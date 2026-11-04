@@ -77,7 +77,9 @@ class WorkflowGuardTests(unittest.TestCase):
                 # independent check after it must run after earlier failures,
                 # stop on cancellation, and retain its failing exit status.
                 if name != 'Check module declarations resolve':
-                    self.assertIn('if: ${{ !cancelled() }}', step)
+                    # Runs after an earlier failure and stops on cancellation.
+                    # A step may narrow further (e.g. one OS), never widen.
+                    self.assertRegex(step, r'if: \$\{\{ !cancelled\(\)')
                 self.assertNotRegex(step, r'\bcontinue-on-error:\s*true\b')
         self.assertNotIn('continue-on-error: true', quality)
         self.assertIn('cargo clippy --locked --all-targets --all-features -- -D warnings', quality)
@@ -102,6 +104,86 @@ class WorkflowGuardTests(unittest.TestCase):
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 17, result.stderr)
             self.assertNotIn('should-not-run', result.stdout)
+
+    def test_branch_filters_name_only_branches_that_exist(self):
+        # The repository has `main` and `dev`; `master` never existed publicly.
+        # A filter on a missing branch silently never fires.
+        for name in ('ci.yml', 'structural-perf.yml'):
+            with self.subTest(workflow=name):
+                text = (ROOT / f'.github/workflows/{name}').read_text()
+                self.assertIn('branches: [dev, main]', text)
+                self.assertNotIn('master', text)
+                self.assertIn('pull_request:', text)
+                self.assertIn('push:', text)
+
+    def test_ci_dispatch_and_cancellation_keep_release_evidence(self):
+        # `scripts/release/check_ci.py` accepts only a successful push run for the
+        # tagged SHA, so a push run must never be superseded by the next one, and
+        # a lost run must be recreatable for the same commit.
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn('workflow_dispatch:', workflow)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+                      workflow)
+        self.assertNotIn('cancel-in-progress: true', workflow)
+
+    def test_every_job_has_a_hosted_sized_timeout(self):
+        for name in ('ci.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{name}').read_text()
+            jobs = text.split('\njobs:\n', 1)[1]
+            starts = list(re.finditer(r'^  ([A-Za-z0-9_-]+):\n', jobs, re.MULTILINE))
+            self.assertGreaterEqual(len(starts), 1 if name == 'structural-perf.yml' else 11)
+            for index, start in enumerate(starts):
+                end = starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
+                with self.subTest(workflow=name, job=start.group(1)):
+                    self.assertIn('timeout-minutes:', jobs[start.start():end])
+
+    def test_linux_rust_jobs_free_disk_before_building(self):
+        # A hosted ubuntu runner has ~14 GB on `/`; the workspace's cold builds do
+        # not fit while the pre-installed toolchains are there.
+        for name in ('ci.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{name}').read_text()
+            with self.subTest(workflow=name):
+                self.assertIn('sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc',
+                              text)
+                self.assertIn('/opt/hostedtoolcache/CodeQL', text)
+                self.assertIn('df -h /', text)
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        # Cleanup must never run on a persistent self-hosted machine.
+        marker = workflow.index('sudo rm -rf /usr/share/dotnet')
+        step_start = workflow.rindex('      - name: ', 0, marker)
+        self.assertIn("runner.environment == 'github-hosted'", workflow[step_start:marker])
+        marker = workflow.index('sudo rm -rf /Users/runner')
+        step_start = workflow.rindex('      - name: ', 0, marker)
+        self.assertIn("runner.environment == 'github-hosted'", workflow[step_start:marker])
+
+    def test_workflows_use_maintained_action_majors(self):
+        for name in ('ci.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{name}').read_text()
+            with self.subTest(workflow=name):
+                self.assertNotIn('actions/checkout@v4', text)
+                self.assertIn('actions/checkout@v7', text)
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        for action in ('actions/upload-artifact@v7',
+                       'actions/setup-node@v7',
+                       'astral-sh/setup-uv@v10.3.3',
+                       'mozilla-actions/sccache-action@v0.0.11'):
+            with self.subTest(action=action):
+                self.assertIn(action, workflow)
+
+    def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
+        # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by
+        # name. Commands run inside the checkout resolve rust-toolchain.toml to a
+        # different toolchain directory, so without a pin the installed Windows
+        # targets are invisible to justrust and cargo-xwin.
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        for job, following in (('windows-arm64-check', 'windows-cross-check'),
+                               ('windows-cross-check', None)):
+            block = workflow.split(f'  {job}:\n', 1)[1]
+            if following:
+                block = block.split(f'\n  {following}:', 1)[0]
+            with self.subTest(job=job):
+                self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
+                self.assertIn('targets: ', block)
 
 
 if __name__ == '__main__':

@@ -16,11 +16,21 @@ on:
 permissions:
   contents: read
 
+# Two dispatches for the same tag would race to upload one version.
+concurrency:
+  group: publish-python-${{ inputs.horon_agent_release_tag }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Publish horon-agent-sdk
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: pypi
+    env:
+      # The pinned 1.99.1 toolchain would otherwise shadow the installed stable
+      # toolchain and download it a second time.
+      RUSTUP_TOOLCHAIN: stable
     permissions:
       contents: read
       # PyPI trusted publishing: no long-lived token is stored in the repository.
@@ -29,11 +39,49 @@ jobs:
       run:
         working-directory: sdk/python
     steps:
+      # PyPI only accepts a trusted publish from a registered publisher, and the
+      # rejection otherwise appears at the very last step after a full build.
+      # Exchange the OIDC token up front so a missing pending publisher fails
+      # here with the exact setup the owner must perform.
+      - name: Verify PyPI trusted publishing is configured
+        working-directory: ${{ github.workspace }}
+        env:
+          PYPI_PROJECT: horon-agent-sdk
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::PyPI trusted publishing needs a GitHub OIDC token, but this job received none. Add 'permissions: id-token: write' to the publish job."
+            exit 1
+          fi
+
+          if ! audience="$(curl -fsS https://pypi.org/_/oidc/audience \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["audience"])')"; then
+            echo "::error::Could not read the trusted-publishing audience from https://pypi.org/_/oidc/audience. Check network access to PyPI."
+            exit 1
+          fi
+          if ! oidc_token="$(curl -fsS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])')"; then
+            echo "::error::Could not obtain a GitHub OIDC token for PyPI. Confirm 'permissions: id-token: write' on the publish job."
+            exit 1
+          fi
+          status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            --data-binary "{\"token\": \"${oidc_token}\"}" \
+            https://pypi.org/_/oidc/mint-token)"
+
+          if [ "${status}" != "200" ]; then
+            echo "::error::PyPI rejected the trusted-publisher exchange (HTTP ${status}). On PyPI, add a pending trusted publisher under Your account -> Publishing: project '${PYPI_PROJECT}', owner 'horon-ai', repository 'agent', workflow 'publish-python-sdk.yml', environment 'pypi'."
+            exit 1
+          fi
+          echo "::notice::PyPI trusted publisher accepted the OIDC exchange for ${PYPI_PROJECT}."
+
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.13"
 

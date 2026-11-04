@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-smoke-${{ github.ref }}-${{ github.event.inputs.target || 'x64' }}
+  group: windows-smoke-${{ github.ref }}-${{ inputs.target || 'x64' }}
   cancel-in-progress: true
 
 env:
@@ -28,15 +28,19 @@ env:
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
+  # dtolnay/rust-toolchain installs the matrix target into `stable`. Use that
+  # same toolchain for the build; otherwise rust-toolchain.toml wins inside the
+  # checkout and `--target` fails with a missing target.
+  RUSTUP_TOOLCHAIN: stable
 
 jobs:
   smoke-x64:
     name: Windows Smoke (x64)
-    if: github.event.inputs.target == 'x64' || github.event.inputs.target == 'both'
+    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'x64' || inputs.target == 'both')
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -48,7 +52,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - uses: mozilla-actions/sccache-action@v0.0.7
+      - uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2
@@ -137,7 +141,7 @@ jobs:
 
       - name: Upload Windows e2e diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-smoke-e2e-diagnostics-x64
           path: ${{ runner.temp }}/horon-agent-windows-e2e-logs
@@ -153,11 +157,13 @@ jobs:
 
   smoke-arm64:
     name: Windows Smoke (ARM64)
-    if: github.event.inputs.target == 'arm64' || github.event.inputs.target == 'both'
+    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'arm64' || inputs.target == 'both')
     runs-on: windows-11-arm
-    timeout-minutes: 35
+    # Release builds of the full CLI on a cold hosted ARM64 runner also need the
+    # MSVC setup; 35 minutes left no headroom for a slow compile.
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -169,7 +175,7 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
 
-      - uses: mozilla-actions/sccache-action@v0.0.7
+      - uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2

@@ -13,6 +13,11 @@ env:
   CARGO_INCREMENTAL: "0"
   # Optimize published binaries fully without changing local/selfdev profiles.
   CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+  # rust-toolchain.toml pins the compiler for commands run inside the checkout.
+  # The matrix targets are installed into `stable` by dtolnay/rust-toolchain, so
+  # the build must use that same toolchain or `--target` fails with a missing
+  # target. The aarch64 emulated-TLS step overrides this with `nightly` inline.
+  RUSTUP_TOOLCHAIN: stable
   # Preserve stable/nightly selected below rather than adopting a JR toolchain.
   JUSTRUST_TOOLCHAIN: system
   # Keep packaging paths deterministic and CI installation noninteractive.
@@ -60,12 +65,14 @@ jobs:
     # dependency skips its dependents.
     if: github.repository == 'horon-ai/agent'
     runs-on: ubuntu-latest
-    # Exact-commit CI includes a native Windows test job with a 150-minute cap.
-    timeout-minutes: 190
+    # Bounded wait for the exact-commit CI evidence plus metadata work. The
+    # previous 3-hour wait always outlived the job limit when no CI run existed;
+    # 45 minutes covers a slow hosted matrix and then fails loudly.
+    timeout-minutes: 60
     outputs:
       tag_sha: ${{ steps.source.outputs.tag_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -106,7 +113,10 @@ jobs:
         run: |
           set -euo pipefail
           git show "$WORKFLOW_SHA:scripts/release/check_ci.py" > "$RUNNER_TEMP/check-release-ci.py"
-          python3 "$RUNNER_TEMP/check-release-ci.py" "$TAG_SHA" --repo "$GITHUB_REPOSITORY" --timeout 10800
+          if ! python3 "$RUNNER_TEMP/check-release-ci.py" "$TAG_SHA" --repo "$GITHUB_REPOSITORY" --timeout 2700; then
+            echo "::error::No successful ci.yml push run with every mandatory job exists for the release commit. Push the commit to dev or main, wait for that CI run to succeed, then rerun this release."
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -154,9 +164,8 @@ jobs:
     needs: create-release
     if: github.event_name == 'workflow_dispatch' && inputs.recovery == 'windows-listener'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
-    env:
-      JUSTRUST_DISABLE: "1"
+    # Cold hosted Windows runners compile the companion crate for two targets.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -168,7 +177,7 @@ jobs:
             target: aarch64-pc-windows-msvc
             arch: amd64_arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
@@ -190,15 +199,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: recovery-companion-${{ matrix.target }}
-      - name: Install pinned justrust
-        shell: bash
-        run: bash scripts/ci/install_justrust.sh
+      # Use cargo directly. justrust has no native aarch64-pc-windows-msvc
+      # client, and with measurement disabled it only forwards to cargo anyway.
       - name: Check and test exact repaired companion source
         shell: pwsh
         run: |
-          & justrust check --local --locked -p horon-agent-companion --target ${{ matrix.target }}
+          & cargo check --locked -p horon-agent-companion --target ${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & justrust test --local --locked -p horon-agent-companion --lib --target ${{ matrix.target }}
+          & cargo test --locked -p horon-agent-companion --lib --target ${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify preflight preserved Cargo.lock
         shell: bash
@@ -210,13 +218,14 @@ jobs:
     permissions:
       contents: write
     needs: [create-release, recovery-preflight]
-    if: ${{ always() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
-    # Each matrix architecture is independent. A failed Linux or macOS target
-    # must not suppress assets produced by the other successful targets.
-    continue-on-error: true
-    # v0.97.0 Intel macOS took 59m17s at optimization level 3. Keep headroom
-    # for healthy cold-cache builds without changing any acceptance checks.
-    timeout-minutes: 90
+    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    # Each matrix architecture still runs to completion (fail-fast: false), so a
+    # failing target never hides the assets the others produced. The failure is
+    # reported as a failure and the final job keeps the release as a draft until
+    # every required asset exists.
+    # v0.97.0 Intel macOS took 59m17s at optimization level 3 on dedicated
+    # hardware; hosted Intel runners are slower, so allow 150 minutes.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -239,12 +248,27 @@ jobs:
             artifact: horon-agent-macos-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.create-release.outputs.tag_sha }}
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
           submodules: recursive
           fetch-depth: 0
+
+      # Hosted Linux images ship ~14 GB free on / and the macOS image is
+      # tighter still, while the release build needs the warm-cache footprint
+      # the old self-hosted Mac had (22 GB target/). Reclaim the preinstalled
+      # SDKs the build never uses before compiling.
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet ~/Library/Caches/Homebrew
+          else
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          fi
+          df -h /
 
       - name: Apply reviewed release source recovery
         shell: bash
@@ -255,11 +279,6 @@ jobs:
           set -euo pipefail
           git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
           python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
-
-      - name: Configure SSH for cargo git dependencies
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -279,7 +298,7 @@ jobs:
           components: rust-src
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
         id: sccache
 
@@ -364,7 +383,7 @@ jobs:
           cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.tar.gz
@@ -379,38 +398,21 @@ jobs:
           gh release upload "${RELEASE_TAG}" "dist/${{ matrix.artifact }}.tar.gz" --clobber
 
   build-windows:
-    name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    name: Build (x86_64-pc-windows-msvc)
+    runs-on: windows-latest
     needs: [create-release, recovery-preflight]
-    if: ${{ always() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
     env:
       # Pinned alpha.17 measurement crashed on Windows x64 requesting 30 GiB.
       # Disable measurement only: the CLI still executes local Cargo and returns
-      # its exit status. Native Windows hosted routing is unsupported. All
-      # compile, launch, installer, signing and publication gates remain active.
+      # its exit status. All compile, launch and publication gates stay active.
       JUSTRUST_DISABLE: "1"
-    # Both Windows architectures are required by the final complete-asset gate.
-    # A compile failure must stop signing rather than cascading into missing files.
     # Windows x64 release smoke tests compile the e2e harness after the release
     # binary. GitHub-hosted Windows runners sometimes exceed 25 minutes, which
     # cancels otherwise healthy releases before artifacts can be uploaded.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: horon-agent-windows-x86_64
-            unsigned_artifact: windows-unsigned-x86_64
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            artifact: horon-agent-windows-aarch64
-            unsigned_artifact: windows-unsigned-aarch64
-            cargo_args: "--no-default-features --features pdf"
-
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
@@ -426,36 +428,28 @@ jobs:
           python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
 
       - name: Configure MSVC build environment (x64)
-        if: matrix.target == 'x86_64-pc-windows-msvc'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: amd64
 
-      - name: Configure MSVC build environment (ARM64)
-        if: matrix.target == 'aarch64-pc-windows-msvc'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: amd64_arm64
-
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-pc-windows-msvc
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
         id: sccache
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: x86_64-pc-windows-msvc
           cache-all-crates: "true"
 
       - name: Install pinned justrust
         shell: bash
         run: bash scripts/ci/install_justrust.sh
 
-      # Native Windows hosted routing is not enabled. Preserve the MSVC runner.
       - name: Build release binary
         shell: pwsh
         run: |
@@ -466,11 +460,7 @@ jobs:
             }
           }
 
-          $cargoArgs = @("build", "--local", "--locked", "--release", "--target", "${{ matrix.target }}")
-          $extraArgs = "${{ matrix.cargo_args }}"
-          if (-not [string]::IsNullOrWhiteSpace($extraArgs)) {
-            $cargoArgs += $extraArgs -split ' '
-          }
+          $cargoArgs = @("build", "--local", "--locked", "--release", "--target", "x86_64-pc-windows-msvc")
 
           & justrust @cargoArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -486,7 +476,7 @@ jobs:
       - name: Verify built Windows binary launches
         shell: pwsh
         run: |
-          & "target/${{ matrix.target }}/release/horon-agent.exe" --version
+          & "target/x86_64-pc-windows-msvc/release/horon-agent.exe" --version
           if ($LASTEXITCODE -ne 0) {
             throw "Built Windows binary failed to run --version"
           }
@@ -495,20 +485,19 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/horon-agent.exe" "dist/${{ matrix.artifact }}.exe"
+          Copy-Item "target/x86_64-pc-windows-msvc/release/horon-agent.exe" "dist/horon-agent-windows-x86_64.exe"
 
       - name: Upload unsigned binary for signing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.unsigned_artifact }}
-          path: dist/${{ matrix.artifact }}.exe
+          name: windows-unsigned-x86_64
+          path: dist/horon-agent-windows-x86_64.exe
 
       # These debug-harness tests provide extra signal, but they must not block
       # publishing a release binary that already built, launched, and passed the
       # installer verification. A transient server-test disconnect caused the
       # Windows x64 asset to disappear from releases v0.44.0-v0.46.0 (#480).
       - name: Run advisory Windows runtime smoke tests (x64)
-        if: matrix.target == 'x86_64-pc-windows-msvc'
         continue-on-error: true
         shell: pwsh
         run: |
@@ -518,21 +507,107 @@ jobs:
           )
 
           foreach ($testName in $tests) {
-            & cargo test --locked --target ${{ matrix.target }} --test e2e $testName -- --exact --nocapture
+            & cargo test --locked --target x86_64-pc-windows-msvc --test e2e $testName -- --exact --nocapture
             if ($LASTEXITCODE -ne 0) {
               throw "Windows smoke test failed: $testName"
             }
           }
 
+  build-windows-arm64:
+    name: Build (aarch64-pc-windows-msvc)
+    runs-on: windows-11-arm
+    needs: [create-release, recovery-preflight]
+    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    # justrust publishes no aarch64-pc-windows-msvc client, so this job builds
+    # with cargo directly on the native ARM64 runner. It is a separate job so a
+    # failure here cannot suppress signing and publication of the x64 assets.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.create-release.outputs.tag_sha }}
+          fetch-depth: 0
+
+      - name: Apply reviewed release source recovery
+        shell: bash
+        env:
+          WORKFLOW_SHA: ${{ github.sha }}
+          RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
+        run: |
+          set -euo pipefail
+          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
+          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+
+      - name: Configure MSVC build environment (ARM64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        continue-on-error: true
+        id: sccache
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-pc-windows-msvc
+          cache-all-crates: "true"
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            sccache --start-server *> $null
+            if ($LASTEXITCODE -eq 0) {
+              $env:RUSTC_WRAPPER = "sccache"
+            }
+          }
+
+          & cargo build --locked --release --target aarch64-pc-windows-msvc --no-default-features --features pdf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        env:
+          HORON_AGENT_RELEASE_BUILD: "1"
+          HORON_AGENT_CI_BUILD: "1"
+          HORON_AGENT_BUILD_SEMVER: ${{ env.RELEASE_TAG }}
+
+      - name: Verify release build preserved Cargo.lock
+        shell: bash
+        run: git diff --exit-code -- Cargo.lock
+
+      - name: Verify built Windows binary launches
+        shell: pwsh
+        run: |
+          & "target/aarch64-pc-windows-msvc/release/horon-agent.exe" --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Built Windows ARM64 binary failed to run --version"
+          }
+
+      - name: Stage unsigned binary for signing
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/aarch64-pc-windows-msvc/release/horon-agent.exe" "dist/horon-agent-windows-aarch64.exe"
+
+      - name: Upload unsigned binary for signing
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-unsigned-aarch64
+          path: dist/horon-agent-windows-aarch64.exe
+
   publish-windows:
     name: Sign and publish Windows assets
     runs-on: windows-latest
-    needs: [create-release, build-windows]
-    # Signing failures keep the complete release draft, including recovery runs.
-    # The optional recovery-preflight ancestor is skipped for normal releases.
-    # Override implicit success() so that skip does not suppress signing, while
-    # still requiring both direct dependencies to succeed.
-    if: always() && needs.create-release.result == 'success' && needs.build-windows.result == 'success'
+    needs: [create-release, build-windows, build-windows-arm64]
+    # The optional recovery-preflight ancestor is skipped for normal releases,
+    # so an explicit status function replaces implicit success(). Only the x64
+    # build gates this job: a failed ARM64 build must not suppress signing and
+    # publication of the x64 assets, and the final job still refuses to publish
+    # a release whose ARM64 asset is missing.
+    if: ${{ !cancelled() && needs.create-release.result == 'success' && needs.build-windows.result == 'success' }}
     timeout-minutes: 30
     outputs:
       signing_enabled: ${{ steps.signing.outputs.enabled }}
@@ -548,7 +623,7 @@ jobs:
       WINDOWS_SIGNING_CERTIFICATE_PROFILE: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE }}
       WINDOWS_SIGNING_REQUIRED: ${{ vars.WINDOWS_SIGNING_REQUIRED }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
@@ -564,7 +639,7 @@ jobs:
           python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
 
       - name: Download unsigned Windows binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: windows-unsigned-*
           path: artifacts
@@ -582,15 +657,20 @@ jobs:
             $env:WINDOWS_SIGNING_CERTIFICATE_PROFILE
           )
           $configured = -not ($requiredValues | Where-Object { [string]::IsNullOrWhiteSpace($_) })
-          "enabled=$($configured.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          # Signing is required only when the repository variable says so
+          # explicitly. An unset variable means "not configured", which must
+          # skip signing with a visible notice instead of failing the release.
+          $signingRequired = $env:WINDOWS_SIGNING_REQUIRED -eq 'true'
 
-          $signingRequired = $env:WINDOWS_SIGNING_REQUIRED -ne 'false'
           if (-not $configured -and $signingRequired) {
-            throw 'Windows signing is required, but Azure Artifact Signing configuration is incomplete. See docs/release/WINDOWS.md.'
+            Write-Output "::error::WINDOWS_SIGNING_REQUIRED is 'true' but Azure Artifact Signing is not configured. Set AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID secrets and WINDOWS_SIGNING_ENDPOINT, WINDOWS_SIGNING_ACCOUNT, WINDOWS_SIGNING_CERTIFICATE_PROFILE variables, or unset WINDOWS_SIGNING_REQUIRED. See docs/release/WINDOWS.md."
+            throw 'Windows code signing is required but its configuration is incomplete.'
           }
           if (-not $configured) {
-            Write-Warning 'Publishing unsigned Windows assets because WINDOWS_SIGNING_REQUIRED=false. This override is not suitable for an official Windows release.'
+            Write-Output "::notice::Windows code signing skipped: Azure Artifact Signing is not configured and WINDOWS_SIGNING_REQUIRED is not 'true'. Publishing unsigned Windows assets."
           }
+
+          "enabled=$($configured.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Azure login with GitHub OIDC
         if: steps.signing.outputs.enabled == 'true'
@@ -600,7 +680,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Authenticode-sign Windows binaries
+      - name: Authenticode-sign Windows x64 binary
         if: steps.signing.outputs.enabled == 'true'
         uses: azure/artifact-signing-action@v2
         with:
@@ -609,21 +689,42 @@ jobs:
           certificate-profile-name: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE }}
           files: |
             ${{ github.workspace }}\artifacts\windows-unsigned-x86_64\horon-agent-windows-x86_64.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Authenticode-sign Windows ARM64 binary
+        if: steps.signing.outputs.enabled == 'true' && hashFiles('artifacts/windows-unsigned-aarch64/horon-agent-windows-aarch64.exe') != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE }}
+          files: |
             ${{ github.workspace }}\artifacts\windows-unsigned-aarch64\horon-agent-windows-aarch64.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
       - name: Verify signatures and package Windows assets
+        id: package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $assets = @(
-            @{ Name = 'horon-agent-windows-x86_64'; Path = 'artifacts/windows-unsigned-x86_64/horon-agent-windows-x86_64.exe' },
-            @{ Name = 'horon-agent-windows-aarch64'; Path = 'artifacts/windows-unsigned-aarch64/horon-agent-windows-aarch64.exe' }
+            @{ Name = 'horon-agent-windows-x86_64'; Path = 'artifacts/windows-unsigned-x86_64/horon-agent-windows-x86_64.exe'; Required = $true },
+            @{ Name = 'horon-agent-windows-aarch64'; Path = 'artifacts/windows-unsigned-aarch64/horon-agent-windows-aarch64.exe'; Required = $false }
           )
+          $packaged = @()
 
           foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset.Path)) {
+              if ($asset.Required) {
+                throw "Missing required unsigned Windows asset: $($asset.Path)"
+              }
+              Write-Warning "Skipping $($asset.Name): the ARM64 build did not produce an unsigned binary. The release stays a draft until it exists."
+              continue
+            }
             $source = (Resolve-Path -LiteralPath $asset.Path).Path
             if ('${{ steps.signing.outputs.enabled }}' -eq 'true') {
               $signature = Get-AuthenticodeSignature -LiteralPath $source
@@ -636,10 +737,14 @@ jobs:
             $destination = Join-Path dist "$($asset.Name).exe"
             Copy-Item -LiteralPath $source -Destination $destination -Force
             tar -czf "dist/$($asset.Name).tar.gz" -C dist "$($asset.Name).exe"
+            $packaged += $asset.Name
           }
 
+          $arm64 = ($packaged -contains 'horon-agent-windows-aarch64').ToString().ToLowerInvariant()
+          "arm64=$arm64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Upload final Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: horon-agent-windows-x86_64
           path: |
@@ -647,7 +752,8 @@ jobs:
             dist/horon-agent-windows-x86_64.tar.gz
 
       - name: Upload final Windows ARM64 artifacts
-        uses: actions/upload-artifact@v4
+        if: steps.package.outputs.arm64 == 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: horon-agent-windows-aarch64
           path: |
@@ -660,7 +766,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload "${env:RELEASE_TAG}" dist/horon-agent-windows-x86_64.exe dist/horon-agent-windows-x86_64.tar.gz dist/horon-agent-windows-aarch64.exe dist/horon-agent-windows-aarch64.tar.gz --clobber
+          $files = @(
+            'dist/horon-agent-windows-x86_64.exe',
+            'dist/horon-agent-windows-x86_64.tar.gz'
+          )
+          if (Test-Path -LiteralPath 'dist/horon-agent-windows-aarch64.tar.gz') {
+            $files += 'dist/horon-agent-windows-aarch64.exe'
+            $files += 'dist/horon-agent-windows-aarch64.tar.gz'
+          } else {
+            Write-Warning 'ARM64 Windows assets were not built; publishing x64 assets only. The release stays a draft until ARM64 exists.'
+          }
+          gh release upload "${env:RELEASE_TAG}" @files --clobber
 
   build-freebsd:
     name: Build (x86_64-unknown-freebsd)
@@ -668,18 +784,28 @@ jobs:
     permissions:
       contents: write
     needs: [create-release, recovery-preflight]
-    if: ${{ always() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
     # GitHub has no native FreeBSD runners, so build inside a FreeBSD VM
     # (QEMU via vmactions), same approach as freebsd-smoke.yml (issues #416,
-    # #433). Best-effort: a flaky VM build must not block the rest of the
-    # release, so failures are surfaced but non-fatal.
-    continue-on-error: true
-    timeout-minutes: 180
+    # #433). FreeBSD is a required platform: the final job refuses to publish a
+    # partial asset set, so a failed VM build is reported as a failure here
+    # rather than being marked "non-fatal" while still blocking publication.
+    timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
+
+      # The QEMU VM image plus the in-VM release target needs more room than a
+      # stock hosted runner has free on /.
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
 
       - name: Apply reviewed release source recovery
         shell: bash
@@ -700,9 +826,10 @@ jobs:
           mem: 6144
           cpu: 4
           # The project is OpenSSL-free (rustls + aws-lc-rs): only a C/C++
-          # toolchain, cmake, and rust are needed.
+          # toolchain, cmake, perl (aws-lc-sys CMake probes) and rust are needed.
+          # Tests execute python3, so no extra package is required for it.
           prepare: |
-            pkg install -y rust cmake gmake pkgconf bash git
+            pkg install -y rust cmake gmake pkgconf bash git perl5
           run: |
             set -e
             echo "::group::Toolchain versions"
@@ -712,9 +839,23 @@ jobs:
             rustc --version
             echo "::endgroup::"
 
+            # Cargo.toml requires rustc 1.99. The FreeBSD package is 1.99.1
+            # today, but a lagging port would otherwise fail deep inside cargo
+            # with a confusing MSRV error. Fail here with the actual version.
+            rust_version="$(rustc --version | awk '{print $2}')"
+            rust_major="${rust_version%%.*}"
+            rust_minor="${rust_version#*.}"
+            rust_minor="${rust_minor%%.*}"
+            if [ "$rust_major" -lt 1 ] || { [ "$rust_major" -eq 1 ] && [ "$rust_minor" -lt 99 ]; }; then
+              echo "::error::FreeBSD rustc ${rust_version} is older than the 1.99 required by Cargo.toml; install a newer rust port (or rustup 1.99.1) in the VM."
+              exit 1
+            fi
+
             export CARGO_TERM_COLOR=always
             # The VM does not inherit the runner's workflow environment.
             export CARGO_PROFILE_RELEASE_OPT_LEVEL="${{ env.CARGO_PROFILE_RELEASE_OPT_LEVEL }}"
+            export CARGO_PROFILE_RELEASE_DEBUG=0
+            export CARGO_INCREMENTAL=0
             # CARGO_BUILD_JOBS keeps memory in check; aws-lc-sys is memory hungry.
             export CARGO_BUILD_JOBS=3
             export HORON_AGENT_RELEASE_BUILD=1
@@ -742,7 +883,7 @@ jobs:
             cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: horon-agent-freebsd-x86_64
           path: dist/horon-agent-freebsd-x86_64.tar.gz
@@ -759,15 +900,15 @@ jobs:
     needs: [create-release, build-linux-macos, publish-windows, build-freebsd]
     # Every platform is independent. Wait until all jobs reach a terminal state,
     # then require all platform assets before publishing. Partial sets stay draft.
-    if: ${{ always() && needs.create-release.result == 'success' }}
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      actions: write
+      actions: read
       contents: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
@@ -782,7 +923,7 @@ jobs:
           git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
           python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           path: artifacts
@@ -932,7 +1073,7 @@ jobs:
           windows_signature = (
               "Authenticode signatures verified for both Windows architectures."
               if os.environ.get("WINDOWS_SIGNING_ENABLED") == "true"
-              else "Windows executables are **unsigned**. Azure Artifact Signing is not configured and the repository's existing `WINDOWS_SIGNING_REQUIRED=false` override allowed unsigned publication. Windows may show publisher or SmartScreen warnings."
+              else "Windows executables are **unsigned**. Azure Artifact Signing is not configured (`WINDOWS_SIGNING_REQUIRED` is not `true`), so signing was skipped. Windows may show publisher or SmartScreen warnings."
           )
           availability = textwrap.dedent(f"""
               {start}
@@ -998,10 +1139,25 @@ jobs:
         run: |
           set -euo pipefail
           install_home="$(mktemp -d "$RUNNER_TEMP/horon-agent-install.XXXXXX")"
-          HOME="$install_home" XDG_CONFIG_HOME="$install_home/.config" \
-            HORON_AGENT_HOME="$install_home/.horon-agent" HORON_AGENT_INSTALL_DIR="$install_home/.local/bin" \
-            HORON_AGENT_VERSION="$RELEASE_TAG" HORON_AGENT_SKIP_SERVER_RELOAD=1 HORON_AGENT_NO_TELEMETRY=1 \
-            bash scripts/install/install.sh
+          # The release asset CDN can lag a few seconds behind the API, which
+          # made this check flaky immediately after publication. Retry the
+          # installer a bounded number of times before failing.
+          installed=false
+          for attempt in 1 2 3 4 5; do
+            if HOME="$install_home" XDG_CONFIG_HOME="$install_home/.config" \
+              HORON_AGENT_HOME="$install_home/.horon-agent" HORON_AGENT_INSTALL_DIR="$install_home/.local/bin" \
+              HORON_AGENT_VERSION="$RELEASE_TAG" HORON_AGENT_SKIP_SERVER_RELOAD=1 HORON_AGENT_NO_TELEMETRY=1 \
+              bash scripts/install/install.sh; then
+              installed=true
+              break
+            fi
+            echo "Installer attempt ${attempt} failed; retrying in 10s" >&2
+            sleep 10
+          done
+          if [ "$installed" != true ]; then
+            echo "::error::Public installer failed after 5 attempts for ${RELEASE_TAG}"
+            exit 1
+          fi
           reported_version="$("$install_home/.local/bin/horon-agent" --version)"
           printf '%s\n' "$reported_version"
           [[ "$reported_version" == "horon-agent $RELEASE_TAG "* ]] || {

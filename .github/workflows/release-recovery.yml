@@ -12,7 +12,7 @@ on:
       - 'scripts/ci/install_justrust.sh'
       - 'scripts/release/build_linux_compat.sh'
   push:
-    branches: [master]
+    branches: [dev, main]
     paths:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-recovery.yml'
@@ -27,12 +27,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Recovery regressions exercise historical tags in isolated clones.
           fetch-depth: 0

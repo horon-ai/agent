@@ -538,7 +538,8 @@ class WorkflowTest(unittest.TestCase):
     def test_it_triggers_on_pull_requests_to_dev(self):
         text = self.workflow()
         self.assertIn("pull_request:", text)
-        self.assertIn("branches: [dev, main, master]", text, "every PR in this repo targets dev")
+        self.assertIn("branches: [dev, main]", text, "every PR in this repo targets dev")
+        self.assertNotIn("master", text, "this repository has no master branch")
 
     def test_it_needs_no_secrets_and_no_release_binary(self):
         text = self.workflow()

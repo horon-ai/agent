@@ -9,10 +9,11 @@ on:
       - 'crates/transport/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/windows-companion.yml'
       - 'scripts/ci/install_justrust.sh'
   push:
-    branches: [master]
+    branches: [dev, main]
     paths:
       - 'crates/companion/**'
       - 'crates/core/**'
@@ -20,6 +21,7 @@ on:
       - 'crates/transport/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/windows-companion.yml'
       - 'scripts/ci/install_justrust.sh'
   workflow_dispatch:
@@ -42,7 +44,9 @@ jobs:
   compile:
     name: Companion (${{ matrix.target }})
     runs-on: windows-latest
-    timeout-minutes: 20
+    # Cold hosted Windows runners compile the shared crates for two targets.
+    # 20 minutes left no room for that; 60 matches the release ARM64 job.
+    timeout-minutes: 60
     env:
       # alpha.17 Windows measurement can allocate 30 GiB before compilation.
       # Execute the same local Cargo check without measurement until fixed.
@@ -56,7 +60,7 @@ jobs:
           - target: aarch64-pc-windows-msvc
             arch: amd64_arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.arch }}
