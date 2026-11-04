@@ -2189,7 +2189,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ast-grep-core",
- "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-javascript",
  "tree-sitter-python",

@@ -275,14 +275,16 @@ impl PtyHandle {
         let mut slave_fd: libc::c_int = -1;
         // SAFETY: `openpty` writes two descriptors on success; `name` is unused
         // (null), the termios pointer is null for kernel defaults, and `winsize`
-        // points at an initialized struct.
+        // points at an initialized struct. glibc declares the window-size
+        // parameter as `*const`, macOS as `*mut`, so the raw pointer is built
+        // from a mutable borrow that is valid for both ABIs.
         let rc = unsafe {
             libc::openpty(
                 &mut master_fd,
                 &mut slave_fd,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut winsize,
+                &raw mut winsize,
             )
         };
         if rc != 0 {

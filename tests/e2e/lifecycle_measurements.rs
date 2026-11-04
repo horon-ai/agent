@@ -84,6 +84,7 @@ fn populations() -> Vec<usize> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "measurement: run manually with --ignored; too slow for hosted CI runners"]
 async fn measure_session_residency_at_population_steps() -> Result<()> {
     let _env = setup_test_env()?;
     let dir = runtime_dir("residency");
