@@ -1,0 +1,1588 @@
+//! Client behavior against a fake harness.
+//!
+//! The correlation logic is the part of an SDK that fails silently: a reply
+//! delivered to the wrong waiter, or a stream event swallowed by a request
+//! that happened to be in flight, produces a hang rather than an error. None
+//! of that is visible from a passing `cargo build`, so it is driven here
+//! against a scripted server on a real socket pair.
+
+#![cfg(unix)]
+
+use horon_agent_harness_api::{
+    API_VERSION_MAJOR, ApiEvent, ApiRequest, ClientFrame, ModelRouteInfo, ServerFrame, SessionInfo, TextMatch,
+    read_frame, write_frame,
+};
+use horon_agent_sdk::{ConnectOptions, HoronAgentClient, SearchTextOptions, Transport};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::sync::mpsc::channel;
+use std::time::Duration;
+
+/// A socket-pair transport, so the test drives the client over the same code
+/// path a real connection uses.
+struct PairTransport(UnixStream);
+
+impl Transport for PairTransport {
+    fn split(self: Box<Self>) -> horon_agent_sdk::Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
+        let writer = self.0.try_clone().expect("socket pair must clone");
+        Ok((Box::new(BufReader::new(self.0)), Box::new(writer)))
+    }
+}
+
+fn session(id: &str) -> SessionInfo {
+    SessionInfo {
+        edit_stats: None,
+        user_connected: false,
+        parent_session_id: None,
+        agent_label: None,
+        swarm_status: None,
+        session_id: id.to_string(),
+        working_dir: None,
+        title: None,
+        status: "idle".to_string(),
+        transcript_bytes: None,
+        saved: false,
+        updated_at_ms: None,
+        last_active_at_ms: None,
+        archived: false,
+        archived_at_ms: None,
+        save_label: None,
+    }
+}
+
+/// Start a fake harness on one end of a socket pair. `handle` is called for
+/// every client frame with a writer for replies.
+fn fake_harness(handle: impl Fn(&ClientFrame, &mut dyn Write) + Send + 'static) -> HoronAgentClient {
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(theirs.try_clone().expect("clone"));
+        let mut writer = theirs;
+        while let Ok(frame) = read_frame::<_, ClientFrame>(&mut reader) {
+            // The handshake is boilerplate every test would repeat.
+            if let ApiRequest::Hello { .. } = frame.request {
+                let reply = ServerFrame {
+                    v: API_VERSION_MAJOR,
+                    reply_to: Some(frame.id),
+                    event: ApiEvent::HelloOk {
+                        version: API_VERSION_MAJOR,
+                        server: "fake-harness/1.0".to_string(),
+                        capabilities: vec!["sessions".to_string()],
+                    },
+                };
+                write_frame(&mut writer, &reply).expect("hello reply");
+                continue;
+            }
+            handle(&frame, &mut writer);
+        }
+    });
+    HoronAgentClient::connect_with(
+        Box::new(PairTransport(ours)),
+        ConnectOptions {
+            request_timeout: Some(Duration::from_secs(5)),
+            ensure_runtime: false,
+            ..Default::default()
+        },
+    )
+    .expect("handshake must succeed")
+}
+
+fn reply(frame: &ClientFrame, event: ApiEvent, writer: &mut dyn Write) {
+    let out = ServerFrame {
+        v: API_VERSION_MAJOR,
+        reply_to: Some(frame.id),
+        event,
+    };
+    write_frame(&mut { writer }, &out).expect("reply");
+}
+
+fn push(event: ApiEvent, writer: &mut dyn Write) {
+    let out = ServerFrame {
+        v: API_VERSION_MAJOR,
+        reply_to: None,
+        event,
+    };
+    write_frame(&mut { writer }, &out).expect("push");
+}
+
+/// The handshake populates the server identity and capabilities, which is how
+/// a client decides what it may depend on.
+#[test]
+fn the_handshake_reports_the_server_and_its_capabilities() {
+    let client = fake_harness(|_, _| {});
+    assert_eq!(client.server, "fake-harness/1.0");
+    assert!(client.supports("sessions"));
+    assert!(
+        !client.supports("permissions"),
+        "a capability the server did not advertise must not be claimed"
+    );
+}
+
+#[path = "client_behavior/soft_interrupt_tests.rs"]
+mod soft_interrupt_tests;
+
+#[path = "client_behavior/ask_response_tests.rs"]
+mod ask_response_tests;
+
+/// GA session-management, runtime, credential, and file methods must preserve
+/// the stable protocol shapes while returning ergonomic SDK-owned values.
+#[test]
+fn ga_runtime_and_file_methods_map_requests_and_typed_replies() {
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&requests);
+    let routes = vec![
+        ModelRouteInfo {
+            usage: Some(horon_agent_sdk::ModelUsage {
+                count: 7,
+                last_used_unix_secs: Some(100),
+                tracking_started_unix_secs: Some(10),
+                selection_count: 3,
+                last_selected_unix_secs: Some(5),
+            }),
+            model: "claude".to_string(),
+            provider: "anthropic".to_string(),
+            api_method: "messages".to_string(),
+            available: true,
+            detail: "ready".to_string(),
+        },
+        ModelRouteInfo {
+            usage: None,
+            model: "gemini".to_string(),
+            provider: "google".to_string(),
+            api_method: "generate_content".to_string(),
+            available: true,
+            detail: "ready".to_string(),
+        },
+    ];
+    let reply_routes = routes.clone();
+    let client = fake_harness(move |frame, writer| {
+        seen.lock().expect("request log").push(frame.request.clone());
+        let event = match &frame.request {
+            ApiRequest::ArchiveSession { .. }
+            | ApiRequest::RestoreSession { .. }
+            | ApiRequest::SetRetentionPolicy { .. }
+            | ApiRequest::NotifyAuthChanged { .. }
+            | ApiRequest::InvalidateUsage { .. } => ApiEvent::Ok,
+            ApiRequest::Ping => ApiEvent::Pong,
+            ApiRequest::GetRuntimeInfo { .. } => ApiEvent::RuntimeInfo {
+                session_id: "s1".to_string(),
+                provider: Some("anthropic".to_string()),
+                model: Some("claude".to_string()),
+                reasoning_effort: Some("high".to_string()),
+                auth_method: Some("oauth".to_string()),
+                routes: reply_routes.clone(),
+            },
+            ApiRequest::SetApiKey { provider, .. } => ApiEvent::CredentialUpdated {
+                provider: provider.clone(),
+                configured: true,
+            },
+            ApiRequest::ClearApiKey { provider } => ApiEvent::CredentialUpdated {
+                provider: provider.clone(),
+                configured: false,
+            },
+            ApiRequest::ReadFile { .. } => ApiEvent::FileContent {
+                session_id: "s1".to_string(),
+                path: "src/a.rs".to_string(),
+                content: "hello".to_string(),
+                size: 8,
+                truncated: true,
+            },
+            ApiRequest::FindFiles { .. } => ApiEvent::Files {
+                session_id: "s1".to_string(),
+                paths: vec!["src/a.rs".to_string()],
+            },
+            ApiRequest::SearchText { .. } => ApiEvent::TextMatches {
+                session_id: "s1".to_string(),
+                matches: vec![TextMatch {
+                    path: "src/a.rs".to_string(),
+                    line: 2,
+                    column: 3,
+                    preview: "  hello".to_string(),
+                }],
+            },
+            ApiRequest::FileStatus { .. } => ApiEvent::FileStatus {
+                session_id: "s1".to_string(),
+                path: "src/a.rs".to_string(),
+                exists: true,
+                kind: "file".to_string(),
+                size: Some(8),
+                modified_ms: Some(123),
+            },
+            other => panic!("unexpected request: {other:?}"),
+        };
+        reply(frame, event, writer);
+    });
+
+    client.archive_session("s1").expect("archive");
+    client.restore_session("s1").expect("restore");
+    client.set_retention_policy(Some(30)).expect("retention policy");
+
+    let runtime = client.get_runtime_info("s1").expect("runtime info");
+    assert_eq!(runtime.server, "fake-harness/1.0");
+    assert_eq!(runtime.protocol_version, API_VERSION_MAJOR);
+    assert_eq!(runtime.capabilities, ["sessions"]);
+    assert!(runtime.healthy);
+    assert_eq!(runtime.session_id, "s1");
+    assert_eq!(runtime.provider.as_deref(), Some("anthropic"));
+    assert_eq!(runtime.model.as_deref(), Some("claude"));
+    assert_eq!(runtime.providers, ["anthropic", "google"]);
+    assert_eq!(runtime.routes, routes);
+
+    client.set_api_key("gemini-api", "secret").expect("set key");
+    client.clear_api_key("horon-agent").expect("clear key");
+    client.notify_auth_changed("openai").expect("refresh OAuth");
+    client
+        .invalidate_usage("claude", Some("claude-otter"))
+        .expect("invalidate usage");
+
+    let content = client.read_file("s1", "src/a.rs", Some(5)).expect("read file");
+    assert_eq!(content.path, "src/a.rs");
+    assert_eq!(content.content, "hello");
+    assert_eq!(content.size, 8);
+    assert!(content.truncated);
+    assert_eq!(
+        client.find_files("s1", "a.rs", Some(4)).expect("find files"),
+        ["src/a.rs"]
+    );
+    assert_eq!(
+        client
+            .search_text(
+                "s1",
+                "hello",
+                SearchTextOptions {
+                    path: Some("src".to_string()),
+                    limit: Some(2),
+                },
+            )
+            .expect("search text"),
+        [TextMatch {
+            path: "src/a.rs".to_string(),
+            line: 2,
+            column: 3,
+            preview: "  hello".to_string(),
+        }]
+    );
+    let status = client.file_status("s1", "src/a.rs").expect("file status");
+    assert_eq!(status.path, "src/a.rs");
+    assert!(status.exists);
+    assert_eq!(status.kind, "file");
+    assert_eq!(status.size, Some(8));
+    assert_eq!(status.modified_ms, Some(123));
+
+    assert_eq!(
+        *requests.lock().expect("request log"),
+        vec![
+            ApiRequest::ArchiveSession {
+                session_id: "s1".to_string(),
+            },
+            ApiRequest::RestoreSession {
+                session_id: "s1".to_string(),
+            },
+            ApiRequest::SetRetentionPolicy {
+                archive_after_days: Some(30),
+            },
+            ApiRequest::Ping,
+            ApiRequest::GetRuntimeInfo {
+                session_id: "s1".to_string(),
+            },
+            ApiRequest::SetApiKey {
+                provider: "gemini-api".to_string(),
+                api_key: "secret".to_string(),
+            },
+            ApiRequest::ClearApiKey {
+                provider: "horon-agent".to_string(),
+            },
+            ApiRequest::NotifyAuthChanged {
+                provider: "openai".to_string(),
+            },
+            ApiRequest::InvalidateUsage {
+                provider: "claude".to_string(),
+                account_label: Some("claude-otter".to_string()),
+            },
+            ApiRequest::ReadFile {
+                session_id: "s1".to_string(),
+                path: "src/a.rs".to_string(),
+                max_bytes: Some(5),
+            },
+            ApiRequest::FindFiles {
+                session_id: "s1".to_string(),
+                query: "a.rs".to_string(),
+                limit: Some(4),
+            },
+            ApiRequest::SearchText {
+                session_id: "s1".to_string(),
+                query: "hello".to_string(),
+                path: Some("src".to_string()),
+                limit: Some(2),
+            },
+            ApiRequest::FileStatus {
+                session_id: "s1".to_string(),
+                path: "src/a.rs".to_string(),
+            },
+        ]
+    );
+}
+
+/// Replies must go to the request that asked for them, not to whichever one
+/// happens to be waiting. Answered out of order on purpose: in-order delivery
+/// would pass even with the correlation removed entirely.
+#[test]
+fn out_of_order_replies_reach_the_right_waiter() {
+    let client = fake_harness(|frame, writer| match &frame.request {
+        // Delay the first request's reply so the second overtakes it.
+        ApiRequest::AttachSession { session_id } => {
+            let id = session_id.clone();
+            std::thread::sleep(Duration::from_millis(120));
+            reply(frame, ApiEvent::Attached { session: session(&id) }, writer);
+        }
+        ApiRequest::Ping => reply(frame, ApiEvent::Pong, writer),
+        _ => {}
+    });
+
+    let slow = {
+        let client = client.clone();
+        std::thread::spawn(move || client.attach_session("slow-session"))
+    };
+    std::thread::sleep(Duration::from_millis(20));
+    client.ping().expect("the fast request must not wait on the slow one");
+    let attached = slow.join().expect("thread").expect("attach must succeed");
+    assert_eq!(attached.session_id, "slow-session");
+}
+
+/// An error frame becomes a typed failure with the wire code, so a caller can
+/// branch on the cause rather than matching on prose.
+#[test]
+fn an_error_frame_becomes_a_typed_failure() {
+    let client = fake_harness(|frame, writer| {
+        reply(
+            frame,
+            ApiEvent::Error {
+                code: horon_agent_harness_api::ErrorCode::UnknownSession,
+                message: "no such session".to_string(),
+                details: None,
+            },
+            writer,
+        );
+    });
+    let error = client.attach_session("gone").expect_err("must fail");
+    assert_eq!(error.code(), "unknown_session");
+    assert!(error.message.contains("no such session"));
+}
+
+/// A reply of the wrong kind is a distinct failure from a harness error: it
+/// means the client and server disagree about the protocol, not that the
+/// request was refused.
+#[test]
+fn a_reply_of_the_wrong_kind_is_reported_as_such() {
+    let client = fake_harness(|frame, writer| reply(frame, ApiEvent::Pong, writer));
+    let error = client.list_sessions().expect_err("must fail");
+    assert_eq!(error.code(), "unexpected_reply");
+}
+
+/// Two subscriptions both see every event: one loop rendering the session must
+/// not starve another waiting for a single acknowledgement.
+#[test]
+fn every_subscriber_sees_every_event() {
+    let (ready_tx, ready_rx) = channel();
+    let client = fake_harness(move |frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            reply(frame, ApiEvent::Pong, writer);
+            for i in 0..3 {
+                push(
+                    ApiEvent::TextDelta {
+                        message_id: None,
+                        session_id: "s1".to_string(),
+                        text: format!("chunk{i}"),
+                    },
+                    writer,
+                );
+            }
+            push(
+                ApiEvent::TurnDone {
+                    session_id: "s1".to_string(),
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+            let _ = ready_tx.send(());
+        }
+    });
+
+    let first = client.events(Some("s1"));
+    let second = client.events(None);
+    client.ping().expect("ping");
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the fake harness must have pushed its events");
+
+    for stream in [&first, &second] {
+        let mut text = String::new();
+        loop {
+            match stream.next_timeout(Duration::from_secs(5)) {
+                Some(ApiEvent::TextDelta { text: chunk, .. }) => text.push_str(&chunk),
+                Some(ApiEvent::TurnDone { .. }) | None => break,
+                Some(_) => continue,
+            }
+        }
+        assert_eq!(text, "chunk0chunk1chunk2");
+    }
+}
+
+/// A session filter keeps another session's stream out. A dashboard attached
+/// to one session must not render another's deltas into it.
+#[test]
+fn a_filtered_subscription_only_sees_its_own_session() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            reply(frame, ApiEvent::Pong, writer);
+            push(
+                ApiEvent::TextDelta {
+                    message_id: None,
+                    session_id: "other".to_string(),
+                    text: "not mine".to_string(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TextDelta {
+                    message_id: None,
+                    session_id: "mine".to_string(),
+                    text: "mine".to_string(),
+                },
+                writer,
+            );
+        }
+    });
+    let stream = client.events(Some("mine"));
+    client.ping().expect("ping");
+    match stream.next_timeout(Duration::from_secs(5)) {
+        Some(ApiEvent::TextDelta { text, session_id, .. }) => {
+            assert_eq!(session_id, "mine");
+            assert_eq!(text, "mine", "the other session's delta leaked through");
+        }
+        other => panic!("expected a text delta for `mine`, got {other:?}"),
+    }
+}
+
+/// A consumer that never reads must not grow its buffer without bound: the
+/// stream holds its budget, then reports the loss and closes.
+#[test]
+fn a_consumer_that_never_reads_overflows_instead_of_growing() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            for i in 0..64 {
+                push(
+                    ApiEvent::TextDelta {
+                        message_id: None,
+                        session_id: "s1".to_string(),
+                        text: format!("chunk{i}"),
+                    },
+                    writer,
+                );
+            }
+            // The reply is written after the flood, so every frame has been
+            // fanned out by the time `ping` returns.
+            reply(frame, ApiEvent::Pong, writer);
+        }
+    });
+    let stream = client.events_with_limits(Some("s1"), 4, 4096);
+    client.ping().expect("ping");
+
+    assert!(
+        stream.buffered_events() <= 4,
+        "buffered {} events, budget is 4",
+        stream.buffered_events()
+    );
+    assert!(
+        stream.buffered_bytes() <= 4096,
+        "buffered {} bytes, budget is 4096",
+        stream.buffered_bytes()
+    );
+
+    let mut delivered = 0;
+    let error = loop {
+        match stream.next_result() {
+            Ok(Some(_)) => delivered += 1,
+            Ok(None) => panic!("the stream closed without reporting the overflow"),
+            Err(error) => break error,
+        }
+    };
+    assert_eq!(error.kind, horon_agent_sdk::ErrorKind::EventBufferOverflow);
+    assert!(error.message.contains("ordinary frames were dropped"));
+    assert_eq!(delivered, 4, "the budget, not the flood, decides delivery");
+    // Nothing half-buffered survives the overflow.
+    assert_eq!(stream.next_result().ok(), Some(None));
+    assert_eq!(stream.buffered_events(), 0);
+}
+
+/// An approval that arrives during an ordinary flood is still delivered: the
+/// reserve exists so the frame a caller acts on is never the one dropped.
+#[test]
+fn a_control_frame_survives_an_overflowing_ordinary_flood() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            for i in 0..64 {
+                push(
+                    ApiEvent::TextDelta {
+                        message_id: None,
+                        session_id: "s1".to_string(),
+                        text: format!("chunk{i}"),
+                    },
+                    writer,
+                );
+            }
+            push(
+                ApiEvent::PermissionRequest {
+                    session_id: "s1".to_string(),
+                    request_id: "p1".to_string(),
+                    tool_name: "bash".to_string(),
+                    description: "rm -rf build".to_string(),
+                },
+                writer,
+            );
+            reply(frame, ApiEvent::Pong, writer);
+        }
+    });
+    let stream = client.events_with_limits(Some("s1"), 4, 4096);
+    client.ping().expect("ping");
+
+    let mut delivered = 0;
+    let mut approval = false;
+    let error = loop {
+        match stream.next_result() {
+            Ok(Some(ApiEvent::PermissionRequest { request_id, .. })) => {
+                assert_eq!(request_id, "p1");
+                approval = true;
+                delivered += 1;
+            }
+            Ok(Some(_)) => delivered += 1,
+            Ok(None) => panic!("the stream closed without reporting the overflow"),
+            Err(error) => break error,
+        }
+    };
+    assert!(approval, "a permission request must never be lost in an ordinary flood");
+    assert_eq!(delivered, 5, "four ordinary frames plus the approval");
+    assert_eq!(error.kind, horon_agent_sdk::ErrorKind::EventBufferOverflow);
+}
+
+/// The reserve is bounded too. When it fills, the stream closes with a visible
+/// error instead of quietly discarding the next approval.
+#[test]
+fn a_full_control_reserve_closes_the_stream_instead_of_dropping_approvals() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            for i in 0..64 {
+                push(
+                    ApiEvent::TextDelta {
+                        message_id: None,
+                        session_id: "s1".to_string(),
+                        text: format!("chunk{i}"),
+                    },
+                    writer,
+                );
+            }
+            for i in 0..4 {
+                push(
+                    ApiEvent::PermissionRequest {
+                        session_id: "s1".to_string(),
+                        request_id: format!("p{i}"),
+                        tool_name: "bash".to_string(),
+                        description: "ls".to_string(),
+                    },
+                    writer,
+                );
+            }
+            reply(frame, ApiEvent::Pong, writer);
+        }
+    });
+    let stream = client.events_with_limits(Some("s1"), 4, 4096);
+    client.ping().expect("ping");
+
+    assert_eq!(stream.buffered_events(), 0, "the reserve fill releases the queue");
+    let error = stream
+        .next_result()
+        .expect_err("a full control reserve must fail the stream");
+    assert_eq!(error.kind, horon_agent_sdk::ErrorKind::EventBufferOverflow);
+    assert!(error.message.contains("control event reserve"));
+    assert_eq!(stream.next_result().ok(), Some(None));
+}
+
+/// A stream that is dropped must release its subscription; one subscription per
+/// reconnect would otherwise leak until the connection closed.
+#[test]
+fn dropping_a_stream_releases_its_subscription() {
+    let client = fake_harness(|_, _| {});
+    let baseline = client.subscriber_count();
+    {
+        let stream = client.events(None);
+        assert_eq!(client.subscriber_count(), baseline + 1);
+        drop(stream);
+    }
+    assert_eq!(client.subscriber_count(), baseline);
+
+    let retained = client.events(Some("s1"));
+    assert_eq!(client.subscriber_count(), baseline + 1);
+    drop(retained);
+    assert_eq!(client.subscriber_count(), baseline);
+}
+
+/// An iterator-style caller must be able to tell an overflow from a clean end.
+/// `next()` reports both as `None`, so `overflow_error()` keeps the error
+/// readable after the fact instead of consuming it.
+#[test]
+fn an_iterator_caller_can_tell_an_overflow_from_a_clean_end() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            for i in 0..64 {
+                push(
+                    ApiEvent::TextDelta {
+                        message_id: None,
+                        session_id: "s1".to_string(),
+                        text: format!("chunk{i}"),
+                    },
+                    writer,
+                );
+            }
+            reply(frame, ApiEvent::Pong, writer);
+        }
+    });
+    let stream = client.events_with_limits(Some("s1"), 4, 4096);
+    assert!(
+        stream.overflow_error().is_none(),
+        "a running stream has no terminal error"
+    );
+    client.ping().expect("ping");
+
+    let mut delivered = 0;
+    while stream.next().is_some() {
+        delivered += 1;
+    }
+    assert_eq!(delivered, 4, "the budget, not the flood, decides delivery");
+
+    let error = stream
+        .overflow_error()
+        .expect("an overflow must stay visible to a next()-only caller");
+    assert_eq!(error.kind, horon_agent_sdk::ErrorKind::EventBufferOverflow);
+    assert!(
+        error.message.contains("4 buffered events"),
+        "the error must name the budget that was exceeded, got: {}",
+        error.message
+    );
+    // Non-taking: asking again still answers, and `next()` keeps reporting None.
+    assert_eq!(stream.overflow_error().map(|again| again.kind), Some(error.kind));
+    assert!(stream.next().is_none());
+}
+
+/// A stream that ends because the connection closed is not an overflow.
+#[test]
+fn a_clean_end_reports_no_overflow() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            reply(frame, ApiEvent::Pong, writer);
+            push(
+                ApiEvent::TurnDone {
+                    session_id: "s1".to_string(),
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+        }
+    });
+    let stream = client.events_with_limits(Some("s1"), 4, 4096);
+    client.ping().expect("ping");
+    assert!(matches!(
+        stream.next_timeout(Duration::from_secs(5)),
+        Some(ApiEvent::TurnDone { .. })
+    ));
+    assert!(stream.overflow_error().is_none());
+}
+
+/// A dropped connection wakes every subscriber instead of leaving it blocked
+/// on a socket that will never deliver again.
+#[test]
+fn a_disconnect_closes_every_subscription() {
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(theirs.try_clone().expect("clone"));
+        let mut writer = theirs;
+        while let Ok(frame) = read_frame::<_, ClientFrame>(&mut reader) {
+            if let ApiRequest::Hello { .. } = frame.request {
+                let reply = ServerFrame {
+                    v: API_VERSION_MAJOR,
+                    reply_to: Some(frame.id),
+                    event: ApiEvent::HelloOk {
+                        version: API_VERSION_MAJOR,
+                        server: "fake-harness/1.0".to_string(),
+                        capabilities: vec!["sessions".to_string()],
+                    },
+                };
+                write_frame(&mut writer, &reply).expect("hello reply");
+                continue;
+            }
+            if let ApiRequest::Ping = frame.request {
+                let reply = ServerFrame {
+                    v: API_VERSION_MAJOR,
+                    reply_to: Some(frame.id),
+                    event: ApiEvent::Pong,
+                };
+                write_frame(&mut writer, &reply).expect("pong");
+                // Dropping both server-side handles is the disconnect.
+                return;
+            }
+        }
+    });
+    let client = HoronAgentClient::connect_with(
+        Box::new(PairTransport(ours)),
+        ConnectOptions {
+            request_timeout: Some(Duration::from_secs(5)),
+            ensure_runtime: false,
+            ..Default::default()
+        },
+    )
+    .expect("handshake must succeed");
+
+    let stream = client.events(None);
+    assert_eq!(client.subscriber_count(), 1);
+    client.ping().expect("ping");
+    assert_eq!(stream.next_result().ok(), Some(None));
+    assert_eq!(stream.buffered_events(), 0);
+}
+
+/// `run` collects one turn: text, reasoning, tool calls, usage. The turn ends
+/// on `turn_done` rather than on the stream closing.
+#[test]
+fn run_collects_one_turn() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::SendMessage { session_id, .. } = &frame.request {
+            let s = session_id.clone();
+            push(ApiEvent::MessageAccepted { session_id: s.clone() }, writer);
+            push(
+                ApiEvent::ReasoningDelta {
+                    session_id: s.clone(),
+                    text: "thinking".to_string(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TextDelta {
+                    message_id: None,
+                    session_id: s.clone(),
+                    text: "hello ".to_string(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::ToolDone {
+                    session_id: s.clone(),
+                    call_id: "c1".to_string(),
+                    name: "bash".to_string(),
+                    output: "ok".to_string(),
+                    error: None,
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TextDelta {
+                    message_id: None,
+                    session_id: s.clone(),
+                    text: "world".to_string(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TokenUsage {
+                    session_id: s.clone(),
+                    input: 10,
+                    output: 5,
+                    cache_read_input: Some(2),
+                    cache_creation_input: Some(3),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnDone {
+                    session_id: s,
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+        }
+    });
+
+    let turn = client
+        .run("s1", "hi", Default::default())
+        .expect("the turn must complete");
+    assert_eq!(turn.text, "hello world");
+    assert_eq!(turn.final_text, "hello world");
+    assert!(turn.messages.is_empty());
+    assert_eq!(turn.reasoning, "thinking");
+    assert_eq!(turn.tool_calls.len(), 1);
+    assert_eq!(turn.tool_calls[0].name, "bash");
+    let usage = turn.usage.expect("usage");
+    assert_eq!(usage.input, 10);
+    assert_eq!(usage.output, 5);
+    assert_eq!(usage.cache_read_input, Some(2));
+    assert_eq!(usage.cache_creation_input, Some(3));
+}
+
+#[test]
+fn run_usage_is_latest_call_and_does_not_retain_previous_cache_counters() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::SendMessage { session_id, .. } = &frame.request {
+            for (input, cache_read_input, cache_creation_input) in [(10, Some(2), Some(3)), (20, None, None)] {
+                push(
+                    ApiEvent::TokenUsage {
+                        session_id: session_id.clone(),
+                        input,
+                        output: 5,
+                        cache_read_input,
+                        cache_creation_input,
+                    },
+                    writer,
+                );
+            }
+            push(
+                ApiEvent::TurnDone {
+                    session_id: session_id.clone(),
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+        }
+    });
+    let usage = client
+        .run("s1", "hi", Default::default())
+        .expect("the turn must complete")
+        .usage
+        .expect("usage");
+    assert_eq!(usage.input, 20);
+    assert_eq!(usage.output, 5);
+    assert_eq!(usage.cache_read_input, None);
+    assert_eq!(usage.cache_creation_input, None);
+}
+
+/// An error mid-turn fails `run` rather than hanging: the harness sends `error`
+/// *instead of* `done`, so a client waiting only for `turn_done` waits forever.
+#[test]
+fn an_error_mid_turn_fails_the_run_instead_of_hanging() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::SendMessage { session_id, .. } = &frame.request {
+            push(
+                ApiEvent::MessageAccepted {
+                    session_id: session_id.clone(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::Error {
+                    code: horon_agent_harness_api::ErrorCode::Internal,
+                    message: "provider exploded".to_string(),
+                    details: None,
+                },
+                writer,
+            );
+        }
+    });
+    let error = client.run("s1", "hi", Default::default()).expect_err("must fail");
+    assert_eq!(error.code(), "internal");
+    assert!(error.message.contains("provider exploded"));
+}
+
+/// When the harness goes away, in-flight requests fail instead of blocking on
+/// a reply that can never arrive.
+#[test]
+fn a_lost_connection_fails_requests_in_flight() {
+    // A server that reads the request and then hangs up without replying.
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(theirs.try_clone().expect("clone"));
+        let mut writer = theirs;
+        let hello: ClientFrame = read_frame(&mut reader).expect("hello");
+        write_frame(
+            &mut writer,
+            &ServerFrame {
+                v: API_VERSION_MAJOR,
+                reply_to: Some(hello.id),
+                event: ApiEvent::HelloOk {
+                    version: API_VERSION_MAJOR,
+                    server: "fake/1.0".to_string(),
+                    capabilities: vec![],
+                },
+            },
+        )
+        .expect("hello reply");
+        let _: ClientFrame = read_frame(&mut reader).expect("request");
+        // Drop both ends: the client's pending request must be failed.
+    });
+
+    let client = HoronAgentClient::connect_with(
+        Box::new(PairTransport(ours)),
+        ConnectOptions {
+            request_timeout: Some(Duration::from_secs(5)),
+            ensure_runtime: false,
+            ..Default::default()
+        },
+    )
+    .expect("handshake");
+    let error = client.ping().expect_err("a dropped harness must fail the request");
+    assert_eq!(error.code(), "disconnected");
+}
+
+#[test]
+fn model_switch_preserves_identity_and_catalog_events_around_the_reply() {
+    let client = fake_harness(|frame, writer| {
+        let ApiRequest::SetModel { session_id, model } = &frame.request else {
+            panic!("unexpected request: {:?}", frame.request);
+        };
+        assert_eq!(session_id, "s1");
+        assert_eq!(model, "openai-api:new-model");
+        push(
+            ApiEvent::ConnectionPhase {
+                session_id: session_id.clone(),
+                phase: "connecting".into(),
+            },
+            writer,
+        );
+        // The stream can interleave with a synchronous command in either order.
+        push(
+            ApiEvent::ModelInfo {
+                session_id: session_id.clone(),
+                provider: Some("openai-api".into()),
+                model: Some("new-model".into()),
+                reasoning_effort: None,
+                auth_method: None,
+            },
+            writer,
+        );
+        reply(frame, ApiEvent::Ok, writer);
+        push(
+            ApiEvent::RuntimeInfo {
+                session_id: session_id.clone(),
+                provider: Some("openai-api".into()),
+                model: Some("new-model".into()),
+                reasoning_effort: None,
+                auth_method: None,
+                routes: vec![ModelRouteInfo {
+                    usage: None,
+                    model: "new-model".into(),
+                    provider: "openai-api".into(),
+                    api_method: "responses".into(),
+                    available: true,
+                    detail: "ready".into(),
+                }],
+            },
+            writer,
+        );
+    });
+    let events = client.events(Some("s1"));
+    let unrelated = client.events(Some("s2"));
+    client.set_model("s1", "openai-api:new-model").expect("model switch");
+    assert!(matches!(
+        events.next_timeout(Duration::from_secs(1)),
+        Some(ApiEvent::ConnectionPhase { .. })
+    ));
+    assert!(matches!(events.next_timeout(Duration::from_secs(1)),
+        Some(ApiEvent::ModelInfo { model, .. }) if model.as_deref() == Some("new-model")));
+    assert!(matches!(events.next_timeout(Duration::from_secs(1)),
+        Some(ApiEvent::RuntimeInfo { routes, .. }) if routes.len() == 1 && routes[0].available));
+    assert!(unrelated.next_timeout(Duration::from_millis(20)).is_none());
+}
+
+#[test]
+fn model_switch_refusal_is_a_typed_error_not_a_success() {
+    let client = fake_harness(|frame, writer| {
+        assert!(matches!(frame.request, ApiRequest::SetModel { .. }));
+        reply(
+            frame,
+            ApiEvent::Error {
+                code: horon_agent_harness_api::ErrorCode::InvalidRequest,
+                message: "provider credential is missing".into(),
+                details: None,
+            },
+            writer,
+        );
+    });
+    let error = client
+        .set_model("s1", "unavailable-model")
+        .expect_err("switch must fail");
+    assert_eq!(
+        error.kind,
+        horon_agent_sdk::ErrorKind::Harness(horon_agent_harness_api::ErrorCode::InvalidRequest)
+    );
+    assert!(error.message.contains("credential"));
+}
+
+#[test]
+fn recovery_events_are_delivered_and_filtered_by_session() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            reply(frame, ApiEvent::Pong, writer);
+            for session_id in ["other", "mine"] {
+                push(
+                    ApiEvent::SessionRecovery {
+                        session_id: session_id.into(),
+                        continuation_message: "continue task".into(),
+                        reconnect_notice: Some("reconnected".into()),
+                    },
+                    writer,
+                );
+            }
+        }
+    });
+    let stream = client.events(Some("mine"));
+    let all = client.events(None);
+    client.ping().expect("ping");
+    assert_eq!(
+        stream.next_timeout(Duration::from_secs(5)),
+        Some(ApiEvent::SessionRecovery {
+            session_id: "mine".into(),
+            continuation_message: "continue task".into(),
+            reconnect_notice: Some("reconnected".into()),
+        })
+    );
+    for expected in ["other", "mine"] {
+        assert!(
+            matches!(all.next_timeout(Duration::from_secs(5)), Some(ApiEvent::SessionRecovery {session_id, ..}) if session_id == expected)
+        );
+    }
+}
+
+#[test]
+fn send_system_reminder_is_hidden_and_does_not_wait_for_acceptance() {
+    let (sent, received) = channel();
+    let client = fake_harness(move |frame, _writer| {
+        sent.send(frame.request.clone()).unwrap();
+        // Deliberately no reply or message_accepted event.
+    });
+    client.send_system_reminder("mine", "continue task").unwrap();
+    assert_eq!(
+        received.recv_timeout(Duration::from_secs(5)).unwrap(),
+        ApiRequest::SendMessage {
+            session_id: "mine".into(),
+            content: String::new(),
+            system_reminder: Some("continue task".into()),
+            images: vec![],
+            no_reply: false,
+        }
+    );
+}
+
+#[test]
+fn side_panel_events_hydrate_before_attach_and_route_only_to_matching_session() {
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::AttachSession { session_id } = &frame.request {
+            for sid in ["other", session_id.as_str()] {
+                push(
+                    ApiEvent::SidePanelState {
+                        session_id: sid.into(),
+                        snapshot: horon_agent_sdk::SidePanelSnapshot {
+                            focus_revision: 0,
+                            focused_page_id: Some("notes".into()),
+                            pages: vec![horon_agent_sdk::SidePanelPage {
+                                id: "notes".into(),
+                                content: "# Notes".into(),
+                                ..Default::default()
+                            }],
+                        },
+                    },
+                    writer,
+                );
+            }
+            reply(
+                frame,
+                ApiEvent::Attached {
+                    session: session(session_id),
+                },
+                writer,
+            );
+        }
+    });
+    let ours = client.events(Some("s1"));
+    let other = client.events(Some("other"));
+    let all = client.events(None);
+    client.attach_session("s1").unwrap();
+    for (stream, expected) in [(&ours, "s1"), (&other, "other")] {
+        let event = stream.next_timeout(Duration::from_secs(1)).unwrap();
+        assert!(
+            matches!(event, ApiEvent::SidePanelState { session_id, snapshot } if session_id == expected && snapshot.pages[0].content == "# Notes")
+        );
+        assert!(stream.next_timeout(Duration::from_millis(20)).is_none());
+    }
+    for expected in ["other", "s1"] {
+        assert!(
+            matches!(all.next_timeout(Duration::from_secs(1)).unwrap(), ApiEvent::SidePanelState { session_id, .. } if session_id == expected)
+        );
+    }
+}
+
+#[test]
+fn run_collects_framed_final_answer_and_retracts_completed_retry_output() {
+    let client = fake_harness(|frame, writer| {
+        if matches!(frame.request, ApiRequest::SendMessage { .. }) {
+            reply(frame, ApiEvent::Ok, writer);
+            for (id, chunks) in [
+                ("narration", vec!["Checking", " logs"]),
+                ("retry", vec!["wrong"]),
+                ("answer", vec!["The cause is ", "the retry loop."]),
+            ] {
+                for text in chunks {
+                    push(
+                        ApiEvent::TextDelta {
+                            session_id: "s1".into(),
+                            message_id: Some(id.into()),
+                            text: text.into(),
+                        },
+                        writer,
+                    );
+                    push(
+                        ApiEvent::ReasoningDelta {
+                            session_id: "s1".into(),
+                            text: "thinking".into(),
+                        },
+                        writer,
+                    );
+                }
+                push(
+                    ApiEvent::TextDone {
+                        session_id: "s1".into(),
+                        message_id: Some(id.into()),
+                    },
+                    writer,
+                );
+            }
+            push(
+                ApiEvent::TextReplace {
+                    session_id: "s1".into(),
+                    message_id: Some("retry".into()),
+                    text: "".into(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnDone {
+                    session_id: "s1".into(),
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+        }
+    });
+    let result = client.run("s1", "diagnose", Default::default()).unwrap();
+    assert_eq!(result.text, "Checking logsThe cause is the retry loop.");
+    assert_eq!(result.final_text, "The cause is the retry loop.");
+    assert_eq!(result.messages.len(), 2);
+    assert_eq!(result.messages[0].message_id.as_deref(), Some("narration"));
+}
+
+fn custom_tool() -> horon_agent_sdk::SessionToolDefinition {
+    horon_agent_sdk::SessionToolDefinition {
+        name: "greet".into(),
+        description: "Greet a person".into(),
+        parameters: serde_json::from_value(serde_json::json!({
+            "type": "object", "properties": {"name": {"type": "string"}},
+            "required": ["name"]
+        }))
+        .unwrap(),
+    }
+}
+
+#[test]
+fn session_tool_configuration_and_listing_preserve_typed_payloads() {
+    let client = fake_harness(|frame, writer| match &frame.request {
+        ApiRequest::ConfigureTools { session_id, tools } => {
+            assert_eq!(session_id, "s1");
+            assert_eq!(tools.enabled, Some(vec!["read".into(), "greet".into()]));
+            assert_eq!(tools.disabled, vec!["bash"]);
+            assert_eq!(
+                serde_json::to_value(&tools.custom).unwrap(),
+                serde_json::to_value(vec![custom_tool()]).unwrap()
+            );
+            reply(frame, ApiEvent::Ok, writer);
+        }
+        ApiRequest::ListTools { session_id } => {
+            assert_eq!(session_id, "s1");
+            reply(
+                frame,
+                ApiEvent::Tools {
+                    session_id: session_id.clone(),
+                    tools: vec![custom_tool()],
+                },
+                writer,
+            );
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    client
+        .configure_tools(
+            "s1",
+            horon_agent_sdk::ToolConfiguration {
+                enabled: Some(vec!["read".into(), "greet".into()]),
+                disabled: vec!["bash".into()],
+                custom: vec![custom_tool()],
+            },
+        )
+        .unwrap();
+    let tools = client.list_tools("s1").unwrap();
+    assert_eq!(
+        serde_json::to_value(tools).unwrap(),
+        serde_json::to_value(vec![custom_tool()]).unwrap()
+    );
+}
+
+#[test]
+fn custom_tool_events_are_session_filtered_and_results_preserve_success_and_failure() {
+    let client = fake_harness(|frame, writer| match &frame.request {
+        ApiRequest::SendMessage { session_id, .. } => {
+            for (id, call_id) in [
+                ("other", "ignore"),
+                (session_id.as_str(), "success"),
+                (session_id.as_str(), "failure"),
+            ] {
+                push(
+                    ApiEvent::ToolCall {
+                        session_id: id.into(),
+                        call_id: call_id.into(),
+                        name: "greet".into(),
+                        input: serde_json::json!({"name": "Ada"}),
+                    },
+                    writer,
+                );
+            }
+        }
+        ApiRequest::ToolResult {
+            session_id,
+            call_id,
+            output,
+            error,
+        } => {
+            assert_eq!(session_id, "s1");
+            match call_id.as_str() {
+                "success" => {
+                    assert_eq!(output, "Hello, Ada!");
+                    assert_eq!(error, &None);
+                }
+                "failure" => {
+                    assert_eq!(output, "");
+                    assert_eq!(error.as_deref(), Some("unavailable"));
+                }
+                other => panic!("unexpected call id: {other}"),
+            }
+            reply(frame, ApiEvent::Ok, writer);
+        }
+        other => panic!("unexpected request: {other:?}"),
+    });
+    let events = client.events(Some("s1"));
+    client.send_message("s1", "greet Ada", vec![], None).unwrap();
+    for expected in ["success", "failure"] {
+        let event = events.next_timeout(Duration::from_secs(2)).expect("custom tool event");
+        let ApiEvent::ToolCall {
+            session_id,
+            call_id,
+            name,
+            input,
+        } = event
+        else {
+            panic!("unexpected event: {event:?}");
+        };
+        assert_eq!(call_id, expected);
+        assert_eq!(name, "greet");
+        assert_eq!(input, serde_json::json!({"name": "Ada"}));
+        let (output, error) = if expected == "success" {
+            ("Hello, Ada!", None)
+        } else {
+            ("", Some("unavailable".into()))
+        };
+        client.submit_tool_result(&session_id, &call_id, output, error).unwrap();
+    }
+}
+
+#[test]
+fn session_tool_methods_propagate_harness_errors() {
+    let client = fake_harness(|frame, writer| {
+        reply(
+            frame,
+            ApiEvent::Error {
+                code: horon_agent_sdk::api::ErrorCode::UnknownRequest,
+                message: "session tools unavailable".into(),
+                details: None,
+            },
+            writer,
+        );
+    });
+    let errors = [
+        client
+            .configure_tools(
+                "s1",
+                horon_agent_sdk::ToolConfiguration {
+                    enabled: None,
+                    disabled: vec![],
+                    custom: vec![],
+                },
+            )
+            .unwrap_err(),
+        client.list_tools("s1").unwrap_err(),
+        client.submit_tool_result("s1", "call", "ok", None).unwrap_err(),
+    ];
+    for error in errors {
+        assert_eq!(
+            error.kind,
+            horon_agent_sdk::ErrorKind::Harness(horon_agent_sdk::api::ErrorCode::UnknownRequest)
+        );
+        assert!(error.to_string().contains("session tools unavailable"));
+    }
+}
+
+#[test]
+fn session_tool_methods_reject_unexpected_replies() {
+    let client = fake_harness(|frame, writer| reply(frame, ApiEvent::Pong, writer));
+    assert!(
+        client
+            .configure_tools(
+                "s1",
+                horon_agent_sdk::ToolConfiguration {
+                    enabled: Some(vec![]),
+                    disabled: vec![],
+                    custom: vec![],
+                }
+            )
+            .is_err()
+    );
+    assert!(client.list_tools("s1").is_err());
+    assert!(client.submit_tool_result("s1", "call", "", None).is_err());
+}
+
+#[test]
+fn create_session_options_preserve_system_prompt_wire_values() {
+    use horon_agent_sdk::CreateSessionOptions;
+
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    let (tx, rx) = channel();
+    let server = std::thread::spawn(move || {
+        let mut reader = BufReader::new(theirs.try_clone().expect("clone"));
+        let mut writer = theirs;
+        for index in 0..6 {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("read frame");
+            let wire: serde_json::Value = serde_json::from_str(&line).expect("JSON frame");
+            let frame: ClientFrame = serde_json::from_value(wire.clone()).expect("client frame");
+            if index == 0 {
+                reply(
+                    &frame,
+                    ApiEvent::HelloOk {
+                        version: API_VERSION_MAJOR,
+                        server: "fake-harness/1.0".into(),
+                        capabilities: vec!["sessions".into()],
+                    },
+                    &mut writer,
+                );
+            } else {
+                tx.send(wire).expect("capture wire");
+                reply(
+                    &frame,
+                    ApiEvent::Attached {
+                        session: session("created"),
+                    },
+                    &mut writer,
+                );
+            }
+        }
+    });
+    let client = HoronAgentClient::connect_with(
+        Box::new(PairTransport(ours)),
+        ConnectOptions {
+            request_timeout: Some(Duration::from_secs(5)),
+            ensure_runtime: false,
+            ..Default::default()
+        },
+    )
+    .expect("connect");
+
+    for prompt in [
+        None,
+        Some("Review precisely.\nKeep Unicode: λ".to_string()),
+        Some(String::new()),
+    ] {
+        let created = client
+            .create_session_with_options(CreateSessionOptions {
+                working_dir: Some("/project".into()),
+                system_prompt: prompt.clone(),
+            })
+            .expect("create session");
+        assert_eq!(created.session_id, "created");
+        let wire = rx.recv_timeout(Duration::from_secs(5)).expect("captured frame");
+        assert_eq!(wire["req"], "create_session");
+        assert_eq!(wire["working_dir"], "/project");
+        assert_eq!(
+            wire.get("system_prompt"),
+            prompt.as_ref().map(|s| serde_json::Value::String(s.clone())).as_ref()
+        );
+    }
+    client
+        .create_session_with_options(CreateSessionOptions::default())
+        .expect("default options");
+    let wire = rx.recv_timeout(Duration::from_secs(5)).expect("default frame");
+    assert!(wire.get("system_prompt").is_none());
+    assert!(wire.get("working_dir").is_none());
+    client.create_session(Some("/legacy".into())).expect("legacy API");
+    let wire = rx.recv_timeout(Duration::from_secs(5)).expect("legacy frame");
+    assert!(wire.get("system_prompt").is_none());
+    assert_eq!(wire["working_dir"], "/legacy");
+    server.join().expect("server");
+}
+
+#[test]
+fn run_retains_abnormal_stop_and_filters_other_sessions() {
+    use horon_agent_sdk::TurnStopReason;
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::SendMessage { session_id, .. } = &frame.request {
+            push(
+                ApiEvent::MessageAccepted {
+                    session_id: session_id.clone(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnStopped {
+                    session_id: "other".into(),
+                    reason: TurnStopReason::Crash,
+                    message: "Other session crashed".into(),
+                    provider_stop_reason: None,
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnStopped {
+                    session_id: session_id.clone(),
+                    reason: TurnStopReason::Interrupted,
+                    message: "Cancelled by the user".into(),
+                    provider_stop_reason: None,
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnDone {
+                    session_id: session_id.clone(),
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+        }
+    });
+    let result = client.run("s1", "hello", Default::default()).unwrap();
+    assert_eq!(result.stop_reason, Some(TurnStopReason::Interrupted));
+    assert_eq!(result.stop_message.as_deref(), Some("Cancelled by the user"));
+}
+
+#[test]
+fn failure_callback_receives_structured_stop_before_error() {
+    use horon_agent_sdk::{RunOptions, TurnStopReason};
+    let client = fake_harness(|frame, writer| {
+        if let ApiRequest::SendMessage { session_id, .. } = &frame.request {
+            push(
+                ApiEvent::MessageAccepted {
+                    session_id: session_id.clone(),
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnStopped {
+                    session_id: session_id.clone(),
+                    reason: TurnStopReason::Crash,
+                    message: "Caught runtime panic".into(),
+                    provider_stop_reason: None,
+                },
+                writer,
+            );
+            push(
+                ApiEvent::Error {
+                    code: horon_agent_harness_api::ErrorCode::Internal,
+                    message: "Caught runtime panic".into(),
+                    details: None,
+                },
+                writer,
+            );
+            push(
+                ApiEvent::TurnDone {
+                    session_id: session_id.clone(),
+                    pending_soft_interrupts: None,
+                },
+                writer,
+            );
+        }
+    });
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = events.clone();
+    let result = client.run(
+        "s1",
+        "hello",
+        RunOptions {
+            on_event: Some(Box::new(move |event| received.lock().unwrap().push(event.clone()))),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+    let events = events.lock().unwrap();
+    let stop = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                ApiEvent::TurnStopped {
+                    reason: TurnStopReason::Crash,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    let error = events
+        .iter()
+        .position(|event| matches!(event, ApiEvent::Error { .. }))
+        .unwrap();
+    assert!(stop < error);
+}
+
+#[test]
+fn tool_names_arrive_before_any_arguments_and_interleaved_inputs_keep_call_ids() {
+    let (release, wait) = channel();
+    let client = fake_harness(move |frame, writer| {
+        if let ApiRequest::Ping = frame.request {
+            reply(frame, ApiEvent::Pong, writer);
+            for id in ["a", "b"] {
+                push(
+                    ApiEvent::ToolStart {
+                        session_id: "mine".into(),
+                        call_id: id.into(),
+                        name: "bash".into(),
+                    },
+                    writer,
+                );
+            }
+            // The SDK must deliver both names with the connection open and no
+            // argument frame available. No transport EOF can mask buffering.
+            wait.recv_timeout(Duration::from_secs(5))
+                .expect("client observed names");
+            for (id, delta) in [("b", "{\"command\":"), ("a", "{}"), ("b", "\"pwd\"}")] {
+                push(
+                    ApiEvent::ToolInputDelta {
+                        session_id: "mine".into(),
+                        call_id: id.into(),
+                        delta: delta.into(),
+                    },
+                    writer,
+                );
+            }
+        }
+    });
+    let events = client.events(Some("mine"));
+    client.ping().unwrap();
+    for id in ["a", "b"] {
+        assert!(
+            matches!(events.next_timeout(Duration::from_secs(5)), Some(ApiEvent::ToolStart { call_id, name, .. }) if call_id == id && name == "bash")
+        );
+    }
+    release.send(()).unwrap();
+    for (id, fragment) in [("b", "{\"command\":"), ("a", "{}"), ("b", "\"pwd\"}")] {
+        assert!(
+            matches!(events.next_timeout(Duration::from_secs(5)), Some(ApiEvent::ToolInputDelta { call_id, delta, .. }) if call_id == id && delta == fragment)
+        );
+    }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "horon-agent-edit-safety"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "In-memory content-addressed file snapshots and the hashline codec shared by the file tools"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"

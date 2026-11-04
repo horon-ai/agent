@@ -1,0 +1,2301 @@
+#![cfg_attr(test, allow(clippy::await_holding_lock))]
+
+use super::*;
+
+use crate::message::{Message, ToolDefinition};
+use crate::provider::{EventStream, Provider};
+use async_trait::async_trait;
+use serde_json::Value;
+use std::ffi::OsString;
+
+struct TestHomeGuard {
+    previous: Option<OsString>,
+}
+
+impl TestHomeGuard {
+    fn new(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("HORON_AGENT_HOME");
+        crate::env::set_var("HORON_AGENT_HOME", path);
+        Self { previous }
+    }
+}
+
+impl Drop for TestHomeGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            crate::env::set_var("HORON_AGENT_HOME", previous);
+        } else {
+            crate::env::remove_var("HORON_AGENT_HOME");
+        }
+    }
+}
+
+struct MockProvider;
+
+#[async_trait]
+impl Provider for MockProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> anyhow::Result<EventStream> {
+        Err(anyhow::anyhow!(
+            "Mock provider should not be used for streaming completions in tool registry tests"
+        ))
+    }
+
+    fn name(&self) -> &str {
+        "mock"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(MockProvider)
+    }
+}
+
+fn mcp_test_context(working_dir: &std::path::Path) -> ToolContext {
+    ToolContext {
+        session_id: "mcp-registry-lifetime".to_string(),
+        message_id: "message".to_string(),
+        tool_call_id: "mcp-call".to_string(),
+        working_dir: Some(working_dir.to_path_buf()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    }
+}
+
+async fn register_empty_mcp_tools(registry: &Registry, working_dir: &std::path::Path) {
+    let pool = Arc::new(crate::mcp::SharedMcpPool::new(crate::mcp::McpConfig::default()));
+    registry
+        .register_mcp_tools_for_dir(
+            None,
+            Some(pool),
+            Some("mcp-registry-lifetime".to_string()),
+            Some(working_dir.to_path_buf()),
+        )
+        .await;
+}
+
+#[tokio::test]
+async fn mcp_list_remains_available_while_background_connect_is_handshaking() {
+    let _env_lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let _home_guard = TestHomeGuard::new(home.path());
+    let working_dir = tempfile::tempdir().expect("create isolated MCP working directory");
+
+    std::fs::write(
+        home.path().join("mcp.json"),
+        r#"{
+            "mcpServers": {
+                "slow": {
+                    "command": "/bin/sh",
+                    "args": ["-c", "sleep 2"],
+                    "timeout_secs": 86400
+                }
+            }
+        }"#,
+    )
+    .expect("write slow MCP config");
+
+    let registry = Registry::empty();
+    registry
+        .register_mcp_tools_for_dir(None, None, None, Some(working_dir.path().to_path_buf()))
+        .await;
+
+    // Let the background connection task acquire its read guard and enter the
+    // slow initialize handshake before asking the management tool to list.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        registry.execute(
+            "mcp",
+            serde_json::json!({"action": "list"}),
+            mcp_test_context(working_dir.path()),
+        ),
+    )
+    .await
+    .expect("mcp list must not wait for a slow background handshake")
+    .expect("mcp list should succeed");
+
+    assert!(output.output.contains("slow"), "unexpected output: {}", output.output);
+}
+
+#[tokio::test]
+async fn real_mcp_registration_does_not_retain_registry_tool_map() {
+    let _env_lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let _home_guard = TestHomeGuard::new(home.path());
+    let working_dir = tempfile::tempdir().expect("create isolated MCP working directory");
+    let registry = Registry::empty();
+    let tools = Arc::downgrade(&registry.tools);
+
+    register_empty_mcp_tools(&registry, working_dir.path()).await;
+    assert!(registry.tool_names().await.iter().any(|name| name == "mcp"));
+
+    drop(registry);
+
+    assert!(
+        tools.upgrade().is_none(),
+        "McpManagementTool must not strongly retain the registry tool map that owns it"
+    );
+}
+
+#[tokio::test]
+async fn mcp_management_upgrades_registry_through_surviving_clone() {
+    let _env_lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let _home_guard = TestHomeGuard::new(home.path());
+    let working_dir = tempfile::tempdir().expect("create isolated MCP working directory");
+    let registry = Registry::empty();
+    let tools = Arc::downgrade(&registry.tools);
+
+    register_empty_mcp_tools(&registry, working_dir.path()).await;
+    let surviving_clone = registry.clone();
+    drop(registry);
+
+    let stale_tool = surviving_clone
+        .tools
+        .read()
+        .await
+        .get("mcp")
+        .cloned()
+        .expect("MCP management tool should be registered");
+    surviving_clone
+        .register("mcp__lifetime__sentinel".to_string(), stale_tool)
+        .await;
+
+    let output = surviving_clone
+        .execute(
+            "mcp",
+            serde_json::json!({"action": "reload"}),
+            mcp_test_context(working_dir.path()),
+        )
+        .await
+        .expect("MCP management should upgrade through the surviving registry clone");
+    assert!(output.output.contains("No servers found in config"));
+    assert!(
+        !surviving_clone
+            .tool_names()
+            .await
+            .iter()
+            .any(|name| name == "mcp__lifetime__sentinel"),
+        "reload should mutate the surviving registry through the weak handle"
+    );
+    assert!(
+        surviving_clone.tool_names().await.iter().any(|name| name == "mcp"),
+        "reload should preserve the MCP management tool"
+    );
+    assert!(tools.upgrade().is_some());
+
+    drop(surviving_clone);
+    assert!(tools.upgrade().is_none());
+}
+
+#[tokio::test]
+async fn test_tool_definitions_are_sorted() {
+    // Create registry with mock provider
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+
+    // Get definitions multiple times and verify they're always in the same order
+    let defs1 = registry.definitions(None).await;
+    let defs2 = registry.definitions(None).await;
+
+    // Should have the same order
+    assert_eq!(defs1.len(), defs2.len());
+    for (d1, d2) in defs1.iter().zip(defs2.iter()) {
+        assert_eq!(d1.name, d2.name);
+    }
+
+    // Verify they're sorted alphabetically
+    let names: Vec<&str> = defs1.iter().map(|d| d.name.as_str()).collect();
+    let mut sorted_names = names.clone();
+    sorted_names.sort();
+    assert_eq!(names, sorted_names, "Tool definitions should be sorted alphabetically");
+}
+
+#[tokio::test]
+async fn gmail_follows_tool_profile_only() {
+    // One registry holding just gmail, so the profile filters are the only thing
+    // that can change its visibility.
+    let registry = Registry::empty();
+    registry
+        .register("gmail".to_string(), Arc::new(super::gmail::GmailTool::new()))
+        .await;
+
+    // The open profile lists every registered built-in, so gmail is visible.
+    let open = registry.definitions_filtered(None, &HashSet::new()).await;
+    assert_eq!(open.iter().filter(|def| def.name == "gmail").count(), 1);
+
+    // The `core` profile is a closed allow-list that omits gmail, so nothing lists it.
+    let core: HashSet<String> = crate::config::CORE_TOOLS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    assert!(!core.contains("gmail"));
+    let closed = registry.definitions_filtered(Some(&core), &HashSet::new()).await;
+    assert!(!closed.iter().any(|def| def.name == "gmail"));
+
+    // An explicit profile entry is the only other switch: allowing it lists it,
+    // disabling it hides it, and no tool surface outside the profile reintroduces it.
+    let allow: HashSet<String> = HashSet::from(["gmail".to_string()]);
+    let listed = registry.definitions_filtered(Some(&allow), &HashSet::new()).await;
+    assert_eq!(listed.iter().filter(|def| def.name == "gmail").count(), 1);
+    let disabled: HashSet<String> = HashSet::from(["gmail".to_string()]);
+    let hidden = registry.definitions_filtered(None, &disabled).await;
+    assert!(!hidden.iter().any(|def| def.name == "gmail"));
+}
+
+#[test]
+fn deferred_mcp_surfaces_follow_umbrella_and_per_tool_filters() {
+    use std::collections::HashSet;
+
+    let umbrella = HashSet::from(["mcp".to_string()]);
+    assert!(super::tool_name_is_allowed(&umbrella, "mcp_search"));
+    assert!(super::tool_name_is_allowed(&umbrella, "mcp_call"));
+    assert!(super::tool_name_is_allowed(&umbrella, "mcp__server__tool"));
+
+    let one_tool = HashSet::from(["mcp__server__allowed".to_string()]);
+    assert!(super::tool_name_is_allowed(&one_tool, "mcp_search"));
+    assert!(super::tool_name_is_allowed(&one_tool, "mcp_call"));
+
+    let disabled = HashSet::from(["mcp".to_string()]);
+    assert!(super::tool_name_is_disabled(&disabled, "mcp_search"));
+    assert!(super::tool_name_is_disabled(&disabled, "mcp_call"));
+    assert!(super::tool_name_is_disabled(&disabled, "mcp__server__tool"));
+
+    super::set_session_tool_policy(
+        "deferred-filter-test",
+        Some(one_tool),
+        HashSet::from(["mcp__server__blocked".to_string()]),
+    );
+    assert!(super::session_mcp_dispatch_is_allowed(
+        "deferred-filter-test",
+        "mcp__server__allowed",
+        "mcp_call"
+    ));
+    assert!(!super::session_mcp_dispatch_is_allowed(
+        "deferred-filter-test",
+        "mcp__server__blocked",
+        "mcp_call"
+    ));
+    assert!(!super::session_mcp_dispatch_is_allowed(
+        "deferred-filter-test",
+        "mcp__server__other",
+        "mcp_call"
+    ));
+    super::clear_session_tool_policy("deferred-filter-test");
+}
+
+#[test]
+fn test_resolve_skill_aliases_to_skill_manage() {
+    assert_eq!(Registry::resolve_tool_name("skill"), "skill_manage");
+    assert_eq!(Registry::resolve_tool_name("Skill"), "skill_manage");
+    assert_eq!(Registry::resolve_tool_name("skill_manage"), "skill_manage");
+}
+
+#[tokio::test]
+async fn test_discover_tools_not_registered_when_sponsors_disabled() {
+    // sponsors.enabled is the legacy config key; when false, integration discovery must not exist.
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let names = registry.tool_names().await;
+    if crate::config::config().sponsors.enabled {
+        assert!(names.iter().any(|n| n == "integration_tools"));
+    } else {
+        assert!(
+            !names.iter().any(|n| n == "integration_tools"),
+            "integration_tools must not be registered when sponsors are disabled"
+        );
+    }
+}
+
+#[tokio::test]
+async fn subagent_tool_is_not_registered() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+
+    assert!(
+        !registry.tool_names().await.iter().any(|name| name == "subagent"),
+        "the deprecated direct subagent tool must not be exposed; use swarm instead"
+    );
+}
+
+struct BareSchemaTool;
+
+#[async_trait]
+impl Tool for BareSchemaTool {
+    fn name(&self) -> &str {
+        "bare_schema"
+    }
+
+    fn description(&self) -> &str {
+        "Test tool without an explicit intent property."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "required": ["command"],
+            "properties": {
+                "command": {"type": "string"}
+            }
+        })
+    }
+
+    async fn execute(&self, _input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
+        Ok(ToolOutput::new("ok"))
+    }
+}
+
+/// `to_definition` deliberately injects a required `intent` into every
+/// object-shaped tool schema (8505080a6), so a tool that omits `intent` from its
+/// own `parameters_schema` still advertises it. This pins that central
+/// behaviour: a bare schema gains `intent` as both a property and a requirement.
+#[test]
+fn tool_definitions_auto_inject_required_intent() {
+    let def = BareSchemaTool.to_definition();
+    assert_eq!(def.input_schema["properties"]["intent"]["type"], "string");
+    let required = def.input_schema["required"].as_array().cloned().unwrap_or_default();
+    assert!(
+        required.iter().any(|value| value == "intent"),
+        "intent must be required after central injection: {required:?}"
+    );
+    assert!(
+        required.iter().any(|value| value == "command"),
+        "injection must preserve the tool's own required fields: {required:?}"
+    );
+}
+
+#[tokio::test]
+async fn first_party_tool_definitions_require_intent_with_display_only_docs() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    registry.register_ambient_tools().await;
+    registry.register_selfdev_tools().await;
+
+    let defs = registry.definitions(None).await;
+    assert!(!defs.is_empty());
+
+    for def in defs {
+        let schema = &def.input_schema;
+        if schema["type"] != "object" {
+            continue;
+        }
+
+        assert_eq!(
+            schema["properties"]["intent"]["type"], "string",
+            "{} should explicitly define optional intent in its schema",
+            def.name
+        );
+        assert!(
+            schema["properties"]["intent"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("shown in the UI"),
+            "{} intent description should say it is UI-display-only",
+            def.name
+        );
+        let required = schema["required"].as_array().cloned().unwrap_or_default();
+        assert!(
+            required.iter().any(|value| value == "intent"),
+            "{} must require intent",
+            def.name
+        );
+    }
+}
+
+#[test]
+fn test_resolve_tool_name_oauth_aliases() {
+    assert_eq!(Registry::resolve_tool_name("file_read"), "read");
+    assert_eq!(Registry::resolve_tool_name("file_write"), "write");
+    assert_eq!(Registry::resolve_tool_name("file_edit"), "edit");
+    assert_eq!(Registry::resolve_tool_name("shell_exec"), "bash");
+    assert_eq!(Registry::resolve_tool_name("shell"), "bash");
+    assert_eq!(Registry::resolve_tool_name("read_file"), "read");
+    assert_eq!(Registry::resolve_tool_name("write_file"), "write");
+    assert_eq!(Registry::resolve_tool_name("edit_file"), "edit");
+    assert_eq!(Registry::resolve_tool_name("task_runner"), "subagent");
+    assert_eq!(Registry::resolve_tool_name("task"), "subagent");
+    assert_eq!(Registry::resolve_tool_name("launch"), "open");
+    assert_eq!(Registry::resolve_tool_name("grep"), "agentgrep");
+    assert_eq!(Registry::resolve_tool_name("file_grep"), "agentgrep");
+    assert_eq!(Registry::resolve_tool_name("todo_read"), "todo");
+    assert_eq!(Registry::resolve_tool_name("todo_write"), "todo");
+    assert_eq!(Registry::resolve_tool_name("todoread"), "todo");
+    assert_eq!(Registry::resolve_tool_name("todowrite"), "todo");
+    assert_eq!(Registry::resolve_tool_name("bash"), "bash");
+    assert_eq!(Registry::resolve_tool_name("functions.bash"), "bash");
+    assert_eq!(Registry::resolve_tool_name("functions.shell_exec"), "bash");
+    assert_eq!(Registry::resolve_tool_name("batch"), "batch");
+    assert_eq!(Registry::resolve_tool_name("memory"), "memory");
+}
+
+#[tokio::test]
+async fn test_batch_resolves_function_namespaced_tools() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let ctx = ToolContext {
+        session_id: "test-batch-function-namespace".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(std::env::temp_dir()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    let result = registry
+        .execute(
+            "batch",
+            serde_json::json!({
+                "tool_calls": [
+                    {"tool": "functions.bash", "command": "true"},
+                    {"tool": "functions.shell_exec", "command": "true"}
+                ]
+            }),
+            ctx,
+        )
+        .await
+        .expect("namespaced batch subcalls should execute");
+
+    assert!(result.output.contains("Completed: 2 succeeded, 0 failed"));
+    assert!(!result.output.contains("Unknown tool"));
+    assert!(result.output.contains("--- [1] bash ---"));
+    assert!(result.output.contains("--- [2] bash ---"));
+    assert!(!result.output.contains("functions."));
+}
+
+#[tokio::test]
+async fn test_batch_rejects_function_namespaced_batch_recursion() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let ctx = ToolContext {
+        session_id: "test-batch-function-namespace-recursion".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(std::env::temp_dir()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    let error = registry
+        .execute(
+            "batch",
+            serde_json::json!({
+                "tool_calls": [{"tool": "functions.batch", "tool_calls": []}]
+            }),
+            ctx,
+        )
+        .await
+        .expect_err("namespaced batch recursion should be rejected");
+
+    assert!(error.to_string().contains("Cannot batch the 'batch' tool"));
+}
+
+#[tokio::test]
+async fn test_batch_resolves_oauth_names() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let temp_dir = std::env::temp_dir();
+
+    let ctx = ToolContext {
+        session_id: "test".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(temp_dir),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    let result = registry
+        .execute("shell_exec", serde_json::json!({"command": "true"}), ctx)
+        .await;
+    assert!(result.is_ok(), "shell_exec should resolve to bash tool");
+}
+
+#[tokio::test]
+async fn registry_execute_enforces_session_tool_policy_after_alias_resolution() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let temp_dir = std::env::temp_dir();
+    let session_id = "test-policy-deny";
+    set_session_tool_policy(session_id, None, HashSet::from(["bash".to_string()]));
+
+    let ctx = ToolContext {
+        session_id: session_id.to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(temp_dir.clone()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    let result = registry
+        .execute("shell_exec", serde_json::json!({"command": "true"}), ctx)
+        .await;
+
+    clear_session_tool_policy(session_id);
+    assert!(result.is_err(), "deny-list should block aliased bash calls");
+    assert!(result.unwrap_err().to_string().contains("Tool 'bash' is disabled"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn registry_execute_pre_tool_hook_blocks_and_allows() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let temp = tempfile::TempDir::new().expect("temp dir");
+
+    // Policy script: block bash calls whose input mentions "secret".
+    let policy = temp.path().join("policy.sh");
+    std::fs::write(
+        &policy,
+        "#!/bin/sh\ninput=$(cat)\ncase \"$input\" in\n  *secret*) echo \"no secrets\" >&2; exit 2 ;;\nesac\nexit 0\n",
+    )
+    .expect("write policy");
+    std::fs::set_permissions(&policy, std::fs::Permissions::from_mode(0o755)).expect("chmod policy");
+
+    let prev = std::env::var_os("HORON_AGENT_HOOK_PRE_TOOL");
+    crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL", policy.to_string_lossy().to_string());
+    // horon-agent-base is compiled without cfg(test) here, so the config cache only
+    // re-checks env every 500ms; force a reload so the hook is visible now.
+    crate::config::invalidate_config_cache();
+
+    let ctx = || ToolContext {
+        session_id: "test-pre-tool-hook".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(std::env::temp_dir()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    let blocked = registry
+        .execute(
+            "bash",
+            serde_json::json!({
+                "command": "echo secret"
+            }),
+            ctx(),
+        )
+        .await;
+    let allowed = registry
+        .execute(
+            "bash",
+            serde_json::json!({
+                "command": "true"
+            }),
+            ctx(),
+        )
+        .await;
+
+    match prev {
+        Some(value) => crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL", value),
+        None => crate::env::remove_var("HORON_AGENT_HOOK_PRE_TOOL"),
+    }
+    crate::config::invalidate_config_cache();
+
+    let error = blocked.expect_err("pre_tool hook should block matching input");
+    assert!(
+        error.to_string().contains("no secrets"),
+        "hook stderr should surface in the error: {error}"
+    );
+    assert!(allowed.is_ok(), "non-matching input should pass the gate");
+}
+
+/// Minimal tool that returns at once, so any dispatch time these tests measure
+/// belongs to a hook stage rather than to the tool itself.
+struct DispatchProbeTool;
+
+#[async_trait]
+impl crate::tool::Tool for DispatchProbeTool {
+    fn name(&self) -> &str {
+        "dispatch_probe"
+    }
+
+    fn description(&self) -> &str {
+        "Returns immediately; measures dispatch stages"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, _: Value, _: ToolContext) -> anyhow::Result<ToolOutput> {
+        Ok(ToolOutput::new("probe ok"))
+    }
+}
+
+/// Run one real dispatch through `Registry::execute` with a `pre_tool` gate that
+/// sleeps `hook_sleep_ms`, and return the stage breakdown the dispatch recorded.
+#[cfg(unix)]
+async fn dispatch_behind_slow_gate(hook_sleep_ms: u64, tool_call_id: &str) -> (bool, DispatchTimings) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = crate::storage::lock_test_env();
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    registry
+        .register("dispatch_probe".to_string(), Arc::new(DispatchProbeTool))
+        .await;
+
+    let hook = temp.path().join("slow-gate.sh");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nsleep {:.3}\nexit 0\n",
+            hook_sleep_ms as f64 / 1000.0
+        ),
+    )
+    .expect("write slow gate");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod slow gate");
+
+    let prev_hook = std::env::var_os("HORON_AGENT_HOOK_PRE_TOOL");
+    let prev_timeout = std::env::var_os("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS");
+    crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL", hook.to_string_lossy().to_string());
+    crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS", "10000");
+    crate::config::invalidate_config_cache();
+
+    let ctx = ToolContext {
+        session_id: format!("test-dispatch-stages-{tool_call_id}"),
+        message_id: "test".to_string(),
+        tool_call_id: tool_call_id.to_string(),
+        working_dir: Some(temp.path().to_path_buf()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+    let result = registry
+        .execute("dispatch_probe", serde_json::json!({"probe": "value"}), ctx)
+        .await;
+
+    match prev_hook {
+        Some(value) => crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL", value),
+        None => crate::env::remove_var("HORON_AGENT_HOOK_PRE_TOOL"),
+    }
+    match prev_timeout {
+        Some(value) => crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS", value),
+        None => crate::env::remove_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS"),
+    }
+    crate::config::invalidate_config_cache();
+
+    let timings = crate::tool::dispatch_timings_for(tool_call_id).expect("dispatch must record stage timings");
+    (result.is_ok(), timings)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn dispatch_attributes_slow_pre_tool_hook_time_to_its_own_stage() {
+    const HOOK_SLEEP_MS: u64 = 400;
+
+    let (ok, timings) = dispatch_behind_slow_gate(HOOK_SLEEP_MS, "test-dispatch-slow-gate").await;
+    assert!(ok, "the gate allows the call, so the dispatch should succeed");
+
+    // `execute_ms` is what the old metric reported on its own: a call that
+    // waited on a slow gate read as instant.
+    assert!(
+        timings.execute_ms < 100,
+        "the probe tool returns at once, so execute_ms must stay small; got {}ms",
+        timings.execute_ms
+    );
+    assert!(
+        timings.hook_gate_ms + 50 >= HOOK_SLEEP_MS,
+        "the gate stage must carry its own {HOOK_SLEEP_MS}ms sleep; got {}ms",
+        timings.hook_gate_ms
+    );
+    assert!(
+        timings.total_ms + 50 >= HOOK_SLEEP_MS + timings.execute_ms,
+        "the total must include the hook wait; total {}ms, execute {}ms, gate {}ms",
+        timings.total_ms,
+        timings.execute_ms,
+        timings.hook_gate_ms
+    );
+    assert!(
+        timings.total_ms > timings.execute_ms + 300,
+        "a hook-only cost must be visible in the total; total {}ms, execute {}ms",
+        timings.total_ms,
+        timings.execute_ms
+    );
+}
+
+/// Manual QA on the real dispatch path: a `pre_tool` gate that sleeps must show
+/// its time in `hook_gate_ms` on the emitted `TOOL_LIFECYCLE` line while
+/// `execute_ms` stays small, and the stages must add up to `elapsed_ms`.
+///
+/// `HORON_AGENT_QA_HOME=/tmp/arp2-t5-qa cargo test --locked -p horon-agent-app-core --lib \
+///  manual_qa_dispatch_stage_breakdown -- --ignored --nocapture`
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "manual QA: prints the emitted TOOL_LIFECYCLE stage fields for a slow pre_tool hook"]
+async fn manual_qa_dispatch_stage_breakdown() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const HOOK_SLEEP_MS: u64 = 500;
+    let _env_lock = crate::storage::lock_test_env();
+    let home = std::env::var_os("HORON_AGENT_QA_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("horon-agent-qa-{}", std::process::id())));
+    std::fs::create_dir_all(&home).expect("create QA home");
+    crate::env::set_var("HORON_AGENT_HOME", &home);
+    crate::logging::init();
+
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let hook = dir.path().join("slow-gate.sh");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nsleep {:.3}\nexit 0\n",
+            HOOK_SLEEP_MS as f64 / 1000.0
+        ),
+    )
+    .expect("write slow gate");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod slow gate");
+
+    let previous_hook = std::env::var_os("HORON_AGENT_HOOK_PRE_TOOL");
+    let previous_timeout = std::env::var_os("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS");
+    crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL", hook.to_string_lossy().to_string());
+    crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS", "10000");
+    crate::config::invalidate_config_cache();
+
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    registry
+        .register("dispatch_probe".to_string(), Arc::new(DispatchProbeTool))
+        .await;
+    let ctx = ToolContext {
+        session_id: "ses_manual_qa_dispatch".to_string(),
+        message_id: "manual-qa".to_string(),
+        tool_call_id: "call_manual_qa_dispatch".to_string(),
+        working_dir: Some(dir.path().to_path_buf()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    let started = std::time::Instant::now();
+    let result = registry
+        .execute("dispatch_probe", serde_json::json!({"probe": "value"}), ctx)
+        .await;
+    let wall = started.elapsed();
+
+    match previous_hook {
+        Some(value) => crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL", value),
+        None => crate::env::remove_var("HORON_AGENT_HOOK_PRE_TOOL"),
+    }
+    match previous_timeout {
+        Some(value) => crate::env::set_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS", value),
+        None => crate::env::remove_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS"),
+    }
+    crate::config::invalidate_config_cache();
+
+    let timings = crate::tool::dispatch_timings_for("call_manual_qa_dispatch");
+    println!("MANUAL-QA hook_sleep_ms={HOOK_SLEEP_MS} wall_ms={}", wall.as_millis());
+    println!(
+        "MANUAL-QA result={}",
+        match &result {
+            Ok(_) => "ok".to_string(),
+            Err(error) => format!("error: {error}"),
+        }
+    );
+    if let Some(timings) = timings {
+        println!("MANUAL-QA stages={timings:?}");
+        println!(
+            "MANUAL-QA stage_sum_ms={} total_ms={}",
+            timings.stage_sum_ms(),
+            timings.total_ms
+        );
+    }
+
+    let log_file = crate::logging::log_path().expect("QA log path");
+    let contents = std::fs::read_to_string(&log_file).unwrap_or_default();
+    let done_lines: Vec<&str> = contents
+        .lines()
+        .filter(|line| line.contains("TOOL_LIFECYCLE") && line.contains("phase=done"))
+        .collect();
+    println!("MANUAL-QA log_file={}", log_file.display());
+    for line in &done_lines {
+        println!("MANUAL-QA log_line={line}");
+    }
+
+    let timings = timings.expect("the real dispatch path must record stage timings");
+    assert!(
+        result.is_ok(),
+        "the gate allows the call, so the dispatch should succeed"
+    );
+    assert!(
+        timings.hook_gate_ms + 100 >= HOOK_SLEEP_MS,
+        "the gate stage must carry the {HOOK_SLEEP_MS}ms hook sleep; got {}ms",
+        timings.hook_gate_ms
+    );
+    assert!(
+        timings.total_ms > timings.execute_ms + 400,
+        "the total must exceed execute_ms by the hook cost; total {}ms, execute {}ms",
+        timings.total_ms,
+        timings.execute_ms
+    );
+    assert!(
+        !done_lines.is_empty(),
+        "expected a TOOL_LIFECYCLE done line in {log_file:?}"
+    );
+    let done = done_lines.last().expect("done line");
+    for key in [
+        "elapsed_ms",
+        "execute_ms",
+        "hook_gate_ms",
+        "post_feedback_ms",
+        "overflow_guard_ms",
+    ] {
+        assert!(done.contains(key), "the done line must carry {key}: {done}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn dispatch_stage_durations_sum_to_the_total() {
+    const HOOK_SLEEP_MS: u64 = 200;
+
+    let (ok, timings) = dispatch_behind_slow_gate(HOOK_SLEEP_MS, "test-dispatch-stage-sum").await;
+    assert!(ok, "the gate allows the call, so the dispatch should succeed");
+
+    let stages = timings.stage_sum_ms();
+    assert!(
+        stages <= timings.total_ms,
+        "the stages cannot exceed the dispatch that contains them; stages {stages}ms, total {}ms",
+        timings.total_ms
+    );
+    assert!(
+        timings.total_ms - stages <= 100,
+        "dispatch time outside every stage must stay small; stages {stages}ms, total {}ms",
+        timings.total_ms
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_timing_fields_carry_durations_and_no_payload() {
+    const MARKER: &str = "PAYLOAD_MARKER_MUST_NOT_BE_TRACED";
+
+    let timings = DispatchTimings {
+        hook_transform_ms: 11,
+        hook_gate_ms: 22,
+        execute_ms: 33,
+        post_feedback_ms: 44,
+        overflow_guard_ms: 55,
+        total_ms: 165,
+    };
+
+    let timing_fields = timings.fields();
+    let keys: Vec<&str> = timing_fields.iter().map(|(key, _)| key.as_str()).collect();
+    assert_eq!(
+        keys,
+        vec![
+            "elapsed_ms",
+            "execute_ms",
+            "hook_transform_ms",
+            "hook_gate_ms",
+            "post_feedback_ms",
+            "overflow_guard_ms",
+        ],
+        "the dispatch fields are durations only, with elapsed_ms still present"
+    );
+    for (key, value) in &timing_fields {
+        assert!(
+            value.parse::<u64>().is_ok(),
+            "{key} must hold a plain duration, got {value:?}"
+        );
+    }
+    assert_eq!(
+        timing_fields[0].1, "165",
+        "elapsed_ms keeps its name and now means the dispatch total"
+    );
+
+    let input = serde_json::json!({"command": MARKER, "content": MARKER});
+    let ctx = ToolContext {
+        session_id: "test-lifecycle-fields".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test-lifecycle-fields".to_string(),
+        working_dir: None,
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+    let mut fields = Registry::tool_lifecycle_fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
+    fields.extend(timings.fields());
+    for (key, value) in &fields {
+        assert!(
+            !value.contains(MARKER),
+            "lifecycle field {key} leaked tool payload text: {value}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_definitions_keep_batch_schema_generic() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+
+    let defs = registry.definitions(None).await;
+    let batch_def = defs
+        .iter()
+        .find(|def| def.name == "batch")
+        .expect("batch definition should exist");
+
+    assert!(batch_def.input_schema["properties"]["tool_calls"]["items"]["oneOf"].is_null());
+    assert!(
+        batch_def.input_schema["properties"]["tool_calls"]["items"]["required"]
+            .as_array()
+            .map(|required| required.iter().any(|value| value == "tool"))
+            .unwrap_or(false)
+    );
+    assert!(batch_def.input_schema["properties"]["tool_calls"]["items"]["properties"]["parameters"].is_null());
+}
+
+#[test]
+fn resolve_tool_name_maps_communicate_to_swarm() {
+    assert_eq!(Registry::resolve_tool_name("communicate"), "swarm");
+}
+
+#[tokio::test]
+#[ignore]
+async fn print_tool_definition_token_report() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let mut defs = registry.definitions(None).await;
+    defs.sort_by_key(|def| std::cmp::Reverse(def.prompt_token_estimate()));
+
+    println!("name,total_tokens,description_tokens");
+    for def in defs {
+        println!(
+            "{},{},{}",
+            def.name,
+            def.prompt_token_estimate(),
+            def.description_token_estimate()
+        );
+    }
+}
+
+/// Tool descriptions are always-on prompt cost, so they are capped at ~20
+/// estimated tokens. Behavioral guidance belongs in parameter descriptions.
+/// Exemptions must be justified inline.
+#[tokio::test]
+async fn tool_descriptions_stay_under_token_cap() {
+    const DESCRIPTION_TOKEN_CAP: usize = 20;
+    // integration_tools keeps a deliberate second sentence explaining that catalog
+    // entries integrate directly with the agent.
+    // swarm appends the user-tunable swarm-prompt.md by design.
+    // batch carries a deliberate parallel-call example (2f4abae33, pinned by
+    // batch_tests::description_includes_parallel_tool_call_example).
+    // browser carries the status-first and handoff-by-default routing policy
+    // (e1576e9e3 and earlier), pinned by browser_tests.
+    // todo carries a deliberate "use it very often" directive requested by the
+    // user, so planning happens proactively rather than only when prompted.
+    // applet carries the whole view-node vocabulary inline, since the model has
+    // no other way to learn which node types and props the host renders.
+    // codemode documents its sandbox API; compile_remote a credit/consent notice.
+    const EXEMPT: &[&str] = &[
+        "integration_tools",
+        "swarm",
+        "batch",
+        "browser",
+        "todo",
+        "applet",
+        "codemode",
+        "compile_remote",
+    ];
+
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let over_cap: Vec<String> = registry
+        .definitions(None)
+        .await
+        .into_iter()
+        .filter(|def| !EXEMPT.contains(&def.name.as_str()))
+        .filter(|def| def.description_token_estimate() > DESCRIPTION_TOKEN_CAP)
+        .map(|def| {
+            format!(
+                "{} (~{} tokens): {}",
+                def.name,
+                def.description_token_estimate(),
+                def.description
+            )
+        })
+        .collect();
+    assert!(
+        over_cap.is_empty(),
+        "tool descriptions over the {DESCRIPTION_TOKEN_CAP}-token cap:\n{}",
+        over_cap.join("\n")
+    );
+}
+
+fn collect_param_descriptions(schema: &Value, path: &str, out: &mut Vec<(String, String)>) {
+    match schema {
+        Value::Object(map) => {
+            if path != "$"
+                && let Some(Value::String(description)) = map.get("description")
+            {
+                out.push((path.to_string(), description.clone()));
+            }
+            for (key, value) in map {
+                if key == "description" {
+                    continue;
+                }
+                collect_param_descriptions(value, &format!("{path}.{key}"), out);
+            }
+        }
+        Value::Array(items) => {
+            for (idx, item) in items.iter().enumerate() {
+                collect_param_descriptions(item, &format!("{path}[{idx}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parameter descriptions inside tool schemas are also always-on prompt cost,
+/// so each is capped. Longer guidance belongs in runtime error messages, docs,
+/// or the system prompt (the todo calibration rubrics, for example, live in
+/// the gate continuation messages in horon-agent-base::todo).
+#[tokio::test]
+async fn tool_parameter_descriptions_stay_under_token_cap() {
+    const PARAM_DESCRIPTION_TOKEN_CAP: usize = 25;
+    // The feedback-loop relevance rubric defines every enum state inline
+    // (abb0baabc, d21916db5) and todo::tests pins each concept, so it is
+    // deliberately longer than the cap.
+    // applet placement lists every shorthand so the model can pick a surface
+    // without a round trip. desktop_selfdev action carries a safety warning:
+    // killing the harness bridge by hand strands the calling session.
+    const EXEMPT: &[(&str, &str)] = &[
+        ("todo", "$.properties.goals.items.properties.feedback_loop_relevance"),
+        ("applet", "$.properties.placement"),
+        ("desktop_selfdev", "$.properties.action"),
+    ];
+
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let mut over_cap: Vec<String> = Vec::new();
+    for def in registry.definitions(None).await {
+        let mut descriptions = Vec::new();
+        collect_param_descriptions(&def.input_schema, "$", &mut descriptions);
+        for (path, description) in descriptions {
+            let tokens = crate::util::estimate_tokens(&description);
+            if tokens > PARAM_DESCRIPTION_TOKEN_CAP && !EXEMPT.contains(&(def.name.as_str(), path.as_str())) {
+                over_cap.push(format!("{} {} (~{} tokens): {}", def.name, path, tokens, description));
+            }
+        }
+    }
+    assert!(
+        over_cap.is_empty(),
+        "{} parameter descriptions over the {PARAM_DESCRIPTION_TOKEN_CAP}-token cap:\n{}",
+        over_cap.len(),
+        over_cap.join("\n")
+    );
+}
+
+fn schema_type_includes(schema: &Value, expected: &str) -> bool {
+    match schema.get("type") {
+        Some(Value::String(value)) => value == expected,
+        Some(Value::Array(values)) => values
+            .iter()
+            .any(|value| value.as_str().is_some_and(|value| value == expected)),
+        _ => false,
+    }
+}
+
+fn collect_schema_errors(schema: &Value, path: &str, errors: &mut Vec<String>) {
+    match schema {
+        Value::Object(map) => {
+            if schema_type_includes(schema, "array") && !map.contains_key("items") {
+                errors.push(format!("{path}: array schema missing items"));
+            }
+
+            // Gemini validates `required` against the same object's `properties`
+            // and rejects the entire request when a name is missing, which broke
+            // every tool-enabled Gemini call (issue #655). Objects without a
+            // local `properties` map are exempt: there is nothing to check
+            // against, and Gemini accepts those.
+            if let (Some(Value::Array(required)), Some(Value::Object(properties))) =
+                (map.get("required"), map.get("properties"))
+            {
+                for name in required {
+                    let Some(name) = name.as_str() else {
+                        errors.push(format!("{path}.required: entries must be strings"));
+                        continue;
+                    };
+                    if !properties.contains_key(name) {
+                        errors.push(format!(
+                            "{path}.required: '{name}' is not defined in the same object's properties"
+                        ));
+                    }
+                }
+            }
+
+            for keyword in ["anyOf", "oneOf", "allOf"] {
+                let Some(branches) = map.get(keyword) else {
+                    continue;
+                };
+                let Some(branches) = branches.as_array() else {
+                    errors.push(format!("{path}.{keyword}: must be an array"));
+                    continue;
+                };
+                for (idx, branch) in branches.iter().enumerate() {
+                    let branch_path = format!("{path}.{keyword}[{idx}]");
+                    match branch {
+                        Value::Object(branch_map) => {
+                            if !branch_map.contains_key("type") {
+                                errors.push(format!("{branch_path}: schema missing type"));
+                            }
+                        }
+                        _ => errors.push(format!("{branch_path}: schema branch must be an object")),
+                    }
+                }
+            }
+
+            for (key, value) in map {
+                collect_schema_errors(value, &format!("{path}.{key}"), errors);
+            }
+        }
+        Value::Array(values) => {
+            for (idx, value) in values.iter().enumerate() {
+                collect_schema_errors(value, &format!("{path}[{idx}]"), errors);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn test_tool_definitions_do_not_expose_invalid_array_schemas() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+
+    let defs = registry.definitions(None).await;
+    let mut errors = Vec::new();
+    for def in &defs {
+        collect_schema_errors(&def.input_schema, &format!("tool `{}`", def.name), &mut errors);
+    }
+
+    assert!(
+        errors.is_empty(),
+        "tool definitions must not expose invalid schemas:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn test_schema_validator_rejects_any_of_branches_without_type() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "status_filter": {
+                "anyOf": [
+                    { "enum": ["running", "completed"] },
+                    { "type": "array", "items": { "type": "string" } }
+                ]
+            }
+        }
+    });
+
+    let mut errors = Vec::new();
+    collect_schema_errors(&schema, "tool `test`", &mut errors);
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("status_filter.anyOf[0]: schema missing type")),
+        "expected missing type error, got: {errors:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_small_output_passes_through() {
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(200_000)));
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    let output = ToolOutput::new("small output");
+    let result = registry.guard_context_overflow("test", output, false).await;
+    assert_eq!(result.output, "small output");
+}
+
+/// A payload whose estimated token count is exactly `tokens`.
+///
+/// The guard sizes an output with [`Registry::estimate_tokens`], which is
+/// content-aware (~4.9 ASCII characters per token), so a fixture sized as
+/// `tokens * 4` characters measures well under the count the test names and the
+/// guard then quotes a smaller number than the assertion expects. Grow to the
+/// shortest run of `x` whose estimate reaches the target: the estimator advances
+/// one token every few characters, so that run measures exactly `tokens`.
+fn payload_with_estimated_tokens(tokens: usize) -> String {
+    let (mut low, mut high) = (1usize, tokens.saturating_mul(8).max(1));
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if Registry::estimate_tokens(&"x".repeat(mid)) >= tokens {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    let payload = "x".repeat(low);
+    assert_eq!(
+        Registry::estimate_tokens(&payload),
+        tokens,
+        "the fixture must measure exactly the token count the test names"
+    );
+    payload
+}
+
+#[tokio::test]
+async fn test_context_guard_withholds_huge_single_output_by_default() {
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1000)));
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    // 30% of 1000 = 300 tokens = 1200 chars max for a single output
+    // Create output that's way larger
+    let big_output = "x".repeat(8000); // 2000 tokens, well over 30% of 1000
+    let output = ToolOutput::new(big_output.clone());
+    let result = registry.guard_context_overflow("test", output, false).await;
+
+    // The whole point of the refusal: none of the payload is spent.
+    assert!(
+        !result.output.contains(&"x".repeat(100)),
+        "withheld output must not leak the payload"
+    );
+    assert!(
+        result.output.contains("OUTPUT WITHHELD"),
+        "should say the output was withheld, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("accept_large_output"),
+        "should name the opt-in flag so the caller can retry"
+    );
+    // A refusal that costs as much as the payload would defeat itself.
+    assert!(
+        result.output.len() < 1200,
+        "refusal should be cheap, was {} chars",
+        result.output.len()
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_returns_truncated_output_when_caller_accepts() {
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1000)));
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    let big_output = "x".repeat(8000);
+    let output = ToolOutput::new(big_output.clone());
+    let result = registry.guard_context_overflow("test", output, true).await;
+
+    assert!(
+        result.output.len() < big_output.len(),
+        "opt-in still truncates to what the budget allows"
+    );
+    assert!(
+        result.output.contains("TRUNCATED"),
+        "should say the output was truncated, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.starts_with(&"x".repeat(200)),
+        "opt-in must actually return the payload prefix"
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_reports_the_real_cost_and_affordable_size() {
+    // 200k budget, 40k already used. A 90k-token result is over the 30%
+    // single-output ceiling (60k), so it is withheld. The quoted numbers must
+    // match the actual arithmetic, since the caller decides based on them.
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(200_000)));
+    {
+        let mut mgr = compaction.write().await;
+        mgr.update_observed_input_tokens(40_000);
+    }
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    let output = ToolOutput::new(payload_with_estimated_tokens(90_000));
+    let result = registry.guard_context_overflow("test", output, false).await;
+
+    assert!(result.output.contains("OUTPUT WITHHELD"));
+    assert!(
+        result.output.contains("90k tokens"),
+        "should quote the real output size, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("45%"),
+        "should quote the share of budget (90k of 200k), got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("200k context budget"),
+        "should quote the budget, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("40k is already used"),
+        "should quote context already spent, got: {}",
+        result.output
+    );
+    assert!(
+        result.output.contains("50k"),
+        "should quote the affordable size, now bounded by the absolute \
+         single-output ceiling rather than 30% of the budget, got: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_truncates_when_context_nearly_full() {
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(10_000)));
+    {
+        let mut mgr = compaction.write().await;
+        mgr.update_observed_input_tokens(9500); // 95% full
+    }
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    // Even a modest output should get truncated when context is 95% full
+    let output = ToolOutput::new("x".repeat(4000)); // 1000 tokens
+    let result = registry.guard_context_overflow("test", output, false).await;
+    assert!(
+        result.output.contains("WITHHELD") || result.output.contains("CONTEXT LIMIT"),
+        "Should warn about context limits when nearly full"
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_still_refuses_when_context_is_exhausted() {
+    // With almost no room left there is nothing to spend, so accepting the cost
+    // cannot buy anything. The opt-in must not become a way to blow past the
+    // window entirely.
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(10_000)));
+    {
+        let mut mgr = compaction.write().await;
+        mgr.update_observed_input_tokens(9_990);
+    }
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    let payload = "x".repeat(400_000);
+    let result = registry
+        .guard_context_overflow("test", ToolOutput::new(payload.clone()), true)
+        .await;
+    assert!(
+        result.output.len() < 2_000,
+        "exhausted context must not return the payload, got {} chars",
+        result.output.len()
+    );
+    assert!(
+        result.output.contains("CONTEXT LIMIT REACHED"),
+        "should report the hard limit, got: {}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_zero_budget_passes_through() {
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(0)));
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    let output = ToolOutput::new("x".repeat(100_000));
+    let result = registry.guard_context_overflow("test", output, false).await;
+    assert_eq!(result.output.len(), 100_000, "Zero budget should pass through");
+}
+
+#[test]
+fn test_accepts_large_output_requires_an_unambiguous_yes() {
+    use super::accepts_large_output;
+
+    assert!(accepts_large_output(
+        &serde_json::json!({ "accept_large_output": true })
+    ));
+    // Models routinely stringify booleans, so accept the string spelling too.
+    assert!(accepts_large_output(
+        &serde_json::json!({ "accept_large_output": "true" })
+    ));
+    assert!(accepts_large_output(
+        &serde_json::json!({ "accept_large_output": "TRUE" })
+    ));
+
+    // Everything else means no. Spending the rest of the window should never
+    // happen because of a truthy-looking value.
+    for input in [
+        serde_json::json!({}),
+        serde_json::json!({ "accept_large_output": false }),
+        serde_json::json!({ "accept_large_output": "false" }),
+        serde_json::json!({ "accept_large_output": 1 }),
+        serde_json::json!({ "accept_large_output": "yes" }),
+        serde_json::json!({ "accept_large_output": serde_json::Value::Null }),
+        serde_json::json!({ "query": "accept_large_output" }),
+    ] {
+        assert!(!accepts_large_output(&input), "should not opt in for {input}");
+    }
+}
+
+#[tokio::test]
+async fn test_request_permission_is_ambient_only() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+
+    let defs = registry.definitions(None).await;
+    assert!(
+        !defs.iter().any(|d| d.name == "request_permission"),
+        "request_permission should not be available in normal sessions"
+    );
+
+    registry.register_ambient_tools().await;
+    let defs_after = registry.definitions(None).await;
+    assert!(
+        defs_after.iter().any(|d| d.name == "request_permission"),
+        "request_permission should be available after ambient tool registration"
+    );
+}
+
+#[test]
+fn closest_tool_names_suggests_near_misses() {
+    let available = ["todo", "end_ambient_cycle", "bash", "read", "write", "edit"];
+    // Exact-ish prefix/typo cases the ambient agent hit (#104).
+    let s = Registry::closest_tool_names("todos", &available);
+    assert_eq!(s.first().map(String::as_str), Some("todo"));
+
+    let s = Registry::closest_tool_names("end_ambient_cyle", &available);
+    assert!(s.iter().any(|n| n == "end_ambient_cycle"), "got {s:?}");
+
+    // Case-insensitive containment.
+    let s = Registry::closest_tool_names("Bash", &available);
+    assert_eq!(s.first().map(String::as_str), Some("bash"));
+
+    // A wildly unrelated name should yield no confident suggestion.
+    let s = Registry::closest_tool_names("xyzzy_quux", &available);
+    assert!(s.is_empty(), "got {s:?}");
+}
+
+#[tokio::test]
+async fn unknown_tool_error_lists_available_tools_and_suggestions() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    registry.register_ambient_tools().await;
+
+    let ctx = ToolContext {
+        session_id: "test-unknown-tool".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: None,
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+    let err = registry
+        .execute("ToolSearch", serde_json::json!({}), ctx)
+        .await
+        .expect_err("ToolSearch is not a real tool");
+    let msg = err.to_string();
+    assert!(msg.contains("Unknown tool: ToolSearch"), "got: {msg}");
+    assert!(
+        msg.contains("Available tools:"),
+        "error must list available tools so the model can recover (#104): {msg}"
+    );
+    assert!(
+        msg.contains("end_ambient_cycle"),
+        "available list should include registered ambient tools: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_context_guard_never_spends_more_than_it_reports() {
+    // State-space sweep over budget, fill level, and payload size. Two
+    // invariants must hold in every combination, because the whole point of the
+    // guard is that a caller can trust the accounting:
+    //   1. Without the opt-in, the returned text is small. Refusing has to be
+    //      cheap or it reproduces the bug it prevents.
+    //   2. The returned text never exceeds the remaining safety headroom, with
+    //      or without the opt-in. Otherwise "accept the cost" would silently
+    //      overrun the window.
+    for budget in [10_000usize, 50_000, 200_000] {
+        for fill_percent in [0usize, 25, 50, 80, 89, 95] {
+            for payload_tokens in [1usize, 500, 5_000, 100_000] {
+                for accept in [false, true] {
+                    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(budget)));
+                    let used = budget * fill_percent / 100;
+                    if used > 0 {
+                        let mut mgr = compaction.write().await;
+                        mgr.update_observed_input_tokens(used as u64);
+                    }
+                    let registry = Registry {
+                        lazy_activation: Arc::default(),
+                        configured_mcp_servers: Arc::default(),
+                        session_mcp: Arc::default(),
+                        mcp_policy: Arc::default(),
+                        tools: Arc::new(RwLock::new(HashMap::new())),
+                        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+                        compaction,
+                    };
+
+                    let payload = "x".repeat(payload_tokens * 4);
+                    let result = registry
+                        .guard_context_overflow("test", ToolOutput::new(payload.clone()), accept)
+                        .await;
+                    let returned_tokens = result.output.len() / 4;
+
+                    let threshold = (budget as f32 * 0.90) as usize;
+                    let headroom = threshold.saturating_sub(used);
+                    let passed_through = result.output == payload;
+
+                    if !accept && !passed_through {
+                        assert!(
+                            result.output.len() < 1_500,
+                            "refusal must stay cheap: budget={budget} fill={fill_percent} \
+                             payload={payload_tokens} returned {} chars",
+                            result.output.len()
+                        );
+                    }
+
+                    // Allow a small slack for the notice text appended after the slice.
+                    assert!(
+                        returned_tokens <= headroom.max(1_000) + 500,
+                        "returned ~{returned_tokens}k tokens with only {headroom} headroom: \
+                         budget={budget} fill={fill_percent} payload={payload_tokens} \
+                         accept={accept}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_context_guard_refusal_reads_clearly_for_todays_regression() {
+    // The exact shape that motivated this change: a 233k-token agentgrep result
+    // against a 200k budget with 18k already used. Printed so the wording stays
+    // reviewable, and asserted so it keeps naming the cost and the escape hatch.
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(200_000)));
+    {
+        let mut mgr = compaction.write().await;
+        mgr.update_observed_input_tokens(18_000);
+    }
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    let result = registry
+        .guard_context_overflow(
+            "agentgrep",
+            ToolOutput::new(payload_with_estimated_tokens(233_000)),
+            false,
+        )
+        .await;
+    println!("---\n{}\n---", result.output);
+
+    assert!(result.output.contains("233k tokens"));
+    assert!(result.output.contains("116%"), "got: {}", result.output);
+    assert!(result.output.contains("18k is already used"));
+    assert!(result.output.contains("accept_large_output"));
+    assert!(result.output.contains("paths_only"));
+}
+
+/// Tool that returns a fixed-size payload, for exercising the guard through the
+/// real `execute()` path rather than by calling the guard directly.
+struct BigOutputTool {
+    chars: usize,
+}
+
+#[async_trait]
+impl Tool for BigOutputTool {
+    fn name(&self) -> &str {
+        "big_output"
+    }
+
+    fn description(&self) -> &str {
+        "Returns a large fixed payload for context guard tests."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+
+    async fn execute(&self, _input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
+        Ok(ToolOutput::new("x".repeat(self.chars)))
+    }
+}
+
+async fn execute_big_output(input: Value) -> String {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    {
+        let mut mgr = registry.compaction.write().await;
+        *mgr = CompactionManager::new().with_budget(10_000);
+    }
+    registry
+        .register("big_output".to_string(), Arc::new(BigOutputTool { chars: 400_000 }))
+        .await;
+
+    let ctx = ToolContext {
+        session_id: "test-context-guard-execute".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(std::env::temp_dir()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    registry
+        .execute("big_output", input, ctx)
+        .await
+        .expect("tool should succeed")
+        .output
+}
+
+/// The whole output, metadata included, so a test can see the opt-in mark the
+/// round reads.
+async fn execute_big_output_result(input: Value, budget: usize, used: u64) -> ToolOutput {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    {
+        let mut mgr = registry.compaction.write().await;
+        *mgr = CompactionManager::new().with_budget(budget);
+        if used > 0 {
+            mgr.update_observed_input_tokens(used);
+        }
+    }
+    registry
+        .register("big_output".to_string(), Arc::new(BigOutputTool { chars: 400_000 }))
+        .await;
+
+    let ctx = ToolContext {
+        session_id: "test-context-guard-refusal-mark".to_string(),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(std::env::temp_dir()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+
+    registry
+        .execute("big_output", input, ctx)
+        .await
+        .expect("tool should succeed")
+}
+
+#[tokio::test]
+async fn test_execute_never_marks_a_refused_output_as_content() {
+    // An exhausted window refuses even an opted-in call: there is no room left
+    // to buy. That refusal carries no payload, so it must not carry the mark the
+    // round reads as "the caller agreed to pay for this content": a marked
+    // refusal let the round truncate the actionable sentence.
+    let refused = execute_big_output_result(
+        serde_json::json!({ "intent": "test", "accept_large_output": true }),
+        10_000,
+        9_990,
+    )
+    .await;
+    std::println!("QA refused output:\n---\n{}\n---", refused.output);
+    assert!(
+        refused.output.contains("CONTEXT LIMIT REACHED"),
+        "the guard must refuse an opted-in call when the window is spent: {}",
+        refused.output
+    );
+    assert!(
+        !Registry::accept_large_output_was_passed(&refused),
+        "a refusal carries no content, so it must not carry the opt-in mark: {}",
+        refused.output
+    );
+
+    // Content the caller opted in to keeps the mark: the round needs it to make
+    // the same truncate-vs-withhold decision the tool layer made.
+    let truncated = execute_big_output_result(
+        serde_json::json!({ "intent": "test", "accept_large_output": true }),
+        10_000,
+        0,
+    )
+    .await;
+    assert!(
+        truncated.output.contains("OUTPUT TRUNCATED"),
+        "an opted-in output with room is truncated, not refused: {}",
+        &truncated.output[..truncated.output.len().min(200)]
+    );
+    assert!(
+        Registry::accept_large_output_was_passed(&truncated),
+        "a truncated output still carries content, so the round must see the mark"
+    );
+}
+
+#[tokio::test]
+async fn test_execute_withholds_oversized_output_by_default() {
+    // The guard is only useful if it runs on the real call path. Every other
+    // test calls guard_context_overflow directly, which would still pass if the
+    // flag were never plumbed through execute().
+    let output = execute_big_output(serde_json::json!({ "intent": "test" })).await;
+    assert!(
+        output.contains("OUTPUT WITHHELD"),
+        "execute() must apply the guard, got: {output}"
+    );
+    assert!(
+        output.len() < 1_500,
+        "withheld output should be cheap, got {} chars",
+        output.len()
+    );
+}
+
+#[tokio::test]
+async fn test_execute_honors_accept_large_output_from_raw_input() {
+    // Proves the flag survives the trip through execute(): the tool itself never
+    // declares or reads `accept_large_output`, so this only works because the
+    // registry reads it off the raw input.
+    let output = execute_big_output(serde_json::json!({ "intent": "test", "accept_large_output": true })).await;
+    assert!(
+        output.contains("OUTPUT TRUNCATED"),
+        "opt-in should return truncated payload, got: {}",
+        &output[..output.len().min(200)]
+    );
+    assert!(
+        output.starts_with(&"x".repeat(200)),
+        "opt-in must actually return payload"
+    );
+}
+
+#[tokio::test]
+async fn test_execute_ignores_a_non_boolean_accept_flag() {
+    // A truthy-looking value must not spend the window. The schema-directed
+    // argument repair coerces `true`/`1`/`yes`/`on` at a boolean position, so
+    // the value that proves the flag is read as a boolean is one the repair
+    // leaves alone.
+    let output = execute_big_output(serde_json::json!({ "intent": "test", "accept_large_output": 2 })).await;
+    assert!(
+        output.contains("OUTPUT WITHHELD"),
+        "the number 2 must not opt in, got: {}",
+        &output[..output.len().min(200)]
+    );
+}
+
+#[tokio::test]
+async fn test_execute_repaired_numeric_accept_flag_counts_as_a_boolean() {
+    // The repair runs before the guard reads the raw flag, so a model that
+    // answers the boolean question with a number still opts in.
+    let output = execute_big_output(serde_json::json!({ "intent": "test", "accept_large_output": 1 })).await;
+    assert!(
+        output.contains("OUTPUT TRUNCATED"),
+        "a repaired 1 is a boolean opt-in, got: {}",
+        &output[..output.len().min(200)]
+    );
+}
+
+#[tokio::test]
+async fn test_every_tool_advertises_the_large_output_escape_hatch() {
+    // The guard applies to every tool, so every tool must document the way out.
+    // Asserted over the real definition list rather than per tool, because the
+    // failure mode is a new tool nobody remembered to annotate.
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    registry.register_ambient_tools().await;
+
+    let defs = registry.definitions(None).await;
+    assert!(defs.len() > 20, "expected the full tool set, got {}", defs.len());
+
+    let mut missing = Vec::new();
+    for def in &defs {
+        let flag = &def.input_schema["properties"][horon_agent_tool_core::ACCEPT_LARGE_OUTPUT_KEY];
+        if flag.get("type").and_then(Value::as_str) != Some("boolean") {
+            missing.push(def.name.clone());
+        }
+        // Advertising it as required would force the model to answer a question
+        // about token budgets on every single call.
+        if let Some(required) = def.input_schema["required"].as_array() {
+            assert!(
+                !required
+                    .iter()
+                    .any(|v| v.as_str() == Some(horon_agent_tool_core::ACCEPT_LARGE_OUTPUT_KEY)),
+                "{} must not require accept_large_output",
+                def.name
+            );
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "tools missing the accept_large_output escape hatch: {missing:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_large_output_flag_costs_little_across_the_whole_tool_set() {
+    // Adding a property to every schema is paid on every request, forever. Keep
+    // the total honest: ~20 tokens per tool is acceptable, a paragraph is not.
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    registry.register_ambient_tools().await;
+    let defs = registry.definitions(None).await;
+
+    let property =
+        serde_json::to_string(&crate::tool::accept_large_output_schema_property_for_test()).expect("serializable");
+    let per_tool = crate::util::estimate_tokens(&property);
+    let total = per_tool * defs.len();
+
+    assert!(
+        per_tool <= 25,
+        "per-tool cost {per_tool} tokens is too high: {property}"
+    );
+    assert!(
+        total < 1_500,
+        "{} tools x {per_tool} tokens = {total} tokens of permanent prompt overhead",
+        defs.len()
+    );
+}
+
+#[tokio::test]
+async fn test_batch_guards_both_its_subcalls_and_its_own_aggregate() {
+    // Batch is how oversized results actually arrive in practice: several
+    // searches fan out at once. Two separate guard applications matter here, and
+    // the aggregate one is the load-bearing case: batch concatenates every
+    // sub-result, so even if each sub-call were individually acceptable the
+    // combined output can blow the window. That aggregate is what withheld
+    // today's regression.
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    {
+        let mut mgr = registry.compaction.write().await;
+        *mgr = CompactionManager::new().with_budget(10_000);
+    }
+    registry
+        .register("big_output".to_string(), Arc::new(BigOutputTool { chars: 400_000 }))
+        .await;
+
+    let ctx = |name: &str| ToolContext {
+        session_id: format!("test-batch-context-guard-{name}"),
+        message_id: "test".to_string(),
+        tool_call_id: "test".to_string(),
+        working_dir: Some(std::env::temp_dir()),
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    };
+    let calls = serde_json::json!([
+        { "tool": "big_output", "intent": "one" },
+        { "tool": "big_output", "intent": "two" },
+    ]);
+
+    // Without an opt-in anywhere, nothing large escapes: no payload reaches the
+    // transcript, only the refusal.
+    let withheld = registry
+        .execute(
+            "batch",
+            serde_json::json!({ "intent": "test", "tool_calls": calls }),
+            ctx("withheld"),
+        )
+        .await
+        .expect("batch should succeed")
+        .output;
+    assert!(
+        withheld.contains("OUTPUT WITHHELD"),
+        "batch output must be guarded, got: {}",
+        &withheld[..withheld.len().min(300)]
+    );
+    assert!(
+        !withheld.contains(&"x".repeat(100)),
+        "no payload should survive when nothing opted in"
+    );
+
+    // Opting in at the batch level returns the aggregate, which is the level a
+    // caller reads. The sub-calls' own refusals are inside it, since each was
+    // guarded separately and neither sub-call opted in.
+    let accepted = registry
+        .execute(
+            "batch",
+            serde_json::json!({
+                "intent": "test",
+                "accept_large_output": true,
+                "tool_calls": calls,
+            }),
+            ctx("accepted"),
+        )
+        .await
+        .expect("batch should succeed")
+        .output;
+    // The aggregate is now returned rather than withheld: it carries the
+    // per-subcall section headers, which the withheld version never reaches.
+    assert!(
+        !accepted.starts_with("⚠️ OUTPUT WITHHELD"),
+        "batch-level opt-in should return the aggregate, got: {}",
+        &accepted[..accepted.len().min(200)]
+    );
+    assert!(
+        accepted.contains("--- [1] big_output ---"),
+        "aggregate should contain per-subcall sections, got: {}",
+        &accepted[..accepted.len().min(300)]
+    );
+    assert!(
+        accepted.matches("OUTPUT WITHHELD").count() >= 1,
+        "each sub-call is guarded on its own; neither opted in"
+    );
+}
+
+#[tokio::test]
+async fn test_guard_withholds_large_output_on_a_million_token_window() {
+    // The regression that made every other test in this file misleading. They
+    // all pinned budgets of 1k to 200k, where 30% of the budget is a small
+    // number. Production reported a 1M-token window, so 30% permitted a 300k
+    // single result and a repo-wide grep costing 233k tokens sailed straight
+    // through a guard that had unit tests passing.
+    let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(1_000_000)));
+    {
+        let mut mgr = compaction.write().await;
+        mgr.update_observed_input_tokens(21_000);
+    }
+    let registry = Registry {
+        lazy_activation: Arc::default(),
+        configured_mcp_servers: Arc::default(),
+        session_mcp: Arc::default(),
+        mcp_policy: Arc::default(),
+        tools: Arc::new(RwLock::new(HashMap::new())),
+        skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+        compaction,
+    };
+
+    // ~233k tokens: the real size of the agentgrep result that started this.
+    let output = ToolOutput::new("x".repeat(932_000));
+    let result = registry.guard_context_overflow("agentgrep", output, false).await;
+
+    assert!(
+        result.output.contains("OUTPUT WITHHELD"),
+        "a 233k-token result must be withheld even on a 1M window, got: {}",
+        &result.output[..result.output.len().min(200)]
+    );
+    assert!(
+        result.output.len() < 1_500,
+        "refusal should cost ~120 tokens, not {} chars",
+        result.output.len()
+    );
+}
+
+#[tokio::test]
+async fn test_single_output_ceiling_is_absolute_not_only_proportional() {
+    // Guards the invariant directly: however large the window, one tool result
+    // may never exceed the absolute ceiling. Without this, raising a model's
+    // advertised context window silently raises the per-call blast radius.
+    for budget in [200_000usize, 1_000_000, 2_000_000, 10_000_000] {
+        let compaction = Arc::new(RwLock::new(CompactionManager::new().with_budget(budget)));
+        let registry = Registry {
+            lazy_activation: Arc::default(),
+            configured_mcp_servers: Arc::default(),
+            session_mcp: Arc::default(),
+            mcp_policy: Arc::default(),
+            tools: Arc::new(RwLock::new(HashMap::new())),
+            skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
+            compaction,
+        };
+
+        // Just over the absolute ceiling, but a trivial fraction of a huge window.
+        let over_ceiling_tokens = Registry::SINGLE_OUTPUT_MAX_TOKENS + 10_000;
+        let result = registry
+            .guard_context_overflow(
+                "test",
+                ToolOutput::new(payload_with_estimated_tokens(over_ceiling_tokens)),
+                false,
+            )
+            .await;
+        assert!(
+            result.output.contains("OUTPUT WITHHELD"),
+            "budget={budget}: {over_ceiling_tokens} tokens must exceed the absolute ceiling"
+        );
+    }
+}
+
+#[tokio::test]
+async fn goal_is_registered_and_advertised() {
+    let registry = Registry::new(Arc::new(MockProvider)).await;
+    let names = registry.tool_names().await;
+    assert!(names.iter().any(|name| name == "todo"));
+    assert!(
+        names.iter().any(|name| name == "goal"),
+        "the goal tool is registered: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == "initiative"),
+        "the renamed tool is advertised only as `goal`: {names:?}"
+    );
+    let definitions = registry.definitions(None).await;
+    let mut sorted = names.clone();
+    sorted.sort();
+    println!("registry tool names ({}): {sorted:?}", sorted.len());
+    assert!(
+        definitions.iter().any(|definition| definition.name == "goal"),
+        "definitions carry the goal tool"
+    );
+    assert!(
+        definitions.iter().all(|definition| definition.name != "initiative"),
+        "no definition advertises the old initiative name"
+    );
+}
+
+/// Every built-in tool, normalized for every provider dialect, must be
+/// sendable.
+///
+/// This is the guard the recurring schema-outage class never had. #446, #495,
+/// #543, #655, #687, #713 and #754 were each discovered by a user whose
+/// provider had gone down, then fixed by appending one keyword to one
+/// provider's deny-list. Nothing checked the *other* providers for the same
+/// construct, which is exactly how #754 hit Gemini through Antigravity months
+/// after the same class was fixed for OpenAI.
+///
+/// Running the real registry through every registered dialect turns "some
+/// provider is about to break" into a failing test on the commit that
+/// introduces it.
+#[tokio::test]
+async fn tool_schemas_are_sendable_to_every_provider_dialect() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let defs = registry.definitions(None).await;
+    assert!(!defs.is_empty(), "the sweep must not pass vacuously");
+
+    let mut failures = Vec::new();
+    // Not per-dialect: no provider *rejects* a property that declares no type,
+    // but OpenAI refuses `strict` for the whole catalog over one (#713), so a
+    // built-in tool acquiring one would silently cost every OpenAI-route agent
+    // its structured-output guarantees.
+    for def in &defs {
+        for error in horon_agent_schema_dialect::untyped_properties(&def.input_schema) {
+            failures.push(format!("tool `{}` {error}", def.name));
+        }
+    }
+    for spec in horon_agent_schema_dialect::registry::ALL {
+        for def in &defs {
+            let normalized = horon_agent_schema_dialect::dialect::apply(&def.input_schema, spec);
+            for error in horon_agent_schema_dialect::must_not_contain_unsupported_constructs(&normalized, spec) {
+                failures.push(format!("[{}] tool `{}` {error}", spec.id, def.name));
+            }
+            // Over-stripping is the hazard an allow-list introduces: a dialect
+            // that forgot to list `description` would produce requests that
+            // succeed while silently deleting every tool's prompt text.
+            for error in horon_agent_schema_dialect::must_preserve_meaning(&def.input_schema, &normalized) {
+                failures.push(format!("[{}] tool `{}` lost meaning: {error}", spec.id, def.name));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "tool schemas are not sendable to every provider:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// The sweep above must fail when a tool really does carry a construct a
+/// provider rejects, otherwise it is decorative. Feeds the exact
+/// `@playwright/mcp` schema from #754 through the same checker to prove the
+/// detection works end to end.
+#[test]
+fn the_dialect_sweep_catches_the_issue_754_schema() {
+    let hostile = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "data": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "propertyNames": { "type": "string" }
+            }
+        }
+    });
+
+    let unnormalized = horon_agent_schema_dialect::must_not_contain_unsupported_constructs(
+        &hostile,
+        &horon_agent_schema_dialect::registry::GEMINI,
+    );
+    assert!(
+        unnormalized.iter().any(|e| e.message.contains("propertyNames")),
+        "the checker must flag the raw schema, got {unnormalized:?}"
+    );
+
+    let normalized =
+        horon_agent_schema_dialect::dialect::apply(&hostile, &horon_agent_schema_dialect::registry::GEMINI);
+    assert!(
+        horon_agent_schema_dialect::must_not_contain_unsupported_constructs(
+            &normalized,
+            &horon_agent_schema_dialect::registry::GEMINI,
+        )
+        .is_empty(),
+        "and must pass once normalized"
+    );
+}
+
+/// Failing strict eligibility closed for #711/#713 must not quietly cost horon-agent's
+/// own tools their strict mode, since that would drop the structured-output
+/// guarantees on every OpenAI-route tool call with nothing to notice.
+///
+/// The tools listed below were already non-strict before that change, for
+/// reasons unrelated to it (`batch` declares `additionalProperties: true` so its
+/// sub-call payloads stay open-world; the others carry open maps or untyped
+/// action payloads). Pinning the exact set is what makes this a regression
+/// detector: a new name appearing means a stricter rule went too far, and a
+/// name disappearing means a tool became strict-eligible and the list is stale.
+#[tokio::test]
+async fn only_the_known_open_world_tools_are_ineligible_for_openai_strict_mode() {
+    /// Built-ins that legitimately cannot be strict. Verified against master
+    /// before the #711/#713 eligibility changes, so this is pre-existing.
+    // applet's view is a recursive, open-ended node tree. goal's milestone
+    // steps are open maps (`additionalProperties: true`) so a caller can send
+    // step shapes the schema does not enumerate.
+    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["applet", "batch", "browser", "goal", "swarm"];
+
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let defs = registry.definitions(None).await;
+    assert!(!defs.is_empty(), "the sweep must not pass vacuously");
+
+    let mut ineligible: Vec<String> = Vec::new();
+    for def in &defs {
+        let compatible = horon_agent_provider_core::openai_schema::openai_compatible_schema(&def.input_schema);
+        if !horon_agent_provider_core::openai_schema::schema_supports_strict(&compatible) {
+            ineligible.push(def.name.clone());
+        }
+    }
+    ineligible.sort();
+
+    let expected: Vec<String> = KNOWN_OPEN_WORLD_TOOLS.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        ineligible, expected,
+        "the set of strict-ineligible built-in tools changed; a new name means an \
+         eligibility rule is too aggressive, a missing name means this list is stale"
+    );
+}
+
+#[path = "tests/mcp_collision.rs"]
+mod mcp_collision;
+
+#[path = "hook_serialization_tests.rs"]
+mod hook_serialization_tests;
+
+#[path = "tests/sdk.rs"]
+mod sdk_tests;
+
+#[test]
+fn touched_paths_include_patch_headers_and_path_keys() {
+    let ctx = mcp_test_context(std::path::Path::new("/work"));
+    let input = serde_json::json!({
+        "file_path": "notes.md",
+        "patch_text": "*** Begin Patch\n*** Update File: notes/a.md\n@@\n-x\n+y\n*** Add File: /abs/b.txt\n+hi\n*** Update File: notes.md\n*** End Patch",
+    });
+    let paths: Vec<String> = Registry::touched_paths(&input, &ctx)
+        .into_iter()
+        .map(|(key, path)| format!("{key}:{}", path.display()))
+        .collect();
+    assert_eq!(
+        paths,
+        vec!["file_path:/work/notes.md", "patch:/work/notes/a.md", "patch:/abs/b.txt",]
+    );
+
+    let diff = "--- a/src/x.rs\n+++ b/src/x.rs\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/new.md\n";
+    assert_eq!(Registry::patch_paths(diff), vec!["src/x.rs", "new.md"]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn post_tool_feedback_hook_appends_stdout_to_tool_result() {
+    use std::os::unix::fs::PermissionsExt;
+    let _env_lock = crate::storage::lock_test_env();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let target = dir.path().join("prose.md");
+    std::fs::write(&target, "hello\n").expect("write target");
+    let script = dir.path().join("feedback.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\ninput=$(cat)\necho \"call=$HORON_AGENT_HOOK_TOOL_CALL_ID tool=$HORON_AGENT_HOOK_TOOL_NAME\"\necho \"paths=$HORON_AGENT_HOOK_TOUCHED_PATHS\"\ncase \"$input\" in *prose.md*) echo stdin-ok ;; esac\nexit 1\n",
+    )
+    .expect("write script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let previous = std::env::var_os("HORON_AGENT_HOOK_POST_TOOL_FEEDBACK");
+    crate::env::set_var("HORON_AGENT_HOOK_POST_TOOL_FEEDBACK", &script);
+    // horon-agent-base is compiled without cfg(test) here, so the config cache
+    // only re-checks env every 500ms; without this the hook is invisible when a
+    // parallel test populated the cache first, and the feedback never runs.
+    crate::config::invalidate_config_cache();
+
+    let registry = Registry::new(Arc::new(MockProvider) as Arc<dyn Provider>).await;
+    let mut ctx = mcp_test_context(dir.path());
+    ctx.tool_call_id = "call_feedback".to_string();
+    let result = registry
+        .execute("read", serde_json::json!({"file_path": "prose.md"}), ctx)
+        .await;
+
+    match previous {
+        Some(value) => crate::env::set_var("HORON_AGENT_HOOK_POST_TOOL_FEEDBACK", value),
+        None => crate::env::remove_var("HORON_AGENT_HOOK_POST_TOOL_FEEDBACK"),
+    }
+    crate::config::invalidate_config_cache();
+    let output = result.expect("read should succeed").output;
+    assert!(output.contains("hello"), "{output}");
+    assert!(output.contains("[post_tool_feedback]"), "{output}");
+    assert!(output.contains("call=call_feedback tool=read"), "{output}");
+    assert!(output.contains(&format!("paths={}", target.display())), "{output}");
+    assert!(output.contains("stdin-ok"), "{output}");
+}

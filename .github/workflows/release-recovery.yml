@@ -1,0 +1,44 @@
+name: Release Recovery Validation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-recovery.yml'
+      - '.github/workflows/windows-companion.yml'
+      - 'scripts/release/**'
+      - 'tests/*release*.py'
+      - 'scripts/install/install.sh'
+      - 'scripts/ci/install_justrust.sh'
+      - 'scripts/release/build_linux_compat.sh'
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-recovery.yml'
+      - '.github/workflows/windows-companion.yml'
+      - 'scripts/release/**'
+      - 'tests/*release*.py'
+      - 'scripts/install/install.sh'
+      - 'scripts/ci/install_justrust.sh'
+      - 'scripts/release/build_linux_compat.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Recovery regressions exercise historical tags in isolated clones.
+          fetch-depth: 0
+      - name: Test recovery, exact-commit authorization, public assets and watcher
+        run: python3 -m unittest discover -s tests -p '*release*.py'
+      - name: Test release preparation
+        run: python3 -m unittest discover -s scripts/release -p 'test_*release*.py'
+      - name: Test installer release metadata validation
+        run: bash scripts/install/test_install_from_source.sh

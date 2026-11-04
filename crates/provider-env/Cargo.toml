@@ -1,0 +1,18 @@
+[package]
+name = "horon-agent-provider-env"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "horon_agent_provider_env"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+horon-agent-core = { path = "../core" }
+horon-agent-logging = { path = "../logging" }
+horon-agent-provider-metadata = { path = "../provider-metadata" }
+horon-agent-storage = { path = "../storage" }
+
+[dev-dependencies]
+tempfile = "3"

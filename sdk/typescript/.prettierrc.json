@@ -1,0 +1,17 @@
+{
+  "endOfLine": "lf",
+  "semi": true,
+  "singleQuote": false,
+  "tabWidth": 2,
+  "useTabs": false,
+  "trailingComma": "all",
+  "printWidth": 120,
+  "overrides": [
+    {
+      "files": "package.json",
+      "options": {
+        "useTabs": true
+      }
+    }
+  ]
+}

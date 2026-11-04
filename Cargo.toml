@@ -1,0 +1,437 @@
+[package]
+name = "horon-agent"
+version = "0.98.1"
+description = "Possibly the greatest coding agent ever built — blazing-fast TUI, multi-model, swarm coordination, 30+ tools"
+edition = "2024"
+rust-version = "1.99"
+autobins = false
+
+[workspace]
+members = [
+    ".",
+    "crates/agent-runtime",
+    "crates/app-core",
+    "crates/ast",
+    "crates/edit-safety",
+    "crates/base",
+    "crates/build-meta",
+    "crates/ambient-types",
+    "crates/auth-types",
+    "crates/embedding",
+    "crates/gateway-types",
+    "crates/import-core",
+    "crates/pdf",
+    "crates/lsp",
+    "crates/logging",
+    "crates/background-types",
+    "crates/batch-types",
+    "crates/build-support",
+    "crates/compaction-core",
+    "crates/edit-bench",
+    "crates/config-types",
+    "crates/command-risk",
+    "crates/core",
+    "crates/harness-api",
+    "crates/harness-api-server",
+    "crates/agent-sdk",
+    "crates/memory-types",
+    "crates/message-types",
+    "crates/overnight-core",
+    "crates/plan",
+    "crates/productivity-core",
+    "crates/swarm-core",
+    "crates/protocol",
+    "crates/selfdev-types",
+    "crates/session-types",
+    "crates/session-store",
+    "crates/setup-hints",
+    "crates/storage",
+    "crates/side-panel-types",
+    "crates/applet-types",
+    "crates/azure-auth",
+    "crates/notify-email",
+    "crates/provider-metadata",
+    "crates/provider-env",
+    "crates/provider-core",
+    "crates/schema-dialect",
+    "crates/provider-openai",
+    "crates/usage-types",
+    "crates/task-types",
+    "crates/todo-policy",
+    "crates/token-estimate",
+    "crates/transport",
+    "crates/codemode",
+    "crates/tool-core",
+    "crates/tool-types",
+    "crates/update-core",
+    "crates/terminal-launch",
+    "crates/terminal-image",
+    "crates/voice",
+    "crates/desktop-open",
+    "crates/companion",
+    "crates/render-core",
+    "crates/perf-counters",
+]
+
+[lib]
+name = "horon_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "horon-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Memory allocator (reduces fragmentation for long-running server)
+tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"], optional = true }
+
+# Async runtime
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "charset", "http2", "system-proxy", "rustls-tls", "rustls-tls-native-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+toml = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# File operations
+
+# Utilities
+dirs = "5"               # home directory
+anyhow = "1"
+libc = "0.2"             # Unix system calls (flock)
+chrono = { version = "0.4", features = ["serde"] }
+
+# Embeddings (local inference) - behind feature flag (163 crates, slow to compile)
+
+# OAuth
+sha2 = "0.10"
+hex = "0.4"
+open = "5"               # Open URLs in browser
+
+# Streaming
+tokio-stream = "0.1"
+
+# Markdown & syntax highlighting
+
+# PDF parsing (behind feature flag)
+horon-agent-build-meta = { path = "crates/build-meta" }
+# Tiny leaf helpers (console/env/fs/id) used directly by the cli layer.
+# Application core: the server/tool/agent layer plus the `horon-agent-base` foundation
+# (which this crate re-exports). The root crate (cli + bin) re-exports it via
+# `pub use horon_agent_app_core::*`, preserving every `crate::<module>` path.
+# default-features=false so the root feature set fully controls the downstream
+# features (see [features]).
+horon-agent-app-core = { path = "crates/app-core", default-features = false }
+horon-agent-voice = { path = "crates/voice" }
+horon-agent-companion = { path = "crates/companion" }
+horon-agent-selfdev-types = { path = "crates/selfdev-types" }
+
+# Archive extraction (for auto-update)
+tempfile = "3"
+# Only for the opt-in legacy SQLite session-index import feature and its CLI QA.
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+[features]
+# Memory recall uses Jev Decisions and needs no local inference stack.
+# Keep embeddings opt-in for historical benchmarks/debugging only.
+default = ["pdf"]
+jemalloc = [
+    "dep:tikv-jemallocator",
+    "tikv-jemallocator/stats",
+    "horon-agent-app-core/jemalloc",
+]
+jemalloc-prof = [
+    "jemalloc",
+    "tikv-jemallocator/profiling",
+    "horon-agent-app-core/jemalloc-prof",
+]
+# Local embeddings and PDF extraction live in horon-agent-base / horon-agent-app-core;
+# these features just forward down the stack.
+embeddings = ["horon-agent-app-core/embeddings"]
+# Internal release feature: build a supported OpenSSL inside the CentOS 7
+# compatibility image while preserving the glibc 2.17 runtime baseline.
+linux-compat-vendored-openssl = ["horon-agent-app-core/linux-compat-vendored-openssl"]
+pdf = ["horon-agent-app-core/pdf"]
+# Offline legacy SQLite session-index import for sessions migrate --apply
+# --legacy-index. Off by default; the default binary refuses with
+# MigrationRequired and never opens the database.
+legacy-session-index-import = ["horon-agent-app-core/legacy-session-index-import", "dep:rusqlite"]
+
+# The harness API bridge ships inside the released binary as `horon-agent api-bridge`.
+# SDK users must not need a Rust toolchain to reach the API: requiring
+# `cargo run -p horon-agent-harness-api-server` made the TypeScript SDK unusable for
+# anyone who installed horon-agent from a release artifact. Unix-only because the
+# bridge listens on a Unix socket.
+[target.'cfg(unix)'.dependencies]
+horon-agent-harness-api-server = { path = "crates/harness-api-server" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+global-hotkey = "0.7"
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSThread",
+    "NSRunLoop",
+    "NSDate",
+    "NSTimer",
+    "NSUserDefaults",
+    "NSValue",
+    "NSAttributedString",
+    "NSDictionary",
+    "block2",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSAppearance",
+    "NSApplication",
+    "NSResponder",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSButton",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSFont",
+    "NSFontDescriptor",
+    "NSImage",
+    "NSAttributedString",
+    "NSMenu",
+    "NSMenuItem",
+    "NSRunningApplication",
+] }
+objc2-user-notifications = "0.3"
+
+[profile.release]
+opt-level = 1
+debug = 0
+codegen-units = 256
+incremental = true
+
+[profile.selfdev]
+inherits = "release"
+opt-level = 0
+
+# Full LTO release for stable/distribution builds
+[profile.release-lto]
+inherits = "release"
+# `inherits` copies `opt-level = 1` from `[profile.release]`, which is tuned for
+# fast local rebuilds, not for a binary shipped to users. The distribution
+# profile sets its own level; the everyday profile is left untouched.
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+incremental = false
+strip = "symbols"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 0
+
+
+[profile.dev.package.unicode-segmentation]
+opt-level = 3
+[profile.selfdev.package.unicode-segmentation]
+opt-level = 3
+[profile.test.package.unicode-segmentation]
+opt-level = 3
+
+[profile.dev.package.compact_str]
+opt-level = 3
+[profile.selfdev.package.compact_str]
+opt-level = 3
+[profile.test.package.compact_str]
+opt-level = 3
+
+# Keep the text-shaping stack optimized even in dev/selfdev/test builds.
+#
+# rustybuzz + ttf-parser + fontdb do glyph shaping and font discovery for the
+# inline transcript rendering path. At opt-level = 0 they are 15-40x slower,
+# which made scrolling real (emoji/markdown-heavy) transcripts janky in
+# dev/selfdev builds even though the production release build was smooth. These
+# are stable third-party crates that almost never recompile, so pinning them to
+# opt-level = 3 costs a one-time compile and is then reused across every
+# iterative horon-agent rebuild. It does NOT slow down recompiles of horon-agent's own
+# crates.
+[profile.dev.package.rustybuzz]
+opt-level = 3
+[profile.selfdev.package.rustybuzz]
+opt-level = 3
+[profile.test.package.rustybuzz]
+opt-level = 3
+
+[profile.dev.package.ttf-parser]
+opt-level = 3
+[profile.selfdev.package.ttf-parser]
+opt-level = 3
+[profile.test.package.ttf-parser]
+opt-level = 3
+
+[profile.dev.package.fontdb]
+opt-level = 3
+[profile.selfdev.package.fontdb]
+opt-level = 3
+[profile.test.package.fontdb]
+opt-level = 3
+
+# Keep the raster image pipeline optimized in dev/selfdev/test builds.
+#
+# Inline transcript images decode (png/zune-jpeg/fdeflate/miniz_oxide), resize
+# (image), and base64-encode (kitty transmit) at draw time; at opt-level 0 a
+# single screenshot costs 100-200ms per decode/resize, which reads as input
+# lag. These are pure pixel crates with no horon-agent logic, so optimizing them
+# does not hurt rebuild times for our own code.
+[profile.dev.package.image]
+opt-level = 3
+[profile.selfdev.package.image]
+opt-level = 3
+[profile.test.package.image]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+[profile.selfdev.package.png]
+opt-level = 3
+[profile.test.package.png]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.selfdev.package.zune-jpeg]
+opt-level = 3
+[profile.test.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.selfdev.package.fdeflate]
+opt-level = 3
+[profile.test.package.fdeflate]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.selfdev.package.miniz_oxide]
+opt-level = 3
+[profile.test.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.base64]
+opt-level = 3
+[profile.selfdev.package.base64]
+opt-level = 3
+[profile.test.package.base64]
+opt-level = 3
+
+# session_search scans multi-megabyte session files with memchr-based
+# case-insensitive matching; keep the SIMD scanner optimized everywhere.
+[profile.dev.package.memchr]
+opt-level = 3
+[profile.selfdev.package.memchr]
+opt-level = 3
+[profile.test.package.memchr]
+opt-level = 3
+
+# The embedding stack (tract ONNX inference + HF tokenizer) runs the MiniLM
+# model for memory recall/maintenance on the shared server. At opt-level 0 a
+# single embed measured ~666 ms (matmul inner loops unoptimized), which keeps
+# the model "busy" long enough that the idle unloader rarely fires and burns
+# CPU on every memory-maintenance pass. These crates are pure compute and
+# change only when the dependency is bumped, so the optimized objects are
+# compiled once and cached across dev/selfdev iterations.
+[profile.dev.package.tract-core]
+opt-level = 3
+[profile.selfdev.package.tract-core]
+opt-level = 3
+[profile.test.package.tract-core]
+opt-level = 3
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.selfdev.package.tract-linalg]
+opt-level = 3
+[profile.test.package.tract-linalg]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+[profile.selfdev.package.tract-data]
+opt-level = 3
+[profile.test.package.tract-data]
+opt-level = 3
+[profile.dev.package.tract-hir]
+opt-level = 3
+[profile.selfdev.package.tract-hir]
+opt-level = 3
+[profile.test.package.tract-hir]
+opt-level = 3
+[profile.dev.package.tract-onnx]
+opt-level = 3
+[profile.selfdev.package.tract-onnx]
+opt-level = 3
+[profile.test.package.tract-onnx]
+opt-level = 3
+[profile.dev.package.tract-onnx-opl]
+opt-level = 3
+[profile.selfdev.package.tract-onnx-opl]
+opt-level = 3
+[profile.test.package.tract-onnx-opl]
+opt-level = 3
+[profile.dev.package.tract-nnef]
+opt-level = 3
+[profile.selfdev.package.tract-nnef]
+opt-level = 3
+[profile.test.package.tract-nnef]
+opt-level = 3
+[profile.dev.package.ndarray]
+opt-level = 3
+[profile.selfdev.package.ndarray]
+opt-level = 3
+[profile.test.package.ndarray]
+opt-level = 3
+[profile.dev.package.tokenizers]
+opt-level = 3
+[profile.selfdev.package.tokenizers]
+opt-level = 3
+[profile.test.package.tokenizers]
+opt-level = 3
+
+[profile.test]
+debug = 0
+incremental = true
+codegen-units = 256
+
+[dev-dependencies]
+async-stream = "0.3"
+horon-agent-harness-api = { path = "crates/harness-api" }
+# Used by tests/context_window_matrix.rs to assert the shared context-window
+# resolution invariants directly, without going through a live provider.
+horon-agent-provider-core = { path = "crates/provider-core" }
+# Enables the downstream test-support helpers (storage::lock_test_env,
+# auth::test_sandbox, bus::reset_models_updated_publish_state_for_tests, the
+# ExternalAuthReviewCandidate read accessors) for the root crate's own cli test
+# target. Feature unification applies this only to test/bench/example builds,
+# never to a normal `cargo build`/release binary.
+horon-agent-app-core = { path = "crates/app-core", default-features = false, features = ["test-support"] }
+# The replication QA drives the shipped Rust SDK over real Unix sockets.
+horon-agent-sdk = { path = "crates/agent-sdk" }
+# tests/support/acp_schema.rs validates agent-written JSON-RPC frames against the
+# vendored ACP v1 schema (tests/fixtures/acp/). Same feature set the SDK already
+# uses, so the lockfile keeps the single existing `jsonschema` entry.
+jsonschema = { version = "0.49.3", default-features = false }
+
+[build-dependencies]

@@ -1,0 +1,12 @@
+[package]
+name = "horon-agent-pdf"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "horon_agent_pdf"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+pdf-extract = "0.12"

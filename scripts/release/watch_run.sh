@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Watch a GitHub Actions run to completion and report the outcome.
+#
+# Used to own a release end to end: tagging is not "released", so this polls the
+# run and exits non-zero if it fails, printing the failed jobs so the cause is
+# visible without opening a browser.
+set -uo pipefail
+
+RUN_ID="${1:?usage: watch_run.sh <run-id> [max-polls] [sleep-seconds]}"
+# 480 polls at the 30-second default allow four hours, covering the 150-minute
+# Windows build timeout plus finalization and queue delays.
+MAX_POLLS="${2:-480}"
+SLEEP_S="${3:-30}"
+
+for i in $(seq 1 "$MAX_POLLS"); do
+    line="$(gh run view "$RUN_ID" --json status,conclusion -q '"\(.status) \(.conclusion)"' 2>&1)" || line="unknown"
+    printf 'HORON_AGENT_PROGRESS {"message":"run %s: %s","current":%d,"total":%d,"unit":"polls"}\n' \
+        "$RUN_ID" "$line" "$i" "$MAX_POLLS"
+    case "$line" in
+        "completed success")
+            echo "RUN SUCCESS"
+            exit 0
+            ;;
+        completed\ *)
+            echo "RUN FAILED: $line"
+            echo "--- failed jobs ---"
+            gh run view "$RUN_ID" --json jobs \
+                -q '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | "\(.conclusion)\t\(.name)"' 2>&1 | head -20
+            exit 1
+            ;;
+    esac
+    sleep "$SLEEP_S"
+done
+
+echo "RUN STILL RUNNING after $MAX_POLLS polls"
+exit 2

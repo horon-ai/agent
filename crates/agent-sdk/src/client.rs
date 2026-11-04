@@ -1,0 +1,2758 @@
+//! Connected harness client: handshake, reply correlation, event streaming.
+//!
+//! Mirrors the TypeScript SDK's `HoronAgentClient` capability for capability. The
+//! shapes differ where Rust and TS differ honestly (`Result` instead of
+//! throwing, channels instead of `EventEmitter`), but every method here has a
+//! counterpart there and vice versa; `parity.rs` enforces that.
+//!
+//! Blocking, thread-based, and `Clone`. A desktop app has a UI thread that
+//! must never block on a socket and a worker that reads it forever, so the
+//! client is a handle both can hold: one reader thread owns the stream and
+//! fans frames out to whoever asked for them.
+
+use crate::errors::{Error, ErrorKind, Result};
+use crate::launch::{LaunchOptions, LaunchedInstance, ensure_runtime, launch_instance};
+use crate::ssh::{SshConnectOptions, SshProcess, SshTransport};
+use horon_agent_harness_api::{
+    API_VERSION_MAJOR, ApiEvent, ApiRequest, AskSelection, CanonicalRecordRef, ClientFrame, ErrorCode, HistoryMessage,
+    MAX_REPLICATION_WIRE_BYTES, ModelRouteInfo, PermissionDecision, RuntimeControlReceipt, RuntimeStateSummary,
+    ServerFrame, SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage,
+    SessionImportResult, SessionInfo, SessionRecordBlobStatus, SessionSnapshot, SessionToolDefinition,
+    StoreErrorDetail, TextMatch, ToolConfiguration, api_socket_path, read_frame, write_frame,
+};
+use std::collections::{HashMap, VecDeque};
+use std::io::{BufRead, BufReader, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError, channel, sync_channel};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
+/// How a client reaches the harness.
+pub struct ConnectOptions {
+    /// Defaults to the resolved harness API socket path.
+    pub socket_path: Option<std::path::PathBuf>,
+    /// Client identity sent in the handshake, e.g. "my-app/1.0".
+    pub client_name: String,
+    /// How long a request waits for its reply. `None` disables the timeout.
+    pub request_timeout: Option<Duration>,
+    /// Start the daemon and bridge if they are not already listening.
+    ///
+    /// On by default: an app that only works once the user has launched two
+    /// daemons by hand is indistinguishable from a broken one.
+    pub ensure_runtime: bool,
+    /// Desktop inline Markdown response renderer. Other clients leave false.
+    pub supports_user_response: bool,
+}
+
+impl Default for ConnectOptions {
+    fn default() -> Self {
+        Self {
+            socket_path: None,
+            client_name: concat!("horon-agent-sdk-rs/", env!("CARGO_PKG_VERSION")).to_string(),
+            request_timeout: Some(Duration::from_secs(30)),
+            ensure_runtime: true,
+            supports_user_response: false,
+        }
+    }
+}
+
+/// Options fixed when a session is created.
+#[derive(Clone, Debug, Default)]
+pub struct CreateSessionOptions {
+    /// Working directory for the new session. Omit to use the runtime default.
+    pub working_dir: Option<String>,
+    /// Replace the entire assembled system prompt, not just its base text.
+    ///
+    /// This bypasses the default prompt and assembled instruction/context additions.
+    /// `None` keeps normal prompt assembly. `Some(String::new())` explicitly
+    /// overrides it with an empty prompt. Immutable after creation and persisted
+    /// by the runtime for resume.
+    pub system_prompt: Option<String>,
+}
+
+/// A duplex byte transport. Lets tests and future WebSockets plug in.
+pub trait Transport: Send {
+    /// A handle which interrupts both halves after `split`. Custom transports
+    /// may omit this; native sockets provide it so Drop closes promptly.
+    fn shutdown_handle(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        None
+    }
+
+    fn split(self: Box<Self>) -> Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)>;
+}
+
+/// A Unix-domain socket transport, the default.
+type PlatformUnixStream = horon_agent_transport::SyncStream;
+
+pub struct UnixTransport(PlatformUnixStream);
+
+impl UnixTransport {
+    pub fn connect(path: &std::path::Path) -> Result<Self> {
+        // A bare `No such file or directory` names the syscall and hides the
+        // cause: the bridge is not running. Connecting is the first thing
+        // anyone does with this SDK, so say what to do about it.
+        let stream = PlatformUnixStream::connect(path).map_err(|cause| {
+            Error::new(
+                ErrorKind::ConnectFailed,
+                match cause.kind() {
+                    std::io::ErrorKind::NotFound => format!(
+                        "harness not running (no socket at {}). Start `horon-agent-harness-api-bridge` \
+                         or connect with ensure_runtime.",
+                        path.display()
+                    ),
+                    // Also seen briefly while the bridge restarts, so do not
+                    // claim the socket is stale.
+                    std::io::ErrorKind::ConnectionRefused => format!(
+                        "harness refused the connection at {}. It may be restarting or stopped.",
+                        path.display()
+                    ),
+                    std::io::ErrorKind::PermissionDenied => format!(
+                        "permission denied on {}. The socket belongs to another user.",
+                        path.display()
+                    ),
+                    _ => format!("could not connect to {}: {cause}", path.display()),
+                },
+            )
+        })?;
+        Ok(Self(stream))
+    }
+}
+
+impl Transport for UnixTransport {
+    fn shutdown_handle(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        #[cfg(unix)]
+        {
+            let socket = self.0.try_clone().ok()?;
+            Some(Arc::new(move || {
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+            }))
+        }
+        #[cfg(windows)]
+        {
+            // Closing the reader and writer handles interrupts named-pipe I/O.
+            // They are owned by the client and dropped during shutdown.
+            None
+        }
+    }
+
+    fn split(self: Box<Self>) -> Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
+        let writer = self
+            .0
+            .try_clone()
+            .map_err(|e| Error::new(ErrorKind::Transport, e.to_string()))?;
+        Ok((Box::new(BufReader::new(self.0)), Box::new(writer)))
+    }
+}
+
+/// A subscription to the event stream.
+///
+/// Streaming events are fanned out to every live subscription, so an app can
+/// have one loop rendering the attached session while another waits for a
+/// single acknowledgement without either stealing frames from the other.
+///
+/// The buffer is bounded in count and bytes. Ordinary frames may hold the
+/// configured budget; control frames (approvals, asks, cancellations, turn
+/// terminals, tool outcomes) get a quarter of it on top, so a flood of deltas
+/// cannot evict the frame that ends a turn. Past the ordinary budget new
+/// ordinary frames are refused and the loss is recorded, which
+/// [`next_result`](Self::next_result) reports as `event_buffer_overflow` once
+/// the frames already queued have been delivered; the stream is closed at that
+/// point. A full control reserve closes the stream immediately with the same
+/// error kind rather than dropping the frame. [`overflow_error`](Self::overflow_error)
+/// reports that error without consuming it, so an iterator-style caller using
+/// [`next`](Self::next) can still tell an overflow from a clean end.
+pub struct EventStream {
+    buffer: Arc<SubscriptionBuffer>,
+    id: u64,
+    inner: Arc<Inner>,
+}
+
+impl EventStream {
+    /// Block for the next event. `None` once the connection closes.
+    ///
+    /// An overflow also ends this stream and reports `None`, so a `None` alone
+    /// does not say whether the stream ended cleanly or dropped frames. Call
+    /// [`overflow_error`](Self::overflow_error) to learn which, or use
+    /// [`next_result`](Self::next_result) to receive the error in place.
+    pub fn next(&self) -> Option<ApiEvent> {
+        self.next_result().ok().flatten()
+    }
+
+    /// Block for the next event, up to `timeout`.
+    ///
+    /// An overflow reports `None` here too; see [`next`](Self::next) and
+    /// [`overflow_error`](Self::overflow_error).
+    pub fn next_timeout(&self, timeout: Duration) -> Option<ApiEvent> {
+        self.next_result_timeout(timeout).ok().flatten()
+    }
+
+    /// The error that ended this stream, if it ended with one.
+    ///
+    /// Non-taking: it keeps answering the same error after
+    /// [`next_result`](Self::next_result) has already reported it, so a caller
+    /// that only ever called [`next`](Self::next) can still tell a clean end
+    /// from an overflow. `None` means the stream has not failed, which includes
+    /// a stream that is still running and one that ended cleanly.
+    pub fn overflow_error(&self) -> Option<Error> {
+        self.buffer.terminal_error()
+    }
+
+    /// Block for the next event, reporting the error that ends the stream.
+    ///
+    /// The error is returned once; the stream reports `Ok(None)` after it.
+    pub fn next_result(&self) -> Result<Option<ApiEvent>> {
+        self.buffer.pop(None)
+    }
+
+    /// [`next_result`](Self::next_result) with a timeout. `Ok(None)` means the
+    /// timeout passed; a terminal error stays pending for the next call.
+    pub fn next_result_timeout(&self, timeout: Duration) -> Result<Option<ApiEvent>> {
+        self.buffer.pop(Some(timeout))
+    }
+
+    /// Events currently buffered for this consumer.
+    pub fn buffered_events(&self) -> usize {
+        self.buffer.buffered_events()
+    }
+
+    /// Estimated serialized bytes currently buffered for this consumer.
+    pub fn buffered_bytes(&self) -> usize {
+        self.buffer.buffered_bytes()
+    }
+}
+
+impl Iterator for EventStream {
+    type Item = ApiEvent;
+    fn next(&mut self) -> Option<ApiEvent> {
+        EventStream::next(self)
+    }
+}
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        if let Ok(mut subs) = self.inner.subscribers.lock() {
+            subs.retain(|(id, _, _)| *id != self.id);
+        }
+    }
+}
+
+/// Default ordinary budget for [`HoronAgentClient::events`].
+const DEFAULT_EVENT_BUFFER_EVENTS: usize = 10_000;
+const DEFAULT_EVENT_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+
+/// Limits for one subscription buffer. Control frames get a quarter of each
+/// ordinary limit on top of it.
+#[derive(Debug, Clone, Copy)]
+struct BufferLimits {
+    ordinary_events: usize,
+    ordinary_bytes: usize,
+    control_events: usize,
+    control_bytes: usize,
+}
+
+impl BufferLimits {
+    fn new(max_buffered_events: usize, max_buffered_bytes: usize) -> Self {
+        let ordinary_events = max_buffered_events.max(1);
+        let ordinary_bytes = max_buffered_bytes.max(1);
+        Self {
+            ordinary_events,
+            ordinary_bytes,
+            control_events: (ordinary_events / 4).max(1),
+            control_bytes: (ordinary_bytes / 4).max(1024),
+        }
+    }
+}
+
+/// One frame waiting for its consumer, with the accounting the budget needs.
+struct QueuedEvent {
+    event: ApiEvent,
+    control: bool,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct BufferState {
+    queue: VecDeque<QueuedEvent>,
+    ordinary_events: usize,
+    ordinary_bytes: usize,
+    control_events: usize,
+    control_bytes: usize,
+    /// No further frames are accepted; the consumer drains and then stops.
+    closed: bool,
+    /// Terminal error. Delivered through `next_result` once, but kept so
+    /// `overflow_error` can keep answering it.
+    error: Option<Error>,
+    /// Whether `next_result` already handed the error to the consumer.
+    error_reported: bool,
+}
+
+/// A subscription's bounded queue.
+///
+/// The reader thread only ever locks this briefly and never waits for the
+/// consumer to make room, so one stalled subscriber cannot stall the socket for
+/// every other subscriber on the connection.
+struct SubscriptionBuffer {
+    state: Mutex<BufferState>,
+    ready: Condvar,
+    limits: BufferLimits,
+}
+
+impl SubscriptionBuffer {
+    fn new(limits: BufferLimits) -> Self {
+        Self {
+            state: Mutex::new(BufferState::default()),
+            ready: Condvar::new(),
+            limits,
+        }
+    }
+
+    /// Queue one frame without blocking. `false` means the subscription is
+    /// finished and should be dropped by the fan-out.
+    fn push(&self, event: ApiEvent) -> bool {
+        let control = is_control_event(&event);
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        if state.closed {
+            return false;
+        }
+        if !control && state.error.is_some() {
+            // The loss is already recorded and the consumer will be told once.
+            // Skip the size estimate as well: a flood must not keep paying for
+            // frames that will not be delivered.
+            return true;
+        }
+        let (limit_events, limit_bytes, used_events, used_bytes) = if control {
+            (
+                self.limits.control_events,
+                self.limits.control_bytes,
+                state.control_events,
+                state.control_bytes,
+            )
+        } else {
+            (
+                self.limits.ordinary_events,
+                self.limits.ordinary_bytes,
+                state.ordinary_events,
+                state.ordinary_bytes,
+            )
+        };
+        let bytes = estimate_event_bytes(&event, limit_bytes.saturating_sub(used_bytes));
+        if used_events + 1 > limit_events || used_bytes.saturating_add(bytes) > limit_bytes {
+            if control {
+                // A control frame is the one frame a caller cannot re-derive
+                // from the transcript, so the stream closes visibly instead of
+                // dropping it.
+                state.error = Some(Error::new(
+                    ErrorKind::EventBufferOverflow,
+                    format!(
+                        "control event reserve filled {} events / {} bytes; the event stream was closed rather than dropping an approval, ask, cancellation or terminal frame",
+                        self.limits.control_events, self.limits.control_bytes
+                    ),
+                ));
+                state.closed = true;
+                clear_queue(&mut state);
+            } else {
+                if state.error.is_some() {
+                    return true;
+                }
+                // Ordinary frames are reproducible from the transcript: stop
+                // buffering them and record the loss, which `pop` reports once
+                // the frames already queued have been delivered.
+                state.error = Some(Error::new(
+                    ErrorKind::EventBufferOverflow,
+                    format!(
+                        "events consumer fell behind {limit_events} buffered events / {limit_bytes} bytes; ordinary frames were dropped and the stream is closing"
+                    ),
+                ));
+            }
+            drop(state);
+            self.ready.notify_all();
+            return true;
+        }
+        state.queue.push_back(QueuedEvent { event, control, bytes });
+        if control {
+            state.control_events += 1;
+            state.control_bytes += bytes;
+        } else {
+            state.ordinary_events += 1;
+            state.ordinary_bytes += bytes;
+        }
+        drop(state);
+        self.ready.notify_one();
+        true
+    }
+
+    /// Block for the next frame, or up to `timeout`, reporting the error that
+    /// ends the subscription exactly once.
+    fn pop(&self, timeout: Option<Duration>) -> Result<Option<ApiEvent>> {
+        let mut state = self.state.lock().map_err(|_| buffer_poisoned())?;
+        loop {
+            if let Some(queued) = state.queue.pop_front() {
+                if queued.control {
+                    state.control_events = state.control_events.saturating_sub(1);
+                    state.control_bytes = state.control_bytes.saturating_sub(queued.bytes);
+                } else {
+                    state.ordinary_events = state.ordinary_events.saturating_sub(1);
+                    state.ordinary_bytes = state.ordinary_bytes.saturating_sub(queued.bytes);
+                }
+                return Ok(Some(queued.event));
+            }
+            if let Some(error) = state.error.clone() {
+                state.closed = true;
+                clear_queue(&mut state);
+                if state.error_reported {
+                    return Ok(None);
+                }
+                state.error_reported = true;
+                return Err(error);
+            }
+            if state.closed {
+                return Ok(None);
+            }
+            let (next, timed_out) = match timeout {
+                None => (self.ready.wait(state).map_err(|_| buffer_poisoned())?, false),
+                Some(limit) => {
+                    let (next, outcome) = self.ready.wait_timeout(state, limit).map_err(|_| buffer_poisoned())?;
+                    (next, outcome.timed_out())
+                }
+            };
+            state = next;
+            if timed_out && state.queue.is_empty() && state.error.is_none() && !state.closed {
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Mark the subscription finished after the connection closed. Frames that
+    /// already arrived stay readable; nothing new is accepted.
+    fn close(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+        }
+        self.ready.notify_all();
+    }
+
+    fn buffered_events(&self) -> usize {
+        self.state.lock().map(|state| state.queue.len()).unwrap_or(0)
+    }
+
+    fn buffered_bytes(&self) -> usize {
+        self.state
+            .lock()
+            .map(|state| state.ordinary_bytes + state.control_bytes)
+            .unwrap_or(0)
+    }
+
+    fn terminal_error(&self) -> Option<Error> {
+        self.state.lock().ok().and_then(|state| state.error.clone())
+    }
+}
+
+fn clear_queue(state: &mut BufferState) {
+    state.queue.clear();
+    state.ordinary_events = 0;
+    state.ordinary_bytes = 0;
+    state.control_events = 0;
+    state.control_bytes = 0;
+}
+
+fn buffer_poisoned() -> Error {
+    Error::new(ErrorKind::Transport, "event buffer lock was poisoned")
+}
+
+/// Frames a caller acts on, which the ordinary budget must never refuse.
+///
+/// A dropped `TurnDone` hangs a turn, a dropped `PermissionRequest` hangs a
+/// tool, and a dropped `ToolDone` loses an outcome the transcript cannot
+/// replay. Narration and deltas are the only frames that can be re-read.
+fn is_control_event(event: &ApiEvent) -> bool {
+    use ApiEvent::*;
+    matches!(
+        event,
+        Error { .. }
+            | TurnDone { .. }
+            | TurnStopped { .. }
+            | MessageAccepted { .. }
+            | PermissionRequest { .. }
+            | ApprovalPending { .. }
+            | ApprovalResolved { .. }
+            | ApprovalAck { .. }
+            | AskRequested { .. }
+            | RunNeedsHumanResume { .. }
+            | SoftInterruptInjected { .. }
+            | SoftInterruptsCancelled { .. }
+            | ToolDone { .. }
+            | BackgroundToolResult { .. }
+    )
+}
+
+/// Estimate one frame's serialized size in bytes, aborting once `ceiling` is
+/// passed so a huge payload is not fully serialized just to be refused.
+fn estimate_event_bytes(event: &ApiEvent, ceiling: usize) -> usize {
+    struct Counter {
+        bytes: usize,
+        ceiling: usize,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes += buf.len();
+            if self.bytes > self.ceiling {
+                return Err(std::io::Error::other("event exceeds the buffer budget"));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter { bytes: 0, ceiling };
+    let _ = serde_json::to_writer(&mut counter, event);
+    counter.bytes
+}
+
+/// Discovery and buffering controls for [`HoronAgentClient::global_events`].
+#[derive(Debug, Clone, Copy)]
+pub struct GlobalEventsOptions {
+    /// How often persisted sessions are rescanned. Zero performs one scan.
+    pub discovery_interval: Duration,
+    /// Maximum events waiting for the consumer before the stream fails loudly.
+    pub max_buffered_events: usize,
+}
+
+impl Default for GlobalEventsOptions {
+    fn default() -> Self {
+        Self {
+            discovery_interval: Duration::from_secs(1),
+            max_buffered_events: 10_000,
+        }
+    }
+}
+
+struct GlobalEventControl {
+    stopped: AtomicBool,
+    terminal_error: Mutex<Option<Error>>,
+    children: Mutex<HashMap<String, HoronAgentClient>>,
+    tx: SyncSender<ApiEvent>,
+    max_buffered_events: usize,
+    wake_lock: Mutex<()>,
+    wake: Condvar,
+}
+
+/// Events fanned in from every persisted and newly-created session.
+///
+/// Delivery begins when each per-session child attaches. Ordering is preserved
+/// within a session; no total order across sessions is promised. Dropping this
+/// stream cancels discovery and closes all child connections.
+pub struct GlobalEventStream {
+    rx: Receiver<ApiEvent>,
+    control: Arc<GlobalEventControl>,
+    discovery: Option<std::thread::JoinHandle<()>>,
+}
+
+impl GlobalEventStream {
+    /// Block for the next event, returning the terminal stream error once.
+    pub fn next(&self) -> Result<Option<ApiEvent>> {
+        loop {
+            if let Some(error) = take_global_error(&self.control) {
+                return Err(error);
+            }
+            if self.control.stopped.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            match self.rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(event) => {
+                    if let Some(error) = take_global_error(&self.control) {
+                        return Err(error);
+                    }
+                    if self.control.stopped.load(Ordering::Acquire) {
+                        return Ok(None);
+                    }
+                    return Ok(Some(event));
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.control.stopped.load(Ordering::Acquire) {
+                        if let Some(error) = take_global_error(&self.control) {
+                            return Err(error);
+                        }
+                        return Ok(None);
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => return Ok(None),
+            }
+        }
+    }
+
+    /// Wait up to `timeout` for an event. `Ok(None)` means timeout or shutdown.
+    pub fn next_timeout(&self, timeout: Duration) -> Result<Option<ApiEvent>> {
+        if let Some(error) = take_global_error(&self.control) {
+            return Err(error);
+        }
+        if self.control.stopped.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        match self.rx.recv_timeout(timeout) {
+            Ok(event) => {
+                if let Some(error) = take_global_error(&self.control) {
+                    Err(error)
+                } else if self.control.stopped.load(Ordering::Acquire) {
+                    Ok(None)
+                } else {
+                    Ok(Some(event))
+                }
+            }
+            Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
+                if let Some(error) = take_global_error(&self.control) {
+                    Err(error)
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+}
+
+impl Iterator for GlobalEventStream {
+    type Item = Result<ApiEvent>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        GlobalEventStream::next(self).transpose()
+    }
+}
+
+impl Drop for GlobalEventStream {
+    fn drop(&mut self) {
+        stop_global_stream(&self.control, None);
+        if let Some(discovery) = self.discovery.take() {
+            let _ = discovery.join();
+        }
+    }
+}
+
+fn take_global_error(control: &GlobalEventControl) -> Option<Error> {
+    control.terminal_error.lock().ok()?.take()
+}
+
+fn stop_global_stream(control: &GlobalEventControl, error: Option<Error>) {
+    if let Some(error) = error
+        && let Ok(mut terminal) = control.terminal_error.lock()
+        && terminal.is_none()
+    {
+        *terminal = Some(error);
+    }
+    control.stopped.store(true, Ordering::Release);
+    control.wake.notify_all();
+    let children = control
+        .children
+        .lock()
+        .ok()
+        .map(|mut children| std::mem::take(&mut *children));
+    drop(children);
+}
+
+/// A live subscription: (id, session filter, buffer).
+type Subscriber = (u64, Option<String>, Arc<SubscriptionBuffer>);
+
+struct Inner {
+    writer: Mutex<Box<dyn Write + Send>>,
+    /// Requests waiting for their `reply_to` frame.
+    pending: Mutex<HashMap<u64, Sender<ServerFrame>>>,
+    /// Live subscriptions: (id, session filter, sink).
+    subscribers: Mutex<Vec<Subscriber>>,
+    next_id: AtomicU64,
+    next_sub: AtomicU64,
+    closed: AtomicBool,
+    /// Capabilities the server advertised, so the reader can drop an event
+    /// gated on one this server never offered. Empty until the handshake
+    /// reply arrives.
+    capabilities: Mutex<Vec<String>>,
+    request_timeout: Option<Duration>,
+    socket_path: std::path::PathBuf,
+    client_name: String,
+    native_socket: bool,
+    ssh_process: Option<Arc<SshProcess>>,
+    shutdown: Option<Arc<dyn Fn() + Send + Sync>>,
+    client_handles: AtomicUsize,
+}
+
+/// Connected harness client.
+///
+/// Replies are correlated by the `reply_to` id the server echoes; anything
+/// without one is a stream event and goes to every subscriber.
+pub struct HoronAgentClient {
+    inner: Arc<Inner>,
+    ssh_options: Option<SshConnectOptions>,
+    instance: Option<Arc<LaunchedInstance>>,
+    /// State directory of the private instance this client owns, if any.
+    pub instance_home: Option<std::path::PathBuf>,
+    /// Server identity from the handshake, e.g. "horon-agent-harness-api-bridge/0.1.0".
+    pub server: String,
+    /// Capability strings advertised by the server.
+    pub capabilities: Vec<String>,
+}
+
+impl Clone for HoronAgentClient {
+    fn clone(&self) -> Self {
+        self.inner.client_handles.fetch_add(1, Ordering::Relaxed);
+        Self {
+            inner: Arc::clone(&self.inner),
+            ssh_options: self.ssh_options.clone(),
+            instance: self.instance.clone(),
+            instance_home: self.instance_home.clone(),
+            server: self.server.clone(),
+            capabilities: self.capabilities.clone(),
+        }
+    }
+}
+
+impl Drop for HoronAgentClient {
+    fn drop(&mut self) {
+        if self.inner.client_handles.fetch_sub(1, Ordering::AcqRel) == 1
+            && let Some(shutdown) = &self.inner.shutdown
+        {
+            shutdown();
+        }
+    }
+}
+
+impl HoronAgentClient {
+    /// Retain this client's shared SSH master for reconnecting independent API
+    /// channels. Returns None for isolated or already closed SSH channels.
+    #[cfg(unix)]
+    pub fn shared_ssh_transport(&self) -> Option<crate::SharedSshTransport> {
+        self.inner
+            .ssh_process
+            .as_ref()
+            .and_then(|process| process.shared_transport())
+    }
+
+    /// Connect to a remote shared harness using system SSH credentials/config.
+    ///
+    /// The remote must have `horon-agent api --stdio`. Dropping the last client clone
+    /// kills and reaps SSH, but leaves the remote shared daemon running. This
+    /// never launches a local runtime or falls back to local session data.
+    pub fn connect_ssh(options: SshConnectOptions) -> Result<Self> {
+        let transport = SshTransport::spawn(&options)?;
+        Self::over_ssh(transport, options)
+    }
+
+    pub(crate) fn over_ssh(transport: SshTransport, options: SshConnectOptions) -> Result<Self> {
+        let process = Arc::clone(&transport.process);
+        // Also interrupts a blocked hello write, not just the reply wait.
+        let (deadline, watchdog) = process.startup_deadline(options.connect_timeout);
+        let connect = ConnectOptions {
+            socket_path: None,
+            client_name: options.client_name.clone(),
+            supports_user_response: options.supports_user_response,
+            request_timeout: options.request_timeout,
+            ensure_runtime: false,
+        };
+        // A remote connection has no local socket path. Do not resolve the
+        // user's local configuration just to manufacture one.
+        let result = Self::over(
+            Box::new(transport),
+            &connect,
+            std::path::PathBuf::new(),
+            false,
+            Some((options, Arc::clone(&process))),
+        );
+        let _ = deadline.send(());
+        let _ = watchdog.join();
+        let result = if process.timed_out.load(Ordering::Acquire) {
+            Err(Error::new(
+                ErrorKind::StartupTimeout,
+                "SSH startup and handshake timed out",
+            ))
+        } else {
+            result
+        };
+        result.map_err(|error| {
+            process.shutdown();
+            let message = if error.kind == ErrorKind::Disconnected {
+                process.diagnostic()
+            } else {
+                format!("{}; {}", error.message, process.diagnostic())
+            };
+            Error::new(
+                if error.kind == ErrorKind::Timeout || process.timed_out.load(Ordering::Acquire) {
+                    ErrorKind::StartupTimeout
+                } else {
+                    error.kind
+                },
+                message,
+            )
+        })
+    }
+
+    /// Start and own a private horon-agent instance, then connect to it.
+    ///
+    /// Its state and sockets are isolated from the user's interactive horon-agent.
+    /// The last clone of this client shuts the instance down through Drop.
+    pub fn launch(options: LaunchOptions) -> Result<Self> {
+        let instance = Arc::new(launch_instance(&options)?);
+        let connect = ConnectOptions {
+            socket_path: Some(instance.socket_path.clone()),
+            supports_user_response: false,
+            client_name: options.client_name.clone(),
+            request_timeout: options.request_timeout,
+            ensure_runtime: false,
+        };
+        let mut client = Self::connect(connect)?;
+        client.instance_home = Some(instance.horon_agent_home.clone());
+        client.instance = Some(instance);
+        Ok(client)
+    }
+
+    /// Connect to the horon-agent running on this machine.
+    ///
+    /// Use this to automate the user's own horon-agent: a desktop app, an editor
+    /// plugin, a status dashboard. It shares the user's live sessions.
+    pub fn connect(options: ConnectOptions) -> Result<Self> {
+        let path = options.socket_path.clone().unwrap_or_else(api_socket_path);
+        if options.ensure_runtime {
+            ensure_runtime(&LaunchOptions::default(), &|_| {})?;
+        }
+        Self::over(Box::new(UnixTransport::connect(&path)?), &options, path, true, None)
+    }
+
+    /// Connect over a caller-supplied transport. The seam tests use.
+    pub fn connect_with(transport: Box<dyn Transport>, options: ConnectOptions) -> Result<Self> {
+        let path = options.socket_path.clone().unwrap_or_else(api_socket_path);
+        Self::over(transport, &options, path, false, None)
+    }
+
+    fn over(
+        transport: Box<dyn Transport>,
+        options: &ConnectOptions,
+        socket_path: std::path::PathBuf,
+        native_socket: bool,
+        ssh: Option<(SshConnectOptions, Arc<SshProcess>)>,
+    ) -> Result<Self> {
+        let hello_timeout = ssh
+            .as_ref()
+            .map(|(options, _)| options.connect_timeout)
+            .or(options.request_timeout);
+        let (ssh_options, ssh_process) = match ssh {
+            Some((options, process)) => (Some(options), Some(process)),
+            None => (None, None),
+        };
+        let shutdown = transport.shutdown_handle();
+        let (reader, writer) = transport.split()?;
+        let inner = Arc::new(Inner {
+            writer: Mutex::new(writer),
+            pending: Mutex::new(HashMap::new()),
+            subscribers: Mutex::new(Vec::new()),
+            next_id: AtomicU64::new(1),
+            next_sub: AtomicU64::new(1),
+            closed: AtomicBool::new(false),
+            capabilities: Mutex::new(Vec::new()),
+            request_timeout: options.request_timeout,
+            socket_path,
+            client_name: options.client_name.clone(),
+            native_socket,
+            ssh_process,
+            shutdown,
+            client_handles: AtomicUsize::new(1),
+        });
+        spawn_reader(Arc::clone(&inner), reader);
+
+        let mut client = Self {
+            inner,
+            ssh_options,
+            instance: None,
+            instance_home: None,
+            server: String::new(),
+            capabilities: Vec::new(),
+        };
+        let frame = client.request_with_timeout(
+            ApiRequest::Hello {
+                min_version: API_VERSION_MAJOR,
+                max_version: API_VERSION_MAJOR,
+                client: options.client_name.clone(),
+                supports_user_response: options.supports_user_response,
+                supports_ask_requests: false,
+            },
+            hello_timeout,
+        )?;
+        match frame.event {
+            ApiEvent::HelloOk {
+                server, capabilities, ..
+            } => {
+                client.server = server;
+                if let Ok(mut negotiated) = client.inner.capabilities.lock() {
+                    *negotiated = capabilities.clone();
+                }
+                client.capabilities = capabilities;
+                Ok(client)
+            }
+            ApiEvent::Error { code, message, details } => {
+                Err(Error::new(ErrorKind::Harness(code), message).with_details(details))
+            }
+            other => Err(Error::new(
+                ErrorKind::HandshakeFailed,
+                format!("unexpected reply to hello: {other:?}"),
+            )),
+        }
+    }
+
+    /// The socket this client is talking to. Empty for SSH connections.
+    pub fn socket_path(&self) -> &std::path::Path {
+        &self.inner.socket_path
+    }
+
+    /// Whether the server advertises a capability.
+    ///
+    /// Capabilities are how a client learns what this particular server can do
+    /// before depending on it. `permissions`, for instance, is absent from the
+    /// current bridge: it never issues permission prompts, so a client that
+    /// waits for one waits forever. Check rather than assume.
+    pub fn supports(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|c| c == capability)
+    }
+
+    /// Send a raw request and wait for its reply frame.
+    pub fn request(&self, request: ApiRequest) -> Result<ServerFrame> {
+        self.request_with_timeout(request, self.inner.request_timeout)
+    }
+
+    fn request_with_timeout(&self, request: ApiRequest, timeout: Option<Duration>) -> Result<ServerFrame> {
+        let (tx, rx) = channel();
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.inner.pending.lock().map_err(poisoned)?.insert(id, tx);
+        if let Err(error) = self.write(ClientFrame::new(id, request.clone())) {
+            self.inner.pending.lock().map_err(poisoned)?.remove(&id);
+            return Err(error);
+        }
+        let received = match timeout {
+            Some(timeout) => rx.recv_timeout(timeout).map_err(|error| match error {
+                RecvTimeoutError::Timeout => Error::new(
+                    ErrorKind::Timeout,
+                    format!("no reply to {} within {timeout:?}", request_name(&request)),
+                ),
+                RecvTimeoutError::Disconnected => self.disconnect_error(),
+            }),
+            None => rx.recv().map_err(|_| self.disconnect_error()),
+        };
+        if received.is_err() {
+            self.inner.pending.lock().map_err(poisoned)?.remove(&id);
+        }
+        received
+    }
+
+    /// Write a request without expecting a request-level reply.
+    pub fn notify(&self, request: ApiRequest) -> Result<()> {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        self.write(ClientFrame::new(id, request))
+    }
+
+    fn write(&self, frame: ClientFrame) -> Result<()> {
+        if self.inner.closed.load(Ordering::Relaxed) {
+            return Err(self.disconnect_error());
+        }
+        let mut writer = self.inner.writer.lock().map_err(poisoned)?;
+        write_frame(&mut *writer, &frame).map_err(|error| {
+            if let Some(process) = &self.inner.ssh_process {
+                process.shutdown();
+                Error::new(ErrorKind::Disconnected, format!("{error}; {}", process.diagnostic()))
+            } else {
+                Error::from(error)
+            }
+        })
+    }
+
+    fn disconnect_error(&self) -> Error {
+        match &self.inner.ssh_process {
+            Some(process) => Error::new(ErrorKind::Disconnected, process.diagnostic()),
+            None => closed_error(),
+        }
+    }
+
+    /// Send a request, failing when the server replies with an error frame.
+    fn request_ok(&self, request: ApiRequest) -> Result<ServerFrame> {
+        let frame = self.request(request)?;
+        match frame.event {
+            ApiEvent::Error { code, message, details } => {
+                Err(Error::new(ErrorKind::Harness(code), message).with_details(details))
+            }
+            _ => Ok(frame),
+        }
+    }
+
+    /// Subscribe to stream events, optionally filtered to one session.
+    ///
+    /// Frames that arrive between reads are buffered, so a consumer that does
+    /// slow work in the loop body does not silently drop deltas. The buffer is
+    /// bounded: see [`EventStream`] for the budgets and for what happens when
+    /// a consumer falls behind.
+    pub fn events(&self, session_id: Option<&str>) -> EventStream {
+        self.events_with_limits(session_id, DEFAULT_EVENT_BUFFER_EVENTS, DEFAULT_EVENT_BUFFER_BYTES)
+    }
+
+    /// [`events`](Self::events) with explicit buffer limits, for a caller that
+    /// must hold a tighter memory bound than the defaults.
+    ///
+    /// `max_buffered_events` and `max_buffered_bytes` bound the ordinary
+    /// frames waiting for this consumer. Control frames get a quarter of each
+    /// limit on top, so a delta flood cannot evict an approval or a turn end.
+    pub fn events_with_limits(
+        &self,
+        session_id: Option<&str>,
+        max_buffered_events: usize,
+        max_buffered_bytes: usize,
+    ) -> EventStream {
+        let buffer = Arc::new(SubscriptionBuffer::new(BufferLimits::new(
+            max_buffered_events,
+            max_buffered_bytes,
+        )));
+        let id = self.inner.next_sub.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut subs) = self.inner.subscribers.lock() {
+            subs.push((id, session_id.map(str::to_string), Arc::clone(&buffer)));
+        }
+        EventStream {
+            buffer,
+            id,
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    /// Number of live event subscriptions on this connection.
+    ///
+    /// Diagnostics: a client can assert that a stream released its
+    /// subscription instead of leaking one per reconnect.
+    pub fn subscriber_count(&self) -> usize {
+        self.inner.subscribers.lock().map(|subs| subs.len()).unwrap_or(0)
+    }
+
+    /// Stream events from all persisted and newly-created sessions.
+    ///
+    /// The bridge attaches one session per connection, so this discovers
+    /// sessions repeatedly, owns one native child connection per session, and
+    /// fans their events into a bounded queue. A disconnected child is removed
+    /// and attached again by a later discovery pass.
+    pub fn global_events(&self, options: GlobalEventsOptions) -> Result<GlobalEventStream> {
+        if !self.inner.native_socket && self.ssh_options.is_none() {
+            return Err(Error::new(
+                ErrorKind::UnsupportedTransport,
+                "global_events requires a native socket or SSH connection; custom transports cannot be cloned into per-session child connections",
+            ));
+        }
+        if self.is_closed() {
+            return Err(self.disconnect_error());
+        }
+        if options.max_buffered_events == 0 {
+            return Err(Error::new(
+                ErrorKind::InvalidOption,
+                "max_buffered_events must be positive",
+            ));
+        }
+
+        let (tx, rx) = sync_channel(options.max_buffered_events);
+        let control = Arc::new(GlobalEventControl {
+            stopped: AtomicBool::new(false),
+            terminal_error: Mutex::new(None),
+            children: Mutex::new(HashMap::new()),
+            tx,
+            max_buffered_events: options.max_buffered_events,
+            wake_lock: Mutex::new(()),
+            wake: Condvar::new(),
+        });
+        let parent = self.clone();
+        let discovery_control = Arc::clone(&control);
+        let discovery = std::thread::spawn(move || {
+            discover_global_sessions(parent, discovery_control, options.discovery_interval);
+        });
+        Ok(GlobalEventStream {
+            rx,
+            control,
+            discovery: Some(discovery),
+        })
+    }
+
+    // --- Curated surface -----------------------------------------------------
+
+    pub fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
+        match self
+            .request_ok(ApiRequest::ListSessions {
+                include_archived: false,
+                limit: None,
+            })?
+            .event
+        {
+            ApiEvent::Sessions { sessions } => Ok(sessions),
+            other => Err(unexpected("sessions", &other)),
+        }
+    }
+
+    /// List only the newest persisted sessions, for bounded dashboard startup.
+    pub fn list_sessions_limited(&self, limit: u32) -> Result<Vec<SessionInfo>> {
+        match self
+            .request_ok(ApiRequest::ListSessions {
+                include_archived: false,
+                limit: Some(limit),
+            })?
+            .event
+        {
+            ApiEvent::Sessions { sessions } => Ok(sessions),
+            other => Err(unexpected("sessions", &other)),
+        }
+    }
+
+    /// Reversibly hide a session from the default list. Its transcript remains
+    /// available for a later restore.
+    pub fn archive_session(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::ArchiveSession {
+            session_id: session_id.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Put an archived session back in the default session list.
+    pub fn restore_session(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::RestoreSession {
+            session_id: session_id.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Automatically archive inactive sessions after `archive_after_days`.
+    /// `None` disables automatic archival.
+    pub fn set_retention_policy(&self, archive_after_days: Option<u32>) -> Result<()> {
+        self.request_ok(ApiRequest::SetRetentionPolicy { archive_after_days })
+            .map(drop)
+    }
+
+    /// Create a session with the normal assembled system prompt.
+    pub fn create_session(&self, working_dir: Option<String>) -> Result<SessionInfo> {
+        self.create_session_with_options(CreateSessionOptions {
+            working_dir,
+            ..Default::default()
+        })
+    }
+
+    /// Create a session with optional full system prompt replacement.
+    /// See [`CreateSessionOptions::system_prompt`] for override semantics.
+    pub fn create_session_with_options(&self, options: CreateSessionOptions) -> Result<SessionInfo> {
+        match self
+            .request_ok(ApiRequest::CreateSession {
+                working_dir: options.working_dir,
+                system_prompt: options.system_prompt,
+            })?
+            .event
+        {
+            ApiEvent::Attached { session } => Ok(session),
+            other => Err(unexpected("attached", &other)),
+        }
+    }
+
+    pub fn attach_session(&self, session_id: &str) -> Result<SessionInfo> {
+        match self
+            .request_ok(ApiRequest::AttachSession {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::Attached { session } => Ok(session),
+            other => Err(unexpected("attached", &other)),
+        }
+    }
+
+    /// Clone a session's complete persisted context into a new idle session.
+    pub fn transfer_session(&self, session_id: &str) -> Result<SessionInfo> {
+        match self
+            .request_ok(ApiRequest::TransferSession {
+                session_id: session_id.into(),
+            })?
+            .event
+        {
+            ApiEvent::SessionForked { session } => Ok(session),
+            other => Err(unexpected("session_forked", &other)),
+        }
+    }
+
+    pub fn fork_session(&self, session_id: &str) -> Result<SessionInfo> {
+        match self
+            .request_ok(ApiRequest::ForkSession {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::SessionForked { session } => Ok(session),
+            other => Err(unexpected("session_forked", &other)),
+        }
+    }
+
+    pub fn detach_session(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::DetachSession {
+            session_id: session_id.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Submit a hidden continuation without a user transcript row or accept wait.
+    /// The caller, not the bridge, decides when recovery is appropriate.
+    pub fn send_system_reminder(&self, session_id: &str, reminder: &str) -> Result<()> {
+        self.notify(ApiRequest::SendMessage {
+            session_id: session_id.to_string(),
+            content: String::new(),
+            system_reminder: Some(reminder.to_string()),
+            images: Vec::new(),
+            no_reply: false,
+        })
+    }
+
+    /// Persist a user message as context without starting a model turn.
+    ///
+    /// The bridge answers `Ok` once the daemon has the message. This is the
+    /// deterministic way to build a transcript for replication QA without a
+    /// provider call.
+    pub fn send_context_message(&self, session_id: &str, content: &str) -> Result<()> {
+        self.request_ok(ApiRequest::SendMessage {
+            session_id: session_id.to_string(),
+            content: content.to_string(),
+            system_reminder: None,
+            images: Vec::new(),
+            no_reply: true,
+        })
+        .map(drop)
+    }
+
+    /// Send a user message.
+    ///
+    /// The harness does not reply to `send_message` at the request level: it
+    /// acknowledges by emitting `message_accepted` once the agent has the
+    /// message. Waiting for a reply here would always time out, so the frame
+    /// is written and the acknowledgement event is awaited instead. Pass a
+    /// `None` timeout for pure fire-and-forget.
+    pub fn send_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        images: Vec<(String, String)>,
+        wait_for_accept: Option<Duration>,
+    ) -> Result<()> {
+        self.send_message_with_reminder(session_id, content, images, None, wait_for_accept)
+    }
+
+    /// [`send_message`](Self::send_message) with a hidden system reminder
+    /// for this turn only, such as a collection's instructions. The reminder
+    /// guides the model without appearing in the visible transcript.
+    pub fn send_message_with_reminder(
+        &self,
+        session_id: &str,
+        content: &str,
+        images: Vec<(String, String)>,
+        system_reminder: Option<&str>,
+        wait_for_accept: Option<Duration>,
+    ) -> Result<()> {
+        // Subscribe *before* writing: an ack that lands between the write and
+        // the subscribe would otherwise be missed and time out a healthy turn.
+        let stream = wait_for_accept.map(|_| self.events(Some(session_id)));
+        self.notify(ApiRequest::SendMessage {
+            session_id: session_id.to_string(),
+            content: content.to_string(),
+            system_reminder: system_reminder
+                .map(str::trim)
+                .filter(|reminder| !reminder.is_empty())
+                .map(str::to_owned),
+            images,
+            no_reply: false,
+        })?;
+        if let (Some(stream), Some(timeout)) = (stream, wait_for_accept) {
+            let deadline = std::time::Instant::now() + timeout;
+            while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+                match stream.next_timeout(remaining) {
+                    // Returning on timeout rather than failing keeps a missing
+                    // ack from failing an otherwise healthy turn: the stream is
+                    // the source of truth.
+                    None => break,
+                    Some(ApiEvent::MessageAccepted { .. }) => break,
+                    Some(_) => continue,
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn cancel(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::Cancel {
+            session_id: session_id.to_string(),
+        })
+        .map(drop)
+    }
+
+    pub fn soft_interrupt(&self, session_id: &str, content: &str, urgent: bool) -> Result<()> {
+        self.soft_interrupt_with_images(session_id, content, Vec::new(), urgent)
+    }
+
+    /// Inject text and image attachments at the next safe point without cancelling.
+    pub fn soft_interrupt_with_images(
+        &self,
+        session_id: &str,
+        content: &str,
+        images: Vec<(String, String)>,
+        urgent: bool,
+    ) -> Result<()> {
+        self.soft_interrupt_with_id(session_id, content, images, urgent, None)
+    }
+
+    /// Queue a soft interrupt tagged with an opaque `client_id`.
+    ///
+    /// The id comes back in [`ApiEvent::SoftInterruptInjected`] when the model
+    /// receives the message, and [`Self::cancel_soft_interrupt`] can take it
+    /// back before then. Needs the `soft_interrupt_ids` capability; an older
+    /// server accepts the message but drops the id.
+    pub fn soft_interrupt_with_id(
+        &self,
+        session_id: &str,
+        content: &str,
+        images: Vec<(String, String)>,
+        urgent: bool,
+        client_id: Option<&str>,
+    ) -> Result<()> {
+        self.request_ok(ApiRequest::SoftInterrupt {
+            session_id: session_id.to_string(),
+            content: content.to_string(),
+            images,
+            urgent,
+            client_id: client_id.map(str::to_string),
+        })
+        .map(drop)
+    }
+
+    pub fn get_history(&self, session_id: &str) -> Result<Vec<HistoryMessage>> {
+        self.get_history_with_images(session_id).map(|(messages, _)| messages)
+    }
+
+    pub fn get_history_with_images(
+        &self,
+        session_id: &str,
+    ) -> Result<(Vec<HistoryMessage>, Vec<horon_agent_harness_api::RenderedImage>)> {
+        match self
+            .request_ok(ApiRequest::GetHistory {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::History { messages, images, .. } => Ok((messages, images)),
+            other => Err(unexpected("history", &other)),
+        }
+    }
+
+    pub fn peek_session(&self, session_id: &str, limit: Option<u32>) -> Result<Vec<HistoryMessage>> {
+        match self
+            .request_ok(ApiRequest::PeekSession {
+                session_id: session_id.to_string(),
+                limit,
+            })?
+            .event
+        {
+            ApiEvent::History { messages, .. } => Ok(messages),
+            other => Err(unexpected("history", &other)),
+        }
+    }
+
+    pub fn clear(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::Clear {
+            session_id: session_id.to_string(),
+        })
+        .map(drop)
+    }
+
+    pub fn rewind(&self, session_id: &str, message_index: usize) -> Result<()> {
+        self.request_ok(ApiRequest::Rewind {
+            session_id: session_id.to_string(),
+            message_index,
+        })
+        .map(drop)
+    }
+
+    pub fn respond_to_permission(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        decision: PermissionDecision,
+    ) -> Result<()> {
+        self.request_ok(ApiRequest::PermissionResponse {
+            session_id: session_id.to_string(),
+            request_id: request_id.to_string(),
+            decision,
+        })
+        .map(drop)
+    }
+
+    /// Answer an `AskRequested` event.
+    ///
+    /// `ask_id` echoes the event. A reply for a question set that is no longer
+    /// pending is refused, so a late answer cannot resolve a newer question.
+    pub fn respond_to_ask(&self, session_id: &str, ask_id: &str, answers: Vec<AskSelection>) -> Result<()> {
+        self.request_ok(ApiRequest::AskResponse {
+            session_id: session_id.to_string(),
+            ask_id: ask_id.to_string(),
+            answers,
+            answer_id: None,
+        })
+        .map(drop)
+    }
+
+    /// Answer an `AskRequested` event with a retry-safe answer id.
+    ///
+    /// Requires `ask_receipts_v1`. The same `answer_id` with the same answers
+    /// is a replay of one answer, so a retry after a lost reply resolves the
+    /// question once; a different `answer_id` for an already answered question
+    /// is a conflict rather than a second resolution.
+    pub fn respond_to_ask_with_id(
+        &self,
+        session_id: &str,
+        ask_id: &str,
+        answer_id: &str,
+        answers: Vec<AskSelection>,
+    ) -> Result<()> {
+        self.require_capability(
+            horon_agent_harness_api::CAPABILITY_ASK_RECEIPTS_V1,
+            "respond_to_ask_with_id",
+        )?;
+        self.request_ok(ApiRequest::AskResponse {
+            session_id: session_id.to_string(),
+            ask_id: ask_id.to_string(),
+            answers,
+            answer_id: Some(answer_id.to_string()),
+        })
+        .map(drop)
+    }
+
+    /// Models this session can switch to, and which one is serving it.
+    pub fn list_models(&self, session_id: &str) -> Result<(Vec<String>, Option<String>)> {
+        match self
+            .request_ok(ApiRequest::ListModels {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::Models { models, current, .. } => Ok((models, current)),
+            other => Err(unexpected("models", &other)),
+        }
+    }
+
+    /// Runtime identity, route catalog, protocol metadata, and a live health
+    /// check for a session.
+    pub fn runtime_command(
+        &self,
+        session_id: &str,
+        command: horon_agent_harness_api::RuntimeCommand,
+        args: Vec<String>,
+    ) -> Result<horon_agent_harness_api::RuntimeCommandOutput> {
+        if !self.supports("runtime_commands") {
+            return Err(Error::new(
+                ErrorKind::Harness(horon_agent_harness_api::ErrorCode::UnknownRequest),
+                "This runtime does not support structured commands. Update and restart the daemon and bridge.",
+            ));
+        }
+        match self
+            .request_ok(ApiRequest::RuntimeCommand {
+                session_id: session_id.into(),
+                command,
+                args,
+            })?
+            .event
+        {
+            ApiEvent::RuntimeCommandResult {
+                session_id,
+                command,
+                data,
+                message,
+            } => Ok(horon_agent_harness_api::RuntimeCommandOutput {
+                session_id,
+                command,
+                data,
+                message,
+            }),
+            other => Err(unexpected("runtime_command_result", &other)),
+        }
+    }
+
+    pub fn get_runtime_info(&self, session_id: &str) -> Result<RuntimeInfo> {
+        self.ping()?;
+        match self
+            .request_ok(ApiRequest::GetRuntimeInfo {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::RuntimeInfo {
+                session_id,
+                provider,
+                model,
+                reasoning_effort,
+                auth_method,
+                routes,
+            } => {
+                let mut providers = Vec::new();
+                if let Some(provider) = provider.as_ref() {
+                    providers.push(provider.clone());
+                }
+                for route in &routes {
+                    if !providers.contains(&route.provider) {
+                        providers.push(route.provider.clone());
+                    }
+                }
+                Ok(RuntimeInfo {
+                    server: self.server.clone(),
+                    protocol_version: API_VERSION_MAJOR,
+                    capabilities: self.capabilities.clone(),
+                    healthy: true,
+                    session_id,
+                    provider,
+                    model,
+                    reasoning_effort,
+                    auth_method,
+                    providers,
+                    routes,
+                })
+            }
+            other => Err(unexpected("runtime_info", &other)),
+        }
+    }
+
+    /// Persist an API key in horon-agent's owner-only provider store and hot-reload
+    /// provider credentials.
+    pub fn set_api_key(&self, provider: &str, api_key: &str) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::SetApiKey {
+                provider: provider.to_string(),
+                api_key: api_key.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::CredentialUpdated { .. } => Ok(()),
+            other => Err(unexpected("credential_updated", &other)),
+        }
+    }
+
+    /// Reload credentials saved by an out-of-band OAuth login. This does not
+    /// send a chat message or transport any credential material.
+    pub fn notify_auth_changed(&self, provider: &str) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::NotifyAuthChanged {
+                provider: provider.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::Ok => Ok(()),
+            other => Err(unexpected("ok", &other)),
+        }
+    }
+
+    /// Tell the daemon a banked usage reset was redeemed for one subscription
+    /// login (`claude` or `openai`), so it refetches quota instead of keeping a
+    /// pre-reset cooldown. Carries no credentials and never redeems anything.
+    pub fn invalidate_usage(&self, provider: &str, account_label: Option<&str>) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::InvalidateUsage {
+                provider: provider.to_string(),
+                account_label: account_label.map(str::to_string),
+            })?
+            .event
+        {
+            ApiEvent::Ok => Ok(()),
+            other => Err(unexpected("ok", &other)),
+        }
+    }
+
+    /// Remove a persisted API-key credential and hot-reload provider
+    /// credentials.
+    pub fn clear_api_key(&self, provider: &str) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::ClearApiKey {
+                provider: provider.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::CredentialUpdated { .. } => Ok(()),
+            other => Err(unexpected("credential_updated", &other)),
+        }
+    }
+
+    /// Read one UTF-8 file under the session working directory.
+    pub fn read_file(&self, session_id: &str, path: &str, max_bytes: Option<u64>) -> Result<FileContent> {
+        match self
+            .request_ok(ApiRequest::ReadFile {
+                session_id: session_id.to_string(),
+                path: path.to_string(),
+                max_bytes,
+            })?
+            .event
+        {
+            ApiEvent::FileContent {
+                path,
+                content,
+                size,
+                truncated,
+                ..
+            } => Ok(FileContent {
+                path,
+                content,
+                size,
+                truncated,
+            }),
+            other => Err(unexpected("file_content", &other)),
+        }
+    }
+
+    /// Find files by case-insensitive path substring under the session root.
+    pub fn find_files(&self, session_id: &str, query: &str, limit: Option<u32>) -> Result<Vec<String>> {
+        match self
+            .request_ok(ApiRequest::FindFiles {
+                session_id: session_id.to_string(),
+                query: query.to_string(),
+                limit,
+            })?
+            .event
+        {
+            ApiEvent::Files { paths, .. } => Ok(paths),
+            other => Err(unexpected("files", &other)),
+        }
+    }
+
+    /// Search UTF-8 files under the session root for a literal string.
+    pub fn search_text(&self, session_id: &str, query: &str, options: SearchTextOptions) -> Result<Vec<TextMatch>> {
+        match self
+            .request_ok(ApiRequest::SearchText {
+                session_id: session_id.to_string(),
+                query: query.to_string(),
+                path: options.path,
+                limit: options.limit,
+            })?
+            .event
+        {
+            ApiEvent::TextMatches { matches, .. } => Ok(matches),
+            other => Err(unexpected("text_matches", &other)),
+        }
+    }
+
+    /// Read safe filesystem metadata for a path under the session root.
+    /// The session's persisted todo state for the auto-poke and quality-gate
+    /// policy. Requires the `todo_state` capability.
+    pub fn todo_state(&self, session_id: &str) -> Result<horon_agent_todo_policy::TodoSnapshot> {
+        match self
+            .request_ok(ApiRequest::GetTodoState {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::TodoState { state, .. } => Ok(state),
+            other => Err(unexpected("todo_state", &other)),
+        }
+    }
+
+    /// Apply a follow-up decision's persistent effects. A no-op when empty.
+    pub fn ack_todo_follow_up(&self, session_id: &str, effects: horon_agent_todo_policy::TodoEffects) -> Result<()> {
+        if effects.is_empty() {
+            return Ok(());
+        }
+        self.request_ok(ApiRequest::AckTodoFollowUp {
+            session_id: session_id.to_string(),
+            effects,
+        })
+        .map(drop)
+    }
+
+    pub fn file_status(&self, session_id: &str, path: &str) -> Result<FileStatus> {
+        match self
+            .request_ok(ApiRequest::FileStatus {
+                session_id: session_id.to_string(),
+                path: path.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::FileStatus {
+                path,
+                exists,
+                kind,
+                size,
+                modified_ms,
+                ..
+            } => Ok(FileStatus {
+                path,
+                exists,
+                kind,
+                size,
+                modified_ms,
+            }),
+            other => Err(unexpected("file_status", &other)),
+        }
+    }
+
+    /// Configure the tools available to a session before starting a turn.
+    ///
+    /// Custom tool invocations arrive as [`ApiEvent::ToolCall`] on [`Self::events`].
+    /// Subscribe before sending a message and answer each invocation with
+    /// [`Self::submit_tool_result`]. The SDK does not execute custom tools itself.
+    pub fn configure_tools(&self, session_id: &str, tools: ToolConfiguration) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::ConfigureTools {
+                session_id: session_id.to_string(),
+                tools,
+            })?
+            .event
+        {
+            ApiEvent::Ok => Ok(()),
+            other => Err(unexpected("ok", &other)),
+        }
+    }
+
+    /// List the effective tool definitions available to a session.
+    pub fn list_tools(&self, session_id: &str) -> Result<Vec<SessionToolDefinition>> {
+        match self
+            .request_ok(ApiRequest::ListTools {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::Tools { tools, .. } => Ok(tools),
+            other => Err(unexpected("tools", &other)),
+        }
+    }
+
+    /// Complete a custom [`ApiEvent::ToolCall`] using its session and call ids.
+    ///
+    /// Pass textual output (serialize structured results as JSON) and `None`
+    /// for success, or `Some(message)` to report a tool execution failure.
+    pub fn submit_tool_result(
+        &self,
+        session_id: &str,
+        call_id: &str,
+        output: &str,
+        error: Option<String>,
+    ) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::ToolResult {
+                session_id: session_id.to_string(),
+                call_id: call_id.to_string(),
+                output: output.to_string(),
+                error,
+            })?
+            .event
+        {
+            ApiEvent::Ok => Ok(()),
+            other => Err(unexpected("ok", &other)),
+        }
+    }
+
+    /// Switch the session to a different model. `model` is an id from
+    /// `list_models`.
+    pub fn set_model(&self, session_id: &str, model: &str) -> Result<()> {
+        self.request_ok(ApiRequest::SetModel {
+            session_id: session_id.to_string(),
+            model: model.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Set how much the model deliberates before answering. The accepted set
+    /// is per-provider, so this takes a string rather than a union that would
+    /// go stale.
+    pub fn set_reasoning_effort(&self, session_id: &str, effort: &str) -> Result<()> {
+        self.request_ok(ApiRequest::SetReasoningEffort {
+            session_id: session_id.to_string(),
+            effort: effort.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Schedule compaction of the transcript so far, freeing context. Not
+    /// synchronous: returning means the request was accepted.
+    pub fn compact(&self, session_id: &str) -> Result<String> {
+        match self
+            .request_ok(ApiRequest::Compact {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::Compacted { message, .. } => Ok(message),
+            other => Err(unexpected("compacted", &other)),
+        }
+    }
+
+    /// Set a session's title. `None` restores the generated one.
+    pub fn rename_session(&self, session_id: &str, title: Option<String>) -> Result<()> {
+        self.request_ok(ApiRequest::RenameSession {
+            session_id: session_id.to_string(),
+            title,
+        })
+        .map(drop)
+    }
+
+    /// Bookmark or unbookmark a session. A label also becomes its title.
+    pub fn set_session_saved(&self, session_id: &str, saved: bool, label: Option<String>) -> Result<()> {
+        self.request_ok(ApiRequest::SetSessionSaved {
+            session_id: session_id.to_string(),
+            saved,
+            label,
+        })
+        .map(drop)
+    }
+
+    /// Report a user action in an agent applet instance.
+    pub fn applet_action(
+        &self,
+        session_id: &str,
+        instance: &str,
+        action: horon_agent_applet_types::Action,
+        state: serde_json::Value,
+        source_key: Option<String>,
+    ) -> Result<()> {
+        self.request_ok(ApiRequest::AppletAction {
+            session_id: session_id.to_string(),
+            instance: instance.to_string(),
+            action,
+            state,
+            source_key,
+        })
+        .map(drop)
+    }
+
+    /// Close an agent applet instance. The agent is not woken.
+    pub fn close_applet(&self, session_id: &str, instance: &str) -> Result<()> {
+        self.request_ok(ApiRequest::CloseApplet {
+            session_id: session_id.to_string(),
+            instance: instance.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Restore the history the last `rewind` removed.
+    pub fn rewind_undo(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::RewindUndo {
+            session_id: session_id.to_string(),
+        })
+        .map(drop)
+    }
+
+    /// Drop soft interrupts that are queued but not yet delivered.
+    pub fn cancel_soft_interrupts(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::CancelSoftInterrupts {
+            session_id: session_id.to_string(),
+            client_ids: None,
+        })
+        .map(drop)
+    }
+
+    /// Take back specific queued soft interrupts by `client_id`.
+    ///
+    /// Returns `(cancelled, not_queued)`. The server decides against injection
+    /// atomically, so an id in `cancelled` was never seen by the model, and an
+    /// id in `not_queued` was already delivered (or never queued).
+    pub fn cancel_soft_interrupts_by_id(
+        &self,
+        session_id: &str,
+        client_ids: &[&str],
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let request = ApiRequest::CancelSoftInterrupts {
+            session_id: session_id.to_string(),
+            client_ids: Some(client_ids.iter().map(|id| id.to_string()).collect()),
+        };
+        match self.request_ok(request)?.event {
+            ApiEvent::SoftInterruptsCancelled { cancelled, not_queued } => Ok((cancelled, not_queued)),
+            other => Err(unexpected("soft_interrupts_cancelled", &other)),
+        }
+    }
+
+    /// Take back one queued soft interrupt. `true` means it was removed before
+    /// the model saw it, `false` that it was already delivered (or unknown).
+    pub fn cancel_soft_interrupt(&self, session_id: &str, client_id: &str) -> Result<bool> {
+        self.cancel_soft_interrupts_by_id(session_id, &[client_id])
+            .map(|(cancelled, _)| !cancelled.is_empty())
+    }
+
+    /// Move the running tool call to the background (the TUI's Alt+B).
+    pub fn background_tool(&self, session_id: &str) -> Result<()> {
+        self.background_tool_result(session_id).map(drop)
+    }
+
+    /// Move the running tool call to the background and report what moved.
+    ///
+    /// Returns `(moved, tool_call_id)`. A server without the
+    /// `background_tool_result` capability answers only `Ok`, reported here as
+    /// `(false, None)` even if a tool was moved.
+    pub fn background_tool_result(&self, session_id: &str) -> Result<(bool, Option<String>)> {
+        match self
+            .request_ok(ApiRequest::BackgroundTool {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::BackgroundToolResult {
+                moved, tool_call_id, ..
+            } => Ok((moved, tool_call_id)),
+            _ => Ok((false, None)),
+        }
+    }
+
+    pub fn ping(&self) -> Result<()> {
+        self.request_ok(ApiRequest::Ping).map(drop)
+    }
+
+    /// Run, queue, receipt, and monitor summary of this session's durable
+    /// runtime journal. Requires `durable_runtime_v1`.
+    ///
+    /// A summary only: input content, command arguments, and command
+    /// environment variables never travel here.
+    pub fn get_runtime_state(&self, session_id: &str) -> Result<RuntimeStateSummary> {
+        self.require_capability(
+            horon_agent_harness_api::CAPABILITY_DURABLE_RUNTIME_V1,
+            "get_runtime_state",
+        )?;
+        match self
+            .request_ok(ApiRequest::GetRuntimeState {
+                session_id: session_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::RuntimeState { state, .. } => Ok(state),
+            other => Err(unexpected("runtime_state", &other)),
+        }
+    }
+
+    /// Apply one control operation under a caller-chosen id.
+    ///
+    /// Requires `durable_runtime_v1`. The same `operation_id` reports the
+    /// recorded receipt instead of applying the operation twice, so a retry
+    /// after a lost reply is safe.
+    pub fn apply_control(
+        &self,
+        session_id: &str,
+        operation_id: &str,
+        action: &str,
+        args: Option<serde_json::Value>,
+    ) -> Result<RuntimeControlReceipt> {
+        self.require_capability(horon_agent_harness_api::CAPABILITY_DURABLE_RUNTIME_V1, "apply_control")?;
+        match self
+            .request_ok(ApiRequest::ApplyControl {
+                session_id: session_id.to_string(),
+                operation_id: operation_id.to_string(),
+                action: action.to_string(),
+                args,
+            })?
+            .event
+        {
+            ApiEvent::ControlReceipt { receipt, .. } => Ok(receipt),
+            other => Err(unexpected("control_receipt", &other)),
+        }
+    }
+
+    /// The recorded state of one control operation. Requires
+    /// `durable_runtime_v1`.
+    pub fn get_control_receipt(&self, session_id: &str, operation_id: &str) -> Result<RuntimeControlReceipt> {
+        self.require_capability(
+            horon_agent_harness_api::CAPABILITY_DURABLE_RUNTIME_V1,
+            "get_control_receipt",
+        )?;
+        match self
+            .request_ok(ApiRequest::GetControlReceipt {
+                session_id: session_id.to_string(),
+                operation_id: operation_id.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::ControlReceipt { receipt, .. } => Ok(receipt),
+            other => Err(unexpected("control_receipt", &other)),
+        }
+    }
+
+    /// One consistent state view plus a bounded history tail, at a marker the
+    /// server also sends on this connection as a `snapshot_marker` event.
+    /// Requires `snapshot_marker_v1`.
+    pub fn get_snapshot(&self, session_id: &str, tail: Option<u32>, max_bytes: Option<u64>) -> Result<SessionSnapshot> {
+        self.require_capability(horon_agent_harness_api::CAPABILITY_SNAPSHOT_MARKER_V1, "get_snapshot")?;
+        match self
+            .request_ok(ApiRequest::GetSnapshot {
+                session_id: session_id.to_string(),
+                tail,
+                max_bytes,
+            })?
+            .event
+        {
+            ApiEvent::Snapshot { snapshot, .. } => Ok(snapshot),
+            other => Err(unexpected("snapshot", &other)),
+        }
+    }
+
+    fn require_capability(&self, capability: &str, surface: &str) -> Result<()> {
+        if self.supports(capability) {
+            return Ok(());
+        }
+        Err(Error::new(
+            ErrorKind::Unsupported,
+            format!(
+                "{surface} requires the `{capability}` capability; update and restart the daemon and the API bridge"
+            ),
+        ))
+    }
+
+    fn replication_request(&self, request: ApiRequest) -> Result<ApiEvent> {
+        let frame = self.request_with_limit(request, MAX_REPLICATION_WIRE_BYTES)?;
+        match frame.event {
+            ApiEvent::Error { code, message, details } => {
+                Err(Error::new(ErrorKind::Harness(code), message).with_details(details))
+            }
+            event => Ok(event),
+        }
+    }
+
+    /// Durable heads and the host-local selection. Requires `session_event_store_v1`.
+    pub fn list_session_heads(&self, session_id: &str) -> Result<SessionHeads> {
+        self.require_capability("session_event_store_v1", "list_session_heads")?;
+        match self.replication_request(ApiRequest::ListSessionHeads {
+            session_id: session_id.to_string(),
+        })? {
+            ApiEvent::SessionHeads {
+                session_id,
+                heads,
+                selected_head,
+            } => Ok(SessionHeads {
+                session_id,
+                heads,
+                selected_head,
+            }),
+            other => Err(unexpected("session_heads", &other)),
+        }
+    }
+
+    /// Select the head execution should use. A live owner answers `busy`.
+    pub fn select_session_head(&self, session_id: &str, head_event_id: &str) -> Result<SessionHeads> {
+        self.require_capability("session_event_store_v1", "select_session_head")?;
+        match self.replication_request(ApiRequest::SelectSessionHead {
+            session_id: session_id.to_string(),
+            head_event_id: head_event_id.to_string(),
+        })? {
+            ApiEvent::SessionHeads {
+                session_id,
+                heads,
+                selected_head,
+            } => Ok(SessionHeads {
+                session_id,
+                heads,
+                selected_head,
+            }),
+            other => Err(unexpected("session_heads", &other)),
+        }
+    }
+
+    /// One page of visible history on a fixed head, oldest first.
+    ///
+    /// `before_event_id` is the previous page's `next_cursor`, passed back
+    /// verbatim. Requires `session_history_cursor_v1`.
+    pub fn get_history_page(
+        &self,
+        session_id: &str,
+        head_event_id: Option<&str>,
+        before_event_id: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<SessionHistoryPage> {
+        self.require_capability("session_history_cursor_v1", "get_history_page")?;
+        match self.replication_request(ApiRequest::GetHistoryPage {
+            session_id: session_id.to_string(),
+            head_event_id: head_event_id.map(str::to_string),
+            before_event_id: before_event_id.map(str::to_string),
+            limit,
+        })? {
+            ApiEvent::SessionHistoryPage {
+                session_id,
+                head,
+                messages,
+                next_cursor,
+            } => Ok(SessionHistoryPage {
+                session_id,
+                head,
+                messages,
+                next_cursor,
+            }),
+            other => Err(unexpected("session_history_page", &other)),
+        }
+    }
+
+    /// Export one bounded parent-first page of original events.
+    ///
+    /// Canonical record bytes are returned as opaque strings and are never
+    /// parsed or re-serialized here. Requires `session_replication_v1`.
+    pub fn export_session_events(
+        &self,
+        session_id: &str,
+        heads: Vec<String>,
+        known_ids: Vec<String>,
+        cursor: Option<String>,
+    ) -> Result<SessionEventPage> {
+        self.require_capability("session_replication_v1", "export_session_events")?;
+        match self.replication_request(ApiRequest::ExportSessionEvents {
+            session_id: session_id.to_string(),
+            protocol_version: horon_agent_harness_api::REPLICATION_PROTOCOL_VERSION,
+            heads,
+            known_ids,
+            cursor,
+        })? {
+            ApiEvent::SessionEventPage {
+                session_id,
+                heads,
+                events,
+                next_cursor,
+                blob_refs,
+                record_refs,
+            } => Ok(SessionEventPage {
+                session_id,
+                heads,
+                events,
+                next_cursor,
+                blob_refs,
+                record_refs,
+            }),
+            other => Err(unexpected("session_event_page", &other)),
+        }
+    }
+
+    /// Import one validated page. Identical retransmissions are idempotent.
+    pub fn import_session_events(
+        &self,
+        page: &SessionEventPage,
+        retry_cursor: Option<&str>,
+    ) -> Result<SessionImportResult> {
+        self.require_capability("session_replication_v1", "import_session_events")?;
+        match self.replication_request(ApiRequest::ImportSessionEvents {
+            session_id: page.session_id.clone(),
+            protocol_version: horon_agent_harness_api::REPLICATION_PROTOCOL_VERSION,
+            heads: page.heads.clone(),
+            events: page.events.clone(),
+            next_cursor: page.next_cursor.clone(),
+            blob_refs: page.blob_refs.clone(),
+            record_refs: page.record_refs.clone(),
+            retry_cursor: retry_cursor.map(str::to_string),
+        })? {
+            ApiEvent::SessionImportResult {
+                session_id,
+                accepted_ids,
+                heads,
+                retry_cursor,
+                conflict_heads,
+            } => Ok(SessionImportResult {
+                session_id,
+                accepted_ids,
+                heads,
+                retry_cursor,
+                conflict_heads,
+            }),
+            other => Err(unexpected("session_import_result", &other)),
+        }
+    }
+
+    /// Read one 1 MiB chunk of an original payload blob.
+    pub fn export_session_blob(
+        &self,
+        session_id: &str,
+        sha256: &str,
+        total_size: u64,
+        offset: u64,
+    ) -> Result<SessionBlobChunk> {
+        self.require_capability("session_replication_v1", "export_session_blob")?;
+        match self.replication_request(ApiRequest::ExportSessionBlob {
+            session_id: session_id.to_string(),
+            sha256: sha256.to_string(),
+            total_size,
+            offset,
+        })? {
+            ApiEvent::SessionBlobChunk {
+                session_id: _,
+                sha256,
+                offset,
+                data_base64,
+                next_offset,
+                total_size,
+                complete,
+            } => Ok(SessionBlobChunk {
+                sha256,
+                offset,
+                data_base64,
+                next_offset,
+                total_size,
+                complete,
+            }),
+            other => Err(unexpected("session_blob_chunk", &other)),
+        }
+    }
+
+    /// Stage one chunk of an original payload blob.
+    pub fn import_session_blob(&self, session_id: &str, chunk: &SessionBlobChunk) -> Result<SessionBlobStatus> {
+        self.require_capability("session_replication_v1", "import_session_blob")?;
+        match self.replication_request(ApiRequest::ImportSessionBlob {
+            session_id: session_id.to_string(),
+            chunk: chunk.clone(),
+        })? {
+            ApiEvent::SessionBlobStatus {
+                session_id,
+                sha256,
+                received,
+                total_size,
+                complete,
+            } => Ok(SessionBlobStatus {
+                session_id,
+                sha256,
+                received,
+                total_size,
+                complete,
+            }),
+            other => Err(unexpected("session_blob_status", &other)),
+        }
+    }
+
+    /// Resume an interrupted payload transfer.
+    pub fn session_blob_status(&self, session_id: &str, sha256: &str, total_size: u64) -> Result<SessionBlobStatus> {
+        self.require_capability("session_replication_v1", "session_blob_status")?;
+        match self.replication_request(ApiRequest::GetSessionBlobStatus {
+            session_id: session_id.to_string(),
+            sha256: sha256.to_string(),
+            total_size,
+        })? {
+            ApiEvent::SessionBlobStatus {
+                session_id,
+                sha256,
+                received,
+                total_size,
+                complete,
+            } => Ok(SessionBlobStatus {
+                session_id,
+                sha256,
+                received,
+                total_size,
+                complete,
+            }),
+            other => Err(unexpected("session_blob_status", &other)),
+        }
+    }
+
+    /// Read one 1 MiB chunk of a whole canonical record carried by reference.
+    pub fn export_session_record_blob(
+        &self,
+        session_id: &str,
+        reference: &CanonicalRecordRef,
+        offset: u64,
+    ) -> Result<SessionBlobChunk> {
+        self.require_capability("session_replication_v1", "export_session_record_blob")?;
+        match self.replication_request(ApiRequest::ExportSessionRecordBlob {
+            session_id: session_id.to_string(),
+            reference: reference.clone(),
+            offset,
+        })? {
+            ApiEvent::SessionBlobChunk {
+                sha256,
+                offset,
+                data_base64,
+                next_offset,
+                total_size,
+                complete,
+                ..
+            } => Ok(SessionBlobChunk {
+                sha256,
+                offset,
+                data_base64,
+                next_offset,
+                total_size,
+                complete,
+            }),
+            other => Err(unexpected("session_blob_chunk", &other)),
+        }
+    }
+
+    /// Stage one chunk of a whole canonical record.
+    pub fn import_session_record_blob(
+        &self,
+        session_id: &str,
+        reference: &CanonicalRecordRef,
+        chunk: &SessionBlobChunk,
+    ) -> Result<SessionRecordBlobStatus> {
+        self.require_capability("session_replication_v1", "import_session_record_blob")?;
+        match self.replication_request(ApiRequest::ImportSessionRecordBlob {
+            session_id: session_id.to_string(),
+            reference: reference.clone(),
+            chunk: chunk.clone(),
+        })? {
+            ApiEvent::SessionRecordBlobStatus {
+                session_id,
+                reference,
+                received,
+                total_size,
+                complete,
+            } => Ok(SessionRecordBlobStatus {
+                session_id,
+                reference,
+                received,
+                total_size,
+                complete,
+            }),
+            other => Err(unexpected("session_record_blob_status", &other)),
+        }
+    }
+
+    /// Resume an interrupted whole-record transfer.
+    pub fn session_record_blob_status(
+        &self,
+        session_id: &str,
+        reference: &CanonicalRecordRef,
+    ) -> Result<SessionRecordBlobStatus> {
+        self.require_capability("session_replication_v1", "session_record_blob_status")?;
+        match self.replication_request(ApiRequest::GetSessionRecordBlobStatus {
+            session_id: session_id.to_string(),
+            reference: reference.clone(),
+        })? {
+            ApiEvent::SessionRecordBlobStatus {
+                session_id,
+                reference,
+                received,
+                total_size,
+                complete,
+            } => Ok(SessionRecordBlobStatus {
+                session_id,
+                reference,
+                received,
+                total_size,
+                complete,
+            }),
+            other => Err(unexpected("session_record_blob_status", &other)),
+        }
+    }
+
+    fn request_with_limit(&self, request: ApiRequest, max_bytes: usize) -> Result<ServerFrame> {
+        let frame = ClientFrame::new(0, request.clone());
+        if let Ok(bytes) = serde_json::to_vec(&frame)
+            && bytes.len() + 64 > max_bytes
+        {
+            return Err(Error::new(
+                ErrorKind::Harness(ErrorCode::InvalidRequest),
+                format!("replication request exceeds the {max_bytes} byte wire envelope"),
+            )
+            .with_details(Some(StoreErrorDetail {
+                store_code: "record_too_large".into(),
+                retryable: false,
+                ..StoreErrorDetail::default()
+            })));
+        }
+        self.request(request)
+    }
+
+    /// Send a message and collect the assistant reply until the turn ends.
+    ///
+    /// The convenience path for scripts: one call in, the text and tool calls
+    /// of one turn out. Streaming consumers should use `events()` instead.
+    pub fn run(&self, session_id: &str, content: &str, options: RunOptions) -> Result<TurnResult> {
+        let stream = self.events(Some(session_id));
+        self.send_message(
+            session_id,
+            content,
+            options.images.clone(),
+            Some(Duration::from_secs(10)),
+        )?;
+        let mut result = TurnResult::default();
+        let mut text_stream = TextCollector::default();
+        while let Some(event) = stream.next() {
+            if let Some(on_event) = &options.on_event {
+                on_event(&event);
+            }
+            match event {
+                ApiEvent::TextDelta { text, message_id, .. } => {
+                    text_stream.message(message_id).0.text.push_str(&text);
+                }
+                ApiEvent::TextReplace { text, message_id, .. } => {
+                    text_stream.message(message_id).0.text = text;
+                }
+                ApiEvent::TextDone { message_id, .. } => {
+                    if let Some(index) = text_stream.index(&message_id) {
+                        text_stream.parts[index].1 = true;
+                    }
+                }
+                ApiEvent::ReasoningDelta { text, .. } => result.reasoning.push_str(&text),
+                ApiEvent::ToolDone {
+                    call_id,
+                    name,
+                    output,
+                    error,
+                    ..
+                } => result.tool_calls.push(ToolCall {
+                    call_id,
+                    name,
+                    output,
+                    error,
+                }),
+                ApiEvent::TokenUsage {
+                    input,
+                    output,
+                    cache_read_input,
+                    cache_creation_input,
+                    ..
+                } => {
+                    result.usage = Some(Usage {
+                        input,
+                        output,
+                        cache_read_input,
+                        cache_creation_input,
+                    })
+                }
+                ApiEvent::PermissionRequest { request_id, .. } if options.auto_approve => {
+                    self.respond_to_permission(session_id, &request_id, PermissionDecision::Allow)?;
+                }
+                ApiEvent::TurnStopped { reason, message, .. } => {
+                    result.stop_reason = Some(reason);
+                    result.stop_message = Some(message);
+                }
+                ApiEvent::TurnDone { .. } => {
+                    text_stream.finish(&mut result);
+                    return Ok(result);
+                }
+                ApiEvent::Error { code, message, details } => {
+                    return Err(Error::new(ErrorKind::Harness(code), message).with_details(details));
+                }
+                _ => {}
+            }
+        }
+        Err(self.disconnect_error())
+    }
+
+    /// Whether the connection has been closed or lost.
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::Relaxed)
+    }
+}
+
+mod types;
+pub use types::*;
+
+#[derive(Default)]
+struct TextCollector {
+    parts: Vec<(AssistantTextMessage, bool)>,
+}
+
+impl TextCollector {
+    fn index(&self, id: &Option<String>) -> Option<usize> {
+        self.parts
+            .iter()
+            .rposition(|(part, done)| &part.message_id == id && (id.is_some() || !done))
+    }
+
+    fn message(&mut self, id: Option<String>) -> &mut (AssistantTextMessage, bool) {
+        let index = self.index(&id).unwrap_or_else(|| {
+            self.parts.push((
+                AssistantTextMessage {
+                    message_id: id,
+                    text: String::new(),
+                },
+                false,
+            ));
+            self.parts.len() - 1
+        });
+        &mut self.parts[index]
+    }
+
+    fn finish(self, result: &mut TurnResult) {
+        result.text = self.parts.iter().map(|(part, _)| part.text.as_str()).collect();
+        result.messages = self
+            .parts
+            .into_iter()
+            .filter_map(|(part, done)| (done && !part.text.is_empty()).then_some(part))
+            .collect();
+        result.final_text = result
+            .messages
+            .last()
+            .map(|part| part.text.clone())
+            .unwrap_or_else(|| result.text.clone());
+    }
+}
+
+fn discover_global_sessions(parent: HoronAgentClient, control: Arc<GlobalEventControl>, interval: Duration) {
+    loop {
+        if control.stopped.load(Ordering::Acquire) {
+            return;
+        }
+        let sessions = match parent
+            .request_ok(ApiRequest::ListSessions {
+                include_archived: true,
+                limit: None,
+            })
+            .and_then(|frame| match frame.event {
+                ApiEvent::Sessions { sessions } => Ok(sessions),
+                other => Err(unexpected("sessions", &other)),
+            }) {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                stop_global_stream(&control, Some(error));
+                return;
+            }
+        };
+
+        for session in sessions {
+            if control.stopped.load(Ordering::Acquire) {
+                return;
+            }
+            start_global_child(&parent, &control, session.session_id);
+        }
+
+        if interval.is_zero() {
+            return;
+        }
+        let Ok(guard) = control.wake_lock.lock() else {
+            stop_global_stream(
+                &control,
+                Some(Error::new(ErrorKind::Transport, "global event lock poisoned")),
+            );
+            return;
+        };
+        let _ = control.wake.wait_timeout(guard, interval);
+    }
+}
+
+fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventControl>, session_id: String) {
+    if control
+        .children
+        .lock()
+        .map(|children| children.contains_key(&session_id))
+        .unwrap_or(true)
+    {
+        return;
+    }
+
+    let connection = if let Some(options) = &parent.ssh_options {
+        let mut options = options.clone();
+        options.client_name = format!("{}/global-events", parent.inner.client_name);
+        #[cfg(unix)]
+        let shared = parent.shared_ssh_transport();
+        #[cfg(unix)]
+        if let Some(shared) = shared {
+            shared.connect()
+        } else if parent
+            .inner
+            .ssh_process
+            .as_ref()
+            .is_some_and(|process| process.was_shared)
+        {
+            Err(Error::new(
+                ErrorKind::Disconnected,
+                "shared SSH parent channel is closed",
+            ))
+        } else {
+            HoronAgentClient::connect_ssh(options)
+        }
+        #[cfg(not(unix))]
+        HoronAgentClient::connect_ssh(options)
+    } else {
+        HoronAgentClient::connect(ConnectOptions {
+            supports_user_response: false,
+            socket_path: Some(parent.inner.socket_path.clone()),
+            client_name: format!("{}/global-events", parent.inner.client_name),
+            request_timeout: parent.inner.request_timeout,
+            ensure_runtime: false,
+        })
+    };
+    let child = match connection {
+        Ok(child) => child,
+        Err(error) => {
+            stop_global_stream(control, Some(error));
+            return;
+        }
+    };
+    let stream = child.events(Some(&session_id));
+    if let Err(error) = child.attach_session(&session_id) {
+        if !matches!(
+            error.kind,
+            ErrorKind::Harness(horon_agent_harness_api::ErrorCode::UnknownSession)
+        ) {
+            stop_global_stream(control, Some(error));
+        }
+        return;
+    }
+    if control.stopped.load(Ordering::Acquire) {
+        return;
+    }
+    if let Ok(mut children) = control.children.lock() {
+        children.insert(session_id.clone(), child);
+    } else {
+        stop_global_stream(
+            control,
+            Some(Error::new(ErrorKind::Transport, "global event lock poisoned")),
+        );
+        return;
+    }
+
+    let pump_control = Arc::clone(control);
+    std::thread::spawn(move || {
+        loop {
+            let event = match stream.next_result() {
+                Ok(Some(event)) => event,
+                Ok(None) => break,
+                Err(error) => {
+                    // A child stream overflowed. Surface it on the global
+                    // stream instead of treating the child as finished, so a
+                    // truncated stream never looks like a completed one.
+                    stop_global_stream(&pump_control, Some(error));
+                    break;
+                }
+            };
+            if pump_control.stopped.load(Ordering::Acquire) {
+                break;
+            }
+            match pump_control.tx.try_send(event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    stop_global_stream(
+                        &pump_control,
+                        Some(Error::new(
+                            ErrorKind::EventBufferOverflow,
+                            format!(
+                                "global_events consumer fell behind {} buffered events",
+                                pump_control.max_buffered_events
+                            ),
+                        )),
+                    );
+                    break;
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    stop_global_stream(&pump_control, None);
+                    break;
+                }
+            }
+        }
+        if let Ok(mut children) = pump_control.children.lock() {
+            children.remove(&session_id);
+        }
+    });
+}
+
+/// The reader thread: correlates replies, fans stream events out.
+fn spawn_reader(inner: Arc<Inner>, mut reader: Box<dyn BufRead + Send>) {
+    std::thread::spawn(move || {
+        while let Ok(frame) = read_frame::<_, ServerFrame>(&mut reader) {
+            // Unknown kinds are skipped silently, per the protocol's
+            // forward-compatibility rule.
+            if matches!(frame.event, ApiEvent::Unknown) {
+                continue;
+            }
+            if let Some(reply_to) = frame.reply_to {
+                let waiter = inner
+                    .pending
+                    .lock()
+                    .ok()
+                    .and_then(|mut pending| pending.remove(&reply_to));
+                if let Some(waiter) = waiter {
+                    let _ = waiter.send(frame);
+                    continue;
+                }
+            }
+            // An event gated on a capability this connection did not negotiate
+            // is dropped rather than handed to a subscriber that has no branch
+            // for it. The server already filters, so this only matters for a
+            // server that ignored the negotiation: the client keeps the same
+            // guarantee either way.
+            if frame.event.required_capability().is_some_and(|capability| {
+                let advertised = inner
+                    .capabilities
+                    .lock()
+                    .map(|value| value.iter().any(|held| held == capability))
+                    .unwrap_or(false);
+                !advertised
+            }) {
+                continue;
+            }
+            // Not a reply anyone is waiting on: a stream event. Dead
+            // subscriptions are dropped here as well as in `EventStream::drop`,
+            // so a leaked stream cannot grow the fan-out list forever.
+            if let Ok(mut subs) = inner.subscribers.lock() {
+                let session = event_session(&frame.event);
+                subs.retain(|(_, filter, buffer)| {
+                    match (filter, session) {
+                        // A filtered subscription only wants its own session's
+                        // events. Events that name *no* session still go to it:
+                        // `error` is the one that matters, since the harness
+                        // sends it instead of `turn_done`, and dropping it
+                        // leaves a turn waiting forever for an end that will
+                        // never come.
+                        (Some(want), Some(got)) if want != got => true,
+                        _ => buffer.push(frame.event.clone()),
+                    }
+                });
+            }
+        }
+        if let Some(shutdown) = &inner.shutdown {
+            shutdown();
+        }
+        inner.closed.store(true, Ordering::Relaxed);
+        // Fail everything in flight rather than leaving callers blocked on a
+        // reply that can never arrive.
+        if let Ok(mut pending) = inner.pending.lock() {
+            pending.clear();
+        }
+        if let Ok(mut subs) = inner.subscribers.lock() {
+            // Wake every live stream instead of leaving it blocked on a
+            // connection that will never deliver again.
+            for (_, _, buffer) in subs.iter() {
+                buffer.close();
+            }
+            subs.clear();
+        }
+    });
+}
+
+/// The session an event belongs to, when it names one.
+fn event_session(event: &ApiEvent) -> Option<&str> {
+    use ApiEvent::*;
+    match event {
+        TextDelta { session_id, .. }
+        | TextDone { session_id, .. }
+        | TextReplace { session_id, .. }
+        | ReasoningDelta { session_id, .. }
+        | ReasoningDone { session_id, .. }
+        | ToolStart { session_id, .. }
+        | ToolInputDelta { session_id, .. }
+        | ToolExec { session_id, .. }
+        | ToolDone { session_id, .. }
+        | ToolCall { session_id, .. }
+        | Tools { session_id, .. }
+        | SidePanelState { session_id, .. }
+        | TokenUsage { session_id, .. }
+        | KvCacheMiss { session_id, .. }
+        | TurnDone { session_id, .. }
+        | SoftInterruptInjected { session_id, .. }
+        | TurnStopped { session_id, .. }
+        | BackgroundProgress { session_id, .. }
+        | MessageAccepted { session_id, .. }
+        | PermissionRequest { session_id, .. }
+        | SessionStatus { session_id, .. }
+        | SessionRecovery { session_id, .. }
+        | ModelInfo { session_id, .. }
+        | RuntimeInfo { session_id, .. }
+        | ConnectionPhase { session_id, .. }
+        | Models { session_id, .. }
+        | Compacted { session_id, .. }
+        | SessionRenamed { session_id, .. }
+        | RuntimeState { session_id, .. }
+        | ControlReceipt { session_id, .. }
+        | SnapshotMarker { session_id, .. }
+        | Snapshot { session_id, .. }
+        | History { session_id, .. } => Some(session_id.as_str()),
+        Attached { session } => Some(session.session_id.as_str()),
+        _ => None,
+    }
+}
+
+fn closed_error() -> Error {
+    Error::new(ErrorKind::Disconnected, "harness connection closed")
+}
+
+fn poisoned<T>(_: std::sync::PoisonError<T>) -> Error {
+    Error::new(ErrorKind::Transport, "harness client state was poisoned")
+}
+
+fn unexpected(want: &str, got: &ApiEvent) -> Error {
+    Error::new(ErrorKind::UnexpectedReply, format!("expected {want}, got {got:?}"))
+}
+
+/// The wire name of a request, for error text.
+fn request_name(request: &ApiRequest) -> String {
+    serde_json::to_value(request)
+        .ok()
+        .and_then(|value| value.get("req").and_then(|r| r.as_str().map(str::to_string)))
+        .unwrap_or_else(|| "request".to_string())
+}

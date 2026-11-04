@@ -1,0 +1,2386 @@
+use serde::{Deserialize, Serialize};
+
+mod display;
+mod menubar;
+mod power;
+pub use {display::DisplayConfig, menubar::MenubarConfig, power::PowerConfig};
+pub mod keybindings;
+mod serde_lenient;
+pub use keybindings::{
+    KEYBINDING_DEFAULTS, KeybindingDefault, KeybindingIssue, KeybindingIssueKind, KeybindingPlatform,
+    KeybindingProvenance, PlatformDefault, default_binding, default_binding_or, keybinding_default,
+    keybinding_defaults_report, validate_keybinding_defaults,
+};
+
+/// Compaction mode
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CompactionMode {
+    /// Compact when context hits a fixed threshold (default)
+    #[default]
+    Reactive,
+    /// Compact early based on predicted token growth rate
+    Proactive,
+    /// Compact based on semantic topic shifts and relevance scoring
+    Semantic,
+}
+
+impl CompactionMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Reactive => "reactive",
+            Self::Proactive => "proactive",
+            Self::Semantic => "semantic",
+        }
+    }
+
+    pub fn parse(input: &str) -> Option<Self> {
+        match input.trim().to_ascii_lowercase().as_str() {
+            "reactive" => Some(Self::Reactive),
+            "proactive" => Some(Self::Proactive),
+            "semantic" => Some(Self::Semantic),
+            _ => None,
+        }
+    }
+}
+
+/// Which compaction engine owns a session.
+///
+/// Exactly one strategy owns compaction at a time. `structured` is horon's own
+/// summarizer; the `openai_*` variants hand ownership to the provider's native
+/// compaction so both never trigger for the same turn.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionStrategy {
+    /// horon summarizes and rewrites the transcript (default).
+    #[default]
+    Structured,
+    /// [OI] native auto compaction owns the transcript.
+    #[serde(rename = "openai_auto")]
+    OpenAiAuto,
+    /// [OI] native compaction is requested explicitly by the agent.
+    #[serde(rename = "openai_explicit")]
+    OpenAiExplicit,
+}
+
+impl CompactionStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Structured => "structured",
+            Self::OpenAiAuto => "openai_auto",
+            Self::OpenAiExplicit => "openai_explicit",
+        }
+    }
+
+    pub fn parse(input: &str) -> Option<Self> {
+        match input.trim().to_ascii_lowercase().as_str() {
+            "structured" => Some(Self::Structured),
+            "openai_auto" | "openai-auto" => Some(Self::OpenAiAuto),
+            "openai_explicit" | "openai-explicit" => Some(Self::OpenAiExplicit),
+            _ => None,
+        }
+    }
+
+    /// Whether the provider owns compaction under this strategy.
+    pub fn is_native(self) -> bool {
+        !matches!(self, Self::Structured)
+    }
+}
+
+/// Session picker Enter action: "current-terminal" (default) or "new-terminal".
+/// Ctrl+Enter performs the alternate action.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionPickerResumeAction {
+    NewTerminal,
+    #[default]
+    CurrentTerminal,
+}
+
+impl SessionPickerResumeAction {
+    pub fn alternate(self) -> Self {
+        match self {
+            Self::NewTerminal => Self::CurrentTerminal,
+            Self::CurrentTerminal => Self::NewTerminal,
+        }
+    }
+}
+
+/// How to display file diffs from edit/write tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffDisplayMode {
+    /// Don't show diffs at all.
+    Off,
+    /// Show diffs inline in the chat (default).
+    #[default]
+    Inline,
+    /// Show the full inline diff in the chat without preview truncation.
+    #[serde(
+        rename = "full-inline",
+        alias = "full_inline",
+        alias = "fullinline",
+        alias = "inline-full",
+        alias = "inline_full",
+        alias = "inlinefull",
+        alias = "full"
+    )]
+    FullInline,
+    /// Show full file with diff highlights in side panel, synced to scroll position.
+    File,
+}
+
+impl DiffDisplayMode {
+    pub fn is_inline(&self) -> bool {
+        matches!(self, Self::Inline | Self::FullInline)
+    }
+
+    pub fn is_full_inline(&self) -> bool {
+        matches!(self, Self::FullInline)
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self, Self::File)
+    }
+
+    pub fn has_side_pane(&self) -> bool {
+        matches!(self, Self::File)
+    }
+
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Off => Self::Inline,
+            Self::Inline => Self::FullInline,
+            Self::FullInline => Self::File,
+            Self::File => Self::Off,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Off => "OFF",
+            Self::Inline => "Inline",
+            Self::FullInline => "Inline Full",
+            Self::File => "File",
+        }
+    }
+}
+
+#[cfg(test)]
+mod diff_display_mode_tests {
+    use super::DiffDisplayMode;
+
+    #[test]
+    fn diff_mode_cycle_keeps_inline_and_file_modes() {
+        use DiffDisplayMode::*;
+        let mut mode = Off;
+        for expected in [Inline, FullInline, File, Off, Inline] {
+            mode = mode.cycle();
+            assert_eq!(mode, expected);
+        }
+        for mode in [Off, Inline, FullInline, File] {
+            assert_eq!(mode.has_side_pane(), mode == File);
+            assert_eq!(mode.is_inline(), matches!(mode, Inline | FullInline));
+            assert_eq!(mode.is_full_inline(), mode == FullInline);
+            assert_eq!(mode.is_file(), mode == File);
+        }
+    }
+
+    #[test]
+    fn diff_mode_remaining_values_round_trip() {
+        for mode in [
+            DiffDisplayMode::Off,
+            DiffDisplayMode::Inline,
+            DiffDisplayMode::FullInline,
+            DiffDisplayMode::File,
+        ] {
+            let encoded = serde_json::to_string(&mode).unwrap();
+            assert_eq!(serde_json::from_str::<DiffDisplayMode>(&encoded).unwrap(), mode);
+        }
+    }
+}
+
+/// How to display mermaid diagrams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagramDisplayMode {
+    /// Don't show diagrams in dedicated widgets (only inline in messages).
+    ///
+    /// `inline`/`off` are accepted spellings: diagrams still render inline in
+    /// the transcript in this mode, and users reasonably write `"inline"`
+    /// (issue #689).
+    #[default]
+    #[serde(alias = "inline", alias = "off")]
+    None,
+    /// Show diagrams in info widget margins (opportunistic, if space available).
+    Margin,
+    /// Show diagrams in a dedicated pinned pane (forces space allocation).
+    Pinned,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagramPanePosition {
+    #[default]
+    Side,
+    Top,
+}
+
+/// How much vertical spacing to use when rendering markdown blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkdownSpacingMode {
+    /// Compact chat/TUI-oriented spacing.
+    #[default]
+    Compact,
+    /// Document-style spacing between top-level blocks.
+    Document,
+}
+
+/// How LaTeX math is rendered in terminal markdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LatexRenderingMode {
+    /// Preserve the original LaTeX source and delimiters.
+    None,
+    /// Convert supported notation to terminal-friendly Unicode text.
+    Unicode,
+    /// Typeset formulas to PNG and display them with the terminal image protocol.
+    #[default]
+    Image,
+}
+
+impl LatexRenderingMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Unicode => "unicode",
+            Self::Image => "image",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" | "raw" | "off" => Some(Self::None),
+            "unicode" | "terminal" | "text" => Some(Self::Unicode),
+            "image" | "images" | "png" => Some(Self::Image),
+            _ => None,
+        }
+    }
+}
+
+impl MarkdownSpacingMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compact => "Compact",
+            Self::Document => "Document",
+        }
+    }
+}
+
+/// How to display the model's reasoning/thinking content in the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningDisplayMode {
+    /// Never display reasoning content.
+    #[default]
+    Off,
+    /// Keep every reasoning trace in the transcript (classic behavior).
+    Full,
+    /// Show only the *current* reasoning live; collapse it once the model
+    /// commits an assistant message or tool call, then show the next one.
+    Current,
+}
+
+impl ReasoningDisplayMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Full => "Full",
+            Self::Current => "Current",
+        }
+    }
+
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Off => Self::Current,
+            Self::Current => Self::Full,
+            Self::Full => Self::Off,
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "off" | "none" | "false" | "0" | "no" => Some(Self::Off),
+            "full" | "all" | "true" | "1" | "yes" | "on" => Some(Self::Full),
+            "current" | "live" | "ephemeral" | "collapse" => Some(Self::Current),
+            _ => None,
+        }
+    }
+}
+
+/// Update channel: how aggressively to receive updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    /// Only update from tagged GitHub Releases (default).
+    #[default]
+    Stable,
+    /// Update from latest commit on main branch (bleeding edge).
+    Main,
+}
+
+impl UpdateChannel {
+    /// Parse a channel name, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "stable" | "release" => Some(Self::Stable),
+            "main" | "nightly" | "edge" => Some(Self::Main),
+            _ => None,
+        }
+    }
+}
+
+/// Config deserialization is deliberately lenient: an unknown or removed
+/// channel name (e.g. a stale `update_channel = "manual"` left in
+/// config.toml) falls back to the default channel instead of failing the
+/// entire config parse. A strict enum here once made the freshly exec'd
+/// server die during the reload handoff, leaving the handoff marker stuck
+/// in `starting` and clients re-requesting the reload forever (issue #349).
+impl<'de> Deserialize<'de> for UpdateChannel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+impl std::fmt::Display for UpdateChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stable => write!(f, "stable"),
+            Self::Main => write!(f, "main"),
+        }
+    }
+}
+
+/// Cross-provider failover behavior when the same input would be resent elsewhere.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CrossProviderFailoverMode {
+    /// Show a 3-second cancelable countdown, then resend on another provider.
+    #[default]
+    Countdown,
+    /// Do not resend the prompt to another provider automatically.
+    #[serde(alias = "off", alias = "false", alias = "disabled", alias = "none")]
+    Manual,
+}
+
+impl CrossProviderFailoverMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Countdown => "countdown",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "manual" | "off" | "false" | "disabled" | "none" => Some(Self::Manual),
+            "countdown" | "auto" | "automatic" => Some(Self::Countdown),
+            _ => None,
+        }
+    }
+}
+
+/// Compaction configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompactionConfig {
+    /// Compaction mode: reactive (default), proactive, or semantic
+    pub mode: CompactionMode,
+
+    /// [proactive] Number of turns to look ahead when projecting token growth
+    pub lookahead_turns: usize,
+
+    /// [proactive] EWMA alpha for token growth smoothing (0.0-1.0, higher = more recency bias)
+    pub ewma_alpha: f32,
+
+    /// [proactive/semantic] Minimum context fill level before any proactive check fires (0.0-1.0)
+    pub proactive_floor: f32,
+
+    /// [proactive/semantic] Minimum number of token snapshots needed before proactive check
+    pub min_samples: usize,
+
+    /// [proactive/semantic] Number of stable turns (no growth) before suppressing proactive compact
+    pub stall_window: usize,
+
+    /// [proactive/semantic] Minimum turns between two compactions (cooldown)
+    pub min_turns_between_compactions: usize,
+
+    /// [semantic] Cosine similarity threshold below which a topic shift is detected (0.0-1.0)
+    pub topic_shift_threshold: f32,
+
+    /// [semantic] Cosine similarity above which a message is kept verbatim (0.0-1.0)
+    pub relevance_keep_threshold: f32,
+
+    /// [semantic] Number of recent turns to look at for building the "current goal" embedding
+    pub goal_window_turns: usize,
+
+    /// Hard cap on the token budget compaction measures against, regardless of
+    /// the model's advertised context window. 0 = no cap (use the model window).
+    ///
+    /// Every turn re-sends the whole transcript, so on a 1M-window model the
+    /// default 80%-of-window trigger lets a session reach ~800k tokens per
+    /// request before anything folds. Set this to e.g. 200000 to compact earlier
+    /// on large-window providers. This bounds the compaction trigger budget,
+    /// not the final request size when recent messages cannot be compacted.
+    pub max_context_tokens: usize,
+
+    /// Which engine owns compaction: `structured` (default), `openai_auto`, or
+    /// `openai_explicit`.
+    ///
+    /// Left unset, the strategy is derived from an explicitly-written
+    /// `[provider] openai_native_compaction_mode`. An explicitly-set strategy
+    /// always wins over that legacy key.
+    pub strategy: Option<CompactionStrategy>,
+
+    /// Headroom kept free below the compaction trigger. Raised to
+    /// `min(window * 0.04, 49152)` when the window needs more room.
+    pub reserve_tokens: usize,
+
+    /// Token allowance for the verbatim recent tail. Lowered when the window
+    /// cannot spare it (`window * (1 - ratio - 0.05)`, floor 1024).
+    pub recent_tokens: usize,
+
+    /// Run proactive and idle compaction jobs in the background. Turning this
+    /// off leaves threshold (reactive) compaction and manual `/compact`
+    /// available; it never blocks a provider request.
+    pub background: bool,
+
+    /// Model for structured compaction summaries. Unset or empty uses the
+    /// session model. Ignored by provider-native strategies.
+    pub summary_model: Option<String>,
+    /// Replace stale tool results with a short marker on the provider request.
+    ///
+    /// The stored transcript is untouched: an older `read` superseded by a
+    /// newer one, or a result that reported nothing, costs one line instead of
+    /// its full text until the conversation is compacted. Off by default
+    /// because it changes what the model sees.
+    pub prune_tool_results: bool,
+}
+
+impl CompactionConfig {
+    /// The strategy that owns compaction for this config.
+    ///
+    /// An explicitly-set `strategy` wins. Otherwise only an explicitly-written
+    /// `[provider] openai_native_compaction_mode` of `auto` or `explicit` selects
+    /// the provider-native path; an absent key, an empty value, or an explicit
+    /// `off` all mean structured compaction.
+    pub fn resolved_strategy(&self, provider: &ProviderConfig) -> CompactionStrategy {
+        if let Some(strategy) = self.strategy {
+            return strategy;
+        }
+        match provider.explicit_native_compaction_mode() {
+            Some("auto") => CompactionStrategy::OpenAiAuto,
+            Some("explicit") => CompactionStrategy::OpenAiExplicit,
+            _ => CompactionStrategy::Structured,
+        }
+    }
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            mode: CompactionMode::Reactive,
+            lookahead_turns: 15,
+            ewma_alpha: 0.3,
+            proactive_floor: 0.40,
+            min_samples: 3,
+            stall_window: 5,
+            min_turns_between_compactions: 10,
+            topic_shift_threshold: 0.45,
+            relevance_keep_threshold: 0.65,
+            goal_window_turns: 5,
+            max_context_tokens: 0,
+            strategy: None,
+            reserve_tokens: 16_384,
+            recent_tokens: 20_000,
+            background: true,
+            summary_model: None,
+            prune_tool_results: false,
+        }
+    }
+}
+
+/// Which tool calls need the user's approval before they run.
+///
+/// The mode is a floor on friction, not a replacement for the command-risk
+/// gate: a call the gate classifies as dangerous still asks in every mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalMode {
+    /// No approval gate; the behavior every existing config already has.
+    #[default]
+    Off,
+    /// Ask before a call that can mutate files.
+    Write,
+    /// Ask before any call that is not read-only.
+    All,
+}
+
+impl ApprovalMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Write => "write",
+            Self::All => "all",
+        }
+    }
+
+    /// Parse a mode name, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "write" => Some(Self::Write),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+}
+
+/// Lenient like [`UpdateChannel`]: a stale `approval_mode` value in config.toml
+/// falls back to `off` rather than discarding every other setting in the file.
+impl<'de> Deserialize<'de> for ApprovalMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+/// How the `bash` tool reacts to a shell idiom another tool handles better.
+///
+/// The interceptor recognises `cat`/`head`/`tail`, `grep`/`rg`, `find`/`fd`,
+/// in-place `sed`/`perl`/`awk`, shell redirection, `nohup`, and a trailing `&`.
+/// A rule only fires when the dedicated tool it names is reachable under the
+/// active allow-list, so a narrowed profile is never nudged toward a tool it
+/// cannot call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BashInterceptorMode {
+    /// Run the command as written; the behavior every existing config has.
+    #[default]
+    Off,
+    /// Run the command and prefix its output with the note.
+    Nudge,
+    /// Refuse the call before anything is spawned.
+    Block,
+}
+
+impl BashInterceptorMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Nudge => "nudge",
+            Self::Block => "block",
+        }
+    }
+
+    /// Parse a mode name, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "nudge" => Some(Self::Nudge),
+            "block" => Some(Self::Block),
+            _ => None,
+        }
+    }
+}
+
+/// Lenient like [`ApprovalMode`]: an unrecognized value falls back to `off`
+/// rather than discarding every other setting in the file.
+impl<'de> Deserialize<'de> for BashInterceptorMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+/// What one `[[tools.bash_patterns]]` rule decides for a matching command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BashPatternApproval {
+    /// Run without asking. Only a single plain command can be allowed.
+    Allow,
+    /// Refuse the call.
+    Deny,
+    /// Ask the user before the call runs.
+    Prompt,
+}
+
+/// One explicit approval rule for shell commands.
+///
+/// `pattern` is matched against the whole command and, for `deny`/`prompt`,
+/// against each command segment. `*` matches any run of characters and every
+/// other character is literal. Rules are evaluated in config order and the
+/// first match wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BashPatternRule {
+    pub pattern: String,
+    pub approval: BashPatternApproval,
+}
+
+/// How credentials that appear in text leaving the agent are handled.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SecretsMode {
+    /// Pass text through untouched; the behavior every existing config has.
+    #[default]
+    Off,
+    /// Replace detected credentials with stable placeholders, restoring them
+    /// for the tool that needs the real value.
+    Obfuscate,
+    /// Refuse the call that would carry a credential outward.
+    Block,
+}
+
+impl SecretsMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Obfuscate => "obfuscate",
+            Self::Block => "block",
+        }
+    }
+
+    /// Parse a mode name, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "obfuscate" => Some(Self::Obfuscate),
+            "block" => Some(Self::Block),
+            _ => None,
+        }
+    }
+}
+
+/// Lenient like [`ApprovalMode`]: an unrecognized value must not make the whole
+/// config file unreadable.
+impl<'de> Deserialize<'de> for SecretsMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum NamedProviderType {
+    #[serde(alias = "openai-compatible", alias = "openai_compatible")]
+    #[default]
+    OpenAiCompatible,
+    #[serde(alias = "anthropic-compatible", alias = "anthropic_compatible")]
+    AnthropicCompatible,
+    OpenRouter,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NamedProviderAuth {
+    #[serde(alias = "Bearer", alias = "BEARER")]
+    #[default]
+    Bearer,
+    #[serde(alias = "Header", alias = "HEADER")]
+    Header,
+    #[serde(alias = "None", alias = "NONE")]
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct NamedProviderModelConfig {
+    pub id: String,
+    /// Explicitly enable or disable `/effort` for this model. When omitted,
+    /// the provider-level setting and built-in model-family detection apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<bool>,
+    /// Reasoning effort selected when this model becomes active. This overrides
+    /// `[provider].openai_reasoning_effort` for this model only.
+    #[serde(default, alias = "reasoning-effort", skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(
+        default,
+        alias = "context_limit",
+        alias = "context-length",
+        alias = "context-window",
+        alias = "context_length",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_window: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct NamedProviderConfig {
+    #[serde(rename = "type")]
+    pub provider_type: NamedProviderType,
+    pub base_url: String,
+    pub api: Option<String>,
+    pub auth: NamedProviderAuth,
+    pub auth_header: Option<String>,
+    /// Extra HTTP headers sent with every request to this provider.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub headers: std::collections::BTreeMap<String, String>,
+    pub api_key_env: Option<String>,
+    pub api_key: Option<String>,
+    pub env_file: Option<String>,
+    pub default_model: Option<String>,
+    pub requires_api_key: Option<bool>,
+    #[serde(default)]
+    pub provider_routing: bool,
+    #[serde(default)]
+    pub model_catalog: bool,
+    #[serde(default)]
+    pub allow_provider_pinning: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<NamedProviderModelConfig>,
+    /// Extra top-level JSON fields merged into every chat/completions request
+    /// body sent to this provider. Lets users inject non-standard parameters
+    /// some OpenAI-compatible backends require (e.g. NVIDIA NIM DeepSeek-V4
+    /// needs `chat_template_kwargs = { thinking = true, reasoning_effort = "high" }`).
+    /// Must be a JSON object; keys here override horon-agent-generated body fields.
+    #[serde(default, alias = "extra-body", skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
+    /// Whether this endpoint accepts the DeepSeek-style top-level
+    /// `reasoning_effort` request field (`/effort` support). When unset, horon-agent
+    /// auto-detects it from the active model id (DeepSeek-family models
+    /// support it regardless of which gateway serves them). Set `false` to
+    /// suppress auto-detection for strict-schema endpoints.
+    #[serde(
+        default,
+        alias = "supports-reasoning-effort",
+        alias = "reasoning_effort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub supports_reasoning_effort: Option<bool>,
+    /// Disable model-name based reasoning detection for this profile. Explicit
+    /// provider/model capability settings continue to work.
+    #[serde(default, alias = "disable-reasoning-heuristics")]
+    pub disable_reasoning_heuristics: bool,
+}
+
+impl Default for NamedProviderConfig {
+    fn default() -> Self {
+        Self {
+            provider_type: NamedProviderType::OpenAiCompatible,
+            base_url: String::new(),
+            api: None,
+            auth: NamedProviderAuth::Bearer,
+            auth_header: None,
+            headers: std::collections::BTreeMap::new(),
+            api_key_env: None,
+            api_key: None,
+            env_file: None,
+            default_model: None,
+            requires_api_key: None,
+            provider_routing: false,
+            model_catalog: false,
+            allow_provider_pinning: false,
+            models: Vec::new(),
+            extra_body: None,
+            supports_reasoning_effort: None,
+            disable_reasoning_heuristics: false,
+        }
+    }
+}
+
+/// Remembered trust decisions for external auth sources managed by other tools.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// External auth source ids that the user has approved horon-agent to read/use.
+    pub trusted_external_sources: Vec<String>,
+    /// Path-bound approvals for external auth sources managed by other tools.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_external_source_paths: Vec<String>,
+}
+
+/// Agent-specific model defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentsConfig {
+    /// Optional default model override for spawned swarm/subagent sessions.
+    ///
+    /// Leave unset (or use `"inherit"` / `"coordinator"`) to have spawned swarm
+    /// agents inherit the spawning coordinator's model. Set to a concrete model
+    /// string to change the worker default. An explicit `model` in the swarm
+    /// tool overrides this default for newly spawned workers.
+    pub swarm_model: Option<String>,
+    /// Optional default reasoning effort for spawned swarm/subagent sessions
+    /// (`"low"`, `"medium"`, `"high"`, ...). Applied when a `swarm spawn`
+    /// call does not pass an explicit `effort`. Leave unset to let workers
+    /// inherit the provider-wide reasoning effort.
+    pub swarm_effort: Option<String>,
+    /// Root reasoning effort in light swarm mode. Unset or invalid means `max`.
+    /// This does not change worker effort (`swarm_effort`).
+    pub swarm_root_effort: Option<String>,
+    /// Root reasoning effort in deep swarm mode. Unset or invalid means `max`.
+    pub swarm_deep_root_effort: Option<String>,
+    /// Default terminal mode for swarm-created agents.
+    pub swarm_spawn_mode: SwarmSpawnMode,
+    /// Maximum percentage (1-90) of the chat column height the inline swarm
+    /// gallery band may occupy. Leave unset to use the built-in default (40%).
+    /// Lower values keep more of the transcript visible; set near the minimum
+    /// to effectively collapse the gallery to a thin strip.
+    pub swarm_gallery_max_pct: Option<u8>,
+    /// Layout of the inline swarm strip above the status line:
+    /// `"vertical"` (default) lists one agent per row (session icon + status
+    /// glyph + task), capped to a few lines; `"horizontal"` packs all agents
+    /// as chips on a single row.
+    #[serde(default)]
+    pub swarm_strip_layout: SwarmStripLayout,
+    /// Jev Decisions provider for recall: auto, openrouter, typesafe, aimlapi,
+    /// or horon-agent. Auto uses a provider-specific BYOK credential before HoronAgent.
+    #[serde(default = "default_memory_jev_provider")]
+    pub memory_jev_provider: String,
+    /// Minimum Jev relevance probability. Invalid values fail closed.
+    #[serde(default = "default_memory_jev_threshold")]
+    pub memory_jev_threshold: f32,
+    /// Optional model override for memory extraction only, never recall.
+    pub memory_model: Option<String>,
+    /// Whether optional automatic memory extraction may use a text-generating
+    /// sidecar. Recall always uses Jev and is independent of this setting.
+    #[serde(default = "default_memory_sidecar_enabled")]
+    pub memory_sidecar_enabled: bool,
+    /// Legacy setting, retained for config compatibility. Jev recall ignores it.
+    #[serde(default = "default_memory_rerank_cadence")]
+    pub memory_rerank_cadence: usize,
+    /// Legacy setting, retained for config compatibility. Jev recall ignores it.
+    #[serde(default = "default_memory_rerank_votes")]
+    pub memory_rerank_votes: usize,
+    /// Legacy setting, retained for config compatibility. Jev recall ignores it.
+    #[serde(default = "default_memory_rerank_min_agree")]
+    pub memory_rerank_min_agree: usize,
+    /// Legacy benchmark/debug embedding backend. Jev recall never uses it.
+    #[serde(default = "default_memory_embedding_backend")]
+    pub memory_embedding_backend: String,
+    /// OpenAI embedding model name when `memory_embedding_backend = "openai"`.
+    /// Unset = `text-embedding-3-small`. Env: `HORON_AGENT_MEMORY_EMBEDDING_MODEL`.
+    #[serde(default)]
+    pub memory_embedding_model: Option<String>,
+    /// Optional override for the embeddings API base URL (no trailing slash),
+    /// for OpenAI-compatible gateways. Unset = `https://api.openai.com/v1`.
+    /// Env: `HORON_AGENT_MEMORY_EMBEDDING_BASE_URL`.
+    #[serde(default)]
+    pub memory_embedding_base_url: Option<String>,
+    /// Optional override for the remote embedding dimensionality (vector-space
+    /// metadata / sanity checks). Unset = inferred from the model name.
+    #[serde(default)]
+    pub memory_embedding_dim: Option<usize>,
+    /// Maximum number of live swarm worker agents in one swarm. This is the RAM
+    /// safety budget for both recursive ad hoc spawning and deep-mode `run_plan`
+    /// parallelism. Completed/stopped workers do not consume slots. Light mode
+    /// still uses a smaller fixed fan-out. `0` disables this configurable guard,
+    /// leaving only the absolute `MAX_SWARM_MEMBERS` hard cap.
+    /// Env override: `HORON_AGENT_SWARM_MAX_CONCURRENT_AGENTS`.
+    #[serde(default = "default_swarm_max_concurrent_agents")]
+    pub swarm_max_concurrent_agents: usize,
+    /// Stalled-worker watchdog window in seconds. A running swarm worker with
+    /// no streamed tokens, tool events, or task heartbeats for this long, and
+    /// no tool currently executing, is flagged as stalled in swarm status and
+    /// its coordinator is notified once. `0` disables the watchdog.
+    /// Env override: `HORON_AGENT_SWARM_STALL_AFTER_SECS`.
+    #[serde(default = "default_swarm_stall_after_secs")]
+    pub swarm_stall_after_secs: u64,
+    /// When the watchdog flags a worker as stalled, also queue a short nudge
+    /// message into the worker's own session. Off by default.
+    /// Env override: `HORON_AGENT_SWARM_STALL_NUDGE`.
+    #[serde(default)]
+    pub swarm_stall_nudge: bool,
+}
+
+fn default_swarm_stall_after_secs() -> u64 {
+    600
+}
+
+fn default_swarm_max_concurrent_agents() -> usize {
+    32
+}
+
+fn default_memory_embedding_backend() -> String {
+    "local".to_string()
+}
+
+fn default_memory_jev_provider() -> String {
+    "auto".to_string()
+}
+
+fn default_memory_jev_threshold() -> f32 {
+    0.8
+}
+
+fn default_memory_sidecar_enabled() -> bool {
+    true
+}
+
+fn default_memory_rerank_cadence() -> usize {
+    3
+}
+
+fn default_memory_rerank_votes() -> usize {
+    2
+}
+
+fn default_memory_rerank_min_agree() -> usize {
+    2
+}
+
+impl Default for AgentsConfig {
+    fn default() -> Self {
+        Self {
+            swarm_model: None,
+            swarm_effort: None,
+            swarm_root_effort: None,
+            swarm_deep_root_effort: None,
+            swarm_spawn_mode: SwarmSpawnMode::default(),
+            swarm_gallery_max_pct: None,
+            swarm_strip_layout: SwarmStripLayout::default(),
+            memory_jev_provider: default_memory_jev_provider(),
+            memory_jev_threshold: default_memory_jev_threshold(),
+            memory_model: None,
+            memory_sidecar_enabled: default_memory_sidecar_enabled(),
+            memory_rerank_cadence: default_memory_rerank_cadence(),
+            memory_rerank_votes: default_memory_rerank_votes(),
+            memory_rerank_min_agree: default_memory_rerank_min_agree(),
+            memory_embedding_backend: default_memory_embedding_backend(),
+            memory_embedding_model: None,
+            memory_embedding_base_url: None,
+            memory_embedding_dim: None,
+            swarm_max_concurrent_agents: default_swarm_max_concurrent_agents(),
+            swarm_stall_after_secs: default_swarm_stall_after_secs(),
+            swarm_stall_nudge: false,
+        }
+    }
+}
+
+impl AgentsConfig {
+    /// Resolve a swarm mode's root effort without allowing orchestration
+    /// sentinels to recurse into another mode. Unknown values preserve the
+    /// historical maximum-effort behavior without invalidating other settings.
+    pub fn root_effort_for_swarm(&self, deep: bool) -> &'static str {
+        let configured = if deep {
+            self.swarm_deep_root_effort.as_deref()
+        } else {
+            self.swarm_root_effort.as_deref()
+        };
+        let value = configured.unwrap_or("max").trim();
+        ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+            .into_iter()
+            .find(|level| level.eq_ignore_ascii_case(value))
+            .unwrap_or("max")
+    }
+}
+
+/// How swarm-created agents should be spawned.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SwarmSpawnMode {
+    /// Open a visible/headed terminal window. This was the historical default.
+    Visible,
+    /// Create the worker in-process without opening a terminal window.
+    Headless,
+    /// Like headless (no terminal window), but the coordinator renders a live
+    /// inline gallery viewport of each worker's streaming output.
+    #[default]
+    Inline,
+    /// Try visible first and fall back to headless if a window cannot be opened.
+    Auto,
+}
+
+impl SwarmSpawnMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "visible" | "headed" => Some(Self::Visible),
+            "headless" => Some(Self::Headless),
+            "inline" => Some(Self::Inline),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+
+    /// Canonical lowercase string for this mode (matches the config/env values).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Visible => "visible",
+            Self::Headless => "headless",
+            Self::Inline => "inline",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+/// Layout of the inline swarm strip shown above the status line.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SwarmStripLayout {
+    /// One agent per row: session icon + status glyph + task label, capped to
+    /// a few lines with a `+N more` overflow marker.
+    #[default]
+    Vertical,
+    /// All agents packed as chips on a single row (the historical layout).
+    Horizontal,
+}
+
+impl SwarmStripLayout {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "vertical" | "list" => Some(Self::Vertical),
+            "horizontal" | "chips" | "strip" => Some(Self::Horizontal),
+            _ => None,
+        }
+    }
+
+    /// Canonical lowercase string for this layout (matches config/env values).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vertical => "vertical",
+            Self::Horizontal => "horizontal",
+        }
+    }
+}
+
+/// Terminal window/pane spawning configuration.
+///
+/// Without a `spawn_hook`, Unix clients inside tmux are opened in a right-side
+/// pane by the built-in launcher. `HORON_AGENT_TERMINAL` explicitly selects a terminal
+/// emulator instead.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TerminalConfig {
+    /// External command that takes over headed session spawns (new terminal
+    /// windows for swarm agents, resume-in-new-terminal, self-dev, restarts).
+    ///
+    /// When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
+    /// opening a terminal emulator itself, with `HORON_AGENT_SPAWN_*` metadata env
+    /// vars describing the spawn (kind, session id, title, cwd, full command).
+    /// This lets multiplexers and wrappers (tmux, kitty remote, zellij, herd
+    /// runners, window managers) decide where and how the session appears.
+    ///
+    /// Example: `spawn_hook = "tmux new-window"` opens each headed spawn as a
+    /// tmux window in the current server. If the hook fails to launch, horon-agent
+    /// falls back to its built-in terminal detection.
+    ///
+    /// Env override: `HORON_AGENT_SPAWN_HOOK` (set empty to disable a config hook).
+    pub spawn_hook: Option<String>,
+    /// External command used to focus/raise an existing session window.
+    ///
+    /// When set, horon-agent runs the hook (instead of wmctrl/xdotool) whenever it
+    /// wants to bring a session's window to the foreground, with
+    /// `HORON_AGENT_FOCUS_SESSION_ID` and `HORON_AGENT_FOCUS_TITLE` env vars. Pair this
+    /// with `spawn_hook` so wrappers that own placement (tmux, kitty remote,
+    /// herd) also own focus (e.g. `tmux select-window`, Wayland compositor
+    /// IPC like `niri msg`).
+    ///
+    /// Env override: `HORON_AGENT_FOCUS_HOOK` (set empty to disable a config hook).
+    pub focus_hook: Option<String>,
+    /// Terminal used by the macOS Cmd+; launch hotkey and in-app session spawns.
+    ///
+    /// One of: `ghostty`, `iterm2`, `wezterm`, `warp`, `alacritty`, `vscode`,
+    /// `terminal` (Apple Terminal). When set, this is the source of truth for
+    /// which terminal horon-agent launches into and is preferred over the legacy
+    /// `~/.horon-agent/preferred_terminal.json` file. Re-run `horon-agent setup-hotkey`
+    /// after changing it so the generated launcher script picks up the change.
+    ///
+    /// macOS only; ignored on other platforms.
+    pub preferred: Option<String>,
+}
+
+/// Lifecycle hooks: external commands horon-agent runs at well-defined points.
+///
+/// Hook commands are parsed shell-style (quotes work) but executed directly,
+/// with `HORON_AGENT_HOOK_*` env vars describing the event (`HORON_AGENT_HOOK_EVENT`,
+/// `HORON_AGENT_HOOK_SESSION_ID`, `HORON_AGENT_HOOK_CWD`, event-specific fields, and a
+/// `HORON_AGENT_HOOK_PAYLOAD` JSON mirror). Hook processes get
+/// `HORON_AGENT_HOOKS_DISABLED=1` so nested horon-agent invocations don't recurse.
+///
+/// All hooks except `pre_tool` are observers: detached, fire-and-forget,
+/// failures only logged. `pre_tool` is a gate: horon-agent waits for it and exit
+/// code 2 blocks the tool call (stderr becomes the error shown to the model);
+/// exit 0 allows; anything else fails open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookCommands(Vec<String>);
+
+impl HookCommands {
+    pub fn one(command: impl Into<String>) -> Self {
+        Self(vec![command.into()])
+    }
+
+    pub fn many(commands: Vec<String>) -> Self {
+        Self(commands)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
+
+    pub fn first(&self) -> Option<&str> {
+        self.0.first().map(String::as_str)
+    }
+}
+
+impl Serialize for HookCommands {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if let [command] = self.0.as_slice() {
+            command.serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HookCommands {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum OneOrMany {
+            One(String),
+            Many(Vec<String>),
+        }
+
+        Ok(match OneOrMany::deserialize(deserializer)? {
+            OneOrMany::One(command) => Self::one(command),
+            OneOrMany::Many(commands) => Self::many(commands),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HooksConfig {
+    /// Synchronous input transformers run before each tool call. Each receives
+    /// the tool input JSON on stdin and may print replacement JSON on stdout.
+    /// Empty stdout or any failure leaves the input unchanged.
+    pub pre_tool_transform: Option<HookCommands>,
+    /// Max milliseconds to wait for each input transformer (default: 500).
+    pub pre_tool_transform_timeout_ms: u64,
+    /// Runs when an agent turn begins (after the user message is added and
+    /// before the model starts generating). Fires before the first `pre_tool`,
+    /// so integrations can detect that the agent is actively working even while
+    /// it is only thinking/streaming text. Fields: MODEL, SOURCE
+    /// ("chat"/"resume"/"ambient"). Env override: HORON_AGENT_HOOK_TURN_START.
+    pub turn_start: Option<HookCommands>,
+    /// Runs when an agent turn completes.
+    /// Fields: STATUS ("ok"/"error"), DURATION_MS, MODEL, LAST_ASSISTANT_TEXT.
+    /// Env override: HORON_AGENT_HOOK_TURN_END.
+    pub turn_end: Option<HookCommands>,
+    /// Runs when a session becomes active (created or resumed).
+    /// Fields: SOURCE ("create"/"resume").
+    /// Env override: HORON_AGENT_HOOK_SESSION_START.
+    pub session_start: Option<HookCommands>,
+    /// Runs when a session closes normally.
+    /// Env override: HORON_AGENT_HOOK_SESSION_END.
+    pub session_end: Option<HookCommands>,
+    /// Gate hook before each tool call. Receives TOOL_NAME and the tool input
+    /// JSON on stdin (also truncated in TOOL_INPUT). Exit 0 allows, exit 2
+    /// blocks (stderr is fed back to the model), anything else fails open.
+    /// Env override: HORON_AGENT_HOOK_PRE_TOOL.
+    pub pre_tool: Option<HookCommands>,
+    /// Runs after each tool call completes.
+    /// Fields: TOOL_NAME, TOOL_CALL_ID, TOOL_INPUT, TOUCHED_PATHS, STATUS
+    /// ("ok"/"error"), DURATION_MS, OUTPUT_BYTES, ERROR.
+    /// Env override: HORON_AGENT_HOOK_POST_TOOL.
+    pub post_tool: Option<HookCommands>,
+    /// Synchronous hook after each successful tool call. Same fields as
+    /// post_tool, tool input JSON on stdin. Its stdout is appended to the tool
+    /// result the model sees (e.g. linter output for edited files).
+    /// Env override: HORON_AGENT_HOOK_POST_TOOL_FEEDBACK.
+    pub post_tool_feedback: Option<HookCommands>,
+    /// Max milliseconds to wait for each post_tool_feedback hook (default:
+    /// 10000). Env override: HORON_AGENT_HOOK_POST_TOOL_FEEDBACK_TIMEOUT_MS.
+    pub post_tool_feedback_timeout_ms: u64,
+    /// Max milliseconds to wait for the pre_tool gate before failing open
+    /// (default: 5000). Env override: HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS.
+    pub pre_tool_timeout_ms: u64,
+}
+
+impl Default for HooksConfig {
+    fn default() -> Self {
+        Self {
+            pre_tool_transform: None,
+            pre_tool_transform_timeout_ms: 500,
+            turn_start: None,
+            turn_end: None,
+            session_start: None,
+            session_end: None,
+            pre_tool: None,
+            post_tool: None,
+            post_tool_feedback: None,
+            post_tool_feedback_timeout_ms: 10_000,
+            pre_tool_timeout_ms: 5000,
+        }
+    }
+}
+
+/// Automatic end-of-turn code review configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AutoReviewConfig {
+    /// Enable autoreview by default for new/resumed sessions (default: false)
+    pub enabled: bool,
+    /// Optional model override for autoreview reviewer sessions.
+    pub model: Option<String>,
+}
+
+/// Integration discovery configuration (legacy `[sponsors]` section name).
+///
+/// Integration discovery makes third-party developer tools discoverable to
+/// the agent via a `discover_tools` tool backed by a hosted directory. Some
+/// providers may share revenue with HoronAgent when a referred user becomes a
+/// customer, but partnership status never influences recommendations.
+/// See <https://horon-agent.sh/discovery-tools>.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SponsorsConfig {
+    /// Enable integration discovery. Enabled by default; set to false to opt
+    /// out. When false, no discovery categories are added to the prompt, the
+    /// `discover_tools` tool is not registered, and horon-agent never contacts the
+    /// discovery endpoint.
+    pub enabled: bool,
+    /// Base URL of the discovery endpoint.
+    pub endpoint: String,
+}
+
+impl Default for SponsorsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "https://api.horon-agent.sh/v1/discovery".to_string(),
+        }
+    }
+}
+
+/// Automatic end-of-turn execution judging configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AutoJudgeConfig {
+    /// Enable autojudge by default for new/resumed sessions (default: false)
+    pub enabled: bool,
+    /// Optional model override for autojudge sessions.
+    pub model: Option<String>,
+}
+
+/// Keybinding configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeybindingsConfig {
+    /// Scroll up key (default: "ctrl+k")
+    pub scroll_up: String,
+    /// Scroll down key (default: "ctrl+j")
+    pub scroll_down: String,
+    /// Page up key (default: "alt+u")
+    pub scroll_page_up: String,
+    /// Page down key (default: "alt+d")
+    pub scroll_page_down: String,
+    /// Model switch next key (default: "ctrl+tab")
+    pub model_switch_next: String,
+    /// Model switch previous key (default: "ctrl+shift+tab")
+    pub model_switch_prev: String,
+    /// Accept the post-error fallback offer: switch to the next best
+    /// model/auth-method and resend the failed turn (default: "ctrl+y").
+    pub fallback_switch: String,
+    /// Effort increase key (default: "cmd+right" on macOS, "alt+right" elsewhere)
+    pub effort_increase: String,
+    /// Effort decrease key (default: "cmd+left" on macOS, "alt+left" elsewhere)
+    pub effort_decrease: String,
+    /// Speed tier increase key, Standard -> Fast -> Ultrafast (default: "alt+up")
+    pub speed_increase: String,
+    /// Speed tier decrease key, Ultrafast -> Fast -> Standard (default: "alt+down")
+    pub speed_decrease: String,
+    /// Centered mode toggle key (default: "alt+c")
+    pub centered_toggle: String,
+    /// Scroll to previous prompt key (default: "ctrl+[")
+    pub scroll_prompt_up: String,
+    /// Scroll to next prompt key (default: "ctrl+]")
+    pub scroll_prompt_down: String,
+    /// Scroll bookmark toggle key (default: "ctrl+g")
+    pub scroll_bookmark: String,
+    /// Toggle auto-poke (default: "ctrl+p"). Set "" to disable.
+    pub auto_poke_toggle: String,
+    /// Scroll up fallback key (default: unset; Cmd+K moves up by prompt on macOS)
+    pub scroll_up_fallback: String,
+    /// Scroll down fallback key (default: unset; Cmd+J moves down by prompt on macOS)
+    pub scroll_down_fallback: String,
+    /// Workspace navigation left key (default: "alt+h")
+    pub workspace_left: String,
+    /// Workspace navigation down key (default: "alt+j")
+    pub workspace_down: String,
+    /// Workspace navigation up key (default: "alt+k")
+    pub workspace_up: String,
+    /// Workspace navigation right key (default: "alt+l")
+    pub workspace_right: String,
+    /// Toggle the side panel (default: "alt+m")
+    pub side_panel_toggle: String,
+    /// Toggle copy/selection mode (default: "alt+y")
+    pub copy_selection_toggle: String,
+    /// Toggle the diagram pane position (default: "alt+t")
+    pub diagram_pane_toggle: String,
+    /// Show/hide the pinned diagram pane (default: "alt+shift+m")
+    pub diagram_pane_visibility_toggle: String,
+    /// Toggle typing scroll lock (default: "alt+s")
+    pub typing_scroll_lock_toggle: String,
+    /// Cycle inline diff display mode (default: unbound; use /diff)
+    pub diff_mode_cycle: String,
+    /// Show the git commit log of the current project (default: "alt+g")
+    pub commit_log: String,
+    /// Toggle the info widget (default: "alt+i")
+    pub info_widget_toggle: String,
+    /// Show/dismiss the session todo list as an inline card in the chat
+    /// transcript (default: "alt+x")
+    pub todo_card_toggle: String,
+    /// Focus/unfocus the inline swarm panel for keyboard navigation (default:
+    /// "alt+n"; alt+↑/↓ select, alt+o pops out, alt+shift+p opens the swarm
+    /// prompt, esc exits). Active only when `agents.swarm_spawn_mode = "inline"`
+    /// and the session manages swarm agents.
+    pub swarm_panel_focus: String,
+    /// Spawn a fresh horon-agent session in a new terminal window (default: unbound).
+    /// Example: "alt+enter".
+    pub new_terminal: String,
+    /// Open the `/resume` session picker (default: "cmd+b" on macOS, "alt+r"
+    /// elsewhere). Set "" to disable.
+    pub open_resume: String,
+    /// Start/stop built-in voice input (default: "ctrl+space"). Speech streams
+    /// to Nari and the transcript is sent as a prompt. Set "" to disable.
+    pub voice_input: String,
+    /// Session picker Enter action: "current-terminal" (default) or "new-terminal".
+    /// Ctrl+Enter performs the alternate action.
+    pub session_picker_enter: SessionPickerResumeAction,
+}
+
+impl Default for KeybindingsConfig {
+    fn default() -> Self {
+        // Pull platform-appropriate defaults from the single source of truth in
+        // `keybindings.rs`. This is where the macOS vs Windows/Linux split takes
+        // effect: each field resolves to its own platform's default binding.
+        let p = KeybindingPlatform::current();
+        let get = |id: &str, fallback: &'static str| default_binding(id, p).unwrap_or(fallback).to_string();
+        Self {
+            scroll_up: get("scroll_up", "ctrl+k"),
+            scroll_down: get("scroll_down", "ctrl+j"),
+            scroll_page_up: get("scroll_page_up", "alt+u"),
+            scroll_page_down: get("scroll_page_down", "alt+d"),
+            model_switch_next: get("model_switch_next", "ctrl+tab"),
+            model_switch_prev: get("model_switch_prev", "ctrl+shift+tab"),
+            fallback_switch: get("fallback_switch", "ctrl+y"),
+            effort_increase: get("effort_increase", "alt+right"),
+            effort_decrease: get("effort_decrease", "alt+left"),
+            speed_increase: get("speed_increase", "alt+up"),
+            speed_decrease: get("speed_decrease", "alt+down"),
+            centered_toggle: get("centered_toggle", "alt+c"),
+            scroll_prompt_up: get("scroll_prompt_up", "ctrl+["),
+            scroll_prompt_down: get("scroll_prompt_down", "ctrl+]"),
+            scroll_bookmark: get("scroll_bookmark", "ctrl+g"),
+            auto_poke_toggle: get("auto_poke_toggle", "ctrl+p"),
+            scroll_up_fallback: get("scroll_up_fallback", ""),
+            scroll_down_fallback: get("scroll_down_fallback", ""),
+            workspace_left: get("workspace_left", "alt+h"),
+            workspace_down: get("workspace_down", "alt+j"),
+            workspace_up: get("workspace_up", "alt+k"),
+            workspace_right: get("workspace_right", "alt+l"),
+            side_panel_toggle: get("side_panel_toggle", "alt+m"),
+            copy_selection_toggle: get("copy_selection_toggle", "alt+y"),
+            diagram_pane_toggle: get("diagram_pane_toggle", "alt+t"),
+            diagram_pane_visibility_toggle: get("diagram_pane_visibility_toggle", "alt+shift+m"),
+            typing_scroll_lock_toggle: get("typing_scroll_lock_toggle", "alt+s"),
+            diff_mode_cycle: get("diff_mode_cycle", ""),
+            commit_log: get("commit_log", "alt+g"),
+            info_widget_toggle: get("info_widget_toggle", "alt+i"),
+            todo_card_toggle: get("todo_card_toggle", "alt+x"),
+            swarm_panel_focus: get("swarm_panel_focus", "alt+n"),
+            new_terminal: get("new_terminal", ""),
+            open_resume: get("open_resume", if cfg!(target_os = "macos") { "cmd+b" } else { "alt+r" }),
+            voice_input: get("voice_input", "ctrl+space"),
+            session_picker_enter: SessionPickerResumeAction::CurrentTerminal,
+        }
+    }
+}
+/// Display/UI configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NativeScrollbarConfig {
+    /// Show a native terminal scrollbar in the chat viewport (default: true)
+    pub chat: bool,
+    /// Show a native terminal scrollbar in the side panel (default: true)
+    pub side_panel: bool,
+}
+impl Default for NativeScrollbarConfig {
+    fn default() -> Self {
+        Self {
+            chat: true,
+            side_panel: true,
+        }
+    }
+}
+fn default_true() -> bool {
+    true
+}
+
+/// How much automatic continuation the turn loops perform after a turn stops
+/// in a way the harness did not expect (default: conservative).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TurnRecoveryMode {
+    /// Never continue an unexpected stop automatically.
+    Off,
+    /// Act on provable truncation and unclosed structure only (default).
+    #[default]
+    Conservative,
+    /// Act on every non-clean class, including the semantic guess.
+    Aggressive,
+}
+
+impl TurnRecoveryMode {
+    /// Parse a mode name, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" | "0" | "no" => Some(Self::Off),
+            "conservative" | "default" | "on" | "true" | "1" | "yes" => Some(Self::Conservative),
+            "aggressive" => Some(Self::Aggressive),
+            _ => None,
+        }
+    }
+}
+
+/// An unknown or removed mode name (e.g. a stale `turn_recovery = "auto"` left
+/// in config.toml) falls back to the default mode instead of failing the whole
+/// config parse, matching `UpdateChannel`.
+impl<'de> Deserialize<'de> for TurnRecoveryMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+/// How imported foreign rules reach the system prompt (default: inline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ForeignRulesMode {
+    /// Append every rule body to the system prompt as before (default).
+    #[default]
+    Inline,
+    /// Inline only always-on rules; list the rest for on-demand reads, so a
+    /// rule enters the context only when its globs match a file the session
+    /// touches.
+    Rulebook,
+}
+
+impl ForeignRulesMode {
+    /// Parse a mode name, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "inline" | "all" | "default" => Some(Self::Inline),
+            "rulebook" | "context" | "on-demand" => Some(Self::Rulebook),
+            _ => None,
+        }
+    }
+}
+
+/// An unknown mode name falls back to inline instead of failing the config
+/// parse, matching `TurnRecoveryMode`.
+impl<'de> Deserialize<'de> for ForeignRulesMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+/// Runtime feature toggles
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FeatureConfig {
+    /// Check for and install horon-agent updates during startup (default: true).
+    /// Set this to false for the persistent equivalent of `--no-update`.
+    pub check_updates: bool,
+    /// Enable memory retrieval/extraction features (default: true)
+    pub memory: bool,
+    /// Enable swarm coordination features (default: true)
+    pub swarm: bool,
+    /// Enable Mermaid rendering and Mermaid-specific model guidance (default: false)
+    pub mermaid: bool,
+    /// Default state of auto-poke (automatic follow-up when the model stops with
+    /// incomplete todos). `/poke on` / `/poke off` still override this per session
+    /// (default: true)
+    pub auto_poke: bool,
+    /// Import rule files written for other agent tools (`.cursor/rules/*.mdc`,
+    /// `.cursorrules`, `.clinerules`, Copilot instructions, Windsurf rules,
+    /// `GEMINI.md`) into the system prompt, read-only (default: false)
+    pub foreign_rules: bool,
+    /// How imported foreign rules reach the prompt: inline appends every rule
+    /// body (default); rulebook inlines always-on rules and lists the rest so
+    /// the read tool can pull one in when its globs match a touched file.
+    pub foreign_rules_mode: ForeignRulesMode,
+    /// Run the independent read-only tool calls of one model message concurrently
+    /// instead of one at a time. Tools that write, run a shell command, or touch
+    /// session state stay sequential (default: true)
+    pub parallel_tools: bool,
+    /// Detect a repeated identical tool call, warn once, refuse the next repeats,
+    /// and end the turn after two refusals (default: true)
+    pub loop_guard: bool,
+    /// Inject timestamps into user messages and tool results sent to the model (default: true)
+    pub message_timestamps: bool,
+    /// Persist auto-recalled memory injections into normal session history instead of sending
+    /// them as request-only ephemeral suffix messages (default: false)
+    pub persist_memory_injections: bool,
+    /// Surface an in-chat system message whenever a request misses the KV cache
+    /// for a harness-caused (avoidable) reason: the system prompt, tool set, or
+    /// message prefix changed without the conversation legitimately growing.
+    /// These should essentially never happen, so the notice acts as a loud alarm
+    /// that something in the harness silently invalidated the prefix cache
+    /// (default: true).
+    pub kv_cache_miss_notices: bool,
+    /// Update channel: "stable" (releases only) or "main" (latest commits)
+    pub update_channel: UpdateChannel,
+    /// Write a redacted local crash bundle under `<agent dir>/crashes/` when the
+    /// process panics. Bundles stay on disk and are never transmitted
+    /// (default: true)
+    pub crash_bundles: bool,
+    /// Automatic continuation after a turn stops unexpectedly: `off`,
+    /// `conservative` (default), or `aggressive`
+    pub turn_recovery: TurnRecoveryMode,
+    /// Enforce the operator-written `[[stream_rules]]` entries while a response
+    /// streams: a matching pattern aborts the response, injects the rule body as
+    /// a system reminder, and re-issues the request (default: false)
+    pub stream_rules: bool,
+}
+
+impl Default for FeatureConfig {
+    fn default() -> Self {
+        Self {
+            check_updates: true,
+            memory: true,
+            swarm: true,
+            mermaid: false,
+            auto_poke: true,
+            foreign_rules: false,
+            foreign_rules_mode: ForeignRulesMode::Inline,
+            parallel_tools: true,
+            loop_guard: true,
+            message_timestamps: true,
+            persist_memory_injections: false,
+            kv_cache_miss_notices: true,
+            update_channel: UpdateChannel::default(),
+            crash_bundles: true,
+            turn_recovery: TurnRecoveryMode::default(),
+            stream_rules: false,
+        }
+    }
+}
+
+/// How often a mid-stream rule may fire (default: every turn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum StreamRuleRepeat {
+    /// Fire on every turn that matches (default).
+    #[default]
+    Turn,
+    /// Fire at most once per session.
+    Once,
+    /// Fire at most once per `repeat_gap` user turns.
+    AfterGap,
+}
+
+impl StreamRuleRepeat {
+    /// Parse a repeat mode, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "turn" | "every-turn" | "default" => Some(Self::Turn),
+            "once" | "session" => Some(Self::Once),
+            "after-gap" | "gap" => Some(Self::AfterGap),
+            _ => None,
+        }
+    }
+}
+
+/// An unknown repeat mode falls back to the default instead of failing the
+/// config parse, matching `TurnRecoveryMode`.
+impl<'de> Deserialize<'de> for StreamRuleRepeat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+/// How a matched rule reaches the model (default: interrupt).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum StreamRuleDelivery {
+    /// Abort the attempt and re-issue the request with the rule body, or block
+    /// the tool call the rule matched (default).
+    #[default]
+    Interrupt,
+    /// Let the work stand and carry the rule body as a passive system reminder.
+    Passive,
+}
+
+impl StreamRuleDelivery {
+    /// Parse a delivery mode, returning `None` for unknown values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "interrupt" | "default" => Some(Self::Interrupt),
+            "passive" | "reminder" => Some(Self::Passive),
+            _ => None,
+        }
+    }
+}
+
+/// An unknown delivery mode falls back to the default instead of failing the
+/// config parse, matching `TurnRecoveryMode`.
+impl<'de> Deserialize<'de> for StreamRuleDelivery {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::parse(&value).unwrap_or_default())
+    }
+}
+
+/// One operator-written mid-stream rule.
+///
+/// `pattern` is a Rust `regex` expression matched against the assistant's own
+/// streaming text; `body` is injected as a system reminder when it matches.
+/// `id` names the rule in the transcript entry and in the logs, so two rules
+/// cannot be confused after the fact.
+///
+/// A rule with no `scope` watches assistant text. `tool` watches every finalized
+/// tool call, and `tool:<name>` watches one; `paths` narrows a tool rule to
+/// calls whose `file_path`/`path` argument matches one of its globs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StreamRuleConfig {
+    /// Stable identifier for this rule.
+    pub id: String,
+    /// Rust `regex` pattern matched against the rolling lookback window or the
+    /// compact JSON of a tool call's input.
+    pub pattern: String,
+    /// Text injected as a system reminder when the pattern matches.
+    pub body: String,
+    /// `text` (default when empty), `tool`, or `tool:<name>`.
+    pub scope: Vec<String>,
+    /// Globs matched against a tool call's `file_path`/`path` argument. Empty
+    /// matches any path.
+    pub paths: Vec<String>,
+    /// How often the rule may fire.
+    pub repeat: StreamRuleRepeat,
+    /// User turns between fires for `repeat = "after-gap"`.
+    pub repeat_gap: u32,
+    /// Whether a match interrupts the work or arrives as a passive reminder.
+    pub delivery: StreamRuleDelivery,
+}
+
+impl Default for StreamRuleConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            pattern: String::new(),
+            body: String::new(),
+            scope: Vec::new(),
+            paths: Vec::new(),
+            repeat: StreamRuleRepeat::Turn,
+            repeat_gap: 10,
+            delivery: StreamRuleDelivery::Interrupt,
+        }
+    }
+}
+
+/// `[advisor]`: a second, independent model that watches the session and files
+/// narrow notes for the main agent to weigh.
+///
+/// Off by default. The advisor reads the transcript and only the read-only
+/// inspection tools; it never starts a turn of its own.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdvisorConfig {
+    /// Whether the advisor runs for this session. Opt-in (default: false).
+    pub enabled: bool,
+    /// Model override for the advisor. `None` inherits the session provider.
+    pub model: Option<String>,
+    /// Non-blocker notes one update may deliver. Blockers are exempt.
+    pub max_notes_per_update: u32,
+    /// User turns after a blocker interrupt during which no further interrupt
+    /// is sent and every note rides the reminder slot instead.
+    pub immune_turns: u32,
+}
+
+impl Default for AdvisorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: None,
+            max_notes_per_update: 4,
+            immune_turns: 3,
+        }
+    }
+}
+
+impl AdvisorConfig {
+    /// Upper bound on the notes a single update may deliver, clamped to the
+    /// documented range. Zero would silently mute the advisor, so it floors at
+    /// one instead of honoring it.
+    pub fn note_budget(&self) -> u32 {
+        self.max_notes_per_update.clamp(1, 32)
+    }
+}
+
+mod web_search;
+pub use web_search::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProviderConfig {
+    /// Default model to use (e.g. "claude-opus-4-8", "copilot:claude-opus-4.6")
+    pub default_model: Option<String>,
+    /// Default provider to use (claude|openai|copilot|openrouter)
+    pub default_provider: Option<String>,
+    /// Reasoning effort for OpenAI Responses API (none|minimal|low|medium|high|xhigh|max)
+    pub openai_reasoning_effort: Option<String>,
+    /// Reasoning effort for Anthropic Messages API output_config (none|low|medium|high|xhigh; max aliases to strongest supported)
+    pub anthropic_reasoning_effort: Option<String>,
+    /// Request one-hour Anthropic prompt caching instead of five minutes.
+    pub anthropic_cache_ttl_1h: bool,
+    /// OpenAI transport mode (auto|websocket|https)
+    pub openai_transport: Option<String>,
+    /// OpenAI service tier override (priority|flex)
+    pub openai_service_tier: Option<String>,
+    /// OpenAI native compaction mode: "auto", "explicit", or "off".
+    ///
+    /// Only a value written in the config file (or set by an environment
+    /// override) counts. An absent key resolves to `"off"`, so an existing
+    /// config file that never mentions this setting keeps horon's structured
+    /// compaction instead of silently handing ownership to the provider.
+    #[serde(
+        default = "native_compaction_mode_absent",
+        deserialize_with = "de_native_compaction_mode"
+    )]
+    pub openai_native_compaction_mode: String,
+    /// Token threshold at which OpenAI auto native compaction should trigger.
+    pub openai_native_compaction_threshold_tokens: usize,
+    /// Preserve provider-native reasoning/thinking items for future-turn context when supported.
+    pub preserve_reasoning_context: bool,
+    /// How to handle cross-provider failover when the same input would be resent elsewhere.
+    pub cross_provider_failover: CrossProviderFailoverMode,
+    /// Whether horon-agent should automatically try another account on the same provider
+    /// before falling back to a different provider.
+    pub same_provider_account_failover: bool,
+    /// Copilot premium request mode: "normal", "one", or "zero"
+    /// "zero" means all requests are free (no premium requests consumed)
+    pub copilot_premium: Option<String>,
+    /// Pin the `gemini` provider to Code Assist OAuth even when a Gemini
+    /// Developer API key (`gemini.env` / `GEMINI_API_KEY`) is present. Without
+    /// this an API key silently wins and every turn bills per token on the
+    /// key's project. `HORON_AGENT_GEMINI_FORCE_OAUTH` overrides this value.
+    pub gemini_force_oauth: bool,
+    /// Google Cloud project for Gemini Code Assist OAuth. Workspace accounts
+    /// require one; without it every turn fails with "requires setting
+    /// GOOGLE_CLOUD_PROJECT". `GOOGLE_CLOUD_PROJECT` (or its legacy `_ID`
+    /// alias) overrides this value. Config values are never exported to env.
+    pub gemini_project: Option<String>,
+    /// When set (non-empty), /model only lists routes from these providers.
+    /// Entries match provider labels ("openai", "anthropic", "copilot",
+    /// "openrouter", ...), api methods ("claude-oauth",
+    /// "openai-compatible:myprofile", ...), or openai-compatible profile ids
+    /// ("myprofile"). The active model's routes always stay visible.
+    pub model_picker_providers: Option<Vec<String>>,
+    /// Max seconds to wait for streaming data before timing out a request with
+    /// no data received. Base budget only: high reasoning efforts scale it up
+    /// automatically (see `horon_agent_base::provider::stream_idle_timeout_for_effort`).
+    /// Default: 180. Overridable via `HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS`.
+    pub stream_idle_timeout_secs: u64,
+    /// Maximum request attempts for transient provider errors, including the
+    /// initial attempt. Default: 8. Overridable via `HORON_AGENT_MAX_RETRIES`.
+    pub max_retries: u32,
+    /// Maximum exponential-backoff delay between transient-error retries.
+    /// Default: 30 seconds. Overridable via `HORON_AGENT_RETRY_BACKOFF_CAP_SECS`.
+    pub retry_backoff_cap_secs: u64,
+    /// Let an unattended run switch to another auto-switch account on its own
+    /// when the provider refuses the request, instead of waiting for the
+    /// interactive countdown. Off by default: an attended session keeps the
+    /// countdown and the human's cancel. Default: false.
+    pub autonomous_failover: bool,
+    /// Automatic route switches allowed per execution chain before the run gives
+    /// up with a final error. `0` disables switching without changing
+    /// `autonomous_failover`. Default: 3.
+    #[serde(default = "default_autonomous_failover_max_attempts")]
+    pub autonomous_failover_max_attempts: u32,
+}
+
+/// Canonical default for `autonomous_failover_max_attempts`.
+///
+/// The durable failover budget in `horon-agent-app-core` spends attempts against
+/// this same number, so the persisted counter and the configured cap cannot
+/// drift apart.
+pub const DEFAULT_AUTONOMOUS_FAILOVER_MAX_ATTEMPTS: u32 = 3;
+
+fn default_autonomous_failover_max_attempts() -> u32 {
+    DEFAULT_AUTONOMOUS_FAILOVER_MAX_ATTEMPTS
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            default_model: None,
+            default_provider: None,
+            openai_reasoning_effort: Some("low".to_string()),
+            anthropic_reasoning_effort: None,
+            anthropic_cache_ttl_1h: true,
+            openai_transport: None,
+            openai_service_tier: Some("priority".to_string()),
+            openai_native_compaction_mode: "off".to_string(),
+            openai_native_compaction_threshold_tokens: 200_000,
+            preserve_reasoning_context: true,
+            cross_provider_failover: CrossProviderFailoverMode::Countdown,
+            same_provider_account_failover: true,
+            copilot_premium: None,
+            gemini_force_oauth: false,
+            gemini_project: None,
+            model_picker_providers: None,
+            stream_idle_timeout_secs: 180,
+            max_retries: 8,
+            retry_backoff_cap_secs: 30,
+            autonomous_failover: false,
+            autonomous_failover_max_attempts: DEFAULT_AUTONOMOUS_FAILOVER_MAX_ATTEMPTS,
+        }
+    }
+}
+
+impl ProviderConfig {
+    /// The explicitly-configured [OI] native compaction mode, if the operator
+    /// actually asked for one.
+    ///
+    /// Returns `None` for `off` (including the absent-key default) and for
+    /// anything unrecognized, so an implicit default can never select the
+    /// provider-native path.
+    pub fn explicit_native_compaction_mode(&self) -> Option<&'static str> {
+        match self.openai_native_compaction_mode.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some("auto"),
+            "explicit" | "manual" => Some("explicit"),
+            _ => None,
+        }
+    }
+}
+
+/// Absent `[provider] openai_native_compaction_mode` means structured compaction.
+fn native_compaction_mode_absent() -> String {
+    "off".to_string()
+}
+
+/// Normalize a written mode; unknown values fall back to `off` (structured)
+/// instead of silently enabling provider-native compaction.
+fn de_native_compaction_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    let normalized = match raw.trim().to_ascii_lowercase().as_str() {
+        "auto" => "auto",
+        "explicit" | "manual" => "explicit",
+        _ => "off",
+    };
+    Ok(normalized.to_string())
+}
+
+/// Ambient mode configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AmbientConfig {
+    /// Enable ambient mode (default: false)
+    pub enabled: bool,
+    /// Provider override (default: auto-select)
+    pub provider: Option<String>,
+    /// Model override (default: provider's strongest)
+    pub model: Option<String>,
+    /// Allow API key usage (default: false, only OAuth)
+    pub allow_api_keys: bool,
+    /// Daily token budget when using API keys
+    pub api_daily_budget: Option<u64>,
+    /// Minimum interval between cycles in minutes (default: 5)
+    pub min_interval_minutes: u32,
+    /// Maximum interval between cycles in minutes (default: 120)
+    pub max_interval_minutes: u32,
+    /// Pause ambient when user has active session (default: true)
+    pub pause_on_active_session: bool,
+    /// Enable proactive work vs garden-only (default: true)
+    pub proactive_work: bool,
+    /// Proactive work branch prefix (default: "ambient/")
+    pub work_branch_prefix: String,
+    /// Show ambient cycle in a terminal window (default: true)
+    pub visible: bool,
+    /// How long an unattended run waits for a human decision on a permission
+    /// request before it applies `approval_default_on_timeout`, in seconds
+    /// (default: 1800).
+    #[serde(default = "default_approval_timeout_secs")]
+    pub approval_timeout_secs: u64,
+    /// What to do when `approval_timeout_secs` elapses with no decision.
+    /// `"deny"` fails closed; `"approve"` runs the gated action. Any other
+    /// value is treated as `"deny"`. Default: `"deny"`.
+    #[serde(default = "default_approval_default_on_timeout")]
+    pub approval_default_on_timeout: String,
+    /// Let `request_permission` run in a session that was never registered as
+    /// an ambient session, which is what an unattended run without an attached
+    /// client looks like. Off by default, so interactive sessions keep the
+    /// ambient-only gate and its error message.
+    #[serde(default)]
+    pub approval_for_clientless_runs: bool,
+}
+
+fn default_approval_timeout_secs() -> u64 {
+    1800
+}
+
+fn default_approval_default_on_timeout() -> String {
+    "deny".to_string()
+}
+
+impl Default for AmbientConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: None,
+            model: None,
+            allow_api_keys: false,
+            api_daily_budget: None,
+            min_interval_minutes: 5,
+            max_interval_minutes: 120,
+            pause_on_active_session: true,
+            proactive_work: true,
+            work_branch_prefix: "ambient/".to_string(),
+            visible: true,
+            approval_timeout_secs: default_approval_timeout_secs(),
+            approval_default_on_timeout: default_approval_default_on_timeout(),
+            approval_for_clientless_runs: false,
+        }
+    }
+}
+
+/// Desktop notification configuration for interactive sessions.
+///
+/// Unlike `[safety]` (ambient-mode ntfy/email/channel notifications), this
+/// section controls lightweight local desktop notifications for the normal
+/// interactive TUI, e.g. "agent finished a long turn".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    /// Send a desktop notification when an agent turn completes (default: true).
+    /// Notifications fire only for long turns (see thresholds below) and, by
+    /// default, only while the terminal window is unfocused.
+    pub turn_complete: bool,
+    /// Minimum turn duration, in seconds, before a completed turn notifies
+    /// (default: 120).
+    pub turn_complete_min_secs: u64,
+    /// Lower duration threshold, in seconds, used when the session has todos
+    /// recorded, since todos indicate longer task-style work (default: 30).
+    pub turn_complete_todo_min_secs: u64,
+    /// Only notify while the terminal window is unfocused (default: true).
+    /// Requires a terminal that reports focus events (most modern terminals).
+    pub turn_complete_only_when_unfocused: bool,
+    /// macOS Notification Center sound name played on turn completion
+    /// (e.g. "Glass", "Ping", "Hero"). Empty string disables the sound.
+    /// Ignored on non-macOS platforms. Default: "Glass".
+    pub turn_complete_sound: String,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            turn_complete: true,
+            turn_complete_min_secs: 120,
+            turn_complete_todo_min_secs: 30,
+            turn_complete_only_when_unfocused: true,
+            turn_complete_sound: "Glass".to_string(),
+        }
+    }
+}
+
+/// Safety system & notification configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SafetyConfig {
+    /// ntfy.sh topic name (required for push notifications)
+    pub ntfy_topic: Option<String>,
+    /// ntfy.sh server URL (default: https://ntfy.sh)
+    pub ntfy_server: String,
+    /// Enable desktop notifications via notify-send (default: true)
+    pub desktop_notifications: bool,
+    /// Enable email notifications (default: false)
+    pub email_enabled: bool,
+    /// Email recipient
+    pub email_to: Option<String>,
+    /// SMTP host (e.g. smtp.gmail.com)
+    pub email_smtp_host: Option<String>,
+    /// SMTP port (default: 587)
+    pub email_smtp_port: u16,
+    /// Email sender address
+    pub email_from: Option<String>,
+    /// SMTP password (prefer HORON_AGENT_SMTP_PASSWORD env var)
+    pub email_password: Option<String>,
+    /// IMAP host for receiving email replies (e.g. imap.gmail.com)
+    pub email_imap_host: Option<String>,
+    /// IMAP port (default: 993)
+    pub email_imap_port: u16,
+    /// Enable email reply → agent directive feature (default: false)
+    pub email_reply_enabled: bool,
+    /// Enable Telegram notifications (default: false)
+    pub telegram_enabled: bool,
+    /// Telegram bot token (from @BotFather)
+    pub telegram_bot_token: Option<String>,
+    /// Telegram chat ID to send messages to
+    pub telegram_chat_id: Option<String>,
+    /// Enable Telegram reply → agent directive feature (default: false)
+    pub telegram_reply_enabled: bool,
+    /// Enable Discord notifications (default: false)
+    pub discord_enabled: bool,
+    /// Discord bot token
+    pub discord_bot_token: Option<String>,
+    /// Discord channel ID to send messages to
+    pub discord_channel_id: Option<String>,
+    /// Discord bot user ID (for filtering own messages in polling)
+    pub discord_bot_user_id: Option<String>,
+    /// Enable Discord reply → agent directive feature (default: false)
+    pub discord_reply_enabled: bool,
+    /// Enable the Jade cloud relay channel (remote control via cloud mailbox, default: false)
+    pub jade_relay_enabled: bool,
+    /// Jade relay API base URL (e.g. https://...lambda-url.us-east-1.on.aws/)
+    pub jade_relay_api_base: Option<String>,
+    /// Jade relay bearer token (prefer HORON_AGENT_JADE_RELAY_TOKEN env var)
+    pub jade_relay_token: Option<String>,
+    /// Jade relay token id header (x-jade-token-id), used for fast token lookup
+    pub jade_relay_token_id: Option<String>,
+    /// Jade relay user id (channel scope; defaults to the token's user when omitted)
+    pub jade_relay_user_id: Option<String>,
+    /// Jade relay session id to bind this laptop's listener to (the channel = user_id/session_id)
+    pub jade_relay_session_id: Option<String>,
+    /// Enable Jade relay prompt → agent directive feature (default: false)
+    pub jade_relay_reply_enabled: bool,
+    /// Enable Jade relay device launch commands that open headed local sessions (default: false)
+    pub jade_relay_launch_enabled: bool,
+    /// Default working directory for remotely launched headed sessions
+    pub jade_relay_launch_working_dir: Option<String>,
+}
+
+impl Default for SafetyConfig {
+    fn default() -> Self {
+        Self {
+            ntfy_topic: None,
+            ntfy_server: "https://ntfy.sh".to_string(),
+            desktop_notifications: true,
+            email_enabled: false,
+            email_to: None,
+            email_smtp_host: None,
+            email_smtp_port: 587,
+            email_from: None,
+            email_password: None,
+            email_imap_host: None,
+            email_imap_port: 993,
+            email_reply_enabled: false,
+            telegram_enabled: false,
+            telegram_bot_token: None,
+            telegram_chat_id: None,
+            telegram_reply_enabled: false,
+            discord_enabled: false,
+            discord_bot_token: None,
+            discord_channel_id: None,
+            discord_bot_user_id: None,
+            discord_reply_enabled: false,
+            jade_relay_enabled: false,
+            jade_relay_api_base: None,
+            jade_relay_token: None,
+            jade_relay_token_id: None,
+            jade_relay_user_id: None,
+            jade_relay_session_id: None,
+            jade_relay_reply_enabled: false,
+            jade_relay_launch_enabled: false,
+            jade_relay_launch_working_dir: None,
+        }
+    }
+}
+
+/// WebSocket gateway configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GatewayConfig {
+    /// Enable the WebSocket gateway (default: false)
+    pub enabled: bool,
+    /// TCP port to listen on (default: 7643)
+    pub port: u16,
+    /// Bind address (default: 0.0.0.0)
+    pub bind_addr: String,
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 7643,
+            bind_addr: "0.0.0.0".to_string(),
+        }
+    }
+}
+
+/// A single global launch hotkey: a chord plus the directory it opens horon-agent in.
+///
+/// `dir` is usually an absolute path, but a few sentinels keep dynamic targets
+/// working without rewriting config on every launch:
+/// - `$HOME` -> the user's home directory.
+/// - `$LAST_DIR` -> the most recent non-home project directory horon-agent ran in.
+/// - `$LAST_REPO` -> the most recent horon-agent repo (for self-dev).
+///
+/// `self_dev = true` opens the directory as a self-dev session (passes the
+/// `self-dev` subcommand). `label` is an optional human name used in notices.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LaunchHotkeyEntry {
+    /// horon-agent-style chord string, e.g. `cmd+;`, `cmd+[`, `cmd+shift+'`.
+    pub chord: String,
+    /// Directory to open (absolute path or a `$HOME`/`$LAST_DIR`/`$LAST_REPO`
+    /// sentinel).
+    pub dir: String,
+    /// Optional short label (e.g. the repo's directory name) for notices.
+    #[serde(default)]
+    pub label: String,
+    /// Open as a self-dev session instead of a normal session.
+    #[serde(default)]
+    pub self_dev: bool,
+}
+
+/// Configuration for the global "launch a new horon-agent" hotkeys (macOS).
+///
+/// When `entries` is empty, horon-agent uses its built-in defaults (`Cmd+;` -> home,
+/// `Cmd+'` -> last project, `Cmd+Shift+'` -> self-dev). Auto-import can bake a
+/// richer, per-repo mapping here once: the top repo on `Cmd+;`, home on
+/// `Cmd+'`, and the next repos on `Cmd+[` / `Cmd+]` / `Cmd+\`. Once baked the
+/// mapping is static and does not move around as the user's activity changes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct LaunchHotkeysConfig {
+    /// Whether the global launch hotkeys are installed at all. `None` means
+    /// "not decided yet" (fall back to the legacy auto-install gating); `Some`
+    /// is an explicit user/import choice.
+    pub enabled: Option<bool>,
+    /// Explicit chord -> directory mapping. Empty = use built-in defaults.
+    pub entries: Vec<LaunchHotkeyEntry>,
+    /// Set true once auto-import has populated `entries`, so we only bake the
+    /// per-repo mapping a single time and never clobber later user edits.
+    pub imported: bool,
+}
+
+#[cfg(test)]
+mod ambient_approval_defaults_tests {
+    use super::*;
+
+    /// A config file written before the approval-wait keys existed must keep
+    /// parsing, with a real timeout and a fail-closed default. `#[serde(default)]`
+    /// on a `u64` would give 0 and on a `String` an empty value, so both fields
+    /// name an explicit default function.
+    #[test]
+    fn legacy_ambient_section_gets_explicit_approval_defaults() {
+        let legacy: AmbientConfig = serde_json::from_str(r#"{"enabled": true, "min_interval_minutes": 7}"#)
+            .expect("legacy ambient section must parse");
+        assert!(legacy.enabled);
+        assert_eq!(legacy.min_interval_minutes, 7);
+        assert_eq!(legacy.approval_timeout_secs, 1800);
+        assert_eq!(legacy.approval_default_on_timeout, "deny");
+        assert!(
+            !legacy.approval_default_on_timeout.is_empty(),
+            "an empty string would be read as an unknown timeout policy"
+        );
+
+        // An unknown extra key from a newer writer must not break parsing.
+        let with_extra: AmbientConfig = serde_json::from_str(
+            r#"{"approval_timeout_secs": 60, "approval_default_on_timeout": "approve", "future_key": [1, 2]}"#,
+        )
+        .expect("unknown keys must be ignored");
+        assert_eq!(with_extra.approval_timeout_secs, 60);
+        assert_eq!(with_extra.approval_default_on_timeout, "approve");
+    }
+
+    #[test]
+    fn ambient_default_impl_matches_the_serde_defaults() {
+        let defaults = AmbientConfig::default();
+        assert_eq!(defaults.approval_timeout_secs, 1800);
+        assert_eq!(defaults.approval_default_on_timeout, "deny");
+
+        let parsed: AmbientConfig = serde_json::from_str("{}").expect("empty object must parse");
+        assert_eq!(parsed.approval_timeout_secs, defaults.approval_timeout_secs);
+        assert_eq!(parsed.approval_default_on_timeout, defaults.approval_default_on_timeout);
+    }
+
+    #[test]
+    fn approval_fields_round_trip() {
+        let config = AmbientConfig {
+            approval_timeout_secs: 45,
+            approval_default_on_timeout: "approve".to_string(),
+            ..AmbientConfig::default()
+        };
+        let encoded = serde_json::to_string(&config).expect("serialize ambient config");
+        let decoded: AmbientConfig = serde_json::from_str(&encoded).expect("parse ambient config");
+        assert_eq!(decoded.approval_timeout_secs, 45);
+        assert_eq!(decoded.approval_default_on_timeout, "approve");
+    }
+
+    #[test]
+    fn clientless_approval_gate_is_off_unless_written() {
+        let defaults = AmbientConfig::default();
+        assert!(!defaults.approval_for_clientless_runs);
+
+        let parsed: AmbientConfig = serde_json::from_str("{\"enabled\": true}").expect("legacy section must parse");
+        assert!(
+            !parsed.approval_for_clientless_runs,
+            "the ambient-only gate must stay closed for configs written before this key"
+        );
+
+        let enabled: AmbientConfig =
+            serde_json::from_str("{\"approval_for_clientless_runs\": true}").expect("flag must parse");
+        assert!(enabled.approval_for_clientless_runs);
+    }
+}
+
+#[cfg(test)]
+mod compaction_strategy_tests {
+    use super::*;
+
+    #[test]
+    fn compaction_strategy_defaults_to_structured() {
+        assert_eq!(CompactionStrategy::default(), CompactionStrategy::Structured);
+        assert_eq!(CompactionConfig::default().strategy, None);
+        assert_eq!(
+            CompactionConfig::default().resolved_strategy(&ProviderConfig::default()),
+            CompactionStrategy::Structured
+        );
+        assert_eq!(CompactionStrategy::default().as_str(), "structured");
+    }
+
+    #[test]
+    fn absent_native_mode_is_not_treated_as_explicit() {
+        // An old config file has no key at all: that must stay structured.
+        let provider: ProviderConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(provider.openai_native_compaction_mode, "off");
+        assert_eq!(provider.explicit_native_compaction_mode(), None);
+
+        let provider: ProviderConfig = serde_json::from_str(r#"{"openai_native_compaction_mode":"auto"}"#).unwrap();
+        assert_eq!(provider.explicit_native_compaction_mode(), Some("auto"));
+        assert_eq!(provider.openai_native_compaction_mode, "auto");
+
+        // An empty string carries no setting; it must not enable native compaction.
+        let provider: ProviderConfig = serde_json::from_str(r#"{"openai_native_compaction_mode":""}"#).unwrap();
+        assert_eq!(provider.openai_native_compaction_mode, "off");
+        assert_eq!(provider.explicit_native_compaction_mode(), None);
+    }
+
+    #[test]
+    fn strategy_round_trips_through_serde() {
+        for (text, expected) in [
+            ("structured", CompactionStrategy::Structured),
+            ("openai_auto", CompactionStrategy::OpenAiAuto),
+            ("openai_explicit", CompactionStrategy::OpenAiExplicit),
+        ] {
+            let json = format!("\"{text}\"");
+            assert_eq!(serde_json::from_str::<CompactionStrategy>(&json).unwrap(), expected);
+            assert_eq!(CompactionStrategy::parse(text), Some(expected));
+        }
+    }
+
+    #[test]
+    fn explicit_strategy_wins_over_legacy_native_mode() {
+        let provider = ProviderConfig {
+            openai_native_compaction_mode: "auto".to_string(),
+            ..Default::default()
+        };
+        // Direct assignment (the env-override path) is still an explicit choice.
+        assert_eq!(provider.explicit_native_compaction_mode(), Some("auto"));
+
+        let mut compaction = CompactionConfig {
+            strategy: Some(CompactionStrategy::Structured),
+            ..Default::default()
+        };
+        assert_eq!(compaction.resolved_strategy(&provider), CompactionStrategy::Structured);
+
+        compaction.strategy = Some(CompactionStrategy::OpenAiExplicit);
+        assert_eq!(
+            compaction.resolved_strategy(&provider),
+            CompactionStrategy::OpenAiExplicit
+        );
+    }
+
+    #[test]
+    fn provider_defaults_and_budget_defaults_match_policy() {
+        let provider = ProviderConfig::default();
+        assert_eq!(provider.openai_native_compaction_mode, "off");
+        assert_eq!(provider.explicit_native_compaction_mode(), None);
+        assert_eq!(provider.openai_native_compaction_threshold_tokens, 200_000);
+
+        let compaction = CompactionConfig::default();
+        assert_eq!(compaction.reserve_tokens, 16_384);
+        assert_eq!(compaction.recent_tokens, 20_000);
+    }
+}
+
+#[cfg(test)]
+mod reasoning_display_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_reasoning_display_is_distinguishable_from_the_legacy_fallback() {
+        // Front-ends (the desktop) apply their own default only when the user
+        // has not chosen one, so this flag must not be true just because
+        // `show_thinking` happens to be set.
+        let mut display = DisplayConfig {
+            reasoning_display: None,
+            show_thinking: true,
+            ..DisplayConfig::default()
+        };
+        assert!(!display.has_explicit_reasoning_display());
+        assert_eq!(display.reasoning_display(), ReasoningDisplayMode::Full);
+
+        display.set_reasoning_display(ReasoningDisplayMode::Current);
+        assert!(display.has_explicit_reasoning_display());
+        assert_eq!(display.reasoning_display(), ReasoningDisplayMode::Current);
+        assert!(
+            display.show_thinking,
+            "any active display mode must keep reasoning requested from the provider"
+        );
+
+        display.set_reasoning_display(ReasoningDisplayMode::Off);
+        assert!(display.has_explicit_reasoning_display());
+        assert!(!display.show_thinking);
+    }
+}
+
+#[cfg(test)]
+#[path = "autonomous_failover_tests.rs"]
+mod autonomous_failover_defaults_tests;

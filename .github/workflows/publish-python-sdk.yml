@@ -1,0 +1,78 @@
+name: Publish Python SDK
+
+env:
+  HORON_AGENT_CI: "1"
+  # CI builds without the local parallel-frontend rustc wrapper from
+  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+
+on:
+  workflow_dispatch:
+    inputs:
+      horon_agent_release_tag:
+        description: Released horon-agent tag whose binaries should be bundled
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish horon-agent-sdk
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      # PyPI trusted publishing: no long-lived token is stored in the repository.
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Enforce Rust, TypeScript, and Python SDK surface parity
+        working-directory: ${{ github.workspace }}
+        run: cargo test -p horon-agent-sdk parity -- --nocapture
+
+      - name: Validate SDK
+        run: |
+          uv sync --locked
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv run pytest
+
+      - name: Download released horon-agent runtimes
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p sdk-runtime-assets
+          gh release download "${{ inputs.horon_agent_release_tag }}" --dir sdk-runtime-assets \
+            --pattern 'horon-agent-linux-x86_64.tar.gz' \
+            --pattern 'horon-agent-linux-aarch64.tar.gz' \
+            --pattern 'horon-agent-macos-x86_64.tar.gz' \
+            --pattern 'horon-agent-macos-aarch64.tar.gz' \
+            --pattern 'horon-agent-windows-x86_64.tar.gz' \
+            --pattern 'horon-agent-windows-aarch64.tar.gz'
+
+      # One pure wheel (no runtime, falls back to PATH), the sdist, and six
+      # platform wheels with the runtime under horon_agent_sdk/_bin/. pip and uv
+      # pick the platform wheel matching the consumer's machine.
+      - name: Build sdist and wheels
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/sdk/build_python_wheels.sh sdk-runtime-assets sdk-python-dist
+
+      - name: Publish to PyPI
+        working-directory: ${{ github.workspace }}
+        run: uv publish --trusted-publishing always sdk-python-dist/*

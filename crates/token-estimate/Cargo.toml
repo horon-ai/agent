@@ -1,0 +1,12 @@
+[package]
+name = "horon-agent-token-estimate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Content-aware token estimation for context budgeting, with no dependencies"
+
+[lib]
+name = "horon_agent_token_estimate"
+path = "src/lib.rs"
+
+[dependencies]

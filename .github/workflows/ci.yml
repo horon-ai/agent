@@ -1,0 +1,742 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main, master]
+  pull_request:
+    branches: [dev, main, master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only for every job here: the workflow builds, tests, and uploads
+# artifacts, and never writes to the repository. Jobs that need more grant it
+# themselves.
+permissions:
+  contents: read
+
+env:
+  HORON_AGENT_CI: "1"
+  # CI builds without the local parallel-frontend rustc wrapper from
+  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+
+# Runner selection. With the repository variable `CI_SELF_HOSTED` set to `true`,
+# the jobs that can run on macOS go to the self-hosted runner labelled
+# `horon-agent`, and the Linux-only and Windows-only jobs are skipped (shown as
+# skipped, never as passed). Unset the variable to return to GitHub-hosted
+# runners; nothing else changes.
+#
+# This repository is public, so a pull request from a fork is untrusted: its
+# workflow file and every script it runs come from the fork, not from `main`.
+# The self-hosted runner is a persistent machine, never a disposable VM, so fork
+# code must not run on it. Every self-hosted branch therefore requires either a
+# non-PR event or a PR whose head repository is this repository, and falls back
+# to `ubuntu-latest` otherwise. The GitHub-hosted-only jobs use the negated
+# condition so a fork PR still gets them.
+jobs:
+  quality:
+    name: Quality Guardrails
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: quality-ubuntu
+          cache-all-crates: "true"
+
+      - name: Check module declarations resolve
+        # A `mod x;` with no file makes rustfmt fail with "Error writing files:
+        # failed to resolve mod", which reads like a formatting problem and hides
+        # every gate behind it. Naming the real cause first (221159294).
+        run: python3 scripts/ci/check_module_files.py
+
+      - name: Check formatting
+        # These gates are independent. Report every failure in one run instead
+        # of letting a Clippy error hide stale lockfiles or budget violations.
+        # No continue-on-error: any failed check still fails the quality job.
+        if: ${{ !cancelled() }}
+        run: bash scripts/ci/check_format.sh
+
+      - name: Check all targets and all features
+        if: ${{ !cancelled() }}
+        run: cargo check --locked --all-targets --all-features
+
+      - name: Run clippy with warnings denied
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Enforce Cargo.lock is up to date
+        if: ${{ !cancelled() }}
+        shell: bash
+        # Adding a dependency without regenerating Cargo.lock breaks every
+        # `--locked` build. Only the Windows jobs pass `--locked`, so such a
+        # commit passes 8 of 9 CI jobs and fails Windows at "Build release
+        # binary", skipping all of its validation steps. This catches it in
+        # seconds, on the job that already owns dependency hygiene.
+        run: |
+          cargo metadata --locked --format-version 1 > /dev/null
+          git diff --exit-code -- Cargo.lock
+
+      - name: Warning budget gate contract tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: scripts/ci/test_check_warnings.sh
+
+      - name: Benchmark script gate
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py
+
+      - name: Enforce warning budget
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: scripts/ci/check_warnings.sh
+
+      - name: Enforce oversized-file ratchet
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_code_size.py
+
+      - name: Enforce oversized-test ratchet
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_test_size.py
+
+      - name: Enforce panic-prone usage ratchet
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_panics.py
+
+      - name: Enforce swallowed-error usage ratchet
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_swallowed_errors.py
+
+      - name: Enforce crate dependency boundaries
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_dependency_boundaries.py
+
+      - name: Enforce Rust and TypeScript SDK surface parity
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo test --locked -p horon-agent-sdk parity -- --nocapture
+
+      - name: Enforce wildcard re-export ratchet
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_wildcard_reexports.py
+
+      - name: Enforce no unused dependencies
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          cargo install cargo-machete --locked
+          cargo machete
+
+  release-automation:
+    name: Release Automation
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test justrust release installation and routing
+        run: |
+          python3 tests/test_ci_workflow_guards.py
+          python3 tests/test_install_justrust_ci.py
+          python3 tests/test_public_release_builds.py
+          python3 tests/test_release_ci.py
+          python3 scripts/release/test_release.py
+          python3 tests/test_verify_public_release.py
+          python3 tests/test_watch_release_run.py
+          bash -n scripts/ci/install_justrust.sh scripts/release/build_linux_compat.sh scripts/release/release.sh
+
+  build:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || matrix.os }}
+    # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
+    # not a *rerun*, where the cache is cold: three consecutive reruns of a
+    # known-good commit were cancelled at the cap, each getting further through
+    # the same green steps (#693). A rerun is exactly what you reach for after a
+    # concurrency cancellation, so the old cap made healthy commits look red.
+    # 75 still bounds a genuinely hung job well under the windows job's 150.
+    timeout-minutes: 75
+    # Some dependencies (e.g. convert_case 0.10.0 via derive_more/crossterm, and
+    # proc-macro2/quote) accidentally ship a `rust-toolchain.toml` *inside their
+    # published crate*. When cargo builds such a crate its CWD is that crate dir,
+    # so the rustup proxy honours the file: convert_case pins `channel = "1.83.0"`
+    # and proc-macro2 requests `components = ["rust-src"]`. That made every
+    # Build & Test job (a) race two parallel `rust-src` downloads and (b) later
+    # try to compile convert_case with rustc 1.83.0, failing with E0514/E0599.
+    # RUSTUP_TOOLCHAIN takes precedence over any rust-toolchain.toml override, so
+    # pinning it here makes every step use this job's installed stable toolchain.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    strategy:
+      fail-fast: false
+      matrix:
+        # Build & Test (ubuntu-latest) and Build & Test (macos-latest). The
+        # matrix is one `include` list rather than `os` plus `include`, because
+        # `include` re-adds any combination `exclude` removes; with
+        # CI_SELF_HOSTED only the macOS entry exists. A fork PR falls back to
+        # both GitHub-hosted entries for the same reason as `runs-on` above.
+        include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","target":"aarch64-apple-darwin"}]') }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          # Pre-install rust-src in the (serial) toolchain step. Some build-script
+          # / proc-macro units trigger an on-demand `rustup component add rust-src`,
+          # and when several parallel cargo/rustc processes request it at once they
+          # race on the shared `~/.rustup/downloads/*.partial` file and fail with
+          # "could not rename ... No such file or directory". Fetching it once here
+          # removes the race. (Was failing every Build & Test job.)
+          components: rust-src
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
+          # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
+          key: ${{ matrix.os }}-stablepin
+
+      - name: Install mold linker (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mold
+
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p .cargo
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cat > .cargo/config.toml << 'EOF'
+          [target.x86_64-unknown-linux-gnu]
+          linker = "clang"
+          rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+          EOF
+          fi
+          # NOTE: intentionally NOT exporting RUSTC_WRAPPER=sccache here. Only this
+          # step used sccache while the later `cargo test --no-run` steps did not,
+          # so sccache emitted rlibs/rmetas stamped `<unknown rustc version>` that
+          # the non-sccache test compile then rejected with E0514
+          # ("compiled by an incompatible version of rustc"). rust-cache already
+          # caches target/ across runs, so a clean, wrapper-consistent build is
+          # both correct and fast enough.
+          RUSTC="$(rustup which rustc)"
+          export RUSTC
+          CARGO_BIN="$(rustup which cargo)"
+          "$CARGO_BIN" build --locked --release --target ${{ matrix.target }}
+
+      - name: Compile library and binary tests
+        shell: bash
+        run: |
+          python3 .github/scripts/run_with_timeout.py 900 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --lib --bins --no-run
+
+      - name: Run deterministic retention-readiness cohort
+        shell: bash
+        run: |
+          # A cold horon-agent-app-core test harness compiles heavy optional provider
+          # dependencies and can exceed three minutes on hosted runners. The
+          # cohort itself runs in under a second once the lib test is built.
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-app-core --lib retention_readiness -- --nocapture
+
+      - name: Run secret-input pty cohort (all platforms with a pty)
+        if: runner.os != 'Windows'
+        shell: bash
+        # `horon-agent-base --lib` is never executed on Linux CI: the only horon-agent-base
+        # test invocation anywhere in this workflow is a Windows-only
+        # `power_inhibit::tests::windows_` filter. So the masking fix for #660 had
+        # a test that was compiled and never run, which is the same
+        # looks-green-but-never-ran shape as the warning budget and the stdin
+        # detector (#651). These tests fork a pty, so they cannot run on the
+        # Windows runner; everywhere else they take about a second.
+        #
+        # 600s, not 300s: the budget is dominated by cold-compiling the
+        # horon-agent-base lib test harness, which exceeded 300s on a hosted macOS
+        # runner (run 30591536707) while the cohort itself runs in a second.
+        run: |
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-base --lib secret_input -- --nocapture
+
+      - name: Run browser session liveness and reuse regressions
+        shell: bash
+        run: |
+          cargo test --locked --target ${{ matrix.target }} -p horon-agent-base --lib browser_session -- --nocapture
+          cargo test --locked --target ${{ matrix.target }} -p horon-agent-app-core --lib browser_session -- --nocapture
+
+      - name: Run embedding numeric-stability cohort (Linux only)
+        if: runner.os == 'Linux'
+        shell: bash
+        # `minilm_embedding_is_numerically_stable_across_inference_engines` pins
+        # the model's actual output, which is the only thing that can catch an
+        # inference-engine upgrade silently changing embeddings: persisted
+        # memories are keyed by model_id, which does not change across a tract
+        # bump, so the stale-embedding filter cannot notice (#657).
+        #
+        # That test skips itself when the model is absent, and horon-agent-embedding
+        # tests are not otherwise run here at all, so without this step it would
+        # never execute. Fetch the model first (~87MB) so the cohort is real
+        # rather than a silent skip.
+        run: |
+          set -euo pipefail
+          model_dir="$HOME/.horon-agent/models/all-MiniLM-L6-v2"
+          mkdir -p "$model_dir"
+          base="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"
+          curl -sSfL --retry 3 -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
+          curl -sSfL --retry 3 -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
+          # Fail loudly if the fetch produced something unusable, so this cannot
+          # degrade back into a silent skip.
+          test -s "$model_dir/model.onnx"
+          test -s "$model_dir/tokenizer.json"
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-embedding --lib -- --nocapture \
+            | tee /tmp/embedding-cohort.log
+          # The test is present and the harness ran it (rather than the binary
+          # failing to build).
+          grep -q "minilm_embedding_is_numerically_stable_across_inference_engines ... ok" \
+            /tmp/embedding-cohort.log
+          # This is the check that matters. A skipped test still reports "ok",
+          # so the reported result alone cannot distinguish "verified" from
+          # "silently did nothing"; only the skip message can.
+          if grep -q "skip: MiniLM model not present" /tmp/embedding-cohort.log; then
+            echo "::error::embedding cohort skipped despite fetching the model"
+            exit 1
+          fi
+
+      - name: Run stdin-forwarding cohort (all platforms)
+        shell: bash
+        # These tests exercise the per-platform stdin detector, whose
+        # implementations are entirely separate (`/proc/PID/syscall` on Linux,
+        # `proc_pidinfo` + thread state on macOS). They were never gated: the
+        # only `horon-agent-app-core --lib` run above is filtered to
+        # `retention_readiness`, and the broader suite is Linux-only, so the
+        # macOS detector had no coverage at all. `TH_STATE_WAITING` was defined
+        # as 2 (`TH_STATE_STOPPED`) rather than 3, which silently disabled
+        # macOS stdin forwarding entirely until #651.
+        #
+        # Deliberately not Linux-gated: running this on both Unix platforms is
+        # the whole point. Windows is a separate job and is not covered here,
+        # because these tests drive `head -n1`, which stock Windows does not
+        # provide; the Windows detector still has no test coverage.
+        run: |
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-app-core --lib tool::bash::tests::test_stdin_forwarding -- --nocapture
+
+      - name: Compile integration test binaries
+        shell: bash
+        # Build the integration-test binaries up front (not counted against the
+        # run steps' execution budgets). The e2e suite in particular is heavy
+        # (burst-spawn concurrency), and folding compilation into its 900s run
+        # budget was pushing slower hosted ubuntu/macos runners over the limit.
+        run: |
+          python3 .github/scripts/run_with_timeout.py 900 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            --test provider_matrix --test e2e --no-run
+
+      - name: Run provider matrix tests
+        shell: bash
+        run: |
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test provider_matrix
+
+      - name: Run e2e tests
+        shell: bash
+        run: |
+          # e2e is fast (~1-2 min of execution); the generous budget only guards
+          # against an occasional slow hosted runner. Compilation is already done
+          # in the dedicated compile step above.
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test e2e
+
+      - name: Check PowerShell script syntax (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/ci/check_powershell.ps1
+
+      # Linux and macOS. Windows still has its own cfg-gated surface and is
+      # not yet warning-clean, so it stays out of the gate (#1177).
+      - name: Enforce warning budget (Linux, macOS)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          scripts/ci/check_warnings.sh
+
+      - name: Security preflight (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked
+          scripts/ci/check_security.sh --strict
+
+  windows-build-test:
+    name: Build & Test (windows-latest)
+    runs-on: windows-latest
+    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-latest
+          cache-all-crates: "true"
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            sccache --start-server *> $null
+            if ($LASTEXITCODE -eq 0) {
+              $env:RUSTC_WRAPPER = 'sccache'
+            }
+          }
+
+          & cargo build --locked --release --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Windows release build failed'
+          }
+
+      - name: Compile library and binary tests
+        shell: pwsh
+        run: |
+          & cargo test --locked --target x86_64-pc-windows-msvc --lib --bins --no-run
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Windows library/binary test compilation failed'
+          }
+
+      - name: Run targeted Windows validation tests
+        shell: pwsh
+        run: |
+          $tests = @(
+            'command_candidates_adds_extension_on_windows',
+            'command_exists_for_known_binary',
+            'command_exists_absolute_path',
+            'sibling_socket_path_roundtrip',
+            'cleanup_socket_pair_removes_main_and_debug_files',
+            'is_process_running_reports_exited_children_as_stopped',
+            'spawn_replacement_process_returns_without_waiting_for_child_exit',
+            'build_shell_command_uses_cmd_and_executes_command',
+            'pipe_name_is_stable_and_normalizes_case_and_separators',
+            'pipe_name_falls_back_when_stem_is_empty',
+            'busy_pipe_is_reported_as_a_live_socket_path',
+            'stream_pair_round_trips_bytes',
+            'split_stream_supports_concurrent_read_and_write',
+            'test_cancel_command_idle_reports_nothing_to_cancel'
+          )
+
+          foreach ($testName in $tests) {
+            & ./scripts/ci/cargo_with_timeout.ps1 `
+              -Name "Windows targeted test: $testName" `
+              -TimeoutSeconds 300 `
+              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--lib', $testName, '--', '--nocapture')
+          }
+
+      - name: Run Windows hotkey and power tests
+        shell: pwsh
+        run: |
+          & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'Windows setup-hints tests' `
+            -TimeoutSeconds 300 `
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-setup-hints', '--lib', '--', '--nocapture')
+
+          & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'Windows power-inhibit tests' `
+            -TimeoutSeconds 900 `
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--no-default-features', '--lib', 'power_inhibit::tests::windows_', '--', '--nocapture')
+
+      - name: Run Windows e2e smoke tests
+        shell: pwsh
+        run: |
+          $tests = @(
+            'provider_behavior::test_socket_model_cycle_supported_models',
+            'provider_behavior::test_model_switch_resets_provider_session'
+          )
+
+          foreach ($testName in $tests) {
+            & ./scripts/ci/cargo_with_timeout.ps1 `
+              -Name "Windows e2e smoke test: $testName" `
+              -TimeoutSeconds 420 `
+              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'e2e', $testName, '--', '--exact', '--nocapture')
+          }
+
+      - name: Run Windows lifecycle e2e tests
+        shell: pwsh
+        env:
+          HORON_AGENT_E2E_ARTIFACT_DIR: ${{ runner.temp }}/horon-agent-windows-e2e-logs
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:HORON_AGENT_E2E_ARTIFACT_DIR | Out-Null
+          $tests = @(
+            'windows_lifecycle::windows_binary_server_accepts_clients_and_debug_cli',
+            'windows_lifecycle::windows_binary_server_rebinds_named_pipe_after_exit'
+          )
+          foreach ($testName in $tests) {
+            & ./scripts/ci/cargo_with_timeout.ps1 `
+              -Name "Windows lifecycle e2e test: $testName" `
+              -TimeoutSeconds 420 `
+              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'e2e', $testName, '--', '--exact', '--nocapture')
+          }
+
+      - name: Upload Windows e2e diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-diagnostics
+          path: ${{ runner.temp }}/horon-agent-windows-e2e-logs
+          if-no-files-found: ignore
+
+      - name: Verify built binary launches
+        shell: pwsh
+        run: |
+          & "target/x86_64-pc-windows-msvc/release/horon-agent.exe" --version
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Built Windows binary failed to run --version'
+          }
+
+      - name: Run Windows installer lifecycle tests
+        shell: pwsh
+        run: |
+          & ./scripts/install/test_install_windows_launcher.ps1
+          & ./scripts/install/test_windows_setup.ps1
+
+  fmt:
+    name: Format
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check module declarations resolve
+        # A `mod x;` with no file makes rustfmt fail with "Error writing files:
+        # failed to resolve mod", which reads like a formatting problem and hides
+        # every gate behind it. Naming the real cause first (221159294).
+        run: python3 scripts/ci/check_module_files.py
+
+      - name: Check formatting
+        run: bash scripts/ci/check_format.sh
+
+  typescript-sdk:
+    name: TypeScript SDK
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      # The SDK mirrors crates/harness-api by hand. Without this job the
+      # only guard that runs on a change is the Rust-side variant check, and a
+      # typo in the TypeScript itself (or a broken client) reaches consumers.
+      - name: Install
+        run: bun install --frozen-lockfile
+        working-directory: sdk/typescript
+
+      - name: Typecheck, build, and test
+        run: bun run check
+        working-directory: sdk/typescript
+
+      # `npm run check` proves the source compiles; it says nothing about what
+      # a consumer actually receives. The published tarball is a separate
+      # artifact (`files`, `exports`, `prepack`), and getting it wrong ships a
+      # package that installs but cannot be imported. Install it as a real
+      # dependency and import it the way a consumer would.
+      - name: Published tarball installs and imports
+        run: bash scripts/sdk/test_package.sh
+
+  python-sdk:
+    name: Python SDK (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest supported version and the newest stable one.
+        python: ["3.10", "3.13"]
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Like the TypeScript job: the SDK mirrors crates/harness-api by hand,
+      # and the Rust-side parity test only proves the method names exist.
+      - name: Install
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Typecheck
+        run: uv run mypy src
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Build sdist and wheel
+        run: uv build
+
+  setup-friction:
+    name: Setup Friction Eval (Linux installer)
+    runs-on: ubuntu-latest
+    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install probe shells
+        run: sudo apt-get update && sudo apt-get install -y fish zsh
+
+      - name: Installer conversion telemetry tests
+        run: bash scripts/install/test_install.sh
+
+      - name: Setup friction scorecard
+        run: bash scripts/install/eval_setup_friction.sh
+
+  powershell-syntax:
+    name: PowerShell Syntax
+    runs-on: windows-latest
+    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check PowerShell script syntax (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          & ./scripts/ci/check_powershell.ps1
+
+      - name: Check PowerShell script syntax (PowerShell 7)
+        shell: pwsh
+        run: |
+          & ./scripts/ci/check_powershell.ps1
+
+  windows-arm64-check:
+    name: Windows ARM64 Release Configuration
+    runs-on: windows-latest
+    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 35
+    env:
+      # Native Windows hosted routing is unsupported. Keep execution on the
+      # runner and bypass alpha.17's sampler until a fixed client is validated.
+      JUSTRUST_TOOLCHAIN: system
+      JUSTRUST_SLOTS: "0"
+      JUSTRUST_NO_TELEMETRY: "1"
+      JUSTRUST_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-arm64-release-check
+          cache-all-crates: "true"
+
+      - name: Install pinned justrust
+        shell: bash
+        run: bash scripts/ci/install_justrust.sh
+
+      - name: Check full Windows ARM64 release configuration
+        shell: pwsh
+        # Unlike the advisory Linux cross-check, this uses the native MSVC
+        # toolchain and the release feature graph, including the companion.
+        run: |
+          & justrust check --local --locked -p horon-agent --bins --target aarch64-pc-windows-msvc --no-default-features --features pdf
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows-cross-check:
+    name: Windows Cross-Target Check (Linux)
+    runs-on: ubuntu-latest
+    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-cross-check
+          cache-all-crates: "true"
+
+      - name: Install LLVM toolchain for cargo-xwin
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm ninja-build
+
+      - name: Install cargo-xwin
+        run: cargo install --git https://github.com/rust-cross/cargo-xwin cargo-xwin
+
+      - name: Check Windows x64 target
+        run: cargo xwin check --locked --target x86_64-pc-windows-msvc
+
+      # cargo-xwin currently feeds clang-style ring builds MSVC /imsvc flags for
+      # aarch64-pc-windows-msvc on Linux. Keep this advisory until upstream
+      # cargo-xwin/ring interop is fixed; native Windows ARM64 smoke covers the
+      # release artifact path.
+      - name: Check Windows ARM64 target (advisory)
+        continue-on-error: true
+        run: cargo xwin check --locked --target aarch64-pc-windows-msvc --no-default-features --features pdf

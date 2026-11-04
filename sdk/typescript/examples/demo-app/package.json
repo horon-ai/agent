@@ -1,0 +1,15 @@
+{
+	"name": "horon-agent-sdk-demo-app",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"start": "node index.mjs"
+	},
+	"dependencies": {
+		"@horon-ai/agent-sdk": "^1.0.0"
+	},
+	"engines": {
+		"node": ">=20"
+	}
+}

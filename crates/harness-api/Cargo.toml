@@ -1,0 +1,20 @@
+[package]
+name = "horon-agent-harness-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Stable, versioned client API for the horon-agent harness (agent runtime)"
+
+[dependencies]
+horon-agent-session-types = { path = "../session-types" }
+horon-agent-session-store = { path = "../session-store" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+horon-agent-usage-types = { path = "../usage-types" }
+
+horon-agent-side-panel-types = { path = "../side-panel-types" }
+horon-agent-applet-types = { path = "../applet-types" }
+horon-agent-tool-types = { path = "../tool-types" }
+horon-agent-todo-policy = { path = "../todo-policy" }
+
+[dev-dependencies]

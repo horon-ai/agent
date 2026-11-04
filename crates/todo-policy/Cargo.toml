@@ -1,0 +1,15 @@
+[package]
+name = "horon-agent-todo-policy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Pure todo quality-gate and auto-poke policy shared by HoronAgent clients"
+
+[dependencies]
+horon-agent-task-types = { path = "../task-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+horon-agent-core = { path = "../core" }

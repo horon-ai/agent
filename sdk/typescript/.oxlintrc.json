@@ -1,0 +1,119 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "nextjs", "unicorn", "import", "promise", "node"],
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "options": {
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error",
+    "typeAware": true
+  },
+  "rules": {
+    "no-unused-vars": "off",
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ],
+    "no-console": "off",
+    "unicorn/prefer-node-protocol": "error",
+    "import/no-unassigned-import": "off",
+    "unicorn/numeric-separators-style": "off",
+    "sort-keys": "off",
+    "one-var": "off",
+    "no-magic-numbers": "off",
+    "import/no-named-export": "off",
+    "id-length": "off",
+    "react/jsx-max-depth": "off",
+    "capitalized-comments": "off",
+    "node/no-sync": "off",
+    "func-style": "off",
+    "sort-imports": "off",
+    "import/group-exports": "off",
+    "no-ternary": "off",
+    "require-unicode-regexp": "off",
+    "prefer-named-capture-group": "off",
+    "import/no-nodejs-modules": "off",
+    "max-statements": "off",
+    "max-lines-per-function": "off",
+    "no-inline-comments": "off",
+    "unicorn/no-null": "off",
+    "unicorn/filename-case": "off",
+    "import/exports-last": "off",
+    "promise/avoid-new": "off",
+    "react/jsx-props-no-spreading": "off",
+    "no-continue": "off",
+    "promise/prefer-await-to-callbacks": "off",
+    "init-declarations": "off",
+    "max-lines": "off",
+    "react/no-unescaped-entities": "off",
+    "max-params": "off",
+    "unicorn/max-nested-calls": "off",
+    "typescript/parameter-properties": "off",
+    "node/global-require": "off",
+    "import/prefer-default-export": "off",
+    "typescript/prefer-readonly-parameter-types": "off",
+    "typescript/strict-boolean-expressions": "off",
+    "typescript/dot-notation": "off",
+    "require-await": "off",
+    "typescript/require-await": "off",
+    "unicorn/no-useless-undefined": "off",
+    "no-duplicate-imports": [
+      "error",
+      {
+        "allowSeparateTypeImports": true
+      }
+    ],
+    "unicorn/prefer-number-coercion": "off",
+    "unicorn/number-literal-case": "off",
+    "typescript/only-throw-error": "off",
+    "react/react-in-jsx-scope": "off"
+  },
+  "ignorePatterns": ["node_modules", "dist", "out", ".omo", "**/*.cjs", ".expo", "**/routeTree.gen.ts"],
+  "overrides": [
+    {
+      "files": ["**/*.js", "**/*.jsx", "tools/**/*.mjs", "scripts/**/*.mjs"],
+      "rules": {
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-return": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-type-assertion": "off",
+        "typescript/no-floating-promises": "off",
+        "typescript/await-thenable": "off",
+        "typescript/no-misused-promises": "off",
+        "typescript/no-confusing-void-expression": "off",
+        "typescript/strict-void-return": "off",
+        "typescript/no-base-to-string": "off",
+        "typescript/restrict-plus-operands": "off",
+        "typescript/restrict-template-expressions": "off",
+        "typescript/no-unnecessary-type-assertion": "off",
+        "typescript/no-unnecessary-type-arguments": "off",
+        "typescript/no-unnecessary-type-conversion": "off",
+        "typescript/require-await": "off"
+      }
+    },
+    {
+      "files": ["tools/**/*.mjs", "scripts/**/*.mjs"],
+      "rules": {
+        "no-await-in-loop": "off",
+        "unicorn/no-await-expression-member": "off"
+      }
+    }
+  ]
+}

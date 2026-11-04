@@ -1,0 +1,9 @@
+[package]
+name = "horon-agent-swarm-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+horon-agent-plan = { path = "../plan" }
+serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,9 @@
+[package]
+name = "horon-agent-batch-types"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+horon-agent-message-types = { path = "../message-types" }
+serde = { version = "1", features = ["derive"] }

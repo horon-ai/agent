@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+command=${1:-help}
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+sandbox_name=${HORON_AGENT_ONBOARDING_SANDBOX:-default}
+sandbox_root_default="$repo_root/.tmp/onboarding/$sandbox_name"
+sandbox_root=${HORON_AGENT_ONBOARDING_DIR:-$sandbox_root_default}
+horon_agent_home="$sandbox_root/home"
+runtime_dir="$sandbox_root/runtime"
+fixture_root_default="$repo_root/.tmp/auth-fixtures"
+fixture_root=${HORON_AGENT_AUTH_FIXTURE_DIR:-$fixture_root_default}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <command> [args...]
+
+Commands:
+  list                         List saved local auth fixtures
+  path [name]                  Print fixture root, or a specific fixture path
+  save <name>                  Save the current sandbox HORON_AGENT_HOME as a fixture
+  load <name>                  Replace the sandbox HORON_AGENT_HOME with a saved fixture
+  reset-sandbox                Remove only the current sandbox HORON_AGENT_HOME
+  delete <name>                Delete a saved fixture
+  env <name>                   Print exports for running against a loaded fixture
+  run <name> -- <args...>      Load fixture, then run horon-agent with args in sandbox
+  help                         Show this help
+
+Environment overrides:
+  HORON_AGENT_ONBOARDING_SANDBOX     Sandbox name to load into/from (default: default)
+  HORON_AGENT_ONBOARDING_DIR         Explicit onboarding sandbox directory
+  HORON_AGENT_AUTH_FIXTURE_DIR       Fixture store (default: .tmp/auth-fixtures)
+
+Notes:
+  Fixtures are local developer state under .tmp by default. They may contain real
+  tokens copied from sandbox logins, so do not move them into tracked paths.
+EOF
+}
+
+require_name() {
+  if [[ $# -lt 1 || -z "${1:-}" ]]; then
+    echo "missing fixture name" >&2
+    exit 2
+  fi
+  if [[ "$1" == *"/"* || "$1" == *".."* || "$1" =~ [^A-Za-z0-9._-] ]]; then
+    echo "invalid fixture name: $1" >&2
+    echo "Use only letters, numbers, dot, underscore, and dash." >&2
+    exit 2
+  fi
+  printf '%s' "$1"
+}
+
+fixture_path() {
+  local name
+  name=$(require_name "$1")
+  printf '%s/%s/home' "$fixture_root" "$name"
+}
+
+metadata_path() {
+  local name
+  name=$(require_name "$1")
+  printf '%s/%s/metadata.txt' "$fixture_root" "$name"
+}
+
+ensure_parent_dirs() {
+  mkdir -p "$fixture_root" "$sandbox_root" "$runtime_dir"
+  chmod 700 "$fixture_root" "$sandbox_root" 2>/dev/null || true
+}
+
+copy_dir_contents() {
+  local src=$1
+  local dst=$2
+  rm -rf "$dst"
+  mkdir -p "$dst"
+  if [[ -d "$src" ]]; then
+    shopt -s dotglob nullglob
+    local entries=("$src"/*)
+    if [[ ${#entries[@]} -gt 0 ]]; then
+      cp -a "${entries[@]}" "$dst"/
+    fi
+    shopt -u dotglob nullglob
+  fi
+}
+
+run_horon-agent() {
+  local binary_path="$repo_root/target/debug/horon-agent"
+  (
+    cd "$repo_root"
+    if [[ -x "$binary_path" ]]; then
+      env HORON_AGENT_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" "$binary_path" "$@"
+    else
+      env HORON_AGENT_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" cargo run --bin horon-agent -- "$@"
+    fi
+  )
+}
+
+list_fixtures() {
+  ensure_parent_dirs
+  local dir
+  for dir in "$fixture_root"/*/; do
+    [[ -d "$dir" ]] || continue
+    basename "${dir%/}"
+  done | sort
+}
+
+save_fixture() {
+  local name=$1
+  local dst meta
+  dst=$(fixture_path "$name")
+  meta=$(metadata_path "$name")
+  ensure_parent_dirs
+  if [[ ! -d "$horon_agent_home" ]]; then
+    echo "sandbox HORON_AGENT_HOME does not exist: $horon_agent_home" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$dst")"
+  copy_dir_contents "$horon_agent_home" "$dst"
+  chmod -R go-rwx "$(dirname "$dst")" 2>/dev/null || true
+  cat > "$meta" <<EOF
+name=$name
+saved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+sandbox_name=$sandbox_name
+source_horon_agent_home=$horon_agent_home
+warning=May contain real local auth tokens. Do not commit or share.
+EOF
+  echo "Saved auth fixture '$name' from $horon_agent_home"
+  echo "Fixture path: $(dirname "$dst")"
+}
+
+load_fixture() {
+  local name=$1
+  local src
+  src=$(fixture_path "$name")
+  ensure_parent_dirs
+  if [[ ! -d "$src" ]]; then
+    echo "fixture does not exist: $name" >&2
+    echo "Expected: $src" >&2
+    exit 1
+  fi
+  copy_dir_contents "$src" "$horon_agent_home"
+  chmod -R go-rwx "$horon_agent_home" 2>/dev/null || true
+  echo "Loaded auth fixture '$name' into sandbox '$sandbox_name'"
+  echo "HORON_AGENT_HOME=$horon_agent_home"
+}
+
+delete_fixture() {
+  local name=$1
+  local fixture_dir="$fixture_root/$name"
+  if [[ ! -d "$fixture_dir" ]]; then
+    echo "fixture does not exist: $name" >&2
+    exit 1
+  fi
+  rm -rf "$fixture_dir"
+  echo "Deleted auth fixture '$name'"
+}
+
+case "$command" in
+  list)
+    list_fixtures
+    ;;
+  path)
+    ensure_parent_dirs
+    if [[ $# -gt 0 ]]; then
+      name=$(require_name "$1")
+      dirname "$(fixture_path "$name")"
+    else
+      printf '%s\n' "$fixture_root"
+    fi
+    ;;
+  save)
+    name=$(require_name "${1:-}")
+    save_fixture "$name"
+    ;;
+  load)
+    name=$(require_name "${1:-}")
+    load_fixture "$name"
+    ;;
+  reset-sandbox)
+    rm -rf "$horon_agent_home"
+    mkdir -p "$horon_agent_home" "$runtime_dir"
+    echo "Reset sandbox HORON_AGENT_HOME: $horon_agent_home"
+    ;;
+  delete)
+    name=$(require_name "${1:-}")
+    delete_fixture "$name"
+    ;;
+  env)
+    name=$(require_name "${1:-}")
+    load_fixture "$name" >/dev/null
+    cat <<EOF
+export HORON_AGENT_HOME="$horon_agent_home"
+export HORON_AGENT_RUNTIME_DIR="$runtime_dir"
+EOF
+    ;;
+  run)
+    name=$(require_name "${1:-}")
+    shift || true
+    if [[ "${1:-}" == "--" ]]; then
+      shift
+    fi
+    load_fixture "$name" >/dev/null
+    run_horon-agent "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $command" >&2
+    echo >&2
+    usage >&2
+    exit 1
+    ;;
+esac

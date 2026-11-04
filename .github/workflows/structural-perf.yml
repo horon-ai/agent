@@ -1,0 +1,75 @@
+name: Structural performance
+
+env:
+  HORON_AGENT_CI: "1"
+  # CI builds without the local parallel-frontend rustc wrapper from
+  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_TERM_COLOR: always
+  # The gate reads stage counters, so recording must not be turned off: with it
+  # off every counter reads 0, which the gate treats as "not measured", not as
+  # "measured zero".
+  HORON_AGENT_PERF_COUNTERS: "1"
+
+# Every PR in this repository targets `dev`, and `ci.yml` triggers only on
+# main/master, so no Rust job ran on a PR at all before this file: no check, no
+# clippy, no tests. This job therefore carries its own `on:` block instead of
+# widening ci.yml's trigger, which would start the whole nine-job matrix
+# (including two Windows builds) on every dev PR.
+#
+# It needs no release binary, no network beyond the checkout and the toolchain,
+# no secrets, and no account: every measurement is a `cargo test` that reads a
+# counter the daemon already keeps. No wall-clock or RSS threshold is asserted,
+# because the B0 distributions are not pinned yet; a counter does not move with
+# the machine and a stopwatch does.
+
+on:
+  pull_request:
+    branches: [dev, main, master]
+  push:
+    branches: [dev, main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: structural-perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  structural-perf:
+    name: Structural performance gate
+    # CI_SELF_HOSTED (repository variable) moves the gate to the self-hosted
+    # macOS runner, as in ci.yml. A pull request from a fork runs the workflow
+    # file it carries, so it must never reach that persistent machine; fork PRs
+    # fall back to the GitHub-hosted runner.
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      # Some dependencies ship a `rust-toolchain.toml` inside their published
+      # crate, so the rustup proxy would honour it from that crate's CWD. Pin the
+      # job's own toolchain, as the Build & Test job does.
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: structural-perf-ubuntu
+
+      - name: Contract test the structural gate
+        # Fast and compile-free: proves the bounds file, the report template and
+        # the violation path before paying for a build.
+        run: python3 -m unittest -v scripts/perf/test_check_structural.py
+
+      - name: Compile the gate script
+        if: ${{ !cancelled() }}
+        run: python3 -m py_compile scripts/perf/check_structural.py scripts/perf/test_check_structural.py
+
+      - name: Run the structural performance gate
+        # Independent of the steps above, so one failure does not hide the rest.
+        if: ${{ !cancelled() }}
+        run: python3 scripts/perf/check_structural.py

@@ -1,0 +1,20 @@
+[package]
+name = "horon-agent-session-store"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Versioned session event log contracts: canonical JSON records, durable identity, and store errors"
+
+[features]
+legacy-session-index-import = ["dep:rusqlite"]
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+horon-agent-perf-counters = { path = "../perf-counters" }
+horon-agent-session-types = { path = "../session-types" }
+horon-agent-message-types = { path = "../message-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "v5"] }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }

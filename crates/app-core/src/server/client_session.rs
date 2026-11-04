@@ -1,0 +1,2049 @@
+#![cfg_attr(test, allow(clippy::await_holding_lock))]
+
+use super::client_disconnect_cleanup::{
+    ColdResumeClaimGuard, SessionCloseGuard, await_pending_close, blocking_session_io, claim_cold_resume,
+};
+use super::client_state::{handle_get_history, spawn_model_prefetch_update};
+use super::swarm::notify_owner_of_unrestored_idle_workers;
+use super::{
+    ClientConnectionInfo, ClientDebugState, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmMember,
+    SwarmState, VersionedPlan, broadcast_swarm_status, fanout_live_client_event, persist_swarm_state_for,
+    register_background_tool_signal, register_session_event_sender, register_session_interrupt_queue,
+    remove_background_tool_signal, remove_plan_participant, remove_session_channel_subscriptions,
+    remove_session_from_swarm, remove_session_interrupt_queue, rename_background_tool_signal, rename_plan_participant,
+    rename_session_interrupt_queue, send_swarm_plan_to_session, swarm_id_for_session, unregister_session_event_sender,
+    update_member_status,
+};
+use crate::agent::Agent;
+use crate::message::ContentBlock;
+use crate::protocol::{NotificationType, ServerEvent};
+use crate::provider::Provider;
+use crate::tool::Registry;
+use crate::transport::WriteHalf;
+use anyhow::Result;
+use futures::FutureExt;
+use horon_agent_agent_runtime::InterruptSignal;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+
+type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
+type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
+const RELOAD_RESTORE_MARKER_MAX_AGE: Duration = Duration::from_secs(60);
+/// Upper bound a live attach waits for the owner to release an owed resume commit.
+const LIVE_ATTACH_COMMIT_WAIT: Duration = Duration::from_secs(5);
+
+pub(super) fn session_was_interrupted_by_reload(agent: &Agent) -> bool {
+    let messages = agent.messages();
+    let Some(last) = messages.last() else {
+        return false;
+    };
+
+    last.content.iter().any(|block| match block {
+        ContentBlock::Text { text, .. } => text.ends_with("[generation interrupted - server reloading]"),
+        ContentBlock::ToolResult { content, is_error, .. } => {
+            content == "Reload initiated. Process restarting..."
+                || (is_error.unwrap_or(false)
+                    && (content.contains("interrupted by server reload")
+                        || content.contains("Skipped - server reloading")))
+        }
+        _ => false,
+    })
+}
+
+pub(super) fn restored_session_was_interrupted(
+    session_id: &str,
+    previous_status: &crate::session::SessionStatus,
+    agent: &Agent,
+) -> bool {
+    let last_is_user = agent
+        .last_message_role()
+        .as_ref()
+        .map(|role| *role == crate::message::Role::User)
+        .unwrap_or(false);
+    let last_is_reload_interrupted = session_was_interrupted_by_reload(agent);
+    let closed_pending_user_during_reload = matches!(previous_status, crate::session::SessionStatus::Closed)
+        && last_is_user
+        && crate::server::reload_marker_active(RELOAD_RESTORE_MARKER_MAX_AGE);
+
+    if last_is_user && matches!(previous_status, crate::session::SessionStatus::Active) {
+        crate::logging::info(&format!(
+            "Session {} was Active with pending user message - treating as interrupted",
+            session_id
+        ));
+    }
+
+    if last_is_reload_interrupted {
+        crate::logging::info(&format!(
+            "Session {} contains reload interruption markers - will auto-resume",
+            session_id
+        ));
+    }
+
+    if closed_pending_user_during_reload {
+        crate::logging::info(&format!(
+            "Session {} was Closed with a pending user message during a recent reload - treating as interrupted",
+            session_id
+        ));
+    }
+
+    matches!(previous_status, crate::session::SessionStatus::Crashed { .. })
+        || (matches!(previous_status, crate::session::SessionStatus::Active) && last_is_user)
+        || last_is_reload_interrupted
+        || closed_pending_user_during_reload
+}
+
+fn mark_remote_reload_started(request_id: &str) {
+    crate::server::write_reload_state(
+        request_id,
+        horon_agent_build_meta::version(),
+        crate::server::ReloadPhase::Starting,
+        None,
+    );
+}
+
+async fn rename_shutdown_signal(
+    shutdown_signals: &Arc<RwLock<HashMap<String, InterruptSignal>>>,
+    old_session_id: &str,
+    new_session_id: &str,
+) {
+    if old_session_id == new_session_id {
+        return;
+    }
+
+    let mut signals = shutdown_signals.write().await;
+    if let Some(signal) = signals.remove(old_session_id) {
+        signals.insert(new_session_id.to_string(), signal);
+    }
+    drop(signals);
+    rename_background_tool_signal(old_session_id, new_session_id);
+    // In-flight turns are registered in the process-global cancel registry by
+    // session id. Attaching to / resuming a session renames it underneath a
+    // still-streaming turn, so the registration must follow, or a later Esc
+    // finds no active-turn signal for the new id and the model keeps
+    // generating (issue #732, regression of issue #428).
+    crate::turn_cancel_registry::rename_active_turns(old_session_id, new_session_id);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn handle_clear_session(
+    id: u64,
+    client_selfdev: bool,
+    client_session_id: &mut String,
+    client_connection_id: &str,
+    agent: &Arc<Mutex<Agent>>,
+    provider: &Arc<dyn Provider>,
+    registry: &Registry,
+    sessions: &SessionAgents,
+    shutdown_signals: &Arc<RwLock<HashMap<String, InterruptSignal>>>,
+    soft_interrupt_queues: &SessionInterruptQueues,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    file_touch: &FileTouchService,
+    channel_subscriptions: &ChannelSubscriptions,
+    channel_subscriptions_by_session: &ChannelSubscriptions,
+    swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
+    event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
+    event_counter: &Arc<std::sync::atomic::AtomicU64>,
+    swarm_event_tx: &broadcast::Sender<SwarmEvent>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
+    let clear_start = Instant::now();
+    let old_session_id = client_session_id.clone();
+    crate::logging::event_info(
+        "SESSION_LIFECYCLE",
+        vec![
+            ("phase", "clear_start".to_string()),
+            ("request_id", id.to_string()),
+            ("session_id", old_session_id.clone()),
+            ("client_connection_id", client_connection_id.to_string()),
+            ("client_selfdev", client_selfdev.to_string()),
+        ],
+    );
+    // Clear changes the branch, not the live Agent binding. Map -> try-Agent
+    // prevents a copied stale Arc from clearing another same-ID incarnation.
+    let result = super::session_replication::clear_live_session(sessions, &old_session_id, agent).await;
+    let preserve_debug = match result {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = client_event_tx.send(ServerEvent::Error {
+                id,
+                message: error.to_string(),
+                retry_after_secs: None,
+            });
+            return;
+        }
+    };
+    let new_id = old_session_id.clone();
+    // These remain in the existing handler signature for caller compatibility.
+    let _ = (provider, registry);
+    crate::runtime_memory_log::emit_event(
+        crate::runtime_memory_log::RuntimeMemoryLogEvent::new("session_cleared", "session_reset_branch")
+            .with_session_id(new_id.clone())
+            .force_attribution(),
+    );
+    remove_session_interrupt_queue(soft_interrupt_queues, client_session_id).await;
+    {
+        let agent_guard = agent.lock().await;
+        register_session_interrupt_queue(soft_interrupt_queues, &new_id, agent_guard.soft_interrupt_queue()).await;
+
+        let mut signals = shutdown_signals.write().await;
+        signals.remove(client_session_id);
+        signals.insert(new_id.clone(), agent_guard.graceful_shutdown_signal());
+        drop(signals);
+        remove_background_tool_signal(client_session_id);
+        register_background_tool_signal(&new_id, agent_guard.background_tool_signal());
+    }
+
+    // `/clear` creates a fresh branch. Do not retain the old branch's
+    // swarm membership or plan participation:
+    // doing so lets a subsequent plan snapshot repopulate the cleared UI.
+    let (swarm_id_for_update, swarm_enabled, friendly_name) = {
+        let mut members = swarm_members.write().await;
+        match members.remove(client_session_id) {
+            Some(member) => (member.swarm_id, member.swarm_enabled, member.friendly_name),
+            None => (None, false, None),
+        }
+    };
+    if let Some(ref swarm_id) = swarm_id_for_update {
+        let mut swarms = swarms_by_id.write().await;
+        if let Some(swarm) = swarms.get_mut(swarm_id) {
+            swarm.remove(client_session_id);
+            if swarm.is_empty() {
+                swarms.remove(swarm_id);
+            }
+        }
+    }
+    file_touch.clear_session(client_session_id).await;
+    remove_session_channel_subscriptions(
+        client_session_id,
+        channel_subscriptions,
+        channel_subscriptions_by_session,
+    )
+    .await;
+    // The connection remains subscribed across `/clear`, so there is no later
+    // subscribe request to register the replacement session. Register it as a
+    // fresh root while deliberately leaving the old swarm and plan behind.
+    ensure_client_swarm_member(
+        &new_id,
+        client_connection_id,
+        &friendly_name,
+        client_event_tx,
+        agent,
+        swarm_enabled,
+        swarm_members,
+        swarms_by_id,
+        event_history,
+        event_counter,
+        swarm_event_tx,
+    )
+    .await;
+    update_member_status(
+        &new_id,
+        "ready",
+        None,
+        swarm_members,
+        swarms_by_id,
+        Some(event_history),
+        Some(event_counter),
+        Some(swarm_event_tx),
+    )
+    .await;
+    if let Some(ref swarm_id) = swarm_id_for_update {
+        remove_plan_participant(swarm_id, client_session_id, swarm_plans).await;
+    }
+
+    *client_session_id = new_id.clone();
+    {
+        let mut connections = client_connections.write().await;
+        if let Some(info) = connections.get_mut(client_connection_id) {
+            info.session_id = new_id.clone();
+            info.last_seen = Instant::now();
+        }
+    }
+    let _ = client_event_tx.send(ServerEvent::SessionId { session_id: new_id });
+    let _ = client_event_tx.send(ServerEvent::Done { id });
+    crate::logging::event_info(
+        "SESSION_LIFECYCLE",
+        vec![
+            ("phase", "clear_done".to_string()),
+            ("request_id", id.to_string()),
+            ("old_session_id", old_session_id),
+            ("new_session_id", client_session_id.clone()),
+            ("client_connection_id", client_connection_id.to_string()),
+            ("preserve_debug", preserve_debug.to_string()),
+            ("swarm_id_updated", swarm_id_for_update.is_some().to_string()),
+            ("elapsed_ms", clear_start.elapsed().as_millis().to_string()),
+        ],
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn ensure_client_swarm_member(
+    client_session_id: &str,
+    client_connection_id: &str,
+    friendly_name: &Option<String>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    agent: &Arc<Mutex<Agent>>,
+    swarm_enabled: bool,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
+    event_counter: &Arc<std::sync::atomic::AtomicU64>,
+    swarm_event_tx: &broadcast::Sender<SwarmEvent>,
+) -> bool {
+    let (working_dir, derived_swarm_id, fallback_name) = {
+        // A target-aware subscribe can attach to an agent that is in the middle
+        // of a turn. Never wait for that turn's agent lock just to populate
+        // connection metadata: doing so prevents the subscribe request from
+        // completing, so subsequent state requests sit unread until the desktop
+        // client times out. The persisted startup stub has the same immutable
+        // identity metadata and is safe to read while the live agent is busy.
+        let (working_dir, fallback_name) = match agent.try_lock() {
+            Ok(agent_guard) => (
+                agent_guard.working_dir().map(PathBuf::from),
+                agent_guard.session_short_name().map(|value| value.to_string()),
+            ),
+            Err(_) => {
+                crate::logging::info(&format!(
+                    "Subscribe metadata for busy session {} is using the persisted startup stub",
+                    client_session_id
+                ));
+                crate::session::Session::load_startup_stub(client_session_id)
+                    .map(|session| (session.working_dir.map(PathBuf::from), session.short_name))
+                    .unwrap_or((None, None))
+            }
+        };
+        let derived_swarm_id = if swarm_enabled {
+            swarm_id_for_session(client_session_id)
+        } else {
+            None
+        };
+        (working_dir, derived_swarm_id, fallback_name)
+    };
+
+    // Prefer the currently restored agent/session identity over the temporary
+    // name captured at raw socket accept time. During resume/reconnect bursts,
+    // the temporary pre-resume session name can otherwise leak onto the real
+    // resumed session and corrupt swarm metadata.
+    let member_name = fallback_name.or_else(|| friendly_name.clone());
+    let mut inserted = false;
+    {
+        let mut members = swarm_members.write().await;
+        if let Some(member) = members.get_mut(client_session_id) {
+            member.event_tx = client_event_tx.clone();
+            member
+                .event_txs
+                .insert(client_connection_id.to_string(), client_event_tx.clone());
+            member.swarm_enabled = swarm_enabled;
+            member.is_headless = false;
+            if member_name.is_some() {
+                member.friendly_name = member_name.clone();
+            }
+        } else {
+            let now = Instant::now();
+            members.insert(
+                client_session_id.to_string(),
+                SwarmMember {
+                    session_id: client_session_id.to_string(),
+                    event_tx: client_event_tx.clone(),
+                    event_txs: HashMap::from([(client_connection_id.to_string(), client_event_tx.clone())]),
+                    working_dir: working_dir.clone(),
+                    swarm_id: derived_swarm_id.clone(),
+                    swarm_enabled,
+                    status: "ready".to_string(),
+                    detail: None,
+                    task_label: None,
+                    friendly_name: member_name.clone(),
+                    report_back_to_session_id: None,
+                    latest_completion_report: None,
+                    role: "agent".to_string(),
+                    joined_at: now,
+                    last_status_change: now,
+                    is_headless: false,
+                    output_tail: None,
+                    todo_progress: None,
+                    todo_items: Vec::new(),
+                    runtime: crate::protocol::SwarmMemberRuntime::default(),
+                },
+            );
+            inserted = true;
+        }
+    }
+
+    if inserted && let Some(ref swarm_id_ref) = derived_swarm_id {
+        let mut swarms = swarms_by_id.write().await;
+        swarms
+            .entry(swarm_id_ref.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(client_session_id.to_string());
+        drop(swarms);
+        super::record_swarm_event(
+            event_history,
+            event_counter,
+            swarm_event_tx,
+            client_session_id.to_string(),
+            member_name,
+            Some(swarm_id_ref.to_string()),
+            crate::server::SwarmEventType::MemberChange {
+                action: "joined".to_string(),
+            },
+        )
+        .await;
+    }
+
+    crate::logging::event_info(
+        "SESSION_LIFECYCLE",
+        vec![
+            ("phase", "swarm_member_registered".to_string()),
+            ("session_id", client_session_id.to_string()),
+            ("client_connection_id", client_connection_id.to_string()),
+            ("inserted", inserted.to_string()),
+            ("swarm_enabled", swarm_enabled.to_string()),
+            ("swarm_id", derived_swarm_id.unwrap_or_else(|| "none".to_string())),
+        ],
+    );
+
+    inserted
+}
+
+pub(super) use super::subscribe_working_dir::{effective_subscribe_working_dir, subscribe_working_dir_replacement};
+
+fn log_ignored_subscribe_working_dir(session_id: &str, current: &str, reported: &str) {
+    crate::logging::warn(&format!(
+        "Ignoring subscribe working_dir {} for session {}: it is the home directory while the session is already bound to {} (issue #481)",
+        reported, session_id, current
+    ));
+}
+
+fn apply_or_defer_subscribe_working_dir(agent: &Arc<Mutex<Agent>>, working_dir: &str, session_id: &str) {
+    let home = dirs::home_dir();
+    if let Ok(mut agent_guard) = agent.try_lock() {
+        match subscribe_working_dir_replacement(agent_guard.working_dir(), working_dir, home.as_deref()) {
+            Some(accepted) => agent_guard.set_working_dir(&accepted),
+            None => {
+                if let Some(current) = agent_guard.working_dir()
+                    && current != working_dir
+                {
+                    log_ignored_subscribe_working_dir(session_id, current, working_dir);
+                }
+            }
+        }
+        return;
+    }
+
+    let agent = Arc::clone(agent);
+    let working_dir = working_dir.to_string();
+    let session_id = session_id.to_string();
+    tokio::spawn(async move {
+        let mut agent_guard = agent.lock().await;
+        match subscribe_working_dir_replacement(agent_guard.working_dir(), &working_dir, home.as_deref()) {
+            Some(accepted) => {
+                agent_guard.set_working_dir(&accepted);
+                crate::logging::info(&format!(
+                    "Applied deferred subscribe working directory for session {}",
+                    session_id
+                ));
+            }
+            None => {
+                if let Some(current) = agent_guard.working_dir()
+                    && current != working_dir
+                {
+                    log_ignored_subscribe_working_dir(&session_id, current, &working_dir);
+                }
+            }
+        }
+    });
+}
+
+fn apply_or_defer_subscribe_selfdev(agent: &Arc<Mutex<Agent>>, session_id: &str) {
+    if let Ok(mut agent_guard) = agent.try_lock() {
+        if !agent_guard.is_canary() {
+            agent_guard.set_canary("self-dev");
+        }
+        return;
+    }
+
+    let agent = Arc::clone(agent);
+    let session_id = session_id.to_string();
+    tokio::spawn(async move {
+        let mut agent_guard = agent.lock().await;
+        if !agent_guard.is_canary() {
+            agent_guard.set_canary("self-dev");
+        }
+        crate::logging::info(&format!(
+            "Applied deferred self-dev subscribe metadata for session {}",
+            session_id
+        ));
+    });
+}
+
+/// Apply to the bound agent, not the connection's temporary registry. Like
+/// working-dir updates, a busy live target must not block client attachment.
+pub(super) async fn apply_or_defer_desktop_response_capability(
+    agent: &Arc<Mutex<Agent>>,
+    supports_user_response: bool,
+) {
+    if let Ok(mut guard) = agent.try_lock() {
+        guard.set_desktop_response_capability(supports_user_response).await;
+        return;
+    }
+    let agent = Arc::clone(agent);
+    tokio::spawn(async move {
+        agent
+            .lock()
+            .await
+            .set_desktop_response_capability(supports_user_response)
+            .await;
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn handle_subscribe(
+    id: u64,
+    subscribe_working_dir: Option<String>,
+    selfdev: Option<bool>,
+    register_mcp_tools: bool,
+    client_selfdev: &mut bool,
+    client_session_id: &str,
+    client_connection_id: &str,
+    friendly_name: &Option<String>,
+    agent: &Arc<Mutex<Agent>>,
+    registry: &Registry,
+    swarm_enabled: bool,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    channel_subscriptions: &ChannelSubscriptions,
+    channel_subscriptions_by_session: &ChannelSubscriptions,
+    swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
+    swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
+    event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
+    event_counter: &Arc<std::sync::atomic::AtomicU64>,
+    swarm_event_tx: &broadcast::Sender<SwarmEvent>,
+) {
+    let subscribe_start = Instant::now();
+    crate::logging::event_info(
+        "SESSION_LIFECYCLE",
+        vec![
+            ("phase", "subscribe_start".to_string()),
+            ("request_id", id.to_string()),
+            ("session_id", client_session_id.to_string()),
+            ("client_connection_id", client_connection_id.to_string()),
+            ("working_dir_set", subscribe_working_dir.is_some().to_string()),
+            ("register_mcp_tools", register_mcp_tools.to_string()),
+            ("swarm_enabled", swarm_enabled.to_string()),
+        ],
+    );
+    let inserted_swarm_member = ensure_client_swarm_member(
+        client_session_id,
+        client_connection_id,
+        friendly_name,
+        client_event_tx,
+        agent,
+        swarm_enabled,
+        swarm_members,
+        swarms_by_id,
+        event_history,
+        event_counter,
+        swarm_event_tx,
+    )
+    .await;
+
+    if let Some(ref dir) = subscribe_working_dir {
+        apply_or_defer_subscribe_working_dir(agent, dir, client_session_id);
+
+        // Swarm grouping must use the *bound* directory, not the raw report, or
+        // a home-dir subscribe would still re-key the session's swarm even
+        // though its agent stayed in the project (issue #481).
+        let bound_dir = {
+            let current = agent
+                .try_lock()
+                .ok()
+                .and_then(|guard| guard.working_dir().map(str::to_string));
+            effective_subscribe_working_dir(current.as_deref(), dir, dirs::home_dir().as_deref())
+        };
+        let new_path = PathBuf::from(&bound_dir);
+        let mut old_swarm_id: Option<String> = None;
+        let mut updated_swarm_id: Option<String> = None;
+        {
+            let mut members = swarm_members.write().await;
+            if let Some(member) = members.get_mut(client_session_id) {
+                old_swarm_id = member.swarm_id.clone();
+                // Existing members include reconnects and daemon-restored
+                // sessions. Keep their persisted swarm id so an intentional
+                // resume retains its workers and plan. Only a newly inserted
+                // root receives the new session-scoped identity.
+                let new_swarm_id = if inserted_swarm_member {
+                    swarm_id_for_session(client_session_id)
+                } else {
+                    member
+                        .swarm_id
+                        .clone()
+                        .or_else(|| swarm_id_for_session(client_session_id))
+                };
+                member.working_dir = Some(new_path);
+                member.swarm_id = if member.swarm_enabled {
+                    new_swarm_id.clone()
+                } else {
+                    None
+                };
+                updated_swarm_id = member.swarm_id.clone();
+            }
+        }
+
+        if let Some(ref old_id) = old_swarm_id {
+            if updated_swarm_id.as_ref() != Some(old_id) {
+                remove_session_channel_subscriptions(
+                    client_session_id,
+                    channel_subscriptions,
+                    channel_subscriptions_by_session,
+                )
+                .await;
+            }
+            let mut swarms = swarms_by_id.write().await;
+            if let Some(swarm) = swarms.get_mut(old_id) {
+                swarm.remove(client_session_id);
+                if swarm.is_empty() {
+                    swarms.remove(old_id);
+                }
+            }
+        }
+
+        if let Some(ref new_id) = updated_swarm_id {
+            let mut swarms = swarms_by_id.write().await;
+            swarms
+                .entry(new_id.clone())
+                .or_insert_with(HashSet::new)
+                .insert(client_session_id.to_string());
+        }
+
+        if updated_swarm_id != old_swarm_id {
+            crate::logging::event_info(
+                "SESSION_LIFECYCLE",
+                vec![
+                    ("phase", "subscribe_swarm_changed".to_string()),
+                    ("session_id", client_session_id.to_string()),
+                    ("client_connection_id", client_connection_id.to_string()),
+                    (
+                        "old_swarm_id",
+                        old_swarm_id.clone().unwrap_or_else(|| "none".to_string()),
+                    ),
+                    (
+                        "new_swarm_id",
+                        updated_swarm_id.clone().unwrap_or_else(|| "none".to_string()),
+                    ),
+                ],
+            );
+            let mut members = swarm_members.write().await;
+            if let Some(member) = members.get_mut(client_session_id) {
+                member.role = "agent".to_string();
+            }
+        }
+
+        if let Some(old_id) = old_swarm_id.clone() {
+            let was_coordinator = {
+                let coordinators = swarm_coordinators.read().await;
+                coordinators
+                    .get(&old_id)
+                    .map(|session_id| session_id == client_session_id)
+                    .unwrap_or(false)
+            };
+            if was_coordinator {
+                let mut new_coordinator: Option<String> = None;
+                {
+                    let swarms = swarms_by_id.read().await;
+                    if let Some(swarm) = swarms.get(&old_id) {
+                        new_coordinator = swarm.iter().min().cloned();
+                    }
+                }
+                {
+                    let mut coordinators = swarm_coordinators.write().await;
+                    coordinators.remove(&old_id);
+                    if let Some(ref new_id) = new_coordinator {
+                        coordinators.insert(old_id.clone(), new_id.clone());
+                    }
+                }
+                if let Some(new_id) = new_coordinator.clone() {
+                    let members = swarm_members.read().await;
+                    if let Some(member) = members.get(&new_id) {
+                        let _ = member.event_tx.send(ServerEvent::Notification {
+                            from_session: new_id.clone(),
+                            from_name: member.friendly_name.clone(),
+                            notification_type: NotificationType::Message {
+                                scope: Some("swarm".to_string()),
+                                channel: None,
+                                tldr: None,
+                            },
+                            message: "You are now the coordinator for this swarm.".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(old_id) = old_swarm_id.clone() {
+            if updated_swarm_id.as_ref() != Some(&old_id) {
+                remove_plan_participant(&old_id, client_session_id, swarm_plans).await;
+                let swarm_state = SwarmState {
+                    members: Arc::clone(swarm_members),
+                    swarms_by_id: Arc::clone(swarms_by_id),
+                    plans: Arc::clone(swarm_plans),
+                    coordinators: Arc::clone(swarm_coordinators),
+                };
+                persist_swarm_state_for(&old_id, &swarm_state).await;
+            }
+            broadcast_swarm_status(&old_id, swarm_members, swarms_by_id).await;
+        }
+        if let Some(new_id) = updated_swarm_id
+            && old_swarm_id.as_ref() != Some(&new_id)
+        {
+            broadcast_swarm_status(&new_id, swarm_members, swarms_by_id).await;
+        }
+    }
+
+    let should_selfdev = *client_selfdev || matches!(selfdev, Some(true));
+
+    if should_selfdev {
+        *client_selfdev = true;
+        apply_or_defer_subscribe_selfdev(agent, client_session_id);
+        registry.register_selfdev_tools().await;
+    }
+
+    let mcp_register_ms = if register_mcp_tools {
+        let mcp_register_start = Instant::now();
+        // Resolve project-local MCP config against the session working dir,
+        // not the server process cwd (issue #420). Prefer the subscribe
+        // request's dir; fall back to the agent's stored session dir.
+        let mcp_working_dir = match subscribe_working_dir.as_ref() {
+            // Resolve against the bound directory so a rejected home-dir report
+            // cannot point project-local MCP discovery at home (issue #481).
+            Some(dir) => {
+                let current = agent
+                    .try_lock()
+                    .ok()
+                    .and_then(|guard| guard.working_dir().map(str::to_string));
+                Some(PathBuf::from(effective_subscribe_working_dir(
+                    current.as_deref(),
+                    dir,
+                    dirs::home_dir().as_deref(),
+                )))
+            }
+            None => agent
+                .try_lock()
+                .ok()
+                .and_then(|agent_guard| agent_guard.working_dir().map(PathBuf::from))
+                .or_else(|| {
+                    crate::session::Session::load_startup_stub(client_session_id)
+                        .ok()
+                        .and_then(|session| session.working_dir.map(PathBuf::from))
+                }),
+        };
+        registry
+            .register_mcp_tools_for_dir(
+                Some(client_event_tx.clone()),
+                Some(Arc::clone(mcp_pool)),
+                Some(client_session_id.to_string()),
+                mcp_working_dir,
+            )
+            .await;
+        mcp_register_start.elapsed().as_millis()
+    } else {
+        0
+    };
+
+    crate::logging::info(&format!(
+        "[TIMING] handle_subscribe: session={}, working_dir_set={}, selfdev={}, mcp_register={}ms, total={}ms",
+        client_session_id,
+        subscribe_working_dir.is_some(),
+        should_selfdev,
+        mcp_register_ms,
+        subscribe_start.elapsed().as_millis(),
+    ));
+    crate::logging::event_info(
+        "SESSION_LIFECYCLE",
+        vec![
+            ("phase", "subscribe_done".to_string()),
+            ("request_id", id.to_string()),
+            ("session_id", client_session_id.to_string()),
+            ("client_connection_id", client_connection_id.to_string()),
+            ("mcp_register_ms", mcp_register_ms.to_string()),
+            ("elapsed_ms", subscribe_start.elapsed().as_millis().to_string()),
+        ],
+    );
+
+    if subscribe_should_mark_ready(client_session_id, swarm_members).await {
+        update_member_status(
+            client_session_id,
+            "ready",
+            None,
+            swarm_members,
+            swarms_by_id,
+            Some(event_history),
+            Some(event_counter),
+            Some(swarm_event_tx),
+        )
+        .await;
+    }
+
+    // Re-send the current swarm plan so a reconnecting client renders the
+    // plan graph immediately instead of waiting for the next plan mutation.
+    send_swarm_plan_to_session(client_session_id, swarm_members, swarm_plans).await;
+
+    // Issue #1651: tell a reattaching owner about idle headless workers the
+    // last restart stopped, instead of leaving them to be found by polling.
+    notify_owner_of_unrestored_idle_workers(
+        client_session_id,
+        &SwarmState {
+            members: Arc::clone(swarm_members),
+            swarms_by_id: Arc::clone(swarms_by_id),
+            plans: Arc::clone(swarm_plans),
+            coordinators: Arc::clone(swarm_coordinators),
+        },
+    )
+    .await;
+
+    // Tell the client which session it is bound to. Local clients learn this
+    // from their own launch state, but a remote client (gateway/WebSocket) has
+    // no other source, and without it a dropped connection cannot reattach:
+    // the next Subscribe carries no `target_session_id`, so the server hands
+    // it a brand-new session and the in-flight turn becomes unreachable.
+    let _ = client_event_tx.send(ServerEvent::SessionId {
+        session_id: client_session_id.to_string(),
+    });
+    let _ = client_event_tx.send(ServerEvent::Done { id });
+    prewarm_idle_agent(agent);
+}
+
+fn prewarm_idle_agent(agent: &Arc<Mutex<Agent>>) -> bool {
+    // Poll local preparation once, without holding the agent across a yield.
+    // If a registry/provider lock would wait, abandon this optional attempt.
+    // Only the provider's network task can outlive this call.
+    let Ok(guard) = agent.try_lock() else {
+        return false;
+    };
+    guard.prewarm_provider().now_or_never().is_some()
+}
+
+async fn subscribe_should_mark_ready(
+    client_session_id: &str,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+) -> bool {
+    let members = swarm_members.read().await;
+    members
+        .get(client_session_id)
+        .is_none_or(|member| member.status != "running")
+}
+
+/// Outcome of moving a temporary connection member onto a resumed session id.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct SwarmMemberRename {
+    /// Swarm the temporary (pre-resume) member belonged to.
+    pub old_swarm_id: Option<String>,
+    /// Swarm the resumed session belongs to after the rename.
+    pub new_swarm_id: Option<String>,
+    /// A foreign swarm the persisted member wrongly claimed before healing.
+    pub healed_swarm_id: Option<String>,
+}
+
+/// Pick the swarm a resumed session should belong to.
+///
+/// A persisted member for the resumed session is authoritative: it records the
+/// swarm the session actually joined. Without one, a temporary member's
+/// session-derived swarm id (`session:<temp id>`) names a throwaway swarm, so
+/// it is re-derived for the resumed id. An explicitly shared swarm id (e.g.
+/// `HORON_AGENT_SWARM_ID`) is kept as is.
+///
+/// Older builds stored the temporary swarm id on the resumed member itself, so
+/// a persisted root member (no spawn owner) can claim `session:<other id>`.
+/// Such a member never joined that swarm: it is healed back to its own
+/// session-scoped swarm.
+fn resumed_member_swarm_id(
+    old_session_id: &str,
+    new_session_id: &str,
+    temporary_swarm_id: Option<&str>,
+    existing: Option<(Option<&str>, bool)>,
+) -> Option<String> {
+    if let Some((existing_swarm_id, has_spawn_owner)) = existing {
+        let own_default = super::util::default_swarm_id_for_session(new_session_id);
+        let claims_foreign_session_swarm = existing_swarm_id
+            .is_some_and(|swarm_id| swarm_id.starts_with("session:") && Some(swarm_id) != own_default.as_deref());
+        if claims_foreign_session_swarm && !has_spawn_owner {
+            return swarm_id_for_session(new_session_id);
+        }
+        return existing_swarm_id.map(str::to_string);
+    }
+    let temporary_swarm_id = temporary_swarm_id?;
+    if super::util::default_swarm_id_for_session(old_session_id).as_deref() == Some(temporary_swarm_id) {
+        swarm_id_for_session(new_session_id)
+    } else {
+        Some(temporary_swarm_id.to_string())
+    }
+}
+
+async fn rename_swarm_member_session(
+    old_session_id: &str,
+    new_session_id: &str,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
+) -> SwarmMemberRename {
+    if old_session_id == new_session_id {
+        let members = swarm_members.read().await;
+        let swarm_id = members.get(new_session_id).and_then(|member| member.swarm_id.clone());
+        return SwarmMemberRename {
+            old_swarm_id: swarm_id.clone(),
+            new_swarm_id: swarm_id,
+            healed_swarm_id: None,
+        };
+    }
+    // Never hold both swarm maps at once. Coordinator cleanup reads them in the
+    // opposite order, so retaining the member write guard while waiting for the
+    // swarm map can permanently deadlock reconnects and every later subscribe.
+    let rename = {
+        let mut members = swarm_members.write().await;
+        let mut rename = SwarmMemberRename::default();
+        if let Some(mut temporary) = members.remove(old_session_id) {
+            rename.old_swarm_id = temporary.swarm_id.clone();
+            // Issue #1650: a session restored from durable swarm state already
+            // has a member recording its own swarm, role and spawn owner.
+            // Overwriting it with the temporary connection member attributed
+            // the resumed session to the temporary swarm, so every reconnect
+            // left another `session:<temp>` swarm naming it as a member.
+            let existing = members
+                .get(new_session_id)
+                .map(|member| (member.swarm_id.as_deref(), member.report_back_to_session_id.is_some()));
+            let new_swarm_id =
+                resumed_member_swarm_id(old_session_id, new_session_id, temporary.swarm_id.as_deref(), existing);
+            if let Some(existing) = members.get_mut(new_session_id) {
+                if existing.swarm_enabled {
+                    if existing.swarm_id != new_swarm_id {
+                        rename.healed_swarm_id = existing.swarm_id.clone();
+                    }
+                    existing.swarm_id = new_swarm_id.clone();
+                }
+                existing.status = "ready".to_string();
+                existing.detail = None;
+                if existing.friendly_name.is_none() {
+                    existing.friendly_name = temporary.friendly_name.take();
+                }
+            } else {
+                temporary.session_id = new_session_id.to_string();
+                temporary.status = "ready".to_string();
+                temporary.detail = None;
+                temporary.swarm_id = if temporary.swarm_enabled {
+                    new_swarm_id.clone()
+                } else {
+                    None
+                };
+                members.insert(new_session_id.to_string(), temporary);
+            }
+            rename.new_swarm_id = members.get(new_session_id).and_then(|member| member.swarm_id.clone());
+        } else {
+            rename.new_swarm_id = members.get(new_session_id).and_then(|member| member.swarm_id.clone());
+        }
+
+        // Keep the spawn tree intact across the rename: children that reported
+        // back to the old session id must follow it.
+        for member in members.values_mut() {
+            if member.report_back_to_session_id.as_deref() == Some(old_session_id) {
+                member.report_back_to_session_id = Some(new_session_id.to_string());
+            }
+        }
+        rename
+    };
+
+    let mut swarms = swarms_by_id.write().await;
+    if let Some(old_swarm_id) = rename.old_swarm_id.as_ref()
+        && let Some(swarm) = swarms.get_mut(old_swarm_id)
+    {
+        swarm.remove(old_session_id);
+        if swarm.is_empty() {
+            swarms.remove(old_swarm_id);
+        }
+    }
+    // The resumed session belongs to exactly one swarm. Drop it from every
+    // other swarm index entry so no persisted swarm keeps reporting it.
+    swarms.retain(|swarm_id, session_ids| {
+        if rename.new_swarm_id.as_deref() != Some(swarm_id.as_str()) {
+            session_ids.remove(new_session_id);
+        }
+        !session_ids.is_empty()
+    });
+    if let Some(new_swarm_id) = rename.new_swarm_id.as_ref() {
+        swarms
+            .entry(new_swarm_id.clone())
+            .or_default()
+            .insert(new_session_id.to_string());
+    }
+    rename
+}
+
+pub(super) async fn handle_reload(
+    id: u64,
+    force: bool,
+    client_session_id: &str,
+    agent: &Arc<Mutex<Agent>>,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
+    // A non-forced reload (e.g. `horon-agent server reload`) is a graceful upgrade
+    // request: only reload when this server is provably running older code than
+    // an available reload candidate. This keeps us from downgrading a newer
+    // server (such as a self-dev daemon next to an older release client) and
+    // from re-entering the reload-loop family (#277), where a server that merely
+    // "differs" can never make the difference go away by reloading.
+    if !force && !super::server_has_newer_binary() {
+        crate::logging::info(&format!(
+            "handle_reload: skipping non-forced reload for client_session_id={} (no strictly-newer binary)",
+            client_session_id
+        ));
+        // Tell the requester this was a deliberate no-op (not a silent success)
+        // so callers like `horon-agent server reload` can report "already up to date"
+        // distinctly from an actual reload.
+        let _ = client_event_tx.send(ServerEvent::ReloadProgress {
+            step: "skip".to_string(),
+            message: "Server already running the newest binary; no reload needed.".to_string(),
+            success: Some(true),
+            output: None,
+        });
+        let _ = client_event_tx.send(ServerEvent::Done { id });
+        return;
+    }
+
+    let request_id = crate::id::new_id("reload");
+    mark_remote_reload_started(&request_id);
+
+    let (triggering_session, prefer_selfdev_binary) = match agent.try_lock() {
+        Ok(agent_guard) => (Some(agent_guard.session_id().to_string()), agent_guard.is_canary()),
+        Err(_) => {
+            crate::logging::warn(&format!(
+                "SERVER_RELOAD_AGENT_BUSY request_id={} client_session_id={} fallback_triggering_session={} prefer_selfdev_binary=false",
+                request_id, client_session_id, client_session_id
+            ));
+            (Some(client_session_id.to_string()), false)
+        }
+    };
+
+    let live_sessions = {
+        let members = swarm_members.read().await;
+        members
+            .iter()
+            .filter_map(|(session_id, member)| {
+                if member.event_txs.is_empty() {
+                    None
+                } else {
+                    Some(session_id.clone())
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut delivered = 0;
+    for session_id in &live_sessions {
+        delivered +=
+            fanout_live_client_event(swarm_members, session_id, ServerEvent::Reloading { new_socket: None }).await;
+    }
+    if delivered == 0 {
+        let _ = client_event_tx.send(ServerEvent::Reloading { new_socket: None });
+    }
+
+    let hash = horon_agent_build_meta::git_hash().to_string();
+    let signal_request_id = crate::server::send_reload_signal(hash, triggering_session.clone(), prefer_selfdev_binary);
+
+    crate::logging::info(&format!(
+        "handle_reload: queued reload signal {} from remote client request {} (triggering_session={:?}, prefer_selfdev_binary={}, reload_notified_sessions={}, reload_notified_clients={})",
+        signal_request_id,
+        request_id,
+        triggering_session,
+        prefer_selfdev_binary,
+        live_sessions.len(),
+        delivered
+    ));
+
+    let _ = client_event_tx.send(ServerEvent::Done { id });
+}
+
+/// Serialize a cold restore for this id and re-check ownership afterwards.
+///
+/// The caller's first live-attach attempt runs before this, so a live or busy
+/// target keeps its fast path. Under the claim, live ownership is read again
+/// (another resumer may have published while this one queued) and pending
+/// closes, replacement gates included, are waited out before any state loads.
+#[allow(clippy::too_many_arguments)]
+async fn claim_cold_resume_target(
+    session_id: &str,
+    client_connection_id: &str,
+    client_instance_id: Option<&str>,
+    agent: &Arc<Mutex<Agent>>,
+    sessions: &SessionAgents,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+) -> (Option<ColdResumeClaimGuard>, Option<Arc<Mutex<Agent>>>) {
+    let claim = claim_cold_resume(session_id).await;
+    loop {
+        let live = claim_live_target_agent(
+            session_id,
+            client_connection_id,
+            client_instance_id,
+            agent,
+            sessions,
+            client_connections,
+        )
+        .await;
+        if live.is_some() {
+            return (Some(claim), live);
+        }
+        if !await_pending_close(session_id).await {
+            return (Some(claim), None);
+        }
+    }
+}
+
+/// The detached source and the close barrier that guards it.
+///
+/// Field order is the drop order: the source reference is always released
+/// before its barrier, on the normal path and on cancellation alike, because a
+/// struct drops its fields in declaration order.
+pub(super) struct DetachedSource {
+    source: Arc<Mutex<Agent>>,
+    _guard: Option<SessionCloseGuard>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cleanup_detached_source_session_if_unused(
+    old_session_id: &str,
+    client_connection_id: &str,
+    source_agent: Arc<Mutex<Agent>>,
+    sessions: &SessionAgents,
+    shutdown_signals: &Arc<RwLock<HashMap<String, InterruptSignal>>>,
+    soft_interrupt_queues: &SessionInterruptQueues,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    file_touch: &FileTouchService,
+    channel_subscriptions: &ChannelSubscriptions,
+    channel_subscriptions_by_session: &ChannelSubscriptions,
+    swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
+    swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
+) -> DetachedSource {
+    unregister_session_event_sender(swarm_members, old_session_id, client_connection_id).await;
+
+    // The guard is published only when this call actually removed the source. It
+    // travels with the source in one holder so the reference can never outlive
+    // the barrier.
+    let Some(guard) = remove_detached_source_if_unclaimed(
+        old_session_id,
+        client_connection_id,
+        &source_agent,
+        sessions,
+        client_connections,
+    )
+    .await
+    else {
+        return DetachedSource {
+            source: source_agent,
+            _guard: None,
+        };
+    };
+    let detached = DetachedSource {
+        source: source_agent,
+        _guard: Some(guard),
+    };
+
+    {
+        let mut agent_guard = detached.source.lock().await;
+        blocking_session_io(|| agent_guard.mark_closed());
+    }
+
+    {
+        let mut signals = shutdown_signals.write().await;
+        signals.remove(old_session_id);
+    }
+    remove_background_tool_signal(old_session_id);
+    remove_session_interrupt_queue(soft_interrupt_queues, old_session_id).await;
+    remove_session_channel_subscriptions(old_session_id, channel_subscriptions, channel_subscriptions_by_session).await;
+    file_touch.clear_session(old_session_id).await;
+
+    let removed_swarm_id = {
+        let mut members = swarm_members.write().await;
+        members.remove(old_session_id).and_then(|member| member.swarm_id)
+    };
+    if let Some(swarm_id) = removed_swarm_id {
+        remove_session_from_swarm(
+            old_session_id,
+            &swarm_id,
+            swarm_members,
+            swarms_by_id,
+            swarm_coordinators,
+            swarm_plans,
+        )
+        .await;
+    }
+    detached
+}
+
+/// Removes a detached source only while holding the same connection-registry
+/// write lock used to claim a live resume target. The connection registry is
+/// the attachment authority, so the lock order for transitions is always
+/// `client_connections` then `sessions`.
+///
+/// Returns the close guard for the removed source, or `None` when a successor
+/// still owns it. The caller keeps the guard through the rest of the detached
+/// cleanup so a cold resume of that id cannot load the transcript while the old
+/// owner is still saving or releasing it.
+async fn remove_detached_source_if_unclaimed(
+    old_session_id: &str,
+    client_connection_id: &str,
+    source_agent: &Arc<Mutex<Agent>>,
+    sessions: &SessionAgents,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+) -> Option<SessionCloseGuard> {
+    let connections = client_connections.write().await;
+    if connections
+        .values()
+        .any(|info| info.client_id != client_connection_id && info.session_id == old_session_id)
+    {
+        return None;
+    }
+
+    // Read the sink before taking the `sessions` guard, so the teardown retires
+    // exactly the channel that was live when the removal was decided: a client
+    // attaching in the meantime registers a different channel and keeps its sink.
+    let retired_sink = super::state::session_event_sink(old_session_id);
+    let mut sessions_guard = sessions.write().await;
+    let owns_source = sessions_guard
+        .get(old_session_id)
+        .map(|existing| Arc::ptr_eq(existing, source_agent))
+        .unwrap_or(false);
+    if !owns_source {
+        return None;
+    }
+    // A real session removal on the resume-takeover path, so it carries the
+    // same teardown as `remove_session_entry`. That helper takes the
+    // `sessions` write lock itself, and this frame already holds it, so the
+    // shared teardown runs here directly instead of through the helper.
+    sessions_guard.remove(old_session_id);
+    super::forget_removed_session(old_session_id, retired_sink.as_ref());
+    // Publish the barrier while this removal is still the only decision that
+    // owns the id, so the cleanup below can never run beside a cold resume.
+    let close_guard = SessionCloseGuard::register(old_session_id).await;
+    Some(close_guard)
+}
+
+/// Atomically reserves an existing live target for this connection.
+///
+/// Reserving under the connection write lock prevents another connection's
+/// detached-source cleanup from observing no users after we have selected the
+/// target but before our connection record is updated.
+async fn claim_live_target_agent(
+    session_id: &str,
+    client_connection_id: &str,
+    client_instance_id: Option<&str>,
+    source_agent: &Arc<Mutex<Agent>>,
+    sessions: &SessionAgents,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+) -> Option<Arc<Mutex<Agent>>> {
+    let mut connections = client_connections.write().await;
+    let sessions_guard = sessions.read().await;
+    let target = sessions_guard
+        .get(session_id)
+        .filter(|existing| !Arc::ptr_eq(existing, source_agent))
+        .cloned()?;
+    // A session that migrated back from another machine has a newer transcript
+    // on disk than this live agent. Never reattach to the stale copy. The
+    // caller then restores from disk and replaces the map entry.
+    if target.try_lock().is_ok_and(|agent| agent.session_copy_is_stale()) {
+        crate::logging::info(&format!(
+            "Resume of {session_id}: live agent is older than the migrated transcript on disk; reloading"
+        ));
+        return None;
+    }
+
+    let info = connections.get_mut(client_connection_id)?;
+    info.session_id = session_id.to_string();
+    info.client_instance_id = client_instance_id.map(str::to_string);
+    info.last_seen = Instant::now();
+    Some(target)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn handle_resume_session(
+    id: u64,
+    session_id: String,
+    working_dir_override: Option<&str>,
+    client_instance_id: Option<&str>,
+    client_has_local_history: bool,
+    allow_session_takeover: bool,
+    client_selfdev: &mut bool,
+    client_session_id: &mut String,
+    client_connection_id: &str,
+    agent: &mut Arc<Mutex<Agent>>,
+    provider: &Arc<dyn Provider>,
+    registry: &Registry,
+    sessions: &SessionAgents,
+    shutdown_signals: &Arc<RwLock<HashMap<String, InterruptSignal>>>,
+    soft_interrupt_queues: &SessionInterruptQueues,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    client_debug_state: &Arc<RwLock<ClientDebugState>>,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    file_touch: &FileTouchService,
+    channel_subscriptions: &ChannelSubscriptions,
+    channel_subscriptions_by_session: &ChannelSubscriptions,
+    swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
+    swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
+    client_count: &Arc<RwLock<usize>>,
+    writer: &Arc<Mutex<WriteHalf>>,
+    server_name: &str,
+    server_icon: &str,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
+    event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
+    event_counter: &Arc<std::sync::atomic::AtomicU64>,
+    swarm_event_tx: &broadcast::Sender<SwarmEvent>,
+    supports_pdf_panels: bool,
+    include_message_ids: bool,
+) -> Result<Arc<Mutex<Agent>>> {
+    let resume_start = Instant::now();
+    let incoming_client_instance_id = client_instance_id.map(str::to_string);
+    crate::logging::event_info(
+        "SESSION_LIFECYCLE",
+        vec![
+            ("phase", "resume_start".to_string()),
+            ("request_id", id.to_string()),
+            ("source_session_id", client_session_id.clone()),
+            ("target_session_id", session_id.clone()),
+            ("client_connection_id", client_connection_id.to_string()),
+            (
+                "client_instance_id",
+                incoming_client_instance_id
+                    .clone()
+                    .unwrap_or_else(|| "none".to_string()),
+            ),
+            ("client_has_local_history", client_has_local_history.to_string()),
+            ("allow_takeover", allow_session_takeover.to_string()),
+        ],
+    );
+    let live_target_agent = claim_live_target_agent(
+        &session_id,
+        client_connection_id,
+        incoming_client_instance_id.as_deref(),
+        agent,
+        sessions,
+        client_connections,
+    )
+    .await;
+    // A cold target is re-checked under a per-id claim: two connections must not
+    // both restore and republish one session. The live and busy paths above never
+    // take it.
+    let (cold_resume_claim, live_target_agent): (Option<ColdResumeClaimGuard>, _) = match live_target_agent {
+        Some(live) => (None, Some(live)),
+        None => {
+            claim_cold_resume_target(
+                &session_id,
+                client_connection_id,
+                incoming_client_instance_id.as_deref(),
+                agent,
+                sessions,
+                client_connections,
+            )
+            .await
+        }
+    };
+    let claim_ms = resume_start.elapsed().as_millis();
+
+    if let Some(live_target_agent) = live_target_agent.as_ref() {
+        // A live owner exists, so this connection restores nothing; waiters on
+        // the claim re-check ownership and take the live path too.
+        drop(cold_resume_claim);
+        let old_session_id = client_session_id.clone();
+
+        let conflicting_live_client = {
+            let connections = client_connections.read().await;
+            connections
+                .values()
+                .find(|info| info.client_id != client_connection_id && info.session_id == session_id)
+                .cloned()
+        };
+        let live_target_busy = live_target_agent.try_lock().is_err();
+        crate::logging::info(&format!(
+            "Resume attach to existing live session {} from temporary {} on connection {}: live_target_busy={}, conflict_owner={}, conflict_processing={}, allow_takeover={}, local_history={}, incoming_instance={:?}",
+            session_id,
+            old_session_id,
+            client_connection_id,
+            live_target_busy,
+            conflicting_live_client
+                .as_ref()
+                .map(|info| info.client_id.as_str())
+                .unwrap_or("<none>"),
+            conflicting_live_client
+                .as_ref()
+                .map(|info| info.is_processing)
+                .unwrap_or(false),
+            allow_session_takeover,
+            client_has_local_history,
+            incoming_client_instance_id
+        ));
+
+        // Installing the target first is what makes cancellation safe: from here
+        // on the connection no longer holds the source, so the detached holder is
+        // free to release the source before its barrier on every exit.
+        let source = std::mem::replace(agent, Arc::clone(live_target_agent));
+        let detach_start = Instant::now();
+        let _detached = cleanup_detached_source_session_if_unused(
+            &old_session_id,
+            client_connection_id,
+            source,
+            sessions,
+            shutdown_signals,
+            soft_interrupt_queues,
+            client_connections,
+            swarm_members,
+            swarms_by_id,
+            file_touch,
+            channel_subscriptions,
+            channel_subscriptions_by_session,
+            swarm_plans,
+            swarm_coordinators,
+        )
+        .await;
+        let detach_source_ms = detach_start.elapsed().as_millis();
+
+        if let Some(conflict) = conflicting_live_client {
+            let incoming_instance_id = incoming_client_instance_id.as_deref();
+            let existing_instance_id = conflict.client_instance_id.as_deref();
+            let distinct_client_instances = incoming_instance_id
+                .zip(existing_instance_id)
+                .map(|(incoming, existing)| incoming != existing)
+                .unwrap_or(false);
+            let can_take_over_live_session =
+                allow_session_takeover && client_has_local_history && !distinct_client_instances;
+
+            if can_take_over_live_session {
+                let (disconnect_tx, debug_client_id, transferred_processing, transferred_tool_name) = {
+                    let mut connections = client_connections.write().await;
+                    let removed = connections.remove(&conflict.client_id);
+                    if let Some(info) = removed {
+                        (
+                            Some(info.disconnect_tx),
+                            info.debug_client_id,
+                            info.is_processing,
+                            info.current_tool_name,
+                        )
+                    } else {
+                        (
+                            None,
+                            conflict.debug_client_id,
+                            conflict.is_processing,
+                            conflict.current_tool_name,
+                        )
+                    }
+                };
+                if transferred_processing {
+                    crate::logging::warn(&format!(
+                        "Taking over live session {} from {} while old owner reports processing; new connection receives status/tool metadata but not the old processing task handle",
+                        session_id, conflict.client_id
+                    ));
+                } else {
+                    crate::logging::info(&format!(
+                        "Taking over live session {} from idle owner {}",
+                        session_id, conflict.client_id
+                    ));
+                }
+
+                {
+                    let mut connections = client_connections.write().await;
+                    if let Some(info) = connections.get_mut(client_connection_id) {
+                        info.is_processing = transferred_processing;
+                        info.current_tool_name = transferred_tool_name;
+                    }
+                }
+
+                if let Some(debug_client_id) = debug_client_id.as_deref() {
+                    let mut debug_state = client_debug_state.write().await;
+                    debug_state.unregister(debug_client_id);
+                }
+
+                if let Some(disconnect_tx) = disconnect_tx {
+                    let _ = disconnect_tx.send(());
+                }
+            }
+        }
+
+        register_session_event_sender(
+            swarm_members,
+            &session_id,
+            client_connection_id,
+            client_event_tx.clone(),
+        )
+        .await;
+
+        let is_canary = live_target_agent
+            .try_lock()
+            .ok()
+            .map(|agent_guard| agent_guard.is_canary())
+            .or_else(|| {
+                crate::session::Session::load_startup_stub(&session_id)
+                    .ok()
+                    .map(|session| session.is_canary)
+            })
+            .unwrap_or(false);
+        if is_canary {
+            *client_selfdev = true;
+            registry.register_selfdev_tools().await;
+        }
+
+        *client_session_id = session_id.clone();
+
+        let history_start = Instant::now();
+        handle_get_history(
+            id,
+            &session_id,
+            false,
+            live_target_agent,
+            provider,
+            sessions,
+            client_connections,
+            client_count,
+            writer,
+            server_name,
+            server_icon,
+            None,
+            supports_pdf_panels,
+            include_message_ids,
+        )
+        .await?;
+        let history_ms = history_start.elapsed().as_millis();
+        let to_history_ms = resume_start.elapsed().as_millis();
+        // A restore may still owe its own commit while this connection attaches to
+        // the same id; `Done` promises a durable session, so land it first. While a
+        // commit is owed no turn can start (every entry commits first), so the lock
+        // holder is the owner's prepare/commit and this wait is short. When nothing
+        // is owed, the busy fast path stays lock-free.
+        let commit_start = Instant::now();
+        if crate::agent::resume_commit_owed(&session_id) {
+            let settled = match tokio::time::timeout(LIVE_ATTACH_COMMIT_WAIT, live_target_agent.lock()).await {
+                Ok(mut agent_guard) => crate::server::client_disconnect_cleanup::blocking_session_io(|| {
+                    agent_guard.finish_resume_persistence()
+                }),
+                Err(_) => Err(anyhow::anyhow!(
+                    "the session owner did not release it within {}s",
+                    LIVE_ATTACH_COMMIT_WAIT.as_secs()
+                )),
+            };
+            if let Err(error) = settled {
+                let message = format!(
+                    "Resumed session is not durable yet; new work stays blocked: {}",
+                    crate::util::format_error_chain(&error)
+                );
+                crate::logging::error(&format!("session {}: {message}", session_id));
+                let _ = client_event_tx.send(ServerEvent::Error {
+                    id,
+                    message,
+                    retry_after_secs: Some(1),
+                });
+                return Ok(Arc::clone(live_target_agent));
+            }
+        }
+        crate::logging::info(&format!(
+            "[TIMING] resume_attach: session={}, path=live, claim={}ms, detach_source={}ms, history={}ms, commit={}ms, to_history={}ms",
+            session_id,
+            claim_ms,
+            detach_source_ms,
+            history_ms,
+            commit_start.elapsed().as_millis(),
+            to_history_ms,
+        ));
+        let _ = client_event_tx.send(ServerEvent::Done { id });
+        // Resolve project-local MCP config against the resumed session's
+        // working dir, not the server process cwd (issue #420).
+        // Do not block on the agent lock here: the target agent may be busy
+        // mid-turn (lock held), and awaiting it would deadlock the resume.
+        let mcp_working_dir = working_dir_override.map(PathBuf::from).or_else(|| {
+            live_target_agent
+                .try_lock()
+                .ok()
+                .and_then(|agent_guard| agent_guard.working_dir().map(PathBuf::from))
+                .or_else(|| {
+                    crate::session::Session::load_startup_stub(&session_id)
+                        .ok()
+                        .and_then(|session| session.working_dir.map(PathBuf::from))
+                })
+        });
+        registry
+            .register_mcp_tools_for_dir(
+                Some(client_event_tx.clone()),
+                Some(Arc::clone(mcp_pool)),
+                Some(session_id.clone()),
+                mcp_working_dir,
+            )
+            .await;
+        spawn_model_prefetch_update(Arc::clone(provider), Arc::clone(live_target_agent));
+        crate::logging::event_info(
+            "SESSION_LIFECYCLE",
+            vec![
+                ("phase", "resume_live_attach_done".to_string()),
+                ("request_id", id.to_string()),
+                ("old_session_id", old_session_id),
+                ("target_session_id", session_id.clone()),
+                ("client_connection_id", client_connection_id.to_string()),
+                ("live_target_busy", live_target_busy.to_string()),
+                ("elapsed_ms", resume_start.elapsed().as_millis().to_string()),
+            ],
+        );
+        return Ok(Arc::clone(live_target_agent));
+    }
+
+    let conflicting_live_client = {
+        let connections = client_connections.read().await;
+        connections
+            .values()
+            .find(|info| info.client_id != client_connection_id && info.session_id == session_id)
+            .cloned()
+    };
+
+    if let Some(conflict) = conflicting_live_client {
+        let incoming_instance_id = incoming_client_instance_id.as_deref();
+        let existing_instance_id = conflict.client_instance_id.as_deref();
+        let same_client_instance = incoming_instance_id
+            .zip(existing_instance_id)
+            .map(|(incoming, existing)| incoming == existing)
+            .unwrap_or(false);
+        let distinct_client_instances = incoming_instance_id
+            .zip(existing_instance_id)
+            .map(|(incoming, existing)| incoming != existing)
+            .unwrap_or(false);
+        let can_take_over_live_session = allow_session_takeover
+            && (same_client_instance || (client_has_local_history && !distinct_client_instances));
+
+        crate::logging::info(&format!(
+            "Resume attach decision for session {} on connection {}: allow_takeover={}, local_history={}, same_client_instance={}, distinct_client_instances={}, incoming_instance={:?}, existing_instance={:?}, existing_owner={}",
+            session_id,
+            client_connection_id,
+            allow_session_takeover,
+            client_has_local_history,
+            same_client_instance,
+            distinct_client_instances,
+            incoming_client_instance_id,
+            conflict.client_instance_id,
+            conflict.client_id,
+        ));
+
+        if can_take_over_live_session {
+            crate::logging::info(&format!(
+                "Taking over live session {} on connection {} by superseding {}",
+                session_id, client_connection_id, conflict.client_id
+            ));
+
+            let (disconnect_tx, debug_client_id, transferred_processing, transferred_tool_name) = {
+                let mut connections = client_connections.write().await;
+                let removed = connections.remove(&conflict.client_id);
+                if let Some(info) = removed {
+                    (
+                        Some(info.disconnect_tx),
+                        info.debug_client_id,
+                        info.is_processing,
+                        info.current_tool_name,
+                    )
+                } else {
+                    (
+                        None,
+                        conflict.debug_client_id,
+                        conflict.is_processing,
+                        conflict.current_tool_name,
+                    )
+                }
+            };
+
+            {
+                let mut connections = client_connections.write().await;
+                if let Some(info) = connections.get_mut(client_connection_id) {
+                    info.is_processing = transferred_processing;
+                    info.current_tool_name = transferred_tool_name;
+                }
+            }
+
+            if let Some(debug_client_id) = debug_client_id.as_deref() {
+                let mut debug_state = client_debug_state.write().await;
+                debug_state.unregister(debug_client_id);
+            }
+
+            if let Some(disconnect_tx) = disconnect_tx {
+                let _ = disconnect_tx.send(());
+            }
+        } else {
+            if allow_session_takeover && distinct_client_instances {
+                crate::logging::warn(&format!(
+                    "Rejecting reconnect takeover for session {} on connection {} because the incoming client is a different live instance from the current owner; incoming_instance={:?}, existing_instance={:?}, existing live owner is {}",
+                    session_id,
+                    client_connection_id,
+                    incoming_client_instance_id,
+                    conflict.client_instance_id,
+                    conflict.client_id
+                ));
+            } else if allow_session_takeover && !client_has_local_history && !same_client_instance {
+                crate::logging::warn(&format!(
+                    "Rejecting reconnect takeover for session {} on connection {} because the incoming client does not match the existing owner instance and has no local history; incoming_instance={:?}, existing_instance={:?}, existing live owner is {}",
+                    session_id,
+                    client_connection_id,
+                    incoming_client_instance_id,
+                    conflict.client_instance_id,
+                    conflict.client_id
+                ));
+            } else {
+                crate::logging::warn(&format!(
+                    "Rejecting duplicate live attach for session {} on connection {} because {} is already attached",
+                    session_id, client_connection_id, conflict.client_id
+                ));
+            }
+            let _ = client_event_tx.send(ServerEvent::Error {
+                id,
+                message: format!(
+                    "Session '{}' is already live but could not be shared safely with this connection.",
+                    session_id
+                ),
+                retry_after_secs: Some(1),
+            });
+            crate::logging::event_warn(
+                "SESSION_LIFECYCLE",
+                vec![
+                    ("phase", "resume_rejected".to_string()),
+                    ("request_id", id.to_string()),
+                    ("target_session_id", session_id.clone()),
+                    ("client_connection_id", client_connection_id.to_string()),
+                    ("conflict_client_id", conflict.client_id),
+                    ("elapsed_ms", resume_start.elapsed().as_millis().to_string()),
+                ],
+            );
+            return Ok(Arc::clone(agent));
+        }
+    }
+
+    let prepare_start = Instant::now();
+    let (result, is_canary) = {
+        // Cold restore: the per-id claim is held, no global close is pending and
+        // no live owner exists. The claim is released as soon as this connection
+        // has republished the session below; later attaches then take the live path.
+        let mut agent_guard = agent.lock().await;
+        // Loading reads on this thread; hand the worker core to the blocking pool
+        // so other sessions keep being served while it runs. The resumed state is
+        // committed below, after the saved transcript has been delivered.
+        let result = blocking_session_io(|| agent_guard.prepare_restored_session(&session_id, working_dir_override));
+        if *client_selfdev {
+            agent_guard.set_canary("self-dev");
+        }
+        let is_canary = agent_guard.is_canary();
+        (result, is_canary)
+    };
+    let prepare_ms = prepare_start.elapsed().as_millis();
+
+    let was_interrupted = match &result {
+        Ok(status) => {
+            let agent_guard = agent.lock().await;
+            restored_session_was_interrupted(&session_id, status, &agent_guard)
+        }
+        Err(_) => false,
+    };
+
+    if result.is_ok() && is_canary {
+        *client_selfdev = true;
+        registry.register_selfdev_tools().await;
+    }
+
+    match result {
+        Ok(_prev_status) => {
+            let old_session_id = client_session_id.clone();
+            *client_session_id = session_id.clone();
+
+            {
+                // A client may resume or re-subscribe the session it is already
+                // on. Removing that id only to insert it again tears down a LIVE
+                // session's sink, metrics and effort, and a later approval then
+                // falls through to its default. Equal ids need no transition.
+                let retired_sink = if old_session_id == session_id {
+                    None
+                } else {
+                    // A genuinely different id is a real removal and carries the
+                    // same teardown. The shared helper takes the `sessions` write
+                    // lock itself, and this frame already holds it, so run the
+                    // teardown directly.
+                    Some(super::state::session_event_sink(&old_session_id))
+                };
+                let mut sessions_guard = sessions.write().await;
+                if let Some(retired_sink) = retired_sink.as_ref()
+                    && sessions_guard.remove(&old_session_id).is_some()
+                {
+                    super::forget_removed_session(&old_session_id, retired_sink.as_ref());
+                }
+                sessions_guard.insert(session_id.clone(), Arc::clone(agent));
+            }
+            // Published: a waiter on the claim now finds the live owner and attaches
+            // to it instead of restoring a second copy.
+            drop(cold_resume_claim);
+            let publish_start = Instant::now();
+            crate::runtime_memory_log::emit_event(
+                crate::runtime_memory_log::RuntimeMemoryLogEvent::new("session_resumed", "existing_session_attached")
+                    .with_session_id(session_id.clone())
+                    .force_attribution(),
+            );
+            rename_shutdown_signal(shutdown_signals, &old_session_id, &session_id).await;
+            rename_session_interrupt_queue(soft_interrupt_queues, &old_session_id, &session_id).await;
+            {
+                let mut connections = client_connections.write().await;
+                if let Some(info) = connections.get_mut(client_connection_id) {
+                    info.session_id = session_id.clone();
+                    info.client_instance_id = incoming_client_instance_id.clone();
+                    info.last_seen = Instant::now();
+                }
+            }
+
+            let rename = rename_swarm_member_session(&old_session_id, &session_id, swarm_members, swarms_by_id).await;
+            remove_session_channel_subscriptions(
+                &old_session_id,
+                channel_subscriptions,
+                channel_subscriptions_by_session,
+            )
+            .await;
+            file_touch.clear_session(&old_session_id).await;
+            let abandoned_swarm_id = rename
+                .old_swarm_id
+                .clone()
+                .filter(|old| rename.new_swarm_id.as_ref() != Some(old));
+            {
+                let mut coordinators = swarm_coordinators.write().await;
+                // The temporary connection's own swarm is abandoned on resume.
+                // Renaming its coordinator entry would make the resumed session
+                // coordinate a swarm it never joined (issue #1650).
+                if let Some(abandoned) = abandoned_swarm_id.as_ref()
+                    && coordinators.get(abandoned) == Some(&old_session_id)
+                {
+                    coordinators.remove(abandoned);
+                }
+                for coordinator in coordinators.values_mut() {
+                    if *coordinator == old_session_id {
+                        *coordinator = session_id.clone();
+                    }
+                }
+            }
+            if let Some(healed) = rename.healed_swarm_id.as_ref() {
+                remove_plan_participant(healed, &session_id, swarm_plans).await;
+                let mut coordinators = swarm_coordinators.write().await;
+                if coordinators.get(healed) == Some(&session_id) {
+                    coordinators.remove(healed);
+                }
+            }
+            if let Some(abandoned) = abandoned_swarm_id.as_ref() {
+                remove_plan_participant(abandoned, &old_session_id, swarm_plans).await;
+            }
+            for stale_swarm_id in abandoned_swarm_id
+                .iter()
+                .chain(rename.healed_swarm_id.iter())
+                .filter(|stale| rename.new_swarm_id.as_ref() != Some(*stale))
+            {
+                let swarm_state = SwarmState {
+                    members: Arc::clone(swarm_members),
+                    swarms_by_id: Arc::clone(swarms_by_id),
+                    plans: Arc::clone(swarm_plans),
+                    coordinators: Arc::clone(swarm_coordinators),
+                };
+                persist_swarm_state_for(stale_swarm_id, &swarm_state).await;
+                broadcast_swarm_status(stale_swarm_id, swarm_members, swarms_by_id).await;
+            }
+            update_member_status(
+                &session_id,
+                "ready",
+                None,
+                swarm_members,
+                swarms_by_id,
+                Some(event_history),
+                Some(event_counter),
+                Some(swarm_event_tx),
+            )
+            .await;
+            if let Some(swarm_id) = {
+                let members = swarm_members.read().await;
+                members.get(&session_id).and_then(|member| member.swarm_id.clone())
+            } {
+                rename_plan_participant(&swarm_id, &old_session_id, &session_id, swarm_plans).await;
+                let swarm_state = SwarmState {
+                    members: Arc::clone(swarm_members),
+                    swarms_by_id: Arc::clone(swarms_by_id),
+                    plans: Arc::clone(swarm_plans),
+                    coordinators: Arc::clone(swarm_coordinators),
+                };
+                persist_swarm_state_for(&swarm_id, &swarm_state).await;
+            }
+
+            register_session_event_sender(
+                swarm_members,
+                &session_id,
+                client_connection_id,
+                client_event_tx.clone(),
+            )
+            .await;
+
+            // Captured before the history call, which takes the agent, so the restored
+            // route can still be reported to a client that has never been told.
+            let (
+                resumed_model,
+                resumed_provider_name,
+                resumed_context_window,
+                resumed_credential,
+                resumed_reasoning_effort,
+            ) = {
+                let guard = agent.lock().await;
+                (
+                    guard.provider_model(),
+                    guard.provider_name(),
+                    guard.provider_context_window(),
+                    guard.active_resolved_credential(),
+                    guard.provider_reasoning_effort(),
+                )
+            };
+
+            let publish_ms = publish_start.elapsed().as_millis();
+            let history_start = Instant::now();
+            let history_result = handle_get_history(
+                id,
+                &session_id,
+                false,
+                agent,
+                provider,
+                sessions,
+                client_connections,
+                client_count,
+                writer,
+                server_name,
+                server_icon,
+                Some(was_interrupted),
+                supports_pdf_panels,
+                include_message_ids,
+            )
+            .await;
+            let history_ms = history_start.elapsed().as_millis();
+            let to_history_ms = resume_start.elapsed().as_millis();
+            // Delivery is done, so the resume commit can run now. It runs on both
+            // outcomes: a failed delivery must not leave the session permanently
+            // unsaveable, and the barrier it closes only opens on a durable save.
+            let commit_start = Instant::now();
+            let persisted = {
+                let mut agent_guard = agent.lock().await;
+                blocking_session_io(|| agent_guard.finish_resume_persistence())
+            };
+            crate::logging::info(&format!(
+                "[TIMING] resume_attach: session={}, path=cold, claim={}ms, prepare={}ms, publish={}ms, history={}ms, commit={}ms, to_history={}ms",
+                session_id,
+                claim_ms,
+                prepare_ms,
+                publish_ms,
+                history_ms,
+                commit_start.elapsed().as_millis(),
+                to_history_ms,
+            ));
+            if let Err(error) = &persisted {
+                let message = format!(
+                    "Resumed session is not durable yet; new work stays blocked: {}",
+                    crate::util::format_error_chain(error)
+                );
+                crate::logging::error(&format!("session {}: {message}", session_id));
+                let _ = client_event_tx.send(ServerEvent::Error {
+                    id,
+                    message,
+                    retry_after_secs: Some(1),
+                });
+            }
+            history_result?;
+            if persisted.is_err() {
+                // Keep the connection alive with the error already sent, exactly
+                // as a failed restore does. The barrier stays closed, so no work
+                // can run on state that never landed; a later resume retries it.
+                return Ok(Arc::clone(agent));
+            }
+            let _ = client_event_tx.send(ServerEvent::Done { id });
+            // Re-send the swarm plan AFTER the History payload: the client
+            // clears its plan snapshot on session change, so without this the
+            // plan graph would stay blank until the next plan mutation.
+            send_swarm_plan_to_session(&session_id, swarm_members, swarm_plans).await;
+            // Issue #1651: a resumed owner learns which idle headless workers
+            // the last restart stopped.
+            notify_owner_of_unrestored_idle_workers(
+                &session_id,
+                &SwarmState {
+                    members: Arc::clone(swarm_members),
+                    swarms_by_id: Arc::clone(swarms_by_id),
+                    plans: Arc::clone(swarm_plans),
+                    coordinators: Arc::clone(swarm_coordinators),
+                },
+            )
+            .await;
+            // Report the restored route for the same reason: a resuming client
+            // never saw a ModelChanged, so it would keep budgeting the session
+            // from its own inert provider and fall back to the generic 200K
+            // default. Measured: a route whose catalog entry carries 1000000
+            // displayed 200000 after every resume.
+            let _ = client_event_tx.send(ServerEvent::ModelChanged {
+                id,
+                model: resumed_model,
+                provider_name: Some(resumed_provider_name),
+                context_window: Some(resumed_context_window as u64),
+                error: None,
+                resolved_credential: resumed_credential,
+                reasoning_effort: resumed_reasoning_effort,
+            });
+            // Resolve project-local MCP config against the restored session's
+            // working dir, not the server process cwd (issue #420).
+            let mcp_working_dir = {
+                let agent_guard = agent.lock().await;
+                agent_guard.working_dir().map(PathBuf::from)
+            };
+            registry
+                .register_mcp_tools_for_dir(
+                    Some(client_event_tx.clone()),
+                    Some(Arc::clone(mcp_pool)),
+                    Some(session_id.clone()),
+                    mcp_working_dir,
+                )
+                .await;
+            spawn_model_prefetch_update(Arc::clone(provider), Arc::clone(agent));
+            crate::logging::event_info(
+                "SESSION_LIFECYCLE",
+                vec![
+                    ("phase", "resume_restored_done".to_string()),
+                    ("request_id", id.to_string()),
+                    ("old_session_id", old_session_id),
+                    ("target_session_id", session_id.clone()),
+                    ("client_connection_id", client_connection_id.to_string()),
+                    ("was_interrupted", was_interrupted.to_string()),
+                    ("elapsed_ms", resume_start.elapsed().as_millis().to_string()),
+                ],
+            );
+        }
+        Err(error) => {
+            let _ = client_event_tx.send(ServerEvent::Error {
+                id,
+                message: format!("Failed to restore session: {}", crate::util::format_error_chain(&error)),
+                retry_after_secs: None,
+            });
+            crate::logging::event_warn(
+                "SESSION_LIFECYCLE",
+                vec![
+                    ("phase", "resume_restore_failed".to_string()),
+                    ("request_id", id.to_string()),
+                    ("target_session_id", session_id),
+                    ("client_connection_id", client_connection_id.to_string()),
+                    ("error", crate::util::format_error_chain(&error)),
+                    ("elapsed_ms", resume_start.elapsed().as_millis().to_string()),
+                ],
+            );
+        }
+    }
+
+    Ok(Arc::clone(agent))
+}
+
+#[cfg(test)]
+#[path = "client_session_tests.rs"]
+mod tests;

@@ -1,0 +1,1332 @@
+//! Events emitted by the daemon wire protocol.
+
+use super::*;
+
+/// One entry of the agent's plan, as a client renders it in a plan update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanEntryWire {
+    pub content: String,
+    /// `"high"` | `"medium"` | `"low"`.
+    pub priority: String,
+    /// `"pending"` | `"in_progress"` | `"completed"`.
+    pub status: String,
+}
+
+/// One file change a tool call made, as a client renders it in a tool call
+/// update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDiffWire {
+    pub path: String,
+    #[serde(default)]
+    pub old_text: Option<String>,
+    pub new_text: String,
+    /// The tool removed this file rather than writing it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deleted: bool,
+    /// Previous path when the tool moved or renamed the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    /// The tool created this file: it did not exist before the call, even when
+    /// the tool read its prior text as empty.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub created: bool,
+}
+
+/// Server event sent to client
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "wire protocol prioritizes straightforward serde payloads over boxing every larger event variant"
+)]
+pub enum ServerEvent {
+    #[serde(rename = "runtime_command_result")]
+    RuntimeCommandResult {
+        id: u64,
+        command: String,
+        data: serde_json::Value,
+        message: String,
+    },
+    #[serde(rename = "tools")]
+    Tools { id: u64, tools: Vec<SessionToolDefinition> },
+    #[serde(rename = "tool_call")]
+    ToolCall {
+        session_id: String,
+        call_id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    /// An autonomous wake was requested. In external wake mode this event is
+    /// emitted instead of starting or injecting into a turn.
+    #[serde(rename = "wake_requested")]
+    WakeRequested {
+        session_id: String,
+        reason: String,
+        notification: String,
+    },
+
+    /// Acknowledgment of request
+    #[serde(rename = "ack")]
+    Ack { id: u64 },
+
+    /// Authoritative worker routing after a successful session preference update.
+    #[serde(rename = "agent_models_changed")]
+    AgentModelsChanged {
+        id: u64,
+        session_id: String,
+        #[serde(default)]
+        overrides: std::collections::BTreeMap<String, String>,
+    },
+
+    /// Streaming text delta
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
+
+    /// Assistant text message boundary within a provider response.
+    #[serde(rename = "text_done")]
+    TextDone,
+
+    /// Streaming reasoning/thinking delta (raw, unformatted model text).
+    ///
+    /// Unlike [`ServerEvent::TextDelta`], this carries the model's reasoning as
+    /// raw text deltas so the client can render the in-progress line live
+    /// (token-by-token) rather than waiting for a whole line to complete. The
+    /// client is responsible for the dim+italic styling. Clients that predate
+    /// this event simply ignore it (reasoning is still persisted as a
+    /// history-only trace and shown when the message commits).
+    #[serde(rename = "reasoning_delta")]
+    ReasoningDelta { text: String },
+
+    /// Reasoning/thinking finished for the current step. Lets the client close
+    /// its live reasoning region (flush the partial line, add separators) before
+    /// normal output or a tool call begins.
+    #[serde(rename = "reasoning_done")]
+    ReasoningDone {
+        /// Wall-clock reasoning duration in seconds, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_secs: Option<f64>,
+    },
+
+    /// Replace the current turn's streamed text content
+    /// Used when text-wrapped tool calls are recovered: the garbled text
+    /// shown during streaming is replaced with the clean prefix text.
+    #[serde(rename = "text_replace")]
+    TextReplace { text: String },
+
+    /// Source-aware correction of a completed provider message. Unlike the
+    /// legacy response-wide replacement, preserve everything before an exact
+    /// trailing old_text match (including already committed messages).
+    #[serde(rename = "text_suffix_replace")]
+    TextSuffixReplace { old_text: String, new_text: String },
+
+    /// Tool call started
+    #[serde(rename = "tool_start")]
+    ToolStart { id: String, name: String },
+
+    /// Tool input delta (streaming JSON)
+    #[serde(rename = "tool_input")]
+    ToolInput {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        delta: String,
+    },
+
+    /// Tool call ended, now executing
+    #[serde(rename = "tool_exec")]
+    ToolExec { id: String, name: String },
+
+    /// Tool execution completed
+    #[serde(rename = "tool_done")]
+    ToolDone {
+        id: String,
+        name: String,
+        output: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    /// Rendered images produced during the live turn, including image-bearing
+    /// tool results and provider-native image generation. Lets remote clients
+    /// render them inline immediately instead of waiting for History reload.
+    #[serde(rename = "side_pane_images")]
+    SidePaneImages {
+        session_id: String,
+        images: Vec<horon_agent_session_types::RenderedImage>,
+    },
+
+    /// Image generated by a provider-native image generation tool.
+    #[serde(rename = "generated_image")]
+    GeneratedImage {
+        id: String,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata_path: Option<String>,
+        output_format: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        revised_prompt: Option<String>,
+    },
+
+    /// Batch tool progress update, including currently-running subcalls
+    #[serde(rename = "batch_progress")]
+    BatchProgress { progress: BatchProgress },
+
+    /// Token usage update
+    #[serde(rename = "tokens")]
+    TokenUsage {
+        input: u64,
+        output: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_read_input: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_creation_input: Option<u64>,
+    },
+
+    /// Prompt-shape signature for the API request that will later report token
+    /// usage. Remote clients use this to diagnose KV-cache misses.
+    #[serde(rename = "kv_cache_request")]
+    KvCacheRequest {
+        system_static_hash: u64,
+        tools_hash: u64,
+        messages_hash: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        message_hashes: Vec<u64>,
+        message_count: usize,
+        tool_count: usize,
+        #[serde(default)]
+        system_static_chars: usize,
+        #[serde(default)]
+        tools_json_chars: usize,
+        #[serde(default)]
+        messages_json_chars: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ephemeral_hash: Option<u64>,
+        #[serde(default)]
+        ephemeral_chars: usize,
+        #[serde(default)]
+        ephemeral_message_count: usize,
+    },
+
+    /// Daemon-classified KV (prompt) cache miss for the request that just
+    /// completed. Emitted after `tokens`. `reason` is a stable snake_case id
+    /// (e.g. `prefix_changed`, `tools_changed`, `expired`, `model_switch`).
+    #[serde(rename = "kv_cache_miss")]
+    KvCacheMiss {
+        reason: String,
+        /// True when the harness itself changed the cached prefix.
+        harness_caused: bool,
+        missed_tokens: u64,
+        expected_tokens: u64,
+        read_tokens: u64,
+        /// Documented intentional invalidation that explains the miss.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        documented_cause: Option<String>,
+        /// Ready-to-display one-line summary.
+        message: String,
+    },
+
+    /// Active transport/connection type for the current stream
+    #[serde(rename = "connection_type")]
+    ConnectionType { connection: String },
+
+    /// Connection phase update (authenticating, connecting, waiting, etc.)
+    #[serde(rename = "connection_phase")]
+    ConnectionPhase { phase: String },
+
+    /// Provider-supplied human-readable transport detail for the current stream.
+    #[serde(rename = "status_detail")]
+    StatusDetail { detail: String },
+
+    /// Provider has finished the visible assistant message, but the turn may still be
+    /// finalizing bookkeeping such as session IDs or completion trailers.
+    ///
+    /// `stop_reason` carries the provider's own reason when it supplied one
+    /// (e.g. Anthropic `end_turn`, `tool_use`, `max_tokens`). It must be
+    /// forwarded rather than dropped: `max_tokens` is the only signal that a
+    /// turn was truncated by the output budget, and headless consumers
+    /// (`run --ndjson`) have no other way to detect it.
+    #[serde(rename = "message_end")]
+    MessageEnd {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+    },
+
+    /// A transient transport fault interrupted the provider stream mid-response
+    /// and the provider is retrying the request from the top. The client must
+    /// discard all partial output from the current attempt (streamed text,
+    /// reasoning, in-progress tool calls) so the replayed response renders
+    /// cleanly instead of duplicating.
+    #[serde(rename = "retry_rollback")]
+    RetryRollback { attempt: u32, max: u32 },
+
+    /// Upstream provider info (e.g., which provider OpenRouter routed to)
+    #[serde(rename = "upstream_provider")]
+    UpstreamProvider { provider: String },
+
+    /// Swarm status update (subagent/session lifecycle info)
+    #[serde(rename = "swarm_status")]
+    SwarmStatus { members: Vec<SwarmMemberStatus> },
+
+    /// Full swarm plan snapshot for synchronization and UI rendering.
+    #[serde(rename = "swarm_plan")]
+    SwarmPlan {
+        swarm_id: String,
+        version: u64,
+        items: Vec<PlanItem>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        participants: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<PlanGraphStatus>,
+    },
+
+    /// Plan proposal payload delivered to the coordinator.
+    #[serde(rename = "swarm_plan_proposal")]
+    SwarmPlanProposal {
+        swarm_id: String,
+        proposer_session: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        proposer_name: Option<String>,
+        items: Vec<PlanItem>,
+        summary: String,
+        proposal_key: String,
+    },
+
+    /// Soft interrupt message was injected at a safe point
+    #[serde(rename = "soft_interrupt_injected")]
+    SoftInterruptInjected {
+        /// The injected message content
+        content: String,
+        /// Optional display role override for the injected content (e.g. "system")
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_role: Option<String>,
+        /// Which injection point: "A" (after stream), "B" (no tools),
+        /// "C" (between tools), "D" (after all tools)
+        point: String,
+        /// Number of tools skipped (only for urgent interrupt at point C)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tools_skipped: Option<usize>,
+        /// Caller ids of the queued messages combined into this injection, in
+        /// queue order. Messages queued without an id contribute nothing.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        client_ids: Vec<String>,
+    },
+
+    /// Reply to a `cancel_soft_interrupts` that named `client_ids`. Decided
+    /// under the queue lock, so an id is never both cancelled and injected.
+    #[serde(rename = "soft_interrupts_cancelled")]
+    SoftInterruptsCancelled {
+        id: u64,
+        /// Requested ids that were still queued and are now removed.
+        cancelled: Vec<String>,
+        /// Requested ids that were not queued: already injected, or unknown.
+        not_queued: Vec<String>,
+    },
+
+    /// Reply to `background_tool`.
+    #[serde(rename = "background_tool_result")]
+    BackgroundToolResult {
+        id: u64,
+        /// A tool was executing and has been signalled to move to the
+        /// background. A tool finishing in the same instant completes normally.
+        moved: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+    },
+
+    /// Soft interrupts still queued when a turn ended. Sent immediately before
+    /// the turn's terminal `done`/`error` on the same ordered stream.
+    #[serde(rename = "soft_interrupt_queue")]
+    SoftInterruptQueue { pending: usize },
+
+    /// Structured abnormal turn outcome, emitted before the terminal Done/Error.
+    #[serde(rename = "turn_stopped")]
+    TurnStopped {
+        reason: TurnStopReason,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_stop_reason: Option<String>,
+    },
+
+    /// An approval request is parked, waiting for a decision. Emitted when a
+    /// tool call (or the ambient runner that took it over) blocks on a
+    /// permission request, so remote clients can surface the prompt instead of
+    /// leaving the run silently stalled.
+    ///
+    /// `expires_at` is the RFC 3339 UTC deadline after which the request's
+    /// timeout default applies. Omitted when the requester set no deadline, so
+    /// an older daemon that never fills it still produces a parseable event.
+    #[serde(rename = "approval_pending")]
+    ApprovalPending {
+        request_id: String,
+        /// Tool name or action the approval covers.
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<String>,
+    },
+
+    /// An approval request reached a final decision.
+    ///
+    /// The daemon keeps its durable copy until the client acknowledges with
+    /// [`ServerEvent::ApprovalAck`]; delivery is at-least-once and consumers
+    /// dedupe on `request_id`.
+    #[serde(rename = "approval_resolved")]
+    ApprovalResolved {
+        request_id: String,
+        approved: bool,
+        /// How the decision was reached (`file`, `inline`, `timeout_default`,
+        /// `superseded`, ...).
+        via: String,
+        /// Who resolved it: `tool` for the tool call that was waiting, or
+        /// `runner` for the ambient runner that inherited the request.
+        resolved_by: String,
+    },
+
+    /// The run switched provider routes after a failover prompt. `chain_id`
+    /// scopes the attempt budget, so a delayed acknowledgement from an earlier
+    /// chain can never clear the current one.
+    #[serde(rename = "failover_switched")]
+    FailoverSwitched {
+        chain_id: String,
+        /// Route left behind.
+        from: String,
+        /// Route now in use.
+        to: String,
+        /// Provider reason carried by the failover prompt.
+        reason: String,
+        /// 1-based attempt number within this chain.
+        attempt: u32,
+        /// Attempt cap for this chain.
+        max: u32,
+    },
+
+    /// The run stopped and needs a human decision before it can continue.
+    ///
+    /// `request_id` is `None` when the stop is not tied to a permission
+    /// request, for example when the automatic-failover budget ran out. A
+    /// consumer must not try to resolve such a stop as an approval request.
+    #[serde(rename = "run_needs_human_resume")]
+    RunNeedsHumanResume {
+        request_id: Option<String>,
+        session_id: String,
+        reason: String,
+        attempts: u32,
+    },
+
+    /// Client acknowledgement of [`ServerEvent::ApprovalResolved`]. It travels
+    /// from the client toward the daemon; the daemon drops its durable copy
+    /// only after seeing it.
+    #[serde(rename = "approval_ack")]
+    ApprovalAck { request_id: String },
+
+    /// Client acknowledgement of [`ServerEvent::FailoverSwitched`], carrying
+    /// the chain it confirms so an older chain's late ack cannot clear a newer
+    /// one.
+    #[serde(rename = "failover_ack")]
+    FailoverAck {
+        chain_id: String,
+        from: String,
+        to: String,
+        attempt: u32,
+    },
+
+    /// Current turn was interrupted by explicit user cancel.
+    ///
+    /// This is rendered as a system/status notice (not assistant content),
+    /// so it does not blend into streaming model output.
+    #[serde(rename = "interrupted")]
+    Interrupted,
+
+    /// The provider ended the turn without any visible assistant output,
+    /// typically a model-side guardrail/refusal stop (e.g. Anthropic
+    /// `stop_reason: "refusal"`), or a reasoning-only response with no final
+    /// text. Rendered as a system notice so the user learns why no response
+    /// arrived instead of the turn ending silently.
+    #[serde(rename = "provider_guardrail")]
+    ProviderGuardrail {
+        /// Raw provider stop reason, when known (e.g. "refusal").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        /// Human-readable explanation for display.
+        message: String,
+    },
+
+    /// Relevant memory was injected into the conversation
+    #[serde(rename = "memory_injected")]
+    MemoryInjected {
+        /// Number of memories injected
+        count: usize,
+        /// Exact memory content that was injected
+        #[serde(default)]
+        prompt: String,
+        /// Display-only version of the injected memory content.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_prompt: Option<String>,
+        /// Character length of injected content
+        #[serde(default)]
+        prompt_chars: usize,
+        /// Age of the precomputed memory payload at injection time
+        #[serde(default)]
+        computed_age_ms: u64,
+    },
+
+    /// Memory activity state update for remote clients.
+    #[serde(rename = "memory_activity")]
+    MemoryActivity { activity: MemoryActivitySnapshot },
+
+    /// Context compaction occurred (background summary or emergency drop)
+    #[serde(rename = "compaction")]
+    Compaction {
+        /// What triggered it: "background", "hard_compact", "auto_recovery"
+        trigger: String,
+        /// Token count before compaction
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pre_tokens: Option<u64>,
+        /// Token estimate after compaction was applied
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        post_tokens: Option<u64>,
+        /// Approximate tokens saved by this compaction event
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_saved: Option<u64>,
+        /// Time spent compacting in the background (0 for synchronous emergency compaction)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        /// Number of messages dropped (for hard/emergency compaction)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        messages_dropped: Option<usize>,
+        /// Number of messages summarized or compacted by this event
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        messages_compacted: Option<usize>,
+        /// Character count of the persisted summary after compaction
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary_chars: Option<usize>,
+        /// Count of recent messages still kept verbatim after compaction
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_messages: Option<usize>,
+    },
+
+    /// Message/turn completed
+    #[serde(rename = "done")]
+    Done { id: u64 },
+
+    /// A context-only user message was appended and persisted. This is distinct
+    /// from `done`: no model turn was started and no turn boundary should be
+    /// emitted to API clients.
+    #[serde(rename = "context_message_added")]
+    ContextMessageAdded { id: u64 },
+
+    /// Another client attached to this session started a turn with this
+    /// message. Sent to every other live attachment so each window shows the
+    /// prompt (or the auto-poke notice) instead of only the sender seeing it.
+    #[serde(rename = "peer_user_message")]
+    PeerUserMessage { content: String },
+
+    /// Error occurred
+    #[serde(rename = "error")]
+    Error {
+        id: u64,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after_secs: Option<u64>,
+    },
+
+    /// Pong response
+    #[serde(rename = "pong")]
+    Pong {
+        id: u64,
+        /// Native SSH protocol v1 supports opt-in disconnected turn continuation.
+        /// Omitted by older daemons, which a new SSH bridge must reject.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_ssh_protocol: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<String>,
+        /// Authoritative connected non-headless users. None on older daemons.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user_connected_session_ids: Option<Vec<String>>,
+    },
+
+    /// Current state (debug)
+    #[serde(rename = "state")]
+    State {
+        id: u64,
+        session_id: String,
+        message_count: usize,
+        is_processing: bool,
+        /// Soft interrupts queued and not yet injected. Omitted by older daemons.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pending_soft_interrupts: Option<usize>,
+    },
+
+    /// Response for debug command
+    #[serde(rename = "debug_response")]
+    DebugResponse { id: u64, ok: bool, output: String },
+
+    /// MCP status update (sent after background MCP connections complete)
+    #[serde(rename = "mcp_status")]
+    McpStatus {
+        /// Server names with tool counts in "name:count" format
+        servers: Vec<String>,
+    },
+
+    /// Client debug command forwarded from debug socket to TUI
+    #[serde(rename = "client_debug_request")]
+    ClientDebugRequest { id: u64, command: String },
+
+    /// Session ID assigned
+    #[serde(rename = "session")]
+    SessionId { session_id: String },
+
+    /// Server requests that this client/session close itself.
+    #[serde(rename = "session_close_requested")]
+    SessionCloseRequested { reason: String },
+
+    /// Session display title changed.
+    #[serde(rename = "session_renamed")]
+    SessionRenamed {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        display_title: String,
+    },
+
+    /// Full conversation history (response to GetHistory)
+    #[serde(rename = "history")]
+    History {
+        id: u64,
+        session_id: String,
+        messages: Vec<HistoryMessage>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<horon_agent_session_types::RenderedImage>,
+        /// Provider name (e.g. "anthropic", "openai")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_name: Option<String>,
+        /// Model name (e.g. "claude-sonnet-4-20250514")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_model: Option<String>,
+        /// Available models for this provider
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        available_models: Vec<String>,
+        /// Route metadata for available models
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        available_model_routes: Vec<horon_agent_provider_core::ModelRoute>,
+        /// Connected MCP server names
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mcp_servers: Vec<String>,
+        /// Available skill names
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skills: Vec<String>,
+        /// Total session token usage (input, output)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total_tokens: Option<(u64, u64)>,
+        /// Detailed persisted token usage totals for diagnostics and cache stats.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token_usage_totals: Option<TokenUsageTotals>,
+        /// All session IDs on the server
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        all_sessions: Vec<String>,
+        /// Number of connected clients
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_count: Option<usize>,
+        /// Whether this session is in canary/self-dev mode
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_canary: Option<bool>,
+        /// Server binary version string (e.g. "v0.1.123 (abc1234)")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_version: Option<String>,
+        /// Server name for multi-server support (e.g. "blazing")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_name: Option<String>,
+        /// Server icon for display (e.g. "🔥")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_icon: Option<String>,
+        /// Whether a newer server binary is available on disk
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_has_update: Option<bool>,
+        /// Whether the session was interrupted mid-generation (crashed/disconnected while processing)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        was_interrupted: Option<bool>,
+        /// Server-owned reload recovery directive for this session, if a reconnect should continue automatically.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reload_recovery: Option<ReloadRecoverySnapshot>,
+        /// Last observed actual connection type for this session (e.g. websocket, https/sse)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        connection_type: Option<String>,
+        /// Last observed provider-supplied status detail for this session.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status_detail: Option<String>,
+        /// Upstream provider (e.g., which provider OpenRouter routed to, or calculated preference)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        upstream_provider: Option<String>,
+        /// Server-resolved billing credential for this session: `Oauth`
+        /// (subscription) vs `ApiKey` (cost-based), or `None` when the active
+        /// provider has no OAuth-vs-API-key distinction. Lets remote clients
+        /// render usage/billing without re-deriving it from the provider name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_credential: Option<horon_agent_provider_core::ResolvedCredential>,
+        /// Reasoning effort for providers that expose it
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<String>,
+        /// Service tier override for OpenAI models
+        #[serde(skip_serializing_if = "Option::is_none")]
+        service_tier: Option<String>,
+        /// Session-scoped preferred model for subagents.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subagent_model: Option<String>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        agent_model_overrides: std::collections::BTreeMap<String, String>,
+        /// Session-scoped automatic review toggle.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        autoreview_enabled: Option<bool>,
+        /// Session-scoped automatic judge toggle.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        autojudge_enabled: Option<bool>,
+        /// Active compaction mode for this session
+        #[serde(default)]
+        compaction_mode: horon_agent_config_types::CompactionMode,
+        /// Current live processing state for this session, if known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activity: Option<SessionActivitySnapshot>,
+        /// Session-scoped side panel pages and active focus state
+        #[serde(default, skip_serializing_if = "snapshot_is_empty")]
+        side_panel: SidePanelSnapshot,
+        /// Session-scoped agent applet instances.
+        #[serde(default, skip_serializing_if = "applets_is_empty")]
+        applets: horon_agent_applet_types::AgentApplets,
+        /// ACP protocol version this connection subscribed with, echoed only
+        /// to that connection. `Some(2)` tells a v2 adapter the daemon serves
+        /// its protocol; absent means an older daemon that ignores the
+        /// subscribe's `protocol_version` and may never send v2-only events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        acp_protocol_version: Option<u32>,
+    },
+
+    /// Expanded compacted-history window (response to GetCompactedHistory).
+    #[serde(rename = "compacted_history")]
+    CompactedHistory {
+        id: u64,
+        session_id: String,
+        messages: Vec<HistoryMessage>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<horon_agent_session_types::RenderedImage>,
+        compacted_total: usize,
+        compacted_visible: usize,
+        compacted_remaining: usize,
+        #[serde(default)]
+        compacted_hidden_prompts: usize,
+    },
+
+    /// Side panel state changed for the active session
+    #[serde(rename = "side_panel_state")]
+    SidePanelState { snapshot: SidePanelSnapshot },
+
+    /// Agent applet instances changed for the active session (full snapshot).
+    #[serde(rename = "applet_state")]
+    AppletState {
+        session_id: String,
+        snapshot: horon_agent_applet_types::AgentApplets,
+    },
+
+    /// Server is reloading (clients should reconnect)
+    #[serde(rename = "reloading")]
+    Reloading {
+        /// New socket path to connect to (if different)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        new_socket: Option<String>,
+    },
+
+    /// Progress update during server reload
+    #[serde(rename = "reload_progress")]
+    ReloadProgress {
+        /// Step name (e.g., "git_pull", "cargo_build", "exec")
+        step: String,
+        /// Human-readable message
+        message: String,
+        /// Whether this step succeeded (None = in progress)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        success: Option<bool>,
+        /// Output from the step (stdout/stderr)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
+
+    /// Model changed (response to cycle_model)
+    #[serde(rename = "model_changed")]
+    ModelChanged {
+        id: u64,
+        model: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider_name: Option<String>,
+        /// The server's resolved context window for the active route, in tokens.
+        ///
+        /// A remote client cannot derive this itself: its local provider is an
+        /// inert placeholder with no model catalog, so asking it returns the
+        /// generic 200K default. The server owns the real provider, so it
+        /// reports the number directly. Measured on a pinned
+        /// `stealth/space-bunny-alpha@Stealth` route whose catalog entry carries
+        /// context_length 1000000, the panel showed 200000 with this absent.
+        ///
+        /// Omitted when unknown, so older peers stay compatible.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        /// Credential the switched-to route will bill against (OAuth vs API
+        /// key). Lets clients update the auth badge on an OAuth<->API switch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_credential: Option<horon_agent_provider_core::ResolvedCredential>,
+        /// Effort the switched-to model runs with. A switch can clear an
+        /// effort the new model does not advertise, so clients must not keep
+        /// showing the old one. Always serialized (`null` = no effort) so a
+        /// client can tell "cleared" from an older server that omits it.
+        #[serde(default)]
+        reasoning_effort: Option<String>,
+    },
+
+    /// Reasoning effort changed (response to set_reasoning_effort)
+    #[serde(rename = "reasoning_effort_changed")]
+    ReasoningEffortChanged {
+        id: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    /// Service tier changed (response to set_service_tier)
+    #[serde(rename = "service_tier_changed")]
+    ServiceTierChanged {
+        id: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        service_tier: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    /// Transport changed (response to set_transport)
+    #[serde(rename = "transport_changed")]
+    TransportChanged {
+        id: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        transport: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    /// Compaction mode changed (response to set_compaction_mode)
+    #[serde(rename = "compaction_mode_changed")]
+    CompactionModeChanged {
+        id: u64,
+        mode: horon_agent_config_types::CompactionMode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    /// Usage delta for a route, independent of catalog availability or Agent locks.
+    #[serde(rename = "model_usage_updated")]
+    ModelUsageUpdated {
+        route: horon_agent_provider_core::ModelRoute,
+    },
+
+    /// Available models updated (pushed after auth changes)
+    #[serde(rename = "available_models_updated")]
+    AvailableModelsUpdated {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_model: Option<String>,
+        available_models: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        available_model_routes: Vec<horon_agent_provider_core::ModelRoute>,
+    },
+
+    /// Notification from another agent (file conflict, message, shared context)
+    #[serde(rename = "notification")]
+    Notification {
+        /// Session ID of the agent that triggered the notification
+        from_session: String,
+        /// Friendly name of the agent (e.g., "fox")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from_name: Option<String>,
+        /// Type of notification
+        notification_type: NotificationType,
+        /// Human-readable message describing what happened
+        message: String,
+    },
+
+    /// External transcript text targeted at the active TUI input.
+    #[serde(rename = "transcript")]
+    Transcript { text: String, mode: TranscriptMode },
+
+    /// Completed `!cmd` shell execution for a connected remote client.
+    #[serde(rename = "input_shell_result")]
+    InputShellResult { result: InputShellResult },
+
+    /// Response to comm_read request
+    #[serde(rename = "comm_context")]
+    CommContext {
+        id: u64,
+        /// Shared context entries
+        entries: Vec<ContextEntry>,
+    },
+
+    /// Response to comm_list request
+    #[serde(rename = "comm_members")]
+    CommMembers { id: u64, members: Vec<AgentInfo> },
+
+    /// Response to comm_list_swarms and comm_set_swarm_label requests
+    #[serde(rename = "comm_swarms")]
+    CommSwarms { id: u64, swarms: Vec<SwarmInfo> },
+
+    /// Response to comm_list_channels request
+    #[serde(rename = "comm_channels")]
+    CommChannels { id: u64, channels: Vec<SwarmChannelInfo> },
+
+    /// Response to comm_summary request
+    #[serde(rename = "comm_summary_response")]
+    CommSummaryResponse {
+        id: u64,
+        session_id: String,
+        tool_calls: Vec<ToolCallSummary>,
+    },
+
+    /// Response to comm_status request
+    #[serde(rename = "comm_status_response")]
+    CommStatusResponse { id: u64, snapshot: AgentStatusSnapshot },
+
+    /// Response to comm_report request
+    #[serde(rename = "comm_report_response")]
+    CommReportResponse { id: u64, status: String, message: String },
+
+    /// Response to comm_plan_status request
+    #[serde(rename = "comm_plan_status_response")]
+    CommPlanStatusResponse { id: u64, summary: PlanGraphStatus },
+
+    /// Response to comm_assign_task request
+    #[serde(rename = "comm_assign_task_response")]
+    CommAssignTaskResponse {
+        id: u64,
+        task_id: String,
+        target_session: String,
+    },
+
+    /// Response to comm_task_control request
+    #[serde(rename = "comm_task_control_response")]
+    CommTaskControlResponse {
+        id: u64,
+        action: String,
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_session: Option<String>,
+        status: String,
+        summary: PlanGraphStatus,
+    },
+
+    /// Response to comm_read_context request
+    #[serde(rename = "comm_context_history")]
+    CommContextHistory {
+        id: u64,
+        session_id: String,
+        messages: Vec<HistoryMessage>,
+    },
+
+    /// Response to comm_spawn request
+    #[serde(rename = "comm_spawn_response")]
+    CommSpawnResponse {
+        id: u64,
+        session_id: String,
+        new_session_id: String,
+    },
+
+    /// Response to comm_list_models request
+    #[serde(rename = "comm_list_models_response")]
+    CommListModelsResponse {
+        id: u64,
+        /// The coordinator's currently active model (spawn default when no
+        /// override is configured or requested).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_model: Option<String>,
+        /// The configured `agents.swarm_model` pin, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        configured_swarm_model: Option<String>,
+        /// All model routes known to the server (model + provider + auth
+        /// method + availability + rough cost estimate).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        model_routes: Vec<horon_agent_provider_core::ModelRoute>,
+    },
+
+    /// Response to comm_await_members request
+    #[serde(rename = "comm_await_members_response")]
+    CommAwaitMembersResponse {
+        id: u64,
+        /// Whether the condition was met (false = timed out)
+        completed: bool,
+        /// Final status of each watched member
+        members: Vec<AwaitedMemberStatus>,
+        /// Human-readable summary
+        summary: String,
+        /// True when the wait was handed off to a detached background watcher.
+        /// In that case `members`/`completed` describe the current snapshot, not
+        /// a final result; completion is delivered later via notify/wake.
+        #[serde(default)]
+        background_started: bool,
+    },
+
+    /// Response to split request — new session created with cloned conversation
+    #[serde(rename = "split_response")]
+    SplitResponse {
+        id: u64,
+        new_session_id: String,
+        new_session_name: String,
+    },
+
+    /// Response to compact request — context compaction status
+    #[serde(rename = "compact_result")]
+    CompactResult {
+        id: u64,
+        /// Human-readable status message
+        message: String,
+        /// Whether compaction was started successfully
+        success: bool,
+    },
+
+    /// Response to resume_all_sessions — summary of which sessions were continued.
+    #[serde(rename = "resume_all_result")]
+    ResumeAllResult {
+        id: u64,
+        /// Number of live sessions that were continued by this request.
+        resumed: usize,
+        /// Number of live sessions inspected but skipped (idle/complete/busy).
+        skipped: usize,
+        /// Friendly names (or short ids) of the sessions that were continued.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resumed_sessions: Vec<String>,
+        /// Human-readable summary suitable for direct display.
+        message: String,
+    },
+
+    /// A running command is waiting for stdin input from the user
+    #[serde(rename = "stdin_request")]
+    StdinRequest {
+        /// Unique request ID for matching the response
+        request_id: String,
+        /// The last line(s) of output (the prompt, e.g. "Password: ")
+        prompt: String,
+        /// Whether the input should be masked (password field)
+        #[serde(default)]
+        is_password: bool,
+        /// Tool call ID this is associated with
+        tool_call_id: String,
+    },
+
+    /// The `ask` tool needs a human answer, and at least one attached client
+    /// said it can render the questions. Answer with `ask_response` echoing
+    /// `request_id`. The tool stops waiting after its own deadline and resolves
+    /// the questions itself, so a client that never answers costs the turn a
+    /// bounded wait rather than a hang.
+    #[serde(rename = "ask_requested")]
+    AskRequested {
+        /// Matches the `request_id` an `ask_response` must echo.
+        request_id: String,
+        questions: Vec<horon_agent_tool_types::AskQuestion>,
+    },
+
+    /// A request the agent needs the ACP client to serve.
+    ///
+    /// `method` is exactly one of the ACP v1 client methods
+    /// (`fs/read_text_file`, `fs/write_text_file`, `terminal/create`,
+    /// `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`,
+    /// `terminal/release`), and `params` are that method's parameters without
+    /// the session id, which the bridge adds from the connection it owns. The
+    /// client answers with [`Request::ClientResponse`] echoing `request_id`.
+    #[serde(rename = "client_request")]
+    ClientRequest {
+        request_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
+        method: String,
+        params: serde_json::Value,
+    },
+
+    /// A tool call needs a human decision, addressed to the ACP client that owns
+    /// the session.
+    ///
+    /// Distinct from [`ServerEvent::ApprovalPending`]: that event is the
+    /// daemon's shared approval surface, while this one carries the ACP prompt
+    /// payload the client renders. The answer is a `permission_decision`.
+    #[serde(rename = "tool_permission_requested")]
+    ToolPermissionRequested {
+        request_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        title: String,
+        input: serde_json::Value,
+    },
+
+    /// The agent's plan for the current turn.
+    #[serde(rename = "plan_updated")]
+    PlanUpdated { entries: Vec<PlanEntryWire> },
+
+    /// The agent stored a user message and will start or join a turn for it.
+    ///
+    /// `id` is the `message` request id the client sent, so a client can settle
+    /// that request before the turn produces anything. `message_id` is the
+    /// session's stored id for the same message, which is also the start id the
+    /// turn's later state and update events refer to.
+    #[serde(rename = "user_message_inserted")]
+    UserMessageInserted { id: u64, message_id: String },
+
+    /// Whether a session is running a turn right now, and what ended the last
+    /// one.
+    ///
+    /// Emitted for every streaming turn of a session, whoever started it, and
+    /// delivered only to connections that negotiated ACP v2: `running: true`
+    /// once the turn holds the agent lock and has stored its starting message,
+    /// `running: false` with `stop_reason` as the turn's last event, after its
+    /// terminal `Done`/`Error` when it has one. A turn that fails after storing its message but
+    /// before its run began reports only the `running: false` (with an empty
+    /// `run_id`). `snapshot: true` reports the current state to a connection
+    /// that just attached, after its History reply, and asks for no ordering
+    /// with a turn; an idle snapshot has an empty `run_id`. While a cancel is
+    /// still answering its request, the idle transition of the turn it stopped
+    /// is held back until that answer is queued, so a connection attaching in
+    /// that window can see an idle snapshot followed by that turn's
+    /// `running: false`.
+    #[serde(rename = "foreground_state")]
+    ForegroundState {
+        session_id: String,
+        running: bool,
+        /// Identity of the run, stable across this run's events.
+        run_id: String,
+        /// Stored id of the message that started the turn, whatever display
+        /// role it has.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start_message_id: Option<String>,
+        /// Text of the starting message, sent only when the message was stored
+        /// without a display role, because no other event shows its text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user_content: Option<String>,
+        /// The session is waiting on the user for a permission or an answer.
+        /// Reported on snapshots only.
+        #[serde(default, skip_serializing_if = "is_false")]
+        awaiting_user: bool,
+        /// Why the turn ended: `end_turn`, `max_tokens`, `max_turn_requests`,
+        /// `refusal`, `cancelled` or `error`. Present only on a `running: false`
+        /// transition.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        /// This report describes the current state, not a transition.
+        #[serde(default, skip_serializing_if = "is_false")]
+        snapshot: bool,
+    },
+
+    /// A tool call stopped running and reports how its process exited.
+    ///
+    /// `id` is the tool call id. `exit_code` and `signal` describe the process;
+    /// `backgrounded` marks a call whose process was handed to the background
+    /// and will keep running after the tool call completed.
+    #[serde(rename = "tool_exit")]
+    ToolExit {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        backgrounded: bool,
+    },
+
+    /// File changes a tool call made.
+    #[serde(rename = "tool_diff")]
+    ToolDiff { id: String, diffs: Vec<FileDiffWire> },
+
+    /// A `tool_permission_requested` reached a decision.
+    ///
+    /// Lets the ACP connection clear the prompt it still shows. The waiting tool
+    /// is released by the decision store, not by this event.
+    #[serde(rename = "tool_permission_resolved")]
+    ToolPermissionResolved { request_id: String, approved: bool },
+
+    /// Reply to `get_runtime_state`: this session's durable runtime journal,
+    /// summarised.
+    ///
+    /// A summary and nothing more. Queued input content, command arguments, and
+    /// command environment variables stay in the journal, because a status
+    /// panel needs counts, phases, and causes rather than the text of what was
+    /// queued.
+    #[serde(rename = "runtime_state")]
+    RuntimeState {
+        id: u64,
+        /// Serialized `RuntimeStateSummary`. The daemon owns the type; this
+        /// wire copy stays additive so a newer daemon can add fields without
+        /// breaking an older bridge.
+        state: serde_json::Value,
+    },
+
+    /// Reply to `apply_control` and `get_control_receipt`.
+    ///
+    /// A retry of the same operation id reports the recorded receipt instead of
+    /// applying the operation twice.
+    #[serde(rename = "control_receipt")]
+    ControlReceipt {
+        id: u64,
+        operation_id: String,
+        action: String,
+        /// `applying`, `terminal`, `replay`, `conflict`, `unknown`, or
+        /// `indeterminate`.
+        outcome: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
+        /// Ready-to-display one-line status.
+        message: String,
+    },
+
+    /// Reply to `get_snapshot`: the boundary and the view it bounds, in one
+    /// frame.
+    ///
+    /// The marker and the snapshot travel together so the pairing cannot be
+    /// lost: the bridge splits them into the API's `snapshot_marker` event and
+    /// `snapshot` reply, which must arrive one-to-one.
+    #[serde(rename = "snapshot_result")]
+    SnapshotResult {
+        id: u64,
+        /// Serialized `SessionSnapshot`, the same shape the API reply carries.
+        snapshot: serde_json::Value,
+    },
+}
+
+#[cfg(test)]
+mod approval_failover_wire_tests {
+    use super::*;
+
+    fn encode(event: &ServerEvent) -> serde_json::Value {
+        serde_json::to_value(event).expect("server event serializes")
+    }
+
+    fn assert_roundtrip(event: ServerEvent, wire_type: &str) -> serde_json::Value {
+        let wire = encode(&event);
+        assert_eq!(wire["type"], wire_type, "wire tag must be stable: {wire}");
+        let decoded: ServerEvent = serde_json::from_value(wire.clone()).expect("server event deserializes");
+        assert_eq!(encode(&decoded), wire, "round trip must preserve the payload");
+        wire
+    }
+
+    #[test]
+    fn approval_and_failover_events_roundtrip_with_their_wire_tags() {
+        let pending = assert_roundtrip(
+            ServerEvent::ApprovalPending {
+                request_id: "req-1".into(),
+                action: "bash".into(),
+                expires_at: Some("2026-10-17T12:00:00Z".into()),
+            },
+            "approval_pending",
+        );
+        assert_eq!(pending["expires_at"], "2026-10-17T12:00:00Z");
+
+        let resolved = assert_roundtrip(
+            ServerEvent::ApprovalResolved {
+                request_id: "req-1".into(),
+                approved: true,
+                via: "file".into(),
+                resolved_by: "runner".into(),
+            },
+            "approval_resolved",
+        );
+        assert_eq!(resolved["approved"], true);
+        assert_eq!(resolved["resolved_by"], "runner");
+
+        let switched = assert_roundtrip(
+            ServerEvent::FailoverSwitched {
+                chain_id: "chain-1".into(),
+                from: "openai".into(),
+                to: "anthropic".into(),
+                reason: "rate_limit".into(),
+                attempt: 2,
+                max: 3,
+            },
+            "failover_switched",
+        );
+        assert_eq!(switched["attempt"], 2);
+        assert_eq!(switched["max"], 3);
+
+        let needs_human = assert_roundtrip(
+            ServerEvent::RunNeedsHumanResume {
+                request_id: Some("req-1".into()),
+                session_id: "sess-1".into(),
+                reason: "unverifiable".into(),
+                attempts: 2,
+            },
+            "run_needs_human_resume",
+        );
+        assert_eq!(needs_human["session_id"], "sess-1");
+        assert_eq!(needs_human["attempts"], 2);
+
+        // A stop with no permission request behind it (an exhausted failover
+        // budget) must say so on the wire instead of naming a chain id that
+        // resolves to nothing.
+        let needs_human_without_request = assert_roundtrip(
+            ServerEvent::RunNeedsHumanResume {
+                request_id: None,
+                session_id: "sess-1".into(),
+                reason: "failover_budget_exhausted".into(),
+                attempts: 3,
+            },
+            "run_needs_human_resume",
+        );
+        assert_eq!(needs_human_without_request["request_id"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn approval_and_failover_acks_roundtrip_with_their_wire_tags() {
+        assert_roundtrip(
+            ServerEvent::ApprovalAck {
+                request_id: "req-1".into(),
+            },
+            "approval_ack",
+        );
+        let ack = assert_roundtrip(
+            ServerEvent::FailoverAck {
+                chain_id: "chain-1".into(),
+                from: "openai".into(),
+                to: "anthropic".into(),
+                attempt: 1,
+            },
+            "failover_ack",
+        );
+        assert_eq!(ack["chain_id"], "chain-1");
+        assert_eq!(ack["attempt"], 1);
+    }
+
+    #[test]
+    fn approval_pending_omits_absent_expiry_and_accepts_unknown_fields() {
+        let event = ServerEvent::ApprovalPending {
+            request_id: "req-1".into(),
+            action: "bash".into(),
+            expires_at: None,
+        };
+        let wire = encode(&event);
+        assert!(
+            wire.get("expires_at").is_none(),
+            "absent expiry stays off the wire: {wire}"
+        );
+
+        // Forward compatibility: a newer peer may add fields, and an explicit
+        // null expiry must read as "unknown" rather than fail the parse.
+        let decoded: ServerEvent = serde_json::from_str(
+            r#"{"type":"approval_pending","request_id":"req-2","action":"write","expires_at":null,"future_field":{"nested":1}}"#,
+        )
+        .expect("unknown fields must not break parsing");
+        let ServerEvent::ApprovalPending {
+            request_id,
+            action,
+            expires_at,
+        } = decoded
+        else {
+            panic!("wrong event type");
+        };
+        assert_eq!(request_id, "req-2");
+        assert_eq!(action, "write");
+        assert_eq!(expires_at, None);
+    }
+}

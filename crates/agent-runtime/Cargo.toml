@@ -1,0 +1,16 @@
+[package]
+name = "horon-agent-agent-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "horon_agent_agent_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = "1"
+tokio = { version = "1", features = ["sync"] }
+horon-agent-perf-counters = { path = "../perf-counters" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "time", "macros"] }

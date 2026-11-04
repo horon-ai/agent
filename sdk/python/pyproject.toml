@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "horon-agent-sdk"
+version = "1.2.0"
+description = "Python SDK for the horon-agent harness API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "horon-ai" }]
+keywords = ["horon-agent", "agent", "harness", "sdk", "asyncio"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = ["jsonschema>=4.20"]
+
+[project.urls]
+Homepage = "https://github.com/horon-ai/agent"
+Repository = "https://github.com/horon-ai/agent"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.13",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/horon_agent_sdk"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/examples",
+  "/README.md",
+  "/RELEASING.md",
+  "/LICENSE",
+  "/pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["horon_agent_sdk", "mock_harness"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "RUF"]
+ignore = [
+  # Formatter owns line wrapping.
+  "E501",
+  # The SDK deliberately catches broad exceptions at process and transport
+  # boundaries, where the alternative is leaking a raw exception into a caller
+  # loop.
+  "BLE001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ASYNC"]
+# Launch and cleanup are filesystem- and process-bound by nature: the socket
+# poll, the instance-home sweep, and the Windows taskkill fallback cannot be
+# awaited without adding a thread hop that would not improve behaviour.
+"src/horon_agent_sdk/launch.py" = ["ASYNC221", "ASYNC240"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = "jsonschema.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:jsonschema.*"]

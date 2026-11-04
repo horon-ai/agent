@@ -1,0 +1,16 @@
+[package]
+name = "horon-agent-perf-counters"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Process-wide stage counters for queue depth, hydration, store IO and interrupt-poll accounting"
+
+[lib]
+name = "horon_agent_perf_counters"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

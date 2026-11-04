@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "notes": [
+    "Structural bounds only. No wall-clock latency or RSS threshold belongs here until the B0 distributions are pinned (plan, todo 17).",
+    "Raising a bound is a deliberate commit, the scripts/ci/check_code_size.py ratchet in the same shape. A regression cannot raise its own ceiling.",
+    "Each bound is enforced by scripts/perf/check_structural.py against the STRUCTURAL_PERF lines the repo's own tests print.",
+    "context condensation: one generic budget (48 KiB), a one-line notice for an unchanged re-read, and exactly one aging batch per pressure crossing."
+  ],
+  "bounds": {
+    "queue_depth_high_water": 64,
+    "queue_bytes_high_water": 4096,
+    "queue_bytes_buffered": 0,
+    "pending_requests": 0,
+    "pending_requests_high_water": 8,
+    "page_warm_replayed": 0,
+    "page_warm_index_builds": 0,
+    "page_read_ratio": 10,
+    "page_read_growth_factor": 2,
+    "hash_buffer_bytes": 65536,
+    "hash_min_source_bytes": 209715200,
+    "frame_max_bytes": 67108864,
+    "soak_min_cycles": 20,
+    "soak_max_cycles": 20,
+    "soak_fd_retention": 8,
+    "soak_thread_retention": 4,
+    "soak_non_returning": 0,
+    "context_spill_kept_bytes": 49152,
+    "context_read_stub_bytes": 512,
+    "context_aging_batches": 1
+  }
+}

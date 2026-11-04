@@ -1,0 +1,23 @@
+[package]
+name = "horon-agent-protocol"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+horon-agent-batch-types = { path = "../batch-types" }
+horon-agent-config-types = { path = "../config-types" }
+horon-agent-message-types = { path = "../message-types" }
+horon-agent-plan = { path = "../plan" }
+horon-agent-provider-core = { path = "../provider-core" }
+horon-agent-selfdev-types = { path = "../selfdev-types" }
+horon-agent-session-types = { path = "../session-types" }
+horon-agent-side-panel-types = { path = "../side-panel-types" }
+horon-agent-tool-types = { path = "../tool-types" }
+horon-agent-applet-types = { path = "../applet-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+anyhow = "1"
+rand = "0.9"

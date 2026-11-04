@@ -1,0 +1,51 @@
+[package]
+name = "horon-agent-harness-api-server"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Harness API endpoint: bridges versioned API clients onto the internal horon-agent protocol"
+
+[dependencies]
+anyhow = "1"
+# The bridge reuses the agent's own cross-session search engine instead of
+# growing a second index with different scoring. That engine lives in
+# app-core, whose search module is self-contained: it reads stored sessions
+# and never touches a provider or the daemon.
+horon-agent-app-core = { path = "../app-core" }
+# The mirror surface drives the same browser bridge CLI and the same
+# per-session browser daemon the `browser` tool uses, so it links the crate
+# those live in rather than growing a second browser path.
+horon-agent-base = { path = "../base", default-features = false }
+horon-agent-harness-api = { path = "../harness-api" }
+# Frames leave the mirror as JPEG: a screenshot arrives as PNG and a 512 KiB
+# base64 budget needs the smaller codec. Both decoders are already in the
+# workspace lock through `horon-agent-base`.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+base64 = "0.22"
+horon-agent-todo-policy = { path = "../todo-policy" }
+horon-agent-perf-counters = { path = "../perf-counters" }
+horon-agent-session-types = { path = "../session-types" }
+horon-agent-session-store = { path = "../session-store" }
+horon-agent-transport = { path = "../transport" }
+serde = "1"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["net", "io-util", "io-std", "rt-multi-thread", "macros", "sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+horon-agent-session-store = { path = "../session-store", features = ["legacy-session-index-import"] }
+# The parser in `background_progress` reads markdown produced by the daemon's
+# own formatter, so the contract test builds that formatter rather than a copy
+# of its output: a change to the wire prose then fails here instead of silently
+# turning every client's progress bar off. Dev-only, so the bridge binary stays
+# free of the application foundation.
+horon-agent-base = { path = "../base", default-features = false }
+horon-agent-background-types = { path = "../background-types" }
+
+[[bin]]
+name = "horon-agent-harness-api-bridge"
+path = "src/bin/bridge.rs"

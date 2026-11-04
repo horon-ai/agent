@@ -1,0 +1,91 @@
+name: Publish TypeScript SDK
+
+env:
+  HORON_AGENT_CI: "1"
+  # CI builds without the local parallel-frontend rustc wrapper from
+  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+
+on:
+  workflow_dispatch:
+    inputs:
+      horon_agent_release_tag:
+        description: Released horon-agent tag whose binaries should be bundled
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @horon-ai/agent-sdk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Enforce Rust and TypeScript SDK surface parity
+        working-directory: ${{ github.workspace }}
+        run: cargo test -p horon-agent-sdk parity -- --nocapture
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate SDK
+        run: bun run check
+
+      - name: Download released horon-agent runtimes
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p sdk-runtime-assets
+          gh release download "${{ inputs.horon_agent_release_tag }}" --dir sdk-runtime-assets \
+            --pattern 'horon-agent-linux-x86_64.tar.gz' \
+            --pattern 'horon-agent-linux-aarch64.tar.gz' \
+            --pattern 'horon-agent-macos-x86_64.tar.gz' \
+            --pattern 'horon-agent-macos-aarch64.tar.gz' \
+            --pattern 'horon-agent-windows-x86_64.tar.gz' \
+            --pattern 'horon-agent-windows-aarch64.tar.gz'
+
+      # The platform packages are generated, not tracked: their manifests are
+      # derived from sdk/typescript/package.json so all seven share one version.
+      - name: Prepare platform packages
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/sdk/prepare_runtime_packages.sh sdk-runtime-packages sdk-runtime-assets
+
+      # These must exist before the main package is published. npm selects only
+      # the package matching the consumer's os/cpu from optionalDependencies.
+      - name: Publish platform runtime packages
+        working-directory: ${{ github.workspace }}
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for package in sdk-runtime-packages/*; do
+            name=$(node -p "require('./$package/package.json').name")
+            version=$(node -p "require('./$package/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already published, skipping"
+              continue
+            fi
+            bun publish "$package" --access public --registry https://registry.npmjs.org
+          done
+
+      - name: Publish SDK with bun
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun publish --access public --registry https://registry.npmjs.org

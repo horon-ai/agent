@@ -1,0 +1,1059 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+
+# `selfdev test` installs a shell-level `cargo` shim so raw `cargo test/check`
+# commands receive this wrapper's memory, linker, feature, and toolchain policy.
+# Exporting this recursion guard makes the final `cargo` invocation below bypass
+# that shim and resolve the real Cargo binary.
+export HORON_AGENT_IN_DEV_CARGO=1
+
+# Agent builds routinely saturate every core. At equal priority they starve
+# interactive UI threads (HoronAgent Desktop measured 100-260 ms input latency
+# during parallel test builds). Lower this build's priority once, inherited by
+# Cargo and every rustc child. Set HORON_AGENT_CARGO_NICE=0 to opt out.
+if [[ -z "${HORON_AGENT_CARGO_NICED:-}" ]]; then
+  export HORON_AGENT_CARGO_NICED=1
+  renice -n "${HORON_AGENT_CARGO_NICE:-10}" -p $$ >/dev/null 2>&1 || true
+fi
+
+# The exported BashTool shim survives `cd` and child shells. Do not redirect
+# Cargo back here when the caller has moved to a different checkout. Compare
+# physical paths so entering this checkout through a symlink still works.
+case "$(pwd -P)" in
+  "$repo_root"|"$repo_root"/*) cd "$repo_root" ;;
+  *) exec cargo "$@" ;;
+esac
+
+# shellcheck source=scripts/dev/remote_config.sh
+source "$repo_root/scripts/dev/remote_config.sh"
+horon_agent_load_remote_config
+
+log() {
+  printf 'cargo: %s\n' "$*" >&2
+}
+
+# Persist one record for every Cargo action routed through this wrapper. This is
+# deliberately separate from session/tool history so compile and test latency
+# can be inspected across sessions and after daemon restarts.
+rust_action_log_started_ns=""
+rust_action_log_started_at=""
+rust_action_log_path=""
+rust_action_log_execution="local"
+cargo_gate_wait_ms=0
+
+start_rust_action_log() {
+  case "${HORON_AGENT_RUST_ACTION_LOG:-1}" in
+    0|false|no|off) return ;;
+  esac
+
+  local state_root="${HORON_AGENT_HOME:-${HOME:+$HOME/.horon-agent}}"
+  [[ -n "$state_root" ]] || state_root="$repo_root/target/horon-agent-state"
+  rust_action_log_path="${HORON_AGENT_RUST_ACTION_LOG_PATH:-$state_root/logs/rust-actions.jsonl}"
+  rust_action_log_started_ns=$(date +%s%N)
+  rust_action_log_started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+  trap 'record_rust_action_log "$?"' EXIT
+}
+
+record_rust_action_log() {
+  local exit_code="$1"
+  [[ -n "$rust_action_log_started_ns" && -n "$rust_action_log_path" ]] || return 0
+  trap - EXIT
+
+  local finished_ns duration_ms profile action
+  finished_ns=$(date +%s%N)
+  duration_ms=$(( (finished_ns - rust_action_log_started_ns) / 1000000 ))
+  profile=$(selected_profile "${cargo_argv[@]}")
+  action="${cargo_argv[0]:-unknown}"
+  mkdir -p "$(dirname "$rust_action_log_path")" 2>/dev/null || return 0
+
+  HORON_AGENT_LOG_STARTED_AT="$rust_action_log_started_at" \
+  HORON_AGENT_LOG_DURATION_MS="$duration_ms" \
+  HORON_AGENT_LOG_GATE_WAIT_MS="$cargo_gate_wait_ms" \
+  HORON_AGENT_LOG_EXIT_CODE="$exit_code" \
+  HORON_AGENT_LOG_ACTION="$action" \
+  HORON_AGENT_LOG_PROFILE="$profile" \
+  HORON_AGENT_LOG_REPO="$repo_root" \
+  HORON_AGENT_LOG_EXECUTION="$rust_action_log_execution" \
+  python3 - "$rust_action_log_path" "${cargo_argv[@]}" <<'PY' || true
+import json
+import os
+import sys
+
+path = sys.argv[1]
+record = {
+    "started_at": os.environ["HORON_AGENT_LOG_STARTED_AT"],
+    "duration_ms": int(os.environ["HORON_AGENT_LOG_DURATION_MS"]),
+    "gate_wait_ms": int(os.environ["HORON_AGENT_LOG_GATE_WAIT_MS"]),
+    "execution_duration_ms": max(
+        0,
+        int(os.environ["HORON_AGENT_LOG_DURATION_MS"])
+        - int(os.environ["HORON_AGENT_LOG_GATE_WAIT_MS"]),
+    ),
+    "exit_code": int(os.environ["HORON_AGENT_LOG_EXIT_CODE"]),
+    "success": os.environ["HORON_AGENT_LOG_EXIT_CODE"] == "0",
+    "action": os.environ["HORON_AGENT_LOG_ACTION"],
+    "profile": os.environ["HORON_AGENT_LOG_PROFILE"],
+    "repository": os.environ["HORON_AGENT_LOG_REPO"],
+    "execution": os.environ["HORON_AGENT_LOG_EXECUTION"],
+    "argv": sys.argv[2:],
+}
+line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+try:
+    os.write(fd, line)
+finally:
+    os.close(fd)
+PY
+  return 0
+}
+
+selected_linker_mode="not-configured"
+selected_linker_desc=""
+sccache_status="disabled"
+selfdev_low_memory_status="disabled"
+feature_profile_status="default"
+build_jobs_status="cargo-default"
+git_meta_status="not-configured"
+build_tmpdir_status="system-default"
+
+path_is_memory_backed() {
+  local path="$1"
+  local fs_type=""
+  if command -v findmnt >/dev/null 2>&1; then
+    fs_type=$(findmnt -n -o FSTYPE --target "$path" 2>/dev/null || true)
+  elif [[ "$(uname -s)" == "Linux" ]]; then
+    fs_type=$(stat -f -c '%T' "$path" 2>/dev/null || true)
+  fi
+  case "$fs_type" in
+    tmpfs|ramfs) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+configure_build_tmpdir() {
+  local candidate="${HORON_AGENT_BUILD_TMPDIR:-}"
+  if [[ -n "$candidate" ]]; then
+    build_tmpdir_status="explicit"
+  elif [[ -n "${TMPDIR:-}" ]]; then
+    build_tmpdir_status="inherited"
+    return
+  elif ! path_is_memory_backed /tmp; then
+    return
+  elif [[ -n "${HORON_AGENT_SCRATCH_DIR:-}" ]]; then
+    candidate="$HORON_AGENT_SCRATCH_DIR/cargo-tmp"
+    build_tmpdir_status="horon-agent-scratch"
+  elif [[ -n "${HORON_AGENT_HOME:-}" ]]; then
+    candidate="$HORON_AGENT_HOME/scratch/cargo-tmp"
+    build_tmpdir_status="horon-agent-home"
+  elif [[ -n "${HOME:-}" ]]; then
+    candidate="$HOME/.horon-agent/scratch/cargo-tmp"
+    build_tmpdir_status="home-scratch"
+  else
+    candidate="$repo_root/target/horon-agent-scratch/cargo-tmp"
+    build_tmpdir_status="target-scratch"
+  fi
+
+  if mkdir -p "$candidate" 2>/dev/null; then
+    export TMPDIR="$candidate"
+    log "using disk-backed build temp directory: $TMPDIR"
+  else
+    build_tmpdir_status="fallback-system-default"
+    log "could not create build temp directory $candidate; using system default"
+  fi
+}
+
+append_rustflags() {
+  local new_flag="$1"
+  if [[ -z "${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-}" ]]; then
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="$new_flag"
+  else
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS} ${new_flag}"
+  fi
+}
+
+selected_profile() {
+  # Print the Cargo profile selected by the args, defaulting to "dev" (cargo's
+  # default for build/check) when no --profile/--release is present.
+  local expect_profile_name="false"
+  local profile="dev"
+  for arg in "$@"; do
+    if [[ "$expect_profile_name" == "true" ]]; then
+      profile="$arg"
+      expect_profile_name="false"
+      continue
+    fi
+    case "$arg" in
+      --release|-r) profile="release" ;;
+      --profile=*) profile="${arg#--profile=}" ;;
+      --profile) expect_profile_name="true" ;;
+    esac
+  done
+  printf '%s\n' "$profile"
+}
+
+# Determine whether the effective build will use incremental compilation.
+# sccache cannot cache incremental units, so this gates whether sccache is
+# useful at all. CARGO_INCREMENTAL (if set) wins; otherwise infer from the
+# profile's incremental setting in Cargo.toml.
+build_is_incremental() {
+  case "${CARGO_INCREMENTAL:-}" in
+    0|false|no|off) return 1 ;;
+    1|true|yes|on) return 0 ;;
+  esac
+  case "$(selected_profile "$@")" in
+    # Non-incremental profiles (see Cargo.toml): sccache can produce hits here.
+    release-lto) return 1 ;;
+    # selfdev/dev/release/test and unknown profiles default to incremental.
+    *) return 0 ;;
+  esac
+}
+
+maybe_enable_sccache() {
+  case "${SCCACHE_DISABLE:-}" in
+    1|true|yes|on)
+      if [[ -n "${RUSTC_WRAPPER:-}" && "${RUSTC_WRAPPER}" == *sccache* ]]; then
+        unset RUSTC_WRAPPER
+      fi
+      sccache_status="disabled-by-env"
+      log "sccache disabled by SCCACHE_DISABLE"
+      return
+      ;;
+  esac
+
+  # sccache cannot cache incremental compilations, so for our default
+  # incremental profiles it produces 0% hits while adding wrapper overhead and
+  # misleading "enabled" status. Skip it for incremental builds unless the
+  # caller explicitly forces it via HORON_AGENT_SCCACHE=1/on/force.
+  local force_sccache="${HORON_AGENT_SCCACHE:-auto}"
+  case "$force_sccache" in
+    1|true|yes|on|force) force_sccache="1" ;;
+    0|false|no|off|never)
+      sccache_status="disabled-by-horon-agent-sccache"
+      log "sccache disabled by HORON_AGENT_SCCACHE"
+      return
+      ;;
+    *) force_sccache="auto" ;;
+  esac
+
+  if [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    if [[ "${RUSTC_WRAPPER}" == *sccache* ]] \
+      && [[ "$force_sccache" != "1" ]] \
+      && build_is_incremental "$@"; then
+      unset RUSTC_WRAPPER
+      sccache_status="removed-inherited-incremental"
+      log "removed inherited sccache wrapper for incremental build (it cannot cache incremental units)"
+      return
+    fi
+    sccache_status="external:${RUSTC_WRAPPER}"
+    log "keeping existing RUSTC_WRAPPER=${RUSTC_WRAPPER}"
+    return
+  fi
+
+  if [[ "$force_sccache" != "1" ]] && build_is_incremental "$@"; then
+    sccache_status="skipped-incremental"
+    log "sccache skipped for incremental build (it cannot cache incremental units; set HORON_AGENT_SCCACHE=on to force, or use a non-incremental profile)"
+    return
+  fi
+
+  if command -v sccache >/dev/null 2>&1; then
+    sccache --start-server >/dev/null 2>&1 || true
+    export RUSTC_WRAPPER=sccache
+    sccache_status="enabled"
+    log "using sccache"
+  else
+    sccache_status="not-found"
+    log "sccache not found; using direct rustc"
+  fi
+}
+
+has_explicit_feature_args() {
+  local expect_value="false"
+  for arg in "$@"; do
+    if [[ "$expect_value" == "true" ]]; then
+      expect_value="false"
+      continue
+    fi
+    case "$arg" in
+      --)
+        return 1
+        ;;
+      --features|--no-default-features)
+        return 0
+        ;;
+      --features=*|--no-default-features=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+feature_args_from_profile() {
+  local profile="$1"
+  case "$profile" in
+    ""|default)
+      return 0
+      ;;
+    minimal|none)
+      printf '%s\0' --no-default-features
+      ;;
+    pdf)
+      printf '%s\0' --no-default-features --features pdf
+      ;;
+    embeddings)
+      printf '%s\0' --no-default-features --features embeddings
+      ;;
+    full)
+      printf '%s\0' --features embeddings,pdf
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_feature_profile() {
+  local profile="${HORON_AGENT_DEV_FEATURE_PROFILE:-default}"
+  case "$profile" in
+    ""|default|minimal|none|pdf|embeddings|full)
+      ;;
+    *)
+      printf 'error: unsupported HORON_AGENT_DEV_FEATURE_PROFILE=%s (expected default|minimal|pdf|embeddings|full)\n' "$profile" >&2
+      exit 1
+      ;;
+  esac
+}
+
+build_cargo_argv() {
+  local profile="${HORON_AGENT_DEV_FEATURE_PROFILE:-default}"
+  if [[ "$profile" == "default" || -z "$profile" ]]; then
+    feature_profile_status="default"
+    printf '%s\0' "$@"
+    return 0
+  fi
+
+  if has_explicit_feature_args "$@"; then
+    feature_profile_status="ignored-explicit-cargo-args"
+    printf '%s\0' "$@"
+    return 0
+  fi
+
+  local -a feature_args=()
+  while IFS= read -r -d '' arg; do
+    feature_args+=("$arg")
+  done < <(feature_args_from_profile "$profile")
+
+  feature_profile_status="$profile"
+  local inserted="false"
+  for arg in "$@"; do
+    if [[ "$arg" == "--" && "$inserted" == "false" ]]; then
+      printf '%s\0' "${feature_args[@]}"
+      inserted="true"
+    fi
+    printf '%s\0' "$arg"
+  done
+  if [[ "$inserted" == "false" ]]; then
+    printf '%s\0' "${feature_args[@]}"
+  fi
+}
+
+meminfo_kib() {
+  local key="$1"
+  awk -v key="$key" '$1 == key ":" { print $2; exit }' /proc/meminfo 2>/dev/null || true
+}
+
+macos_available_memory_kib() {
+  command -v vm_stat >/dev/null 2>&1 || return 1
+
+  local stats page_size free_pages inactive_pages speculative_pages
+  stats=$(LC_ALL=C vm_stat 2>/dev/null) || return 1
+  page_size=$(printf '%s\n' "$stats" \
+    | sed -n '1s/.*page size of \([0-9][0-9]*\) bytes.*/\1/p')
+  free_pages=$(printf '%s\n' "$stats" \
+    | awk '$1 == "Pages" && $2 == "free:" { sub(/\.$/, "", $3); print $3; exit }')
+  inactive_pages=$(printf '%s\n' "$stats" \
+    | awk '$1 == "Pages" && $2 == "inactive:" { sub(/\.$/, "", $3); print $3; exit }')
+  speculative_pages=$(printf '%s\n' "$stats" \
+    | awk '$1 == "Pages" && $2 == "speculative:" { sub(/\.$/, "", $3); print $3; exit }')
+
+  [[ "$page_size" =~ ^[0-9]+$ && "$page_size" -gt 0 ]] || return 1
+  [[ "$free_pages" =~ ^[0-9]+$ ]] || return 1
+  [[ "$inactive_pages" =~ ^[0-9]+$ ]] || return 1
+  [[ "$speculative_pages" =~ ^[0-9]+$ ]] || return 1
+
+  # Inactive and speculative pages are reclaimable without swapping. Purgeable
+  # pages are intentionally not added because they can already be represented in
+  # those categories, and double-counting would make the job limit less safe.
+  printf '%s\n' "$(( (free_pages + inactive_pages + speculative_pages) * page_size / 1024 ))"
+}
+
+available_memory_kib() {
+  local value
+  case "$(uname -s)" in
+    Linux)
+      [[ -r /proc/meminfo ]] || return 1
+      value=$(meminfo_kib MemAvailable)
+      ;;
+    Darwin)
+      value=$(macos_available_memory_kib) || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  [[ "$value" =~ ^[0-9]+$ && "$value" -gt 0 ]] || return 1
+  printf '%s\n' "$value"
+}
+
+selfdev_low_memory_default_needed() {
+  [[ "$(uname -s)" == "Linux" ]] || return 1
+  [[ -r /proc/meminfo ]] || return 1
+  command -v pgrep >/dev/null 2>&1 || return 1
+  pgrep -x earlyoom >/dev/null 2>&1 || return 1
+
+  local mem_total_kib mem_available_kib swap_total_kib
+  mem_total_kib=$(meminfo_kib MemTotal)
+  mem_available_kib=$(meminfo_kib MemAvailable)
+  swap_total_kib=$(meminfo_kib SwapTotal)
+  [[ -n "$mem_total_kib" && -n "$mem_available_kib" && -n "$swap_total_kib" ]] || return 1
+
+  # On small no-swap machines, earlyoom can terminate the root horon-agent rustc
+  # around 1-3 GiB RSS before the kernel OOM killer would report anything.
+  # Keep this adaptive so larger workstations, and currently-idle smaller
+  # workstations with enough headroom, retain the faster inherited selfdev
+  # profile by default.
+  (( swap_total_kib == 0 && mem_total_kib < 24576 * 1024 && mem_available_kib < 8192 * 1024 ))
+}
+
+cpu_count() {
+  local n
+  n=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+  [[ "$n" =~ ^[0-9]+$ && "$n" -ge 1 ]] || n=1
+  printf '%s\n' "$n"
+}
+
+# Choose a Cargo job count from *currently available* memory so concurrent
+# builds (e.g. several self-dev agents on one machine) self-throttle instead of
+# all assuming the full core count and tripping earlyoom/OOM.
+#
+# After the monolith was split into the horon-agent-base/app-core/cli crate DAG,
+# the largest single rustc unit is horon-agent-base, which has grown back to a
+# measured ~1.6 GiB RSS peak (selfdev profile, sampled VmRSS while building the
+# lib), down from the old 2.5-3 GiB monolith but above the original ~1.28 GiB
+# post-split figure. We budget ~1.75 GiB of currently-available memory per job:
+# a deliberate cushion above the measured peak (rustc's true VmHWM can exceed a
+# coarse sample, and horon-agent-base keeps growing) so a fresh build under load backs
+# off before earlyoom SIGTERMs it. Clamp into [1, cpus]. On an idle 15 GiB
+# machine this still uses ~7 of 8 cores; under memory pressure a fresh build
+# backs off further. An explicit CARGO_BUILD_JOBS / HORON_AGENT_BUILD_JOBS always
+# wins. Linux reads MemAvailable; macOS conservatively sums reclaimable vm_stat
+# pages. Unsupported hosts and failed probes fall back to Cargo's configuration.
+select_build_jobs() {
+  # Respect an explicit override from either env var.
+  local override="${HORON_AGENT_BUILD_JOBS:-${CARGO_BUILD_JOBS:-}}"
+  if [[ -n "$override" ]]; then
+    if [[ "$override" =~ ^[0-9]+$ && "$override" -ge 1 ]]; then
+      export CARGO_BUILD_JOBS="$override"
+      build_jobs_status="override:$override"
+      return
+    fi
+    # Invalid override: warn and fall through to adaptive sizing.
+    log "ignoring invalid job override '$override' (expected a positive integer); using adaptive sizing"
+    unset CARGO_BUILD_JOBS
+  fi
+
+  local mem_available_kib
+  if ! mem_available_kib=$(available_memory_kib); then
+    build_jobs_status="cargo-default"
+    return
+  fi
+
+  local cpus mib_per_job_default mib_per_job
+  cpus=$(cpu_count)
+
+  # Per-job memory budget (MiB). Sized with a cushion above the largest measured
+  # rustc unit (horon-agent-base, ~1.6 GiB RSS sampled) so an idle machine uses nearly
+  # every core while a memory-pressured one backs off before earlyoom kills a
+  # build. Tunable per host via HORON_AGENT_BUILD_MIB_PER_JOB.
+  mib_per_job_default=1792
+  mib_per_job="${HORON_AGENT_BUILD_MIB_PER_JOB:-$mib_per_job_default}"
+  [[ "$mib_per_job" =~ ^[0-9]+$ && "$mib_per_job" -ge 256 ]] || mib_per_job="$mib_per_job_default"
+
+  local mem_available_mib jobs_by_mem jobs
+  mem_available_mib=$(( mem_available_kib / 1024 ))
+  jobs_by_mem=$(( mem_available_mib / mib_per_job ))
+  (( jobs_by_mem < 1 )) && jobs_by_mem=1
+
+  # Final job count is the smaller of "fits in memory" and core count.
+  jobs="$jobs_by_mem"
+  (( jobs > cpus )) && jobs="$cpus"
+  (( jobs < 1 )) && jobs=1
+
+  export CARGO_BUILD_JOBS="$jobs"
+  build_jobs_status="adaptive:${jobs} (cpus=${cpus}, mem_avail=${mem_available_mib}MiB, budget=${mib_per_job}MiB/job)"
+  if (( jobs < cpus )); then
+    log "limiting cargo to ${jobs} job(s) under memory pressure (${mem_available_mib}MiB available, ~${mib_per_job}MiB/job); override with HORON_AGENT_BUILD_JOBS"
+  fi
+}
+
+# Keep `horon-agent-build-meta`'s embedded git metadata in lockstep with HEAD without
+# making it watch `.git` mtimes.
+#
+# `horon-agent-build-meta/build.rs` deliberately does NOT declare `.git/HEAD`/`.git/index`
+# as `rerun-if-changed` inputs, because their mtimes change on every `git add`,
+# `git status`, commit, and concurrent-agent git op -- which would force a
+# full-tree recompile (base -> app-core -> cli) on every incremental
+# build. The trade-off was that after a commit the binary kept embedding the
+# previous short hash, so the self-dev publish guard rejected it with
+# "binary was built from git hash X, but source state is Y" until someone
+# manually touched Cargo.toml.
+#
+# Instead, export the *value* of the current git hash/date. build.rs declares
+# `cargo:rerun-if-env-changed=HORON_AGENT_BUILD_GIT_HASH` (and _DATE), so cargo reruns
+# the build script ONLY when these values change -- i.e. exactly when HEAD moves
+# -- and never on a bare `git add`/`status` or repeated builds on the same
+# commit. This keeps the embedded hash correct after every commit while keeping
+# same-commit incremental builds fully incremental. We intentionally do NOT
+# export HORON_AGENT_BUILD_GIT_DIRTY here: the dirty flag flips on every edit and would
+# reintroduce per-build churn; the publish guard validates dirty builds via the
+# source fingerprint / mtime path instead of the embedded flag.
+export_git_build_metadata() {
+  # Respect any value the caller already set (e.g. release/CI pipelines).
+  if [[ -n "${HORON_AGENT_BUILD_GIT_HASH:-}" ]]; then
+    git_meta_status="external:${HORON_AGENT_BUILD_GIT_HASH}"
+    return
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    git_meta_status="git-not-found"
+    return
+  fi
+  local hash date
+  hash="$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || true)"
+  if [[ -z "$hash" ]]; then
+    git_meta_status="no-head"
+    return
+  fi
+  export HORON_AGENT_BUILD_GIT_HASH="$hash"
+  date="$(git -C "$repo_root" log -1 --format=%ci 2>/dev/null || true)"
+  if [[ -n "$date" ]]; then
+    export HORON_AGENT_BUILD_GIT_DATE="$date"
+  fi
+  git_meta_status="hash=${hash}"
+}
+
+maybe_configure_low_memory_selfdev() {
+  if [[ "$(selected_profile "$@")" != "selfdev" ]]; then
+    selfdev_low_memory_status="not-selfdev"
+    return
+  fi
+
+  local mode="${HORON_AGENT_SELFDEV_LOW_MEMORY:-auto}"
+  case "$mode" in
+    1|true|yes|on|force)
+      ;;
+    0|false|no|off|never)
+      selfdev_low_memory_status="disabled-by-env"
+      return
+      ;;
+    auto|"")
+      if ! selfdev_low_memory_default_needed; then
+        selfdev_low_memory_status="auto-not-needed"
+        return
+      fi
+      ;;
+    *)
+      printf 'error: unsupported HORON_AGENT_SELFDEV_LOW_MEMORY=%s (expected auto|on|off)\n' "$mode" >&2
+      exit 1
+      ;;
+  esac
+
+  export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
+  export CARGO_PROFILE_SELFDEV_INCREMENTAL="${CARGO_PROFILE_SELFDEV_INCREMENTAL:-true}"
+  export CARGO_PROFILE_SELFDEV_CODEGEN_UNITS="${CARGO_PROFILE_SELFDEV_CODEGEN_UNITS:-256}"
+  # The low-memory profile deliberately keeps incremental compilation enabled
+  # to avoid repeatedly rebuilding large root crates. sccache rejects Cargo
+  # incremental builds, so default to direct rustc unless the caller opts out
+  # of low-memory mode entirely.
+  export SCCACHE_DISABLE="${SCCACHE_DISABLE:-1}"
+  selfdev_low_memory_status="enabled:incremental=${CARGO_PROFILE_SELFDEV_INCREMENTAL},codegen-units=${CARGO_PROFILE_SELFDEV_CODEGEN_UNITS}"
+  log "using low-memory selfdev overrides (${selfdev_low_memory_status#enabled:})"
+}
+
+# Enable rustc's parallel front-end (`-Zthreads`) for the unoptimized
+# iteration profiles (dev/selfdev/test). The horon-agent monoliths spend most of an
+# opt-level 0 compile in the single-threaded front-end (type/borrow checking),
+# so extra front-end threads are the highest-leverage compile-time lever.
+#
+# Measured on a 16-thread Intel Core Ultra X9 388H, full re-check of one crate:
+#   horon-agent-base      29.3s -> 8.8s   (-Zthreads=8, +0.08 GiB RSS)
+#   horon-agent-app-core  25.7s -> 8.9s   (-Zthreads=8, +0.2 GiB RSS)
+#
+# This is applied through Cargo's RUSTC_WRAPPER
+# (scripts/dev/rustc_parallel_frontend), not RUSTFLAGS or RUSTC_WORKSPACE_WRAPPER:
+#   - only local crates (sources outside CARGO_HOME) get the flag, so registry
+#     and git dependency artifacts are untouched;
+#   - RUSTC_WRAPPER is not hashed into crate metadata or fingerprints, so raw
+#     `cargo` (rust-analyzer, CI) and wrapped builds share the same artifacts;
+#   - it works on the stable toolchain (the wrapper sets RUSTC_BOOTSTRAP=1 for
+#     those rustc invocations only), so no nightly install is required;
+#   - optimized compiles (release/release-lto/publish) are passed through.
+# Keep it stable between builds: rustc's incremental cache is keyed on the
+# flags, so flipping it recompiles the affected crates once.
+#
+# Controls:
+#   HORON_AGENT_PARALLEL_FRONTEND=auto|0     (default auto = on for dev/selfdev/test)
+#   HORON_AGENT_FRONTEND_THREADS=<n>         (default min(8, CPUs))
+parallel_frontend_status="disabled"
+
+configure_parallel_frontend() {
+  local profile
+  profile=$(selected_profile "$@")
+  case "$profile" in
+    dev|selfdev|test) ;;
+    *)
+      parallel_frontend_status="skipped-profile:${profile}"
+      return 0
+      ;;
+  esac
+
+  if [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    parallel_frontend_status="skipped-external-rustc-wrapper:${RUSTC_WRAPPER}"
+    return 0
+  fi
+
+  export RUSTC_WRAPPER="$repo_root/scripts/dev/rustc_parallel_frontend"
+  case "${HORON_AGENT_PARALLEL_FRONTEND:-auto}" in
+    0|false|no|off)
+      parallel_frontend_status="disabled-by-env:wrapper-passthrough"
+      return 0
+      ;;
+  esac
+  parallel_frontend_status="enabled:rustc-wrapper:threads=${HORON_AGENT_FRONTEND_THREADS:-auto}"
+  log "using parallel rustc front-end for local crates (-Zthreads=${HORON_AGENT_FRONTEND_THREADS:-auto})"
+}
+
+configure_linux_linker() {
+  local requested_mode="${HORON_AGENT_FAST_LINKER:-auto}"
+  local mode="$requested_mode"
+
+  case "$mode" in
+    auto)
+      # Prefer mold over lld: on this repo's large statically-linked binary
+      # (~300 MB .text), mold links the horon-agent bin in ~2.0s vs lld's ~2.9s
+      # (measured, warm, selfdev profile). The bin relinks on every build, so
+      # that ~0.8s is a per-build win. Both need clang as the linker driver.
+      if command -v mold >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
+        mode="mold"
+      elif command -v ld.lld >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
+        mode="lld"
+      else
+        mode="system"
+      fi
+      ;;
+    lld|mold|system)
+      ;;
+    *)
+      printf 'error: unsupported HORON_AGENT_FAST_LINKER=%s (expected auto|lld|mold|system)\n' "$mode" >&2
+      exit 1
+      ;;
+  esac
+
+  selected_linker_mode="$mode"
+
+  case "$mode" in
+    lld)
+      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER:-clang}"
+      append_rustflags "-C link-arg=-fuse-ld=lld"
+      selected_linker_desc="clang + lld"
+      log "using clang + lld"
+      ;;
+    mold)
+      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER:-clang}"
+      append_rustflags "-C link-arg=-fuse-ld=mold"
+      selected_linker_desc="clang + mold"
+      log "using clang + mold"
+      ;;
+    system)
+      # Leave the linker driver to cargo's default (`cc`). Only mold/lld need
+      # clang as the driver, and forcing it here breaks machines without clang.
+      selected_linker_desc="system linker settings"
+      if [[ "$requested_mode" == "auto" ]]; then
+        log "no supported fast linker detected; using system linker settings"
+      else
+        log "using system linker settings"
+      fi
+      ;;
+  esac
+}
+
+print_setup() {
+  if [[ -n "${HORON_AGENT_DEV_FEATURE_PROFILE:-}" && "${HORON_AGENT_DEV_FEATURE_PROFILE}" != "default" ]]; then
+    feature_profile_status="${HORON_AGENT_DEV_FEATURE_PROFILE}"
+  fi
+  local cargo_gate_mode="${HORON_AGENT_CARGO_GATE:-on}"
+  local cargo_gate_dir="${HORON_AGENT_CARGO_GATE_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}}"
+  cat <<EOF
+repo_root=$repo_root
+os=$(uname -s)
+arch=$(uname -m)
+sccache_status=$sccache_status
+selfdev_low_memory_status=$selfdev_low_memory_status
+parallel_frontend_status=$parallel_frontend_status
+build_jobs_status=$build_jobs_status
+cargo_build_jobs=${CARGO_BUILD_JOBS:-<unset>}
+cargo_gate_mode=$cargo_gate_mode
+cargo_gate_path=${HORON_AGENT_CARGO_GATE_PATH:-$cargo_gate_dir/horon-agent-cargo-build.lock}
+build_tmpdir_status=$build_tmpdir_status
+tmpdir=${TMPDIR:-<unset>}
+feature_profile_status=$feature_profile_status
+git_meta_status=$git_meta_status
+build_git_hash=${HORON_AGENT_BUILD_GIT_HASH:-<unset>}
+rustc_wrapper=${RUSTC_WRAPPER:-<unset>}
+linker_mode=$selected_linker_mode
+linker_desc=${selected_linker_desc:-<none>}
+linker=${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER:-<unset>}
+rustflags=${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-<unset>}
+EOF
+}
+
+remote_tcp_timeout() {
+  # Bounded probe used the first time we contact a host (or after the recovery
+  # window expires) so an unreachable host fails fast instead of waiting for
+  # the full SSH ConnectTimeout. Accepts fractional seconds (GNU timeout).
+  local value="${HORON_AGENT_REMOTE_TCP_TIMEOUT:-1}"
+  if [[ ! "$value" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    value=1
+  fi
+  printf '%s\n' "$value"
+}
+
+remote_recovery_tcp_timeout() {
+  # Shorter probe used while a host was recently seen down. An up host always
+  # answers in a few ms, so this still detects recovery on the next build while
+  # keeping per-build cost low during an outage.
+  local value="${HORON_AGENT_REMOTE_RECOVERY_TCP_TIMEOUT:-0.3}"
+  if [[ ! "$value" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    value=0.3
+  fi
+  printf '%s\n' "$value"
+}
+
+remote_down_cache_ttl() {
+  # How long (seconds) a recent failure keeps using the shorter recovery probe
+  # timeout. Recovery is still detected on the very next build; this only
+  # controls how long downtime builds stay cheap before reverting to the full
+  # probe timeout. Set to 0 to always use the full timeout.
+  local value="${HORON_AGENT_REMOTE_DOWN_TTL:-300}"
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    value=300
+  fi
+  printf '%s\n' "$value"
+}
+
+remote_down_cache_path() {
+  local remote="${HORON_AGENT_REMOTE_HOST:-}"
+  local key
+  if command -v cksum >/dev/null 2>&1; then
+    key="$(printf '%s' "$remote" | cksum | awk '{print $1}')"
+  else
+    key="${remote//[^A-Za-z0-9_-]/_}"
+  fi
+  printf '%s/horon-agent-remote-down-%s\n' "${TMPDIR:-/tmp}" "$key"
+}
+
+remote_down_cache_fresh() {
+  local ttl
+  ttl="$(remote_down_cache_ttl)"
+  [[ "$ttl" -gt 0 ]] || return 1
+  local cache
+  cache="$(remote_down_cache_path)"
+  [[ -f "$cache" ]] || return 1
+  local recorded now age
+  recorded="$(cat "$cache" 2>/dev/null || printf '0')"
+  [[ "$recorded" =~ ^[0-9]+$ ]] || return 1
+  now="$(date +%s)"
+  age=$((now - recorded))
+  (( age >= 0 && age < ttl ))
+}
+
+record_remote_down() {
+  local ttl
+  ttl="$(remote_down_cache_ttl)"
+  [[ "$ttl" -gt 0 ]] || return 0
+  local cache
+  cache="$(remote_down_cache_path)"
+  date +%s >"$cache" 2>/dev/null || true
+}
+
+clear_remote_down() {
+  local cache
+  cache="$(remote_down_cache_path)"
+  rm -f "$cache" 2>/dev/null || true
+}
+
+# Resolve the effective hostname/port for the remote alias and report whether
+# the connection goes through a ProxyJump/ProxyCommand (where a direct TCP
+# probe to the final hostname would be misleading).
+remote_resolve_endpoint() {
+  local ssh_bin="$1" remote="$2"
+  local hostname="$remote" port=22 uses_proxy="false"
+  local config line key value
+  if config="$("$ssh_bin" -G "$remote" 2>/dev/null)"; then
+    while IFS=' ' read -r key value; do
+      case "$key" in
+        hostname) [[ -n "$value" ]] && hostname="$value" ;;
+        port) [[ "$value" =~ ^[0-9]+$ ]] && port="$value" ;;
+        proxyjump|proxycommand)
+          [[ -n "$value" && "$value" != "none" ]] && uses_proxy="true"
+          ;;
+      esac
+    done <<<"$config"
+  fi
+  printf '%s\t%s\t%s\n' "$hostname" "$port" "$uses_proxy"
+}
+
+# Fast TCP reachability check using bash /dev/tcp with a hard timeout.
+remote_tcp_reachable() {
+  local hostname="$1" port="$2"
+  local tcp_timeout="${3:-}"
+  if [[ -z "$tcp_timeout" ]]; then
+    tcp_timeout="$(remote_tcp_timeout)"
+  fi
+  timeout "$tcp_timeout" bash -c "exec 3<>/dev/tcp/$hostname/$port" 2>/dev/null
+}
+
+remote_cargo_preflight() {
+  local remote="${HORON_AGENT_REMOTE_HOST:-}"
+  if [[ -z "$remote" ]]; then
+    log "remote cargo requested but HORON_AGENT_REMOTE_HOST is not configured"
+    return 1
+  fi
+
+  local ssh_bin="${HORON_AGENT_REMOTE_SSH_BIN:-ssh}"
+  if ! command -v "$ssh_bin" >/dev/null 2>&1; then
+    log "remote cargo requested but ssh binary is unavailable: $ssh_bin"
+    return 1
+  fi
+
+  # Choose probe timeout: while a host was recently seen down, use a short
+  # recovery timeout so downtime builds stay cheap. An up host answers in a few
+  # ms regardless, so recovery is still detected on the very next build.
+  local tcp_timeout
+  if remote_down_cache_fresh; then
+    tcp_timeout="$(remote_recovery_tcp_timeout)"
+  else
+    tcp_timeout="$(remote_tcp_timeout)"
+  fi
+
+  # Fast TCP pre-probe to fail fast when the host is offline, unless the
+  # connection is proxied (where a direct probe would be wrong) or explicitly
+  # disabled via HORON_AGENT_REMOTE_TCP_PROBE=0.
+  local tcp_probe="${HORON_AGENT_REMOTE_TCP_PROBE:-1}"
+  case "$tcp_probe" in
+    0|false|no|off) tcp_probe="0" ;;
+    *) tcp_probe="1" ;;
+  esac
+  if [[ "$tcp_probe" == "1" ]]; then
+    local endpoint hostname port uses_proxy
+    endpoint="$(remote_resolve_endpoint "$ssh_bin" "$remote")"
+    IFS=$'\t' read -r hostname port uses_proxy <<<"$endpoint"
+    if [[ "$uses_proxy" != "true" ]]; then
+      if ! remote_tcp_reachable "$hostname" "$port" "$tcp_timeout"; then
+        log "remote host $remote ($hostname:$port) unreachable within ${tcp_timeout}s TCP probe; using local cargo"
+        record_remote_down
+        return 1
+      fi
+    fi
+  fi
+
+  local connect_timeout
+  connect_timeout="$(horon_agent_remote_connect_timeout)"
+  local server_alive_interval="${HORON_AGENT_REMOTE_SERVER_ALIVE_INTERVAL:-10}"
+  local server_alive_count="${HORON_AGENT_REMOTE_SERVER_ALIVE_COUNT_MAX:-1}"
+  local output
+  if ! output=$("$ssh_bin" \
+    -o BatchMode=yes \
+    -o ConnectTimeout="$connect_timeout" \
+    -o ServerAliveInterval="$server_alive_interval" \
+    -o ServerAliveCountMax="$server_alive_count" \
+    "$remote" "printf 'horon-agent-remote-ok\\n'" 2>&1); then
+    log "remote cargo preflight failed for $remote after ~${connect_timeout}s: $output"
+    record_remote_down
+    return 1
+  fi
+  clear_remote_down
+  return 0
+}
+
+remote_cargo_fallback_mode() {
+  local mode="${HORON_AGENT_REMOTE_CARGO_FALLBACK:-local}"
+  case "$mode" in
+    local|1|true|yes|on)
+      printf 'local\n'
+      ;;
+    error|fail|0|false|no|off|never)
+      printf 'error\n'
+      ;;
+    *)
+      printf 'error: unsupported HORON_AGENT_REMOTE_CARGO_FALLBACK=%s (expected local|error)\n' "$mode" >&2
+      exit 2
+      ;;
+  esac
+}
+
+cargo_test_has_explicit_filter() {
+  [[ "${1:-}" == "test" ]] || return 1
+
+  local expect_value=""
+  shift
+  for arg in "$@"; do
+    if [[ -n "$expect_value" ]]; then
+      expect_value=""
+      continue
+    fi
+
+    case "$arg" in
+      --)
+        return 1
+        ;;
+      --bench|--bin|--example|--features|--manifest-path|--message-format|--package|-p|--profile|--target|--target-dir)
+        expect_value="$arg"
+        ;;
+      --bench=*|--bin=*|--example=*|--features=*|--manifest-path=*|--message-format=*|--package=*|-p=*|--profile=*|--target=*|--target-dir=*)
+        ;;
+      --*)
+        ;;
+      -*)
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+run_local_cargo() {
+  if cargo_test_has_explicit_filter "${cargo_argv[@]}" && [[ "${HORON_AGENT_DEV_CARGO_ALLOW_ZERO_TESTS:-0}" != "1" ]]; then
+    local output_file
+    output_file=$(mktemp "${TMPDIR:-/tmp}/horon-agent-dev-cargo.XXXXXX")
+    local status=0
+    cargo "${cargo_argv[@]}" 2>&1 | tee "$output_file" || status=${PIPESTATUS[0]}
+    if [[ "$status" -eq 0 ]] \
+      && grep -qE '^running 0 tests$' "$output_file" \
+      && ! grep -qE '^running [1-9][0-9]* tests$' "$output_file"; then
+      printf 'cargo: explicit cargo test filter matched zero tests; check the test path/name or set HORON_AGENT_DEV_CARGO_ALLOW_ZERO_TESTS=1 to allow this intentionally\n' >&2
+      rm -f "$output_file"
+      return 97
+    fi
+    rm -f "$output_file"
+    return "$status"
+  fi
+
+  cargo "${cargo_argv[@]}"
+}
+
+cargo_action_needs_gate() {
+  case "${cargo_argv[0]:-}" in
+    build|check|clippy|test|bench|run|rustc|rustdoc) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Cargo's own package-cache and target-dir locks only coordinate processes that
+# happen to share those exact directories. HoronAgent agents also build from scratch
+# worktrees, different target directories, and different toolchains, so several
+# memory-heavy rustc processes can still run at once. On this 15 GiB development
+# machine that makes every build slower and can trigger earlyoom.
+#
+# Serialize compile-capable local Cargo actions across all horon-agent worktrees. A
+# single Cargo invocation can still use all jobs selected by select_build_jobs,
+# so this trades harmful process-level competition for useful crate-level
+# parallelism. Nested wrapper calls inherit HORON_AGENT_CARGO_GATE_HELD and cannot
+# deadlock. Set HORON_AGENT_CARGO_GATE=off for an intentional concurrency experiment.
+acquire_cargo_gate() {
+  cargo_gate_wait_ms=0
+  cargo_action_needs_gate || return 0
+
+  case "${HORON_AGENT_CARGO_GATE:-on}" in
+    0|false|no|off|disabled)
+      return 0
+      ;;
+  esac
+  if [[ "${HORON_AGENT_CARGO_GATE_HELD:-0}" == "1" ]]; then
+    return 0
+  fi
+  if ! command -v flock >/dev/null 2>&1; then
+    log "flock is unavailable; running without the host-wide Cargo gate"
+    return 0
+  fi
+
+  local gate_dir gate_path wait_started_ns wait_finished_ns waited_seconds
+  gate_dir="${HORON_AGENT_CARGO_GATE_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}}"
+  mkdir -p "$gate_dir"
+  gate_path="${HORON_AGENT_CARGO_GATE_PATH:-$gate_dir/horon-agent-cargo-build.lock}"
+  exec {cargo_gate_fd}>"$gate_path"
+  if ! flock -n "$cargo_gate_fd"; then
+    log "waiting for the host-wide Cargo gate ($gate_path)"
+    wait_started_ns=$(date +%s%N)
+    waited_seconds=0
+    # Avoid one silent, unbounded flock call. Periodic notes make it clear that
+    # the process is alive and blocked behind another compiler rather than hung.
+    while ! flock -w 30 "$cargo_gate_fd"; do
+      waited_seconds=$((waited_seconds + 30))
+      log "still waiting for the host-wide Cargo gate (${waited_seconds}s elapsed)"
+    done
+    wait_finished_ns=$(date +%s%N)
+    cargo_gate_wait_ms=$(( (wait_finished_ns - wait_started_ns) / 1000000 ))
+  fi
+  export HORON_AGENT_CARGO_GATE_HELD=1
+  log "acquired host-wide Cargo gate (waited ${cargo_gate_wait_ms}ms)"
+}
+
+validate_feature_profile
+configure_build_tmpdir
+export_git_build_metadata
+maybe_configure_low_memory_selfdev "$@"
+maybe_enable_sccache "$@"
+configure_parallel_frontend "$@"
+
+if [[ "$(uname -s)" == "Linux" ]] && [[ "$(uname -m)" == "x86_64" ]]; then
+  configure_linux_linker
+fi
+
+if [[ "${1:-}" == "--print-setup" ]]; then
+  select_build_jobs
+  print_setup
+  exit 0
+fi
+
+cargo_argv=()
+while IFS= read -r -d '' arg; do
+  cargo_argv+=("$arg")
+done < <(build_cargo_argv "$@")
+
+start_rust_action_log
+
+if [[ "${HORON_AGENT_REMOTE_CARGO:-0}" == "1" ]]; then
+  if remote_cargo_preflight; then
+    log "using remote cargo via scripts/dev/remote_build.sh"
+    rust_action_log_execution="remote"
+    "$repo_root/scripts/dev/remote_build.sh" "${cargo_argv[@]}"
+    exit $?
+  fi
+  if [[ "$(remote_cargo_fallback_mode)" == "local" ]]; then
+    log "remote cargo unavailable; falling back to local cargo (set HORON_AGENT_REMOTE_CARGO_FALLBACK=error to fail instead)"
+  else
+    log "remote cargo unavailable and fallback disabled"
+    exit 75
+  fi
+fi
+
+acquire_cargo_gate
+# Size the in-process parallelism only after competing horon-agent Cargo processes
+# have drained. Measuring before the wait would preserve an unnecessarily low
+# one-job decision even after memory becomes available.
+select_build_jobs
+run_local_cargo
