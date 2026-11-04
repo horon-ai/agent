@@ -23,10 +23,11 @@ use acp_client::{
 };
 use acp_daemon::AcpDaemon;
 use acp_schema::{Direction, FrameValidator};
-use lifecycle::{BINARY, Script, TOOL_PROMPT, scratch_root, set_mode, wait_for_socket, write_config};
+use lifecycle::{
+    BINARY, ChangeWatch, Script, TOOL_PROMPT, scratch_root, set_mode, wait_for_pid_exit, wait_for_socket, write_config,
+};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -413,24 +414,6 @@ fn dump_logs(root: &Path, home: &Path) {
     eprintln!("--- daemon.log (newest first) ---\n{}", tail.join("\n"));
 }
 
-fn kevent_vnode(fd: std::os::fd::RawFd) -> libc::kevent {
-    libc::kevent {
-        ident: fd as libc::uintptr_t,
-        filter: libc::EVFILT_VNODE,
-        flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
-        fflags: libc::NOTE_WRITE | libc::NOTE_EXTEND,
-        data: 0,
-        udata: std::ptr::null_mut(),
-    }
-}
-
-fn timespec(duration: Duration) -> libc::timespec {
-    libc::timespec {
-        tv_sec: duration.as_secs() as libc::time_t,
-        tv_nsec: duration.subsec_nanos() as libc::c_long,
-    }
-}
-
 /// Waits until a daemon log line contains `needle`. The wait is driven by the
 /// file-change events of the log directory and its files: the watches are
 /// registered before each scan, so a line written between the scan and the
@@ -439,76 +422,24 @@ fn wait_for_log(home: &Path, needle: &str, deadline: Duration) {
     let dir = home.join("logs");
     let end = Instant::now() + deadline;
     loop {
-        let queue = unsafe { libc::kqueue() };
-        assert!(queue >= 0, "kqueue");
-        let mut watched = Vec::new();
-        for path in [home.to_path_buf(), dir.clone()] {
-            if let Ok(file) = std::fs::File::open(&path) {
-                watched.push(file);
-            }
-        }
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
             .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
             .unwrap_or_default();
         files.retain(|path| path.extension().is_some_and(|ext| ext == "log"));
-        for path in &files {
-            if let Ok(file) = std::fs::File::open(path) {
-                watched.push(file);
-            }
-        }
-        for file in &watched {
-            let change = kevent_vnode(file.as_raw_fd());
-            unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
-        }
+        let mut watched: Vec<&Path> = vec![home, &dir];
+        watched.extend(files.iter().map(PathBuf::as_path));
+        let watch = ChangeWatch::arm(&watched);
         let found = files
             .iter()
             .any(|path| std::fs::read_to_string(path).is_ok_and(|text| text.contains(needle)));
         if found {
-            unsafe { libc::close(queue) };
             return;
         }
         let remaining = end.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            unsafe { libc::close(queue) };
             panic!("no daemon log line contains {needle:?} within {deadline:?}");
         }
-        let timeout = timespec(remaining);
-        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-        unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, &timeout) };
-        unsafe { libc::close(queue) };
-    }
-}
-
-/// Waits for process `pid` to exit, on the kernel's exit event.
-fn wait_for_pid_exit(pid: i32, deadline: Duration) -> Result<(), String> {
-    let queue = unsafe { libc::kqueue() };
-    assert!(queue >= 0, "kqueue");
-    let change = libc::kevent {
-        ident: pid as libc::uintptr_t,
-        filter: libc::EVFILT_PROC,
-        flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_ONESHOT,
-        fflags: libc::NOTE_EXIT,
-        data: 0,
-        udata: std::ptr::null_mut(),
-    };
-    let registered = unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
-    if registered < 0 {
-        let error = std::io::Error::last_os_error();
-        unsafe { libc::close(queue) };
-        return if error.raw_os_error() == Some(libc::ESRCH) {
-            Ok(())
-        } else {
-            Err(format!("watch pid {pid}: {error}"))
-        };
-    }
-    let timeout = timespec(deadline);
-    let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-    let ready = unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, &timeout) };
-    unsafe { libc::close(queue) };
-    if ready == 1 {
-        Ok(())
-    } else {
-        Err(format!("process {pid} still runs after {deadline:?}"))
+        watch.wait(remaining);
     }
 }
 
@@ -517,27 +448,21 @@ fn wait_for_pid_exit(pid: i32, deadline: Duration) -> Result<(), String> {
 fn wait_for_file(path: &Path, deadline: Duration) -> String {
     let end = Instant::now() + deadline;
     let parent = path.parent().expect("a parent dir");
+    // The directory must exist before the watch is armed; a missing one is a
+    // broken fixture, not a slow file.
+    std::fs::File::open(parent).expect("the parent dir");
     loop {
-        let queue = unsafe { libc::kqueue() };
-        assert!(queue >= 0, "kqueue");
-        let dir = std::fs::File::open(parent).expect("the parent dir");
-        let change = kevent_vnode(dir.as_raw_fd());
-        unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
+        let watch = ChangeWatch::arm(&[parent]);
         if let Ok(text) = std::fs::read_to_string(path)
             && !text.trim().is_empty()
         {
-            unsafe { libc::close(queue) };
             return text;
         }
         let remaining = end.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            unsafe { libc::close(queue) };
             panic!("{} did not appear within {deadline:?}", path.display());
         }
-        let timeout = timespec(remaining);
-        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-        unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, &timeout) };
-        unsafe { libc::close(queue) };
+        watch.wait(remaining);
     }
 }
 
