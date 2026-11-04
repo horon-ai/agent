@@ -187,7 +187,9 @@ fn secure_file(file: &File, _path: &Path) -> Result<()> {
 }
 
 fn secret_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
+    let options = OpenOptions::new();
+    #[cfg(unix)]
+    let mut options = options;
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

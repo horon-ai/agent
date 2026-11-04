@@ -198,6 +198,10 @@ fn durable_input_retry_cleans_the_previously_injected_copy() {
     assert!(resolved.warning.is_none());
 }
 
+/// The failure is induced by a read-only directory, which only exists as a
+/// concept where the filesystem carries POSIX write bits; Windows accepts the
+/// write, so the premise of this test has no Windows form.
+#[cfg(unix)]
 #[test]
 fn durable_input_mirror_failure_keeps_the_accept() {
     let _guard = crate::storage::lock_test_env();

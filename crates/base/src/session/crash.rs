@@ -584,7 +584,6 @@ pub fn find_session_by_name_or_id(name_or_id: &str) -> Result<String> {
 #[cfg(test)]
 mod batch_crash_tests {
     use super::*;
-    use std::os::unix::fs::DirBuilderExt;
 
     #[test]
     fn test_crashed_sessions_info_struct() {
@@ -602,11 +601,7 @@ mod batch_crash_tests {
     fn isolated_home() -> (tempfile::TempDir, std::sync::MutexGuard<'static, ()>) {
         let guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(temp.path().join("sessions"))
-            .expect("sessions dir");
+        crate::storage::create_store_dir(&temp.path().join("sessions"), true).expect("sessions dir");
         crate::env::set_var("HORON_AGENT_HOME", temp.path());
         (temp, guard)
     }
@@ -633,19 +628,12 @@ mod batch_crash_tests {
 
         let corrupt_id = "session_corrupt_1770000003000";
         let corrupt_dir = temp.path().join("sessions").join(corrupt_id);
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&corrupt_dir)
-            .expect("corrupt session dir");
+        crate::storage::create_store_dir(&corrupt_dir, false).expect("corrupt session dir");
         let corrupt_bytes: &[u8] = b"{not a record}\n";
         std::fs::write(corrupt_dir.join("events.jsonl"), corrupt_bytes).expect("corrupt log");
 
         let pid_dir = storage::active_pids_dir().expect("active pid dir");
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(&pid_dir)
-            .expect("active pid dir created");
+        crate::storage::create_store_dir(&pid_dir, true).expect("active pid dir created");
         std::fs::write(pid_dir.join(corrupt_id), "999999").expect("stale pid for corrupt");
         std::fs::write(pid_dir.join("session_absent_1770000004000"), "999998").expect("stale pid for absent");
 
@@ -697,19 +685,17 @@ mod batch_crash_tests {
 
         let corrupt = "session_crashcorrupt_1770000008000";
         let corrupt_dir = temp.path().join("sessions").join(corrupt);
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&corrupt_dir)
-            .expect("corrupt dir");
+        crate::storage::create_store_dir(&corrupt_dir, false).expect("corrupt dir");
         {
             use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut file = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .mode(0o600)
-                .open(corrupt_dir.join("events.jsonl"))
-                .expect("corrupt log");
+            let mut options = std::fs::OpenOptions::new();
+            options.create_new(true).write(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(corrupt_dir.join("events.jsonl")).expect("corrupt log");
             file.write_all(b"{not a record}\n").expect("bytes");
         }
 
@@ -878,12 +864,9 @@ mod batch_crash_tests {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir()?;
         crate::env::set_var("HORON_AGENT_HOME", temp.path());
-        // The store refuses any directory under the agent home that is not 0700,
-        // and create_dir_all would leave this one at the umask default (0755).
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(temp.path().join("sessions"))?;
+        // The store refuses any directory under the agent home that is not 0700
+        // on unix, and create_dir_all would leave this one at the umask default.
+        crate::storage::create_store_dir(&temp.path().join("sessions"), false)?;
 
         let err = find_session_by_name_or_id("ses_does_not_exist_anywhere");
         assert!(err.is_err(), "expected unknown bare id to error");

@@ -1843,6 +1843,7 @@ mod tests {
         )
         .expect("write skill");
         std::fs::create_dir_all(&skills_dir).expect("skills dir");
+        #[cfg(unix)]
         let link = skills_dir.join("linked-skill");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
