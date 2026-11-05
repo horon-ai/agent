@@ -2601,7 +2601,6 @@ dependencies = [
  "horon-agent-message-types",
  "horon-agent-plan",
  "horon-agent-provider-core",
- "horon-agent-selfdev-types",
  "horon-agent-session-types",
  "horon-agent-side-panel-types",
  "horon-agent-tool-types",

@@ -190,7 +190,15 @@ impl AuthChanged {
     }
 }
 
-pub type ReloadRecoverySnapshot = horon_agent_selfdev_types::ReloadRecoveryDirective;
+/// Server-owned instruction for resuming a session that was interrupted by a
+/// reload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReloadRecoveryDirective {
+    pub reconnect_notice: Option<String>,
+    pub continuation_message: String,
+}
+
+pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
 pub use wire::{

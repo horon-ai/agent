@@ -57,7 +57,7 @@ mod lifecycle;
 mod live_turn;
 mod provider_control;
 mod reload;
-mod reload_recovery;
+pub(crate) mod reload_recovery;
 mod reload_state;
 mod reload_trace;
 mod runtime;
@@ -83,6 +83,7 @@ use self::debug::{ClientConnectionInfo, ClientDebugState};
 use self::debug_jobs::DebugJob;
 use self::headless::create_headless_session;
 use self::reload::await_reload_signal;
+use self::reload_recovery::ReloadContext;
 use self::runtime::ServerRuntime;
 use self::swarm::{
     MAX_SWARM_MEMBERS, broadcast_swarm_plan, broadcast_swarm_plan_with_previous, broadcast_swarm_status,
@@ -110,7 +111,6 @@ use crate::runtime_memory_log::{
     ServerRuntimeMemoryClients, ServerRuntimeMemoryEmbeddings, ServerRuntimeMemorySample, ServerRuntimeMemoryServer,
     ServerRuntimeMemorySessions, ServerRuntimeMemoryTopSession,
 };
-use crate::tool::selfdev::ReloadContext;
 use crate::transport::Listener;
 use anyhow::Result;
 use horon_agent_agent_runtime::{InterruptSignal, SoftInterruptSource};

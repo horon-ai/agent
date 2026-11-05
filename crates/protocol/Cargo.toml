@@ -10,7 +10,6 @@ horon-agent-config-types = { path = "../config-types" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-plan = { path = "../plan" }
 horon-agent-provider-core = { path = "../provider-core" }
-horon-agent-selfdev-types = { path = "../selfdev-types" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-side-panel-types = { path = "../side-panel-types" }
 horon-agent-tool-types = { path = "../tool-types" }

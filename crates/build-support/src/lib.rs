@@ -2,6 +2,7 @@ mod paths;
 mod platform_support;
 mod source_state;
 mod storage_helpers;
+mod types;
 mod version_gc;
 
 pub use paths::{
@@ -40,8 +41,10 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 pub use horon_agent_selfdev_types::{
-    BinaryChoice, BinaryVersionReport, BuildInfo, CanaryStatus, CrashInfo, DevBinarySourceMetadata, MigrationContext,
-    PendingActivation, PublishedBuild, SelfDevBuildCommand, SelfDevBuildTarget, SourceState,
+    BinaryChoice, CanaryStatus, CrashInfo, PendingActivation, SelfDevBuildCommand, SelfDevBuildTarget,
+};
+pub use types::{
+    BinaryVersionReport, BuildInfo, DevBinarySourceMetadata, MigrationContext, PublishedBuild, SourceState,
 };
 
 /// Manifest tracking build versions and their status

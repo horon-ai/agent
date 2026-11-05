@@ -12,8 +12,8 @@ use crate::bus::{
 use crate::message::{Message, Role, StreamEvent, ToolDefinition};
 use crate::protocol::{NotificationType, ServerEvent};
 use crate::provider::{EventStream, Provider};
+use crate::server::reload_recovery::ReloadContext;
 use crate::tool::Registry;
-use crate::tool::selfdev::ReloadContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
