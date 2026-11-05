@@ -33,11 +33,11 @@ Windows 설치 경로와 서명 절차는 [`WINDOWS.md`](WINDOWS.md)에 있다.
 
 ## Linux 서버에서 실행
 
-릴리스 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다. OpenSSL과 다른 패키지는 필요 없다. TLS는 전부 rustls로 처리하고 OpenSSL은 의존성 그래프에 없다 (`cargo tree -p horon-agent -i openssl-sys --target all`이 아무것도 찾지 않는다). IMAP 메일 알림을 보내는 `crates/notify-email`도 `imap`의 `rustls-tls` 기능으로 rustls를 쓴다.
+릴리스 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다. OpenSSL과 다른 패키지는 필요 없다. TLS는 전부 rustls로 처리하고 OpenSSL은 의존성 그래프에 없다 (`cargo tree -p horon-agent -i openssl-sys --target all`이 아무것도 찾지 않는다). IMAP 메일 알림을 보내는 `crates/notify-email`도 워크스페이스의 rustls 0.23으로 IMAP TLS를 직접 만든다.
 
 ### 인증서
 
-모델 HTTPS 호출은 reqwest가 내장한 webpki 루트를 쓴다. 그래서 `ca-certificates` 없이도 `serve`, `run`, `api-bridge`가 동작한다. IMAP 메일 알림 경로만 시스템 CA 저장소를 읽는다. 메일 알림을 쓰는 서버는 `ca-certificates` 패키지를 설치한다. rustls는 TLS 1.2와 1.3만 받으므로 TLS 1.0·1.1만 지원하는 IMAP 서버에는 연결하지 못한다.
+모델 HTTPS 호출은 reqwest가 내장한 webpki 루트를 쓴다. 그래서 `ca-certificates` 없이도 `serve`, `run`, `api-bridge`가 동작한다. IMAP 메일 알림도 같은 방식이다. `notify-email`은 바이너리에 포함한 webpki 루트를 먼저 넣고, 호스트에 시스템 CA 저장소가 있으면 그 인증서도 함께 신뢰한다. 그래서 메일 알림을 쓰는 서버에도 `ca-certificates` 패키지는 필요 없다. 사설 CA를 쓰는 서버는 시스템 저장소에 그 CA를 넣으면 메일 알림에서도 신뢰한다. rustls는 TLS 1.2와 1.3만 지원하므로 TLS 1.0·1.1만 지원하는 IMAP 서버에는 연결하지 못한다.
 
 ### 준비
 
