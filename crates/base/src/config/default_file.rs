@@ -523,6 +523,10 @@ bash_pty = "auto"
 # until a plan is approved. Off by default, so nothing changes for an existing
 # config.
 plan_mode = false
+# IRC bus: expose the `irc` tool so agents of the same daemon can send, wait
+# for, and read each other's messages. Off by default because it opens a
+# message path between sessions. Env override: HORON_AGENT_IRC.
+irc = false
 # Let `bash` start the next call in the directory the previous command ended in.
 # On by default: an agent that must prefix every command with `cd` misreads its
 # own working directory. Set false to pin every call to the session directory.
@@ -923,6 +927,16 @@ work_branch_prefix = "ambient/"
 # Let a run with no attached client ask for permission instead of stalling
 # (default: false)
 # approval_for_clientless_runs = false
+
+[irc]
+# Messages kept per agent mailbox before the oldest is dropped.
+mailbox_cap = 100
+# Largest accepted message body, in bytes.
+max_body_bytes = 65536
+# Longest a single `wait` call may block, in seconds.
+wait_max_secs = 300
+# Broadcast legs delivered concurrently.
+broadcast_concurrency = 16
 
 [gateway]
 # Enable WebSocket gateway for iOS/web clients

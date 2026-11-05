@@ -2473,6 +2473,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "horon-agent-irc-core"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "tokio",
+]
+
+[[package]]
 name = "horon-agent-logging"
 version = "0.1.0"
 dependencies = [

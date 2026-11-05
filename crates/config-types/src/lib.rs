@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 mod display;
+mod gateway;
+mod irc;
 mod menubar;
 mod power;
-pub use {display::DisplayConfig, menubar::MenubarConfig, power::PowerConfig};
+pub use {display::DisplayConfig, gateway::GatewayConfig, irc::IrcConfig, menubar::MenubarConfig, power::PowerConfig};
 pub mod keybindings;
 mod serde_lenient;
 pub use keybindings::{
@@ -2127,28 +2129,6 @@ impl Default for SafetyConfig {
             jade_relay_reply_enabled: false,
             jade_relay_launch_enabled: false,
             jade_relay_launch_working_dir: None,
-        }
-    }
-}
-
-/// WebSocket gateway configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct GatewayConfig {
-    /// Enable the WebSocket gateway (default: false)
-    pub enabled: bool,
-    /// TCP port to listen on (default: 7643)
-    pub port: u16,
-    /// Bind address (default: 0.0.0.0)
-    pub bind_addr: String,
-}
-
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            port: 7643,
-            bind_addr: "0.0.0.0".to_string(),
         }
     }
 }

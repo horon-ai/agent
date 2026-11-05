@@ -173,6 +173,11 @@ impl Config {
         {
             self.tools.tool_result_aging = parsed;
         }
+        if let Ok(v) = std::env::var("HORON_AGENT_IRC")
+            && let Some(parsed) = parse_env_bool(&v)
+        {
+            self.tools.irc = parsed;
+        }
 
         // ACP adapter
         if let Ok(v) = std::env::var("HORON_AGENT_ACP_PROFILE") {
