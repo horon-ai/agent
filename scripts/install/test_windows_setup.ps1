@@ -91,7 +91,10 @@ function New-IsolatedWindowsProfile([string]$Name) {
     $local = Join-Path $root 'Local App Data'
     $profile = Join-Path $root 'User Profile'
     $appData = Join-Path $profile 'AppData\Roaming'
-    $horonAgentHome = Join-Path $root 'HoronAgent Home'
+    # The uninstaller's purge guard only accepts a dedicated `.horon-agent` or
+    # `horon-agent-*` directory, and `-Purge` targets this configured home, so the
+    # isolated home must satisfy that contract.
+    $horonAgentHome = Join-Path $root 'horon-agent home'
     $temp = Join-Path $root 'Temp'
     foreach ($dir in @($local, $profile, $appData, $horonAgentHome, $temp)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
