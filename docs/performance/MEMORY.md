@@ -36,7 +36,7 @@
 - `crates/app-core/src/server/debug_server_state.rs`
 
 터미널 UI를 쓰던 `:debug memory`, `:debug markdown:memory`, `:debug mermaid:memory`
-같은 표면은 이 빌드에 없다. 트림에서 TUI와 그 캐시가 함께 사라졌기 때문에,
+같은 표면은 이 빌드에 없다. headless 전환 때 TUI와 그 캐시가 함께 사라졌기 때문에,
 그 캐시에 걸려 있던 상한도 이 문서에서 내렸다.
 
 ### 예산 모델
@@ -76,7 +76,7 @@
 
 #### Mermaid와 Markdown 캐시 예산
 
-트림 이전에는 `src/tui/markdown.rs`, `src/tui/mermaid.rs`가 하이라이트·렌더·
+headless 전환 이전에는 `src/tui/markdown.rs`, `src/tui/mermaid.rs`가 하이라이트·렌더·
 소스·이미지 상태 캐시에 명시적 상한을 두었다. 그 파일과 캐시는 현재 트리에
 없으므로 지킬 상한도 없다. 대응하는 캐시를 다시 들이면 그때 상한과 근거를
 이 절에 되살린다.

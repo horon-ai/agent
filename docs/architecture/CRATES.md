@@ -1,7 +1,7 @@
 # 크레이트 소유권과 모듈화 경계
 
 
-> 이 문서는 "TUI"를 언급한다. 그것은 트림에서 삭제된 이전 클라이언트 표면이며 현재 트리에 해당 크레이트가 없다. 경계 판단 기준을 설명하려고 이름을 남긴 것이지, 지금 존재하는 구성 요소를 가리키는 것이 아니다.
+> 이 문서는 "TUI"를 언급한다. 그것은 headless 전환 때 삭제한 이전 클라이언트 표면이며 현재 트리에 해당 크레이트가 없다. 경계 판단 기준을 설명하려고 이름을 남긴 것이지, 지금 존재하는 구성 요소를 가리키는 것이 아니다.
 이 문서는 공유 크레이트를 아무거나 쌓아 두는 곳으로 만들지 않으면서 `horon-agent`의 모듈성을 유지하기 위한 목표 구조를 정의한다. 실용적인 판단 기준을 담았다. 타입, 헬퍼, 동작을 루트 크레이트 밖으로 옮길지 정할 때 이 문서를 쓴다.
 
 ## 목표
@@ -112,7 +112,7 @@ python3 scripts/ci/check_dependency_boundaries.py
 - `side_panel`은 관계없는 고정 UI·레이아웃 테스트와 지연 벤치마크 테스트까지 고른다.
 - `usage`는 순수 사용량 테스트에 더해 앱 표시 테스트까지 고른다.
 - `session::`은 세션 영속화를 넘어 라이브 접속 서버 테스트와 피커 동작까지 고른다.
-- `ambient`는 ambient 모듈의 영속화·런타임 테스트를 넘어 설정과 스케줄 상태를 다루는 TUI·헬퍼 통합 테스트(트림에서 삭제된 TUI를 포함한다)까지 고른다.
+- `ambient`는 ambient 모듈의 영속화·런타임 테스트를 넘어 설정과 스케줄 상태를 다루는 헬퍼 통합 테스트까지 고른다.
 
 도메인 크레이트나 모듈 옆에 정확한 필터를 적어 둔다. 넓은 필터는 주기적인 전체 점검에는 여전히 쓸모가 있지만, 정확한 테스트와 컴파일 검사가 통과하면 DTO만 추출하는 작업을 막아서는 안 된다.
 
@@ -123,7 +123,7 @@ python3 scripts/ci/check_dependency_boundaries.py
 | 사용량 DTO | `cargo check --profile selfdev -p horon-agent-usage-types -p horon-agent --bin horon-agent` | `crates/usage-types`의 단위 테스트와, 그 DTO를 소비하는 정확한 테스트 이름을 우선한다. 맨 `usage` 필터는 표시 계층 테스트까지 고르므로 필수 게이트로 쓰지 않는다. | DTO 크레이트는 보고서와 로컬 카운터 계약을 소유한다. 런타임 조회, 캐시, 표시는 루트에 남는다. |
 | 게이트웨이 DTO | `cargo check --profile selfdev -p horon-agent-gateway-types -p horon-agent --bin horon-agent` | 가능하면 정확한 테스트 이름으로 게이트웨이 영속화·인증 테스트를 좁힌다. | 페어링과 토큰의 HTTP·WebSocket 동작은 루트에 남는다. |
 | ambient DTO | `cargo check --profile selfdev -p horon-agent-ambient-types -p horon-agent --bin horon-agent` | 스케줄러와 타입 소비자만 대상으로 한다. | ambient DTO 크레이트는 사용 기록만 소유한다. 큐, 런타임, 프롬프트 동작은 루트에 남는다. |
-| ambient 동작 모듈 | `cargo check --profile selfdev -p horon-agent-app-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-app-core ambient::ambient_tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::scheduler::tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::runner::runner_tests --lib` | 모듈만 고치는 리팩터링에서 맨 `ambient`를 필수 게이트로 쓰지 않는다. 모듈을 넘나드는 TUI·설정 상태 테스트(트림에서 삭제된 TUI를 포함한다)까지 고르기 때문이다. |
+| ambient 동작 모듈 | `cargo check --profile selfdev -p horon-agent-app-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-app-core ambient::ambient_tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::scheduler::tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::runner::runner_tests --lib` | 모듈만 고치는 리팩터링에서 맨 `ambient`를 필수 게이트로 쓰지 않는다. 모듈을 넘나드는 설정 상태 테스트까지 고르기 때문이다. |
 | 메모리 활동 DTO | `cargo check --profile selfdev -p horon-agent-memory-types -p horon-agent-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-base runtime_memory_log --lib` | `memory::activity`는 현재 어떤 테스트와도 맞지 않으므로 소비자 테스트를 쓴다. |
 | 목표·todo·catchup 코어 DTO | `cargo check --profile selfdev -p horon-agent-core -p horon-agent --bin horon-agent` | 동작이 바뀌면 목표·todo·catchup의 정확한 필터를 쓴다. | 지금은 작고 안정적이어서 `horon-agent-core`에 둘 만하다. 변경이 잦아지면 다시 본다. |
 
@@ -153,7 +153,7 @@ python3 scripts/ci/check_dependency_boundaries.py
   `crates/base/src/goal.rs`, `todo`는 `crates/task-types`에 있다
 - `env`, `id`, `stdin_detect`, `util`, `panic_util`은 `crates/core/src/`에 있다
 
-이 감사는 트림 이전 루트 모듈을 대상으로 했다. 그 모듈은 지금 루트 `src/`에 없고,
+이 감사는 headless 전환 이전의 루트 모듈을 대상으로 했다. 그 모듈은 지금 루트 `src/`에 없고,
 루트에는 `cli/`, `lib.rs`, `main.rs`만 남아 있다.
 
 이 감사에서 정한 컴파일 속도 우선순위:
@@ -211,7 +211,7 @@ python3 scripts/ci/check_dependency_boundaries.py
 
 ### 세션 모듈
 
-트림 이전 `src/session.rs`의 책임은 지금 `crates/session-store`와
+headless 전환 이전 `src/session.rs`의 책임은 지금 `crates/session-store`와
 `crates/session-types`에 나뉘어 있다. 아래는 그 위에서 남은 분할 목표다.
 
 - 메타데이터와 세션 모델
@@ -223,7 +223,7 @@ python3 scripts/ci/check_dependency_boundaries.py
 
 ### 앰비언트 모듈
 
-트림 이전 `src/ambient.rs`의 책임은 지금 `crates/app-core/src/ambient/`에
+headless 전환 이전 `src/ambient.rs`의 책임은 지금 `crates/app-core/src/ambient/`에
 있다. 아래는 그 위에서 남은 분할 목표다.
 
 - 보이는 사이클 컨텍스트 입출력
@@ -237,7 +237,7 @@ load/save/record 동작을 구조체에서 분리하기 전에는 `AmbientState`
 
 ### 사용량 모듈
 
-트림 이전 `src/usage.rs`의 책임은 지금 `crates/base/src/usage.rs`와
+headless 전환 이전 `src/usage.rs`의 책임은 지금 `crates/base/src/usage.rs`와
 `crates/base/src/usage/`에 있고, DTO는 `horon-agent-usage-types`가 소유한다.
 
 - API 조회 제공자
@@ -249,7 +249,7 @@ load/save/record 동작을 구조체에서 분리하기 전에는 `AmbientState`
 
 ### 게이트웨이 모듈
 
-트림 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gateway.rs`와
+headless 전환 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gateway.rs`와
 `crates/base/src/gateway/`에 있고, DTO는 `horon-agent-gateway-types`가
 소유한다.
 

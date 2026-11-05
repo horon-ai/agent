@@ -154,7 +154,7 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 1. rustls 스택을 거치는 `rustls-webpki` TLS 권고
 2. `imap-proto`를 거치는 `lexical-core`
 3. HoronAgent가 `boring-tls`를 켜게 되면 `lettre`
-4. `ratatui`를 거치는 `lru` (트림 이전 기록. 지금 트리에는 `ratatui` 가 없다)
+4. `ratatui`를 거치는 `lru` (headless 전환 이전 기록. 지금 트리에는 `ratatui` 가 없다)
 5. `syntect`를 거치는 `bincode`
 6. 여러 전이 의존성을 거치는 `paste` / `rand`
 
@@ -192,7 +192,6 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
   `half ^2.5`를 고정하기 때문이다. 0.23 계열은 그 고정을 없앤다. 이 문제가
   중요했던 이유는 파서가 바이너리에 실린 모델이 아니라 런타임에 내려받은 모델을
   대상으로 돌기 때문에, 무시로 넘기는 것이 분명히 안전하지 않았기 때문이다.
-  #657을 참고한다.
 - `RUSTSEC-2024-0320`(`yaml-rust`)은 2026-03-05에 `syntect` 기능을 YAML 로딩
   대신 내장 구문/테마 덤프로 줄여 의존성 그래프에서 제거했다.
 - `RUSTSEC-2026-0194` / `RUSTSEC-2026-0195`(`quick-xml` 0.39.2)는 데스크톱

@@ -113,7 +113,7 @@ Windows 설정은 불필요한 의심 동작을 피하도록 일부러 설계했
    - `WINDOWS_SIGNING_ACCOUNT`
    - `WINDOWS_SIGNING_CERTIFICATE_PROFILE`
 6. 테스트 태그를 푸시하고 `Sign and publish Windows assets` 작업이 실행 파일 두 개에 모두 서명하는지, `Get-AuthenticodeSignature`가 `Valid`를 돌려주는지 확인한다.
-7. `WINDOWS_SIGNING_REQUIRED`는 설정하지 않거나 `true`로 둔다. Windows 자산은 기본으로 서명이 필수라서, 설정이 빠졌거나 서명 서비스에 장애가 나면 그 릴리스에서 Windows만 빠지고 나머지 플랫폼은 정상적으로 배포된다. `false`로 두는 것은 명시적인 비상 우회이고 공식 Windows 릴리스에 쓸 설정이 아니다.
+7. 서명을 필수로 만들려면 `WINDOWS_SIGNING_REQUIRED`를 `true`로 둔다. 이 값이 `true`가 아니고 Azure 설정도 없으면 서명 단계는 `::notice::`를 남기고 건너뛰며, 서명되지 않은 Windows 자산이 올라가고 릴리스 노트에 서명되지 않았다고 적힌다. `true`인데 설정이 빠졌으면 작업이 빠진 시크릿과 변수 이름을 알리며 실패한다. 공식 Windows 릴리스는 `true`로 배포한다.
 
 워크플로는 패키징, 체크섬 생성, 릴리스 업로드 전에 SHA-256 Authenticode 서명과 RFC 3161 타임스탬프를 적용한다. x64와 ARM64 실행 파일 모두 지원되는 x64 Windows 서명 러너에서 서명한다.
 
@@ -140,7 +140,7 @@ Windows는 다음으로 덮는다.
 
 - `.github/workflows/ci.yml`: 배포 빌드, 테스트 컴파일, 플랫폼 대상 테스트, 런타임 스모크 테스트, 수명 주기 종단 테스트, 설치 스크립트 검증, PowerShell 문법 검사.
 - `.github/workflows/windows-smoke.yml`: 수동으로 실행하는 x64와 ARM64 스모크 검증.
-- `.github/workflows/release.yml`: x64와 ARM64 빌드, Windows 배포에 필요한 관리형 서명, 서명 검증, 패키징, 체크섬. 플랫폼과 아키텍처마다 따로 배포하므로 Windows가 실패해도 성공한 Unix 자산을 막지 않는다.
+- `.github/workflows/release.yml`: x64와 ARM64 빌드(아키텍처마다 별도 작업), Windows 배포에 필요한 관리형 서명, 서명 검증, 패키징, 체크섬. 각 플랫폼 작업은 서로를 기다리지 않고 자기 자산을 초안 릴리스에 올린다. 마지막 `Finalize release` 작업은 모든 플랫폼 자산이 갖춰졌을 때만 릴리스를 공개하고, 하나라도 빠지면 초안으로 남긴다. ARM64 빌드가 실패해도 x64 서명과 업로드는 진행된다.
 
 ## 아키텍처 메모
 

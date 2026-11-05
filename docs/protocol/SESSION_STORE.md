@@ -12,7 +12,9 @@
 저장소의 루트는 하나다. `$HORON_AGENT_HOME/sessions`(보통 `~/.horon-agent/sessions`)이다. 아래 경로는
 모두 이 루트 기준이다. 모든 파일은 소유자 전용이며(디렉터리 `0700`, 파일 `0600`), 모든 접근자는 세션
 id를 다시 검증하고 루트 아래에서 심볼릭 링크, 디렉터리가 아닌 요소, 다른 소유자의 요소를 거부한다.
-그래서 형식이 올바른 id도 저장소 밖 경로를 가리킬 수 없다(`schema.rs::SessionPaths`).
+그래서 형식이 올바른 id도 저장소 밖 경로를 가리킬 수 없다(`schema.rs::SessionPaths`). Windows에는
+권한 비트와 `O_NOFOLLOW`가 없어 소유자 전용은 홈 디렉터리의 상속 ACL이 맡고, 파일은 연 뒤에 확인한다.
+자세한 내용은 [`release/WINDOWS.md`](../release/WINDOWS.md)의 아키텍처 메모에 있다.
 
 ### 배치
 

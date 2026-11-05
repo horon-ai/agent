@@ -90,7 +90,7 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 
 정말로 서버가 필요한 도구가 하나 있다. `swarm`은 워커가 서버가 맡는 헤드리스 세션이기 때문에 소켓으로 데몬과 이야기한다. 예전에는 `run`
 세션에서 이런 요청이("horon-agent server is not running") 그대로 실패해서 headless 자동화가 swarm을 쓸 수
-없었다(이슈 #1748). 이제 `run` 명령이 요청 시 서버를 띄우는 등록기(
+없었다. 이제 `run` 명령이 요청 시 서버를 띄우는 등록기(
 `crate::server_spawn::register_on_demand_server_spawner`)를 걸어 두고, 서버에 닿지 못하는 첫 swarm
 요청이 서버를 하나 띄운다. 공유 소켓에서는 평범한 오래 사는 데몬이 되고, 사용자 지정 `--socket`에서는 그 실행이 소유하는 서버가 된다.
 

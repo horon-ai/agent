@@ -158,7 +158,7 @@ horon-agent provider current --json
 - `tracking_started_unix_secs`는 이 로컬 원장의 적용 범위를 표시한다. 추적이
   시작되기 전에는 값이 없다. count는 전체 기간의 과거 추정치가 아니다. count가
   0이면 이 범위에 기록된 턴이 없다는 뜻이며 "한 번도 쓰지 않았다"는 뜻이 아니다.
-- `selection_count`와 `last_selected_unix_secs`는 트림 이전 TUI가 남긴
+- `selection_count`와 `last_selected_unix_secs`는 headless 전환 이전 TUI가 남긴
   `model_picker_usage.json`에서 온다. 이 값은 선택기 선택을 재며 모델 요청을
   재지 않는다. effort 변형은 한 라우트 안에서 합산된다. 이 카운터는 따로 유지된다.
 - `usage`가 없으면 메타데이터를 알 수 없다는 뜻이며 구버전 서버도 여기에 해당한다.
@@ -182,7 +182,7 @@ horon-agent provider current --json
 `horon_agent_sdk::compare_model_usage`와 TypeScript `compareModelUsage`는 추적된 턴
 수, 마지막 사용 시각, 과거 선택 횟수, 마지막 선택 시각 순으로 사용량을 좋은 순서로
 비교한다. 검색 관련성과 명시적인 current/favorite 정책은 이 비교기보다 앞서고, 그
-뒤에 안정적인 모델/라우트 타이브레이커가 붙는다. 트림 이전 TUI도 같은 비교기를 썼고
+뒤에 안정적인 모델/라우트 타이브레이커가 붙는다. headless 전환 이전 TUI도 같은 비교기를 썼고
 기존 current/favorite 정책을 그대로 두었다.
 
 레거시 프로토콜 클라이언트는 `get_model_catalog.subscribe_usage_updates: true`로

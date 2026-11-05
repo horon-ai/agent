@@ -709,7 +709,7 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
   전환을 허용할지 정하는 모드 게이트로만 읽고(`crates/app-core/src/server/provider_control.rs`),
   클라이언트가 붙어 있으면 원래 프로바이더 오류를 그대로 턴에 돌려줍니다. 3초 카운트다운을 띄우고
   취소를 받는 일은 클라이언트 몫인데, 이 headless 빌드에는 그 화면을 그리는 클라이언트가 없습니다
-  (TUI는 트림에서 빠졌습니다). 붙은 클라이언트가 전환을 원하면 `Request::SetRoute`로 직접 요청해야
+  (TUI는 headless 전환 때 빠졌습니다). 붙은 클라이언트가 전환을 원하면 `Request::SetRoute`로 직접 요청해야
   합니다. 서버가 스스로 전환하는 것은 무인 실행에서만입니다.
 - **`FailoverSwitched`는 ack 전까지 남습니다.** `failover-events.json`에 최대 100개를 두고, 재시작이나
   재연결 때 다시 방출합니다. 재방출은 같은 키로 중복될 수 있으니 소비자는 `(session_id, chain_id, from, to, attempt)`로
@@ -791,40 +791,21 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
   홈에서 돌고 있는 혼용 구간에는 그 프로세스가 락을 잡고 있을 수 있습니다. 그때 파일을 지우면 세 번째
   프로세스가 새 락 파일을 만들어 같은 락을 잡았다고 믿게 됩니다. 창이 좁고(이전 중 옛 프로세스가 도는
   동안) 결과도 락을 둘이 소유한다고 믿는 정도지만, 이 빌드만 도는 환경이 아니면 생길 수 있는 일입니다.
-- **CI 품질 잡의 예산 가드 넷은 `origin/dev`에서 이미 실패합니다.** `check_code_size.py`,
-  `check_test_size.py`, `check_panics.py`, `check_swallowed_errors.py`는 이 브랜치가
-  기준을 만들지 않았어도 `origin/dev`에서 그대로 실패합니다. 그래서 이 브랜치는 그 가드를
-  만족시킬 수도 없고, 그 가드를 깨뜨리지도 않습니다. 나머지 셋(`check_module_files.py`,
-  `check_dependency_boundaries.py`, `check_wildcard_reexports.py`)은 이 트리에서 통과합니다.
-- **이 브랜치도 그 네 목록에 항목을 더합니다.** 새로 1200줄을 넘긴 운영 코드는
-  `agent/failover_budget.rs`(1332), `ambient/persistence.rs`(1252),
-  `notifications.rs`(1546), `server/state.rs`(1545),
-  `tool/ambient.rs`(1521)입니다. 이 기능이 치르는 크기가 그만큼입니다.
-  기준 파일(`scripts/ci/*_budget.json`)은 일부러 갱신하지 않았습니다. `--update`는 지금 트리를 통째로
-  정답으로 받아들이므로, 이후 모든 변경에 대해 그 가드를 꺼버립니다.
-- **루트에서 돌린 clippy 게이트는 멤버 크레이트를 검사하지 않습니다.** 루트 `Cargo.toml`이 `[package]`와
-  `[workspace]`를 겸하고 `default-members`가 없습니다. 그래서 루트에서
-  `cargo clippy --locked --all-targets --all-features -- -D warnings`를 돌리면 루트 패키지만 검사하고
-  나머지는 컴파일만 합니다(`Checking horon-agent-app-core` 줄이 0건, 실행은 몇 초 만에 끝납니다).
-  `.github/workflows/ci.yml`의 clippy 단계와 `scripts/ci/check_all.sh`도 같은 형태라 같은 이유로
-  멤버 크레이트의 테스트 타깃을 검사하지 않습니다. 실제로 워크스페이스를 검사하는 명령은
-  `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`이고, 이 명령을 돌리는
-  스크립트는 아직 없으니 검증할 때는 이 명령을 그대로 써야 합니다. `--workspace`를 빼면 exit 0으로
-  끝나므로 게이트가 통과했다는 것만으로는 아무것도 증명되지 않습니다. 실제로 멤버 크레이트의 테스트
-  타깃에 `let unused_probe = 1;`을 심고 두 형태를 돌리면, 루트 형태는 exit 0으로 지나가고
-  `--workspace` 형태만 `unused variable`로 exit 101을 냅니다. 이 브랜치는 그 `--workspace`
-  게이트를 켜서 드러난 린트 11건을 린트가 지시한 대로 기계적으로 고쳤고, 열한 건 모두 `origin/dev`의
-  테스트 코드에 이미 있던 것이지 이 브랜치가 만든 회귀가 아닙니다(`needless_borrow` 계열 9건,
-  `deprecated fetch_update` 1건, `field_reassign_with_default` 1건).
-- **CI는 아직 좁은 형태를 돌립니다.** 이 브랜치에서는 `--workspace` 형태가 통과하고, 그 형태가
-  드러낸 린트 11건도 고쳤습니다. 하지만 PR마다 도는 가드는 여전히 멤버 크레이트를 검사하지 않습니다.
-  `.github/workflows/ci.yml:59`가 `--workspace` 없이
-  `cargo clippy --locked --all-targets --all-features -- -D warnings`를 돌리고,
-  `scripts/ci/check_all.sh`도 같은 형태입니다. 이 브랜치가 고친 것은 로컬 게이트와 문서이지
-  CI가 아닙니다. CI를 바꾸면 이 저장소의 앞으로 오는 모든 PR의 판정이 바뀌므로 그 변경은 자체 검토를
-  받는 별도 작업이어야 하고, 그래서 이 브랜치에서는 두 파일을 건드리지 않았습니다. 이 브랜치는
-  `--workspace` 형태로 검증했습니다. `ci.yml`에서 명령을 복사하는 사람은 여전히 아무것도 검사하지
-  않는 형태를 얻습니다.
+- **예산 가드의 기준선은 2026-11-05 트리입니다.** `check_code_size.py`, `check_test_size.py`,
+  `check_panics.py`, `check_swallowed_errors.py`의 기준 파일(`scripts/ci/*_budget.json`)은 공개
+  저장소로 옮기면서 그날 트리로 `--update`했습니다. 이 기능이 만든 큰 파일(`agent/failover_budget.rs`,
+  `ambient/persistence.rs`, `notifications.rs`, `server/state.rs`, `tool/ambient.rs`)도 그때 기준선에
+  들어갔습니다. 그래서 가드 일곱 개가 모두 `dev`에서 통과하고, 이후 변경은 이 기준선보다 커지면
+  실패합니다. 기준선을 다시 올리는 `--update`는 의도한 정리 뒤에만 씁니다.
+- **루트에서 돌린 clippy는 멤버 크레이트의 테스트 타깃을 검사하지 않습니다.** 루트 `Cargo.toml`이
+  `[package]`와 `[workspace]`를 겸하고 `default-members`가 없습니다. 그래서 루트에서
+  `cargo clippy --locked --all-targets --all-features -- -D warnings`를 돌리면 멤버 크레이트의
+  라이브러리 코드는 린트하지만 멤버 크레이트의 테스트·예제 타깃은 린트하지 않습니다. 워크스페이스
+  전체를 검사하는 명령은 `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`이고,
+  2026-11-05 `dev`에서 exit 0으로 통과합니다.
+- **CI는 아직 루트 형태를 돌립니다.** `.github/workflows/ci.yml`의 `Run clippy with warnings denied`
+  단계와 `scripts/ci/check_all.sh`는 `--workspace` 없이 돌립니다. 멤버 크레이트 테스트 코드의
+  린트 회귀는 CI에서 잡히지 않으므로, 그 코드를 바꿨다면 위 `--workspace` 명령을 로컬에서 돌립니다.
 
 ### 먼저 읽을 파일
 
