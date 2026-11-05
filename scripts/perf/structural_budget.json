@@ -4,7 +4,8 @@
     "Structural bounds only. No wall-clock latency or RSS threshold belongs here until the B0 distributions are pinned (plan, todo 17).",
     "Raising a bound is a deliberate commit, the scripts/ci/check_code_size.py ratchet in the same shape. A regression cannot raise its own ceiling.",
     "Each bound is enforced by scripts/perf/check_structural.py against the STRUCTURAL_PERF lines the repo's own tests print.",
-    "context condensation: one generic budget (48 KiB), a one-line notice for an unchanged re-read, and exactly one aging batch per pressure crossing."
+    "context condensation: one generic budget (48 KiB), a one-line notice for an unchanged re-read, and exactly one aging batch per pressure crossing.",
+    "irc mailbox: a 100-message cap that drops the oldest, one body allocation per broadcast, no waiter left parked after timeout/cancel churn, and a 16-leg broadcast concurrency ceiling."
   ],
   "bounds": {
     "queue_depth_high_water": 64,
@@ -26,6 +27,10 @@
     "soak_non_returning": 0,
     "context_spill_kept_bytes": 49152,
     "context_read_stub_bytes": 512,
-    "context_aging_batches": 1
+    "context_aging_batches": 1,
+    "irc_mailbox_cap": 100,
+    "irc_broadcast_body_allocations": 1,
+    "irc_waiters_live_after_churn": 0,
+    "irc_broadcast_concurrency": 16
   }
 }

@@ -28,3 +28,6 @@ mod wait_tests;
 #[cfg(test)]
 #[path = "envelope_tests.rs"]
 mod envelope_tests;
+
+#[cfg(test)]
+mod perf_tests;
