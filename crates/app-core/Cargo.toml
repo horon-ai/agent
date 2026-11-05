@@ -124,8 +124,6 @@ jemalloc = ["horon-agent-base/jemalloc"]
 jemalloc-prof = ["horon-agent-base/jemalloc-prof"]
 # local embeddings live in horon-agent-base (embedding); forward there.
 embeddings = ["horon-agent-base/embeddings"]
-# Used only by the CentOS 7 portable Linux release build.
-linux-compat-vendored-openssl = ["horon-agent-notify-email/linux-compat-vendored-openssl"]
 # PDF text extraction lives in this crate (tool/read.rs).
 pdf = ["dep:horon-agent-pdf"]
 # Offline import of display metadata that exists only in the legacy SQLite

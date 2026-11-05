@@ -303,6 +303,17 @@ jobs:
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --locked --release --target ${{ matrix.target }}
 
+      - name: Bare Linux runtime smoke (Linux)
+        # A hosted ubuntu image ships libssl, a CA bundle, a TTY, and
+        # XDG_RUNTIME_DIR, so a release binary that linked OpenSSL dynamically
+        # (and could not load on a bare Debian server at all) passed every test
+        # here. This runs the real binary in a Debian container with OpenSSL and
+        # the CA store removed. Linux only: with CI_SELF_HOSTED the matrix keeps
+        # just the macOS entry, and this guard is about the Linux artifact.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/ci/check_linux_bare_runtime.sh target/${{ matrix.target }}/release/horon-agent
+
       - name: Compile library and binary tests
         shell: bash
         run: |
