@@ -6,6 +6,7 @@
 //! the rest of the tool only deals with [`PtyPlan`].
 
 use crate::config::BashPtyMode;
+#[cfg(unix)]
 use std::process::Stdio;
 use tokio::process::Command as TokioCommand;
 

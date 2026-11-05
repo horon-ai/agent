@@ -13,11 +13,7 @@ fn with_temp_home<T>(f: impl FnOnce(&Path) -> T) -> T {
     crate::env::set_var("HORON_AGENT_HOME", temp.path());
     // The store refuses any directory under the agent home that is not 0700,
     // and create_dir_all would leave this one at the umask default (0755).
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(temp.path().join("sessions"))
-        .expect("create sessions dir");
+    crate::storage::create_store_dir(&temp.path().join("sessions"), false).expect("create sessions dir");
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(temp.path())));
 

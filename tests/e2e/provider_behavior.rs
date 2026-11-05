@@ -688,6 +688,7 @@ async fn test_model_switch_resets_provider_session() -> Result<()> {
 
     let msg_id = client.send_message("hello").await?;
     let mut saw_done1 = false;
+    let mut seen_events = Vec::new();
     // First-turn Done includes full agent-loop startup; slow Windows CI
     // runners intermittently exceeded the old 5s budget (CI flake). Keep the
     // loop tolerant of individual read timeouts and bound only the total wait.
@@ -696,12 +697,24 @@ async fn test_model_switch_resets_provider_session() -> Result<()> {
         let Ok(event) = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await else {
             continue;
         };
-        if matches!(event?, ServerEvent::Done { id } if id == msg_id) {
+        let event = event?;
+        seen_events.push(format!("{event:?}"));
+        if matches!(event, ServerEvent::Done { id } if id == msg_id) {
             saw_done1 = true;
             break;
         }
     }
-    assert!(saw_done1, "Did not receive Done for first message");
+    assert!(
+        saw_done1,
+        "Did not receive Done for first message {msg_id}. Seen events: {}\nstate={}\nlogs={}",
+        seen_events.join(" | "),
+        debug_run_command(debug_socket_path.clone(), "state", None)
+            .await
+            .unwrap_or_else(|err| format!("<state error: {err}>")),
+        std::env::var_os("HORON_AGENT_HOME")
+            .and_then(|home| latest_log_excerpt(std::path::Path::new(&home)))
+            .unwrap_or_else(|| "<no logs>".to_string())
+    );
 
     let model_id = client.cycle_model(1).await?;
     let mut saw_model = false;

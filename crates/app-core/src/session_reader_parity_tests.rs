@@ -16,13 +16,8 @@ struct Home {
 
 impl Home {
     fn new() -> Self {
-        use std::os::unix::fs::DirBuilderExt;
         let dir = tempfile::tempdir().expect("isolated agent home");
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(dir.path().join("sessions"))
-            .expect("sessions dir");
+        crate::storage::create_store_dir(&dir.path().join("sessions"), true).expect("sessions dir");
         let previous = std::env::var_os("HORON_AGENT_HOME");
         crate::env::set_var("HORON_AGENT_HOME", dir.path());
         crate::config::Config::invalidate_cache();
@@ -175,7 +170,6 @@ fn mixed_new_and_old_home_matches_a_legacy_only_home_on_every_surface() {
 
 #[test]
 fn corrupt_session_and_stale_pid_never_erase_a_neighbours_listing() {
-    use std::os::unix::fs::DirBuilderExt;
     let _guard = crate::storage::lock_test_env();
     let home = Home::new();
 
@@ -184,28 +178,26 @@ fn corrupt_session_and_stale_pid_never_erase_a_neighbours_listing() {
 
     let corrupt = "session_corrupt_1770000006000";
     let corrupt_dir = home.sessions().join(corrupt);
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&corrupt_dir)
-        .expect("corrupt session dir");
+    crate::storage::create_store_dir(&corrupt_dir, false).expect("corrupt session dir");
     let corrupt_bytes: &[u8] = b"{not a record}\n";
     {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
         let mut file = std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
-            .mode(0o600)
             .open(corrupt_dir.join("events.jsonl"))
             .expect("corrupt log");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .expect("owner-only log");
+        }
         file.write_all(corrupt_bytes).expect("corrupt bytes");
     }
 
     let pid_dir = home.path().join("active_pids");
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&pid_dir)
-        .expect("pid dir");
+    crate::storage::create_store_dir(&pid_dir, false).expect("pid dir");
     std::fs::write(pid_dir.join(corrupt), "999999").expect("stale pid");
 
     assert!(

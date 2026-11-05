@@ -1,7 +1,6 @@
 use super::*;
 
 fn refresh_failure_case(partial: bool) {
-    use std::os::unix::fs::DirBuilderExt;
     // Given a real writer and a fault in the derived runtime destination only.
     let home = Home::new();
     let id = if partial {
@@ -23,7 +22,7 @@ fn refresh_failure_case(partial: bool) {
                 match hook_step.load(std::sync::atomic::Ordering::SeqCst) {
                     1 => {
                         std::fs::rename(&hook_runtime, &hook_held)?;
-                        std::fs::DirBuilder::new().mode(0o700).create(&hook_runtime)?;
+                        crate::storage::create_store_dir(&hook_runtime, false)?;
                         hook_step.store(if partial { 2 } else { 0 }, std::sync::atomic::Ordering::SeqCst);
                     }
                     2 => {

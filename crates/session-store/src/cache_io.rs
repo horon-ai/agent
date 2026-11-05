@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -172,7 +172,23 @@ impl Stamp {
     }
     pub fn read(path: &Path) -> Result<Self, StoreError> {
         let m = checked_file(path, false)?.metadata()?;
-        #[cfg(not(unix))]
+        // Windows has no device, inode or change time on the stable standard
+        // library surface. The stamp keeps its fields for wire compatibility and
+        // leans on what the platform does expose: the file's length and last
+        // write time, both read through the handle.
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+
+            return Ok(Self {
+                device: 0,
+                inode: 0,
+                len: m.file_size(),
+                modified: (m.last_write_time() as i64, 0),
+                changed: (m.creation_time() as i64, 0),
+            });
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = &m;
             return Err(crate::blobs::unsupported());
@@ -213,18 +229,29 @@ pub(crate) fn json_error(error: serde_json::Error) -> StoreError {
 }
 
 pub(crate) fn dirty_present(paths: &crate::SessionPaths, id: Option<&crate::SessionId>) -> Result<bool, StoreError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (paths, id);
         return Err(crate::blobs::unsupported());
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let directory = paths.root().join(".catalog.dirty");
         match fs::symlink_metadata(&directory) {
             Ok(metadata) => {
-                if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
+                if !metadata.is_dir() {
                     return Err(crate::blobs::unsafe_path(&directory));
+                }
+                // The owner-only mode is a Unix property. Windows keeps the
+                // marker private through the agent home's inherited ACL, so only
+                // the directory type is checked there.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+
+                    if metadata.permissions().mode() & 0o777 != 0o700 {
+                        return Err(crate::blobs::unsafe_path(&directory));
+                    }
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),

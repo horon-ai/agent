@@ -136,11 +136,7 @@ async fn handle_get_history_busy_fresh_session_returns_empty_without_waiting() {
     // owner-private, so create it here instead of letting `create_dir_all`
     // leave it at the umask default.
     {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(temp_home.path().join("sessions"))
-            .expect("create sessions dir");
+        crate::storage::create_store_dir(&temp_home.path().join("sessions"), false).expect("create sessions dir");
     }
 
     let session_id = "session_fresh_busy_history";
@@ -831,11 +827,7 @@ fn live_resume_history_home(temp_home: &std::path::Path) {
     // The event store owns `sessions/` and refuses a directory that is not
     // owner-private, so create it instead of letting `create_dir_all` leave it
     // at the umask default.
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(temp_home.join("sessions"))
-        .expect("create sessions dir");
+    crate::storage::create_store_dir(&temp_home.join("sessions"), false).expect("create sessions dir");
 }
 
 fn write_live_resume_fixture_session(session_id: &str) -> crate::session::Session {

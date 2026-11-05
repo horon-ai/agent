@@ -194,6 +194,7 @@ async fn durable_input_explicit_resolve_retry_and_cancel() {
     assert!(!store.state().expect("state").inputs.contains_key(&cancel_me.input_id));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn durable_input_mirror_failure_does_not_roll_back_the_accept() {
     let _guard = crate::storage::lock_test_env();

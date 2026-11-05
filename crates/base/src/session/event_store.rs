@@ -13,7 +13,7 @@ pub(super) fn publish_local<T: serde::Serialize>(path: &Path, value: &T) -> Resu
     temporary.write_all(&serde_json::to_vec(value)?)?;
     temporary.as_file().sync_all()?;
     temporary.persist(path).map_err(|error| error.error)?;
-    std::fs::File::open(directory)?.sync_all()?;
+    crate::platform::sync_directory(directory)?;
     Ok(())
 }
 
@@ -195,7 +195,7 @@ pub(super) fn select(
     let file = paths.session_dir(id)?.join("local-head.json");
     publish_local(&file, head)?;
     publish_local(&paths.session_dir(id)?.join("local-head-explicit.json"), &explicit)?;
-    std::fs::File::open(paths.session_dir(id)?)?.sync_all()?;
+    crate::platform::sync_directory(&paths.session_dir(id)?)?;
     Ok(())
 }
 

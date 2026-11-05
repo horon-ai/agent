@@ -8,6 +8,7 @@
 //! dispatched through `dispatch_observer`, which spawns a detached child and
 //! returns immediately, so it stays concurrent by contract and these tests pin
 //! that behavior instead of changing it.
+#![cfg(unix)]
 #![allow(clippy::await_holding_lock)]
 
 use super::{MockProvider, mcp_test_context};

@@ -514,28 +514,49 @@ jobs:
       - name: Run targeted Windows validation tests
         shell: pwsh
         run: |
-          $tests = @(
-            'command_candidates_adds_extension_on_windows',
-            'command_exists_for_known_binary',
-            'command_exists_absolute_path',
-            'sibling_socket_path_roundtrip',
-            'cleanup_socket_pair_removes_main_and_debug_files',
-            'is_process_running_reports_exited_children_as_stopped',
-            'spawn_replacement_process_returns_without_waiting_for_child_exit',
-            'build_shell_command_uses_cmd_and_executes_command',
-            'pipe_name_is_stable_and_normalizes_case_and_separators',
-            'pipe_name_falls_back_when_stem_is_empty',
-            'busy_pipe_is_reported_as_a_live_socket_path',
-            'stream_pair_round_trips_bytes',
-            'split_stream_supports_concurrent_read_and_write',
-            'test_cancel_command_idle_reports_nothing_to_cancel'
-          )
+          # Each test lives in a specific crate, so every group names its
+          # package. A filter that matches nothing makes libtest report
+          # "0 passed" and exit 0, so each name is checked against the crate's
+          # test list before the run and a missing name fails the step.
+          $groups = [ordered]@{
+            'horon-agent-base' = @(
+              'command_candidates_adds_extension_on_windows',
+              'command_exists_for_known_binary',
+              'command_exists_absolute_path',
+              'is_process_running_reports_exited_children_as_stopped',
+              'spawn_replacement_process_returns_without_waiting_for_child_exit'
+            )
+            'horon-agent-app-core' = @(
+              'sibling_socket_path_roundtrip',
+              'cleanup_socket_pair_removes_main_and_debug_files',
+              'build_shell_command_uses_cmd_and_executes_command'
+            )
+            'horon-agent-transport' = @(
+              'pipe_name_is_stable_and_normalizes_case_and_separators',
+              'pipe_name_falls_back_when_stem_is_empty',
+              'busy_pipe_is_reported_as_a_live_socket_path',
+              'stream_pair_round_trips_bytes',
+              'split_stream_supports_concurrent_read_and_write'
+            )
+          }
 
-          foreach ($testName in $tests) {
+          foreach ($package in $groups.Keys) {
+            $names = $groups[$package]
+            $listed = & cargo test --locked --target x86_64-pc-windows-msvc -p $package --lib -- --list 2>&1 | ForEach-Object { "$_" }
+            if ($LASTEXITCODE -ne 0) {
+              $listed | ForEach-Object { Write-Host $_ }
+              throw "listing tests of $package failed with exit code $LASTEXITCODE"
+            }
+            foreach ($testName in $names) {
+              if (-not ($listed | Where-Object { $_ -match "(^|::)$([regex]::Escape($testName)): test$" })) {
+                throw "Windows targeted test $testName is not in the $package lib tests"
+              }
+            }
+
             & ./scripts/ci/cargo_with_timeout.ps1 `
-              -Name "Windows targeted test: $testName" `
-              -TimeoutSeconds 300 `
-              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--lib', $testName, '--', '--nocapture')
+              -Name "Windows targeted tests: $package" `
+              -TimeoutSeconds 600 `
+              -CargoArgs (@('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', $package, '--lib', '--') + $names + @('--nocapture'))
           }
 
       - name: Run Windows hotkey and power tests

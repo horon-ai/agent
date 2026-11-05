@@ -791,12 +791,7 @@ fn load_session_resolves_both_layouts_and_never_needs_a_snapshot_glob() {
         .tempdir()
         .expect("create temp HORON_AGENT_HOME");
     let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .recursive(true)
-        .create(temp_home.path().join("sessions"))
-        .expect("sessions dir");
+    crate::storage::create_store_dir(&temp_home.path().join("sessions"), true).expect("sessions dir");
 
     let canonical_id = "session_canonical_layout_1770000001000";
     let mut canonical = Session::create_with_id(canonical_id.to_string(), None, None);

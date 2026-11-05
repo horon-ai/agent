@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(unix)]
 #[test]
 fn session_replication_local_publication_is_private_and_catalog_readable() {
     use std::os::unix::fs::PermissionsExt;

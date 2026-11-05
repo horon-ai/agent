@@ -184,16 +184,11 @@ struct SplitTestHome {
 
 impl SplitTestHome {
     fn new() -> Self {
-        use std::os::unix::fs::DirBuilderExt;
-
         let directory = tempfile::tempdir().expect("split test home");
         // The event store owns `sessions/` under the agent home and refuses any
         // directory that is not owner-private; create it at 0700 so a load of a
         // never-saved session reports NotFound instead of an unusable root.
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(directory.path().join("sessions"))
-            .expect("create sessions dir");
+        crate::storage::create_store_dir(&directory.path().join("sessions"), false).expect("create sessions dir");
         let previous_home = std::env::var_os("HORON_AGENT_HOME");
         crate::env::set_var("HORON_AGENT_HOME", directory.path());
         Self {

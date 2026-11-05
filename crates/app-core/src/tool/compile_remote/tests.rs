@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(unix)]
 use base64::Engine;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

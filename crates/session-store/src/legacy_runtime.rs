@@ -26,45 +26,50 @@ pub struct LegacyIndexStamp {
 
 /// Stat only: changing read permissions does not invalidate a completed import.
 pub(crate) fn index_stamps(home: &Path) -> Result<BTreeMap<String, LegacyIndexStamp>, StoreError> {
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = home;
         return Err(crate::blobs::unsupported());
     }
-    #[cfg(unix)]
-    {
-        let mut result = BTreeMap::new();
-        for suffix in ["", "-wal", "-shm"] {
-            let name = format!("session-metadata-v1.sqlite3{suffix}");
-            let path = home.join(&name);
-            crate::legacy_bundle::safe_path(&path)?;
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.into()),
-            };
-            if !metadata.is_file() {
-                return Err(crate::blobs::unsafe_path(&path));
-            }
-            let modified = metadata
-                .modified()?
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| migration_required())?;
-            result.insert(
-                name,
-                LegacyIndexStamp {
-                    device: metadata.dev(),
-                    inode: metadata.ino(),
-                    uid: metadata.uid(),
-                    gid: metadata.gid(),
-                    length: metadata.len(),
-                    modified_seconds: modified.as_secs(),
-                    modified_nanos: modified.subsec_nanos(),
-                },
-            );
+    let mut result = BTreeMap::new();
+    for suffix in ["", "-wal", "-shm"] {
+        let name = format!("session-metadata-v1.sqlite3{suffix}");
+        let path = home.join(&name);
+        crate::legacy_bundle::safe_path(&path)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_file() {
+            return Err(crate::blobs::unsafe_path(&path));
         }
-        Ok(result)
+        let modified = metadata
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| migration_required())?;
+        // A Windows stamp carries only what the platform exposes: the file's
+        // length and modification time. The identity fields stay at their
+        // defaults, so a completed import stays authorized until the database
+        // file itself changes, which is the property this check needs.
+        #[cfg(unix)]
+        let (device, inode, uid, gid) = (metadata.dev(), metadata.ino(), metadata.uid(), metadata.gid());
+        #[cfg(not(unix))]
+        let (device, inode, uid, gid) = (0, 0, 0, 0);
+        result.insert(
+            name,
+            LegacyIndexStamp {
+                device,
+                inode,
+                uid,
+                gid,
+                length: metadata.len(),
+                modified_seconds: modified.as_secs(),
+                modified_nanos: modified.subsec_nanos(),
+            },
+        );
     }
+    Ok(result)
 }
 
 /// Authorize runtime activation only after every indexed row was migrated offline.

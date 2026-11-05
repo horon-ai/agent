@@ -45,8 +45,7 @@ impl Home {
         };
         let destination = std::path::PathBuf::from(root).join(format!("{phase}-{}", uuid::Uuid::new_v4()));
         fn copy(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
-            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            std::fs::DirBuilder::new().mode(0o700).create(destination)?;
+            crate::storage::create_store_dir(destination, false)?;
             for entry in std::fs::read_dir(source)? {
                 let entry = entry?;
                 let target = destination.join(entry.file_name());
@@ -55,7 +54,11 @@ impl Home {
                     copy(&entry.path(), &target)?;
                 } else if kind.is_file() {
                     std::fs::copy(entry.path(), &target)?;
-                    std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o600))?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))?;
+                    }
                 } else {
                     return Err(std::io::Error::other("fixture evidence contains a non-regular entry"));
                 }

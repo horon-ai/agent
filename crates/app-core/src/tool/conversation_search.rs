@@ -342,7 +342,6 @@ fn map_lower_range(text: &str, lo: usize, hi: usize) -> (usize, usize) {
 mod tests {
     use super::*;
     use crate::compaction::CompactionManager;
-    use std::os::unix::fs::DirBuilderExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn create_test_tool() -> ConversationSearchTool {
@@ -360,7 +359,7 @@ mod tests {
         // The store refuses any directory under the agent home that is not 0700,
         // and create_dir_all would leave this one at the umask default (0755).
         let _ = std::fs::create_dir_all(&base);
-        let _ = std::fs::DirBuilder::new().mode(0o700).create(base.join("sessions"));
+        let _ = crate::storage::create_store_dir(&base.join("sessions"), false);
 
         let previous_home = std::env::var("HORON_AGENT_HOME").ok();
         crate::env::set_var("HORON_AGENT_HOME", &base);

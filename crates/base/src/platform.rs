@@ -126,6 +126,23 @@ fn desired_nofile_soft_limit(current: u64, hard: u64, minimum: u64) -> Option<u6
     (desired > current).then_some(desired)
 }
 
+/// Flush a directory entry so a file created or renamed in it survives a crash.
+#[cfg(unix)]
+pub fn sync_directory(path: &Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+/// Flush a directory entry, where the platform can.
+///
+/// Windows cannot open a directory for `FlushFileBuffers` without backup
+/// semantics, and NTFS journals directory metadata itself, so the published
+/// file's own `sync_all` is the durability boundary there and there is nothing
+/// left to flush.
+#[cfg(not(unix))]
+pub fn sync_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// Create a symlink (Unix) or copy the file (Windows).
 ///
 /// On Windows, symlinks require elevated privileges or Developer Mode,

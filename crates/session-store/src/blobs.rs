@@ -21,14 +21,42 @@ impl Disk {
         if !metadata.is_dir() {
             return Err(unsafe_path(path));
         }
-        File::open(path).map_err(io_error)?.sync_all().map_err(io_error)
+        // A directory cannot be opened for `sync_all` on Windows without backup
+        // semantics, and NTFS journals directory entries itself. The file's own
+        // `sync_all` is what makes its bytes durable there, so this flush keeps
+        // the identity check above and then has nothing left to do.
+        #[cfg(windows)]
+        {
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        {
+            File::open(path).map_err(io_error)?.sync_all().map_err(io_error)
+        }
     }
 
     pub fn directory(&mut self, path: &Path) -> Result<(), StoreError> {
-        #[cfg(not(unix))]
+        // Windows has no owner-only mode to set, so the directory is created with
+        // the inheritable ACL of its parent and only its type and leaf identity
+        // are verified. `create_dir_all` follows an existing intermediate link,
+        // so the leaf is re-checked after creation.
+        #[cfg(windows)]
         {
-            let _ = path;
-            return Err(unsupported());
+            match fs::symlink_metadata(path) {
+                Ok(metadata) => {
+                    if !metadata.is_dir() {
+                        return Err(unsafe_path(path));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fs::create_dir_all(path)?;
+                    if !fs::symlink_metadata(path)?.is_dir() {
+                        return Err(unsafe_path(path));
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+            Ok(())
         }
         #[cfg(unix)]
         {
@@ -56,6 +84,11 @@ impl Disk {
             // Also sync on retry: an earlier create may have failed at parent sync.
             let parent = path.parent().ok_or_else(|| unsafe_path(path))?;
             self.sync_dir(parent, IoPoint::DirectorySync)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = path;
+            Err(unsupported())
         }
     }
 
@@ -97,6 +130,22 @@ pub(crate) fn io_error(error: std::io::Error) -> StoreError {
     }
 }
 
+/// Flush a directory entry so a file published in it survives a crash.
+#[cfg(not(windows))]
+pub(crate) fn sync_directory(path: &Path) -> Result<(), StoreError> {
+    File::open(path).map_err(io_error)?.sync_all().map_err(io_error)
+}
+
+/// Flush a directory entry, where the platform can.
+///
+/// Windows cannot open a directory for flushing without backup semantics, and
+/// NTFS journals directory metadata itself, so the published file's own
+/// `sync_all` is the durability boundary there.
+#[cfg(windows)]
+pub(crate) fn sync_directory(_path: &Path) -> Result<(), StoreError> {
+    Ok(())
+}
+
 pub(crate) fn unsupported() -> StoreError {
     StoreError::internal(
         StoreErrorCode::DurabilityUnsupported,
@@ -122,7 +171,14 @@ fn options() -> Result<OpenOptions, std::io::Error> {
         options.mode(0o600);
         Ok(options)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    // Windows has no `O_NOFOLLOW` and no mode bits to request at open time. The
+    // leaf is checked after opening by `check_file`, and the owner-only property
+    // comes from the agent home's inheritable ACL rather than from this call.
+    #[cfg(windows)]
+    {
+        Ok(OpenOptions::new())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
@@ -172,7 +228,31 @@ pub(crate) fn check_file(path: &Path, file: &File) -> Result<(), std::io::Error>
         }
         Ok(())
     }
-    #[cfg(not(unix))]
+    // Windows exposes no mode bits, link count or inode on the stable standard
+    // library surface, and `OpenOptions` has no `O_NOFOLLOW`, so this is the
+    // strongest check available: the leaf must be a regular file whose creation
+    // time matches the opened handle, so a file swapped in between the open and
+    // this check is refused. Size and the last write time are deliberately not
+    // compared: NTFS may defer both in the directory entry while a writing handle
+    // is still open, and this check also runs in that window. The owner-only
+    // property is carried by the agent home's inheritable ACL.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        let actual = file.metadata()?;
+        let named = fs::symlink_metadata(path)?;
+        if !actual.is_file() || !named.is_file() || actual.creation_time() != named.creation_time() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "unsafe file identity or permissions",
+            ));
+        }
+        Ok(())
+    }
+    // Every other platform keeps the original refusal: the store has no
+    // durability contract it can verify there.
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (path, file);
         Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
