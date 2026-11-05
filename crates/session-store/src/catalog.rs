@@ -1,5 +1,5 @@
 //! Host-local listing index. Session locks are acquired only outside catalog locks.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::blobs::new_file;
 use crate::blobs::{Disk, checked_file, log_file};
 use crate::cache_io::{Stamp, decode, encode, publish};
@@ -25,12 +25,20 @@ fn lock(paths: &SessionPaths) -> Result<File, StoreError> {
             return Err(crate::blobs::unsafe_path(paths.root()));
         }
     }
-    #[cfg(not(unix))]
+    // Windows has no owner-only mode bits; the store root is kept private by the
+    // inherited ACL of the agent home, so only its type is verified here.
+    #[cfg(windows)]
+    {
+        if !fs::symlink_metadata(paths.root())?.is_dir() {
+            return Err(crate::blobs::unsafe_path(paths.root()));
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = paths;
         return Err(crate::blobs::unsupported());
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let path = paths.root().join(".catalog.lock");
         let file = match new_file(&path) {

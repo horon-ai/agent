@@ -37,7 +37,7 @@ impl LocalRuntime {
         id: &horon_agent_session_store::SessionId,
     ) -> Result<()> {
         super::event_store::publish_local(&paths.session_dir(id)?.join("local-runtime.json"), self)?;
-        std::fs::File::open(paths.session_dir(id)?)?.sync_all()?;
+        crate::platform::sync_directory(&paths.session_dir(id)?)?;
         Ok(())
     }
 }

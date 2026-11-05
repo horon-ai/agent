@@ -49,7 +49,7 @@ pub fn origin_id(paths: &SessionPaths) -> Result<OriginId, StoreError> {
             let id = OriginId::new_v4();
             file.write_all(id.as_str().as_bytes())?;
             file.sync_all()?;
-            std::fs::File::open(paths.root())?.sync_all()?;
+            crate::blobs::sync_directory(paths.root())?;
             Ok(id)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
