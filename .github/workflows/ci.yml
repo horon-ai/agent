@@ -542,8 +542,11 @@ jobs:
 
           foreach ($package in $groups.Keys) {
             $names = $groups[$package]
-            $listed = & cargo test --locked --target x86_64-pc-windows-msvc -p $package --lib -- --list 2>$null
-            if ($LASTEXITCODE -ne 0) { throw "listing tests of $package failed with exit code $LASTEXITCODE" }
+            $listed = & cargo test --locked --target x86_64-pc-windows-msvc -p $package --lib -- --list 2>&1 | ForEach-Object { "$_" }
+            if ($LASTEXITCODE -ne 0) {
+              $listed | ForEach-Object { Write-Host $_ }
+              throw "listing tests of $package failed with exit code $LASTEXITCODE"
+            }
             foreach ($testName in $names) {
               if (-not ($listed | Where-Object { $_ -match "(^|::)$([regex]::Escape($testName)): test$" })) {
                 throw "Windows targeted test $testName is not in the $package lib tests"
