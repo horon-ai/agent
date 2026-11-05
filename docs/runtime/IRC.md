@@ -67,7 +67,7 @@ External wake 모드는 클라이언트가 직접 세션을 깨우는 설정이�
 
 주입 지점은 턴이 끝나는 자리가 아니라 모델 응답과 도구 라운드의 경계다. 위 표의 `턴 경계`도 턴 종료가 아니라 이 경계를 뜻한다. 스트리밍 경로는 모델 응답이 도구 호출 없이 끝날 때 그 응답을 처리하는 자리(`crates/app-core/src/agent/interrupts.rs`의 `handle_streaming_no_tool_calls`), 도구 라운드가 끝난 뒤 다음 모델 호출 전(`crates/app-core/src/agent/turn_streaming_mpsc.rs`), 긴급 표시가 있을 때 도구 그룹 경계에서 주입한다. 비스트리밍 턴 루프는 도구 라운드가 끝날 때만 주입하므로(`crates/app-core/src/agent/turn_loops.rs`) 도구 없이 끝나는 턴에는 주입 지점이 없다. 그래서 바쁜 수신자의 턴이 마지막 모델 응답을 마치고 그 응답에 대한 주입 검사까지 지난 뒤에 도착한 메시지는 그 턴에 들어가지 않고 대기열에 남는다. 이 메시지는 버려지지 않고 보관되며(`crates/app-core/src/server/live_turn.rs`), 서버는 남은 개수만 `SoftInterruptQueue` 이벤트로 알리고 새 턴을 시작하지 않는다(`crates/app-core/src/server/client_lifecycle.rs`). 다음 턴에서도 주입은 턴 시작이 아니라 첫 모델 응답을 처리하는 경계에서 일어난다. 첫 응답이 도구 호출로 이어지면 그 라운드가 끝난 뒤에, 도구 호출 없이 끝나면 그 응답 직후에 주입된다. 기존 `swarm` DM도 같은 `queue_soft_interrupt_for_session` 경로를 쓴다(`crates/app-core/src/server/client_comm_message.rs`). 받는 쪽이 `irc wait`로 기다리고 있으면 위 표의 첫 행대로 대기자에게 바로 넘어가므로, 답이 필요한 쪽은 `wait`를 쓰는 편이 확실하다.
 
-실패한 레그의 사유는 영수증에 실린다. 도구는 하나라도 전달되면 성공으로 보고, 모든 레그가 실패했을 때만 오류를 낸다. 부분 실패는 재전송으로 인한 중복을 피하려고 결과 본문에만 적는다.
+실패한 레그의 사유는 영수증에 실린다. 도구는 하나라도 전달되면 성공으로 보고, 레그가 있는데 모두 실패했거나 브로드캐스트 대상이 하나도 없을 때 오류를 낸다. 부분 실패는 재전송으로 인한 중복을 피하려고 결과 본문에만 적는다.
 
 ### 순서와 메일박스 상한
 
@@ -76,6 +76,10 @@ External wake 모드는 클라이언트가 직접 세션을 깨우는 설정이�
 같은 발신자의 연속 호출은 도구의 효과 등급이 기본 쓰기 배리어라서 한 라운드에서 하나씩 순서대로 실행된다. 그래서 같은 발신자가 보낸 메시지는 수신 측에서도 보낸 순서대로 도착한다. 서로 다른 발신자 사이의 전역 순서는 보장하지 않는다.
 
 메일박스는 라이브 전달이 실패한 메시지를 보관하는 큐다. 대상마다 `VecDeque` 하나를 두고, 길이가 `mailbox_cap`(기본 100)을 넘으면 가장 오래된 것부터 버리며 `mailbox_dropped`를 센다. 대기자에게 바로 넘어간 메시지와 주입에 성공한 메시지는 메일박스에 남지 않는다. `inbox`는 오래된 것부터 꺼낸다.
+
+라이브 전달이 `Errored`로 끝나면 같은 잠금 안에서 이 메시지를 받아 줄 대기자를 다시 찾는다. 대기자가 있으면 메일박스에 넣지 않고 그 대기자에게 넘기며 영수증은 `injected`가 되고, 없을 때만 메일박스에 넣고 `failed`로 기록한다.
+
+기다리던 `wait`가 중단되어 도구 태스크가 취소되면 대기 등록을 지운다. 그 사이 넘겨받았지만 읽지 못한 메시지는 같은 잠금 안에서 다른 대기자에게 넘기거나 `seq` 위치에 맞춰 메일박스로 되돌린다. 이때도 상한을 넘으면 가장 오래된 것을 버리고 `mailbox_dropped`를 센다.
 
 ### 답장 의무와 wait
 
@@ -134,7 +138,7 @@ External wake 모드는 클라이언트가 직접 세션을 깨우는 설정이�
 
 동작별 결과는 다음과 같다.
 
-- `send`: 첫 줄이 `message {id} sent`이고, 이어서 대상마다 `{to}: injected|woken|failed ({reason})` 한 줄이 나온다. 전달된 레그가 하나도 없을 때만 도구 오류다.
+- `send`: 첫 줄이 `message {id} sent`이고, 이어서 대상마다 `{to}: injected|woken|failed ({reason})` 한 줄이 나온다. 대상이 있는데 모든 레그가 실패하면 이 형식 그대로 도구 오류가 된다. 브로드캐스트 대상이 하나도 없어 레그가 만들어지지 않으면 이 줄을 쓰지 않고 `no recipients: there is no visible agent to broadcast to`만 도구 오류로 낸다.
 - `wait`: 결과가 메시지면 봉투를 그대로 돌려준다. 그 밖에는 `no message within {n}s`, `nothing to wait for: no one who owes you a reply can still answer`, `unanswerable: {ids} are waiting on you; send them what they need`, `interrupted: new input is queued for this session`, `cancelled` 중 하나다.
 - `inbox`: 보관된 봉투를 오래된 순서로 개행으로 잇는다. 비어 있으면 `inbox is empty`다.
 - `list`: 대상마다 `{id}\t{handle or -}\t{status}\t{parent or -}` 한 줄을 쓰고, 마지막 줄에 `unread: {n}`을 붙인다.
