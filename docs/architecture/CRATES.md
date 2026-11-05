@@ -323,6 +323,17 @@ headless 전환 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gat
 - 하네스 API 프레임의 major와 minor는 `API_VERSION_MAJOR`와 `API_VERSION_MINOR`이고 둘 다 `crates/harness-api/src/lib.rs`가 소유한다. 지금 프레임의 `v`에는 major만 실리므로 minor가 올라가도 클라이언트가 알 수 없다. 통합할 때는 major와 minor를 한 쌍으로 싣고, 이름이 같은 두 복제 상수는 `STORE_REPLICATION_VERSION`과 `REPLICATION_VERSION`으로 갈라 값의 일치를 테스트가 단언하게 한다.
 - companion 소켓과 MCP는 이 계약에 넣지 않는다. MCP `protocol_version`은 상대 서버가 정하는 값이라 우리가 올리거나 내릴 수 없다.
 
+### IRC 버스 크레이트는 동기화 원시만 쓴다
+
+`horon-agent-irc-core`(crate 경로 `crates/irc-core/`)는 프로세스 안에서만 도는 메일박스 버스를 소유한다. 서버 상태, 소켓, 설정, 디스크를 만지지 않고 `Mutex`와 `oneshot` 같은 동기화 원시와 `Arc` 공유만 쓴다. 의존성도 `tokio`의 `sync`, `time`, `macros`, `rt` 기능과 `futures`로 제한한다(`crates/irc-core/Cargo.toml`). 런타임을 만들지 않으므로 서버 없이 단위 테스트와 처리량 예제를 돌릴 수 있고, 서버 쪽 연결은 `crates/app-core/src/server/irc/`가 소유한다.
+
+이 배치는 "타입 크레이트에는 전역 상태와 런타임 의존성을 넣지 않는다"는 소유 규칙의 예외다. 버스는 데이터 계약이 아니라 동작을 가진 작은 엔진이고, 그 동작을 서버 크레이트에 두면 서버 없이 검증할 수 없기 때문이다. 예외를 좁게 유지하려고 두 가지를 지킨다.
+
+- 버스 본체(`crates/irc-core/src/bus.rs`)는 전역을 읽지 않는다. 데몬은 `crates/app-core/src/server/irc/mod.rs`의 `install`이 리스너를 bind한 뒤 한 번 설치하고, 데몬 실행이 끝날 때 지운다.
+- 전역 접근은 `crates/irc-core/src/global.rs`의 세 함수로만 열고, 세션 제거 정리는 `crates/app-core/src/server/session_forget.rs`가 버스의 `forget`을 호출해 맡는다.
+
+새 기능이 서버 세션 상태, 소켓, 디스크를 필요로 하면 이 크레이트에 넣지 않고 `crates/app-core/src/server/irc/`로 넓힌다. 반대로 순수한 큐·표·순서 규칙은 이 크레이트에 남긴다.
+
 ## "충분히 최적"의 정의
 
 다음 조건을 만족하면 구조가 충분히 좋다.
