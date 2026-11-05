@@ -37,7 +37,7 @@
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | 구조 게이트, A/B 측정 |
 | | [`RESULTS.md`](performance/RESULTS.md) | 측정 결과와 한계 |
 | | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산과 사고 대응 절차 |
-| `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release` |
+| `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행 |
 | | [`WINDOWS.md`](release/WINDOWS.md) | Windows 빌드와 서명 |
 
 ## 갱신 규칙
