@@ -2242,7 +2242,6 @@ dependencies = [
  "horon-agent-provider-env",
  "horon-agent-provider-metadata",
  "horon-agent-provider-openai",
- "horon-agent-render-core",
  "horon-agent-selfdev-types",
  "horon-agent-session-store",
  "horon-agent-session-types",

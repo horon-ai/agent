@@ -71,11 +71,9 @@ horon-agent-provider-env = { path = "../provider-env" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-provider-openai = { path = "../provider-openai" }
 # NOTE: this foundation layer intentionally does NOT depend on any `horon-agent-tui-*`
-# crate. The two pure-data/string symbols it used to reach for (`ResumeTarget`,
-# `reasoning_line_markup`) were moved to `horon-agent-session-types` and
-# `horon-agent-render-core` respectively, so the layering inversion (foundation
-# depending on presentation) is gone.
-horon-agent-render-core = { path = "../render-core" }
+# crate or on a presentation crate. `ResumeTarget` lives in
+# `horon-agent-session-types` and reasoning-line markup lives in
+# `session/render_markup.rs`, so the layering inversion is gone.
 horon-agent-terminal-launch = { path = "../terminal-launch" }
 horon-agent-terminal-image = { path = "../terminal-image" }
 horon-agent-usage-types = { path = "../usage-types" }
