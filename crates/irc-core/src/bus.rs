@@ -297,9 +297,8 @@ impl IrcBus {
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
         tokio::pin!(cancel);
-        let mut recheck = tokio::time::interval(RECHECK);
+        let mut recheck = tokio::time::interval_at(tokio::time::Instant::now() + RECHECK, RECHECK);
         recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        recheck.tick().await;
 
         loop {
             tokio::select! {
@@ -367,3 +366,7 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
+
+#[cfg(test)]
+#[path = "wait_latency_tests.rs"]
+mod wait_latency_tests;
