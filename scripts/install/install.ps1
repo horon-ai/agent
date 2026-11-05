@@ -141,7 +141,10 @@ function Get-HoronAgentSha256FromManifest {
     $found = @()
     foreach ($line in ($ManifestText -split "`r?`n")) {
         if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$') {
-            $candidateName = $Matches[2]
+            # A manifest row may name the asset by path (`nested/path/asset.exe`,
+            # and `./asset.exe` from a directory walk); the artifact selected for
+            # download is matched by its file name.
+            $candidateName = [System.IO.Path]::GetFileName($Matches[2])
             if ($candidateName -eq $AssetName) {
                 $found += $Matches[1].ToLowerInvariant()
             }
