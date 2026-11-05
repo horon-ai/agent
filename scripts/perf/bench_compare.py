@@ -1,0 +1,1822 @@
+#!/usr/bin/env python3
+"""Compare horon-agent with other headless coding agents.
+
+Every number is produced against a local mock model server
+(``scripts/perf/mock_llm_server.py``), so a run spends no money and needs no
+credentials. Each tool is pointed at that server through its own supported
+configuration surface inside a throwaway HOME, never the real one.
+
+Measured:
+  version_ms        cold ``--version`` wall time (N repeats)
+  oneshot_ms        one headless prompt through to completion, plus peak
+                    process-tree RSS and whether a tool round-trip happened
+  sessions_memory   idle and post-turn process-tree RSS for N concurrent
+                    sessions x K turns; "first session" and "each additional
+                    session" (least-squares slope)
+  install_size_bytes  binary or npm package directory size
+
+horon is the baseline; every other row shows its multiple of horon.
+
+Usage:
+    python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent \
+        --sessions 1 5 10 --turns 3 --json-out out.json --markdown-out out.md
+
+Missing tools are listed under "skipped" with a reason and do not fail the run.
+A measurement that fails records null plus an error string instead of a zero.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import bench_common as bc  # noqa: E402
+
+SUITE = "compare"
+DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi"]
+TURN_PROMPT = "List the files in the current directory, then reply with mock-ok."
+SESSION_TURNS = [
+    "List the files in the current directory.",
+    "List the files in the current directory again.",
+    "List the files one more time.",
+    "Show the directory listing.",
+    "Run ls again.",
+]
+
+
+# ---------------------------------------------------------------------------
+# Mock model server
+# ---------------------------------------------------------------------------
+
+
+class MockServer:
+    """Owns one mock_llm_server.py process on a free localhost port."""
+
+    def __init__(self) -> None:
+        self.proc: subprocess.Popen | None = None
+        self.port: int | None = None
+        self.base_url: str | None = None
+        self.log_path: str | None = None
+
+    def start(self) -> "MockServer":
+        script = str(Path(__file__).with_name("mock_llm_server.py"))
+        log = open(os.path.join(bc.short_temp_dir("hm-log-"), "mock.log"), "w", encoding="utf-8")
+        self.log_path = log.name
+        self.proc = subprocess.Popen(
+            [sys.executable, script, "--port", "0"],
+            stdout=subprocess.PIPE,
+            stderr=log,
+            text=True,
+            start_new_session=True,
+        )
+        assert self.proc.stdout is not None
+        line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError("mock model server did not print its port")
+        info = json.loads(line)
+        self.port = info["port"]
+        self.base_url = info["url"]
+        return self
+
+    def _get(self, path: str, timeout: float = 10.0) -> dict:
+        with urllib.request.urlopen(f"{self.base_url}{path}", timeout=timeout) as resp:
+            return json.loads(resp.read() or b"{}")
+
+    def stats(self) -> dict:
+        return self._get("/__stats")
+
+    def reset(self) -> None:
+        req = urllib.request.Request(f"{self.base_url}/__reset", data=b"{}", method="POST")
+        req.add_header("content-type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+
+    def stop(self) -> None:
+        if self.proc is None:
+            return
+        bc.terminate_pgroup(self.proc.pid)
+        try:
+            if self.proc.stdout:
+                self.proc.stdout.close()
+        except OSError:
+            pass
+        self.proc = None
+
+
+# ---------------------------------------------------------------------------
+# Tool definitions
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ToolSpec:
+    name: str
+    binary: str | None = None
+    version: str | None = None
+    skipped_reason: str | None = None
+
+
+BASE_ENV_DROP = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_ORG_ID",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "JCODE_HOME",
+    "JCODE_RUNTIME_DIR",
+    "HORON_AGENT_HOME",
+    "HORON_AGENT_RUNTIME_DIR",
+    "HORON_AGENT_SOCKET",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "PI_CODING_AGENT_DIR",
+    "OPENCODE_CONFIG",
+)
+
+
+def scrub_env(env: dict) -> dict:
+    """Remove variables that would point a tool at the real user account."""
+    clean = dict(env)
+    for key in BASE_ENV_DROP:
+        clean.pop(key, None)
+    return clean
+
+
+def resolve_bin(name: str, override: str | None, env: dict) -> str | None:
+    if override:
+        return override if os.path.exists(override) else None
+    candidates = {
+        "jcode": ["jcode"],
+        "claude_code": ["claude"],
+        "codex": ["codex"],
+        "opencode": ["opencode"],
+        "pi": ["pi"],
+    }.get(name, [])
+    for candidate in candidates:
+        found = shutil.which(candidate, path=env.get("PATH"))
+        if found:
+            return found
+    return None
+
+
+def tool_version(binary: str, env: dict) -> str | None:
+    try:
+        out = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=30, env=env, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (out.stdout or out.stderr or "").strip().splitlines()
+    return text[0].strip() if text else None
+
+
+# ---------------------------------------------------------------------------
+# Per-tool configuration
+# ---------------------------------------------------------------------------
+
+
+def write_horon_config(root: str, base_url: str) -> str:
+    home = os.path.join(root, "home")
+    os.makedirs(os.path.join(home, "config"), exist_ok=True)
+    config = f"""[provider]
+default_provider = "mock"
+default_model = "mock-model"
+
+[providers.mock]
+type = "openai-compatible"
+base_url = "{base_url}/v1"
+auth = "none"
+default_model = "mock-model"
+requires_api_key = false
+
+[[providers.mock.models]]
+id = "mock-model"
+context_window = 128000
+"""
+    path = os.path.join(home, "config.toml")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(config)
+    return home
+
+
+def horon_env(root: str, binary: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "HORON_AGENT"))
+    env["HORON_AGENT_SOCKET"] = os.path.join(root, "run", "horon-agent.sock")
+    env["HORON_AGENT_RUN_MCP"] = "0"
+    env["HORON_AGENT_RUN_AUTO_POKE"] = "0"
+    env["HORON_AGENT_DEBUG_CONTROL"] = "1"
+    env["HORON_AGENT_NO_UPDATE"] = "1"
+    env["DISABLE_TELEMETRY"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+    env["PATH"] = os.path.dirname(binary) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def horon_oneshot_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "--no-update",
+        "run",
+        "--no-selfdev",
+        "--quiet",
+        "--provider-profile",
+        "mock",
+        "--model",
+        "mock-model",
+        "--tools",
+        "bash",
+        TURN_PROMPT,
+    ]
+
+
+def jcode_env(root: str, binary: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "JCODE"))
+    env["JCODE_NO_TELEMETRY"] = "1"
+    env["JCODE_DEBUG_CONTROL"] = "1"
+    env["JCODE_TEMP_SERVER"] = "1"
+    env["JCODE_SERVER_OWNER_PID"] = str(os.getpid())
+    env["JCODE_MEMORY_ENABLED"] = "0"
+    env["DISABLE_TELEMETRY"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+    env["PATH"] = os.path.dirname(binary) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def write_jcode_config(root: str, base_url: str) -> None:
+    home = os.path.join(root, "home")
+    os.makedirs(home, exist_ok=True)
+    config = f"""[provider]
+default_provider = "mock"
+default_model = "mock-model"
+
+[providers.mock]
+type = "openai-compatible"
+base_url = "{base_url}/v1"
+auth = "none"
+default_model = "mock-model"
+requires_api_key = false
+
+[[providers.mock.models]]
+id = "mock-model"
+context_window = 128000
+"""
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(config)
+
+
+def jcode_oneshot_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "--no-update",
+        "--no-selfdev",
+        "run",
+        "--provider-profile",
+        "mock",
+        "--model",
+        "mock-model",
+        "--tools",
+        "bash",
+        TURN_PROMPT,
+    ]
+
+
+def claude_env(root: str, base_url: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "CLAUDE"))
+    env["ANTHROPIC_BASE_URL"] = base_url
+    env["ANTHROPIC_AUTH_TOKEN"] = "mock-token"
+    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+    env["DISABLE_TELEMETRY"] = "1"
+    env["DISABLE_AUTOUPDATER"] = "1"
+    env["DISABLE_ERROR_REPORTING"] = "1"
+    env["DISABLE_BUG_COMMAND"] = "1"
+    env["CLAUDE_CODE_DISABLE_UPDATE_CHECK"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+    return env
+
+
+def claude_oneshot_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "-p",
+        "--model",
+        "mock-model",
+        "--permission-mode",
+        "bypassPermissions",
+        "--output-format",
+        "text",
+        TURN_PROMPT,
+    ]
+
+
+def claude_session_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "bypassPermissions",
+        "--model",
+        "mock-model",
+    ]
+
+
+def codex_env(root: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "CODEX"))
+    env["CODEX_HOME"] = os.path.join(root, "home")
+    env["MOCK_PROVIDER_KEY"] = "mock-key"
+    env["DISABLE_TELEMETRY"] = "1"
+    env["OTEL_SDK_DISABLED"] = "true"
+    env["DO_NOT_TRACK"] = "1"
+    return env
+
+
+CODEX_PROVIDER_ARGS = [
+    "-c",
+    'model_providers.mock={name="mock",base_url="__BASE__",env_key="MOCK_PROVIDER_KEY",wire_api="responses"}',
+    "-c",
+    "model_provider=mock",
+]
+
+
+def codex_provider_args(base_url: str) -> list[str]:
+    return [part.replace("__BASE__", f"{base_url}/v1") for part in CODEX_PROVIDER_ARGS]
+
+
+def codex_oneshot_argv(binary: str, base_url: str) -> list[str]:
+    return [
+        binary,
+        "exec",
+        *codex_provider_args(base_url),
+        "-m",
+        "mock-model",
+        "-s",
+        "read-only",
+        "-c",
+        'approval_policy="never"',
+        "--skip-git-repo-check",
+        TURN_PROMPT,
+    ]
+
+
+def opencode_env(root: str, base_url: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "OPENCODE"))
+    config_dir = os.path.join(root, "config", "opencode")
+    os.makedirs(config_dir, exist_ok=True)
+    # The built-in `openai` provider accepts a baseURL override, so opencode does
+    # not have to fetch @ai-sdk/openai-compatible at runtime. A custom
+    # openai-compatible provider makes the first request install that npm
+    # package into its cache, which blows past any sane turn timeout.
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+            "openai": {
+                "options": {"baseURL": f"{base_url}/v1", "apiKey": "mock-key"},
+                "models": {"mock-model": {"name": "Mock Model"}},
+            }
+        },
+        "model": "openai/mock-model",
+    }
+    with open(os.path.join(config_dir, "opencode.json"), "w", encoding="utf-8") as fh:
+        json.dump(config, fh, indent=2)
+    env["XDG_CONFIG_HOME"] = os.path.join(root, "config")
+    env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
+    env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
+    env["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "1"
+    env["OPENCODE_DISABLE_EMBEDDED_WEB_UI"] = "1"
+    env["DISABLE_TELEMETRY"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+    return env
+
+
+def opencode_oneshot_argv(binary: str) -> list[str]:
+    return [binary, "run", "-m", "openai/mock-model", TURN_PROMPT]
+
+
+def pi_env(root: str, base_url: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "PI"))
+    agent_dir = os.path.join(root, "pi")
+    os.makedirs(agent_dir, exist_ok=True)
+    models = {
+        "providers": {
+            "mock": {
+                "baseUrl": f"{base_url}/v1",
+                "api": "openai-completions",
+                "apiKey": "mock-key",
+                "models": [
+                    {
+                        "id": "mock-model",
+                        "name": "Mock Model",
+                        "contextWindow": 128000,
+                        "maxTokens": 4096,
+                        "input": ["text"],
+                        "reasoning": False,
+                        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                    }
+                ],
+            }
+        }
+    }
+    with open(os.path.join(agent_dir, "models.json"), "w", encoding="utf-8") as fh:
+        json.dump(models, fh, indent=2)
+    env["PI_CODING_AGENT_DIR"] = agent_dir
+    env["PI_OFFLINE"] = "1"
+    env["PI_SKIP_VERSION_CHECK"] = "1"
+    env["PI_TELEMETRY"] = "0"
+    env["DISABLE_TELEMETRY"] = "1"
+    env["DO_NOT_TRACK"] = "1"
+    return env
+
+
+def pi_oneshot_argv(binary: str) -> list[str]:
+    return [binary, "-p", "--no-session", "--provider", "mock", "--model", "mock-model", TURN_PROMPT]
+
+
+def pi_session_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--provider",
+        "mock",
+        "--model",
+        "mock-model",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Measurement helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Proc:
+    proc: subprocess.Popen
+    pgid: int
+    extra: dict = field(default_factory=dict)
+
+    def close(self) -> None:
+        try:
+            if self.proc.stdin:
+                self.proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+        bc.terminate_pgroup(self.pgid)
+
+
+def spawn(argv: list[str], cwd: str, env: dict, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) -> Proc:
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=stdout,
+        stderr=stderr,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+    )
+    return Proc(proc=proc, pgid=os.getpgid(proc.pid))
+
+
+def measure_oneshot(argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float) -> dict:
+    """Run one headless prompt and time it, sampling peak tree RSS."""
+    try:
+        before = mock.stats()["request_count"]
+    except Exception:  # noqa: BLE001
+        before = 0
+    started = time.perf_counter()
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    sampler = bc.MemorySampler(proc.pid, interval=0.03).start()
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        bc.terminate_pgroup(os.getpgid(proc.pid))
+        try:
+            stdout, stderr = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    peak = sampler.stop()
+    try:
+        after = mock.stats()
+        requests = after["requests"][before:]
+        roundtrip = any(r.get("issued_tool_call") for r in requests) and any(
+            r.get("has_tool_result") for r in requests
+        )
+        saw_requests = len(requests)
+    except Exception:  # noqa: BLE001
+        roundtrip = None
+        saw_requests = None
+
+    error = None
+    if timed_out:
+        error = f"timeout after {timeout:.0f}s"
+    elif proc.returncode not in (0, None):
+        detail = (stderr or "").strip().splitlines()
+        error = f"exit {proc.returncode}: " + (detail[-1] if detail else "no stderr")
+    return {
+        "ms": None if timed_out else round(elapsed_ms, 2),
+        "peak_rss_bytes": peak or None,
+        "tool_roundtrip": roundtrip,
+        "mock_requests": saw_requests,
+        "exit_code": proc.returncode,
+        "error": error,
+        "stdout_tail": (stdout or "").strip()[-300:],
+    }
+
+
+def measure_version(argv: list[str], env: dict, runs: int) -> dict:
+    times: list[float] = []
+    error = None
+    for _ in range(max(1, runs)):
+        started = time.perf_counter()
+        try:
+            result = subprocess.run(
+                argv, capture_output=True, text=True, timeout=60, env=env, check=False
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            error = str(exc)[:200]
+            break
+        times.append((time.perf_counter() - started) * 1000)
+        if result.returncode != 0 and not error:
+            error = f"exit {result.returncode}"
+    summary = bc.summarize(times)
+    if summary is None:
+        return {"summary": None, "error": error or "no successful runs"}
+    if error:
+        summary["error"] = error
+    return {"summary": summary, "error": error}
+
+
+def _resolve_npm_package(name: str, from_dir: Path) -> Path | None:
+    """Node's lookup: <dir>/node_modules/<name> from from_dir upwards."""
+    current = from_dir
+    while True:
+        candidate = current / "node_modules" / name
+        if (candidate / "package.json").is_file():
+            return candidate
+        if current.parent == current:
+            return None
+        current = current.parent
+
+
+def _npm_closure(package_dir: Path) -> list[Path]:
+    """The package plus every installed dependency and optional dependency.
+
+    Launcher packages such as @openai/codex ship their native binary in an
+    optional platform package, so the launcher directory alone is a few KB.
+    """
+    seen: dict[str, Path] = {}
+    queue = [package_dir]
+    while queue:
+        current = queue.pop()
+        key = os.path.realpath(current)
+        if key in seen:
+            continue
+        seen[key] = current
+        try:
+            manifest = json.loads((current / "package.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        names = set(manifest.get("dependencies") or {}) | set(manifest.get("optionalDependencies") or {})
+        for name in sorted(names):
+            resolved = _resolve_npm_package(name, current)
+            if resolved is not None:
+                queue.append(resolved)
+    return list(seen.values())
+
+
+def _tree_size(root: Path) -> int:
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            try:
+                total += os.lstat(os.path.join(dirpath, name)).st_size
+            except OSError:
+                continue
+    return total
+
+
+def measure_install_size(binary: str) -> tuple[int | None, str | None]:
+    """Binary size, or the npm package plus its installed dependencies for node tools."""
+    try:
+        real = os.path.realpath(binary)
+    except OSError:
+        return None, "binary path not resolvable"
+    if not os.path.exists(real):
+        return None, "binary missing"
+    package_dir = None
+    current = Path(real).parent
+    for _ in range(6):
+        if (current / "package.json").is_file():
+            package_dir = current
+            break
+        if current.parent == current:
+            break
+        current = current.parent
+    if package_dir is None or "node_modules" not in str(package_dir):
+        return os.path.getsize(real), None
+    # A dependency nested inside the package is already counted by its parent's
+    # walk; skip closure members that live under another member.
+    members = sorted(_npm_closure(package_dir), key=lambda p: len(str(p)))
+    roots: list[Path] = []
+    for member in members:
+        if not any(str(member).startswith(str(root) + os.sep) for root in roots):
+            roots.append(member)
+    return sum(_tree_size(root) for root in roots), None
+
+
+# ---------------------------------------------------------------------------
+# Session harnesses
+# ---------------------------------------------------------------------------
+
+
+def run_turns_parallel(turn_fns: list, timeout: float) -> list[str | None]:
+    """Run one turn per session concurrently; return per-session errors."""
+    errors: list[str | None] = [None] * len(turn_fns)
+    threads = []
+
+    def wrap(index: int, fn) -> None:
+        try:
+            errors[index] = fn()
+        except Exception as exc:  # noqa: BLE001
+            errors[index] = str(exc)[:200]
+
+    for index, fn in enumerate(turn_fns):
+        thread = threading.Thread(target=wrap, args=(index, fn), daemon=True)
+        threads.append(thread)
+        thread.start()
+    deadline = time.perf_counter() + timeout
+    for thread in threads:
+        thread.join(max(0.1, deadline - time.perf_counter()))
+    return errors
+
+
+# ---- horon / jcode daemon harness ----------------------------------------
+
+
+class UnixDebugSession:
+    """A session on a daemon that speaks the ``debug_command`` JSON protocol."""
+
+    def __init__(self, socket_path: str, session_id: str, cwd: str):
+        self.socket_path = socket_path
+        self.session_id = session_id
+        self.cwd = cwd
+
+    def command(self, command: str, timeout: float = 180.0) -> str:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect(self.socket_path)
+        request = {"type": "debug_command", "id": 1, "command": command, "session_id": self.session_id}
+        sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
+        data = b""
+        try:
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                chunk = sock.recv(1 << 20)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in data:
+                    line = data.split(b"\n", 1)[0]
+                    response = json.loads(line)
+                    if response.get("ok") is False:
+                        raise RuntimeError(str(response.get("output") or response.get("error"))[:200])
+                    return response.get("output", "")
+        finally:
+            sock.close()
+        raise TimeoutError(f"debug command timed out: {command[:40]}")
+
+    def turn(self, prompt: str, timeout: float = 180.0) -> str | None:
+        self.command(f"message:{prompt}", timeout=timeout)
+        return None
+
+
+def start_daemon(
+    argv: list[str], cwd: str, env: dict, socket_path: str, debug_socket: str, log_path: str, timeout: float
+) -> Proc:
+    log = open(log_path, "w", encoding="utf-8")
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=log,
+        start_new_session=True,
+    )
+    handle = Proc(proc=proc, pgid=os.getpgid(proc.pid))
+    if not bc.wait_for_socket(main_socket_path(socket_path), timeout):
+        if not bc.wait_for_socket(debug_socket, timeout):
+            handle.close()
+            raise RuntimeError(f"daemon socket not ready: {log_path}")
+    if not bc.wait_for_socket(debug_socket, timeout):
+        handle.close()
+        raise RuntimeError("daemon debug socket not ready")
+    return handle
+
+
+def main_socket_path(socket_path: str) -> str:
+    return socket_path
+
+
+def measure_daemon_sessions(
+    name: str,
+    make_daemon,
+    session_count: int,
+    turns: int,
+    cwd: str,
+    timeout: float,
+) -> dict:
+    """Generic N-session harness for a single daemon process."""
+    daemon = None
+    sessions: list[UnixDebugSession] = []
+    samples: list[dict] = []
+    errors: list[str] = []
+    try:
+        daemon, sessions, create_errors = make_daemon(session_count)
+        errors.extend(create_errors)
+        time.sleep(1.0)
+        idle_rss = bc.process_tree_rss_bytes(daemon.proc.pid)
+        samples.append(
+            {
+                "phase": "idle",
+                "rss_bytes": idle_rss,
+                "pss_bytes": bc.process_tree_pss_bytes(daemon.proc.pid),
+            }
+        )
+        turn_times: list[list[float]] = []
+        for turn_index in range(turns):
+            prompt = SESSION_TURNS[turn_index % len(SESSION_TURNS)]
+            started = time.perf_counter()
+
+            def make_turn(session: UnixDebugSession):
+                return lambda: session.turn(prompt, timeout=timeout)
+
+            turn_errors = run_turns_parallel([make_turn(s) for s in sessions], timeout + 30)
+            elapsed = (time.perf_counter() - started) * 1000
+            turn_times.append([round(elapsed, 2)])
+            for index, error in enumerate(turn_errors):
+                if error:
+                    errors.append(f"turn {turn_index + 1} session {index}: {error}")
+            time.sleep(0.5)
+            samples.append(
+                {
+                    "phase": f"turn{turn_index + 1}",
+                    "rss_bytes": bc.process_tree_rss_bytes(daemon.proc.pid),
+                    "pss_bytes": bc.process_tree_pss_bytes(daemon.proc.pid),
+                    "turn_ms": round(elapsed, 2),
+                }
+            )
+        return {
+            "sessions": session_count,
+            "samples": samples,
+            "turn_ms": turn_times,
+            "errors": errors,
+            "sessions_created": len(sessions),
+        }
+    finally:
+        for session in sessions:
+            del session
+        if daemon is not None:
+            daemon.close()
+
+
+def make_horon_daemon(binary: str, root: str, cwd: str):
+    socket_path = os.path.join(root, "run", "bench.sock")
+    debug_socket = socket_path.replace(".sock", "-debug.sock")
+    env = horon_env(root, binary)
+    argv = [
+        binary,
+        "--no-update",
+        "serve",
+        "--no-selfdev",
+        "--socket",
+        socket_path,
+        "--debug-socket",
+        "--provider-profile",
+        "mock",
+        "--model",
+        "mock-model",
+        "--tools",
+        "bash",
+    ]
+
+    def factory(count: int):
+        daemon = start_daemon(
+            argv, cwd, env, socket_path, debug_socket, os.path.join(root, "serve.log"), timeout=60
+        )
+        sessions = []
+        errors = []
+        for index in range(count):
+            try:
+                out = sessions_client(debug_socket, f"create_session:{cwd}")
+                session_id = json.loads(out)["session_id"]
+                sessions.append(UnixDebugSession(debug_socket, session_id, cwd))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"create_session {index}: {exc}")
+                break
+        return daemon, sessions, errors
+
+    return factory
+
+
+def sessions_client(debug_socket: str, command: str, timeout: float = 60.0) -> str:
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    sock.connect(debug_socket)
+    try:
+        sock.sendall((json.dumps({"type": "debug_command", "id": 1, "command": command}) + "\n").encode())
+        data = b""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            chunk = sock.recv(1 << 20)
+            if not chunk:
+                break
+            data += chunk
+            if b"\n" in data:
+                response = json.loads(data.split(b"\n", 1)[0])
+                if response.get("ok") is False:
+                    raise RuntimeError(str(response.get("output") or response.get("error"))[:200])
+                return response.get("output", "")
+    finally:
+        sock.close()
+    raise TimeoutError("debug command timed out")
+
+
+def make_jcode_daemon(binary: str, root: str, cwd: str):
+    socket_path = os.path.join(root, "run", "bench.sock")
+    debug_socket = socket_path.replace(".sock", "-debug.sock")
+    env = jcode_env(root, binary)
+    argv = [
+        binary,
+        "--no-update",
+        "--no-selfdev",
+        "serve",
+        "--socket",
+        socket_path,
+        "--provider-profile",
+        "mock",
+        "--model",
+        "mock-model",
+        "--tools",
+        "bash",
+    ]
+
+    def factory(count: int):
+        daemon = start_daemon(
+            argv, cwd, env, socket_path, debug_socket, os.path.join(root, "serve.log"), timeout=90
+        )
+        sessions = []
+        errors = []
+        for index in range(count):
+            try:
+                out = sessions_client(debug_socket, f"create_session:{cwd}")
+                session_id = json.loads(out)["session_id"]
+                sessions_client(debug_socket, "set_model:mock-model", timeout=30)
+                sessions.append(UnixDebugSession(debug_socket, session_id, cwd))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"create_session {index}: {exc}")
+                break
+        return daemon, sessions, errors
+
+    return factory
+
+
+# ---- stdio JSON-line harness (claude, codex, pi) -------------------------
+
+
+class ClaudeSession:
+    def __init__(self, binary: str, cwd: str, env: dict):
+        self.handle = spawn(claude_session_argv(binary), cwd, env)
+        self.tool_uses = 0
+
+    def turn(self, prompt: str, timeout: float = 180.0) -> str | None:
+        message = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": prompt}]}}
+        assert self.handle.proc.stdin is not None
+        try:
+            self.handle.proc.stdin.write(json.dumps(message) + "\n")
+            self.handle.proc.stdin.flush()
+        except (BrokenPipeError, ValueError) as exc:
+            return f"stdin closed: {exc}"
+        assert self.handle.proc.stdout is not None
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = self.handle.proc.stdout.readline()
+            if not line:
+                return "process exited"
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "assistant":
+                self.tool_uses += json.dumps(event).count('"tool_use"')
+            if event.get("type") == "result":
+                if event.get("is_error"):
+                    return str(event.get("result"))[:200]
+                return None
+        return "timeout"
+
+    def close(self) -> None:
+        self.handle.close()
+
+
+class CodexSession:
+    def __init__(self, binary: str, cwd: str, env: dict, base_url: str):
+        argv = [binary, *codex_provider_args(base_url), "-m", "mock-model", "-s", "read-only", "-c",
+                'approval_policy="never"', "app-server"]
+        self.handle = spawn(argv, cwd, env)
+        self.next_id = 1
+        self.request("initialize", {"clientInfo": {"name": "bench-compare", "version": "1"}})
+        self._send({"jsonrpc": "2.0", "method": "initialized"})
+        result = self.request(
+            "thread/start",
+            {"cwd": cwd, "model": "mock-model", "approvalPolicy": "never", "sandbox": "read-only"},
+        )
+        self.thread_id = result["thread"]["id"]
+        self.tool_uses = 0
+
+    def _send(self, payload: dict) -> None:
+        assert self.handle.proc.stdin is not None
+        self.handle.proc.stdin.write(json.dumps(payload) + "\n")
+        self.handle.proc.stdin.flush()
+
+    def _read_until(self, predicate, timeout: float) -> tuple[str | None, object]:
+        assert self.handle.proc.stdout is not None
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = self.handle.proc.stdout.readline()
+            if not line:
+                return "process exited", None
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            verdict = predicate(event)
+            if verdict is not None:
+                return None, verdict
+        return "timeout", None
+
+    def request(self, method: str, params: dict, timeout: float = 120.0) -> dict:
+        request_id = self.next_id
+        self.next_id += 1
+        self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        box: dict = {}
+
+        def predicate(event):
+            if event.get("id") == request_id and "method" not in event:
+                if "error" in event:
+                    raise RuntimeError(f"codex {method}: {event['error']}")
+                box.update(event.get("result") or {})
+                return box
+            return None
+
+        error, value = self._read_until(predicate, timeout)
+        if error:
+            raise RuntimeError(f"codex {method}: {error}")
+        return value or {}
+
+    def turn(self, prompt: str, timeout: float = 180.0) -> str | None:
+        request_id = self.next_id
+        self.next_id += 1
+        self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "turn/start",
+                "params": {"threadId": self.thread_id, "input": [{"type": "text", "text": prompt}]},
+            }
+        )
+
+        def predicate(event):
+            method = event.get("method", "")
+            if event.get("id") and method:
+                self._send({"jsonrpc": "2.0", "id": event["id"], "result": {"decision": "decline"}})
+                return None
+            if method == "item/completed":
+                item = (event.get("params") or {}).get("item") or {}
+                if item.get("type") in ("commandExecution", "mcpToolCall", "fileChange", "webSearch"):
+                    self.tool_uses += 1
+            if method == "turn/completed":
+                turn = (event.get("params") or {}).get("turn") or {}
+                status = turn.get("status")
+                if status in (None, "completed"):
+                    return ""
+                return str(turn.get("error") or status)[:200]
+            return None
+
+        error, value = self._read_until(predicate, timeout)
+        if error:
+            return error
+        return value or None
+
+    def close(self) -> None:
+        self.handle.close()
+
+
+class PiSession:
+    def __init__(self, binary: str, cwd: str, env: dict):
+        self.handle = spawn(pi_session_argv(binary), cwd, env)
+
+    def turn(self, prompt: str, timeout: float = 180.0) -> str | None:
+        assert self.handle.proc.stdin is not None
+        self.handle.proc.stdin.write(json.dumps({"type": "prompt", "message": prompt}) + "\n")
+        self.handle.proc.stdin.flush()
+        assert self.handle.proc.stdout is not None
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            line = self.handle.proc.stdout.readline()
+            if not line:
+                return "process exited"
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "response" and event.get("success") is False:
+                return str(event.get("error"))[:200]
+            if event.get("type") == "agent_end":
+                messages = event.get("messages") or []
+                last = messages[-1] if messages else {}
+                if last.get("stopReason") == "error" or last.get("errorMessage"):
+                    return str(last.get("errorMessage") or "pi turn failed")[:200]
+                return None
+        return "timeout"
+
+    def close(self) -> None:
+        self.handle.close()
+
+
+def measure_proc_sessions(make_session, session_count: int, turns: int, timeout: float) -> dict:
+    sessions = []
+    samples: list[dict] = []
+    errors: list[str] = []
+    try:
+        for index in range(session_count):
+            try:
+                sessions.append(make_session())
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"session {index}: {exc}")
+                break
+        if not sessions:
+            return {"sessions": session_count, "samples": samples, "errors": errors, "sessions_created": 0}
+        time.sleep(2.0)
+        roots = [s.handle.proc.pid for s in sessions]
+        samples.append(
+            {
+                "phase": "idle",
+                "rss_bytes": sum(bc.process_tree_rss_bytes(pid) for pid in roots),
+                "pss_bytes": sum_of_pss(roots),
+            }
+        )
+        turn_times: list[list[float]] = []
+        for turn_index in range(turns):
+            prompt = SESSION_TURNS[turn_index % len(SESSION_TURNS)]
+            started = time.perf_counter()
+
+            def make_turn(session):
+                return lambda: session.turn(prompt, timeout=timeout)
+
+            turn_errors = run_turns_parallel([make_turn(s) for s in sessions], timeout + 30)
+            elapsed = (time.perf_counter() - started) * 1000
+            turn_times.append([round(elapsed, 2)])
+            for index, error in enumerate(turn_errors):
+                if error:
+                    errors.append(f"turn {turn_index + 1} session {index}: {error}")
+            time.sleep(0.5)
+            samples.append(
+                {
+                    "phase": f"turn{turn_index + 1}",
+                    "rss_bytes": sum(bc.process_tree_rss_bytes(pid) for pid in roots),
+                    "pss_bytes": sum_of_pss(roots),
+                    "turn_ms": round(elapsed, 2),
+                }
+            )
+        return {
+            "sessions": session_count,
+            "samples": samples,
+            "turn_ms": turn_times,
+            "errors": errors,
+            "sessions_created": len(sessions),
+        }
+    finally:
+        for session in sessions:
+            try:
+                session.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def sum_of_pss(roots: list[int]) -> int | None:
+    total = 0
+    seen = False
+    for pid in roots:
+        value = bc.process_tree_pss_bytes(pid)
+        if value is not None:
+            total += value
+            seen = True
+    return total if seen else None
+
+
+# ---- opencode HTTP harness ------------------------------------------------
+
+
+def http_json(method: str, url: str, body: dict | None = None, timeout: float = 120.0):
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(url, data=data, method=method, headers={"content-type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read()
+    return json.loads(raw) if raw else None
+
+
+def measure_opencode_sessions(
+    binary: str, root: str, cwd: str, session_count: int, turns: int, timeout: float, model_url: str
+) -> dict:
+    port = bc.free_port()
+    base = f"http://127.0.0.1:{port}"
+    # The provider config points at the mock model server; `base` is only where
+    # opencode's own HTTP API listens for the benchmark's session calls.
+    env = opencode_env(root, model_url)
+    # A fresh XDG tree makes `opencode serve` accept a message and then finish
+    # its step with no tokens and no HTTP request at all; the same config works
+    # once the tool has made one successful model call. Warm the caches with the
+    # `run` subcommand first so the session numbers measure per-session cost
+    # rather than that first-call initialization (which `oneshot_ms` covers).
+    warmup = subprocess.run(
+        opencode_oneshot_argv(binary),
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=max(120.0, timeout),
+        check=False,
+    )
+    if warmup.returncode != 0:
+        raise RuntimeError(f"opencode warm-up failed: {(warmup.stderr or '').strip()[-200:]}")
+    log = open(os.path.join(root, "serve.log"), "w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [binary, "serve", "--port", str(port), "--hostname", "127.0.0.1"],
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=log,
+        start_new_session=True,
+    )
+    pgid = os.getpgid(proc.pid)
+    sessions: list[str] = []
+    samples: list[dict] = []
+    errors: list[str] = []
+    try:
+        time.sleep(4.0)
+        deadline = time.time() + 60
+        while True:
+            try:
+                http_json("GET", f"{base}/session", timeout=5)
+                break
+            except Exception:  # noqa: BLE001
+                if time.time() > deadline:
+                    raise RuntimeError("opencode server not ready")
+                time.sleep(0.5)
+        for index in range(session_count):
+            try:
+                sessions.append(http_json("POST", f"{base}/session", {"title": f"bench-{index}"})["id"])
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"session {index}: {exc}")
+                break
+        time.sleep(1.0)
+        samples.append(
+            {
+                "phase": "idle",
+                "rss_bytes": bc.process_tree_rss_bytes(proc.pid),
+                "pss_bytes": bc.process_tree_pss_bytes(proc.pid),
+            }
+        )
+        turn_times: list[list[float]] = []
+        for turn_index in range(turns):
+            prompt = SESSION_TURNS[turn_index % len(SESSION_TURNS)]
+            started = time.perf_counter()
+
+            def one(session_id: str):
+                def run():
+                    reply = http_json(
+                        "POST",
+                        f"{base}/session/{session_id}/message",
+                        {
+                            "parts": [{"type": "text", "text": prompt}],
+                            "model": {"providerID": "openai", "modelID": "mock-model"},
+                        },
+                        timeout=timeout,
+                    )
+                    error = ((reply or {}).get("info") or {}).get("error")
+                    if error:
+                        return str(error)[:200]
+                    return None
+
+                return run
+
+            turn_errors = run_turns_parallel([one(session_id) for session_id in sessions], timeout + 30)
+            elapsed = (time.perf_counter() - started) * 1000
+            turn_times.append([round(elapsed, 2)])
+            for index, error in enumerate(turn_errors):
+                if error:
+                    errors.append(f"turn {turn_index + 1} session {index}: {error}")
+            time.sleep(0.5)
+            samples.append(
+                {
+                    "phase": f"turn{turn_index + 1}",
+                    "rss_bytes": bc.process_tree_rss_bytes(proc.pid),
+                    "pss_bytes": bc.process_tree_pss_bytes(proc.pid),
+                    "turn_ms": round(elapsed, 2),
+                }
+            )
+        return {
+            "sessions": session_count,
+            "samples": samples,
+            "turn_ms": turn_times,
+            "errors": errors,
+            "sessions_created": len(sessions),
+        }
+    finally:
+        bc.terminate_pgroup(pgid)
+        try:
+            log.close()
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Tool plugins
+# ---------------------------------------------------------------------------
+
+
+class ToolRunner:
+    """Everything the benchmark needs to know about one tool."""
+
+    name = ""
+    label = ""
+
+    def __init__(self, binary: str):
+        self.binary = binary
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        raise NotImplementedError
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        raise NotImplementedError
+
+    def env_for_version(self, root: str) -> dict:
+        raise NotImplementedError
+
+
+class HoronRunner(ToolRunner):
+    name = "horon"
+    label = "horon"
+
+    def env_for_version(self, root: str) -> dict:
+        return horon_env(root, self.binary)
+
+    def _root(self, root: str, mock: MockServer) -> dict:
+        home = write_horon_config(root, mock.base_url)
+        env = horon_env(root, self.binary)
+        env["HORON_AGENT_HOME"] = home
+        return env
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = self._root(root, mock)
+        return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        self._root(root, mock)
+        return measure_daemon_sessions(
+            self.name, make_horon_daemon(self.binary, root, cwd), count, turns, cwd, timeout
+        )
+
+
+class JcodeRunner(ToolRunner):
+    name = "jcode"
+    label = "jcode"
+
+    def env_for_version(self, root: str) -> dict:
+        write_jcode_config(root, "http://127.0.0.1:1")
+        return jcode_env(root, self.binary)
+
+    def _root(self, root: str, mock: MockServer) -> dict:
+        write_jcode_config(root, mock.base_url)
+        return jcode_env(root, self.binary)
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = self._root(root, mock)
+        return measure_oneshot(jcode_oneshot_argv(self.binary), cwd, env, mock, timeout)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        self._root(root, mock)
+        return measure_daemon_sessions(
+            self.name, make_jcode_daemon(self.binary, root, cwd), count, turns, cwd, timeout
+        )
+
+
+class ClaudeRunner(ToolRunner):
+    name = "claude_code"
+    label = "Claude Code"
+
+    def env_for_version(self, root: str) -> dict:
+        return claude_env(root, "http://127.0.0.1:1")
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = claude_env(root, mock.base_url)
+        return measure_oneshot(claude_oneshot_argv(self.binary), cwd, env, mock, timeout)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        env = claude_env(root, mock.base_url)
+        return measure_proc_sessions(lambda: ClaudeSession(self.binary, cwd, env), count, turns, timeout)
+
+
+class CodexRunner(ToolRunner):
+    name = "codex"
+    label = "Codex CLI"
+
+    def env_for_version(self, root: str) -> dict:
+        return codex_env(root)
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = codex_env(root)
+        return measure_oneshot(codex_oneshot_argv(self.binary, mock.base_url), cwd, env, mock, timeout)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        env = codex_env(root)
+        base_url = mock.base_url or ""
+        return measure_proc_sessions(
+            lambda: CodexSession(self.binary, cwd, env, base_url), count, turns, timeout
+        )
+
+
+class OpencodeRunner(ToolRunner):
+    name = "opencode"
+    label = "OpenCode"
+
+    def env_for_version(self, root: str) -> dict:
+        return opencode_env(root, "http://127.0.0.1:1")
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = opencode_env(root, mock.base_url or "")
+        return measure_oneshot(opencode_oneshot_argv(self.binary), cwd, env, mock, timeout)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        return measure_opencode_sessions(
+            self.binary, root, cwd, count, turns, timeout, mock.base_url or ""
+        )
+
+
+class PiRunner(ToolRunner):
+    name = "pi"
+    label = "pi"
+
+    def env_for_version(self, root: str) -> dict:
+        return pi_env(root, "http://127.0.0.1:1")
+
+    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = pi_env(root, mock.base_url or "")
+        return measure_oneshot(pi_oneshot_argv(self.binary), cwd, env, mock, timeout)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        env = pi_env(root, mock.base_url or "")
+        return measure_proc_sessions(lambda: PiSession(self.binary, cwd, env), count, turns, timeout)
+
+
+RUNNERS = {
+    "horon": HoronRunner,
+    "jcode": JcodeRunner,
+    "claude_code": ClaudeRunner,
+    "codex": CodexRunner,
+    "opencode": OpencodeRunner,
+    "pi": PiRunner,
+}
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--bin", action="append", default=[], metavar="NAME=PATH",
+                        help="tool binary override, repeatable")
+    parser.add_argument("--sessions", type=int, nargs="+", default=[1, 5, 10],
+                        help="concurrent session counts (default: 1 5 10)")
+    parser.add_argument("--turns", type=int, default=3, help="turns per session (default: 3)")
+    parser.add_argument("--version-runs", type=int, default=5, help="--version repeats (default: 5)")
+    parser.add_argument("--oneshot-runs", type=int, default=3, help="one-shot prompt repeats (default: 3)")
+    parser.add_argument("--tools", nargs="+", default=DEFAULT_TOOLS,
+                        help=f"tools to measure (default: {' '.join(DEFAULT_TOOLS)})")
+    parser.add_argument("--timeout", type=float, default=180.0, help="per-turn/oneshot timeout seconds")
+    parser.add_argument("--json-out")
+    parser.add_argument("--markdown-out")
+    return parser.parse_args(argv)
+
+
+def parse_bin_overrides(values: list[str]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit(f"--bin expects NAME=PATH, got {value!r}")
+        name, path = value.split("=", 1)
+        overrides[name.strip()] = os.path.abspath(os.path.expanduser(path.strip()))
+    return overrides
+
+
+def plan_first_session(points: list[dict], key: str) -> float | None:
+    for point in points:
+        if point["sessions"] == 1 and not point.get("errors"):
+            value = point.get(key)
+            return float(value) if value else None
+    return None
+
+
+def slope_series(points: list[dict], key: str) -> float | None:
+    """Least-squares slope over clean points only.
+
+    A point whose turns timed out still records *some* RSS, but mixing that with
+    a healthy point produces a meaningless "each additional session" figure,
+    which reads as a real result. A negative slope means growth stayed inside
+    RSS sampling noise (a downsized heap or a freed cache between samples), so
+    it is reported as 0 rather than as a negative allocation.
+    """
+    xs, ys = [], []
+    for point in points:
+        if point.get("errors"):
+            continue
+        value = point.get(key)
+        if value:
+            xs.append(float(point["sessions"]))
+            ys.append(float(value))
+    slope = bc.linear_slope(xs, ys)
+    if slope is None:
+        return None
+    return max(0.0, slope)
+
+
+
+def summarize_oneshot(runs: list[dict]) -> dict:
+    """Collapse repeated one-shot runs into one comparable row.
+
+    ``ms`` is the median so a single slow first process (page cache, JIT warm
+    up) does not set the headline number; the individual runs stay in the JSON so
+    a spread is visible rather than hidden behind one statistic.
+    """
+    times = [run["ms"] for run in runs if run.get("ms") is not None]
+    peaks = [run["peak_rss_bytes"] for run in runs if run.get("peak_rss_bytes")]
+    summary = bc.summarize(times)
+    errors = [run["error"] for run in runs if run.get("error")]
+    roundtrips = [run.get("tool_roundtrip") for run in runs if run.get("tool_roundtrip") is not None]
+    return {
+        "ms": summary["median"] if summary else None,
+        "summary": summary,
+        "peak_rss_bytes": max(peaks) if peaks else None,
+        "tool_roundtrip": (all(roundtrips) if roundtrips else None),
+        "mock_requests": [run.get("mock_requests") for run in runs],
+        "errors": errors,
+        "error": errors[0] if errors else None,
+        "runs": runs,
+    }
+
+
+def measure_tool(
+    runner: ToolRunner,
+    mock: MockServer,
+    session_counts: list[int],
+    turns: int,
+    version_runs: int,
+    oneshot_runs: int,
+    timeout: float,
+) -> dict:
+    root = bc.short_temp_dir(f"hcmp-{runner.name[:6]}-")
+    cwd = os.path.join(root, "ws")
+    os.makedirs(cwd, exist_ok=True)
+    with open(os.path.join(cwd, "sample.txt"), "w", encoding="utf-8") as fh:
+        fh.write("benchmark fixture\n")
+    result: dict = {
+        "name": runner.name,
+        "label": runner.label,
+        "binary": runner.binary,
+        "version": None,
+        "version_ms": None,
+        "oneshot": None,
+        "sessions_memory": None,
+        "install_size_bytes": None,
+        "error": None,
+    }
+    try:
+        version_env = runner.env_for_version(root)
+        result["version"] = tool_version(runner.binary, version_env)
+        result["version_ms"] = measure_version([runner.binary, "--version"], version_env, version_runs)
+        size, size_error = measure_install_size(runner.binary)
+        result["install_size_bytes"] = size
+        if size_error:
+            result["install_size_error"] = size_error
+
+        runs: list[dict] = []
+        for _ in range(max(1, oneshot_runs)):
+            try:
+                runs.append(runner.oneshot(mock, root, cwd, timeout))
+            except Exception as exc:  # noqa: BLE001
+                runs.append({"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
+                             "error": str(exc)[:300]})
+        result["oneshot"] = summarize_oneshot(runs)
+
+        points = []
+        for count in session_counts:
+            mock.reset()
+            try:
+                measurement = runner.sessions(mock, root, cwd, count, turns, timeout)
+            except Exception as exc:  # noqa: BLE001
+                points.append({"sessions": count, "error": str(exc)[:300], "samples": [], "errors": [str(exc)[:300]]})
+                continue
+            idle = next((s for s in measurement["samples"] if s["phase"] == "idle"), None)
+            post = measurement["samples"][-1] if measurement["samples"] else None
+            errors = list(measurement.get("errors") or [])
+            created = measurement.get("sessions_created")
+            if created is not None and created != count:
+                errors.append(f"only {created}/{count} sessions were created")
+            points.append(
+                {
+                    "sessions": count,
+                    "idle_rss_bytes": (idle or {}).get("rss_bytes"),
+                    "idle_pss_bytes": (idle or {}).get("pss_bytes"),
+                    "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
+                    "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
+                    "samples": measurement["samples"],
+                    "turn_ms": measurement.get("turn_ms"),
+                    "errors": errors,
+                    "sessions_created": created,
+                }
+            )
+        result["sessions_memory"] = {
+            "turns": turns,
+            "points": points,
+            "first_session_idle_rss_bytes": plan_first_session(points, "idle_rss_bytes"),
+            "each_additional_idle_rss_bytes": slope_series(points, "idle_rss_bytes"),
+            "first_session_post_turn_rss_bytes": plan_first_session(points, "post_turn_rss_bytes"),
+            "each_additional_post_turn_rss_bytes": slope_series(points, "post_turn_rss_bytes"),
+            "first_session_idle_pss_bytes": plan_first_session(points, "idle_pss_bytes"),
+            "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)[:400]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Report rendering
+# ---------------------------------------------------------------------------
+
+
+def baseline_value(results: list[dict], path: tuple[str, ...]):
+    for result in results:
+        if result["name"] != "horon":
+            continue
+        value = result
+        for key in path:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        return value if isinstance(value, (int, float)) else None
+    return None
+
+
+def relative(value, baseline, lower_is_better: bool = True) -> str:
+    if value is None or baseline in (None, 0):
+        return "—"
+    ratio = value / baseline
+    return bc.fmt_ratio(ratio, better_is_lower=lower_is_better)
+
+
+def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
+    results = report["results"]
+    lines = ["# Coding agent comparison (headless, mock model)", ""]
+    host = report["host"]
+    lines.append(
+        f"Host: {host['os']}/{host['arch']}, {host['cpu_count']} CPUs, Python {host['python']}. "
+        f"Baseline: **horon**."
+    )
+    lines.append("")
+
+    skipped = report.get("skipped") or []
+    if skipped:
+        lines.append("Skipped: " + ", ".join(f"{s['name']} ({s['reason']})" for s in skipped))
+        lines.append("")
+
+    # Version / binary
+    rows = []
+    for result in results:
+        oneshot = result.get("oneshot") or {}
+        rows.append(
+            [
+                result["label"],
+                result.get("version") or "—",
+                (result.get("version_ms") or {}).get("summary", {}).get("median") and
+                bc.fmt_ms(result["version_ms"]["summary"]["median"]) or "—",
+                bc.fmt_bytes(result.get("install_size_bytes")),
+            ]
+        )
+    lines.append(bc.markdown_table(["Tool", "Version", "`--version` (median)", "Install size"], rows))
+    lines.append("")
+
+    # One-shot
+    base_ms = baseline_value(results, ("oneshot", "ms"))
+    base_rss = baseline_value(results, ("oneshot", "peak_rss_bytes"))
+    rows = []
+    for result in results:
+        oneshot = result.get("oneshot") or {}
+        ms = oneshot.get("ms")
+        rss = oneshot.get("peak_rss_bytes")
+        roundtrip = oneshot.get("tool_roundtrip")
+        notes = oneshot.get("errors") or ([oneshot["error"]] if oneshot.get("error") else [])
+        note = notes[0] if notes else ""
+        summary = oneshot.get("summary") or {}
+        spread = ""
+        if summary.get("samples", 0) > 1:
+            spread = f"{bc.fmt_ms(summary['min'])}–{bc.fmt_ms(summary['max'])}"
+        rows.append(
+            [
+                result["label"],
+                bc.fmt_ms(ms),
+                spread,
+                relative(ms, base_ms) if result["name"] != "horon" else "baseline",
+                bc.fmt_bytes(rss),
+                relative(rss, base_rss) if result["name"] != "horon" else "baseline",
+                "yes" if roundtrip else ("no" if roundtrip is False else "—"),
+                note[:60],
+            ]
+        )
+    lines.append("**One-shot headless prompt** (includes startup, one `ls` tool call, final answer)")
+    lines.append("")
+    lines.append(
+        bc.markdown_table(
+            ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
+             "Tool round-trip", "Note"],
+            rows,
+        )
+    )
+    lines.append("")
+
+    # Sessions
+    base_first = baseline_value(results, ("sessions_memory", "first_session_idle_rss_bytes"))
+    base_additional = baseline_value(results, ("sessions_memory", "each_additional_idle_rss_bytes"))
+    rows = []
+    for result in results:
+        memory = result.get("sessions_memory") or {}
+        first = memory.get("first_session_idle_rss_bytes")
+        additional = memory.get("each_additional_idle_rss_bytes")
+        post_first = memory.get("first_session_post_turn_rss_bytes")
+        post_additional = memory.get("each_additional_post_turn_rss_bytes")
+        rows.append(
+            [
+                result["label"],
+                bc.fmt_bytes(first),
+                bc.fmt_bytes(additional),
+                relative(additional, base_additional) if result["name"] != "horon" else "baseline",
+                bc.fmt_bytes(post_first),
+                bc.fmt_bytes(post_additional),
+            ]
+        )
+    lines.append(
+        f"**Session memory** (idle after {turns} turn(s) per session; sizes are process-tree sums, "
+        f"RSS; PSS also recorded on Linux). \"Each additional\" is the least-squares slope across the "
+        f"measured session counts; 0 B means growth stayed below RSS sampling noise."
+    )
+    lines.append("")
+    lines.append(
+        bc.markdown_table(
+            ["Tool", "First session", "Each additional", "vs horon (additional)", "First (post-turn)",
+             "Each additional (post-turn)"],
+            rows,
+        )
+    )
+    lines.append("")
+
+    # Per-count detail
+    rows = []
+    for result in results:
+        memory = result.get("sessions_memory") or {}
+        by_count = {p["sessions"]: p for p in memory.get("points") or []}
+        row = [result["label"]]
+        for count in session_counts:
+            point = by_count.get(count) or {}
+            value = point.get("post_turn_rss_bytes")
+            row.append(bc.fmt_bytes(value))
+        rows.append(row)
+    lines.append("**Post-turn tree RSS per session count**")
+    lines.append("")
+    lines.append(bc.markdown_table(["Tool"] + [f"{n} session(s)" for n in session_counts], rows))
+    lines.append("")
+
+    errors = []
+    for result in results:
+        if result.get("error"):
+            errors.append(f"- {result['label']}: {result['error']}")
+        for point in (result.get("sessions_memory") or {}).get("points") or []:
+            for error in point.get("errors") or []:
+                errors.append(f"- {result['label']} @ {point['sessions']} sessions: {error}")
+    if errors:
+        lines.append("**Errors recorded during measurement**")
+        lines.append("")
+        lines.extend(errors[:20])
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    overrides = parse_bin_overrides(args.bin)
+    started_at = bc.utc_now_iso()
+    results: list[dict] = []
+    skipped: list[dict] = []
+
+    if "horon" not in args.tools:
+        args.tools = ["horon"] + list(args.tools)
+
+    mock = MockServer().start()
+    try:
+        for name in args.tools:
+            runner_cls = RUNNERS.get(name)
+            if runner_cls is None:
+                skipped.append({"name": name, "reason": "unknown tool"})
+                continue
+            binary = resolve_bin(name, overrides.get(name), os.environ)
+            if not binary:
+                skipped.append({"name": name, "reason": "binary not found (pass --bin name=path)"})
+                continue
+            runner = runner_cls(binary)
+            bc.eprint(f"[bench_compare] measuring {name} ({binary})")
+            results.append(
+                measure_tool(
+                    runner, mock, args.sessions, args.turns, args.version_runs, args.oneshot_runs, args.timeout
+                )
+            )
+            bc.eprint(f"[bench_compare] finished {name}")
+    finally:
+        mock.stop()
+
+    report = bc.build_report(SUITE, results, skipped, started_at)
+    report["parameters"] = {
+        "sessions": args.sessions,
+        "turns": args.turns,
+        "version_runs": args.version_runs,
+        "timeout_s": args.timeout,
+    }
+    markdown = render_markdown(report, args.sessions, args.turns)
+    if args.json_out:
+        bc.write_json(args.json_out, report)
+        bc.eprint(f"[bench_compare] wrote {args.json_out}")
+    if args.markdown_out:
+        bc.write_markdown(args.markdown_out, markdown)
+        bc.eprint(f"[bench_compare] wrote {args.markdown_out}")
+    if not args.json_out and not args.markdown_out:
+        print(markdown)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
