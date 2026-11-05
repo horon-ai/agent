@@ -481,6 +481,7 @@ impl CommandWatcher {
     /// Kill the child's whole process group, the way the `bash` tool cancels.
     pub fn cancel(&mut self) {
         if let Some(mut child) = self.child.take() {
+            #[cfg(unix)]
             let _ = crate::platform::signal_detached_process_group(child.id(), libc::SIGKILL);
             let _ = child.kill();
             let _ = child.wait();

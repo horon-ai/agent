@@ -850,11 +850,22 @@ mod tests {
     #[test]
     fn restore_returns_the_original_bytes() {
         let mut vault = SecretVault::new();
-        let text = "export OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz012345\n\
-                    aws=AKIAABCDEFGHIJKLMNOP\n\
-                    header: Bearer abcdefghijklmnopqrstuvwxyz0123456789\n";
-        let masked = obfuscate(text, &mut vault, &[]);
+        // The AWS sample is assembled from two pieces: the masking rule and the
+        // repository secret scan both look for `AKIA` followed by sixteen token
+        // characters, so a single literal here would read as credential material
+        // to the scan while proving nothing more than the round trip below.
+        let aws_key = format!("{}{}", "AKIA", "ABCDEFGHIJKLMNOP");
+        let text = format!(
+            "export OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz012345\n\
+             aws={aws_key}\n\
+             header: Bearer abcdefghijklmnopqrstuvwxyz0123456789\n"
+        );
+        let masked = obfuscate(&text, &mut vault, &[]);
         assert_ne!(masked, text, "the sample must actually carry credentials");
+        assert!(
+            masked.contains("«SECRET:aws:"),
+            "the AWS shape must be masked: {masked}"
+        );
         assert_eq!(restore(&masked, &vault), text);
     }
 

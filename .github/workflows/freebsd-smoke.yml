@@ -40,11 +40,23 @@ jobs:
   smoke:
     name: FreeBSD Smoke (x86_64)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # QEMU with 3 cargo jobs compiles the binary plus the platform test harness;
+    # 120 minutes left no headroom on a cold hosted runner.
+    timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # The QEMU guest disk image plus the in-VM build needs more room than a
+      # stock hosted runner has free on /.
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
 
       - name: Build and test in FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -55,10 +67,11 @@ jobs:
           mem: 6144
           cpu: 4
           # Install the toolchain horon-agent needs. The project is OpenSSL-free
-          # (rustls + aws-lc-rs), so we only need a C/C++ toolchain, cmake, and
-          # rust. pkgconf is handy for any transitive pkg-config probes.
+          # (rustls + aws-lc-rs), so we only need a C/C++ toolchain, cmake, perl
+          # (aws-lc-sys CMake probes) and rust. pkgconf is handy for any
+          # transitive pkg-config probes.
           prepare: |
-            pkg install -y rust cmake gmake pkgconf bash git
+            pkg install -y rust cmake gmake pkgconf bash git perl5
           # CARGO_BUILD_JOBS keeps memory in check; aws-lc-sys is memory hungry.
           run: |
             set -e
@@ -69,7 +82,20 @@ jobs:
             rustc --version
             echo "::endgroup::"
 
+            # Cargo.toml requires rustc 1.99. The FreeBSD package is 1.99.1
+            # today, but detect a lagging port here instead of failing deep in
+            # cargo with an opaque MSRV error.
+            rust_version="$(rustc --version | awk '{print $2}')"
+            rust_major="${rust_version%%.*}"
+            rust_minor="${rust_version#*.}"
+            rust_minor="${rust_minor%%.*}"
+            if [ "$rust_major" -lt 1 ] || { [ "$rust_major" -eq 1 ] && [ "$rust_minor" -lt 99 ]; }; then
+              echo "::error::FreeBSD rustc ${rust_version} is older than the 1.99 required by Cargo.toml; install a newer rust port (or rustup 1.99.1) in the VM."
+              exit 1
+            fi
+
             export CARGO_TERM_COLOR=always
+            export CARGO_INCREMENTAL=0
             export CARGO_BUILD_JOBS=3
 
             if [ "${{ inputs.release }}" = "true" ]; then

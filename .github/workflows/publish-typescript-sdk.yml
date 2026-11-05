@@ -16,24 +16,115 @@ on:
 permissions:
   contents: read
 
+# Two dispatches for the same tag would race to publish one version.
+concurrency:
+  group: publish-typescript-${{ inputs.horon_agent_release_tag }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Publish @horon-ai/agent-sdk
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # The pinned 1.99.1 toolchain would otherwise shadow the installed stable
+      # toolchain and download it a second time.
+      RUSTUP_TOOLCHAIN: stable
     permissions:
       contents: read
+      # npm trusted publishing and provenance use short-lived OIDC credentials.
       id-token: write
     defaults:
       run:
         working-directory: sdk/typescript
     steps:
+      # npm trusted publishing needs no repository secret, but a trusted publisher
+      # can only be attached to a package that already exists. Accept either
+      # credential and decide before any build work, so a missing credential
+      # fails here with the exact setup the owner must perform.
+      - name: Verify npm publishing credentials
+        working-directory: ${{ github.workspace }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            echo "::notice::Using the NPM_TOKEN repository secret for bootstrap publishing. Configure npm trusted publishing and delete the secret once all seven packages exist."
+            echo "NPM_PUBLISH_MODE=token" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::Cannot publish: the NPM_TOKEN repository secret is unset and this job received no GitHub OIDC token. Either add a granular npm token as NPM_TOKEN for the first release, or grant 'permissions: id-token: write' and configure npm trusted publishing for @horon-ai/agent-sdk and its six platform packages (organization 'horon-ai', repository 'agent', workflow 'publish-typescript-sdk.yml')."
+            exit 1
+          fi
+          echo "::notice::NPM_TOKEN is unset; publishing with npm trusted publishing (OIDC) and provenance. Every package must already exist with a trusted publisher for this workflow."
+          echo "NPM_PUBLISH_MODE=oidc" >> "$GITHUB_ENV"
+
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
+
+      # Node 24 bundles npm 11.19, which supports trusted publishing
+      # (npm >= 11.5.1, Node >= 22.14) and provenance signatures.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Verify npm supports trusted publishing
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          version="$(npm --version)"
+          echo "npm ${version}"
+          if [ "$(printf '%s\n' 11.5.1 "${version}" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "::error::npm ${version} is too old for trusted publishing and provenance. Use Node 24 or newer (npm 11.5.1+)."
+            exit 1
+          fi
+
+      # npm can only attach a trusted publisher to a package that already exists.
+      # In OIDC mode an unpublished package means the registry was never
+      # bootstrapped, so fail here instead of after the full build.
+      - name: Verify npm packages exist for trusted publishing
+        if: env.NPM_PUBLISH_MODE == 'oidc'
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for package in \
+            @horon-ai/agent-sdk \
+            @horon-ai/agent-linux-x64 \
+            @horon-ai/agent-linux-arm64 \
+            @horon-ai/agent-darwin-x64 \
+            @horon-ai/agent-darwin-arm64 \
+            @horon-ai/agent-win32-x64 \
+            @horon-ai/agent-win32-arm64; do
+            output="$(npm view "$package" version 2>&1)" || {
+              case "${output}" in
+                *E404*) missing="${missing} ${package}" ;;
+                *) echo "::warning::Could not query ${package}: ${output}" ;;
+              esac
+            }
+          done
+          if [ -n "${missing}" ]; then
+            echo "::error::npm trusted publishing requires the packages to exist, but these are unpublished:${missing}. For the first release, set the NPM_TOKEN repository secret (see the notice in the first step) or publish them once manually."
+            exit 1
+          fi
+          echo "::notice::All seven packages exist; npm trusted publishing can attach to them."
+
+      # Only bootstrap token publishing writes an .npmrc. In OIDC mode npm reads
+      # the job's id-token itself and must not see a stale auth token.
+      - name: Configure npm token authentication
+        if: env.NPM_PUBLISH_MODE == 'token'
+        working-directory: ${{ github.workspace }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: printf '%s\n' "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -73,8 +164,12 @@ jobs:
       - name: Publish platform runtime packages
         working-directory: ${{ github.workspace }}
         env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
+          if [ "${NPM_PUBLISH_MODE}" = "oidc" ]; then
+            unset NODE_AUTH_TOKEN
+          fi
           for package in sdk-runtime-packages/*; do
             name=$(node -p "require('./$package/package.json').name")
             version=$(node -p "require('./$package/package.json').version")
@@ -82,10 +177,15 @@ jobs:
               echo "$name@$version already published, skipping"
               continue
             fi
-            bun publish "$package" --access public --registry https://registry.npmjs.org
+            npm publish "$package" --access public --provenance --registry https://registry.npmjs.org
           done
 
-      - name: Publish SDK with bun
+      - name: Publish SDK with npm
         env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun publish --access public --registry https://registry.npmjs.org
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${NPM_PUBLISH_MODE}" = "oidc" ]; then
+            unset NODE_AUTH_TOKEN
+          fi
+          npm publish --access public --provenance --registry https://registry.npmjs.org

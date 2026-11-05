@@ -82,7 +82,6 @@ fn task7_new_session_saves_beside_unreceipted_legacy_database() -> Result<()> {
 #[test]
 fn task7_incomplete_first_file_migration_resumes_on_load_and_restart() -> Result<()> {
     use horon_agent_session_store as store;
-    use std::os::unix::fs::PermissionsExt;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-first-file-")?;
     let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
@@ -92,8 +91,7 @@ fn task7_incomplete_first_file_migration_resumes_on_load_and_restart() -> Result
     legacy.last_pid = None;
     let original = serde_json::to_vec(&legacy)?;
     let root = home_path.join("sessions");
-    std::fs::create_dir(&root)?;
-    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+    crate::storage::create_store_dir(&root, false)?;
     let original_path = root.join("task7_first_file.json");
     std::fs::write(&original_path, &original)?;
     let paths = store::SessionPaths::new(root);

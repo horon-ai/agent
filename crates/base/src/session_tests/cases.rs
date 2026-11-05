@@ -1,6 +1,5 @@
 use super::*;
 use anyhow::{Result, anyhow};
-use std::os::unix::fs::DirBuilderExt;
 
 /// A temporary directory together with its canonical spelling.
 ///
@@ -27,13 +26,10 @@ fn test_session_exists_roundtrip() -> Result<()> {
             .map_err(|e| anyhow!(e))?
             .as_nanos()
     ));
-    // The store refuses any directory under the agent home that is not 0700,
-    // and create_dir_all would leave this one at the umask default (0755).
-    // `recursive(true)` also creates the home itself, which a plain create does not.
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(tmp_dir.join("sessions"))?;
+    // The store refuses any directory under the agent home that is not 0700 on
+    // unix, and create_dir_all would leave this one at the umask default. The
+    // recursive create also makes the home itself, which a plain create does not.
+    crate::storage::create_store_dir(&tmp_dir.join("sessions"), true)?;
 
     assert!(!session_path_in_dir(&tmp_dir, "missing-session").exists());
 

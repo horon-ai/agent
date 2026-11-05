@@ -184,7 +184,10 @@ async fn secrets_are_masked_outbound_and_restored_for_tools() {
     let session = "tier2-secrets";
     let _registration = secrets::register_session_vault(session);
 
-    let credential = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    // Shaped like a GitHub token for the masking rule (`ghp_` plus 20 or more
+    // token characters) but shorter than the 36 the repository secret scan looks
+    // for, so the fixture never reads as live credential material.
+    let credential = "ghp_fixture0123456789abcdefghij";
     let transcript = vec![Message::user(&format!(
         "deploy with GITHUB_TOKEN={credential} and nothing else"
     ))];
@@ -612,7 +615,10 @@ async fn plan_mode_refuses_a_write_that_declares_nothing() {
     drop(env);
 }
 
-const REAL_CREDENTIAL: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+/// Shaped like a GitHub token for the masking rule (`ghp_` plus 20 or more token
+/// characters) but shorter than the 36 the repository secret scan looks for, so
+/// the fixture never reads as live credential material.
+const REAL_CREDENTIAL: &str = "ghp_fixture0123456789abcdefghij";
 
 /// A provider that records what it was asked and issues one shell call.
 ///

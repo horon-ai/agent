@@ -2,13 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [dev, main, master]
+    branches: [dev, main]
   pull_request:
-    branches: [dev, main, master]
+    branches: [dev, main]
+  # A push run on the commit a release tag will point at is the evidence
+  # `scripts/release/check_ci.py` requires. A cancelled or flaky run had no way to
+  # be recreated for the same commit without pushing a new one; dispatch reruns it
+  # in place.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded pull-request runs only. A push run on the commit a release
+  # tag points at must finish: the release gate accepts only a successful `push`
+  # run for the tagged SHA, so cancelling it leaves the release with no evidence.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Read-only for every job here: the workflow builds, tests, and uploads
 # artifacts, and never writes to the repository. Jobs that need more grant it
@@ -23,6 +31,11 @@ env:
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
+  # Test and dev builds do not need debug info, and on a hosted runner every byte
+  # is disk. The workspace profiles already set debug = 0; these make that hold
+  # for member crates that might override the profile.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 # Runner selection. With the repository variable `CI_SELF_HOSTED` set to `true`,
 # the jobs that can run on macOS go to the self-hosted runner labelled
@@ -41,9 +54,21 @@ jobs:
   quality:
     name: Quality Guardrails
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - name: Free disk space
+        # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
+        # all-targets/all-features build does not fit. The pre-installed
+        # toolchains below are unused here. Skipped on the self-hosted machine,
+        # whose toolchains belong to its owner.
+        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -53,7 +78,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: quality-ubuntu
+          # Keyed by runner OS: with CI_SELF_HOSTED this job runs on macOS, and a
+          # macOS cache restored on Linux (same branch) carries unusable artifacts.
+          key: quality-${{ runner.os }}
           cache-all-crates: "true"
 
       - name: Check module declarations resolve
@@ -69,11 +96,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/ci/check_format.sh
 
-      - name: Check all targets and all features
-        if: ${{ !cancelled() }}
-        run: cargo check --locked --all-targets --all-features
-
       - name: Run clippy with warnings denied
+        # Clippy compiles every target and feature that `cargo check` would, so
+        # this single step covers both and halves the all-features artifacts a
+        # hosted runner has to hold.
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
@@ -139,19 +165,24 @@ jobs:
         shell: bash
         run: python3 scripts/ci/check_wildcard_reexports.py
 
+      - name: Install cargo-machete
+        # The crate is published as a binary; building it from source on every
+        # run costs minutes and hundreds of MB on a job that already has the
+        # largest build. install-action downloads the release binary instead.
+        if: ${{ !cancelled() }}
+        uses: taiki-e/install-action@cargo-machete
+
       - name: Enforce no unused dependencies
         if: ${{ !cancelled() }}
         shell: bash
-        run: |
-          cargo install cargo-machete --locked
-          cargo machete
+        run: cargo machete
 
   release-automation:
     name: Release Automation
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Test justrust release installation and routing
         run: |
@@ -172,8 +203,9 @@ jobs:
     # known-good commit were cancelled at the cap, each getting further through
     # the same green steps (#693). A rerun is exactly what you reach for after a
     # concurrency cancellation, so the old cap made healthy commits look red.
-    # 75 still bounds a genuinely hung job well under the windows job's 150.
-    timeout-minutes: 75
+    # A hosted 4 vCPU runner with no cache at all needs more still: this job
+    # builds release, test, and e2e artifacts from scratch in one target dir.
+    timeout-minutes: 120
     # Some dependencies (e.g. convert_case 0.10.0 via derive_more/crossterm, and
     # proc-macro2/quote) accidentally ship a `rust-toolchain.toml` *inside their
     # published crate*. When cargo builds such a crate its CWD is that crate dir,
@@ -196,7 +228,29 @@ jobs:
         include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","target":"aarch64-apple-darwin"}]') }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Free disk space (Linux)
+        # Hosted ubuntu starts with about 14 GB on `/`. One job holds the release
+        # build, both test harnesses, and the e2e binaries in a single target
+        # dir, so the pre-installed toolchains this job never uses are removed
+        # first. A self-hosted runner is macOS, so this never touches it.
+        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Free disk space (macOS)
+        # The macOS hosted image has the least free space of the three. Skip on
+        # the self-hosted machine: its caches and toolchains are its owner's.
+        if: ${{ !cancelled() && runner.os == 'macOS' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet \
+            "$HOME/Library/Caches/Homebrew"
+          df -h /
+
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -221,7 +275,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq mold
+          # clang is the linker driver named in .cargo/config.toml below; the
+          # image ships it, but not as a documented contract, so install it
+          # explicitly rather than depending on an image update's default.
+          sudo apt-get install -y -qq clang mold
 
       - name: Build
         shell: bash
@@ -373,25 +430,28 @@ jobs:
           python3 .github/scripts/run_with_timeout.py 600 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test e2e
 
-      - name: Check PowerShell script syntax (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          ./scripts/ci/check_powershell.ps1
-
-      # Linux and macOS. Windows still has its own cfg-gated surface and is
-      # not yet warning-clean, so it stays out of the gate (#1177).
-      - name: Enforce warning budget (Linux, macOS)
-        if: runner.os == 'Linux' || runner.os == 'macOS'
+      # macOS only: the quality job already runs the same gate on Linux, and a
+      # second whole-workspace `cargo check` on the ubuntu matrix entry is a
+      # second full compile of a release build that is already on disk. macOS is
+      # the only place this gate sees Apple-specific warnings. Windows still has
+      # its own cfg-gated surface and is not yet warning-clean, so it stays out
+      # (#1177).
+      - name: Enforce warning budget (macOS)
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           scripts/ci/check_warnings.sh
+
+      - name: Install cargo-audit
+        if: runner.os == 'Linux'
+        # Pre-built binary: building cargo-audit from source costs 5-10 minutes
+        # on a job that already has a full target dir.
+        uses: taiki-e/install-action@cargo-audit
 
       - name: Security preflight (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          cargo install cargo-audit --locked
           scripts/ci/check_security.sh --strict
 
   windows-build-test:
@@ -400,7 +460,14 @@ jobs:
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - name: Report free disk space
+        # D: carries the workspace and target dir on the Windows image. Logged,
+        # not gated: the image has room, but a target dir of this size makes the
+        # number worth having when a run fails.
+        shell: pwsh
+        run: Get-PSDrive D | Format-Table -AutoSize
+
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -413,7 +480,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.11
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2
@@ -518,7 +585,7 @@ jobs:
 
       - name: Upload Windows e2e diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-e2e-diagnostics
           path: ${{ runner.temp }}/horon-agent-windows-e2e-logs
@@ -543,7 +610,7 @@ jobs:
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -563,7 +630,14 @@ jobs:
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      # `scripts/sdk/test_package.sh` packs and installs the tarball with npm,
+      # so the npm major decides what a consumer receives. Pin Node instead of
+      # inheriting whatever the image ships that week.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -601,9 +675,9 @@ jobs:
       run:
         working-directory: sdk/python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: ${{ matrix.python }}
 
@@ -632,7 +706,7 @@ jobs:
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install probe shells
         run: sudo apt-get update && sudo apt-get install -y fish zsh
@@ -649,7 +723,7 @@ jobs:
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check PowerShell script syntax (Windows PowerShell 5.1)
         shell: powershell
@@ -665,8 +739,15 @@ jobs:
     name: Windows ARM64 Release Configuration
     runs-on: windows-latest
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
+      # `dtolnay/rust-toolchain` installs components into the `stable` toolchain
+      # by name, while anything run inside the checkout resolves the repository's
+      # rust-toolchain.toml pin to a separate toolchain directory. Without this,
+      # the aarch64 target is installed for a toolchain the build never uses and
+      # `justrust check` fails with "target may not be installed". Same cure as
+      # the `build` job.
+      RUSTUP_TOOLCHAIN: stable
       # Native Windows hosted routing is unsupported. Keep execution on the
       # runner and bypass alpha.17's sampler until a fixed client is validated.
       JUSTRUST_TOOLCHAIN: system
@@ -674,7 +755,7 @@ jobs:
       JUSTRUST_NO_TELEMETRY: "1"
       JUSTRUST_DISABLE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -707,9 +788,24 @@ jobs:
     name: Windows Cross-Target Check (Linux)
     runs-on: ubuntu-latest
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
-    timeout-minutes: 35
+    timeout-minutes: 50
+    env:
+      # The two Windows targets are installed into `stable`; the same pin makes
+      # `cargo xwin` resolve that toolchain instead of rust-toolchain.toml's.
+      RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
+      - name: Free disk space
+        # cargo-xwin unpacks the Windows SDK and CRT into the target dir on top
+        # of a workspace build; the hosted image's 14 GB is not enough with the
+        # pre-installed toolchains still there.
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -728,7 +824,9 @@ jobs:
           sudo apt-get install -y -qq clang lld llvm ninja-build
 
       - name: Install cargo-xwin
-        run: cargo install --git https://github.com/rust-cross/cargo-xwin cargo-xwin
+        # Pre-built release binary; building it from the git source cost several
+        # minutes on every run.
+        uses: taiki-e/install-action@cargo-xwin
 
       - name: Check Windows x64 target
         run: cargo xwin check --locked --target x86_64-pc-windows-msvc

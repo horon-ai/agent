@@ -1830,6 +1830,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn skill_snapshot_budget_reload_sees_deleted_and_relinked_skills() {
         let _env_guard = crate::storage::lock_test_env();
@@ -1844,32 +1845,28 @@ mod tests {
         .expect("write skill");
         std::fs::create_dir_all(&skills_dir).expect("skills dir");
         let link = skills_dir.join("linked-skill");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
         let first = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("load");
         assert!(first.get("linked-skill").is_some());
 
-        #[cfg(unix)]
-        {
-            std::fs::remove_file(&link).expect("remove link");
-            let other = temp.path().join("other-skill");
-            std::fs::create_dir_all(&other).expect("other dir");
-            std::fs::write(
-                other.join("SKILL.md"),
-                "---\nname: relinked-skill\ndescription: Relinked skill\n---\n\nNew body.\n",
-            )
-            .expect("write skill");
-            std::os::unix::fs::symlink(&other, &link).expect("relink");
+        std::fs::remove_file(&link).expect("remove link");
+        let other = temp.path().join("other-skill");
+        std::fs::create_dir_all(&other).expect("other dir");
+        std::fs::write(
+            other.join("SKILL.md"),
+            "---\nname: relinked-skill\ndescription: Relinked skill\n---\n\nNew body.\n",
+        )
+        .expect("write skill");
+        std::os::unix::fs::symlink(&other, &link).expect("relink");
 
-            let relinked = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("reload");
-            assert!(relinked.get("linked-skill").is_none());
-            assert!(relinked.get("relinked-skill").is_some());
+        let relinked = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("reload");
+        assert!(relinked.get("linked-skill").is_none());
+        assert!(relinked.get("relinked-skill").is_some());
 
-            std::fs::remove_file(&link).expect("remove link");
-            let deleted = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("reload after delete");
-            assert!(deleted.get("relinked-skill").is_none());
-        }
+        std::fs::remove_file(&link).expect("remove link");
+        let deleted = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("reload after delete");
+        assert!(deleted.get("relinked-skill").is_none());
     }
 
     #[test]

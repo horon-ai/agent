@@ -3,13 +3,22 @@
 //! `tests/session_event_lifecycle.rs` via `#[path]`.
 #![allow(dead_code)]
 
+#[path = "change_watch.rs"]
+mod change_watch;
+
+/// Re-exported so a suite that includes both this fixture and the waits needs
+/// only one `mod` of the shared file (clippy::duplicate_mod otherwise refuses the
+/// second `#[path]` include of the same source). Each includer uses a different
+/// subset, so an unused name here is not dead code.
+#[allow(unused_imports)]
+pub use change_watch::{ChangeWatch, wait_for_pid_exit};
+
 use horon_agent::session::event_store_api as store;
 use horon_agent_sdk::{ConnectOptions, HoronAgentClient};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -828,19 +837,12 @@ pub fn scratch_root(label: &str) -> PathBuf {
 
 /// Wait until the socket accepts a connection. The wait is driven by the
 /// directory-change event for the socket's parent, so a live server is picked up
-/// on its creation rather than on a timer.
+/// on its creation rather than on a timer; a target without that event source
+/// polls the connect once per slice under the same deadline.
 pub fn wait_for_socket(path: &Path, deadline: Duration) {
     let end = Instant::now() + deadline;
     let parent = path.parent().expect("socket parent");
-    let queue = unsafe { libc::kqueue() };
-    let mut armed = false;
-    if queue >= 0
-        && let Ok(dir) = std::fs::File::open(parent)
-    {
-        let change = kevent_for(dir.as_raw_fd(), libc::NOTE_WRITE | libc::NOTE_EXTEND);
-        armed = unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) } >= 0;
-    }
-    let mut dir_file = std::fs::File::open(parent).ok();
+    let watch = ChangeWatch::arm(&[parent]);
     let outcome = loop {
         if UnixStream::connect(path).is_ok() {
             break Ok(());
@@ -853,37 +855,9 @@ pub fn wait_for_socket(path: &Path, deadline: Duration) {
                 path.display()
             ));
         }
-        if !armed {
-            std::thread::sleep(SLICE);
-            continue;
-        }
-        let slice = remaining.min(SLICE);
-        let timeout = libc::timespec {
-            tv_sec: slice.as_secs() as libc::time_t,
-            tv_nsec: slice.subsec_nanos() as libc::c_long,
-        };
-        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-        let ready = unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, &timeout) };
-        if ready < 0 {
-            armed = false;
-        }
-        let _ = &mut dir_file;
+        watch.wait(remaining.min(SLICE));
     };
-    if queue >= 0 {
-        unsafe { libc::close(queue) };
-    }
     outcome.unwrap_or_else(|error| panic!("{error}"));
-}
-
-fn kevent_for(fd: std::os::fd::RawFd, note: u32) -> libc::kevent {
-    libc::kevent {
-        ident: fd as libc::uintptr_t,
-        filter: libc::EVFILT_VNODE,
-        flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR,
-        fflags: note,
-        data: 0,
-        udata: std::ptr::null_mut(),
-    }
 }
 
 pub fn export_all(client: &HoronAgentClient, session_id: &str) -> horon_agent_sdk::SessionEventPage {
@@ -1104,7 +1078,8 @@ pub fn text_message(id: &str, role: &str, text: &str) -> store::MessageAppendedP
 /// Block on the OS file-change event for the session log and report the durable
 /// compaction summary from whichever retained head carries it. A record already
 /// on disk returns immediately; otherwise the wait is driven by the filesystem
-/// event, never by a timer.
+/// event, never by a timer, and a target without that event source polls the
+/// projection once per slice under the same deadline.
 pub fn wait_for_compaction(
     paths: &store::SessionPaths,
     session_id: &str,
@@ -1115,45 +1090,21 @@ pub fn wait_for_compaction(
         return Ok(summary);
     }
     let log = paths.events_log(&session).map_err(|error| error.to_string())?;
-    let file = std::fs::File::open(&log).map_err(|error| format!("open log: {error}"))?;
-    let queue = unsafe { libc::kqueue() };
-    if queue < 0 {
-        return Err("kqueue unavailable".to_string());
-    }
-    let change = kevent_for(
-        file.as_raw_fd(),
-        libc::NOTE_WRITE | libc::NOTE_EXTEND | libc::NOTE_DELETE | libc::NOTE_RENAME,
-    );
-    let registered = unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
-    if registered < 0 {
-        unsafe { libc::close(queue) };
-        return Err(format!("kqueue registration failed for {}", log.display()));
-    }
+    let watch = ChangeWatch::arm(&[&log]);
     let end = Instant::now() + deadline;
-    let outcome = loop {
+    loop {
         let remaining = end.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            break Err(format!(
+            return Err(format!(
                 "no durable Compacted record in {} within {deadline:?}",
                 log.display()
             ));
         }
-        let slice = remaining.min(SLICE);
-        let timeout = libc::timespec {
-            tv_sec: slice.as_secs() as libc::time_t,
-            tv_nsec: slice.subsec_nanos() as libc::c_long,
-        };
-        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-        let ready = unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, &timeout) };
-        if ready < 0 {
-            break Err("kevent wait failed".to_string());
-        }
+        watch.wait(remaining.min(SLICE));
         if let Some(summary) = compacted_summary(paths, &session) {
-            break Ok(summary);
+            return Ok(summary);
         }
-    };
-    unsafe { libc::close(queue) };
-    outcome
+    }
 }
 
 fn compacted_summary(paths: &store::SessionPaths, session: &store::SessionId) -> Option<String> {
