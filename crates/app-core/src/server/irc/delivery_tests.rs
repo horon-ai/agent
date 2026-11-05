@@ -365,3 +365,35 @@ async fn ready_target_without_pending_relay_cannot_respond() {
     assert!(deliver.can_respond("busy").await, "a running session can still respond");
     assert!(!deliver.can_respond("missing").await, "an unknown agent cannot respond");
 }
+
+#[tokio::test]
+async fn removed_session_clears_pending_relay_count() {
+    let _env = TestEnv::new("");
+    let fixture = Fixture::new();
+    fixture
+        .add(member("woken", Some("swarm-a"), "ready", Some("bear"), None).0)
+        .await;
+    let deliver = fixture.deliver(sessions_of(&[]), Arc::new(RwLock::new(HashMap::new())));
+    let relays = deliver.pending_relays();
+
+    // The wake turn has not finished, so its relay has not released the mark.
+    // A relay that outlives its session would otherwise keep the count until it
+    // ends, and a reused session id would inherit it.
+    relays.lock().expect("pending lock").insert(Arc::from("woken"), 2);
+    assert!(
+        deliver.can_respond("woken").await,
+        "a ready session with an in-flight relay still owes a reply"
+    );
+
+    crate::server::session_forget::forget_removed_session("woken", None);
+
+    assert_eq!(
+        relays.lock().expect("pending lock").get("woken").copied(),
+        None,
+        "removing the session must drop its relay mark"
+    );
+    assert!(
+        !deliver.can_respond("woken").await,
+        "a removed session must not answer from a stale relay mark"
+    );
+}

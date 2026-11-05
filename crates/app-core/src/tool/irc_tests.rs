@@ -258,6 +258,33 @@ async fn partial_broadcast_failure_is_not_a_tool_error() {
 }
 
 #[tokio::test]
+async fn broadcast_with_no_targets_is_an_error_without_sent_line() {
+    let _env = crate::storage::lock_test_env();
+    let _home = HomeGuard::with_config("[tools]\nirc = true\n");
+    let _bus = BusGuard;
+    install(
+        IrcLimits::default(),
+        Arc::new(FakeDirectory::with_broadcast(vec![("root", None)], Vec::new())),
+        Arc::new(FakeDeliver::injected()),
+    );
+
+    let error = IrcTool::new()
+        .execute(json!({"action": "send", "to": "all", "message": "hello"}), ctx("root"))
+        .await
+        .expect_err("a broadcast with no visible targets is a tool error");
+
+    let body = error.to_string();
+    assert!(
+        !body.starts_with("message "),
+        "an empty broadcast must not claim the message was sent: {body}"
+    );
+    assert!(
+        body.ends_with("no recipients: there is no visible agent to broadcast to"),
+        "the error should name the missing recipients: {body}"
+    );
+}
+
+#[tokio::test]
 async fn wait_returns_the_reply_envelope() {
     let _env = crate::storage::lock_test_env();
     let _home = HomeGuard::with_config("[tools]\nirc = true\n");
