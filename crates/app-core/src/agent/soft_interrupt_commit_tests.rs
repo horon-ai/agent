@@ -380,6 +380,7 @@ async fn restore_emits_log_line() {
     assert!(restores[0].contains("restored=1"), "got {}", restores[0]);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn commit_failure_keeps_in_flight() {
     let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();

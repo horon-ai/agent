@@ -460,12 +460,8 @@ struct AmbientHome {
 
 impl AmbientHome {
     fn new() -> Self {
-        use std::os::unix::fs::DirBuilderExt;
         let dir = tempfile::tempdir().expect("isolated agent home");
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(dir.path().join("sessions"))
-            .expect("create sessions dir");
+        crate::storage::create_store_dir(&dir.path().join("sessions"), false).expect("create sessions dir");
         let previous = std::env::var_os("HORON_AGENT_HOME");
         crate::env::set_var("HORON_AGENT_HOME", dir.path());
         Self { _dir: dir, previous }

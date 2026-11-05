@@ -51,13 +51,7 @@ impl ResumeTestEnv {
         let previous_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
         crate::env::set_var("HORON_AGENT_HOME", home.path());
         crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            std::fs::DirBuilder::new()
-                .mode(0o700)
-                .create(home.path().join("sessions"))
-                .expect("create sessions dir");
-        }
+        crate::storage::create_store_dir(&home.path().join("sessions"), false).expect("create sessions dir");
         Self {
             _home: home,
             _runtime: runtime,

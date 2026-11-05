@@ -38,14 +38,9 @@ impl Drop for RuntimeRestore {
 /// owner-private (0700), so `sessions/` is created with that mode instead of the
 /// umask default.
 fn setup_runtime_dir() -> Result<(IsolatedDirs, RuntimeRestore)> {
-    use std::os::unix::fs::DirBuilderExt;
-
     let runtime = tempfile::TempDir::new().map_err(|e| anyhow!(e))?;
     let home = tempfile::TempDir::new().map_err(|e| anyhow!(e))?;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(home.path().join("sessions"))
-        .map_err(|e| anyhow!(e))?;
+    crate::storage::create_store_dir(&home.path().join("sessions"), false).map_err(|e| anyhow!(e))?;
     let prev_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
     let prev_home = std::env::var_os("HORON_AGENT_HOME");
     crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
