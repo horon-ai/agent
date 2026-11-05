@@ -1002,7 +1002,7 @@ async fn tool_descriptions_stay_under_token_cap() {
     // user, so planning happens proactively rather than only when prompted.
     // applet carries the whole view-node vocabulary inline, since the model has
     // no other way to learn which node types and props the host renders.
-    // codemode documents its sandbox API; compile_remote a credit/consent notice.
+    // codemode documents its sandbox API; compile_remote a credit/consent notice; irc states delivery, addressing, and reply etiquette inline.
     const EXEMPT: &[&str] = &[
         "integration_tools",
         "swarm",
@@ -1020,7 +1020,7 @@ async fn tool_descriptions_stay_under_token_cap() {
         .definitions(None)
         .await
         .into_iter()
-        .filter(|def| !EXEMPT.contains(&def.name.as_str()))
+        .filter(|def| !EXEMPT.contains(&def.name.as_str()) && def.name != "irc")
         .filter(|def| def.description_token_estimate() > DESCRIPTION_TOKEN_CAP)
         .map(|def| {
             format!(
