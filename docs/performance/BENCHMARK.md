@@ -24,6 +24,7 @@ B0 분포를 고정하기 전에는 지연이나 RSS 임계값을 막는 기준�
 | 스트리밍 해시 버퍼 | `large_request`, `small_request`, `buffer_bytes` | 세 값이 모두 같고 `HASH_STREAM_BUFFER` 이하 |
 | NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 상한은 예산 값과 같고, 수용 크기는 상한 이하, 거절 크기는 상한 초과이면서 수용 크기의 다음 바이트 |
 | 자원 반납 | `fd_retention`, `thread_retention`, `non_returning` | 짧은 소크(20 사이클) 뒤 각각 예산 이하, 반납 실패 0 |
+| IRC 메일박스 | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | 상한 100 이하, 1000건 유입에서 드롭 900, 브로드캐스트 1회당 본문 할당 1회, 타임아웃·취소 뒤 대기자 0, 동시 브로드캐스트 16 이하 |
 
 각 측정은 저장소의 기존 테스트가 직접 인쇄한다. 테스트는 `STRUCTURAL_PERF section=<이름> k=v k=v` 한 줄을 남기고, 게이트는 그 줄을 읽는다. 게이트가 따로 재측정하지 않는 이유는, 같은 경계를 두 구현이 각자 판정하면 둘이 갈라지기 때문이다.
 
@@ -43,7 +44,7 @@ B0 분포를 고정하기 전에는 지연이나 RSS 임계값을 막는 기준�
 python3 scripts/perf/check_structural.py
 ```
 
-한 구역만 돌린다. 구역 이름은 `queue`, `pending`, `page`, `hash`, `frame`, `soak` 이다.
+한 구역만 돌린다. 구역 이름은 `queue`, `pending`, `page`, `hash`, `frame`, `soak`, `context`, `irc` 이다.
 
 ```bash
 python3 scripts/perf/check_structural.py --only page
@@ -64,6 +65,14 @@ python3 -m unittest -v scripts/perf/test_check_structural.py
 테스트는 한 번에 하나씩 돈다. 카운터는 프로세스 전역이고 `reset()` 은 그 프로세스에서 다른 테스트가 기록하지 않을 때만 뜻이 있으므로, 게이트는 측정마다 `--test-threads=1 --exact` 로 테스트 하나만 실행한다.
 
 측정은 카고의 디버그 프로필을 쓴다. 릴리스 빌드는 필요 없다.
+
+`irc` 섹션은 메일박스 상한, 넘칠 때 버린 수, 브로드캐스트 본문 할당, 대기자 정리, 동시 브로드캐스트 상한을 본다. 처리량은 시간 예산이 아니라 별도 예제로 잰다. 예제는 대기자에게 직접 전달하는 경로, 즉시 주입을 돌려주는 가짜 전달 경로, 64개 대상 브로드캐스트 세 시나리오를 릴리스 프로필에서 돌고 `IRC_THROUGHPUT scenario=… messages=… elapsed_us=… msgs_per_sec=…` 형식으로 한 줄씩 인쇄한다.
+
+```bash
+cargo run --locked --release -p horon-agent-irc-core --example irc_throughput
+```
+
+메시지 수는 환경변수 `IRC_THROUGHPUT_MESSAGES`로 바꾼다. 기본값은 100000이다.
 
 ### 경계를 올리는 절차
 

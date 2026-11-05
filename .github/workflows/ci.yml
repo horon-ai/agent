@@ -355,6 +355,39 @@ jobs:
           cargo test --locked --target ${{ matrix.target }} -p horon-agent-base --lib browser_session -- --nocapture
           cargo test --locked --target ${{ matrix.target }} -p horon-agent-app-core --lib browser_session -- --nocapture
 
+      - name: Run IRC cohorts
+        shell: bash
+        # Nothing else in this workflow runs `horon-agent-irc-core` tests: the
+        # build step has no `--workspace`, and the `horon-agent-base` /
+        # `horon-agent-app-core` IRC tests sit behind a filter no other step
+        # uses. A filter that matches nothing makes libtest report "0 passed"
+        # and exit 0, the looks-green-but-never-ran shape the warning budget and
+        # the stdin detector both had, so each cohort must report at least one
+        # pass.
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-irc-core --lib -- --nocapture | tee /tmp/irc-1.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-1.log || {
+            echo "::error::IRC cohort 1 ran no tests"
+            exit 1
+          }
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-base --lib irc -- --nocapture | tee /tmp/irc-2.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-2.log || {
+            echo "::error::IRC cohort 2 ran no tests"
+            exit 1
+          }
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-app-core --lib irc -- --nocapture | tee /tmp/irc-3.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-3.log || {
+            echo "::error::IRC cohort 3 ran no tests"
+            exit 1
+          }
+
       - name: Run embedding numeric-stability cohort (Linux only)
         if: runner.os == 'Linux'
         shell: bash
@@ -541,6 +574,11 @@ jobs:
               'sibling_socket_path_roundtrip',
               'cleanup_socket_pair_removes_main_and_debug_files',
               'build_shell_command_uses_cmd_and_executes_command'
+            )
+            'horon-agent-irc-core' = @(
+              'send_orders_same_millisecond_messages_by_seq',
+              'mailbox_drops_oldest_beyond_cap',
+              'mutual_wait_returns_unanswerable'
             )
             'horon-agent-transport' = @(
               'pipe_name_is_stable_and_normalizes_case_and_separators',

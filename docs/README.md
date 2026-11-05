@@ -27,6 +27,7 @@
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, 보조 호출 |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.md`](runtime/TURNS.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
+| | [`IRC.md`](runtime/IRC.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
 | | [`PROMPT.md`](runtime/PROMPT.md) | 시스템 프롬프트 구성과 토큰 추정 |
 | | [`HOOKS.md`](runtime/HOOKS.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
