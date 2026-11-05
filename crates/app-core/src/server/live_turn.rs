@@ -282,10 +282,6 @@ pub(super) async fn run_live_turn_if_idle(
 
 /// Same as [`run_live_turn_if_idle`], and hands back the turn's completion
 /// channel when the turn was started.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "used by the IRC delivery path in the next change")
-)]
 pub(super) async fn run_live_turn_if_idle_with_completion(
     session_id: &str,
     message: &str,

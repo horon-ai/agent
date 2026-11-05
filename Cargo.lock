@@ -2119,6 +2119,7 @@ dependencies = [
  "horon-agent-edit-safety",
  "horon-agent-harness-api",
  "horon-agent-import-core",
+ "horon-agent-irc-core",
  "horon-agent-lsp",
  "horon-agent-message-types",
  "horon-agent-notify-email",
