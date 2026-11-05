@@ -1,27 +1,42 @@
 use super::*;
-use tokio::time::{Duration, timeout};
+
+struct TestHome {
+    _temp: tempfile::TempDir,
+    project: std::path::PathBuf,
+    prev_home: Option<std::ffi::OsString>,
+}
+
+impl TestHome {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("repo");
+        std::fs::create_dir_all(&project).expect("project dir");
+        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        Self {
+            _temp: temp,
+            project,
+            prev_home,
+        }
+    }
+}
+
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        if let Some(prev_home) = self.prev_home.take() {
+            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        } else {
+            crate::env::remove_var("HORON_AGENT_HOME");
+        }
+    }
+}
 
 #[tokio::test]
 async fn initiative_tool_create_and_resume_round_trip() {
     let _guard = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let project = temp.path().join("repo");
-    std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
-
+    let home = TestHome::new();
     let tool = InitiativeTool::new();
-    let ctx = ToolContext {
-        session_id: "ses_goal_tool".to_string(),
-        message_id: "msg1".to_string(),
-        tool_call_id: "tool1".to_string(),
-        working_dir: Some(project.clone()),
-        stdin_request_tx: None,
-        graceful_shutdown_signal: None,
-        execution_mode: crate::tool::ToolExecutionMode::AgentTurn,
-    };
-
-    let mut bus_rx = Bus::global().subscribe();
+    let ctx = goal_ctx("ses_goal_tool", &home.project);
 
     let create = tool
         .execute(
@@ -35,24 +50,9 @@ async fn initiative_tool_create_and_resume_round_trip() {
         )
         .await
         .expect("create goal");
-    assert!(create.output.contains("Created goal"));
+    assert!(create.output.contains("Created goal `ship-mobile-mvp`"));
+    assert!(create.output.contains("Ship mobile MVP"));
     assert!(!create.output.contains("side panel"));
-
-    // Creating an initiative must not spawn the side panel.
-    let update = timeout(Duration::from_millis(200), bus_rx.recv()).await;
-    if let Ok(Ok(event)) = update {
-        assert!(
-            !matches!(event, BusEvent::SidePanelUpdated(_)),
-            "create must not publish a side panel update, got {:?}",
-            event
-        );
-    }
-
-    let persisted = crate::side_panel::snapshot_for_session("ses_goal_tool").expect("side panel snapshot");
-    assert!(
-        !persisted.pages.iter().any(|page| page.id == "goal.ship-mobile-mvp"),
-        "create must not write a goal page to the side panel"
-    );
 
     let resume = tool
         .execute(json!({"action": "resume"}), ctx)
@@ -60,70 +60,40 @@ async fn initiative_tool_create_and_resume_round_trip() {
         .expect("resume goal");
     assert!(resume.output.contains("Resumed goal"));
     assert!(resume.output.contains("finish reconnect flow"));
-
-    if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
 }
 
 #[tokio::test]
-async fn initiative_tool_list_does_not_open_side_panel_by_default() {
+async fn initiative_tool_list_renders_goals_overview_as_tool_output() {
     let _guard = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let project = temp.path().join("repo");
-    std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
-
+    let home = TestHome::new();
     crate::goal::create_goal(
         crate::goal::GoalCreateInput {
             title: "Ship mobile MVP".to_string(),
             scope: crate::goal::GoalScope::Project,
             ..crate::goal::GoalCreateInput::default()
         },
-        Some(&project),
+        Some(&home.project),
     )
     .expect("create goal");
 
     let tool = InitiativeTool::new();
-    let ctx = ToolContext {
-        session_id: "ses_goal_list".to_string(),
-        message_id: "msg1".to_string(),
-        tool_call_id: "tool1".to_string(),
-        working_dir: Some(project.clone()),
-        stdin_request_tx: None,
-        graceful_shutdown_signal: None,
-        execution_mode: crate::tool::ToolExecutionMode::AgentTurn,
-    };
-
-    let list = tool.execute(json!({"action": "list"}), ctx).await.expect("list goals");
+    let ctx = goal_ctx("ses_goal_list", &home.project);
+    // Older clients still send `display`; it must be accepted and change nothing.
+    let list = tool
+        .execute(json!({"action": "list", "display": "side_panel"}), ctx)
+        .await
+        .expect("list goals");
 
     assert!(list.output.contains("# Goals"));
-    let snapshot = crate::side_panel::snapshot_for_session("ses_goal_list").expect("side panel snapshot");
-    assert!(
-        !snapshot.pages.iter().any(|page| page.id == "goals"),
-        "list must not open the goals overview in the side panel"
-    );
-    assert_eq!(snapshot.focused_page_id, None);
-
-    if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
+    assert!(list.output.contains("Ship mobile MVP"));
+    assert!(list.output.contains("`ship-mobile-mvp`"));
+    assert_eq!(list.title.as_deref(), Some("1 goals"));
 }
 
 #[tokio::test]
-async fn initiative_tool_update_refreshes_open_overview_without_stealing_focus() {
+async fn initiative_tool_update_renders_text_output() {
     let _guard = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let project = temp.path().join("repo");
-    std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
-
+    let home = TestHome::new();
     let goal = crate::goal::create_goal(
         crate::goal::GoalCreateInput {
             title: "Ship mobile MVP".to_string(),
@@ -131,50 +101,32 @@ async fn initiative_tool_update_refreshes_open_overview_without_stealing_focus()
             next_steps: vec!["finish reconnect flow".to_string()],
             ..crate::goal::GoalCreateInput::default()
         },
-        Some(&project),
+        Some(&home.project),
     )
     .expect("create goal");
 
     let tool = InitiativeTool::new();
-    let ctx = ToolContext {
-        session_id: "ses_goal_update".to_string(),
-        message_id: "msg1".to_string(),
-        tool_call_id: "tool1".to_string(),
-        working_dir: Some(project.clone()),
-        stdin_request_tx: None,
-        graceful_shutdown_signal: None,
-        execution_mode: crate::tool::ToolExecutionMode::AgentTurn,
-    };
+    let ctx = goal_ctx("ses_goal_update", &home.project);
 
-    // The user opens the overview explicitly (e.g. via /goals); the tool
-    // itself never spawns the side panel.
-    crate::goal::open_goals_overview_for_session("ses_goal_update", Some(&project), true).expect("open goals overview");
+    let updated = tool
+        .execute(
+            json!({
+                "action": "update",
+                "id": goal.id,
+                "next_steps": ["ship reconnect flow"]
+            }),
+            ctx.clone(),
+        )
+        .await
+        .expect("update goal");
+    assert!(updated.output.contains("Updated goal `ship-mobile-mvp`"));
 
-    tool.execute(
-        json!({
-            "action": "update",
-            "id": goal.id,
-            "next_steps": ["ship reconnect flow"]
-        }),
-        ctx,
-    )
-    .await
-    .expect("update goal");
-
-    let snapshot = crate::side_panel::snapshot_for_session("ses_goal_update").expect("side panel snapshot");
-    assert_eq!(snapshot.focused_page_id.as_deref(), Some("goals"));
-    let goals_page = snapshot
-        .pages
-        .iter()
-        .find(|page| page.id == "goals")
-        .expect("goals page");
-    assert!(goals_page.content.contains("ship reconnect flow"));
-
-    if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
+    let shown = tool
+        .execute(json!({"action": "show", "id": goal.id}), ctx)
+        .await
+        .expect("show goal");
+    assert!(shown.output.contains("# Goal: Ship mobile MVP"));
+    assert!(shown.output.contains("ship reconnect flow"));
 }
 
 #[test]

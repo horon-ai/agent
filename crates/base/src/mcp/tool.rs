@@ -1,7 +1,7 @@
 //! MCP Tool - wraps MCP server tools for horon-agent's tool system
 
 use super::manager::McpManager;
-use super::protocol::{ContentBlock, McpToolDef};
+use super::protocol::{ContentBlock, McpToolDef, ResourceContent};
 use anyhow::Result;
 use async_trait::async_trait;
 use horon_agent_tool_core::{Tool, ToolContext};
@@ -46,7 +46,7 @@ impl Tool for McpTool {
         self.tool_def.input_schema.clone()
     }
 
-    async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+    async fn execute(&self, input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
         let mut input = if input.is_null() {
             Value::Object(serde_json::Map::new())
         } else {
@@ -80,21 +80,7 @@ impl Tool for McpTool {
                     output_parts.push(format!("[Image: {} ({} bytes)]", mime_type, data.len()));
                 }
                 ContentBlock::Resource { resource } => {
-                    if let Some(rendered) = crate::applets::mount_mcp_resource(
-                        &ctx.session_id,
-                        &ctx.tool_call_id,
-                        &resource.uri,
-                        resource.mime_type.as_deref(),
-                        resource.text.as_deref(),
-                    ) {
-                        output_parts.push(rendered);
-                    } else if let Some(text) = resource.text {
-                        output_parts.push(text);
-                    } else if let Some(blob) = resource.blob {
-                        output_parts.push(format!("[Resource: {} ({} bytes)]", resource.uri, blob.len()));
-                    } else {
-                        output_parts.push(format!("[Resource: {}]", resource.uri));
-                    }
+                    output_parts.push(render_resource_content(resource));
                 }
             }
         }
@@ -112,6 +98,20 @@ impl Tool for McpTool {
         } else {
             Ok(ToolOutput::new(output).with_title(title))
         }
+    }
+}
+
+/// Render one returned MCP resource as plain tool output. Text passes through
+/// unchanged; a blob-only resource reports its URI and size because tool output
+/// has nowhere to display binary content.
+pub fn render_resource_content(resource: ResourceContent) -> String {
+    if let Some(text) = resource.text {
+        return text;
+    }
+    let uri = resource.uri;
+    match resource.blob {
+        Some(blob) => format!("[Resource: {} ({} bytes)]", uri, blob.len()),
+        None => format!("[Resource: {}]", uri),
     }
 }
 
@@ -271,8 +271,8 @@ pub fn create_mcp_tools_from_cached_many(
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch_name, dispatch_names};
-    use crate::mcp::protocol::McpToolDef;
+    use super::{dispatch_name, dispatch_names, render_resource_content};
+    use crate::mcp::protocol::{McpToolDef, ResourceContent};
     use serde_json::json;
 
     #[test]
@@ -383,5 +383,41 @@ mod tests {
         assert_eq!(first.len(), 2);
         assert_ne!(first[0], first[1]);
         assert!(first.iter().all(|name| name.starts_with("mcp__")));
+    }
+
+    #[test]
+    fn resource_text_passes_through_unchanged() {
+        let resource = ResourceContent {
+            uri: "file:///notes.md".to_string(),
+            mime_type: Some("text/markdown".to_string()),
+            text: Some("# Notes\n".to_string()),
+            blob: None,
+        };
+        assert_eq!(render_resource_content(resource), "# Notes\n");
+    }
+
+    #[test]
+    fn blob_only_resource_renders_a_text_fallback() {
+        let resource = ResourceContent {
+            uri: "file:///logo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            text: None,
+            blob: Some("aGVsbG8=".to_string()),
+        };
+        assert_eq!(
+            render_resource_content(resource),
+            "[Resource: file:///logo.png (8 bytes)]"
+        );
+    }
+
+    #[test]
+    fn empty_resource_renders_its_uri() {
+        let resource = ResourceContent {
+            uri: "file:///empty".to_string(),
+            mime_type: None,
+            text: None,
+            blob: None,
+        };
+        assert_eq!(render_resource_content(resource), "[Resource: file:///empty]");
     }
 }

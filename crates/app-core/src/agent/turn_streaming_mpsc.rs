@@ -328,10 +328,9 @@ impl Agent {
                 }
                 request_suffix.push(memory_msg);
             }
-            // Surface background plan-limit hits once so the user sees the
-            // upgrade prompt in the reply (see turn_loops for rationale).
+            // Surface background plan-limit hits once in the reply as a
+            // reminder message (see turn_loops for rationale).
             if let Some(notice) = self.memory_enabled.then(crate::subscription_notice::take).flatten() {
-                crate::subscription_notice::show_upgrade_card(&notice, &self.session.id);
                 let reminder = Message::user(&Self::plan_limit_reminder(&notice));
                 ephemeral_signature_messages.push(reminder.clone());
                 request_suffix.push(reminder);

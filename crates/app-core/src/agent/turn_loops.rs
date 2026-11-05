@@ -855,12 +855,10 @@ impl Agent {
                 request_suffix.push(Message::user(Self::BATCH_NUDGE));
             }
             // Background features (memory recall) can hit a plan limit with no
-            // visible failure. Surface it once through the agent so every UI
-            // shows the upgrade prompt instead of silently degrading.
-            // Agents without memory (auth smoke tests, headless probes) leave
-            // the notice for a user-facing session.
+            // visible failure. Surface it once as a reminder message instead of
+            // silently degrading. Agents without memory (auth smoke tests,
+            // headless probes) leave the notice for a user-facing session.
             if let Some(notice) = self.memory_enabled.then(crate::subscription_notice::take).flatten() {
-                crate::subscription_notice::show_upgrade_card(&notice, &self.session.id);
                 request_suffix.push(Message::user(&Self::plan_limit_reminder(&notice)));
             }
 
