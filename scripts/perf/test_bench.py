@@ -23,8 +23,13 @@ SCRIPTS = Path(__file__).resolve().parent
 PYTHON_FILES = [
     SCRIPTS / "ab_perf.py",
     SCRIPTS / "analyze_memory_log.py",
+    SCRIPTS / "bench_common.py",
+    SCRIPTS / "bench_compare.py",
+    SCRIPTS / "bench_compile.py",
     SCRIPTS / "bench_loading.py",
+    SCRIPTS / "bench_reload_storm.py",
     SCRIPTS / "bench_startup.py",
+    SCRIPTS / "bench_tools.py",
     SCRIPTS / "check_structural.py",
 ]
 GATE = SCRIPTS / "check_memory.sh"
