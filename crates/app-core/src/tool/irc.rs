@@ -160,6 +160,11 @@ async fn send(bus: &IrcBus, session_id: &str, params: IrcInput) -> Result<ToolOu
 }
 
 fn format_report(report: &SendReport) -> Result<String> {
+    // A broadcast with no visible peers produces no legs at all: there is no
+    // message id worth reporting and no failed target to explain.
+    if report.receipts.is_empty() {
+        bail!("no recipients: there is no visible agent to broadcast to");
+    }
     let mut lines = Vec::with_capacity(report.receipts.len() + 1);
     lines.push(format!("message {} sent", report.message_id));
     for receipt in &report.receipts {

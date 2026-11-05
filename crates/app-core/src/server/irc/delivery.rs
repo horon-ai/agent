@@ -1,6 +1,7 @@
 //! Handing an IRC message to a live session: wake an idle one, inject into a
 //! busy one, and relay a wake turn's answer back to the sender.
 
+use super::super::session_forget::{PendingRelays, register_pending_relays};
 use super::super::{
     SessionAgents, SessionInterruptQueues, SwarmEvent, SwarmMember, fanout_session_event,
     live_turn::LiveTurnSwarmContext, live_turn::run_live_turn_if_idle_with_completion,
@@ -29,8 +30,6 @@ pub(super) struct SessionDeliver {
     pending_relays: PendingRelays,
 }
 
-type PendingRelays = Arc<StdMutex<HashMap<AgentId, usize>>>;
-
 impl SessionDeliver {
     pub(super) fn new(
         members: Arc<RwLock<HashMap<String, SwarmMember>>>,
@@ -41,6 +40,8 @@ impl SessionDeliver {
         event_counter: Arc<AtomicU64>,
         event_tx: broadcast::Sender<SwarmEvent>,
     ) -> Self {
+        let pending_relays = Arc::new(StdMutex::new(HashMap::new()));
+        register_pending_relays(&pending_relays);
         Self {
             members,
             sessions,
@@ -49,10 +50,12 @@ impl SessionDeliver {
             event_history,
             event_counter,
             event_tx,
-            pending_relays: Arc::new(StdMutex::new(HashMap::new())),
+            pending_relays,
         }
     }
 
+    /// The counters shared with session removal; a test hook for observing the
+    /// relay mark a wake leaves behind.
     #[cfg(test)]
     pub(super) fn pending_relays(&self) -> PendingRelays {
         Arc::clone(&self.pending_relays)
