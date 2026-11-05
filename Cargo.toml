@@ -158,9 +158,6 @@ jemalloc-prof = [
 # Local embeddings and PDF extraction live in horon-agent-base / horon-agent-app-core;
 # these features just forward down the stack.
 embeddings = ["horon-agent-app-core/embeddings"]
-# Internal release feature: build a supported OpenSSL inside the CentOS 7
-# compatibility image while preserving the glibc 2.17 runtime baseline.
-linux-compat-vendored-openssl = ["horon-agent-app-core/linux-compat-vendored-openssl"]
 pdf = ["horon-agent-app-core/pdf"]
 # Offline legacy SQLite session-index import for sessions migrate --apply
 # --legacy-index. Off by default; the default binary refuses with

@@ -437,10 +437,6 @@ fn enabled_features() -> Vec<String> {
             "legacy-session-index-import",
             cfg!(feature = "legacy-session-index-import"),
         ),
-        (
-            "linux-compat-vendored-openssl",
-            cfg!(feature = "linux-compat-vendored-openssl"),
-        ),
         ("pdf", cfg!(feature = "pdf")),
     ];
     flags
