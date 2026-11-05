@@ -654,7 +654,13 @@ def measure_install_size(binary: str) -> tuple[int | None, str | None]:
             break
         current = current.parent
     if package_dir is None or "node_modules" not in str(package_dir):
-        return os.path.getsize(real), None
+        size = os.path.getsize(real)
+        # A shell launcher shipped beside its payload (`<name>.bin`, as in the
+        # jcode Linux release) is a few hundred bytes; count the payload too.
+        payload = real + ".bin"
+        if os.path.isfile(payload):
+            size += os.path.getsize(payload)
+        return size, None
     # A dependency nested inside the package is already counted by its parent's
     # walk; skip closure members that live under another member.
     members = sorted(_npm_closure(package_dir), key=lambda p: len(str(p)))
