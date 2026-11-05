@@ -178,13 +178,22 @@ impl IrcBus {
     }
 
     async fn hand_off(&self, target: &Endpoint, message: &IrcMessage) -> Outcome {
-        let waiter = {
+        // Take the waiter and hand the message over under one lock. A dropped
+        // `wait` recovers under the same lock, so either the hand-off happens
+        // first (the message is in the receiver) or the waiter is unregistered
+        // first (the delivery falls back to the session); the two cannot
+        // interleave and strand a message.
+        let handed = {
             let mut state = self.lock();
-            state.take_matching_waiter(target.id.as_ref(), message)
+            match state.take_matching_waiter(target.id.as_ref(), message) {
+                Some(waiter) => match waiter.tx.send(message.clone()) {
+                    Ok(()) => true,
+                    Err(_) => false,
+                },
+                None => false,
+            }
         };
-        if let Some(waiter) = waiter
-            && waiter.tx.send(message.clone()).is_ok()
-        {
+        if handed {
             return Outcome::Injected;
         }
 
@@ -198,6 +207,12 @@ impl IrcBus {
             }
             DeliverResult::Errored(reason) => {
                 let mut state = self.lock();
+                // A receiver may have registered while this delivery was in
+                // flight. Waiters come first, so hand the message over instead
+                // of parking it in a mailbox that nobody polls.
+                if state.deliver_to_waiter(message) {
+                    return Outcome::Injected;
+                }
                 let cap = self.limits.mailbox_cap;
                 state.enqueue(message.clone(), cap);
                 Outcome::Failed(reason)
@@ -253,7 +268,7 @@ impl IrcBus {
         cancel: impl Future<Output = ()>,
     ) -> WaitOutcome {
         let timeout = timeout.min(self.limits.wait_max);
-        let (waiter_id, mut rx, targets) = {
+        let (waiter_id, rx, targets) = {
             let mut state = self.lock();
             if let Some(message) = state.take_accepted(me, &filter) {
                 return WaitOutcome::Message(message);
@@ -286,12 +301,20 @@ impl IrcBus {
             );
             (id, rx, targets)
         };
+        // From here on the waiter is registered, so any exit short of `settle`
+        // or a received message must unregister it.
+        let mut guard = PendingWait {
+            bus: self,
+            me,
+            waiter_id,
+            rx: Some(rx),
+        };
 
         if self.deliver.has_pending_input(me).await {
-            return self.settle(me, waiter_id, &mut rx, WaitOutcome::PendingInput).await;
+            return self.settle(&mut guard, WaitOutcome::PendingInput).await;
         }
         if !self.any_target_can_respond(&targets).await {
-            return self.settle(me, waiter_id, &mut rx, WaitOutcome::NothingToWaitFor).await;
+            return self.settle(&mut guard, WaitOutcome::NothingToWaitFor).await;
         }
 
         let deadline = tokio::time::sleep(timeout);
@@ -301,25 +324,30 @@ impl IrcBus {
         recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
-            tokio::select! {
-                received = &mut rx => {
+            let wake = tokio::select! {
+                received = guard.receive() => Wake::Received(received),
+                _ = &mut deadline => Wake::Deadline,
+                _ = &mut cancel => Wake::Cancel,
+                _ = recheck.tick() => Wake::Recheck,
+            };
+            match wake {
+                Wake::Received(received) => {
+                    // The sender already removed the waiter; there is nothing
+                    // left to clean up and no extra lock to take.
+                    guard.disarm();
                     return match received {
                         Ok(message) => WaitOutcome::Message(message),
                         Err(_) => WaitOutcome::NothingToWaitFor,
                     };
                 }
-                _ = &mut deadline => {
-                    return self.settle(me, waiter_id, &mut rx, WaitOutcome::Timeout).await;
-                }
-                _ = &mut cancel => {
-                    return self.settle(me, waiter_id, &mut rx, WaitOutcome::Cancelled).await;
-                }
-                _ = recheck.tick() => {
+                Wake::Deadline => return self.settle(&mut guard, WaitOutcome::Timeout).await,
+                Wake::Cancel => return self.settle(&mut guard, WaitOutcome::Cancelled).await,
+                Wake::Recheck => {
                     if self.deliver.has_pending_input(me).await {
-                        return self.settle(me, waiter_id, &mut rx, WaitOutcome::PendingInput).await;
+                        return self.settle(&mut guard, WaitOutcome::PendingInput).await;
                     }
                     if !self.any_target_can_respond(&targets).await {
-                        return self.settle(me, waiter_id, &mut rx, WaitOutcome::NothingToWaitFor).await;
+                        return self.settle(&mut guard, WaitOutcome::NothingToWaitFor).await;
                     }
                 }
             }
@@ -336,27 +364,86 @@ impl IrcBus {
     }
 
     /// Unpark the waiter, preferring a message that already reached it over `outcome`.
-    async fn settle(
-        &self,
-        me: &str,
-        waiter_id: u64,
-        rx: &mut oneshot::Receiver<IrcMessage>,
-        outcome: WaitOutcome,
-    ) -> WaitOutcome {
+    async fn settle(&self, guard: &mut PendingWait<'_>, outcome: WaitOutcome) -> WaitOutcome {
         let removed = {
             let mut state = self.lock();
-            state.remove_waiter(me, waiter_id)
+            state.remove_waiter(guard.me, guard.waiter_id)
         };
         if removed {
-            return match rx.try_recv() {
-                Ok(message) => WaitOutcome::Message(message),
-                Err(_) => outcome,
+            let received = guard.try_receive();
+            guard.disarm();
+            return match received {
+                Some(message) => WaitOutcome::Message(message),
+                None => outcome,
             };
         }
         // A delivery leg claimed the waiter and is handing the message over.
-        match rx.await {
+        // The guard stays armed so an abort during this await still recovers
+        // the message through `Drop`.
+        let received = guard.receive().await;
+        guard.disarm();
+        match received {
             Ok(message) => WaitOutcome::Message(message),
             Err(_) => outcome,
+        }
+    }
+}
+
+/// Which event ended one parked iteration.
+enum Wake {
+    Received(Result<IrcMessage, oneshot::error::RecvError>),
+    Deadline,
+    Cancel,
+    Recheck,
+}
+
+/// Keeps a parked waiter registered only while its `wait` future is alive.
+///
+/// The waiter lives in `State`, not on the future's stack, so a future dropped
+/// at an await point would otherwise leave it behind forever. If a message
+/// already reached the abandoned receiver, `Drop` hands it to the next matching
+/// waiter or buffers it, so the reply is not lost.
+struct PendingWait<'a> {
+    bus: &'a IrcBus,
+    me: &'a str,
+    waiter_id: u64,
+    rx: Option<oneshot::Receiver<IrcMessage>>,
+}
+
+impl PendingWait<'_> {
+    async fn receive(&mut self) -> Result<IrcMessage, oneshot::error::RecvError> {
+        match self.rx.as_mut() {
+            Some(rx) => rx.await,
+            None => std::future::pending().await,
+        }
+    }
+
+    fn try_receive(&mut self) -> Option<IrcMessage> {
+        take_received(self.rx.as_mut()?)
+    }
+
+    fn disarm(&mut self) {
+        self.rx = None;
+    }
+}
+
+impl Drop for PendingWait<'_> {
+    fn drop(&mut self) {
+        let Some(mut rx) = self.rx.take() else {
+            return;
+        };
+        // Recovery and removal share the lock with `hand_off`'s take-and-send,
+        // so the two serialize: either the hand-off already put the message in
+        // `rx` (and it is recovered here), or the waiter is removed before any
+        // sender can claim it.
+        let mut state = self.bus.lock();
+        let recovered = take_received(&mut rx);
+        state.remove_waiter(self.me, self.waiter_id);
+        if let Some(message) = recovered
+            && !state.deliver_to_waiter(&message)
+        {
+            let cap = self.bus.limits.mailbox_cap;
+            state.enqueue_recovered(message, cap);
         }
     }
 }
@@ -367,6 +454,26 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
+/// Take a message that already reached the receiver, if any.
+///
+/// `Err` covers both "nothing yet" and "sender gone"; the caller treats both as
+/// "nothing to recover". The obvious shorthand is rejected by the repository's
+/// swallowed-error gate, so the match stays explicit.
+#[expect(
+    clippy::manual_ok_err,
+    reason = "the swallowed-error gate rejects the shorthand; both error cases mean nothing arrived"
+)]
+fn take_received(rx: &mut oneshot::Receiver<IrcMessage>) -> Option<IrcMessage> {
+    match rx.try_recv() {
+        Ok(message) => Some(message),
+        Err(_) => None,
+    }
+}
+
 #[cfg(test)]
 #[path = "wait_latency_tests.rs"]
 mod wait_latency_tests;
+
+#[cfg(test)]
+#[path = "cancel_safety_tests.rs"]
+mod cancel_safety_tests;

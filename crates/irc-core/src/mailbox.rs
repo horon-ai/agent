@@ -48,6 +48,19 @@ impl State {
         Some(found)
     }
 
+    /// Hand `message` to the oldest matching waiter, skipping waiters whose
+    /// receiver is already gone. Returns whether a waiter took the message.
+    pub fn deliver_to_waiter(&mut self, message: &IrcMessage) -> bool {
+        loop {
+            let Some(waiter) = self.take_matching_waiter(message.to.as_ref(), message) else {
+                return false;
+            };
+            if waiter.tx.send(message.clone()).is_ok() {
+                return true;
+            }
+        }
+    }
+
     pub fn register_waiter(&mut self, me: &str, waiter: Waiter) {
         self.waiters.entry(me.into()).or_default().push_back(waiter);
         self.sync_waiters_live();
@@ -107,6 +120,28 @@ impl State {
     pub fn enqueue(&mut self, message: IrcMessage, cap: usize) {
         let mailbox = self.mailboxes.entry(message.to.clone()).or_default();
         mailbox.push_back(message);
+        if mailbox.len() > cap {
+            mailbox.pop_front();
+            self.stats.mailbox_dropped += 1;
+        }
+        let len = mailbox.len() as u64;
+        if len > self.stats.mailbox_high_water {
+            self.stats.mailbox_high_water = len;
+        }
+    }
+
+    /// Buffer a recovered message at its sequence position so a sender's
+    /// messages keep their order and `inbox` still reads oldest first.
+    ///
+    /// The cap still drops from the front, so the oldest message wins over the
+    /// newest when the mailbox is full.
+    pub fn enqueue_recovered(&mut self, message: IrcMessage, cap: usize) {
+        let mailbox = self.mailboxes.entry(message.to.clone()).or_default();
+        let index = mailbox
+            .iter()
+            .position(|queued| queued.seq > message.seq)
+            .unwrap_or(mailbox.len());
+        mailbox.insert(index, message);
         if mailbox.len() > cap {
             mailbox.pop_front();
             self.stats.mailbox_dropped += 1;
