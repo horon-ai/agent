@@ -60,6 +60,9 @@ HEALTHY_LINES = [
     "rejected_frame_bytes=67108865",
     "STRUCTURAL_PERF section=soak cycles=20 fd_retention=0 thread_retention=-1 non_returning=0",
     "STRUCTURAL_PERF section=context source=app-core spill_kept_bytes=39349 read_stub_bytes=158 aging_batches=1",
+    "STRUCTURAL_PERF section=irc source=irc-core mailbox_high_water=100 mailbox_dropped=900 "
+    "broadcast_body_allocations=1 waiters_live_after_churn=0 broadcast_inflight_high_water=16 flood=1000 "
+    "broadcast_targets=64",
 ]
 
 
@@ -277,6 +280,17 @@ class ViolationTest(unittest.TestCase):
         )
         self.assert_fails_naming(lines, "aging_batches")
 
+    def test_a_mailbox_that_keeps_the_flood_fails(self):
+        # The cap was reported at 101 after a 1,000-message flood: the bus
+        # buffered past its own ceiling and kept the messages it should drop.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=irc",
+            "STRUCTURAL_PERF section=irc source=irc-core mailbox_high_water=101 mailbox_dropped=899 "
+            "broadcast_body_allocations=1 waiters_live_after_churn=0 broadcast_inflight_high_water=16 flood=1000 "
+            "broadcast_targets=64",
+        )
+        self.assert_fails_naming(lines, "mailbox_high_water")
+
     def test_a_reader_that_accepts_a_frame_above_the_cap_fails(self):
         # The reader buffered past its own cap instead of refusing: one byte
         # over, and the next frame after it would be read as the tail of this
@@ -351,6 +365,15 @@ class MissingMeasurementTest(unittest.TestCase):
         self.assertEqual(run.result["missing"], ["frame/sdk"])
         self.assertIn("frame/sdk", run.stderr)
 
+    def test_a_missing_irc_section_fails_the_same_way(self):
+        without_irc = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=irc")]
+        run = run_gate(without_irc)
+        self.assertEqual(run.code, 2, "an irc section that did not run is not a pass")
+        result = run.result
+        self.assertEqual(result["verdict"], "fail")
+        self.assertEqual(result["missing"], ["irc"])
+        self.assertIn("irc", run.stderr)
+
     def test_a_line_without_a_section_is_refused(self):
         with self.assertRaises(gate.GateError):
             gate.parse_lines("STRUCTURAL_PERF queue_depth_high_water=1")
@@ -403,6 +426,10 @@ class BudgetTest(unittest.TestCase):
             "context_spill_kept_bytes",
             "context_read_stub_bytes",
             "context_aging_batches",
+            "irc_mailbox_cap",
+            "irc_broadcast_body_allocations",
+            "irc_waiters_live_after_churn",
+            "irc_broadcast_concurrency",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

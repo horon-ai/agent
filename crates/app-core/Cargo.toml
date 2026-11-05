@@ -60,6 +60,7 @@ horon-agent-ast = { path = "../ast" }
 horon-agent-harness-api = { path = "../harness-api" }
 horon-agent-productivity-core = { path = "../productivity-core" }
 horon-agent-import-core = { path = "../import-core" }
+horon-agent-irc-core = { path = "../irc-core" }
 
 # OAuth
 base64 = "0.22"

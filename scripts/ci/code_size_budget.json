@@ -10,7 +10,7 @@
     "crates/app-core/src/ambient/persistence.rs": 1252,
     "crates/app-core/src/notifications.rs": 1549,
     "crates/app-core/src/overnight.rs": 1219,
-    "crates/app-core/src/server.rs": 2572,
+    "crates/app-core/src/server.rs": 2551,
     "crates/app-core/src/server/client_actions.rs": 1419,
     "crates/app-core/src/server/client_lifecycle.rs": 5083,
     "crates/app-core/src/server/client_session.rs": 2049,

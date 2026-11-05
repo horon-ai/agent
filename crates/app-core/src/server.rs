@@ -31,9 +31,11 @@ mod comm_sync;
 mod comm_worktree;
 mod configured_name;
 mod session_connections;
+mod session_forget;
 mod session_observation;
 pub mod session_replication;
 use configured_name::normalize_configured_server_name;
+use session_forget::forget_removed_session;
 mod control_receipts;
 mod debug;
 mod debug_ambient;
@@ -49,6 +51,7 @@ mod debug_testers;
 mod durable_state;
 pub mod foreground_state;
 mod headless;
+mod irc;
 mod jade_relay;
 mod lifecycle;
 mod live_turn;
@@ -190,32 +193,6 @@ pub(super) async fn remove_session_entry<T>(sessions: &Arc<RwLock<HashMap<String
         forget_removed_session(session_id, retired_sink.as_ref());
     }
     removed
-}
-
-/// Forget the per-session registries a removed session owned: its event sink,
-/// its metrics, and its recorded reasoning effort.
-///
-/// Split out from [`remove_session_entry`] for callers that already hold the
-/// `sessions` write guard: re-entering `remove_session_entry` there would take
-/// the same lock twice. `retired_sink` is the channel the event-sink registry
-/// held before the removal; `None` means no sink was registered.
-///
-/// The presence marker is deliberately not part of this: `remove_session_entry`
-/// owns it, and the two resume paths that call this directly never cleared it.
-pub(super) fn forget_removed_session(session_id: &str, retired_sink: Option<&mpsc::UnboundedSender<ServerEvent>>) {
-    if let Some(retired) = retired_sink {
-        unregister_session_event_sink(session_id, retired);
-    }
-    crate::session_metrics::forget(session_id);
-    crate::session_effort::forget_session_effort(session_id);
-    // Per-session caches that would otherwise outlive the session: the monitor
-    // runtime (and its sampler thread), the observation record, and the durable
-    // input store. Without this a daemon that opens and closes sessions forever
-    // keeps every one of them, and their threads, alive.
-    crate::tool::forget_session_caches(session_id);
-    crate::server::session_observation::forget_session(session_id);
-    crate::durable_input_runtime::forget_session(session_id);
-    crate::server::control_receipts::forget_session(session_id);
 }
 
 const SERVER_NAME_ENV: &str = "HORON_AGENT_SERVER_NAME";
@@ -2406,6 +2383,7 @@ impl Server {
 
         let main_listener = Listener::bind(&self.socket_path)?;
         let debug_listener = Listener::bind(&self.debug_socket_path)?;
+        irc::install(self);
 
         #[cfg(unix)]
         {
@@ -2528,6 +2506,7 @@ impl Server {
                 let _ = main_handle.await;
             }
         }
+        horon_agent_irc_core::global::clear();
         Ok(())
     }
 
