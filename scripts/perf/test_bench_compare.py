@@ -134,6 +134,15 @@ class InstallSizeTests(unittest.TestCase):
             self.assertIsNone(error)
             self.assertEqual(size, 128)
 
+    def test_shell_launcher_counts_sibling_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            launcher = Path(root) / "tool-linux"
+            launcher.write_text("#!/bin/sh\nexec \"$0.bin\"\n")
+            (Path(root) / "tool-linux.bin").write_bytes(b"x" * 1000)
+            size, error = bench.measure_install_size(str(launcher))
+            self.assertIsNone(error)
+            self.assertEqual(size, len("#!/bin/sh\nexec \"$0.bin\"\n") + 1000)
+
 
 class ReportShapeTests(unittest.TestCase):
     def test_envelope_contract(self) -> None:

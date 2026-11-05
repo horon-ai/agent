@@ -90,22 +90,24 @@ install_jcode() {
     note_fail jcode "download failed: $url"
     return 1
   fi
-  if ! tar xzf "$tarball" -C "$DEST"; then
+  # Extract into its own directory: the Linux archive is a sh launcher plus a
+  # `<name>.bin` payload it execs from its own directory, so both must stay together.
+  local dist="$DEST/jcode-dist"
+  rm -rf "$dist"
+  mkdir -p "$dist"
+  if ! tar xzf "$tarball" -C "$dist"; then
     note_fail jcode "unpack failed: $tarball"
     return 1
   fi
   rm -f "$tarball"
   local extracted
-  extracted="$(find "$DEST" -maxdepth 1 -type f -name 'jcode-*' ! -name '*.tar.gz' | head -n1)"
+  extracted="$(find "$dist" -maxdepth 1 -type f -name 'jcode-*' ! -name '*.bin' | head -n1)"
   if [ -z "$extracted" ]; then
     note_fail jcode "release archive contained no binary"
     return 1
   fi
-  chmod +x "$extracted"
-  if [ "$extracted" != "$DEST/jcode" ]; then
-    mv -f "$extracted" "$DEST/jcode"
-  fi
-  record_bin jcode "$DEST/jcode"
+  chmod +x "$dist"/jcode-*
+  record_bin jcode "$extracted"
 }
 
 install_node_tool() {
