@@ -8,11 +8,12 @@ pub use horon_agent_config_types::{
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DiagramDisplayMode, DiagramPanePosition,
     DiffDisplayMode, DisplayConfig, FeatureConfig, ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig,
-    KeybindingsConfig, LatexRenderingMode, LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode, MenubarConfig,
-    NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, NativeScrollbarConfig,
-    NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode,
-    SessionPickerResumeAction, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode,
-    SwarmStripLayout, TerminalConfig, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
+    IrcConfig, KeybindingsConfig, LatexRenderingMode, LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode,
+    MenubarConfig, NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType,
+    NativeScrollbarConfig, NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
+    SecretsMode, SessionPickerResumeAction, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat,
+    SwarmSpawnMode, SwarmStripLayout, TerminalConfig, TurnRecoveryMode, UpdateChannel, WebSearchConfig,
+    WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 use serde::{Deserialize, Serialize};
@@ -154,6 +155,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_IDLE_ANIMATION",
     "HORON_AGENT_IMAP_HOST",
     "HORON_AGENT_INFO_WIDGET_TOGGLE_KEY",
+    "HORON_AGENT_IRC",
     "HORON_AGENT_JADE_RELAY_API_BASE",
     "HORON_AGENT_JADE_RELAY_ENABLED",
     "HORON_AGENT_JADE_RELAY_LAUNCH_ENABLED",
@@ -580,6 +582,9 @@ pub struct Config {
     /// WebSocket gateway configuration (for iOS/web clients)
     pub gateway: GatewayConfig,
 
+    /// Limits for the in-process agent IRC mailbox bus.
+    pub irc: IrcConfig,
+
     /// Advisor: a second, independent model that files narrow notes.
     pub advisor: AdvisorConfig,
 
@@ -762,6 +767,13 @@ pub const CLIENTLESS_APPROVAL_TOOL: &str = "request_permission";
 /// fifteen-tool headless surface is unchanged, and this tool only becomes
 /// reachable when the operator turns plan mode on.
 pub const PLAN_TOOL: &str = "submit_plan";
+
+/// Tool joined into a non-empty allow-list when `[tools] irc` is on.
+///
+/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`]: the fifteen-tool
+/// headless surface is unchanged, and this tool only becomes reachable when the
+/// operator turns the IRC bus on.
+pub const IRC_TOOL: &str = "irc";
 
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
@@ -1044,6 +1056,9 @@ pub struct ToolConfig {
     /// refused until a plan is approved. Off by default so nothing changes for
     /// an existing config.
     pub plan_mode: bool,
+    /// Opt-in `irc`: expose the tool that sends and receives messages between
+    /// agents of the same daemon. Off by default; `HORON_AGENT_IRC` overrides.
+    pub irc: bool,
     /// Which calls ask for approval before they run. `off` (default) keeps the
     /// current behavior of never asking; see [`ApprovalMode`].
     pub approval_mode: ApprovalMode,
@@ -1119,6 +1134,7 @@ impl Default for ToolConfig {
             ask_policy: AskPolicy::Recommended,
             load_mode: BTreeMap::new(),
             plan_mode: false,
+            irc: false,
             approval_mode: ApprovalMode::Off,
             bash_session_cwd: true,
             bash_non_interactive_env: true,
@@ -1142,54 +1158,6 @@ pub struct ToolSelection {
 impl ToolConfig {
     pub fn selection(&self) -> ToolSelection {
         self.selection_with_ambient(&config().ambient)
-    }
-
-    /// [`Self::selection`] with the ambient settings supplied by the caller.
-    ///
-    /// `request_permission` is registered by the ambient runner, but registration
-    /// alone does not make it reachable: the agent applies this allow-list to
-    /// the tool surface and rejects calls outside it. An unattended run that has
-    /// no attached client cannot be an ambient session in the old sense, so
-    /// `ambient.approval_for_clientless_runs` joins the tool into the computed
-    /// allow-list. [`CORE_TOOLS`] stays the fifteen-tool set it is today.
-    /// An empty or absent allow-list is left alone: `None` already exposes every
-    /// registered tool, and an explicit `none` profile must stay empty.
-    pub fn selection_with_ambient(&self, ambient: &AmbientConfig) -> ToolSelection {
-        let mut allowed_tools = self.base_allowed_tools();
-        let disabled_tools: HashSet<String> = self
-            .disabled
-            .iter()
-            .map(|name| normalize_tool_name(name))
-            .filter(|name| !name.is_empty())
-            .collect();
-
-        if ambient.approval_for_clientless_runs
-            && let Some(allowed) = allowed_tools.as_mut()
-            && !allowed.is_empty()
-        {
-            allowed.insert(CLIENTLESS_APPROVAL_TOOL.to_string());
-        }
-
-        // Plan mode is registered on the same terms: the tool is registered only
-        // when the switch is on, and registration alone does not make it
-        // reachable past this allow-list.
-        if self.plan_mode
-            && let Some(allowed) = allowed_tools.as_mut()
-            && !allowed.is_empty()
-        {
-            allowed.insert(PLAN_TOOL.to_string());
-        }
-
-        if let Some(allowed) = allowed_tools.as_mut() {
-            for name in &disabled_tools {
-                allowed.remove(name);
-            }
-        }
-
-        ToolSelection {
-            allowed_tools,
-            disabled_tools,
-        }
     }
 
     pub fn allowed_tools(&self) -> Option<HashSet<String>> {
@@ -1393,6 +1361,7 @@ mod config_file;
 mod default_file;
 mod display_summary;
 mod env_overrides;
+mod tool_selection;
 
 #[cfg(test)]
 #[path = "config_tests.rs"]
