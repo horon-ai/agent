@@ -173,7 +173,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare,tools -f competitors=c
 | `competitors` | `jcode,claude_code,codex,opencode,pi` | horon 과 비교할 도구. 설치에 실패한 도구는 `skipped` 로 남는다. |
 | `sessions` | `1 5 10` | 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
-| `runner` | `ubuntu-latest` | `self-hosted` 를 고르면 상주 macOS 러너에서 돈다. 수치가 덜 흔들린다. |
+| `runner` | `ubuntu-latest` | `macos-persistent` 를 고르면 저장소의 상주 macOS 러너에서 돈다. 수치가 덜 흔들린다. |
 
 모든 묶음은 한 작업, 한 기계에서 돌아 비교 행이 같은 CPU·디스크·부하를 공유한다. 모델이 필요한 측정은 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙으므로 시크릿과 API 요금이 없다. 결과는 작업 요약(step summary)의 표와 `benchmark-<run_id>` 아티팩트(JSON, 마크다운)로 남고, 임계값으로 실패하지 않는다. 스크립트 자체가 오류를 낼 때만 실패한다.
 

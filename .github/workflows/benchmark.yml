@@ -35,13 +35,13 @@ on:
         required: false
         default: "3"
       runner:
-        description: "ubuntu-latest, or self-hosted for the persistent macOS runner (quieter numbers)"
+        description: "ubuntu-latest, or macos-persistent for the repository's persistent macOS runner (quieter numbers)"
         type: choice
         required: false
         default: ubuntu-latest
         options:
           - ubuntu-latest
-          - self-hosted
+          - macos-persistent
 
 permissions:
   contents: read
@@ -60,9 +60,9 @@ jobs:
   benchmark:
     name: Benchmark (${{ inputs.suites }})
     # Every suite runs in one job on one machine, so the comparison rows share the
-    # same CPU, disk, and load. Only users with write access can dispatch, so the
-    # self-hosted runner never runs fork code from here.
-    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    # same CPU, disk, and load. Only users with write access can dispatch, and the
+    # first-party guard below keeps the persistent macOS runner off fork code.
+    runs-on: ${{ inputs.runner == 'macos-persistent' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
     timeout-minutes: 180
     env:
       RUSTUP_TOOLCHAIN: stable
