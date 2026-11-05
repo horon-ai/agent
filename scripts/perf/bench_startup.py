@@ -122,7 +122,9 @@ def wait_for_socket(path: str, timeout_s: float) -> bool:
 def measure_server_startup(binary: str, runs: int) -> list[float]:
     times: list[float] = []
     for _ in range(runs):
-        root = tempfile.mkdtemp(prefix="horon-agent-server-bench-")
+        # Short prefix: macOS $TMPDIR is long, and the daemon socket path must
+        # stay under SUN_LEN (104 bytes) or `serve` never binds it.
+        root = tempfile.mkdtemp(prefix="ha-serve-")
         env = isolated_env(root)
         socket_path = env["HORON_AGENT_SOCKET"]
         proc = None
