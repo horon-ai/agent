@@ -40,6 +40,7 @@ members = [
     "crates/plan",
     "crates/productivity-core",
     "crates/swarm-core",
+    "crates/irc-core",
     "crates/protocol",
     "crates/selfdev-types",
     "crates/session-types",
