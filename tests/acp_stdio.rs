@@ -751,8 +751,8 @@ fn is1_handshake() {
         .collect();
     assert_eq!(
         auth_ids,
-        ["horon-agent-credentials", "horon-agent-terminal-login"],
-        "the repeated initialize refreshed the stored capabilities: {refreshed}"
+        ["horon-agent-credentials"],
+        "a terminal capability adds no auth method: {refreshed}"
     );
 
     let session_id = conn.new_session(&work);
@@ -1936,10 +1936,9 @@ fn is12_mcp() {
     loader.assert_schema_clean();
 }
 
-/// IS-13: authMethods carry the agent method always and the terminal method
-/// only for a client that advertised auth.terminal; authenticate and
-/// session/new answer -32000 while no model is usable and succeed once one is;
-/// logout is never offered.
+/// IS-13: authMethods carry the one credentials method and no terminal method
+/// whatever the client advertises; authenticate and session/new answer -32000
+/// while no model is usable and succeed once one is; logout is never offered.
 #[test]
 fn is13_auth() {
     let no_model = NoModelDaemon::start();
@@ -1968,16 +1967,17 @@ fn is13_auth() {
     let logout = conn.err("logout", json!({}));
     assert_eq!(logout["code"], -32601, "no logout method: {logout}");
     let refreshed = conn.initialize(json!({"auth": {"terminal": true}}));
-    let methods = refreshed["authMethods"].as_array().expect("authMethods");
-    let ids: Vec<&str> = methods.iter().filter_map(|method| method["id"].as_str()).collect();
+    let ids: Vec<&str> = refreshed["authMethods"]
+        .as_array()
+        .expect("authMethods")
+        .iter()
+        .filter_map(|method| method["id"].as_str())
+        .collect();
     assert_eq!(
         ids,
-        ["horon-agent-credentials", "horon-agent-terminal-login"],
-        "{refreshed}"
+        ["horon-agent-credentials"],
+        "a terminal capability adds no auth method: {refreshed}"
     );
-    let terminal = &methods[1];
-    assert_eq!(terminal["type"], "terminal", "{terminal}");
-    assert_eq!(terminal["args"], json!(["--login"]), "{terminal}");
     conn.assert_schema_clean();
     drop(conn);
     drop(no_model);
@@ -1994,6 +1994,38 @@ fn is13_auth() {
     );
     let session = conn.new_session(&work);
     assert!(!session.is_empty());
+    conn.assert_schema_clean();
+}
+
+/// The golden v1 frame and the shipped binary agree on `authMethods`: one
+/// credentials method, no terminal method, and the dropped terminal id is an
+/// unknown method that leaves the process serving.
+#[test]
+fn golden_v1_auth_methods() {
+    let fixture = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/acp/golden-v1-frames.jsonl"),
+    )
+    .expect("golden fixture");
+    let golden = fixture
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("golden frame"))
+        .find(|frame| frame["id"] == json!(0) && frame.get("result").is_some())
+        .expect("the golden initialize answer");
+
+    let daemon = AcpDaemon::start("acp");
+    let _dump = LogDump(&daemon);
+    let mut conn = Conn::open(&daemon, ClientCapabilities::default(), "golden-auth");
+    let init = conn.initialize(json!({"auth": {"terminal": true}}));
+    assert_eq!(init["protocolVersion"], 1, "v1 keeps version 1: {init}");
+    assert_eq!(init["authMethods"], golden["result"]["authMethods"], "{init}");
+
+    let terminal = conn.err("authenticate", json!({"methodId": "horon-agent-terminal-login"}));
+    assert_eq!(terminal["code"], -32602, "{terminal}");
+    assert_eq!(
+        conn.ok("authenticate", json!({"methodId": "horon-agent-credentials"})),
+        json!({}),
+        "the process keeps serving after the unknown method"
+    );
     conn.assert_schema_clean();
 }
 

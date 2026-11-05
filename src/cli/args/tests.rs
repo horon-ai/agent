@@ -726,18 +726,15 @@ fn quiet_global_flag_parses() {
 fn acp_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "acp"]).unwrap();
     match args.command {
-        Some(Command::Acp { login: false }) => {}
+        Some(Command::Acp) => {}
         other => panic!("unexpected command: {:?}", other),
     }
 }
 
 #[test]
-fn acp_login_flag_parses() {
-    let args = Args::try_parse_from(["horon-agent", "acp", "--login"]).unwrap();
-    match args.command {
-        Some(Command::Acp { login: true }) => {}
-        other => panic!("unexpected command: {:?}", other),
-    }
+fn acp_rejects_login_flag() {
+    let error = Args::try_parse_from(["horon-agent", "acp", "--login"]).expect_err("--login is gone");
+    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
 }
 
 #[test]

@@ -741,16 +741,16 @@ impl AcpRuntime {
             return self.peer.write_error(id, &late_initialize_error()).await;
         }
         // v1 names the client's fields `clientCapabilities` and `clientInfo`; v2
-        // names them `capabilities` and `info`, so a v2 client's elicitation and
-        // terminal auth support is read from where it sends them.
+        // names them `capabilities` and `info`, so a v2 client's elicitation
+        // support is read from where it sends it.
         let (capabilities_key, info_key) = match version {
             AcpVersion::V1 => ("clientCapabilities", "clientInfo"),
             AcpVersion::V2 => ("capabilities", "info"),
         };
         let capabilities = params.get(capabilities_key).cloned().unwrap_or_else(|| json!({}));
         let result = match version {
-            AcpVersion::V1 => initialize_result(params, self.profile),
-            AcpVersion::V2 => v2::shapes::initialize_response(self.profile, &capabilities, MCP_REMOTE_TRANSPORTS.http),
+            AcpVersion::V1 => initialize_result(self.profile),
+            AcpVersion::V2 => v2::shapes::initialize_response(self.profile, MCP_REMOTE_TRANSPORTS.http),
         };
         {
             let mut connection = self.lock_connection();

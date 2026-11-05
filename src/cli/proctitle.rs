@@ -11,7 +11,7 @@ use crate::process_title::{compact_process_title, session_name, set_title};
 pub(crate) fn initial_title(args: &Args) -> String {
     match &args.command {
         Some(Command::Serve { .. }) => "horon:server".to_string(),
-        Some(Command::Acp { .. }) => "horon-agent acp".to_string(),
+        Some(Command::Acp) => "horon-agent acp".to_string(),
         Some(Command::Server { .. }) => "horon-agent server".to_string(),
         Some(Command::Connect) => "horon:client".to_string(),
         #[cfg(unix)]

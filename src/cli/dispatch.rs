@@ -204,18 +204,15 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             ));
             server.run().await?;
         }
-        Some(Command::Acp { login }) => match acp::acp_entry(login) {
-            acp::AcpEntry::Login => acp::run_acp_login().await?,
-            acp::AcpEntry::Stdio => {
-                acp::run_acp_command(
-                    args.provider,
-                    args.model.clone(),
-                    args.provider_profile.clone(),
-                    args.tool_profile.is_some(),
-                )
-                .await?;
-            }
-        },
+        Some(Command::Acp) => {
+            acp::run_acp_command(
+                args.provider,
+                args.model.clone(),
+                args.provider_profile.clone(),
+                args.tool_profile.is_some(),
+            )
+            .await?;
+        }
         Some(Command::Connect) => {
             anyhow::bail!("the interactive client is unavailable in this headless build");
         }

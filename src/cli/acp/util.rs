@@ -152,11 +152,10 @@ pub(super) fn compatibility_option_value(
         .ok_or_else(|| format!("{method} requires a non-empty string {}", value_fields.join(" or ")))
 }
 
-pub(super) fn initialize_result(params: &Value, profile: AcpProfile) -> Value {
+pub(super) fn initialize_result(profile: AcpProfile) -> Value {
     // We only speak exactly ACP_PROTOCOL_VERSION; the response pins to our
     // version regardless of the `protocolVersion` the client requested.
     let protocol_version = ACP_PROTOCOL_VERSION;
-    let client_capabilities = params.get("clientCapabilities").cloned().unwrap_or(Value::Null);
     let mut agent_capabilities = json!({
         "loadSession": true,
         "promptCapabilities": {
@@ -199,7 +198,7 @@ pub(super) fn initialize_result(params: &Value, profile: AcpProfile) -> Value {
             "title": "HoronAgent",
             "version": horon_agent_build_meta::pkg_version(),
         },
-        "authMethods": auth_methods(&client_capabilities),
+        "authMethods": auth_methods(),
     })
 }
 

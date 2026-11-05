@@ -185,11 +185,7 @@ pub(crate) enum Command {
     },
 
     /// Run as an Agent Client Protocol (ACP) adapter backed by the HoronAgent daemon
-    Acp {
-        /// Run the interactive provider login, then exit without starting the adapter
-        #[arg(long)]
-        login: bool,
-    },
+    Acp,
 
     /// Manage the background server daemon (e.g. `horon-agent server stop`).
     Server {
