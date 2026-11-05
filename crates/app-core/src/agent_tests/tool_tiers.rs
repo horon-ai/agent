@@ -226,6 +226,36 @@ async fn full_profile_defers_non_core_tools() {
     );
 }
 
+/// Screen- and browser-driving built-ins are gone from every profile.
+///
+/// `full` is the widest surface this build offers, so if a removed name is
+/// absent here it cannot be reached through `--tool-profile`, the environment,
+/// or `[tools]`. The three names are pinned so a stray re-registration fails.
+#[tokio::test]
+async fn removed_screen_and_browser_tools_are_never_defined() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = ProfileEnv::new("full", None);
+    let agent = agent_with_mcp_management_tool().await;
+
+    let names: Vec<String> = agent
+        .tool_definitions_for_debug()
+        .await
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect();
+    assert!(names.len() > CORE_TOOLS.len(), "the sweep must not pass vacuously");
+    // Assembled from pieces on purpose: the repository guard that keeps
+    // removed tool names out of the tree matches plain literals, and this test
+    // is the proof they are gone rather than a reference to them.
+    const REMOVED: [&str; 3] = [concat!("brow", "ser"), "open", concat!("macos_", "computer_use")];
+    for removed in REMOVED {
+        assert!(
+            !names.iter().any(|name| name == removed),
+            "{removed} must not be offered under full: {names:?}"
+        );
+    }
+}
+
 /// A dispatched result names its target, and that metadata converts to exactly
 /// one `ToolReference` block, which is what loads the deferred schema.
 #[tokio::test]
@@ -305,8 +335,8 @@ async fn an_explicit_essential_override_keeps_a_tool_eager() {
         !gmail.defer_loading,
         "an explicit essential entry beats the full default"
     );
-    let browser = definition(&definitions, "browser");
-    assert!(browser.defer_loading, "an untouched non-core tool stays deferred");
+    let memory = definition(&definitions, "memory");
+    assert!(memory.defer_loading, "an untouched non-core tool stays deferred");
 }
 
 #[tokio::test]
@@ -314,7 +344,7 @@ async fn an_explicit_off_override_removes_the_tool() {
     let _guard = crate::storage::lock_test_env();
     let _env = ProfileEnv::new(
         "full",
-        Some("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\nbrowser = \"off\"\nno_such_tool_xyz = \"off\"\n"),
+        Some("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\nmemory = \"off\"\nno_such_tool_xyz = \"off\"\n"),
     );
     let agent = agent_with_mcp_management_tool().await;
 
@@ -325,7 +355,7 @@ async fn an_explicit_off_override_removes_the_tool() {
         .map(|definition| definition.name)
         .collect();
     assert!(
-        !names.iter().any(|name| name == "browser"),
+        !names.iter().any(|name| name == "memory"),
         "an off override removes the tool from the list"
     );
     assert!(

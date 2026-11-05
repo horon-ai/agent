@@ -1,5 +1,5 @@
 {
-  "total": 153,
+  "total": 140,
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": 15,
     "crates/agent-sdk/src/auth/callback.rs": 2,
@@ -16,13 +16,9 @@
     "crates/app-core/src/tool/activator_clone.rs": 4,
     "crates/app-core/src/tool/artifacts.rs": 1,
     "crates/app-core/src/tool/bash.rs": 2,
-    "crates/app-core/src/tool/browser.rs": 2,
-    "crates/app-core/src/tool/browser_fast.rs": 6,
-    "crates/app-core/src/tool/browser_jev.rs": 1,
     "crates/app-core/src/tool/calendar.rs": 1,
     "crates/app-core/src/tool/communicate.rs": 1,
     "crates/app-core/src/tool/compile_remote.rs": 2,
-    "crates/app-core/src/tool/computer/win.rs": 3,
     "crates/app-core/src/tool/discover.rs": 1,
     "crates/app-core/src/tool/generated_guard.rs": 2,
     "crates/app-core/src/tool/lazy_activation.rs": 1,
@@ -39,7 +35,6 @@
     "crates/base/src/monitor/mod.rs": 4,
     "crates/base/src/provider_activity_oauth.rs": 3,
     "crates/base/src/secrets.rs": 3,
-    "crates/base/src/subscription_notice.rs": 1,
     "crates/base/src/voice_intent.rs": 5,
     "crates/base/src/workspace_trust.rs": 1,
     "crates/edit-bench/src/generate.rs": 1,

@@ -1336,7 +1336,6 @@ pub(super) async fn handle_client(
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
             Request::ClientResponse { .. } => unreachable!("client responses dispatched before acknowledgment"),
-            Request::SetBrowserMode { .. } => unreachable!("browser mode pushes are lightweight control requests"),
             Request::Message {
                 id,
                 content,

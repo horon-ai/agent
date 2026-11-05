@@ -59,7 +59,6 @@ pub(crate) fn initial_title(args: &Args) -> String {
                 "horon-agent hotkey setup".to_string()
             }
         }
-        Some(Command::Browser { .. }) => "horon-agent browser".to_string(),
         Some(Command::Replay { .. }) => "horon-agent replay".to_string(),
         Some(Command::Model(_)) => "horon-agent model".to_string(),
         Some(Command::ProviderTestCoverage { .. }) => "horon-agent provider-test-coverage".to_string(),

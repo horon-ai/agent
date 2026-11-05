@@ -31,8 +31,6 @@ const DROP: &[&str] = &[
     "batch",
     "bg",
     "memory",
-    "browser",
-    "macos_computer_use",
     "selfdev",
     "desktop_selfdev",
     "compile_remote",
@@ -45,7 +43,6 @@ const DROP: &[&str] = &[
     "session_search",
     "conversation_search",
     "todo",
-    "open",
 ];
 
 #[test]

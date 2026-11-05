@@ -51,19 +51,6 @@ pub struct SessionToolConfig {
     pub custom: Vec<SessionToolDefinition>,
 }
 
-/// Which side is driving a session's mirrored browser.
-///
-/// Pushed by the harness API bridge when its `browser_mirror` surface changes
-/// hands. The bridge stays the authority; the daemon only caches what it was
-/// last told, so a tool call never has to ask the bridge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BrowserMode {
-    #[serde(rename = "agent")]
-    Agent,
-    #[serde(rename = "user")]
-    User,
-}
-
 /// Client capabilities an ACP connection offers the daemon for one session.
 ///
 /// Each flag says the client can serve the matching ACP v1 method back to the
@@ -366,19 +353,6 @@ pub enum Request {
         id: u64,
         session_id: String,
         message: String,
-    },
-
-    /// Announce which side is driving a session's mirrored browser.
-    ///
-    /// Sent by the API bridge on `browser_mirror` takeover and resume. A push,
-    /// not a query: the daemon caches it with a lease, so the browser tool never
-    /// waits on the bridge. A daemon that predates this request answers with an
-    /// error, which the bridge discards.
-    #[serde(rename = "browser_mode")]
-    SetBrowserMode {
-        id: u64,
-        session_id: String,
-        mode: BrowserMode,
     },
 
     /// The user pressed something in an agent-mounted applet instance. The

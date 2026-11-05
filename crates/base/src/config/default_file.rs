@@ -434,7 +434,7 @@ profile = "core"
 # All built-in tools, including gmail, are exposed by the full profile.
 # Use enabled = ["*"] to explicitly select the unrestricted full toolset.
 # Hide selected tools after applying the profile/allow-list.
-# disabled = ["browser", "gmail", "swarm"]
+# disabled = ["calendar", "gmail", "swarm"]
 # Disable all built-in tools unless enabled is set.
 disable_base_tools = false
 # MCP tool exposure. "auto" never changes the cached tool list when MCP
@@ -584,7 +584,7 @@ dual_confirm_classes = []
 # does not have is ignored. Default: empty, so every tool keeps its profile tier.
 # [tools.load_mode]
 # gmail = "off"
-# browser = "essential"
+# memory = "essential"
 
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.

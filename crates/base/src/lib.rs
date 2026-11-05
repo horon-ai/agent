@@ -24,8 +24,6 @@ pub mod artifacts;
 pub mod auth;
 pub mod aux_completion;
 pub mod background;
-pub mod browser;
-pub mod browser_detect;
 pub mod bus;
 pub mod cache_invalidation;
 pub mod cache_tracker;

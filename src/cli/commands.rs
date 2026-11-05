@@ -8,7 +8,7 @@ use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
-use crate::{browser, gateway, memory, session, storage};
+use crate::{gateway, memory, session, storage};
 
 mod menubar;
 mod provider_setup;
@@ -1817,133 +1817,6 @@ pub fn run_pair_command(list: bool, revoke: Option<String>) -> Result<()> {
 }
 
 pub use gateway::{detect_tailscale_dns_name, parse_tailscale_dns_name, resolve_connect_host};
-
-pub async fn run_browser(action: &str, requested: Option<&str>) -> Result<()> {
-    match action {
-        "setup" => browser::run_setup_command_for(requested).await?,
-        "detect" => {
-            let target = browser::resolve_target_browser(requested)?;
-            println!("Browser detection");
-            println!(
-                "  target: {} ({})",
-                target.kind.display_name(),
-                target.source.describe()
-            );
-            match crate::browser_detect::system_default_browser_id() {
-                Some(id) => println!("  system default: {}", id),
-                None => println!("  system default: unknown"),
-            }
-            let installed: Vec<&str> = crate::browser_detect::ALL_BROWSERS
-                .iter()
-                .filter(|k| k.is_installed())
-                .map(|k| k.id())
-                .collect();
-            println!(
-                "  installed: {}",
-                if installed.is_empty() {
-                    "none detected".to_string()
-                } else {
-                    installed.join(", ")
-                }
-            );
-            if let Some(saved) = browser::saved_browser_preference() {
-                println!("  configured by setup: {}", saved.id());
-            }
-            println!("\nOverride with `horon-agent browser setup <browser>` or HORON_AGENT_BROWSER=<browser>.");
-        }
-        "status" => {
-            let target = browser::resolve_target_browser(requested)?;
-            let name = target.kind.display_name();
-            let status = browser::ensure_browser_ready_noninteractive_for(&target).await?;
-            println!("Browser automation");
-            println!("  backend: {}", status.backend);
-            println!("  browser: {} ({})", status.browser, status.detected_via);
-            if let Some(connected) = &status.connected_browser {
-                println!("  connected browser: {}", connected);
-            }
-            println!(
-                "  binary: {}",
-                if status.binary_installed {
-                    "installed"
-                } else {
-                    "missing"
-                }
-            );
-            println!(
-                "  setup: {}",
-                if status.setup_complete {
-                    "complete"
-                } else {
-                    "not complete"
-                }
-            );
-            println!(
-                "  bridge: {}",
-                if status.responding {
-                    "responding"
-                } else {
-                    "not responding"
-                }
-            );
-            println!(
-                "  compatibility: {}",
-                if status.compatible {
-                    "ok"
-                } else if !status.responding {
-                    // Nothing answered, so there is no extension to compare.
-                    "unknown (bridge not responding)"
-                } else {
-                    "extension/bridge mismatch"
-                }
-            );
-            if !status.missing_actions.is_empty() {
-                println!("  missing actions: {}", status.missing_actions.join(", "));
-            }
-
-            if status.ready && !browser::status_answered_by(&status, target.kind) {
-                let answering = status.connected_browser.as_deref().unwrap_or("another browser");
-                println!(
-                    "\n{name} is not connected: the bridge that answered belongs to {answering}. Browser actions with browser={} will fail until {name} runs the Browser Agent Bridge extension. Run `horon-agent browser setup {}` to set it up.",
-                    target.kind.id(),
-                    target.kind.id()
-                );
-                if browser::is_browser_running(target.kind)
-                    && let Some(diagnosis) = browser::diagnose_silent_chromium_bridge(target.kind)
-                {
-                    println!("{diagnosis}");
-                }
-            } else if status.ready {
-                println!("\nBuilt-in browser tool is ready.");
-            } else if status.responding && !status.compatible {
-                println!(
-                    "\nThe browser bridge is connected, but the installed extension is out of date for this horon-agent build. Run `horon-agent browser setup` to repair or update it."
-                );
-            } else if status.binary_installed && !browser::is_browser_running(target.kind) {
-                println!(
-                    "\n{} is not running, so the bridge cannot respond. Start {} (or run a browser tool action, which launches it automatically), then re-check status. Setup is one-time and does not need to be re-run.",
-                    name, name
-                );
-            } else if status.binary_installed {
-                println!(
-                    "\n{} is running, but the bridge is not responding. Check that the Browser Agent Bridge extension is enabled ({}). Run `horon-agent browser setup` only to repair the install.",
-                    name,
-                    target.kind.extensions_page()
-                );
-                if let Some(diagnosis) = browser::diagnose_silent_chromium_bridge(target.kind) {
-                    println!("{diagnosis}");
-                }
-            } else {
-                println!("\nRun `horon-agent browser setup` to install or repair it.");
-            }
-        }
-        other => {
-            eprintln!("Unknown browser action: {}", other);
-            eprintln!("Available: setup [browser], status [browser], detect");
-            std::process::exit(1);
-        }
-    }
-    Ok(())
-}
 
 #[derive(Debug, Serialize)]
 struct ModelListReport {

@@ -31,7 +31,6 @@ pub mod ambient;
 pub mod ambient_runner;
 pub mod ambient_scheduler;
 pub mod approval;
-pub mod browser_mode;
 pub mod build;
 pub mod catchup;
 pub mod channel;

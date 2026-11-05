@@ -657,24 +657,6 @@ pub enum ApiEvent {
         complete: bool,
     },
 
-    /// Reply to `BrowserMirror`.
-    ///
-    /// Exactly one of `state`, `frame`, or `error` is present. `takeover` and
-    /// `resume` answer with `state`, so a panel learns the new mode without a
-    /// second round trip. A browser that cannot be reached at all is answered
-    /// with an `Error` frame carrying `browser_unavailable`, because no result
-    /// can be true in that case.
-    BrowserMirrorResult {
-        session_id: String,
-        action: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        state: Option<BrowserState>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        frame: Option<BrowserFrame>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<BrowserMirrorError>,
-    },
-
     /// Reply to `GetRuntimeState`: the run, queue, receipt, and monitor
     /// summary of this session's durable runtime journal, after a restart as
     /// well as before one.
@@ -787,9 +769,6 @@ pub enum ErrorCode {
     UnknownSession,
     InvalidRequest,
     Internal,
-    /// The agent's browser bridge is not installed, or nothing answered in
-    /// time. `message` names what to install, start, or enable.
-    BrowserUnavailable,
     /// The request needs a capability this connection did not negotiate, or
     /// this build does not serve yet. `message` names the missing capability.
     /// Never sent for a request an older client could send, so an older client
@@ -1040,54 +1019,6 @@ pub struct TextMatch {
     pub line: u32,
     pub column: u32,
     pub preview: String,
-}
-
-/// One tab the mirrored browser has open.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserTabState {
-    pub id: i64,
-    pub url: String,
-    pub title: String,
-    /// The agent's bound tab when the session has one, otherwise whatever the
-    /// browser itself reported as focused.
-    pub active: bool,
-}
-
-/// Snapshot of the browser a session's agent drives.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserState {
-    /// The agent has a browser window bound to this session and it answered.
-    /// `false` still carries `tabs` when the browser itself answered, so a
-    /// panel can list what is open before the agent has its own window.
-    pub connected: bool,
-    pub tabs: Vec<BrowserTabState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_tab_id: Option<i64>,
-    /// URL and title of the active tab, empty when there is none.
-    pub url: String,
-    pub title: String,
-    /// Who is driving: `agent` normally, `user` after `takeover`.
-    pub mode: String,
-}
-
-/// One frame of the active tab, encoded as JPEG.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserFrame {
-    /// Always `image/jpeg`.
-    pub media_type: String,
-    /// Base64 of the JPEG bytes. At most 512 KiB of base64; a frame that cannot
-    /// be encoded within that is refused, never truncated.
-    pub data: String,
-    /// Size of the decoded JPEG, in bytes.
-    pub bytes: u64,
-}
-
-/// A mirror call that was well formed and refused. `code` is stable so a client
-/// can branch on it; `message` is ready to display.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserMirrorError {
-    pub code: String,
-    pub message: String,
 }
 
 /// Durable token usage for one session.

@@ -112,8 +112,7 @@ horon-agent-tool-types = { path = "../tool-types" }
 horon-agent-side-panel-types = { path = "../side-panel-types" }
 horon-agent-applet-types = { path = "../applet-types" }
 
-# Gzip/deflate decoding (provider import helpers, browser extension unzip)
-flate2 = "1"
+# Temporary files and directories for provider import helpers.
 tempfile = "3"
 
 [features]
@@ -137,9 +136,6 @@ embeddings = ["dep:horon-agent-embedding"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Registry", "Win32_System_SystemServices", "Win32_System_Threading"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-global-hotkey = "0.7"
 
 [dev-dependencies]
 # Paused-time (auto-advancing virtual clock) tests for the background stall watchdog.

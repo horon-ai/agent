@@ -10,7 +10,6 @@ use serde_json::{Map, Value, json};
 use std::time::Duration;
 
 const PROVIDER_ENV: &str = "HORON_AGENT_MEMORY_JEV_PROVIDER";
-const BROWSER_PROVIDER_ENV: &str = "HORON_AGENT_BROWSER_JEV_PROVIDER";
 const VOICE_PROVIDER_ENV: &str = "HORON_AGENT_VOICE_JEV_PROVIDER";
 const MAX_REQUEST_BYTES: usize = 80 * 1024;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
@@ -40,7 +39,6 @@ const VOICE_HEDGE_DELAYS: [Duration; 3] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum JevPurpose {
     Memory,
-    Browser,
     Voice,
 }
 
@@ -48,17 +46,14 @@ impl JevPurpose {
     fn name(self) -> &'static str {
         match self {
             Self::Memory => "memory",
-            Self::Browser => "browser",
             Self::Voice => "voice",
         }
     }
 
     fn capability(self) -> &'static str {
+        // Both purposes use the gateway's existing typed noul contract.
         match self {
-            Self::Memory => "memory_jev",
-            Self::Browser => "browser_jev",
-            // Voice uses the gateway's existing typed noul contract.
-            Self::Voice => "memory_jev",
+            Self::Memory | Self::Voice => "memory_jev",
         }
     }
 
@@ -69,14 +64,12 @@ impl JevPurpose {
     ) -> Result<String> {
         let key = match self {
             Self::Memory => PROVIDER_ENV,
-            Self::Browser => BROWSER_PROVIDER_ENV,
             Self::Voice => VOICE_PROVIDER_ENV,
         };
         match env(key) {
             Ok(value) => Ok(value),
             Err(std::env::VarError::NotPresent) => Ok(match self {
                 Self::Memory => memory_default(),
-                Self::Browser => "auto".into(),
                 Self::Voice => "auto".into(),
             }),
             Err(_) => bail!("{key} must contain a valid provider name"),
@@ -164,15 +157,9 @@ impl JevClient {
         Self::for_purpose(JevPurpose::Memory)
     }
 
-    /// Browser routing is independent of memory configuration and defaults to
-    /// subscription-first auto selection. Evaluation never changes accounts.
-    pub fn for_browser() -> Result<Self> {
-        Self::for_purpose(JevPurpose::Browser)
-    }
-
     /// Voice uses included HoronAgent access (whose gateway uses Typesafe directly),
     /// then Typesafe BYOK when no HoronAgent credential exists. Other provider keys and
-    /// memory/browser configuration are ignored. HORON_AGENT_VOICE_JEV_PROVIDER may
+    /// memory configuration are ignored. HORON_AGENT_VOICE_JEV_PROVIDER may
     /// explicitly select typesafe or horon-agent. Evaluation never changes accounts.
     pub fn for_voice() -> Result<Self> {
         Self::for_purpose(JevPurpose::Voice)
@@ -246,7 +233,7 @@ impl JevClient {
     /// Never retries using another provider or account after an auth/billing
     /// failure. Callers own the relevance threshold and uncertainty policy.
     pub async fn evaluate(&self, state: Value, questions: Map<String, Value>) -> Result<Value> {
-        let body = request_body_for(self.purpose, self.provider, state, &questions)?;
+        let body = request_body_for(self.provider, state, &questions)?;
         if let Some(endpoint) = &self.me_endpoint {
             let response = self
                 .client
@@ -362,17 +349,11 @@ impl JevClient {
             .bearer_auth(&self.api_key)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body);
-        if self.provider == JevProvider::HoronAgent && self.purpose == JevPurpose::Browser {
-            // The gateway budgets browser handoffs separately so background
-            // memory recall cannot exhaust interactive browsing.
-            request = request.header("X-Horon-Agent-Jev-Purpose", "browser");
-        }
         if self.provider == JevProvider::OpenRouter {
             request = request.header("HTTP-Referer", "https://horon-agent.sh").header(
                 "X-Title",
                 match self.purpose {
                     JevPurpose::Memory => "HoronAgent Memory",
-                    JevPurpose::Browser => "HoronAgent Browser",
                     JevPurpose::Voice => "HoronAgent Voice",
                 },
             );
@@ -513,28 +494,10 @@ fn trusted_gateway_base(base: &str) -> Result<String> {
 
 #[cfg(test)]
 fn request_body(provider: JevProvider, state: Value, questions: &Map<String, Value>) -> Result<Vec<u8>> {
-    request_body_for(JevPurpose::Memory, provider, state, questions)
+    request_body_for(provider, state, questions)
 }
 
-fn request_body_for(
-    purpose: JevPurpose,
-    provider: JevProvider,
-    state: Value,
-    questions: &Map<String, Value>,
-) -> Result<Vec<u8>> {
-    if purpose == JevPurpose::Browser {
-        ensure!(
-            questions.len() == 1
-                && questions.get("action").is_some_and(|question| {
-                    question["type"] == "choice"
-                        && question["instructions"].as_str().is_some_and(|s| !s.trim().is_empty())
-                        && question["criteria"].as_object().is_some_and(|criteria| {
-                            (2..=255).contains(&criteria.len()) && criteria.values().all(Value::is_string)
-                        })
-                }),
-            "Browser Decisions requires exactly one action choice question with text instructions and 2 to 255 text criteria"
-        );
-    }
+fn request_body_for(provider: JevProvider, state: Value, questions: &Map<String, Value>) -> Result<Vec<u8>> {
     ensure!(
         state.is_string() || state.is_object() || state.is_array(),
         "Jev state must be text, an object, or an array"
@@ -570,7 +533,7 @@ fn request_body_for(
             ),
             _ => bail!("Unsupported Jev question type; expected noul, choice, or score"),
         }
-        if provider == JevProvider::HoronAgent && purpose != JevPurpose::Browser {
+        if provider == JevProvider::HoronAgent {
             ensure!(
                 question["type"] == "noul"
                     && instructions.as_str().is_some_and(|s| !s.trim().is_empty())
@@ -711,11 +674,6 @@ mod tests {
         json!({"answers": {"m0": {"type": "noul", "noul": 0.91}}, "usage": {"input_tokens": 123, "output_tokens": 4}})
     }
 
-    fn browser_questions() -> Map<String, Value> {
-        json!({"action": {"type": "choice", "instructions": "Choose the next browser action", "criteria": {"click": "Click the button", "stop": "Return control"}}})
-            .as_object().unwrap().clone()
-    }
-
     #[test]
     fn voice_routes_independently_to_subscription_or_typesafe_only() {
         let selector = JevPurpose::Voice
@@ -780,31 +738,12 @@ mod tests {
     }
 
     #[test]
-    fn purpose_selectors_are_independent_and_browser_defaults_to_subscription_first() {
+    fn memory_selector_uses_its_own_override_and_config_default() {
         let env = |key: &str| match key {
             PROVIDER_ENV => Ok("typesafe".into()),
-            BROWSER_PROVIDER_ENV => Ok("openrouter".into()),
             _ => panic!("unexpected configuration lookup"),
         };
         assert_eq!(JevPurpose::Memory.selector_with(env, || panic!()).unwrap(), "typesafe");
-        assert_eq!(
-            JevPurpose::Browser.selector_with(env, || panic!()).unwrap(),
-            "openrouter"
-        );
-        let selector = JevPurpose::Browser
-            .selector_with(
-                |key| {
-                    assert_eq!(key, BROWSER_PROVIDER_ENV);
-                    Err(std::env::VarError::NotPresent)
-                },
-                || panic!("browser must not consult memory config"),
-            )
-            .unwrap();
-        assert_eq!(selector, "auto");
-        assert_eq!(
-            resolve_with(&selector, |_, _| Some("present".into())).unwrap().0,
-            JevProvider::HoronAgent
-        );
         assert_eq!(
             JevPurpose::Memory
                 .selector_with(
@@ -817,62 +756,14 @@ mod tests {
                 .unwrap(),
             "aimlapi"
         );
-        for purpose in [JevPurpose::Memory, JevPurpose::Browser] {
-            assert!(
-                purpose
-                    .selector_with(
-                        |_| Err(std::env::VarError::NotUnicode("invalid".into())),
-                        || panic!("invalid override must not use defaults"),
-                    )
-                    .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn browser_choice_contract_is_distinct_from_memory_noul() {
-        let valid = browser_questions();
-        for provider in [
-            JevProvider::HoronAgent,
-            JevProvider::OpenRouter,
-            JevProvider::TypeSafe,
-            JevProvider::Aimlapi,
-        ] {
-            assert!(request_body_for(JevPurpose::Browser, provider, json!("page"), &valid).is_ok());
-            assert!(request_body_for(JevPurpose::Browser, provider, json!("page"), &questions()).is_err());
-            for invalid in [
-                json!({}),
-                json!({"pick": valid["action"]}),
-                json!({"action": valid["action"], "extra": valid["action"]}),
-                json!({"action": {"type": "noul", "instructions": "Pick", "criteria": {"a": "A", "b": "B"}}}),
-                json!({"action": {"type": "choice", "instructions": {}, "criteria": {"a": "A", "b": "B"}}}),
-                json!({"action": {"type": "choice", "instructions": "  ", "criteria": {"a": "A", "b": "B"}}}),
-                json!({"action": {"type": "choice", "instructions": "Pick", "criteria": {"a": "A"}}}),
-                json!({"action": {"type": "choice", "instructions": "Pick", "criteria": {"a": "A", "b": null}}}),
-            ] {
-                assert!(
-                    request_body_for(
-                        JevPurpose::Browser,
-                        provider,
-                        json!("page"),
-                        invalid.as_object().unwrap()
-                    )
-                    .is_err(),
-                    "{invalid}"
-                );
-            }
-            for count in [255, 256] {
-                let mut q = valid.clone();
-                q.get_mut("action").unwrap()["criteria"] =
-                    Value::Object((0..count).map(|i| (i.to_string(), json!("option"))).collect());
-                assert_eq!(
-                    request_body_for(JevPurpose::Browser, provider, json!("page"), &q).is_ok(),
-                    count == 255
-                );
-            }
-        }
-        assert!(request_body(JevProvider::HoronAgent, json!("state"), &valid).is_err());
-        assert!(request_body(JevProvider::HoronAgent, json!("state"), &questions()).is_ok());
+        assert!(
+            JevPurpose::Memory
+                .selector_with(
+                    |_| Err(std::env::VarError::NotUnicode("invalid".into())),
+                    || panic!("invalid override must not use defaults"),
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -1168,7 +1059,7 @@ mod tests {
         for entitled in [false, true] {
             let mut replies = vec![(
                 200,
-                json!({"capabilities": {"memory_jev": entitled, "browser_jev": false}}).to_string(),
+                json!({"capabilities": {"memory_jev": entitled}}).to_string(),
                 vec![],
             )];
             if entitled {
@@ -1188,7 +1079,7 @@ mod tests {
                 assert!(body["state"].is_string());
                 assert!(
                     !requests[1].to_ascii_lowercase().contains("x-horon-agent-jev-purpose"),
-                    "only browser decisions use the browser budget"
+                    "voice decisions must not claim a purpose-scoped budget"
                 );
             } else {
                 let error = result.unwrap_err().to_string();
@@ -1514,106 +1405,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_subscription_checks_browser_capability_and_posts_choice() {
-        let answer = json!({"answers": {"action": {"type": "choice", "choice": "click", "confidence": 0.9}}});
-        let (base, worker) = mock_server(vec![
-            (
-                200,
-                json!({"capabilities": {"browser_jev": true, "memory_jev": false}}).to_string(),
-                vec![],
-            ),
-            (200, answer.to_string(), vec![]),
-        ]);
-        let mut client = mock_client(&base, JevProvider::HoronAgent);
-        client.purpose = JevPurpose::Browser;
-        assert_eq!(client.provider_name(), "horon-agent");
-        assert_eq!(client.model_id(), "typesafe/jev-1.13");
-        assert_eq!(
-            client
-                .evaluate(json!({"page": "private-page"}), browser_questions())
-                .await
-                .unwrap(),
-            answer
-        );
-        let requests = worker.join().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert!(requests[0].starts_with("GET /v1/me "));
-        assert!(!requests[0].contains("private-page"));
-        assert!(requests[1].starts_with("POST /v1/decisions "));
-        assert!(
-            requests[1]
-                .to_ascii_lowercase()
-                .contains("x-horon-agent-jev-purpose: browser\r\n"),
-            "browser decisions must use the gateway's separate browser budget"
-        );
-        let body: Value = serde_json::from_str(requests[1].split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(body["questions"], Value::Object(browser_questions()));
-        assert!(body["state"].is_string());
-    }
-
-    #[tokio::test]
-    async fn browser_capability_denial_prevents_page_upload() {
-        for me in [
-            json!({"capabilities": {"memory_jev": true}}),
-            json!({"capabilities": {"browser_jev": false}}),
-            json!({"capabilities": {"browser_jev": "true"}}),
-        ] {
-            let (base, worker) = mock_server(vec![(200, me.to_string(), vec![])]);
-            let mut client = mock_client(&base, JevProvider::HoronAgent);
-            client.purpose = JevPurpose::Browser;
-            let error = client
-                .evaluate(json!("private-page"), browser_questions())
-                .await
-                .unwrap_err();
-            assert!(error.to_string().contains("browser_jev"));
-            let requests = worker.join().unwrap();
-            assert_eq!(requests.len(), 1);
-            assert!(requests[0].starts_with("GET /v1/me "));
-            assert!(!requests[0].contains("private-page"));
-        }
-    }
-
-    #[tokio::test]
-    async fn browser_auth_billing_and_redirect_failures_never_retry_or_fallback() {
-        for provider in [JevProvider::HoronAgent, JevProvider::OpenRouter] {
-            for preflight in [false, true] {
-                if preflight && provider != JevProvider::HoronAgent {
-                    continue;
-                }
-                for status in [401, 402, 403, 302, 307] {
-                    let mut replies = Vec::new();
-                    if provider == JevProvider::HoronAgent && !preflight {
-                        replies.push((200, json!({"capabilities": {"browser_jev": true}}).to_string(), vec![]));
-                    }
-                    replies.push((
-                        status,
-                        "private-provider-error test-route-secret".into(),
-                        vec![("Location".into(), "http://127.0.0.1:1/never-follow".into())],
-                    ));
-                    let expected_requests = replies.len();
-                    let (base, worker) = mock_server(replies);
-                    let mut client = mock_client(&base, provider);
-                    client.purpose = JevPurpose::Browser;
-                    let error = client
-                        .evaluate(json!("private-page"), browser_questions())
-                        .await
-                        .unwrap_err();
-                    let detail = format!("{error:#}");
-                    assert!(detail.contains(&status.to_string()));
-                    for secret in ["private-provider-error", "test-route-secret", "private-page"] {
-                        assert!(!detail.contains(secret));
-                    }
-                    let requests = worker.join().unwrap();
-                    assert_eq!(requests.len(), expected_requests);
-                    if preflight {
-                        assert!(!requests[0].contains("private-page"));
-                    }
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
     async fn subscription_requires_live_capability_then_sends_bound_bearer() {
         let (base, worker) = mock_server(vec![
             (200, json!({"capabilities": {"memory_jev": true}}).to_string(), vec![]),
@@ -1670,22 +1461,18 @@ mod tests {
     #[tokio::test]
     async fn gateway_plan_quota_is_not_retried_and_becomes_upgrade_prompt() {
         let quota = json!({"error": {
-            "code": "quota_exceeded", "message": "server text", "purpose": "browser", "scope": "day",
+            "code": "quota_exceeded", "message": "server text", "purpose": "memory", "scope": "day",
             "limit": 2000, "tier": "plus", "upgrade_tier": "pro",
             "upgrade_url": "https://horon-agent.sh/pricing", "resets_at": "2026-09-27T00:00:00.000Z"
         }});
         let (base, worker) = mock_server(vec![
-            (200, json!({"capabilities": {"browser_jev": true}}).to_string(), vec![]),
+            (200, json!({"capabilities": {"memory_jev": true}}).to_string(), vec![]),
             (429, quota.to_string(), vec![("Retry-After".into(), "80000".into())]),
         ]);
-        let mut client = mock_client(&base, JevProvider::HoronAgent);
-        client.purpose = JevPurpose::Browser;
-        let error = client
-            .evaluate(json!({"page": "p"}), browser_questions())
-            .await
-            .unwrap_err();
+        let client = mock_client(&base, JevProvider::HoronAgent);
+        let error = client.evaluate(json!("p"), questions()).await.unwrap_err();
         let notice = crate::subscription_notice::from_error(&error).expect("typed quota notice");
-        assert_eq!(notice.feature, "browser");
+        assert_eq!(notice.feature, "memory");
         assert_eq!(notice.upgrade_tier.as_deref(), Some("pro"));
         assert!(error.to_string().contains("Upgrade to Pro"));
         assert!(error.to_string().contains("https://horon-agent.sh/pricing"));

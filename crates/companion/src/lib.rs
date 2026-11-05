@@ -10,7 +10,6 @@
 //! * `power_activity`: the macOS/Windows lid-close override while agents work.
 //! * global voice: the Copilot-key push-to-talk listener (Linux), so voice
 //!   reaches a focused HoronAgent CLI even when HoronAgent Desktop is not open.
-//! * browser bridge: periodic auto-update, off the browser tool's hot path.
 //!
 //! Test with `justrust test -p horon-agent-companion`.
 

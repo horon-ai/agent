@@ -327,11 +327,6 @@ pub(super) async fn handle_lightweight_control_request(
             )
             .await;
         }
-        // The bridge owns the browser driver mode; the daemon only caches what
-        // it was last told. The ack was already written above.
-        Request::SetBrowserMode { session_id, mode, .. } => {
-            crate::browser_mode::set(&session_id, mode);
-        }
         Request::AppletAction {
             id,
             session_id,

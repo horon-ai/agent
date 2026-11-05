@@ -455,17 +455,6 @@ pub(crate) enum Command {
     /// Install platform launcher integration (Windows shortcut; macOS notification helper)
     SetupLauncher,
 
-    /// Browser automation setup and status
-    Browser {
-        /// Action (setup, status, detect)
-        #[arg(default_value = "setup")]
-        action: String,
-
-        /// Browser to target: auto (default: detect your browser), firefox,
-        /// chrome, chromium, edge, brave, or safari
-        browser: Option<String>,
-    },
-
     /// Replay a saved session in the TUI
     Replay {
         /// Session ID, name, or path to session JSON file

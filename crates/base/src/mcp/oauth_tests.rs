@@ -402,7 +402,7 @@ async fn browser_login(auth_url: String, inject_bad_callbacks: bool) -> Result<(
 async fn do_login(fixture: &Fixture, inject_bad_callbacks: bool) -> Result<()> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let resource = fixture.resource();
-    let login = login(&resource, BrowserMode::Print, move |auth_url| {
+    let login = login(&resource, BrowserPreference::Print, move |auth_url| {
         let auth_url = auth_url.to_string();
         tokio::spawn(async move {
             let _ = sender.send(browser_login(auth_url, inject_bad_callbacks).await);

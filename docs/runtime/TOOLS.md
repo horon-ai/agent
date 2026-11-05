@@ -23,7 +23,7 @@
 ```toml
 [tools.load_mode]
 gmail = "off"
-browser = "essential"
+memory = "essential"
 ```
 
 ### 기본 배치

@@ -66,7 +66,7 @@ fn core_profile_lists_the_core_tools_it_does_not_send_eagerly() {
         };
         assert_eq!(tiers.tier(name), expected, "{name} resolves to its listed tier");
     }
-    for name in ["gmail", "browser", "swarm"] {
+    for name in ["gmail", "memory", "swarm"] {
         assert_eq!(
             tiers.tier(name),
             LoadMode::Essential,
@@ -126,7 +126,7 @@ fn full_profile_defers_every_tool_outside_core() {
     for name in CORE_TOOLS {
         assert_eq!(tiers.tier(name), LoadMode::Essential, "{name} is a core tool");
     }
-    for name in ["browser", "swarm", "gmail", "hashline_edit"] {
+    for name in ["memory", "swarm", "gmail", "hashline_edit"] {
         assert_eq!(
             tiers.tier(name),
             LoadMode::Discoverable,
@@ -248,7 +248,7 @@ fn explicit_entries_override_the_profile_and_core() {
     let cfg = ToolConfig {
         profile: "full".to_string(),
         load_mode: overrides(&[
-            ("browser", LoadMode::Essential),
+            ("memory", LoadMode::Essential),
             ("bash", LoadMode::Off),
             ("swarm", LoadMode::Off),
         ]),
@@ -256,7 +256,7 @@ fn explicit_entries_override_the_profile_and_core() {
     };
     let tiers = cfg.load_tiers(None, false);
 
-    assert_eq!(tiers.tier("browser"), LoadMode::Essential);
+    assert_eq!(tiers.tier("memory"), LoadMode::Essential);
     assert_eq!(tiers.tier("bash"), LoadMode::Off, "an override beats the core set");
     assert_eq!(tiers.tier("swarm"), LoadMode::Off);
     assert_eq!(tiers.tier("gmail"), LoadMode::Discoverable);
@@ -298,14 +298,14 @@ fn load_mode_parses_from_toml_and_defaults_to_empty() {
     let parsed: ToolConfig = toml::from_str(
         r#"
 [load_mode]
-browser = "off"
+memory = "off"
 ask = "essential"
 swarm = "discoverable"
 "#,
     )
     .expect("the load_mode table must parse");
 
-    assert_eq!(parsed.load_mode.get("browser"), Some(&LoadMode::Off));
+    assert_eq!(parsed.load_mode.get("memory"), Some(&LoadMode::Off));
     assert_eq!(parsed.load_mode.get("ask"), Some(&LoadMode::Essential));
     assert_eq!(parsed.load_mode.get("swarm"), Some(&LoadMode::Discoverable));
     assert_eq!(LoadMode::parse("Off"), Some(LoadMode::Off));

@@ -1,7 +1,6 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
-mod browser_mirror;
 mod credentials;
 mod search_artifacts;
 mod usage_report;
@@ -231,10 +230,6 @@ pub struct BridgeState {
     usage: usage_report::Cache,
     /// API ids of `usage_report` requests waiting on the subscription probe.
     pending_usage_reports: Vec<(u64, Value)>,
-    /// Daemon socket this connection translates onto. `None` in tests, and in
-    /// any bridge started without a socket: a browser-mode push is then
-    /// skipped, which leaves the daemon on its permissive default.
-    pub legacy_socket: Option<std::path::PathBuf>,
     /// Bytes the client actually sent for the request being translated, set by
     /// the connection loop before each translation.
     ///
@@ -1202,7 +1197,6 @@ impl BridgeState {
                 }
             }
             "search_sessions" | "list_artifacts" => search_artifacts::handle(req, api_id, request),
-            "browser_mirror" => browser_mirror::handle(api_id, request, self.legacy_socket.as_deref()),
             "set_model" => {
                 let model = request["model"].as_str().unwrap_or("");
                 if model.is_empty() {

@@ -107,7 +107,6 @@ ErrorCode: TypeAlias = Literal[
     "unknown_session",
     "invalid_request",
     "internal",
-    "browser_unavailable",
     "unsupported",
 ]
 
@@ -614,47 +613,6 @@ class SidePanelSnapshot(TypedDict, total=False):
     pages: list[SidePanelPage]
 
 
-class BrowserTabState(TypedDict):
-    """One tab the mirrored browser has open."""
-
-    id: int
-    url: str
-    title: str
-    # The agent's bound tab when the session has one, otherwise the browser's focused tab.
-    active: bool
-
-
-class BrowserState(TypedDict, total=False):
-    """Snapshot of the browser a session's agent drives."""
-
-    # The agent has a browser window bound to this session and it answered.
-    connected: bool
-    tabs: list[BrowserTabState]
-    active_tab_id: int
-    url: str
-    title: str
-    # Who is driving: ``agent`` normally, ``user`` after ``takeover``.
-    mode: str
-
-
-class BrowserFrame(TypedDict):
-    """One frame of the active tab, encoded as JPEG."""
-
-    # Always ``image/jpeg``.
-    media_type: str
-    # Base64 of the JPEG bytes; at most 512 KiB, never truncated.
-    data: str
-    # Size of the decoded JPEG, in bytes.
-    bytes: int
-
-
-class BrowserMirrorError(TypedDict):
-    """A mirror call that was well formed and refused; ``code`` is stable."""
-
-    code: str
-    message: str
-
-
 TurnStopReason: TypeAlias = Literal[
     "interrupted",
     "failure",
@@ -747,7 +705,6 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "session_blob_chunk",
     "session_blob_status",
     "session_record_blob_status",
-    "browser_mirror_result",
     "runtime_state",
     "control_receipt",
     "snapshot_marker",
@@ -817,7 +774,6 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "export_session_record_blob",
     "import_session_record_blob",
     "get_session_record_blob_status",
-    "browser_mirror",
     "get_runtime_state",
     "apply_control",
     "get_control_receipt",

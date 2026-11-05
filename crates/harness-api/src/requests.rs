@@ -504,21 +504,6 @@ pub enum ApiRequest {
         reference: crate::replication::CanonicalRecordRef,
     },
 
-    /// Watch and drive the agent's own browser through a mirror panel.
-    /// Requires `browser_mirror`.
-    ///
-    /// `action` is one of `state`, `frame`, `navigate`, `back`, `forward`,
-    /// `reload`, `new_tab`, `select_tab`, `close_tab`, `input`, `takeover`,
-    /// `resume`. `args` is action specific and omitted when the action needs
-    /// none. The browser is the one the agent's `browser` tool drives for this
-    /// session, not a second browser the client starts.
-    BrowserMirror {
-        session_id: String,
-        action: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        args: Option<serde_json::Value>,
-    },
-
     /// Liveness check.
     Ping,
 

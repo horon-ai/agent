@@ -777,9 +777,9 @@ pub const IRC_TOOL: &str = "irc";
 
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
-/// Out-of-scope tools (swarm/batch/bg, memory, browser, computer, selfdev,
-/// compile_remote, panel/side_panel, applet, calendar, gmail, session and
-/// conversation search, feedback, todo/goal) stay off because the profile is an
+/// Out-of-scope tools (swarm/batch/bg, memory, selfdev, compile_remote,
+/// panel/side_panel, applet, calendar, gmail, session and conversation search,
+/// feedback, todo/goal) stay off because the profile is an
 /// allow-list. `skill_manage` is the registry key for the skill tool
 /// (`resolve_tool_name` maps `skill` to it); `mcp` is the wildcard covering
 /// every `mcp__server__tool` plus the fixed `mcp_search`/`mcp_call` surface.

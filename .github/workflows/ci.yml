@@ -349,12 +349,6 @@ jobs:
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
             -p horon-agent-base --lib secret_input -- --nocapture
 
-      - name: Run browser session liveness and reuse regressions
-        shell: bash
-        run: |
-          cargo test --locked --target ${{ matrix.target }} -p horon-agent-base --lib browser_session -- --nocapture
-          cargo test --locked --target ${{ matrix.target }} -p horon-agent-app-core --lib browser_session -- --nocapture
-
       - name: Run IRC cohorts
         shell: bash
         # Nothing else in this workflow runs `horon-agent-irc-core` tests: the

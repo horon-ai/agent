@@ -303,6 +303,7 @@ ask_policy = "error"
 
 [tools.load_mode]
 gmail = "off"
+# An obsolete tool name must stay inert instead of failing the load.
 browser = "essential"
 "#,
     )
@@ -976,15 +977,15 @@ fn tool_config_minimal_profile_allows_core_coding_tools() {
     assert!(allowed.contains("write"));
     assert!(allowed.contains("apply_patch"));
     assert!(allowed.contains("agentgrep"));
-    assert!(!allowed.contains("browser"));
+    assert!(!allowed.contains("memory"));
     assert!(!allowed.contains("swarm"));
 }
 
 #[test]
 fn tool_config_explicit_enabled_and_disabled_lists_compose() {
     let cfg = ToolConfig {
-        enabled: vec!["shell".to_string(), "read_file".to_string(), "browser".to_string()],
-        disabled: vec!["browser".to_string()],
+        enabled: vec!["shell".to_string(), "read_file".to_string(), "memory".to_string()],
+        disabled: vec!["memory".to_string()],
         ..ToolConfig::default()
     };
     let selection = cfg.selection();
@@ -994,8 +995,8 @@ fn tool_config_explicit_enabled_and_disabled_lists_compose() {
     assert!(allowed.contains("read"));
     assert!(!allowed.contains("shell"));
     assert!(!allowed.contains("read_file"));
-    assert!(!allowed.contains("browser"));
-    assert!(selection.disabled_tools.contains("browser"));
+    assert!(!allowed.contains("memory"));
+    assert!(selection.disabled_tools.contains("memory"));
 }
 
 #[test]
@@ -1038,8 +1039,6 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "batch",
         "bg",
         "memory",
-        "browser",
-        "macos_computer_use",
         "selfdev",
         "desktop_selfdev",
         "compile_remote",
@@ -1052,7 +1051,6 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "session_search",
         "conversation_search",
         "todo",
-        "open",
     ] {
         assert!(!allowed.contains(off), "core profile must exclude {off}");
     }
@@ -1078,13 +1076,13 @@ fn tool_config_none_profile_disables_all_tools() {
 #[test]
 fn tool_config_disabled_only_keeps_full_profile_with_deny_list() {
     let cfg = ToolConfig {
-        disabled: vec!["browser".to_string(), "swarm".to_string()],
+        disabled: vec!["memory".to_string(), "swarm".to_string()],
         ..ToolConfig::default()
     };
     let selection = cfg.selection();
 
     assert!(selection.allowed_tools.is_none());
-    assert!(selection.disabled_tools.contains("browser"));
+    assert!(selection.disabled_tools.contains("memory"));
     assert!(selection.disabled_tools.contains("swarm"));
     assert!(!selection.disabled_tools.contains("gmail"));
 }

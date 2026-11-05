@@ -3,7 +3,7 @@ name = "horon-agent-companion"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "horon-agent companion: per-login helper for desktop-only effects (open, terminals, lid override, global voice, browser bridge updates)"
+description = "horon-agent companion: per-login helper for desktop-only effects (open, terminals, lid override, global voice)"
 
 # Runs in the user's graphical session. The harness server reaches it only
 # through horon_agent_base::companion_client and never links this crate.

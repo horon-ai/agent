@@ -230,18 +230,18 @@ API 키 항목과 HoronAgent 구독이다.
 전체 저장 형식, 한도, 레거시 마이그레이션 규칙은
 `docs/protocol/SESSION_STORE.md`에 있다.
 
-## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, browser_mirror, durable_runtime
+## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, durable_runtime
 
-이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 네 요청과 그 응답 이벤트이고, 끝부분은 1.14의 내구 런타임 표면 넷입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
+이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 끝부분은 1.14의 내구 런타임 표면 넷입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
 
-네 요청 모두 추가형입니다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`, `browser_mirror`를 광고합니다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
+세 요청 모두 추가형입니다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`를 광고합니다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
 
 ### 공통 규칙
 
 - 프레임 하나는 JSON 객체 하나, 한 줄입니다(NDJSON). 요청은 `req`로 종류를 구분하고 `id`를 싣고, 응답은 `reply_to`로 그 `id`를 되돌려 줍니다.
 - 요청 본문은 `#[serde(tag = "req", rename_all = "snake_case")]`로 직렬화되므로 필드 이름은 snake_case입니다.
 - 모르는 필드는 무시하고, 모르는 이벤트 종류는 건너뜁니다.
-- 실패는 `{"ev":"error","code":...,"message":...}`로 옵니다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`, `browser_unavailable`입니다.
+- 실패는 `{"ev":"error","code":...,"message":...}`로 옵니다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`입니다.
 - 세션을 지목하는 요청은 `session_id`를 받습니다. 없는 세션은 빈 결과가 아니라 `unknown_session`으로 답합니다. "이 세션은 아무것도 쓰지 않았다"와 "그런 세션이 없다"는 다른 사실이기 때문입니다.
 
 ### usage_report
@@ -406,89 +406,6 @@ API 키 항목과 HoronAgent 구독이다.
 메타데이터만 돌려줍니다. 바이트는 클라이언트가 `read_file`로 따로 읽습니다. 그래서 40MB짜리 HTML 보고서도 후보마다 `stat` 한 번이면 됩니다.
 
 목록은 두 경로에서 모읍니다. 트랜스크립트가 지목한 경로와 작업 디렉터리 스캔입니다. 두 경로 모두 세션 루트 밖으로 나가는 경로와 심볼릭 링크를 거부하므로, 트랜스크립트가 `../../.ssh/id_rsa`를 지목해도 목록에 오르지 않습니다. 세션 시작 시각을 기록이 없으면 세션 파일의 수정 시각으로 대신하고, 그보다 오래된 파일은 제외합니다. 결과는 `mtime_ms` 내림차순, 같은 시각이면 경로 오름차순으로 정렬하고 200개에서 자릅니다.
-
-### browser_mirror
-
-에이전트가 그 세션에서 쓰는 브라우저를 클라이언트 패널에서 보고 조작합니다. 능력 이름은 `browser_mirror`입니다. 별도의 브라우저를 새로 띄우지 않고, 에이전트의 `browser` 도구가 쓰는 같은 브리지 CLI와 같은 세션 데몬에 붙습니다.
-
-#### 요청
-
-```json
-{ "v": 1, "id": 10, "req": "browser_mirror", "session_id": "session_...", "action": "frame" }
-```
-
-| 필드 | 타입 | 필수 | 뜻 |
-| --- | --- | --- | --- |
-| `session_id` | string | 예 | 브라우저를 공유하는 세션 |
-| `action` | string | 예 | 아래 열두 동작 중 하나 |
-| `args` | object | 아니요 | 동작별 인자. 없으면 `{}`로 취급합니다. 객체가 아니면 `invalid_request`입니다 |
-
-동작은 열두 개입니다.
-
-| 동작 | 하는 일 | 응답 본문 |
-| --- | --- | --- |
-| `state` | 탭 목록과 활성 탭, 현재 모드 스냅샷 | `state` |
-| `frame` | 활성 탭(또는 `args.tabId`)의 JPEG 한 장 | `frame` |
-| `navigate` | `args.url`로 이동. 창이 없으면 새로 엽니다 | 없음 |
-| `back` / `forward` / `reload` | 창이 있을 때만 동작합니다 | 없음 |
-| `new_tab` | 탭을 엽니다(`args.url`은 선택). 창이 없으면 새로 엽니다 | 없음 |
-| `select_tab` | `args.tab_id`로 전환 | 없음 |
-| `close_tab` | `args.tab_id`를 닫음 | 없음 |
-| `input` | `args.kind`에 따라 입력을 보냄 | 없음 |
-| `takeover` | 사용자가 조작자로 전환. 스냅샷으로 답합니다 | `state` |
-| `resume` | 에이전트로 복귀. 스냅샷으로 답합니다 | `state` |
-
-`frame`은 `args.tab_id`로 탭을 지정할 수 있습니다. `navigate`와 `new_tab`은 `args.url`을 받고, `select_tab`과 `close_tab`은 `args.tab_id`가 없으면 `invalid_request`입니다.
-
-`input`의 `kind`는 `click`, `scroll`, `key`, `text`, `paste` 다섯입니다. `click`은 `x`/`y`, `selector`, 또는 `text`가 필요하고, `scroll`은 `x`/`y` 델타나 `selector`, `key`는 `key`, `text`와 `paste`는 `text`가 필요합니다.
-
-#### 응답: `browser_mirror_result`
-
-```json
-{
-  "v": 1,
-  "reply_to": 10,
-  "ev": "browser_mirror_result",
-  "session_id": "session_...",
-  "action": "frame",
-  "frame": { "media_type": "image/jpeg", "data": "...", "bytes": 51200 }
-}
-```
-
-| 필드 | 타입 | 뜻 |
-| --- | --- | --- |
-| `session_id` | string | 요청한 세션 |
-| `action` | string | 요청한 동작을 그대로 |
-| `state` | `BrowserState`, 없을 수 있음 | `state`, `takeover`, `resume`의 결과 |
-| `frame` | `BrowserFrame`, 없을 수 있음 | `frame`의 결과 |
-| `error` | `BrowserMirrorError`, 없을 수 있음 | 형식은 맞지만 거부된 호출의 이유 |
-
-`state`, `frame`, `error` 중 정확히 하나만 있습니다. `navigate`처럼 상태를 돌려주지 않는 동작은 셋 다 없습니다. 브라우저에 아예 닿을 수 없으면 결과 프레임이 아니라 `ev: "error"`, `code: "browser_unavailable"`로 답합니다. 그 경우 참인 결과가 없기 때문입니다.
-
-`BrowserState`:
-
-| 필드 | 타입 | 뜻 |
-| --- | --- | --- |
-| `connected` | boolean | 세션에 묶인 브라우저 창이 있고 응답했습니다. `false`여도 브라우저 자체가 응답했으면 `tabs`가 실립니다 |
-| `tabs` | `BrowserTabState[]` | 열린 탭 |
-| `active_tab_id` | number, 없을 수 있음 | 활성 탭 id |
-| `url` | string | 활성 탭 URL. 없으면 빈 문자열 |
-| `title` | string | 활성 탭 제목. 없으면 빈 문자열 |
-| `mode` | string | 조작자. 보통 `agent`, `takeover` 뒤에는 `user` |
-
-`BrowserTabState`는 `id`, `url`, `title`, `active`를 가집니다.
-
-`BrowserFrame`은 `media_type`(항상 `image/jpeg`), `data`(JPEG 바이트의 base64), `bytes`(디코드한 JPEG 크기)를 가집니다. base64는 512 KiB가 상한입니다. 그 안에 인코딩되지 않는 스크린샷은 잘라서 보내지 않고 한도와 함께 거부합니다.
-
-`BrowserMirrorError`는 `code`와 `message`를 가집니다. `code`는 클라이언트가 분기할 수 있는 고정 값이고, `message`는 화면에 그대로 보여 줄 수 있는 문장입니다. 지원하지 않는 동작은 `unsupported_action`입니다.
-
-#### 동작
-
-- 모든 호출에 기한이 있습니다. `state`는 두 번의 호출에 각각 2초, `frame`은 5초, 나머지 조작은 5초입니다. 넘기면 프로세스를 죽이고 `browser_unavailable`로 답합니다. 연결이 매달리지 않습니다.
-- `state`와 `frame`은 데몬을 새로 띄우지 않습니다. 패널이 1초마다 부르는 조회가 브라우저 창을 열면 버그이기 때문입니다. 창을 열 수 있는 것은 `navigate`와 `new_tab`뿐이고, 그마저 CLI가 10초에서 자릅니다.
-- `takeover`는 60초 임대입니다. 그 세션에서 오는 요청이 임대를 갱신하고, 패널이 닫혀 요청이 끊기면 임대가 스스로 만료되어 에이전트가 조작권을 되찾습니다. 임대가 끝난 뒤의 `resume`은 이미 에이전트 모드입니다.
-- `takeover`는 화면 표시만 바꾸지 않습니다. 브리지가 데몬에 `browser_mode` 요청으로 그 세션의 모드를 밀어 넣고, 데몬의 브라우저 도구는 페이지를 조작하는 동작을 거부합니다. 조회 동작(`status`, `setup`, `list_tabs`, `get_active_tab`, `list_frames`, `snapshot`, `get_content`, `interactables`, `screenshot`, `wait`)은 계속 동작합니다. 데몬이 보관한 사본도 60초 임대라 패널이 사라지면 도구가 스스로 풀리고, `resume`은 즉시 `agent`를 밀어 다음 호출부터 허용합니다. 도구는 브리지에 묻지 않고 자기 프로세스의 사본만 읽으므로, 패널이 사라져도 턴이 매달리지 않습니다.
-- `frame`은 `args.tab_id`로 특정 탭을 지정할 수 있고, 없으면 활성 탭입니다. 명시한 탭이 닫혀 실패하면 재시도하지 않습니다. 사용자가 닫은 탭은 세션 문제가 아니고, 다른 탭에서 몰래 조작하는 것이 거부보다 나쁘기 때문입니다.
 
 ### durable_runtime_v1 · monitor_v1 · snapshot_marker_v1 · ask_receipts_v1
 

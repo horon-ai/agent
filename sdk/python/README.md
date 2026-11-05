@@ -298,7 +298,6 @@ the platform can still surface separately.
 | `too_many_requests` | `max_pending_requests` requests await replies. | Await replies or raise the limit deliberately; the refused request never reached the wire. |
 | `transport_backpressure` | The transport reported a full buffer and provides no drain signal. | Give it `on_drain`, or return `None` from `write` if it never blocks. |
 | `internal` | The bridge or daemon failed unexpectedly. | Preserve logs, retry once if safe, then report. |
-| `browser_unavailable` | `browser_mirror` found no browser bridge. | Install or start what the message names. |
 
 ### Streaming and structured-output errors
 

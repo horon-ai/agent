@@ -900,7 +900,7 @@ fn pkce_pair() -> (String, String) {
     (verifier, challenge)
 }
 
-pub enum BrowserMode {
+pub enum BrowserPreference {
     Open,
     Print,
 }
@@ -1015,7 +1015,7 @@ async fn wait_for_callback(
 /// Explicit interactive login. `on_url` receives the authorization URL once it
 /// is ready, even in `Print` mode. Only this API can open a browser. The supplied
 /// URL contains state, so callers must show it intentionally, not log it.
-pub async fn login(mcp_url: &str, browser: BrowserMode, on_url: impl FnOnce(&str)) -> Result<()> {
+pub async fn login(mcp_url: &str, browser: BrowserPreference, on_url: impl FnOnce(&str)) -> Result<()> {
     validate_mcp_url(mcp_url)?;
     let path = store_path()?;
     let key = canonical_resource(mcp_url);
@@ -1071,7 +1071,7 @@ pub async fn login(mcp_url: &str, browser: BrowserMode, on_url: impl FnOnce(&str
     }
     let auth_url = auth_url.to_string();
     on_url(&auth_url);
-    if matches!(browser, BrowserMode::Open) && open::that(&auth_url).is_err() {
+    if matches!(browser, BrowserPreference::Open) && open::that(&auth_url).is_err() {
         // on_url already presented the URL, so manual opening still works.
         crate::logging::warn("Could not open OAuth browser; open the displayed authorization URL manually");
     }

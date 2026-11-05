@@ -67,8 +67,6 @@ base64 = "0.22"
 sha2 = "0.10"
 rand = "0.9.3"
 url = "2"
-# Local fallback for the open tool when no `horon-agent companion` is running.
-horon-agent-desktop-open = { path = "../desktop-open" }
 horon-agent-agent-runtime = { path = "../agent-runtime" }
 horon-agent-ambient-types = { path = "../ambient-types" }
 horon-agent-notify-email = { path = "../notify-email" }
@@ -138,7 +136,7 @@ legacy-session-index-import = ["horon-agent-session-store/legacy-session-index-i
 test-support = ["horon-agent-base/test-support"]
 
 [dev-dependencies]
-# Paused-time browser tests must compile when this package is tested alone,
+# Paused-time streaming tests must compile when this package is tested alone,
 # without inheriting test-util from another workspace package's dev-dependencies.
 tokio = { version = "1", features = ["test-util"] }
 # Used by async streaming tests (ambient/runner_tests, server/client_actions_tests).
@@ -154,10 +152,3 @@ horon-agent-token-estimate = { path = "../token-estimate" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-global-hotkey = "0.7"
-# Native desktop control for the `macos_computer_use` tool (synthetic mouse/keyboard
-# events, cursor positioning, display bounds). `highsierra` enables the
-# CGEventCreateScrollWheelEvent2 binding used for scroll.
-core-graphics = { version = "0.23", features = ["highsierra"] }

@@ -202,8 +202,8 @@ pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
 pub use wire::{
-    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BrowserMode, ClientRpcError, FileDiffWire,
-    PermissionDecision, PlanEntryWire, Request, ServerEvent, SessionMcpServer,
+    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, ClientRpcError, FileDiffWire, PermissionDecision,
+    PlanEntryWire, Request, ServerEvent, SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -644,7 +644,6 @@ impl Request {
             Request::ResumeSession { id, .. } => *id,
             Request::ResumeAllSessions { id } => *id,
             Request::NotifySession { id, .. } => *id,
-            Request::SetBrowserMode { id, .. } => *id,
             Request::AppletAction { id, .. } => *id,
             Request::CloseApplet { id, .. } => *id,
             Request::Transcript { id, .. } => *id,
@@ -727,9 +726,6 @@ impl Request {
                 // one-shot client can send it without subscribing to a session.
                 | Request::InvalidateOpenAiUsage { .. }
                 | Request::NotifySession { .. }
-                // The bridge pushes a session's browser driver mode here. It
-                // names the session explicitly and needs no subscription.
-                | Request::SetBrowserMode { .. }
                 | Request::AppletAction { .. }
                 | Request::CloseApplet { .. }
                 | Request::CommShare { .. }

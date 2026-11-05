@@ -90,7 +90,6 @@ export type ErrorCode =
   | "unknown_session"
   | "invalid_request"
   | "internal"
-  | "browser_unavailable"
   | "unsupported";
 
 /** Cumulative built-in file-tool changes, not net worktree diff. */
@@ -678,7 +677,6 @@ export type ApiRequest =
       chunk: SessionBlobChunk;
     }
   | { req: "get_session_record_blob_status"; session_id: string; reference: CanonicalRecordRef }
-  | { req: "browser_mirror"; session_id: string; action: string; args?: unknown }
   /** Requires `durable_runtime_v1`. Replies `runtime_state`. */
   | { req: "get_runtime_state"; session_id: string }
   /**
@@ -748,43 +746,6 @@ export interface SidePanelSnapshot {
   focused_page_id: string | null;
   /** Omitted by the runtime when empty. */
   pages?: SidePanelPage[];
-}
-
-/** One tab the mirrored browser has open. */
-export interface BrowserTabState {
-  id: number;
-  url: string;
-  title: string;
-  /** The agent's bound tab when the session has one, otherwise the browser's focused tab. */
-  active: boolean;
-}
-
-/** Snapshot of the browser a session's agent drives. */
-export interface BrowserState {
-  /** The agent has a browser window bound to this session and it answered. */
-  connected: boolean;
-  tabs: BrowserTabState[];
-  active_tab_id?: number;
-  url: string;
-  title: string;
-  /** Who is driving: `agent` normally, `user` after `takeover`. */
-  mode: "agent" | "user" | string;
-}
-
-/** One frame of the active tab, encoded as JPEG. */
-export interface BrowserFrame {
-  /** Always `image/jpeg`. */
-  media_type: string;
-  /** Base64 of the JPEG bytes; at most 512 KiB, never truncated. */
-  data: string;
-  /** Size of the decoded JPEG, in bytes. */
-  bytes: number;
-}
-
-/** A mirror call that was well formed and refused; `code` is stable. */
-export interface BrowserMirrorError {
-  code: string;
-  message: string;
 }
 
 export type ApiEvent =
@@ -1045,14 +1006,6 @@ export type ApiEvent =
       total_size: number;
       complete: boolean;
     }
-  | {
-      ev: "browser_mirror_result";
-      session_id: string;
-      action: string;
-      state?: BrowserState;
-      frame?: BrowserFrame;
-      error?: BrowserMirrorError;
-    }
   /** Reply to `get_runtime_state`. Requires `durable_runtime_v1`. */
   | { ev: "runtime_state"; session_id: string; state: RuntimeStateSummary }
   /** Reply to `apply_control` and `get_control_receipt`. */
@@ -1162,7 +1115,6 @@ export const KNOWN_EVENT_KINDS = [
   "session_blob_chunk",
   "session_blob_status",
   "session_record_blob_status",
-  "browser_mirror_result",
   "runtime_state",
   "control_receipt",
   "snapshot_marker",
@@ -1232,7 +1184,6 @@ export const KNOWN_REQUEST_KINDS = [
   "export_session_record_blob",
   "import_session_record_blob",
   "get_session_record_blob_status",
-  "browser_mirror",
   "get_runtime_state",
   "apply_control",
   "get_control_receipt",

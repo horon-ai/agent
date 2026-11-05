@@ -12,7 +12,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 /// reports stop (server crashed or was killed), release the lid override
 /// rather than holding it until the companion exits.
 const POWER_LEASE: Duration = Duration::from_secs(30);
-const BRIDGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
@@ -20,8 +19,6 @@ pub struct CompanionOptions {
     pub socket: PathBuf,
     /// Run the global push-to-talk listener (Linux).
     pub voice: bool,
-    /// Periodically update an installed browser bridge.
-    pub browser_updates: bool,
 }
 
 impl Default for CompanionOptions {
@@ -29,7 +26,6 @@ impl Default for CompanionOptions {
         Self {
             socket: socket_path(),
             voice: true,
-            browser_updates: true,
         }
     }
 }
@@ -182,9 +178,6 @@ pub async fn run(options: CompanionOptions) -> Result<()> {
     if options.voice {
         crate::voice::spawn();
     }
-    if options.browser_updates {
-        tokio::spawn(browser_bridge_updates());
-    }
     {
         let companion = companion.clone();
         tokio::spawn(async move {
@@ -283,28 +276,6 @@ async fn shutdown_signal() -> Result<()> {
     #[cfg(not(unix))]
     {
         tokio::signal::ctrl_c().await.context("wait for Ctrl-C")
-    }
-}
-
-/// Keep an installed browser bridge current. Previously the browser tool did
-/// this inline before an action, adding a GitHub round trip to agent turns.
-async fn browser_bridge_updates() {
-    let mut tick = tokio::time::interval(BRIDGE_UPDATE_INTERVAL);
-    loop {
-        tick.tick().await;
-        let Some(kind) = horon_agent_base::browser::saved_browser_preference() else {
-            continue;
-        };
-        match horon_agent_base::browser::update_bridge_if_newer(kind, false).await {
-            Ok(update) => {
-                if let Some(note) = update.describe() {
-                    horon_agent_base::logging::info(&format!("companion: {note}"));
-                }
-            }
-            Err(error) => {
-                horon_agent_base::logging::warn(&format!("companion: browser bridge update check failed: {error:#}"))
-            }
-        }
     }
 }
 

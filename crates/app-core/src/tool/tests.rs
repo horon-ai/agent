@@ -420,7 +420,6 @@ fn test_resolve_tool_name_oauth_aliases() {
     assert_eq!(Registry::resolve_tool_name("edit_file"), "edit");
     assert_eq!(Registry::resolve_tool_name("task_runner"), "subagent");
     assert_eq!(Registry::resolve_tool_name("task"), "subagent");
-    assert_eq!(Registry::resolve_tool_name("launch"), "open");
     assert_eq!(Registry::resolve_tool_name("grep"), "agentgrep");
     assert_eq!(Registry::resolve_tool_name("file_grep"), "agentgrep");
     assert_eq!(Registry::resolve_tool_name("todo_read"), "todo");
@@ -996,8 +995,6 @@ async fn tool_descriptions_stay_under_token_cap() {
     // swarm appends the user-tunable swarm-prompt.md by design.
     // batch carries a deliberate parallel-call example (2f4abae33, pinned by
     // batch_tests::description_includes_parallel_tool_call_example).
-    // browser carries the status-first and handoff-by-default routing policy
-    // (e1576e9e3 and earlier), pinned by browser_tests.
     // todo carries a deliberate "use it very often" directive requested by the
     // user, so planning happens proactively rather than only when prompted.
     // applet carries the whole view-node vocabulary inline, since the model has
@@ -1007,7 +1004,6 @@ async fn tool_descriptions_stay_under_token_cap() {
         "integration_tools",
         "swarm",
         "batch",
-        "browser",
         "todo",
         "applet",
         "codemode",
@@ -2205,7 +2201,7 @@ async fn only_the_known_open_world_tools_are_ineligible_for_openai_strict_mode()
     // applet's view is a recursive, open-ended node tree. goal's milestone
     // steps are open maps (`additionalProperties: true`) so a caller can send
     // step shapes the schema does not enumerate.
-    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["applet", "batch", "browser", "goal", "swarm"];
+    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["applet", "batch", "goal", "swarm"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;

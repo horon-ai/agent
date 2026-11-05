@@ -69,7 +69,6 @@ impl ErrorKind {
                 horon_agent_harness_api::ErrorCode::UnknownSession => "unknown_session",
                 horon_agent_harness_api::ErrorCode::InvalidRequest => "invalid_request",
                 horon_agent_harness_api::ErrorCode::Internal => "internal",
-                horon_agent_harness_api::ErrorCode::BrowserUnavailable => "browser_unavailable",
                 horon_agent_harness_api::ErrorCode::Unsupported => "unsupported",
             },
         }

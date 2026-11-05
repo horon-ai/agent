@@ -99,8 +99,8 @@ Format and wire contract: `docs/protocol/SESSION_STORE.md`.
 ## Tools
 
 The default profile is `core`: file read/write/edit, shell, search, web fetch
-and search, skills, MCP, `undo`, and `ask`. Swarm, memory, browser, and the
-other optional tools stay in the tree but off; enable them with
+and search, skills, MCP, `undo`, and `ask`. Swarm, memory, and the other
+optional tools stay in the tree but off; enable them with
 `--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, or `[tools] profile` in
 `~/.horon-agent/config.toml`.
 

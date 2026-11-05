@@ -16,15 +16,12 @@ mod batch;
 mod bg;
 #[cfg(unix)]
 pub(crate) mod bridge_reload;
-mod browser;
 mod calendar;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
 mod communicate;
 mod compile_remote;
-#[cfg(target_os = "macos")]
-mod computer;
 mod config_edit_notice;
 mod context_notes;
 mod conversation_search;
@@ -53,7 +50,6 @@ mod minimizer;
 mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
-mod open;
 mod panel;
 mod patch;
 pub mod path_policy;
@@ -992,16 +988,6 @@ impl Registry {
             "compile_remote",
             compile_remote::CompileRemoteTool::new,
         );
-        if build_allows("browser") {
-            Self::insert_tool_timed(&mut m, &mut timings, "browser", browser::BrowserTool::new);
-        }
-        if build_allows("open") {
-            Self::insert_tool_timed(&mut m, &mut timings, "open", open::OpenTool::new);
-        }
-        #[cfg(target_os = "macos")]
-        if build_allows("macos_computer_use") {
-            Self::insert_tool_timed(&mut m, &mut timings, "macos_computer_use", computer::ComputerTool::new);
-        }
         if build_allows("webfetch") {
             Self::insert_tool_timed(&mut m, &mut timings, "webfetch", webfetch::WebFetchTool::new);
         }
