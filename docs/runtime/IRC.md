@@ -65,6 +65,8 @@ External wake 모드는 클라이언트가 직접 세션을 깨우는 설정이�
 
 부모 판정은 대상의 `Endpoint::parent`, 즉 `report_back_to_session_id`가 보낸 사람의 세션 id와 같은지로 한다. 브로드캐스트와 `progress` 메시지는 부모가 보내도 긴급 주입이 아니다.
 
+주입 지점은 턴이 끝나는 자리가 아니라 모델 응답과 도구 라운드의 경계다. 위 표의 `턴 경계`도 턴 종료가 아니라 이 경계를 뜻한다. 스트리밍 경로는 모델 응답이 도구 호출 없이 끝날 때 그 응답을 처리하는 자리(`crates/app-core/src/agent/interrupts.rs`의 `handle_streaming_no_tool_calls`), 도구 라운드가 끝난 뒤 다음 모델 호출 전(`crates/app-core/src/agent/turn_streaming_mpsc.rs`), 긴급 표시가 있을 때 도구 그룹 경계에서 주입한다. 비스트리밍 턴 루프는 도구 라운드가 끝날 때만 주입하므로(`crates/app-core/src/agent/turn_loops.rs`) 도구 없이 끝나는 턴에는 주입 지점이 없다. 그래서 바쁜 수신자의 턴이 마지막 모델 응답을 마치고 그 응답에 대한 주입 검사까지 지난 뒤에 도착한 메시지는 그 턴에 들어가지 않고 대기열에 남는다. 이 메시지는 버려지지 않고 보관되며(`crates/app-core/src/server/live_turn.rs`), 서버는 남은 개수만 `SoftInterruptQueue` 이벤트로 알리고 새 턴을 시작하지 않는다(`crates/app-core/src/server/client_lifecycle.rs`). 다음 턴에서도 주입은 턴 시작이 아니라 첫 모델 응답을 처리하는 경계에서 일어난다. 첫 응답이 도구 호출로 이어지면 그 라운드가 끝난 뒤에, 도구 호출 없이 끝나면 그 응답 직후에 주입된다. 기존 `swarm` DM도 같은 `queue_soft_interrupt_for_session` 경로를 쓴다(`crates/app-core/src/server/client_comm_message.rs`). 받는 쪽이 `irc wait`로 기다리고 있으면 위 표의 첫 행대로 대기자에게 바로 넘어가므로, 답이 필요한 쪽은 `wait`를 쓰는 편이 확실하다.
+
 실패한 레그의 사유는 영수증에 실린다. 도구는 하나라도 전달되면 성공으로 보고, 모든 레그가 실패했을 때만 오류를 낸다. 부분 실패는 재전송으로 인한 중복을 피하려고 결과 본문에만 적는다.
 
 ### 순서와 메일박스 상한
@@ -207,3 +209,4 @@ cargo run --locked --release -p horon-agent-irc-core --example irc_throughput
 - 채널, 토픽, 구독, 메시지 TTL은 없다.
 - 데몬 없이 단독으로 실행한 세션에서는 버스가 없어 도구가 거부된다.
 - `wait`는 모델 호출이 아니라 프로세스 안의 메시지 도착만 기다린다. 상대 턴이 모델 응답을 만드는 시간은 `timeout_secs` 안에 들어와야 한다.
+- 바쁜 세션의 턴이 마지막 모델 응답을 마치고 그 응답에 대한 주입 검사까지 지난 뒤 도착한 메시지는 그 턴에 들어가지 않고 대기열에 남는다. 버려지지도, 새 턴을 시작하지도 않으며 다음 턴의 첫 모델 응답 경계에서야 주입되므로, 받는 쪽이 그 뒤로 턴을 이어 가지 않으면 전달이 그만큼 늦어진다.
