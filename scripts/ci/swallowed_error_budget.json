@@ -1,9 +1,9 @@
 {
-  "total": 2092,
+  "total": 2077,
   "totals_by_pattern": {
-    "dot_ok": 756,
-    "let_underscore": 837,
-    "unwrap_or_default": 499
+    "dot_ok": 753,
+    "let_underscore": 832,
+    "unwrap_or_default": 492
   },
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": {
@@ -124,11 +124,6 @@
     "crates/app-core/src/agent_result_cache.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/app-core/src/ambient/directives.rs": {
-      "dot_ok": 2,
-      "let_underscore": 1,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/ambient/manager.rs": {
@@ -453,11 +448,6 @@
     },
     "crates/app-core/src/session_launch.rs": {
       "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/ssh_remote.rs": {
-      "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 0
     },
@@ -1290,21 +1280,6 @@
       "dot_ok": 2,
       "let_underscore": 0,
       "unwrap_or_default": 1
-    },
-    "crates/edit-bench/src/compare.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/edit-bench/src/generate.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/edit-bench/src/run.rs": {
-      "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 4
     },
     "crates/edit-safety/examples/snapshot_demo.rs": {
       "dot_ok": 0,

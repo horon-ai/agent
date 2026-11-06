@@ -7,7 +7,7 @@ publish = false
 # Application core for horon-agent: all non-presentation modules (server, agent,
 # provider, auth, session, tool, config, etc.) extracted out of the monolithic
 # root `horon-agent` crate so they compile as a separate rustc unit. The root `horon-agent`
-# crate (cli + tui + bin) re-exports this crate's modules via `pub use
+# crate (cli + bin) re-exports this crate's modules via `pub use
 # horon_agent_app_core::*`, preserving every existing `crate::<module>` path.
 
 [lib]
@@ -71,16 +71,13 @@ horon-agent-ambient-types = { path = "../ambient-types" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-schema-dialect = { path = "../schema-dialect" }
 horon-agent-lsp = { path = "../lsp" }
-# NOTE: horon-agent-app-core does NOT depend on any horon-agent-tui-* crate. They were
-# unused dead dependency edges here (the TUI declares them itself). Removing
-# them stops a horon-agent-tui-* edit from cascading a recompile through app-core.
 horon-agent-update-core = { path = "../update-core" }
 
 # Streaming
 tokio-stream = "0.1"
 
 # NOTE: no ratatui/crossterm here. Terminal rendering and prompts belong to the
-# CLI and horon-agent-tui, so the shared runtime never touches a terminal.
+# CLI, so the shared runtime never touches a terminal.
 
 # PDF parsing (behind feature flag)
 horon-agent-pdf = { path = "../pdf", optional = true }

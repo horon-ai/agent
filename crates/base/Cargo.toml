@@ -68,10 +68,9 @@ horon-agent-provider-metadata = { path = "../provider-metadata" }
 horon-agent-provider-env = { path = "../provider-env" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-provider-openai = { path = "../provider-openai" }
-# NOTE: this foundation layer intentionally does NOT depend on any `horon-agent-tui-*`
-# crate or on a presentation crate. `ResumeTarget` lives in
-# `horon-agent-session-types` and reasoning-line markup lives in
-# `session/render_markup.rs`, so the layering inversion is gone.
+# NOTE: this foundation layer intentionally depends on no presentation crate.
+# `ResumeTarget` lives in `horon-agent-session-types` and reasoning-line markup
+# lives in `session/render_markup.rs`, so the layering inversion is gone.
 horon-agent-terminal-launch = { path = "../terminal-launch" }
 horon-agent-usage-types = { path = "../usage-types" }
 
@@ -79,8 +78,7 @@ horon-agent-usage-types = { path = "../usage-types" }
 # Streaming
 
 # NOTE: no terminal crates (crossterm, ratatui, qrcode). Interactive login
-# prompts are a client concern: the CLI installs a presenter into
-# `auth::login_ui`, and this shared crate never touches a terminal.
+# prompts are a client concern: this shared crate never touches a terminal.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "ico", "tiff"] }  # PNG/JPEG plus BMP/ICO/TIFF decoding so they can be re-encoded to PNG for providers (#1712). Skip avif/rav1e, exr, etc.
 
 # NOTE: PDF text extraction (horon-agent-pdf) lives in the upper horon-agent-app-core crate

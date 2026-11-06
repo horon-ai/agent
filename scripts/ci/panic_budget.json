@@ -1,5 +1,5 @@
 {
-  "total": 104,
+  "total": 101,
   "tracked_files": {
     "crates/agent-sdk/src/ssh.rs": 8,
     "crates/agent-sdk/src/structured.rs": 1,
@@ -31,8 +31,6 @@
     "crates/base/src/monitor/mod.rs": 4,
     "crates/base/src/secrets.rs": 3,
     "crates/base/src/workspace_trust.rs": 1,
-    "crates/edit-bench/src/generate.rs": 1,
-    "crates/edit-bench/src/run.rs": 2,
     "crates/harness-api-server/src/lib.rs": 1,
     "crates/harness-api-server/src/translate.rs": 3,
     "crates/harness-api/examples/harness_repl.rs": 15,
