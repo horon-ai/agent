@@ -252,87 +252,6 @@ async fn register_visible_spawned_member_marks_startup_as_running() {
 }
 
 #[test]
-fn prepare_visible_spawn_session_persists_startup_before_launch() {
-    let _guard = crate::storage::lock_test_env();
-    let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-    let worktree = tempfile::TempDir::new().expect("temp worktree");
-    let startup = "Please start by auditing prompt delivery.";
-
-    let (session_id, launched) = prepare_visible_spawn_session(
-        Some(worktree.path().to_str().expect("utf8 worktree path")),
-        None,
-        None,
-        None,
-        None,
-        false,
-        Some(startup),
-        |session_id, _cwd: &std::path::Path, _selfdev, provider_key| {
-            assert_eq!(provider_key, None);
-            let path = crate::storage::horon_agent_dir()
-                .expect("horon-agent dir")
-                .join(format!("client-input-{}", session_id));
-            let data = std::fs::read_to_string(&path).expect("startup file should exist");
-            assert!(
-                data.contains(startup),
-                "startup payload should be written before launch"
-            );
-            assert!(
-                data.contains(r#""submit_on_restore":true"#),
-                "startup payload should auto-submit on restore"
-            );
-            Ok(true)
-        },
-    )
-    .expect("visible spawn preparation should succeed");
-
-    assert!(launched);
-    let path = crate::storage::horon_agent_dir()
-        .expect("horon-agent dir")
-        .join(format!("client-input-{}", session_id));
-    assert!(path.exists(), "startup file should remain for launched visible session");
-
-    crate::env::remove_var("HORON_AGENT_HOME");
-}
-
-#[test]
-fn prepare_visible_spawn_session_cleans_startup_when_launch_not_started() {
-    let _guard = crate::storage::lock_test_env();
-    let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-    let worktree = tempfile::TempDir::new().expect("temp worktree");
-
-    let (session_id, launched) = prepare_visible_spawn_session(
-        Some(worktree.path().to_str().expect("utf8 worktree path")),
-        None,
-        None,
-        None,
-        None,
-        false,
-        Some("Do the thing."),
-        |_session_id, _cwd: &std::path::Path, _selfdev, _provider_key| Ok(false),
-    )
-    .expect("visible spawn preparation should succeed even when launch is skipped");
-
-    assert!(!launched);
-    let path = crate::storage::horon_agent_dir()
-        .expect("horon-agent dir")
-        .join(format!("client-input-{}", session_id));
-    assert!(
-        !path.exists(),
-        "startup file should be removed when visible launch does not start"
-    );
-    assert!(
-        !crate::session::session_exists(&session_id),
-        "prepared session should be cleaned up when visible launch does not start"
-    );
-
-    crate::env::remove_var("HORON_AGENT_HOME");
-}
-
-#[test]
 fn prepare_visible_spawn_session_cleans_session_when_launch_errors() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
@@ -346,9 +265,7 @@ fn prepare_visible_spawn_session_cleans_session_when_launch_errors() {
         None,
         None,
         None,
-        false,
-        Some("Do the thing."),
-        |_session_id, _cwd: &std::path::Path, _selfdev, _provider_key| Err(anyhow::anyhow!("launch failed")),
+        |_session_id, _cwd: &std::path::Path, _provider_key| Err(anyhow::anyhow!("launch failed")),
     )
     .expect_err("visible spawn preparation should surface launch error");
 
@@ -388,9 +305,7 @@ fn prepare_visible_spawn_session_persists_and_launches_provider_key_for_openrout
         None,
         None,
         None,
-        false,
-        None,
-        |_session_id, _cwd: &std::path::Path, _selfdev, provider_key| {
+        |_session_id, _cwd: &std::path::Path, provider_key| {
             assert_eq!(provider_key, Some("openrouter"));
             Ok(true)
         },
@@ -418,9 +333,7 @@ fn prepare_visible_spawn_session_persists_requested_effort() {
         None,
         None,
         Some("low"),
-        false,
-        None,
-        |_session_id, _cwd: &std::path::Path, _selfdev, _provider_key| Ok(true),
+        |_session_id, _cwd: &std::path::Path, _provider_key| Ok(true),
     )
     .expect("visible spawn preparation should succeed");
 
@@ -449,9 +362,7 @@ fn prepare_visible_spawn_session_prefers_parent_provider_key_over_model_guess() 
         Some("ollama"),
         None,
         None,
-        false,
-        None,
-        |_session_id, _cwd: &std::path::Path, _selfdev, provider_key| {
+        |_session_id, _cwd: &std::path::Path, provider_key| {
             assert_eq!(provider_key, Some("ollama"));
             Ok(true)
         },
@@ -475,7 +386,6 @@ fn coordinator_identity(
         model: model.map(str::to_string),
         provider_key: provider_key.map(str::to_string),
         route_api_method: route_api_method.map(str::to_string),
-        is_canary: false,
     }
 }
 

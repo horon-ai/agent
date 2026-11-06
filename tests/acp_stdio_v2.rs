@@ -690,13 +690,11 @@ impl Peer {
 /// product keeps directly under HORON_AGENT_HOME. The list is private there, so
 /// it is copied and `credential_lists_match_the_shipped_code` fails the moment
 /// the two drift apart.
-const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 7] = [
+const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 5] = [
     "auth.json",
     "openai-auth.json",
     "antigravity_oauth.json",
     "gemini_oauth.json",
-    "google_oauth.json",
-    "google_credentials.json",
     "config.toml",
 ];
 
@@ -850,8 +848,8 @@ fn is1_negotiation() {
 }
 
 /// IS-2: the v2 initialize result: `info`, object capability markers, no
-/// `loadSession`, and the terminal auth method only for a client that
-/// advertised `capabilities.auth.terminal`.
+/// `loadSession`, and one auth method even for a client that advertised
+/// `capabilities.auth.terminal`.
 #[test]
 fn is2_initialize_shape() {
     let daemon = AcpDaemon::start("acp");
@@ -886,17 +884,13 @@ fn is2_initialize_shape() {
     let mut terminal = Conn::v2_with(&daemon, ClientCapabilities::default(), true, "is2b");
     let result = terminal.initialize();
     let methods = result["authMethods"].as_array().expect("authMethods");
+    assert_eq!(methods.len(), 1, "no client capability adds a method: {result}");
     let ids: Vec<&str> = methods
         .iter()
         .filter_map(|method| method["methodId"].as_str())
         .collect();
-    assert_eq!(
-        ids,
-        ["horon-agent-credentials", "horon-agent-terminal-login"],
-        "{result}"
-    );
-    assert_eq!(methods[1]["type"], "terminal", "{result}");
-    assert_eq!(methods[1]["args"], json!(["--login"]), "{result}");
+    assert_eq!(ids, ["horon-agent-credentials"], "{result}");
+    assert!(methods[0].get("args").is_none(), "{result}");
     terminal.assert_schema_clean();
 }
 
@@ -2322,7 +2316,7 @@ fn credential_snapshot_ignores_runtime_state() {
         home.join("external/.config/github-copilot/hosts.json"),
         home.join("external/.openclaw/agents/main/agent/auth-profiles.json"),
         home.join("config/horon-agent/openai.env"),
-        home.join("config/horon-agent/horon-agent-subscription.env"),
+        home.join("config/horon-agent/anthropic.env"),
     ];
     for path in &appearing {
         let before = snapshot();

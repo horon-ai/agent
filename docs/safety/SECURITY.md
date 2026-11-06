@@ -141,22 +141,18 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 | `RUSTSEC-2024-0436` | `paste` | `ratatui -> paste`, `tokenizers -> paste`, `tract-* -> paste` | TUI 렌더링, 토크나이저, 임베딩/모델 지원 | 전이 의존성이 널리 퍼져 있다. 한 모듈에 국한되지 않는다. | 로컬 우회보다 업스트림 의존성 업그레이드를 먼저 한다. `ratatui`, `tokenizers`, `tract-*`를 올린 뒤 다시 평가한다. |
 | `RUSTSEC-2026-0002` | `lru` | `ratatui -> lru` | TUI 렌더링/캐시 내부 | UI 의존성의 불건전성 경고. 인증/프로바이더 로직은 아니지만 프로세스에 함께 실린다. | 호환되는 시점에 `ratatui` / `ratatui-image`를 함께 올린다. |
 | `RUSTSEC-2026-0097` | `rand` | `azure_core`, `tungstenite`, `tract-*`, `ratatui-image` 등 | Azure 인증, 웹소켓, 임베딩, UI 전이 경로 | `rand::rng()`를 쓰는 사용자 정의 로거와 관련된 불건전성 경고. HoronAgent는 그 패턴을 의도적으로 쓰지 않지만 그래프에서 이 크레이트가 넓게 퍼져 있다. | `rand` 0.9 호환 의존성 스택으로 업스트림 업그레이드를 우선한다. |
-| `RUSTSEC-2026-0141` | `lettre` | `horon-agent-notify-email -> lettre` | 알림 이메일 발송 | 취약점이 Boring TLS 백엔드의 호스트 이름 검증 경로에 적용된다. HoronAgent의 `lettre` 의존성은 rustls/native-tls 기능을 쓰고 `boring-tls`를 쓰지 않으므로 현재 빌드에서 악용 가능하다고 보지 않는다. | `scripts/ci/check_security.sh`에서 무시를 유지한다. `lettre`가 패치 릴리스하거나 기능 사용이 바뀌면 무시를 뺀다. |
 | `RUSTSEC-2026-0098` | `rustls-webpki` | `rustls` 의존성 스택 | rustls 사용처의 TLS 인증서 검증 | URI 이름에 대한 이름 제약을 잘못 받아들인다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
 | `RUSTSEC-2026-0099` | `rustls-webpki` | `rustls` 의존성 스택 | rustls 사용처의 TLS 인증서 검증 | 와일드카드 인증서에 이름 제약을 받아들인다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
 | `RUSTSEC-2026-0104` | `rustls-webpki` | `rustls` 의존성 스택 | TLS 인증서 폐기 목록 파싱 | CRL 파싱에서 도달 가능한 패닉이 있다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
-| `RUSTSEC-2026-0049` | `rustls-webpki` | `rustls` 의존성 스택(`aws-smithy` rustls 0.21, `imap`/`rustls-connector` rustls 0.22) | TLS 인증서 폐기 목록 처리 | 잘못된 매칭 로직 때문에 Distribution Point가 지정한 CRL을 권위 있는 것으로 보지 않는다. 더 오래된 rustls 스택을 거친 전이 문제이며, 수정에는 rustls-webpki >=0.103.10이 필요하고 이는 `aws-sdk`/`imap` 스택의 메이저 업그레이드를 요구한다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
+| `RUSTSEC-2026-0049` | `rustls-webpki` | `rustls` 의존성 스택(`aws-smithy` rustls 0.21) | TLS 인증서 폐기 목록 처리 | 잘못된 매칭 로직 때문에 Distribution Point가 지정한 CRL을 권위 있는 것으로 보지 않는다. 더 오래된 rustls 스택을 거친 전이 문제이며, 수정에는 rustls-webpki >=0.103.10이 필요하고 이는 `aws-sdk` 스택의 메이저 업그레이드를 요구한다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
 | `RUSTSEC-2026-0187` | `lopdf` | `horon-agent-pdf -> pdf-extract 0.8.2 -> lopdf 0.34` | PDF 텍스트 추출(`/pdf`, 이미지/PDF 읽기) | 깊게 중첩된 PDF 객체를 파싱할 때 스택이 넘친다. 사용자가 여는(악의적일 수 있는) PDF에서 텍스트를 추출할 때만 도달하며 인증/프로바이더/네트워크 경로는 아니다. `pdf-extract 0.8.2`가 `lopdf 0.34`를 고정하므로 업스트림 `pdf-extract` 릴리스 없이는 수정된 `>=0.42`로 올릴 수 없다. | `pdf-extract`가 `lopdf >=0.42`에 의존하는 릴리스를 내면 올리고 그때 무시를 뺀다. |
-| `RUSTSEC-2023-0086` | `lexical-core` | `imap -> imap-proto -> lexical-core` | Gmail/IMAP 지원 경로 | 메일 스택의 오래된 불건전 전이 의존성. 네트워크에서 파싱한 데이터를 다루므로 UI 전용 발견보다 우선순위가 높다. | `imap` / `imap-proto` 업그레이드나 교체를 조사한다. 유지되는 경로가 없으면 IMAP 의존성을 격리하거나 제거한다. |
 
 ### 우선순위
 
 1. rustls 스택을 거치는 `rustls-webpki` TLS 권고
-2. `imap-proto`를 거치는 `lexical-core`
-3. HoronAgent가 `boring-tls`를 켜게 되면 `lettre`
-4. `ratatui`를 거치는 `lru` (headless 전환 이전 기록. 지금 트리에는 `ratatui` 가 없다)
-5. `syntect`를 거치는 `bincode`
-6. 여러 전이 의존성을 거치는 `paste` / `rand`
+2. `ratatui`를 거치는 `lru` (headless 전환 이전 기록. 지금 트리에는 `ratatui` 가 없다)
+3. `syntect`를 거치는 `bincode`
+4. 여러 전이 의존성을 거치는 `paste` / `rand`
 
 ### 지금 잠금 파일과의 차이
 
@@ -170,17 +166,14 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 | `bincode` | 없다 | `RUSTSEC-2025-0141` |
 | `lru` | 없다 | `RUSTSEC-2026-0002` |
 | `quick-xml` | 없다 | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
-| `lexical-core` | 없다 | `RUSTSEC-2023-0086`의 전이 경로 |
 | `paste` | 있다 | `RUSTSEC-2024-0436` |
 | `rand` | 있다 | `RUSTSEC-2026-0097` |
-| `imap` | 있다 | `RUSTSEC-2026-0049`, `RUSTSEC-2023-0086` |
 | `azure_core` | 있다 | `RUSTSEC-2026-0097` |
 | `tungstenite` | 있다 | `RUSTSEC-2026-0097` |
 | `tract-nnef` | 있다 | `RUSTSEC-2026-0097`, 아래 `RUSTSEC-2026-0217` 항목 |
-| `lettre` | 있다 | `RUSTSEC-2026-0141` |
 | `lopdf` | 있다 | `RUSTSEC-2026-0187` |
 | `rustls-webpki` | 있다 | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
-| `crossterm` | 있다 | `horon-agent-terminal-image`의 선택 기능 `display`로 남아 있다(`crates/terminal-image/Cargo.toml:14`, `:20`) |
+| `crossterm` | 없다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다 |
 
 ### 참고
 
@@ -201,7 +194,7 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
   `wayland-scanner`가 `quick-xml >= 0.41`로 옮겨가야 한다. 2026-07-04에 분류해
   `scripts/ci/check_security.sh`에서 무시했다.
 - `scripts/ci/check_security.sh`는 위에서 명시적으로 분류한 취약점 권고
-  (`lettre`와 `rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
+  (`rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
   (`scripts/ci/check_security.sh:98-112`). 새
   취약점은 기본적으로 여전히 CI를 실패시킨다.
 - 의존성 버전을 바꾸기 전에 다음을 실행한다.

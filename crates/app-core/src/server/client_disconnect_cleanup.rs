@@ -1,8 +1,7 @@
 use super::{
-    ClientConnectionInfo, ClientDebugState, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmEventType,
-    SwarmMember, VersionedPlan, record_swarm_event, remove_background_tool_signal,
-    remove_session_channel_subscriptions, remove_session_from_swarm, remove_session_interrupt_queue,
-    unregister_session_event_sender, update_member_status,
+    ClientConnectionInfo, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember,
+    VersionedPlan, record_swarm_event, remove_background_tool_signal, remove_session_channel_subscriptions,
+    remove_session_from_swarm, remove_session_interrupt_queue, unregister_session_event_sender, update_member_status,
 };
 use crate::agent::Agent;
 use anyhow::Result;
@@ -296,12 +295,9 @@ fn disconnected_while_processing(
 pub(super) async fn detach_client_attachment(
     session_id: &str,
     connection_id: &str,
-    debug_id: &str,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
-    client_debug_state: &Arc<RwLock<ClientDebugState>>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
 ) {
-    client_debug_state.write().await.unregister(debug_id);
     client_connections.write().await.remove(connection_id);
     unregister_session_event_sender(swarm_members, session_id, connection_id).await;
 }
@@ -324,8 +320,6 @@ pub(super) async fn cleanup_client_connection(
     file_touch: &FileTouchService,
     channel_subscriptions: &ChannelSubscriptions,
     channel_subscriptions_by_session: &ChannelSubscriptions,
-    client_debug_state: &Arc<RwLock<ClientDebugState>>,
-    client_debug_id: &str,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     client_connection_id: &str,
     shutdown_signals: &Arc<RwLock<HashMap<String, InterruptSignal>>>,
@@ -357,9 +351,7 @@ pub(super) async fn cleanup_client_connection(
     detach_client_attachment(
         client_session_id,
         client_connection_id,
-        client_debug_id,
         client_connections,
-        client_debug_state,
         swarm_members,
     )
     .await;

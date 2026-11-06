@@ -2,7 +2,6 @@ use super::*;
 
 impl Agent {
     pub(super) fn capture_compaction_route(&mut self) {
-        self.sync_bound_account_route();
         if self.session.route_api_method.is_some() {
             return;
         }
@@ -11,13 +10,10 @@ impl Agent {
             return;
         }
         if self.provider.name().eq_ignore_ascii_case("openai") {
-            self.session.route_api_method = self.provider.active_resolved_credential().map(|credential| {
-                match credential {
-                    horon_agent_provider_core::ResolvedCredential::ApiKey => "openai-api",
-                    horon_agent_provider_core::ResolvedCredential::Oauth => "openai-oauth",
-                }
-                .to_owned()
-            });
+            self.session.route_api_method = match self.provider.active_resolved_credential() {
+                Some(horon_agent_provider_core::ResolvedCredential::ApiKey) => Some("openai-api".to_owned()),
+                _ => None,
+            };
         }
     }
 
@@ -84,51 +80,16 @@ impl Agent {
         self.session.model_usage_turn_id.clone().unwrap()
     }
 
-    pub(super) fn sync_bound_account_route(&mut self) {
-        let Some(label) = self.provider.oauth_account_label() else {
-            return;
-        };
-        if self
-            .session
-            .route_api_method
-            .as_deref()
-            .and_then(horon_agent_provider_core::oauth_account_label)
-            .is_some_and(|selected| selected != label)
-        {
-            logging::warn("Refusing to replace an explicit saved-account route with a different observed account");
-            return;
-        }
-        let method = match self.provider.name().to_ascii_lowercase().as_str() {
-            "openai" => "openai-oauth",
-            "claude" | "anthropic" => "claude-oauth",
-            _ => return,
-        };
-        let route = format!("{method}@{label}");
-        if self.session.route_api_method.as_deref() == Some(route.as_str()) {
-            return;
-        }
-        self.session.route_api_method = Some(route);
-        self.session.provider_key = Some(method.to_string());
-        self.session.model = Some(self.provider_model());
-        self.persist_session_best_effort("observed saved account route");
-    }
-
-    pub(super) fn record_failed_account_route(&mut self, error: &str) {
-        self.sync_bound_account_route();
+    pub(super) fn record_failed_credential_route(&mut self, error: &str) {
         if !horon_agent_provider_core::classify_failover_error_message(error).should_mark_provider_unavailable() {
             return;
         }
         let provider = self.provider.name().to_ascii_lowercase();
-        let provider = match provider.as_str() {
-            "openai" => "openai",
-            "claude" | "anthropic" => "claude",
-            _ => return,
-        };
-        let label = self.provider.oauth_account_label();
-        let (key, label) = match (provider, self.provider.active_resolved_credential(), label.as_deref()) {
-            (_, Some(horon_agent_provider_core::ResolvedCredential::Oauth), Some(label)) => (provider, Some(label)),
-            ("openai", Some(horon_agent_provider_core::ResolvedCredential::ApiKey), _) => ("openai-api", None),
-            ("claude", Some(horon_agent_provider_core::ResolvedCredential::ApiKey), _) => ("anthropic-api", None),
+        let (key, label) = match (provider.as_str(), self.provider.active_resolved_credential()) {
+            ("openai", Some(horon_agent_provider_core::ResolvedCredential::ApiKey)) => ("openai-api", None),
+            ("claude" | "anthropic", Some(horon_agent_provider_core::ResolvedCredential::ApiKey)) => {
+                ("anthropic-api", None)
+            }
             _ => return,
         };
         if crate::provider::provider_unavailability_detail_for_account_label(key, label).is_none() {
@@ -137,7 +98,6 @@ impl Agent {
     }
 
     pub(super) fn record_model_turn_usage(&mut self, turn_id: &str) {
-        self.sync_bound_account_route();
         if self.session.is_debug {
             return;
         }
@@ -331,14 +291,9 @@ impl Agent {
             self.provider.name(),
             self.session.provider_key.as_deref(),
         );
-        if let Some(label) = self.provider.oauth_account_label() {
-            let method = if self.provider.name().eq_ignore_ascii_case("openai") {
-                "openai-oauth"
-            } else {
-                "claude-oauth"
-            };
-            self.session.route_api_method = Some(format!("{method}@{label}"));
-        } else if self
+        // A saved OAuth account route cannot survive a model switch: this
+        // build has no OAuth credentials, so drop the stale label.
+        if self
             .session
             .route_api_method
             .as_deref()
@@ -417,14 +372,6 @@ impl Agent {
     /// swarm agents inherit this so they reconstruct the coordinator's exact
     /// auth route instead of falling back to the config default.
     pub fn session_route_api_method(&self) -> Option<String> {
-        if let Some(label) = self.provider.oauth_account_label() {
-            let method = if self.provider.name().eq_ignore_ascii_case("openai") {
-                "openai-oauth"
-            } else {
-                "claude-oauth"
-            };
-            return Some(format!("{method}@{label}"));
-        }
         self.session.route_api_method.clone()
     }
 

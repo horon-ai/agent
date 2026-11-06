@@ -399,38 +399,6 @@ async fn test_debug_create_session_marks_debug() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_debug_create_selfdev_session_marks_canary() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-debug-selfdev-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = MockProvider::new();
-    let provider: Arc<dyn horon_agent::provider::Provider> = Arc::new(provider);
-    let server_instance = server::Server::new_with_paths(provider, socket_path.clone(), debug_socket_path.clone());
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    wait_for_server_ready(&socket_path, &debug_socket_path).await?;
-
-    let session_id =
-        debug_create_headless_session_with_command(debug_socket_path.clone(), "create_session:selfdev:/tmp").await?;
-    let session = Session::load(&session_id)?;
-    assert!(session.is_debug);
-    assert!(session.is_canary);
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn test_clear_preserves_debug_for_resumed_debug_session() -> Result<()> {
     let _env = setup_test_env()?;
     let runtime_dir = short_runtime_dir(format!(

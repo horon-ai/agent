@@ -88,7 +88,7 @@ fn prompt_response_omits_unreported_usage_and_cache_fields() {
 
 #[test]
 fn initialize_standard_omits_horon_agent_meta() {
-    let result = initialize_result(&json!({"protocolVersion": 1}), AcpProfile::Standard);
+    let result = initialize_result(AcpProfile::Standard);
     assert_eq!(result["protocolVersion"], 1);
     assert!(result["agentCapabilities"].get("_meta").is_none());
     assert_eq!(result["agentCapabilities"]["loadSession"], true);
@@ -96,7 +96,7 @@ fn initialize_standard_omits_horon_agent_meta() {
 
 #[test]
 fn initialize_full_advertises_horon_agent_extension_meta() {
-    let result = initialize_result(&json!({"protocolVersion": 1}), AcpProfile::Full);
+    let result = initialize_result(AcpProfile::Full);
     assert_eq!(result["agentCapabilities"]["_meta"]["horon-agent"]["profile"], "full");
 }
 
@@ -567,14 +567,8 @@ fn prompt_blocks_reject_audio_unknown_and_malformed() {
 }
 
 #[test]
-fn acp_login_flag_never_starts_the_stdio_adapter() {
-    assert_eq!(acp_entry(true), AcpEntry::Login);
-    assert_eq!(acp_entry(false), AcpEntry::Stdio);
-}
-
-#[test]
 fn initialize_advertises_full_v1_surface() {
-    let result = initialize_result(&json!({"protocolVersion": 1}), AcpProfile::Standard);
+    let result = initialize_result(AcpProfile::Standard);
     assert_eq!(
         result["agentCapabilities"],
         json!({
@@ -593,38 +587,25 @@ fn initialize_advertises_full_v1_surface() {
         json!([{
             "id": "horon-agent-credentials",
             "name": "Use HoronAgent login",
-            "description": "Uses the provider login stored by horon-agent. Run 'horon-agent login' first if none exists.",
+            "description": "Uses the OpenAI-compatible provider profile configured in [providers.<name>]. Run 'horon-agent provider add' to create one.",
         }])
     );
 }
 
 #[test]
-fn terminal_auth_method_only_when_client_advertises() {
-    let ids = |params: Value| -> Vec<String> {
-        initialize_result(&params, AcpProfile::Standard)["authMethods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|method| method["id"].as_str().unwrap().to_string())
-            .collect()
-    };
-    for params in [
-        json!({"protocolVersion": 1}),
-        json!({"protocolVersion": 1, "clientCapabilities": {}}),
-        json!({"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": false}}}),
-        json!({"protocolVersion": 1, "clientCapabilities": {"auth": {}}}),
-    ] {
-        assert_eq!(ids(params.clone()), ["horon-agent-credentials"], "{params}");
-    }
-    let params = json!({"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": true}}});
-    assert_eq!(
-        ids(params.clone()),
-        ["horon-agent-credentials", "horon-agent-terminal-login"]
-    );
-    let terminal = &initialize_result(&params, AcpProfile::Standard)["authMethods"][1];
-    assert_eq!(
-        *terminal,
-        json!({"id": "horon-agent-terminal-login", "name": "Log in from the terminal", "type": "terminal", "args": ["--login"], "env": {}})
+fn auth_methods_ignore_terminal_capability() {
+    // A client's `auth.terminal` capability adds nothing: this build has no
+    // login command for a terminal method to run.
+    let methods = auth_methods();
+    assert_eq!(methods.len(), 1, "{methods:?}");
+    assert_eq!(methods[0]["id"], "horon-agent-credentials");
+    assert!(methods.iter().all(|method| method.get("type").is_none()), "{methods:?}");
+    let description = methods[0]["description"].as_str().expect("description");
+    assert!(description.contains("[providers.<name>]"), "{description}");
+    assert!(description.contains("horon-agent provider add"), "{description}");
+    assert!(
+        !description.contains("horon-agent login"),
+        "the removed login command is never advertised: {description}"
     );
 }
 
@@ -1318,7 +1299,7 @@ pub(super) mod connection_core {
         let (input_writer, input_reader) = tokio::io::duplex(1 << 20);
         let mut runtime = AcpRuntime::new(
             AcpProfile::Standard,
-            ProviderChoice::HoronAgent,
+            ProviderChoice::Auto,
             None,
             None,
             Box::new(output_writer),
@@ -1376,8 +1357,8 @@ pub(super) mod connection_core {
 
         /// `initialize` selecting protocol version 2. Its v2 `capabilities`
         /// carry the v1 file and terminal markers, which a v2 connection must
-        /// never pass to the daemon (IS-3), and the terminal auth marker, so the
-        /// answer offers the terminal auth method too (IS-15).
+        /// never pass to the daemon (IS-3), and the terminal auth marker, which
+        /// this build still answers with only the credentials method.
         pub(in crate::cli::acp) async fn initialize_v2(&mut self) {
             self.send(json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
                 "protocolVersion":2,
@@ -1391,8 +1372,8 @@ pub(super) mod connection_core {
             assert_eq!(response["result"]["protocolVersion"], 2, "{response}");
             assert_eq!(
                 response["result"]["authMethods"].as_array().map(Vec::len),
-                Some(2),
-                "the v2 auth.terminal marker offers the terminal method: {response}"
+                Some(1),
+                "the v2 auth.terminal marker adds no method: {response}"
             );
         }
 
@@ -2891,7 +2872,7 @@ pub(super) mod connection_core {
     fn verify_start_client(profile: AcpProfile) -> Client {
         let (output_writer, output_reader) = tokio::io::duplex(1 << 20);
         let (input_writer, input_reader) = tokio::io::duplex(1 << 20);
-        let runtime = AcpRuntime::new(profile, ProviderChoice::HoronAgent, None, None, Box::new(output_writer));
+        let runtime = AcpRuntime::new(profile, ProviderChoice::Auto, None, None, Box::new(output_writer));
         let serve = tokio::spawn(runtime.clone().serve(input_reader));
         Client {
             runtime,
@@ -3739,15 +3720,22 @@ pub(super) mod connection_core {
     async fn authenticate_unknown_method_invalid_params() {
         let mut client = start_client();
         client.initialize().await;
-        for (id, params) in [
-            (1, json!({"methodId": "nope"})),
-            (2, json!({"methodId": "horon-agent-terminal-login"})),
-            (3, json!({})),
-            (4, json!({"methodId": 7})),
+        // The removed terminal method is now just an unknown id: `authenticate`
+        // answers -32602 and the later requests prove the process stayed alive.
+        for (id, params, expected) in [
+            (1, json!({"methodId": "nope"}), "Unknown authentication method: nope"),
+            (
+                2,
+                json!({"methodId": "horon-agent-terminal-login"}),
+                "Unknown authentication method: horon-agent-terminal-login",
+            ),
+            (3, json!({}), "authenticate requires a string methodId"),
+            (4, json!({"methodId": 7}), "authenticate requires a string methodId"),
         ] {
             client.send(request(json!(id), "authenticate", params)).await;
             let (_, response) = client.recv_response(json!(id)).await;
             assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+            assert_eq!(response["error"]["message"], expected, "{response}");
         }
         client.close_stdin().await;
     }

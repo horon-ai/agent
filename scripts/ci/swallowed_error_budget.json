@@ -1,21 +1,11 @@
 {
-  "total": 2590,
+  "total": 2092,
   "totals_by_pattern": {
-    "dot_ok": 932,
-    "let_underscore": 1039,
-    "unwrap_or_default": 619
+    "dot_ok": 756,
+    "let_underscore": 837,
+    "unwrap_or_default": 499
   },
   "tracked_files": {
-    "crates/agent-sdk/src/auth.rs": {
-      "dot_ok": 1,
-      "let_underscore": 13,
-      "unwrap_or_default": 1
-    },
-    "crates/agent-sdk/src/auth/callback.rs": {
-      "dot_ok": 10,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/agent-sdk/src/client.rs": {
       "dot_ok": 8,
       "let_underscore": 7,
@@ -158,7 +148,7 @@
     },
     "crates/app-core/src/ambient/runner.rs": {
       "dot_ok": 0,
-      "let_underscore": 13,
+      "let_underscore": 11,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/ambient/scheduler.rs": {
@@ -174,11 +164,6 @@
     "crates/app-core/src/catchup.rs": {
       "dot_ok": 2,
       "let_underscore": 0,
-      "unwrap_or_default": 5
-    },
-    "crates/app-core/src/channel.rs": {
-      "dot_ok": 0,
-      "let_underscore": 5,
       "unwrap_or_default": 5
     },
     "crates/app-core/src/durable_input_runtime.rs": {
@@ -197,9 +182,9 @@
       "unwrap_or_default": 0
     },
     "crates/app-core/src/notifications.rs": {
-      "dot_ok": 3,
-      "let_underscore": 7,
-      "unwrap_or_default": 4
+      "dot_ok": 0,
+      "let_underscore": 5,
+      "unwrap_or_default": 1
     },
     "crates/app-core/src/overnight.rs": {
       "dot_ok": 12,
@@ -214,16 +199,6 @@
     "crates/app-core/src/plan_mode.rs": {
       "dot_ok": 6,
       "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/replay.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/app-core/src/restart_snapshot.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/running_tool_registry.rs": {
@@ -248,7 +223,7 @@
     },
     "crates/app-core/src/server/client_actions.rs": {
       "dot_ok": 2,
-      "let_underscore": 53,
+      "let_underscore": 49,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/server/client_comm_channels.rs": {
@@ -273,7 +248,7 @@
     },
     "crates/app-core/src/server/client_lifecycle.rs": {
       "dot_ok": 2,
-      "let_underscore": 74,
+      "let_underscore": 69,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/server/client_lifecycle_logging.rs": {
@@ -287,14 +262,14 @@
       "unwrap_or_default": 0
     },
     "crates/app-core/src/server/client_session.rs": {
-      "dot_ok": 8,
+      "dot_ok": 6,
       "let_underscore": 20,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/server/client_state.rs": {
       "dot_ok": 2,
       "let_underscore": 1,
-      "unwrap_or_default": 4
+      "unwrap_or_default": 0
     },
     "crates/app-core/src/server/comm_await.rs": {
       "dot_ok": 0,
@@ -303,7 +278,7 @@
     },
     "crates/app-core/src/server/comm_control.rs": {
       "dot_ok": 0,
-      "let_underscore": 37,
+      "let_underscore": 35,
       "unwrap_or_default": 4
     },
     "crates/app-core/src/server/comm_graph.rs": {
@@ -318,7 +293,7 @@
     },
     "crates/app-core/src/server/comm_session.rs": {
       "dot_ok": 4,
-      "let_underscore": 12,
+      "let_underscore": 11,
       "unwrap_or_default": 13
     },
     "crates/app-core/src/server/comm_sync.rs": {
@@ -361,11 +336,6 @@
       "let_underscore": 3,
       "unwrap_or_default": 3
     },
-    "crates/app-core/src/server/debug_testers.rs": {
-      "dot_ok": 1,
-      "let_underscore": 8,
-      "unwrap_or_default": 0
-    },
     "crates/app-core/src/server/durable_state.rs": {
       "dot_ok": 1,
       "let_underscore": 1,
@@ -386,11 +356,6 @@
       "let_underscore": 1,
       "unwrap_or_default": 0
     },
-    "crates/app-core/src/server/jade_relay.rs": {
-      "dot_ok": 2,
-      "let_underscore": 8,
-      "unwrap_or_default": 3
-    },
     "crates/app-core/src/server/lifecycle.rs": {
       "dot_ok": 8,
       "let_underscore": 3,
@@ -403,8 +368,8 @@
     },
     "crates/app-core/src/server/provider_control.rs": {
       "dot_ok": 1,
-      "let_underscore": 25,
-      "unwrap_or_default": 1
+      "let_underscore": 23,
+      "unwrap_or_default": 0
     },
     "crates/app-core/src/server/reload.rs": {
       "dot_ok": 1,
@@ -521,11 +486,6 @@
       "let_underscore": 2,
       "unwrap_or_default": 2
     },
-    "crates/app-core/src/tool/applet.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 4
-    },
     "crates/app-core/src/tool/apply_patch.rs": {
       "dot_ok": 2,
       "let_underscore": 1,
@@ -566,21 +526,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/app-core/src/tool/bridge_reload.rs": {
-      "dot_ok": 8,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/browser.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 2
-    },
-    "crates/app-core/src/tool/browser_fast.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/app-core/src/tool/client_terminal.rs": {
       "dot_ok": 1,
       "let_underscore": 3,
@@ -599,31 +544,6 @@
     "crates/app-core/src/tool/communicate/transport.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/computer/osa.rs": {
-      "dot_ok": 0,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/computer/screen.rs": {
-      "dot_ok": 1,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/computer/setup.rs": {
-      "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/computer/sys.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
-    },
-    "crates/app-core/src/tool/computer/win.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/tool/config_edit_notice.rs": {
@@ -650,11 +570,6 @@
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 2
-    },
-    "crates/app-core/src/tool/gmail.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 10
     },
     "crates/app-core/src/tool/goal.rs": {
       "dot_ok": 0,
@@ -719,31 +634,6 @@
     "crates/app-core/src/tool/read_selector.rs": {
       "dot_ok": 1,
       "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/build_queue.rs": {
-      "dot_ok": 1,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/mod.rs": {
-      "dot_ok": 8,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/reload.rs": {
-      "dot_ok": 0,
-      "let_underscore": 9,
-      "unwrap_or_default": 2
-    },
-    "crates/app-core/src/tool/selfdev/setup.rs": {
-      "dot_ok": 7,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/status.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/tool/session_mcp.rs": {
@@ -856,33 +746,8 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/base/examples/voice_intent_latency.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/applets.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/base/src/artifacts.rs": {
       "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/account_pool.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/auth/account_store.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/codex.rs": {
-      "dot_ok": 6,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
@@ -894,77 +759,22 @@
     "crates/base/src/auth/external.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/auth/google.rs": {
-      "dot_ok": 4,
-      "let_underscore": 0,
       "unwrap_or_default": 1
-    },
-    "crates/base/src/auth/google/setup.rs": {
-      "dot_ok": 6,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/lifecycle.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
     },
     "crates/base/src/auth/mod.rs": {
-      "dot_ok": 4,
+      "dot_ok": 3,
       "let_underscore": 2,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/auth/oauth.rs": {
-      "dot_ok": 2,
-      "let_underscore": 12,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/auth/refresh_state.rs": {
-      "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/base/src/auth/test_sandbox.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/auth/transfer.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/validation.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/base/src/background.rs": {
       "dot_ok": 20,
       "let_underscore": 15,
       "unwrap_or_default": 11
-    },
-    "crates/base/src/browser.rs": {
-      "dot_ok": 9,
-      "let_underscore": 9,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/browser_detect.rs": {
-      "dot_ok": 4,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/browser_session.rs": {
-      "dot_ok": 1,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/browser_update.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
     },
     "crates/base/src/bus.rs": {
       "dot_ok": 0,
@@ -974,11 +784,6 @@
     "crates/base/src/claude_live.rs": {
       "dot_ok": 1,
       "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/client_input.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/base/src/compaction/mod.rs": {
@@ -1008,7 +813,7 @@
     },
     "crates/base/src/config/config_file.rs": {
       "dot_ok": 4,
-      "let_underscore": 4,
+      "let_underscore": 2,
       "unwrap_or_default": 3
     },
     "crates/base/src/config/env_overrides.rs": {
@@ -1049,7 +854,7 @@
     "crates/base/src/external_auth.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/base/src/foreign_rules.rs": {
       "dot_ok": 1,
@@ -1071,11 +876,6 @@
       "let_underscore": 4,
       "unwrap_or_default": 1
     },
-    "crates/base/src/generated_image.rs": {
-      "dot_ok": 5,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/base/src/git_clone_isolation.rs": {
       "dot_ok": 8,
       "let_underscore": 3,
@@ -1091,20 +891,10 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/gmail.rs": {
-      "dot_ok": 9,
-      "let_underscore": 1,
-      "unwrap_or_default": 5
-    },
     "crates/base/src/goal.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/google_calendar.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 2
     },
     "crates/base/src/hooks.rs": {
       "dot_ok": 0,
@@ -1122,7 +912,7 @@
       "unwrap_or_default": 4
     },
     "crates/base/src/jev.rs": {
-      "dot_ok": 6,
+      "dot_ok": 4,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
@@ -1248,33 +1038,18 @@
     },
     "crates/base/src/prompt.rs": {
       "dot_ok": 12,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/provider/account_failover.rs": {
-      "dot_ok": 0,
       "let_underscore": 0,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/base/src/provider/catalog_cache.rs": {
       "dot_ok": 4,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/provider/catalog_routes.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/base/src/provider/external.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 2
-    },
-    "crates/base/src/provider/horon_agent.rs": {
-      "dot_ok": 0,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
     },
     "crates/base/src/provider/image_clamp.rs": {
       "dot_ok": 4,
@@ -1282,7 +1057,7 @@
       "unwrap_or_default": 0
     },
     "crates/base/src/provider/mod.rs": {
-      "dot_ok": 3,
+      "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 4
     },
@@ -1294,7 +1069,7 @@
     "crates/base/src/provider/models.rs": {
       "dot_ok": 3,
       "let_underscore": 0,
-      "unwrap_or_default": 5
+      "unwrap_or_default": 3
     },
     "crates/base/src/provider/openai.rs": {
       "dot_ok": 1,
@@ -1314,11 +1089,6 @@
     "crates/base/src/provider_activity.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/provider_activity_oauth.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
       "unwrap_or_default": 1
     },
     "crates/base/src/provider_catalog.rs": {
@@ -1406,11 +1176,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/side_panel.rs": {
-      "dot_ok": 3,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/skill.rs": {
       "dot_ok": 4,
       "let_underscore": 0,
@@ -1425,26 +1190,6 @@
       "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 0
-    },
-    "crates/base/src/subscription_api.rs": {
-      "dot_ok": 4,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/subscription_catalog.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/subscription_notice.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/telegram.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
     },
     "crates/base/src/terminal_launch.rs": {
       "dot_ok": 0,
@@ -1461,45 +1206,15 @@
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
-    "crates/base/src/usage.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/usage/accessors.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/usage/api_keys.rs": {
       "dot_ok": 6,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/usage/cache.rs": {
-      "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/base/src/usage/model.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/usage/openai_helpers.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
       "unwrap_or_default": 0
-    },
-    "crates/base/src/usage/openai_reset.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/usage/provider_fetch.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
     },
     "crates/base/src/workspace_trust.rs": {
       "dot_ok": 3,
@@ -1518,8 +1233,8 @@
     },
     "crates/build-support/src/lib.rs": {
       "dot_ok": 2,
-      "let_underscore": 5,
-      "unwrap_or_default": 6
+      "let_underscore": 3,
+      "unwrap_or_default": 3
     },
     "crates/build-support/src/paths.rs": {
       "dot_ok": 17,
@@ -1564,7 +1279,7 @@
     "crates/config-types/src/serde_lenient.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/core/src/stdin_detect.rs": {
       "dot_ok": 3,
@@ -1617,14 +1332,9 @@
       "unwrap_or_default": 1
     },
     "crates/harness-api-server/src/translate.rs": {
-      "dot_ok": 30,
+      "dot_ok": 28,
       "let_underscore": 0,
-      "unwrap_or_default": 53
-    },
-    "crates/harness-api-server/src/translate/browser_mirror.rs": {
-      "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
+      "unwrap_or_default": 50
     },
     "crates/harness-api-server/src/writer.rs": {
       "dot_ok": 0,
@@ -1661,11 +1371,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 16
     },
-    "crates/import-core/src/repo_ranking.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
     "crates/logging/src/lib.rs": {
       "dot_ok": 5,
       "let_underscore": 0,
@@ -1695,11 +1400,6 @@
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 2
-    },
-    "crates/notify-email/src/lib.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/overnight-core/src/lib.rs": {
       "dot_ok": 1,
@@ -1826,16 +1526,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 6
     },
-    "crates/render-core/src/math.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
-    },
-    "crates/render-core/src/preprocess.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/schema-dialect/src/dialect.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -1850,11 +1540,6 @@
       "dot_ok": 2,
       "let_underscore": 2,
       "unwrap_or_default": 2
-    },
-    "crates/selfdev-types/src/desktop.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
     },
     "crates/session-store/examples/schema_roundtrip.rs": {
       "dot_ok": 0,
@@ -1931,56 +1616,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/setup-hints/src/cli_launch_hints.rs": {
-      "dot_ok": 0,
-      "let_underscore": 4,
-      "unwrap_or_default": 1
-    },
-    "crates/setup-hints/src/keymap/external.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/setup-hints/src/keymap/macos_hotkeys.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/setup-hints/src/keymap/mod.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 4
-    },
-    "crates/setup-hints/src/launch_hotkeys.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/setup-hints/src/lib.rs": {
-      "dot_ok": 8,
-      "let_underscore": 21,
-      "unwrap_or_default": 15
-    },
-    "crates/setup-hints/src/linux_niri.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/setup-hints/src/macos_launcher.rs": {
-      "dot_ok": 2,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/setup-hints/src/macos_terminal.rs": {
-      "dot_ok": 5,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/setup-hints/src/windows_setup.rs": {
-      "dot_ok": 2,
-      "let_underscore": 11,
-      "unwrap_or_default": 2
-    },
     "crates/storage/src/active_pids.rs": {
       "dot_ok": 30,
       "let_underscore": 9,
@@ -1997,11 +1632,6 @@
       "unwrap_or_default": 0
     },
     "crates/swarm-core/src/lib.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/terminal-image/src/display.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 1
@@ -2126,35 +1756,20 @@
       "let_underscore": 10,
       "unwrap_or_default": 6
     },
-    "src/cli/auth_import.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "src/cli/cloud_move.rs": {
       "dot_ok": 19,
       "let_underscore": 7,
       "unwrap_or_default": 6
     },
     "src/cli/commands.rs": {
-      "dot_ok": 13,
+      "dot_ok": 8,
       "let_underscore": 2,
-      "unwrap_or_default": 9
-    },
-    "src/cli/commands/menubar.rs": {
-      "dot_ok": 3,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
+      "unwrap_or_default": 4
     },
     "src/cli/commands/provider_setup.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 1
-    },
-    "src/cli/commands/restart.rs": {
-      "dot_ok": 1,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
     },
     "src/cli/debug.rs": {
       "dot_ok": 0,
@@ -2162,33 +1777,13 @@
       "unwrap_or_default": 1
     },
     "src/cli/dispatch.rs": {
-      "dot_ok": 4,
-      "let_underscore": 5,
+      "dot_ok": 3,
+      "let_underscore": 2,
       "unwrap_or_default": 3
     },
     "src/cli/hot_exec.rs": {
       "dot_ok": 3,
       "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "src/cli/login.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 1
-    },
-    "src/cli/login/google.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "src/cli/login/scriptable.rs": {
-      "dot_ok": 0,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "src/cli/macos_notification_broker.rs": {
-      "dot_ok": 6,
-      "let_underscore": 4,
       "unwrap_or_default": 0
     },
     "src/cli/output.rs": {
@@ -2198,11 +1793,6 @@
     },
     "src/cli/provider_init.rs": {
       "dot_ok": 4,
-      "let_underscore": 13,
-      "unwrap_or_default": 0
-    },
-    "src/cli/selfdev.rs": {
-      "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 0
     },

@@ -216,10 +216,7 @@ pub struct EnvSnapshot {
     pub os: String,
     pub arch: String,
     pub pid: u32,
-    pub is_selfdev: bool,
     pub is_debug: bool,
-    pub is_canary: bool,
-    pub testing_build: Option<String>,
     pub working_git: Option<GitState>,
 }
 

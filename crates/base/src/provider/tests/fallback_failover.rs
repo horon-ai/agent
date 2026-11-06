@@ -1,5 +1,3 @@
-include!("agent_failover.rs");
-
 #[test]
 fn test_active_provider_env_only_seeds_sessions_when_explicitly_selected() {
     with_clean_provider_test_env(|| {

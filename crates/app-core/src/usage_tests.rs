@@ -310,7 +310,7 @@ fn test_usage_data_from_provider_report_maps_limits_and_extra_usage() {
 #[test]
 fn test_openai_usage_data_from_provider_report_preserves_error() {
     let report = ProviderUsage {
-        provider_name: "OpenAI (ChatGPT)".to_string(),
+        provider_name: "OpenAI (subscription)".to_string(),
         error: Some("API error (401 Unauthorized)".to_string()),
         ..Default::default()
     };
@@ -328,7 +328,7 @@ fn test_openai_usage_data_from_provider_report_preserves_error() {
 #[test]
 fn test_openai_usage_data_from_provider_report_preserves_hard_limit_flag() {
     let report = ProviderUsage {
-        provider_name: "OpenAI (ChatGPT)".to_string(),
+        provider_name: "OpenAI (subscription)".to_string(),
         hard_limit_reached: true,
         limits: vec![UsageLimit {
             name: "5-hour window".to_string(),
@@ -463,7 +463,7 @@ fn test_parse_openai_usage_payload_labels_monthly_primary_window() {
     assert_eq!(parsed.limits[0].name, "Monthly window");
 
     let usage = openai_usage_data_from_provider_report(&ProviderUsage {
-        provider_name: "OpenAI (ChatGPT)".to_string(),
+        provider_name: "OpenAI (subscription)".to_string(),
         limits: parsed.limits,
         hard_limit_reached: parsed.hard_limit_reached,
         ..Default::default()

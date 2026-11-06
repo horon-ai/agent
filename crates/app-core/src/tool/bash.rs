@@ -1836,23 +1836,6 @@ impl Tool for BashTool {
             return Ok(output);
         }
 
-        // Auto-detect browser bridge commands and rewrite them to the installed
-        // binary when available, but do not run setup automatically. Browser
-        // setup should stay an explicit status/setup flow rather than a default
-        // side effect of trying to use the browser.
-        if crate::browser::is_browser_command(&params.command) {
-            params.command = crate::browser::rewrite_command_with_full_path(&params.command);
-
-            // Give each agent its own browser session without blocking async workers.
-            if !cfg!(windows)
-                && std::env::var("BROWSER_SESSION").is_err()
-                && let Some(session_name) =
-                    crate::browser::ensure_browser_session_for_async(&ctx.session_id, None).await
-            {
-                params.command = format!("BROWSER_SESSION={} {}", session_name, params.command);
-            }
-        }
-
         // Foreground execution with stdin detection
         let hint = file_edit_hint(&params.command);
         let mut output = self.execute_foreground(&params, &ctx).await?;

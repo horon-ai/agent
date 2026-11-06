@@ -206,8 +206,8 @@ that already have an `execute` callback.
 ### Web search
 
 The built-in `websearch` tool uses the model provider's own server-side search
-when the provider supports it (Anthropic first-party API, OpenAI API or ChatGPT
-login on non-codex models). Otherwise it scrapes locally with the configured
+when the provider supports it (Anthropic first-party API, or an OpenAI API key
+on non-codex models). Otherwise it scrapes locally with the configured
 engines. It needs no SDK code:
 
 - Provider searches stream as ordinary tool rows named `web_search`:
@@ -647,7 +647,6 @@ try {
 | `too_many_requests` | `maxPendingRequests` requests are already awaiting a reply, so the new request was refused instead of growing the pending map. | Await replies, cancel work, or raise `maxPendingRequests` deliberately. The request never reached the wire, so repeating it is safe. |
 | `transport_backpressure` | The transport reported a full write buffer but provides no `onDrain` signal, so the client cannot honour its backpressure. | Give the transport an `onDrain` listener, or return `void` from `write` if it never blocks. |
 | `internal` | The bridge or daemon failed unexpectedly while handling a valid request. | Preserve the message and horon-agent logs, retry once if safe, then report it if reproducible. |
-| `browser_unavailable` | A `browser_mirror` request found no browser bridge to talk to: nothing installed, or nothing answered within the call's deadline. | Install or start what the message names (`horon-agent browser setup`, then the Browser Agent Bridge extension). Polling again will not help until that is done. |
 
 ### Streaming and structured-output errors
 

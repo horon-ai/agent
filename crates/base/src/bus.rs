@@ -1,6 +1,5 @@
 pub use crate::background::BackgroundCleanupResult;
 use crate::message::ToolCall;
-use crate::side_panel::SidePanelSnapshot;
 use crate::todo::TodoItem;
 pub use horon_agent_background_types::{
     BackgroundTaskCompleted, BackgroundTaskProgress, BackgroundTaskProgressEvent, BackgroundTaskProgressKind,
@@ -307,18 +306,6 @@ pub struct ProductivityReportPayload {
     pub png_path: std::path::PathBuf,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SidePanelUpdated {
-    pub session_id: String,
-    pub snapshot: SidePanelSnapshot,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AppletsUpdated {
-    pub session_id: String,
-    pub snapshot: horon_agent_applet_types::AgentApplets,
-}
-
 #[derive(Clone, Debug)]
 pub enum UpdateStatus {
     Checking,
@@ -471,9 +458,6 @@ pub enum BusEvent {
         message: String,
         open_picker: bool,
     },
-    /// Side panel pages were updated for a session
-    SidePanelUpdated(SidePanelUpdated),
-    AppletsUpdated(AppletsUpdated),
     /// Deferred Mermaid rendering completed and cached content may now be visible
     MermaidRenderCompleted,
     /// The TUI's background git-status probe produced a value that differs

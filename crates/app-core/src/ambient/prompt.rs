@@ -437,7 +437,6 @@ pub fn build_ambient_system_prompt(
          - `end_ambient_cycle` — REQUIRED to finish the cycle (see below).\n\
          - `schedule_ambient` — schedule your next wake time.\n\
          - `request_permission` — get approval before any code change.\n\
-         - `send_message` — keep the user informed.\n\
          Standard tools (`bash`, `read`, `write`, `edit`, `memory`, etc.) are \
          also available.\n\n\
          Start by using the `todo` tool to plan what you'll do this cycle.\n\n\
@@ -470,14 +469,7 @@ pub fn build_ambient_system_prompt(
          - Session history — patterns in what the user works on\n\n\
          When done, you MUST call end_ambient_cycle with a summary of \
          everything you did, including compaction count. Always schedule \
-         your next wake time with context for what you plan to do next.\n\n\
-         ## Messaging Check-ins\n\n\
-         You have a `send_message` tool. Use it to keep the user informed \
-         about what you're doing. Send a brief message when you start a cycle \
-         and when you finish significant work. Keep messages short and useful — \
-         the user should be able to glance at their messages and know what's happening \
-         without opening horon-agent. You can optionally target a specific channel \
-         (e.g. telegram, discord) or omit channel to send to all.\n",
+         your next wake time with context for what you plan to do next.\n",
     );
 
     prompt

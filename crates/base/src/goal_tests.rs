@@ -48,37 +48,3 @@ fn create_and_resume_goal_persists_project_goal() {
         crate::env::remove_var("HORON_AGENT_HOME");
     }
 }
-
-#[test]
-fn write_goal_page_auto_focuses_first_goal_only() {
-    let _guard = crate::storage::lock_test_env();
-    let temp = tempfile::tempdir().expect("tempdir");
-    let project = temp.path().join("repo");
-    std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
-
-    let session_id = "ses_goal_panel";
-    let goal = create_goal(
-        GoalCreateInput {
-            title: "Ship mobile MVP".to_string(),
-            scope: GoalScope::Project,
-            ..GoalCreateInput::default()
-        },
-        Some(&project),
-    )
-    .expect("create goal");
-
-    let first = write_goal_page(session_id, Some(&project), &goal, GoalDisplayMode::Auto).expect("first write");
-    assert_eq!(first.focused_page_id.as_deref(), Some("goal.ship-mobile-mvp"));
-
-    crate::side_panel::write_markdown_page(session_id, "notes", Some("Notes"), "# Notes", true).expect("notes");
-    let second = write_goal_page(session_id, Some(&project), &goal, GoalDisplayMode::Auto).expect("second write");
-    assert_eq!(second.focused_page_id.as_deref(), Some("notes"));
-
-    if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}

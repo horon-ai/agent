@@ -54,7 +54,7 @@ fn protected_versions() -> HashSet<String> {
         protected.insert(version);
     }
     if let Ok(dir) = builds_dir() {
-        for channel in ["current", "stable", "shared-server", "canary"] {
+        for channel in ["current", "stable", "shared-server"] {
             if let Some(version) = channel_target_version(&dir.join(channel)) {
                 protected.insert(version);
             }
@@ -62,12 +62,6 @@ fn protected_versions() -> HashSet<String> {
     }
     if let Ok(manifest) = BuildManifest::load() {
         protected.extend(manifest.stable.clone());
-        protected.extend(manifest.canary.clone());
-        if let Some(pending) = manifest.pending_activation.as_ref() {
-            protected.insert(pending.new_version.clone());
-            protected.extend(pending.previous_current_version.clone());
-            protected.extend(pending.previous_shared_server_version.clone());
-        }
     }
     protected
 }

@@ -72,7 +72,6 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     "streaming",
     "text_framing",
     "turn_stop_reasons",
-    "side_panel",
     "persisted_session_discovery",
     "runtime_info",
     "api_key_provisioning",
@@ -94,7 +93,6 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // both round-trip through the bridge to the daemon's own decision store.
     "permissions",
     "asks",
-    "browser_mirror",
     // Durable runtime surfaces. Every one of these is a request the bridge
     // serves itself or gates on `ApiRequest::required_capability`, so a client
     // that checks the capability before sending must find it here: a method
@@ -467,7 +465,6 @@ where
     let mut legacy_reader = BufReader::new(legacy_read);
 
     let mut state = translate::BridgeState::with_crash_on_disconnect(client_name.starts_with("horon-agent-desktop-"));
-    state.legacy_socket = Some(legacy_socket.clone());
     state.session_tools_supported = session_tools_supported;
     state.supports_user_response = hello["supports_user_response"].as_bool().unwrap_or(false);
     state.supports_ask_requests = hello["supports_ask_requests"].as_bool().unwrap_or(false);

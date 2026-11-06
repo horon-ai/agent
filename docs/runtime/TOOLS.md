@@ -22,8 +22,8 @@
 
 ```toml
 [tools.load_mode]
-gmail = "off"
-browser = "essential"
+batch = "off"
+memory = "essential"
 ```
 
 ### 기본 배치

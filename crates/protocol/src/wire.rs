@@ -51,19 +51,6 @@ pub struct SessionToolConfig {
     pub custom: Vec<SessionToolDefinition>,
 }
 
-/// Which side is driving a session's mirrored browser.
-///
-/// Pushed by the harness API bridge when its `browser_mirror` surface changes
-/// hands. The bridge stays the authority; the daemon only caches what it was
-/// last told, so a tool call never has to ask the bridge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BrowserMode {
-    #[serde(rename = "agent")]
-    Agent,
-    #[serde(rename = "user")]
-    User,
-}
-
 /// Client capabilities an ACP connection offers the daemon for one session.
 ///
 /// Each flag says the client can serve the matching ACP v1 method back to the
@@ -241,14 +228,6 @@ pub enum Request {
         session_id: Option<String>,
     },
 
-    /// Execute a client debug command (forwarded to TUI)
-    #[serde(rename = "client_debug_command")]
-    ClientDebugCommand { id: u64, command: String },
-
-    /// Response from TUI for client debug command
-    #[serde(rename = "client_debug_response")]
-    ClientDebugResponse { id: u64, output: String },
-
     /// Subscribe to events (for TUI clients)
     #[serde(rename = "subscribe")]
     Subscribe {
@@ -256,9 +235,6 @@ pub enum Request {
         /// Full system prompt override for a new session only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt: Option<String>,
-        /// Opt in to PDF panel payloads. Older clients only accept Markdown.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        supports_pdf_panels: bool,
         /// Desktop can render user_response tool calls as inline answers.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         supports_user_response: bool,
@@ -268,8 +244,6 @@ pub enum Request {
         supports_ask_requests: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_dir: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        selfdev: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_session_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,53 +340,6 @@ pub enum Request {
         id: u64,
         session_id: String,
         message: String,
-    },
-
-    /// Announce which side is driving a session's mirrored browser.
-    ///
-    /// Sent by the API bridge on `browser_mirror` takeover and resume. A push,
-    /// not a query: the daemon caches it with a lease, so the browser tool never
-    /// waits on the bridge. A daemon that predates this request answers with an
-    /// error, which the bridge discards.
-    #[serde(rename = "browser_mode")]
-    SetBrowserMode {
-        id: u64,
-        session_id: String,
-        mode: BrowserMode,
-    },
-
-    /// The user pressed something in an agent-mounted applet instance. The
-    /// server stores `state`, then wakes the agent (or resolves a waiting
-    /// `applet` tool call).
-    #[serde(rename = "applet_action")]
-    AppletAction {
-        id: u64,
-        session_id: String,
-        instance: String,
-        action: horon_agent_applet_types::Action,
-        #[serde(default)]
-        state: serde_json::Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        source_key: Option<String>,
-    },
-
-    /// The user closed an agent-mounted applet instance. No agent wake.
-    #[serde(rename = "close_applet")]
-    CloseApplet {
-        id: u64,
-        session_id: String,
-        instance: String,
-    },
-
-    /// Inject externally transcribed text into a live TUI session.
-    #[serde(rename = "transcript")]
-    Transcript {
-        id: u64,
-        text: String,
-        #[serde(default)]
-        mode: TranscriptMode,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
     },
 
     /// Execute a shell command from `!cmd` in the active remote session.
@@ -599,10 +526,6 @@ pub enum Request {
     },
 
     /// Switch active OpenAI account label on the server session.
-    /// This keeps account overrides and provider credential caches in sync.
-    #[serde(rename = "switch_openai_account")]
-    SwitchOpenAiAccount { id: u64, label: String },
-
     /// Invalidate daemon-local usage and quota cooldown state after a banked reset.
     /// This never redeems a reset or switches accounts. `None` pins the default
     /// account scope, not whichever account is active when the request arrives.

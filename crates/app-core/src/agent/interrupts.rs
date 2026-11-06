@@ -544,7 +544,6 @@ impl Agent {
             "disabled_tools": self.disabled_tools,
             "session": {
                 "id": self.session.id,
-                "is_canary": self.session.is_canary,
                 "model": self.session.model,
                 "working_dir": self.session.working_dir,
                 "message_count": self.session.active_history_offset() + self.session.active_context().len(),

@@ -6,14 +6,12 @@
 pub use horon_agent_config_types::{
     AdvisorConfig, AgentsConfig, AmbientConfig, ApprovalMode, AuthConfig, AutoJudgeConfig, AutoReviewConfig,
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
-    CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DiagramDisplayMode, DiagramPanePosition,
-    DiffDisplayMode, DisplayConfig, FeatureConfig, ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig,
-    IrcConfig, KeybindingsConfig, LatexRenderingMode, LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode,
-    MenubarConfig, NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType,
-    NativeScrollbarConfig, NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SecretsMode, SessionPickerResumeAction, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat,
-    SwarmSpawnMode, SwarmStripLayout, TerminalConfig, TurnRecoveryMode, UpdateChannel, WebSearchConfig,
-    WebSearchEngine,
+    CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
+    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
+    NamedProviderModelConfig, NamedProviderType, NotificationsConfig, PowerConfig, ProviderConfig,
+    ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery,
+    StreamRuleRepeat, SwarmSpawnMode, SwarmStripLayout, TerminalConfig, TurnRecoveryMode, UpdateChannel,
+    WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 use serde::{Deserialize, Serialize};
@@ -70,40 +68,27 @@ snippet_pointer = "/summary"
 
 const CONFIG_ENV_KEYS: &[&str] = &[
     "HOME",
-    "HORON_AGENT_COMMIT_LOG_KEY",
-    "HORON_AGENT_RESUME_PROJECT_SCOPE",
     "HORON_AGENT_SWARM_STALL_AFTER_SECS",
     "HORON_AGENT_SWARM_STALL_NUDGE",
     "HORON_AGENT_ACP_PROFILE",
     "HORON_AGENT_ACP_PROTOCOL_V2",
     "HORON_AGENT_ACP_TOOL_PROFILE",
-    "HORON_AGENT_ACTIVE_SESSIONS_MANAGER",
-    "HORON_AGENT_EXTERNAL_SESSIONS",
     "HORON_AGENT_AMBIENT_ENABLED",
     "HORON_AGENT_AMBIENT_MAX_INTERVAL",
     "HORON_AGENT_AMBIENT_MIN_INTERVAL",
     "HORON_AGENT_AMBIENT_MODEL",
     "HORON_AGENT_AMBIENT_PROACTIVE",
     "HORON_AGENT_AMBIENT_PROVIDER",
-    "HORON_AGENT_AMBIENT_VISIBLE",
-    "HORON_AGENT_ANIMATION_FPS",
     "HORON_AGENT_AUTO_POKE",
     "HORON_AGENT_AUTOJUDGE_ENABLED",
     "HORON_AGENT_AUTOJUDGE_MODEL",
     "HORON_AGENT_AUTOREVIEW_ENABLED",
     "HORON_AGENT_AUTOREVIEW_MODEL",
     "HORON_AGENT_AUTO_POKE",
-    "HORON_AGENT_AUTO_SERVER_RELOAD",
     "HORON_AGENT_CHECK_UPDATES",
     "HORON_AGENT_BING_API_KEY",
-    "HORON_AGENT_BLOCK_LID_CLOSE",
     "HORON_AGENT_BING_API_KEY_ENV",
     "HORON_AGENT_BING_MARKET",
-    "HORON_AGENT_CENTERED_TOGGLE_KEY",
-    "HORON_AGENT_CHAT_NATIVE_SCROLLBAR",
-    "HORON_AGENT_COMPACT_NOTIFICATIONS",
-    "HORON_AGENT_COPY_BADGE_ALT_LABEL",
-    "HORON_AGENT_COPY_SELECTION_TOGGLE_KEY",
     "HORON_AGENT_COPILOT_PREMIUM",
     "HORON_AGENT_GEMINI_FORCE_OAUTH",
     "GOOGLE_CLOUD_PROJECT",
@@ -112,30 +97,9 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_CROSS_PROVIDER_FAILOVER",
     "HORON_AGENT_DEBUG_SOCKET",
     "HORON_AGENT_DEFAULT_REASONING_DISPLAY",
-    "HORON_AGENT_DICTATION_COMMAND",
-    "HORON_AGENT_DICTATION_RECORDER",
-    "HORON_AGENT_DICTATION_KEY",
-    "HORON_AGENT_DICTATION_MODE",
-    "HORON_AGENT_DICTATION_TIMEOUT_SECS",
     "HORON_AGENT_DIFF_LINE_WRAP",
-    "HORON_AGENT_DIFF_MODE",
-    "HORON_AGENT_DIFF_MODE_CYCLE_KEY",
-    "HORON_AGENT_DIAGRAM_PANE_TOGGLE_KEY",
-    "HORON_AGENT_DIAGRAM_PANE_VISIBILITY_TOGGLE_KEY",
     "HORON_AGENT_DISABLE_BASE_TOOLS",
-    "HORON_AGENT_DISABLED_ANIMATIONS",
     "HORON_AGENT_DISABLED_TOOLS",
-    "HORON_AGENT_DISCORD_BOT_TOKEN",
-    "HORON_AGENT_DISCORD_BOT_USER_ID",
-    "HORON_AGENT_DISCORD_CHANNEL_ID",
-    "HORON_AGENT_DISCORD_REPLY_ENABLED",
-    "HORON_AGENT_DISPLAY_CENTERED",
-    "HORON_AGENT_EFFORT_DECREASE_KEY",
-    "HORON_AGENT_EFFORT_INCREASE_KEY",
-    "HORON_AGENT_SPEED_DECREASE_KEY",
-    "HORON_AGENT_SPEED_INCREASE_KEY",
-    "HORON_AGENT_EMAIL_REPLY_ENABLED",
-    "HORON_AGENT_EMAIL_TO",
     "HORON_AGENT_FOCUS_HOOK",
     "HORON_AGENT_GATEWAY_BIND_ADDR",
     "HORON_AGENT_GATEWAY_ENABLED",
@@ -152,38 +116,19 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_HOOK_SESSION_START",
     "HORON_AGENT_HOOK_TURN_END",
     "HORON_AGENT_HOOK_TURN_START",
-    "HORON_AGENT_IDLE_ANIMATION",
-    "HORON_AGENT_IMAP_HOST",
-    "HORON_AGENT_INFO_WIDGET_TOGGLE_KEY",
     "HORON_AGENT_IRC",
-    "HORON_AGENT_JADE_RELAY_API_BASE",
-    "HORON_AGENT_JADE_RELAY_ENABLED",
-    "HORON_AGENT_JADE_RELAY_LAUNCH_ENABLED",
-    "HORON_AGENT_JADE_RELAY_LAUNCH_WORKING_DIR",
-    "HORON_AGENT_JADE_RELAY_REPLY_ENABLED",
-    "HORON_AGENT_JADE_RELAY_SESSION_ID",
-    "HORON_AGENT_JADE_RELAY_TOKEN",
-    "HORON_AGENT_JADE_RELAY_TOKEN_ID",
-    "HORON_AGENT_JADE_RELAY_USER_ID",
     "HORON_AGENT_KV_CACHE_MISS_NOTICES",
-    "HORON_AGENT_LATEX_RENDERING",
-    "HORON_AGENT_MARKDOWN_SPACING",
     "HORON_AGENT_MEMORY_EMBEDDING_BACKEND",
     "HORON_AGENT_MEMORY_EMBEDDING_BASE_URL",
     "HORON_AGENT_MEMORY_EMBEDDING_DIM",
     "HORON_AGENT_MEMORY_EMBEDDING_MODEL",
     "HORON_AGENT_MEMORY_ENABLED",
     "HORON_AGENT_MEMORY_JEV_PROVIDER",
-    "HORON_AGENT_ENABLE_MERMAID",
     "HORON_AGENT_MEMORY_MODEL",
     "HORON_AGENT_MEMORY_SIDECAR_ENABLED",
     "HORON_AGENT_PERSIST_MEMORY_INJECTIONS",
     "HORON_AGENT_MESSAGE_TIMESTAMPS",
     "HORON_AGENT_MODEL",
-    "HORON_AGENT_MODEL_SWITCH_KEY",
-    "HORON_AGENT_MODEL_SWITCH_PREV_KEY",
-    "HORON_AGENT_MOUSE_CAPTURE",
-    "HORON_AGENT_NEW_TERMINAL_KEY",
     "HORON_AGENT_NO_EMOJI",
     "HORON_AGENT_NTFY_SERVER",
     "HORON_AGENT_NTFY_TOPIC",
@@ -194,33 +139,12 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_OPENAI_TRANSPORT",
     "HORON_AGENT_ANTHROPIC_REASONING_EFFORT",
     "HORON_AGENT_PRESERVE_REASONING_CONTEXT",
-    "HORON_AGENT_PERFORMANCE",
-    "HORON_AGENT_PIN_IMAGES",
-    "HORON_AGENT_PIN_TODOS",
     "HORON_AGENT_PREVENT_SLEEP_WHILE_STREAMING",
     "HORON_AGENT_PROVIDER",
-    "HORON_AGENT_PROMPT_ENTRY_ANIMATION",
-    "HORON_AGENT_QUEUE_MODE",
     "HORON_AGENT_REASONING_DISPLAY",
-    "HORON_AGENT_REDRAW_FPS",
     "HORON_AGENT_SAME_PROVIDER_ACCOUNT_FAILOVER",
-    "HORON_AGENT_SCROLL_BOOKMARK_KEY",
-    "HORON_AGENT_SCROLL_DOWN_FALLBACK_KEY",
-    "HORON_AGENT_SCROLL_DOWN_KEY",
-    "HORON_AGENT_SCROLL_PAGE_DOWN_KEY",
-    "HORON_AGENT_SCROLL_PAGE_UP_KEY",
-    "HORON_AGENT_SCROLL_PROMPT_DOWN_KEY",
-    "HORON_AGENT_SCROLL_PROMPT_UP_KEY",
-    "HORON_AGENT_SCROLL_UP_FALLBACK_KEY",
-    "HORON_AGENT_SCROLL_UP_KEY",
     "HORON_AGENT_SEARXNG_URL",
-    "HORON_AGENT_SHOW_AGENTGREP_OUTPUT",
-    "HORON_AGENT_SHOW_BASH_OUTPUT",
-    "HORON_AGENT_SHOW_DIFFS",
     "HORON_AGENT_SHOW_THINKING",
-    "HORON_AGENT_SIDE_PANEL_TOGGLE_KEY",
-    "HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR",
-    "HORON_AGENT_SMTP_PASSWORD",
     "HORON_AGENT_SPAWN_HOOK",
     "HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS",
     "HORON_AGENT_MAX_RETRIES",
@@ -240,26 +164,16 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_SWARM_MAX_CONCURRENT_AGENTS",
     "HORON_AGENT_SWARM_SPAWN_MODE",
     "HORON_AGENT_SWARM_STRIP_LAYOUT",
-    "HORON_AGENT_TELEGRAM_BOT_TOKEN",
-    "HORON_AGENT_TELEGRAM_CHAT_ID",
-    "HORON_AGENT_TELEGRAM_REPLY_ENABLED",
-    "HORON_AGENT_TOOL_CALL_DETAILS",
     "HORON_AGENT_TOOL_PROFILE",
     "HORON_AGENT_TOOLS",
     "HORON_AGENT_TRUSTED_EXTERNAL_AUTH_SOURCES",
-    "HORON_AGENT_TYPING_SCROLL_LOCK_TOGGLE_KEY",
     "HORON_AGENT_UPDATE_CHANNEL",
-    "HORON_AGENT_VOICE_INPUT_KEY",
     "HORON_AGENT_WEBSEARCH_ENGINE",
     "HORON_AGENT_WEBSEARCH_FALLBACK_ENGINES",
     "HORON_AGENT_WEBSEARCH_NATIVE_ALLOWED_DOMAINS",
     "HORON_AGENT_WEBSEARCH_NATIVE_BLOCKED_DOMAINS",
     "HORON_AGENT_WEBSEARCH_NATIVE_MAX_USES",
     "HORON_AGENT_WEBSEARCH_PREFER_NATIVE",
-    "HORON_AGENT_WORKSPACE_DOWN_KEY",
-    "HORON_AGENT_WORKSPACE_LEFT_KEY",
-    "HORON_AGENT_WORKSPACE_RIGHT_KEY",
-    "HORON_AGENT_WORKSPACE_UP_KEY",
     "XDG_CONFIG_HOME",
 ];
 
@@ -519,12 +433,6 @@ pub struct Config {
     /// Daemon behavior for autonomous wake requests.
     pub server: ServerConfig,
 
-    /// Keybinding configuration
-    pub keybindings: KeybindingsConfig,
-
-    /// External dictation / speech-to-text integration
-    pub dictation: DictationConfig,
-
     /// Display/UI configuration
     pub display: DisplayConfig,
 
@@ -594,9 +502,6 @@ pub struct Config {
     /// Power-management configuration (prevent sleep while streaming)
     pub power: PowerConfig,
 
-    /// macOS menu bar session indicator
-    pub menubar: MenubarConfig,
-
     /// Auto-review configuration
     pub autoreview: AutoReviewConfig,
 
@@ -608,9 +513,6 @@ pub struct Config {
     /// [`sponsors_is_default`]).
     #[serde(skip_serializing_if = "sponsors_is_default")]
     pub sponsors: SponsorsConfig,
-
-    /// Global "launch a new horon-agent" hotkeys (macOS). Baked once by auto-import.
-    pub launch_hotkeys: LaunchHotkeysConfig,
 
     /// `[desktop.*]` tables owned by HoronAgent Desktop (voice, workspace,
     /// appearance, ...). The CLI never interprets them, but it must round-trip
@@ -777,10 +679,10 @@ pub const IRC_TOOL: &str = "irc";
 
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
-/// Out-of-scope tools (swarm/batch/bg, memory, browser, computer, selfdev,
-/// compile_remote, panel/side_panel, applet, calendar, gmail, session and
-/// conversation search, feedback, todo/goal) stay off because the profile is an
-/// allow-list. `skill_manage` is the registry key for the skill tool
+/// Out-of-scope tools (swarm/batch/bg, memory, selfdev, compile_remote,
+/// session and conversation search, feedback, todo/goal)
+/// stay off because the profile is an allow-list. `skill_manage` is the
+/// registry key for the skill tool
 /// (`resolve_tool_name` maps `skill` to it); `mcp` is the wildcard covering
 /// every `mcp__server__tool` plus the fixed `mcp_search`/`mcp_call` surface.
 ///
@@ -1316,56 +1218,19 @@ fn normalize_tool_name(name: &str) -> String {
     horon_agent_tool_types::resolve_tool_name(trimmed).to_string()
 }
 
-/// External dictation / speech-to-text integration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DictationConfig {
-    /// Shell command to run. Must print the transcript to stdout.
-    pub command: String,
-    /// How to apply the resulting transcript.
-    pub mode: crate::protocol::TranscriptMode,
-    /// Optional in-app hotkey to trigger dictation.
-    pub key: String,
-    /// Maximum time to wait for the command to finish (0 = no timeout).
-    pub timeout_secs: u64,
-    /// Personal names or terms sent as recognition context to built-in voice
-    /// transcription. Appended to the built-in vocabulary every user gets
-    /// (HoronAgent names plus common coding agent terms), for this user only.
-    pub vocabulary: Vec<String>,
-    /// Built-in voice input: optional shell command that records the
-    /// microphone and prints raw mono 16 kHz s16le PCM to stdout. Empty means
-    /// auto-detect (pw-record, parecord, arecord, rec, ffmpeg).
-    pub recorder: String,
-    /// Keyboards `horon-agent companion` watches for Copilot-key push-to-talk
-    /// (Linux evdev nodes, preferably stable `/dev/input/by-id/...` paths).
-    /// Empty disables the companion's global voice listener.
-    pub global_devices: Vec<std::path::PathBuf>,
-}
-
-impl Default for DictationConfig {
-    fn default() -> Self {
-        Self {
-            command: String::new(),
-            mode: crate::protocol::TranscriptMode::Send,
-            key: "off".to_string(),
-            timeout_secs: 90,
-            vocabulary: Vec::new(),
-            recorder: String::new(),
-            global_devices: Vec::new(),
-        }
-    }
-}
-
 pub mod change_report;
 mod config_file;
 mod default_file;
-mod display_summary;
 mod env_overrides;
 mod tool_selection;
 
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "config_channel_compat_tests.rs"]
+mod channel_compat;
 
 #[cfg(test)]
 #[path = "config_tool_tiers_tests.rs"]

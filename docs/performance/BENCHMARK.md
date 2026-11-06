@@ -237,7 +237,7 @@ jcode(`1jehuang/jcode`, 2026-11-05 커밋 `c725fa3`)의 `scripts/` 벤치마크�
 | `bench_resume_suite.py` | 없음 | 제외. `resume_bench` 마커를 내는 Rust 테스트가 없고, 재개 지연은 reload storm 이 잰다. |
 | `benchmark_swarm.py`, `benchmark_takehome.py`, `run_terminal_bench_*`, `audit_terminal_bench_submission.py` | 없음 | 제외. 실제 모델과 유료 API, 외부 하네스가 필요하다. |
 | `benchmark_discovery*.py`, `benchmark_attribution.py` | 없음 | 제외. 호스팅 카탈로그와 실제 모델 호출이 필요하다. |
-| `benchmark_browser_handoff.*` | 없음 | 제외. 실제 브라우저와 모델 판단이 필요하고 browser 도구는 기본 꺼짐이다. |
+| `benchmark_browser_handoff.*` | 없음 | 제외. 실제 브라우저와 모델 판단이 필요하고 이 빌드에는 browser 도구가 없다. |
 | `analyze_root_crate.py`, `analyze_openai_ws_cache.py` | 없음 | 제외. horon 은 이미 크레이트로 나뉘어 있고, 그 로그 줄을 내지 않는다. |
 
 ### 하지 않는 것

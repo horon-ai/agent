@@ -38,8 +38,6 @@ const CREDENTIAL_FILES = [
   "openai-auth.json",
   "antigravity_oauth.json",
   "gemini_oauth.json",
-  "google_oauth.json",
-  "google_credentials.json",
   "config.toml",
 ];
 

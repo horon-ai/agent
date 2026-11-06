@@ -26,18 +26,14 @@
 - 에이전트는 풀에서 꺼내 쓰는 일꾼이지, 하나하나 챙기는 대상이 아니다.
 - 코디네이터와 워크트리 관리자 역할은 사용자에게 보이는 개념에서 **스케줄러 정책**으로 내려간다.
 
-```mermaid
-flowchart LR
-  subgraph Now[Now: agent-first]
-    C[Coordinator] --> A1[Agent] --> P1[plan item]
-  end
-  subgraph Next[Reframe: DAG-first]
-    T1[Task A] --> T2[Task B]
-    T1 --> T3[Task C]
-    T2 --> T4[Task D]
-    T3 --> T4
-    W[(worker pool)] -.executes.-> T1
-  end
+```text
+Now (agent-first)
+  Coordinator -> Agent -> plan item
+
+DAG-first (reframe)
+  worker pool ...executes...> Task A
+  Task A -> Task B \
+  Task A -> Task C --> Task D
 ```
 
 기존 `horon-agent-plan` 그래프 코드가 토대다. 새로 쓰는 것이 아니라 그 코드를 진화시킨다.
@@ -117,15 +113,10 @@ DAG 엔진은 두 **모드** 중 하나로 돈다. 의도적으로 **엔진 하�
 하고, 소유자가 종합한다. 잎 작업을 직접 실행하지는 않는다. 이렇게 하면 노드마다 책임이 깔끔하게
 남고 소유 경계가 또렷해진다.
 
-```mermaid
-flowchart TB
-  A[Task A - atomic] --> D[Task D - composite]
-  B[Task B - atomic] --> D
-  D --> D1[child D.1]
-  D --> D2[child D.2]
-  D1 --> D2
-  D2 --> Dj[D join / synthesize]
-  Dj --> E[Task E downstream of D]
+```text
+Task A (atomic) --\
+                  +--> Task D (composite) --> child D.1 --> child D.2
+Task B (atomic) --/                                    --> D join / synthesize --> Task E
 ```
 
 **deep 모드**에서 재귀에는 고정 깊이나 노드당 팬아웃 제한이 없다. 성장은 설정 가능한 라이브 일꾼
@@ -152,16 +143,12 @@ DAG는 태스크 유형을 가리지 않는다. 구조(분해, 게이트, 타입
 - 마지막 `synthesize` 노드는 **선택**이다. 순수 탐색 태스크에서는 이것이 산출물이고, 구현
   태스크에서는 병합되고 검증된 코드가 산출물이며 보고서는 출시된 것의 얇은 요약이다.
 
-```mermaid
-flowchart LR
-  E[explore: how does X work] -. findings .-> P[plan changes]
-  P --> I1[implement: module A]
-  P --> I2[implement: module B]
-  I1 --> V{verify: build + tests}
-  I2 --> V
-  V -->|fails| Fix[fix node]
-  Fix --> V
-  V -->|passes| Done[working feature, committed]
+```text
+explore: how does X work --findings--> plan changes
+plan changes --> implement: module A --\
+plan changes --> implement: module B --+--> verify: build + tests
+verify --fails--> fix node --> verify (loop)
+verify --passes--> working feature, committed
 ```
 
 ---
@@ -205,16 +192,12 @@ flowchart LR
 - "무언가를 놓쳤을 가능성이 아주 낮다"가 이렇게 나온다. 열린 빈틈이나 실패한 검사가 있는 한
   그래프가 부모의 완료를 문자 그대로 허용하지 않는다.
 
-```mermaid
-flowchart LR
-  Q[explore X] --> E[enumerate facets]
-  E --> F1[facet: hotplug]
-  E --> F2[facet: DPI]
-  F1 --> Cr{critique}
-  F2 --> Cr
-  Cr -->|gap found| F3[facet: cursor crossing]
-  F3 --> Cr
-  Cr -->|no gaps| S[synthesize report]
+```text
+explore X --> enumerate facets
+enumerate facets --> facet: hotplug --\
+enumerate facets --> facet: DPI --------+--> critique
+critique --gap found--> facet: cursor crossing --> critique (loop)
+critique --no gaps--> synthesize report
 ```
 
 ### 6.3 "확인하지 않은 것"을 명시한 타입 지정 아티팩트(얕음을 드러내기)
@@ -283,9 +266,11 @@ flowchart LR
 그래서 포괄성 보장은 첫 에이전트가 똑똑한지에 **달려 있지 않다**. 평범한 첫 분해도 여전히 걸리고
 확장된다.
 
-```mermaid
-flowchart LR
-  A[fully scripted: system dictates facets] --- B[seeded: first agent drafts, gates+recursion correct it] --- C[fully emergent: agent decides everything, no gates]
+```text
+fully scripted <--> seeded <--> fully emergent
+(system dictates facets)   (first agent drafts,    (agent decides everything,
+                            gates+recursion          no gates)
+                            correct it)
 ```
 
 우리는 **B(씨앗 + 구조적 게이트)**에 있다.
@@ -323,13 +308,12 @@ flowchart LR
 연산으로 바뀌는 서버 쪽 객체다. 에이전트는 그래프를 *정하는* 일에서 완전한 자유를 갖고(임의
 추론/도구 사용), 그것을 *집행하는* 일에서 구조적 게이트를 건너뛸 자유는 0이다.
 
-```mermaid
-flowchart TB
-  Agent[agent reasoning - arbitrary] -->|submit spec / expand_node| Tool[swarm tool = graph ops]
-  Tool -->|validate: acyclic, owned, gated, typed| Graph[(server-owned DAG)]
-  Graph --> Sched[scheduler: fill_slots/run_plan]
-  Sched -->|hydrate input from upstream artifacts| Workers
-  Workers -->|complete_node + artifact| Tool
+```text
+agent reasoning (arbitrary)
+  -- submit spec / expand_node --> swarm tool (= graph ops)
+  -- validate: acyclic, owned, gated, typed --> server-owned DAG
+  -- scheduler: fill_slots / run_plan --> workers (input hydrated from upstream artifacts)
+  -- workers: complete_node + artifact --> swarm tool (loop)
 ```
 
 ### 제안 도구 표면(`swarm`의 진화)
@@ -415,22 +399,20 @@ flowchart TB
 ### T0 - 첫 에이전트가 최상위 뼈대를 그린다
 루트 에이전트는 답하지 않는다. 씨앗을 놓는다. explore, gate, synthesize.
 
-```mermaid
-flowchart LR
-  R[explore multimonitor / composite] --> Cr{critique}
-  Cr --> S[synthesize report]
+```text
+explore multimonitor (composite) --\
+                                    +--> critique --> synthesize report
+explore multimonitor (composite) --/
 ```
 
 ### T1 - 루트가 explore를 측면으로 확장한다(복합 -> 자식)
-```mermaid
-flowchart LR
-  F1[geometry/layout] --> Cr
-  F2[hotplug/disconnect] --> Cr
-  F3[DPI/scaling] --> Cr
-  F4[focus/cursor crossing] --> Cr
-  F5[workspace to output map] --> Cr
-  F6[existing code touchpoints] --> Cr
-  Cr{critique} --> S[synthesize]
+```text
+facet: geometry/layout -----------\
+facet: hotplug/disconnect ---------+
+facet: DPI/scaling ----------------+--> critique --> synthesize
+facet: focus/cursor crossing ------+
+facet: workspace to output map ----+
+facet: existing code touchpoints --/
 ```
 
 ### T2 - 스케줄러가 준비된 측면을 파견한다(팬아웃, 병렬 일꾼)
@@ -438,16 +420,11 @@ flowchart LR
 ### T3 - 한 측면이 스스로 분해된다(재귀)
 `w2`는 핫플러그가 깊다고 보고 자기 노드를 확장한다. 이제 서브 DAG를 소유한다.
 
-```mermaid
-flowchart LR
-  F2[hotplug owner:w2 / composite] --> Cr
-  F2 --> H1[udev/event source]
-  F2 --> H2[reflow on remove]
-  F2 --> H3[restore on re-add]
-  H1 --> Hj[hotplug synth]
-  H2 --> Hj
-  H3 --> Hj
-  Hj --> Cr{critique}
+```text
+hotplug (owner: w2, composite) --> critique
+  --> udev/event source --\
+  --> reflow on remove ---+--> hotplug synth --> critique
+  --> restore on re-add --/
 ```
 
 ### T4 - 원자 측면이 끝난다. 이제 엣지가 아티팩트를 나른다
@@ -460,13 +437,9 @@ flowchart LR
 감사자가 모든 측면의 `what_i_did_not_check`를 읽는다. 한 출력에서의 전체 화면이나 혼합 주사율을
 아무도 덮지 않았다. 감사자가 새 노드와 재비평을 넣고, synthesize는 계속 막힌다.
 
-```mermaid
-flowchart LR
-  Cr{critique: gaps found} --> G1[fullscreen on one output]
-  Cr --> G2[mixed refresh rate]
-  G1 --> Cr2{re-critique}
-  G2 --> Cr2
-  Cr2 --> S[synthesize]
+```text
+critique (gaps found) --> fullscreen on one output --\
+critique (gaps found) --> mixed refresh rate --------+--> re-critique --> synthesize
 ```
 
 ### T7 - 빈틈 노드가 끝나고, 재비평이 통과하고, synthesize가 돈다

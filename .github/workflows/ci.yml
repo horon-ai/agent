@@ -349,12 +349,6 @@ jobs:
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
             -p horon-agent-base --lib secret_input -- --nocapture
 
-      - name: Run browser session liveness and reuse regressions
-        shell: bash
-        run: |
-          cargo test --locked --target ${{ matrix.target }} -p horon-agent-base --lib browser_session -- --nocapture
-          cargo test --locked --target ${{ matrix.target }} -p horon-agent-app-core --lib browser_session -- --nocapture
-
       - name: Run IRC cohorts
         shell: bash
         # Nothing else in this workflow runs `horon-agent-irc-core` tests: the
@@ -457,13 +451,7 @@ jobs:
         run: |
           python3 .github/scripts/run_with_timeout.py 900 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            --test provider_matrix --test e2e --no-run
-
-      - name: Run provider matrix tests
-        shell: bash
-        run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test provider_matrix
+            --test e2e --no-run
 
       - name: Run e2e tests
         shell: bash
@@ -564,9 +552,6 @@ jobs:
           # test list before the run and a missing name fails the step.
           $groups = [ordered]@{
             'horon-agent-base' = @(
-              'command_candidates_adds_extension_on_windows',
-              'command_exists_for_known_binary',
-              'command_exists_absolute_path',
               'is_process_running_reports_exited_children_as_stopped',
               'spawn_replacement_process_returns_without_waiting_for_child_exit'
             )
@@ -608,14 +593,9 @@ jobs:
               -CargoArgs (@('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', $package, '--lib', '--') + $names + @('--nocapture'))
           }
 
-      - name: Run Windows hotkey and power tests
+      - name: Run Windows power tests
         shell: pwsh
         run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'Windows setup-hints tests' `
-            -TimeoutSeconds 300 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-setup-hints', '--lib', '--', '--nocapture')
-
           & ./scripts/ci/cargo_with_timeout.ps1 `
             -Name 'Windows power-inhibit tests' `
             -TimeoutSeconds 900 `

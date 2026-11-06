@@ -1,48 +1,4 @@
 #[test]
-fn test_transcript_request_roundtrip() -> Result<()> {
-    let req = Request::Transcript {
-        id: 77,
-        text: "hello from whisper".to_string(),
-        mode: TranscriptMode::Send,
-        session_id: Some("sess_abc".to_string()),
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"transcript\""));
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 77);
-    let Request::Transcript {
-        text,
-        mode,
-        session_id,
-        ..
-    } = decoded
-    else {
-        return Err(anyhow!("expected Transcript request"));
-    };
-    assert_eq!(text, "hello from whisper");
-    assert_eq!(mode, TranscriptMode::Send);
-    assert_eq!(session_id.as_deref(), Some("sess_abc"));
-    Ok(())
-}
-
-#[test]
-fn test_transcript_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::Transcript {
-        text: "dictated text".to_string(),
-        mode: TranscriptMode::Replace,
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"transcript\""));
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::Transcript { text, mode } = decoded else {
-        return Err(anyhow!("expected Transcript event"));
-    };
-    assert_eq!(text, "dictated text");
-    assert_eq!(mode, TranscriptMode::Replace);
-    Ok(())
-}
-
-#[test]
 fn test_memory_activity_event_roundtrip() -> Result<()> {
     let event = ServerEvent::MemoryActivity {
         activity: MemoryActivitySnapshot {
@@ -248,44 +204,6 @@ fn test_structured_set_route_decodes_as_set_route_not_set_model() -> Result<()> 
 }
 
 #[test]
-fn test_horon_agent_subscription_set_route_is_wire_safe() -> Result<()> {
-    let request = Request::SetRoute {
-        automatic_failover: false,
-        id: 8,
-        selection: horon_agent_provider_core::RouteSelection {
-            model: "gpt-5.5".to_string(),
-            runtime_key: horon_agent_provider_core::RuntimeKey::HoronAgentSubscription,
-            api_method: "horon-agent-subscription".to_string(),
-            provider_label: "HoronAgent Subscription".to_string(),
-            detail: "horon-agent subscription routing · managed server-side".to_string(),
-        },
-    };
-
-    let line = serde_json::to_string(&request)?;
-    assert!(line.contains("\"type\":\"set_route\""));
-    assert!(line.contains("\"kind\":\"horon-agent-subscription\""));
-
-    let decoded = decode_request(&line)?;
-    let Request::SetRoute {
-        id,
-        selection,
-        automatic_failover,
-    } = decoded
-    else {
-        return Err(anyhow!("expected HoronAgent SetRoute, got {decoded:?}"));
-    };
-    assert!(!automatic_failover);
-    assert_eq!(id, 8);
-    assert_eq!(selection.model, "gpt-5.5");
-    assert_eq!(
-        selection.runtime_key,
-        horon_agent_provider_core::RuntimeKey::HoronAgentSubscription
-    );
-    assert_eq!(selection.routed_model_spec(), "gpt-5.5");
-    Ok(())
-}
-
-#[test]
 fn test_automatic_failover_set_route_marker_and_legacy_default() -> Result<()> {
     let selection = horon_agent_provider_core::RouteSelection {
         model: "gpt-6.1-sol".to_string(),
@@ -399,12 +317,10 @@ fn test_unknown_runtime_key_other_set_route_is_wire_safe() -> Result<()> {
 fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result<()> {
     let req = Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: true,
         supports_user_response: true,
         supports_ask_requests: true,
         id: 89,
         working_dir: Some("/tmp/project".to_string()),
-        selfdev: Some(true),
         target_session_id: Some("sess_target".to_string()),
         client_instance_id: Some("client-123".to_string()),
         client_has_local_history: true,
@@ -419,12 +335,10 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
     let decoded = parse_request_json(&json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,
         working_dir,
-        selfdev,
         target_session_id,
         client_instance_id,
         client_has_local_history,
@@ -438,11 +352,9 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 89);
-    assert!(supports_pdf_panels);
     assert!(supports_user_response);
     assert!(supports_ask_requests);
     assert_eq!(working_dir.as_deref(), Some("/tmp/project"));
-    assert_eq!(selfdev, Some(true));
     assert_eq!(target_session_id.as_deref(), Some("sess_target"));
     assert_eq!(client_instance_id.as_deref(), Some("client-123"));
     assert!(client_has_local_history);
@@ -462,12 +374,10 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
     let decoded = parse_request_json(json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,
         working_dir,
-        selfdev,
         target_session_id,
         client_instance_id,
         client_has_local_history,
@@ -481,11 +391,9 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 91);
-    assert!(!supports_pdf_panels);
     assert!(!supports_user_response);
     assert!(!supports_ask_requests);
     assert_eq!(working_dir, None);
-    assert_eq!(selfdev, None);
     assert_eq!(target_session_id, None);
     assert_eq!(client_instance_id, None);
     assert!(!client_has_local_history);

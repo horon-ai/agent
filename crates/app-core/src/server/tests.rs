@@ -12,8 +12,8 @@ use crate::bus::{
 use crate::message::{Message, Role, StreamEvent, ToolDefinition};
 use crate::protocol::{NotificationType, ServerEvent};
 use crate::provider::{EventStream, Provider};
+use crate::server::reload_recovery::ReloadContext;
 use crate::tool::Registry;
-use crate::tool::selfdev::ReloadContext;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -327,7 +327,7 @@ async fn background_task_wake_runs_live_session_immediately_when_idle() {
     )])));
     let task = BackgroundTaskCompleted {
         task_id: "bgwake".to_string(),
-        tool_name: "selfdev-build".to_string(),
+        tool_name: "bash".to_string(),
         display_name: None,
         session_id: session_id.clone(),
         status: BackgroundTaskStatus::Completed,
@@ -785,15 +785,14 @@ async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -
     }
 
     let mut initiator = crate::session::Session::create(None, Some("initiator".to_string()));
-    initiator.set_canary("self-dev");
     // The store validates tool identity order, so the interrupted result needs
     // the assistant tool call that produced it before it can be persisted.
     initiator.add_message(
         Role::Assistant,
         vec![crate::message::ContentBlock::ToolUse {
             id: "tool_reload".to_string(),
-            name: "reload".to_string(),
-            input: serde_json::json!({}),
+            name: "bash".to_string(),
+            input: serde_json::json!({"command": "sleep 1"}),
             thought_signature: None,
         }],
     );
@@ -801,8 +800,8 @@ async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -
         Role::User,
         vec![crate::message::ContentBlock::ToolResult {
             tool_use_id: "tool_reload".to_string(),
-            content: "Reload initiated. Process restarting...".to_string(),
-            is_error: Some(false),
+            content: "[Tool 'bash' interrupted by server reload after 0.2s]".to_string(),
+            is_error: Some(true),
         }],
     );
     initiator.save()?;
@@ -842,7 +841,7 @@ async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -
         None,
         None,
         &[
-            persisted_headless_member(&initiator.id, swarm_id, "running", "selfdev reload"),
+            persisted_headless_member(&initiator.id, swarm_id, "running", "bash tool"),
             persisted_headless_member(&peer.id, swarm_id, "running", "bash tool"),
         ],
     );

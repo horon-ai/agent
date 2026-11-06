@@ -52,7 +52,6 @@ regex = "1"
 fancy-regex = "0.20"
 urlencoding = "2"        # URL encoding for web search
 uuid = { version = "1", features = ["v4", "v5"] }
-horon-agent-applet-types = { path = "../applet-types" }
 horon-agent-ast = { path = "../ast" }
 
 # Embeddings (local inference) live in horon-agent-base; this crate forwards the
@@ -67,11 +66,8 @@ base64 = "0.22"
 sha2 = "0.10"
 rand = "0.9.3"
 url = "2"
-# Local fallback for the open tool when no `horon-agent companion` is running.
-horon-agent-desktop-open = { path = "../desktop-open" }
 horon-agent-agent-runtime = { path = "../agent-runtime" }
 horon-agent-ambient-types = { path = "../ambient-types" }
-horon-agent-notify-email = { path = "../notify-email" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-schema-dialect = { path = "../schema-dialect" }
 horon-agent-lsp = { path = "../lsp" }
@@ -103,10 +99,8 @@ horon-agent-overnight-core = { path = "../overnight-core" }
 horon-agent-perf-counters = { path = "../perf-counters" }
 horon-agent-plan = { path = "../plan" }
 horon-agent-swarm-core = { path = "../swarm-core" }
-horon-agent-selfdev-types = { path = "../selfdev-types" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }
-horon-agent-setup-hints = { path = "../setup-hints" }
 horon-agent-task-types = { path = "../task-types" }
 horon-agent-tool-core = { path = "../tool-core" }
 horon-agent-codemode = { path = "../codemode" }
@@ -138,7 +132,7 @@ legacy-session-index-import = ["horon-agent-session-store/legacy-session-index-i
 test-support = ["horon-agent-base/test-support"]
 
 [dev-dependencies]
-# Paused-time browser tests must compile when this package is tested alone,
+# Paused-time streaming tests must compile when this package is tested alone,
 # without inheriting test-util from another workspace package's dev-dependencies.
 tokio = { version = "1", features = ["test-util"] }
 # Used by async streaming tests (ambient/runner_tests, server/client_actions_tests).
@@ -154,10 +148,3 @@ horon-agent-token-estimate = { path = "../token-estimate" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-global-hotkey = "0.7"
-# Native desktop control for the `macos_computer_use` tool (synthetic mouse/keyboard
-# events, cursor positioning, display bounds). `highsierra` enables the
-# CGEventCreateScrollWheelEvent2 binding used for scroll.
-core-graphics = { version = "0.23", features = ["highsierra"] }

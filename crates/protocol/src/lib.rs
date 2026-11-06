@@ -19,11 +19,6 @@ pub use notifications::{FeatureToggle, NotificationType};
 use horon_agent_batch_types::BatchProgress;
 use horon_agent_message_types::{InputShellResult, ToolCall};
 use horon_agent_plan::{PlanItem, VersionedPlan, next_runnable_item_ids, summarize_plan_graph};
-use horon_agent_side_panel_types::{SidePanelSnapshot, snapshot_is_empty};
-
-fn applets_is_empty(applets: &horon_agent_applet_types::AgentApplets) -> bool {
-    applets.instances.is_empty()
-}
 use std::collections::BTreeMap;
 
 #[path = "protocol_memory.rs"]
@@ -190,12 +185,20 @@ impl AuthChanged {
     }
 }
 
-pub type ReloadRecoverySnapshot = horon_agent_selfdev_types::ReloadRecoveryDirective;
+/// Server-owned instruction for resuming a session that was interrupted by a
+/// reload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReloadRecoveryDirective {
+    pub reconnect_notice: Option<String>,
+    pub continuation_message: String,
+}
+
+pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
 pub use wire::{
-    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BrowserMode, ClientRpcError, FileDiffWire,
-    PermissionDecision, PlanEntryWire, Request, ServerEvent, SessionMcpServer,
+    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, ClientRpcError, FileDiffWire, PermissionDecision,
+    PlanEntryWire, Request, ServerEvent, SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -626,8 +629,6 @@ impl Request {
             Request::Ping { id } => *id,
             Request::GetState { id } => *id,
             Request::DebugCommand { id, .. } => *id,
-            Request::ClientDebugCommand { id, .. } => *id,
-            Request::ClientDebugResponse { id, .. } => *id,
             Request::Subscribe { id, .. } | Request::PrepareDisconnect { id } => *id,
             Request::GetHistory { id } => *id,
             Request::GetModelCatalog { id, .. } => *id,
@@ -636,10 +637,6 @@ impl Request {
             Request::ResumeSession { id, .. } => *id,
             Request::ResumeAllSessions { id } => *id,
             Request::NotifySession { id, .. } => *id,
-            Request::SetBrowserMode { id, .. } => *id,
-            Request::AppletAction { id, .. } => *id,
-            Request::CloseApplet { id, .. } => *id,
-            Request::Transcript { id, .. } => *id,
             Request::InputShell { id, .. } => *id,
             Request::CycleModel { id, .. } => *id,
             Request::RefreshModels { id } => *id,
@@ -661,7 +658,6 @@ impl Request {
             Request::Compact { id } => *id,
             Request::TriggerMemoryExtraction { id } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,
-            Request::SwitchOpenAiAccount { id, .. } => *id,
             Request::InvalidateOpenAiUsage { id, .. } => *id,
             Request::StdinResponse { id, .. } => *id,
             Request::ApprovalAck { id, .. } | Request::FailoverAck { id, .. } => *id,
@@ -719,11 +715,6 @@ impl Request {
                 // one-shot client can send it without subscribing to a session.
                 | Request::InvalidateOpenAiUsage { .. }
                 | Request::NotifySession { .. }
-                // The bridge pushes a session's browser driver mode here. It
-                // names the session explicitly and needs no subscription.
-                | Request::SetBrowserMode { .. }
-                | Request::AppletAction { .. }
-                | Request::CloseApplet { .. }
                 | Request::CommShare { .. }
                 | Request::CommRead { .. }
                 | Request::CommMessage { .. }

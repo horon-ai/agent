@@ -74,6 +74,7 @@ fn report_permanent_failure_once(error: &anyhow::Error) {
 }
 
 /// Clear the process-wide judge circuit breaker after real auth state changes.
+#[cfg(test)]
 pub(crate) fn clear_failure_backoff() {
     if let Ok(mut guard) = FAILURE_BACKOFF_UNTIL.lock() {
         *guard = None;

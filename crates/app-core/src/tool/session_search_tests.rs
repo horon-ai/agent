@@ -405,7 +405,6 @@ fn filters_cover_role_provider_model_flags_and_dates() {
         session.model = Some("claude-sonnet-4".to_string());
         session.saved = true;
         session.is_debug = true;
-        session.is_canary = true;
         session.save().expect("save filter metadata");
 
         let mut options = SearchOptions::for_test("current-session");
@@ -426,7 +425,6 @@ fn filters_cover_role_provider_model_flags_and_dates() {
         options.model_filter = Some("sonnet".to_string());
         options.saved_filter = Some(true);
         options.debug_filter = Some(true);
-        options.canary_filter = Some(true);
         options.before = Some(Utc::now() + Duration::days(1));
         assert!(!run_search(home, "filterable-needle", &options).is_empty());
 

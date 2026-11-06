@@ -2,7 +2,7 @@
 //! `$defs` entry it produces, plus the IS-1/IS-6/IS-12/IS-15 rules that schema
 //! validation cannot express.
 
-use super::super::auth::{AUTH_METHOD_CREDENTIALS, AUTH_METHOD_TERMINAL};
+use super::super::auth::AUTH_METHOD_CREDENTIALS;
 use super::super::session_configuration::{acp_available_commands, insert_available_commands_v2};
 use super::super::util::ACP_PROTOCOL_VERSION;
 use super::negotiate::{ACP_V2_PROTOCOL_VERSION, AcpVersion, InitError, select};
@@ -124,18 +124,16 @@ fn select_table() {
 
 #[test]
 fn initialize_response_matches_schema() {
-    let v1_style = json!({ "fs": { "readTextFile": true }, "terminal": true });
-    let v2_style = json!({ "auth": { "terminal": {} }, "elicitation": { "form": {} } });
     for profile in [
         super::super::util::AcpProfile::Standard,
         super::super::util::AcpProfile::Extended,
         super::super::util::AcpProfile::Full,
     ] {
-        assert_matches("InitializeResponse", &initialize_response(profile, &v1_style, true));
-        assert_matches("InitializeResponse", &initialize_response(profile, &v2_style, false));
+        assert_matches("InitializeResponse", &initialize_response(profile, true));
+        assert_matches("InitializeResponse", &initialize_response(profile, false));
     }
 
-    let response = initialize_response(super::super::util::AcpProfile::Standard, &v2_style, true);
+    let response = initialize_response(super::super::util::AcpProfile::Standard, true);
     assert_eq!(response["protocolVersion"], 2);
     assert_eq!(response["info"]["name"], "horon-agent");
     assert_eq!(response["info"]["title"], "HoronAgent");
@@ -162,46 +160,45 @@ fn initialize_response_matches_schema() {
         );
     }
     assert!(response["capabilities"].get("_meta").is_none());
-    assert_eq!(response["authMethods"].as_array().unwrap().len(), 2);
-
-    let without_http = initialize_response(super::super::util::AcpProfile::Standard, &v1_style, false);
-    assert!(without_http["capabilities"]["session"]["mcp"].get("http").is_none());
     assert_eq!(
-        without_http["authMethods"].as_array().unwrap().len(),
-        1,
-        "a v1 boolean terminal capability never advertises the v2 terminal method"
+        response["authMethods"],
+        json!([{
+            "methodId": AUTH_METHOD_CREDENTIALS,
+            "type": "agent",
+            "name": "Use HoronAgent login",
+            "description": "Uses the OpenAI-compatible provider profile configured in [providers.<name>]. Run 'horon-agent provider add' to create one.",
+        }])
     );
+
+    let without_http = initialize_response(super::super::util::AcpProfile::Standard, false);
+    assert!(without_http["capabilities"]["session"]["mcp"].get("http").is_none());
+    assert_eq!(without_http["authMethods"].as_array().unwrap().len(), 1);
 }
 
 #[test]
 fn auth_methods_matches_schema() {
-    for method in auth_methods(&json!({ "auth": { "terminal": {} } })) {
-        assert_matches("AuthMethod", &method);
+    let methods = auth_methods();
+    assert_eq!(methods.len(), 1, "no client capability adds a method: {methods:?}");
+    for method in &methods {
+        assert_matches("AuthMethod", method);
     }
-    let methods = auth_methods(&json!({ "auth": { "terminal": {} } }));
     assert_eq!(methods[0]["methodId"], AUTH_METHOD_CREDENTIALS);
     assert_eq!(methods[0]["type"], "agent");
-    assert_eq!(methods[1]["methodId"], AUTH_METHOD_TERMINAL);
-    assert_eq!(methods[1]["type"], "terminal");
-    assert_eq!(auth_methods(&json!({ "auth": { "terminal": null } })).len(), 1);
-    assert_eq!(auth_methods(&json!({ "auth": { "terminal": false } })).len(), 1);
+    assert!(methods[0].get("args").is_none(), "no terminal method: {methods:?}");
 }
 
 #[test]
-fn terminal_auth_args_are_login_only() {
-    let methods = auth_methods(&json!({ "auth": { "terminal": {} } }));
-    let terminal = methods
-        .iter()
-        .find(|method| method["type"] == "terminal")
-        .expect("the terminal method is advertised");
-    assert_eq!(terminal["methodId"], AUTH_METHOD_TERMINAL);
-    assert_eq!(terminal["name"], "Log in from the terminal");
-    assert_eq!(
-        terminal["description"],
-        "Runs 'horon-agent acp --login' in a terminal to log in."
+fn credentials_method_points_at_provider_profiles() {
+    let description = auth_methods()[0]["description"]
+        .as_str()
+        .expect("the credentials method has a description")
+        .to_string();
+    assert!(description.contains("[providers.<name>]"), "{description}");
+    assert!(description.contains("horon-agent provider add"), "{description}");
+    assert!(
+        !description.contains("horon-agent login"),
+        "the removed login command is never advertised: {description}"
     );
-    assert_eq!(terminal["args"], json!(["--login"]), "the client appends only --login");
-    assert_eq!(terminal["env"], json!([]), "v2 env is an array, not an object");
 }
 
 #[test]

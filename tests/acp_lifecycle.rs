@@ -463,8 +463,9 @@ mod acp {
         adapter.finish();
     }
 
+    /// The removed `--login` argument is a clap usage error and nothing starts.
     #[test]
-    fn acp_login_closed_stdin_exits_1_no_stdout() {
+    fn acp_login_flag_is_gone() {
         let root = scratch_root("acplogin");
         for dir in ["home", "rt"] {
             std::fs::create_dir_all(root.join(dir)).expect("scratch dirs");
@@ -480,10 +481,12 @@ mod acp {
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(
             output.status.code(),
-            Some(1),
+            Some(2),
             "stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("unexpected argument"), "stderr: {stderr}");
         assert!(
             output.stdout.is_empty(),
             "stdout: {}",

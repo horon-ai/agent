@@ -1,6 +1,4 @@
 mod accessors;
-mod account_failover;
-mod account_selection;
 pub mod activation;
 pub(crate) mod catalog_cache;
 mod catalog_memo;
@@ -12,10 +10,9 @@ mod dispatch;
 pub mod external;
 mod failover;
 mod fingerprint;
-pub mod horon_agent;
 mod image_clamp;
+pub mod model_rank;
 pub mod models;
-mod multi_provider;
 pub mod openai;
 pub mod openai_request;
 pub mod pricing;
@@ -24,15 +21,10 @@ mod route_builders;
 mod selection;
 mod startup;
 mod state;
-mod stream_start;
 mod stream_timeout;
 
 use crate::auth;
 use crate::message::{Message, ToolDefinition};
-use account_failover::{
-    account_usage_probe, active_account_label_for_provider, maybe_annotate_limit_summary,
-    same_provider_account_failover_enabled,
-};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 #[cfg(test)]
@@ -41,11 +33,9 @@ use registry::ProviderRegistry;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-pub use account_failover::{has_alternate_account_in_pool, has_eligible_alternate_account};
 pub use catalog_routes::{
     remote_current_openai_compatible_route_for_model, remote_model_routes_fallback,
     remote_model_routes_lightweight_fallback, remote_openai_compatible_route_for_model,
-    simplified_model_routes_for_picker,
 };
 pub use horon_agent_provider_core::ProviderFailoverPrompt;
 pub use horon_agent_provider_core::attempt_tracker;
@@ -58,7 +48,7 @@ pub use horon_agent_provider_core::{
     CHEAPNESS_REFERENCE_OUTPUT_TOKENS, CredentialMode, DEFAULT_CONTEXT_LIMIT, EventStream, HORON_AGENT_USER_AGENT,
     ModelCapabilities, ModelCatalogRefreshSummary, ModelRoute, ModelRouteApiMethod, NativeCompactionResult,
     NativeToolResult, NativeToolResultSender, PremiumMode, Provider, ProviderRequestContext, RouteBillingKind,
-    RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource, RouteSelection, RuntimeKey, dedupe_model_routes,
+    RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource, RouteSelection, dedupe_model_routes,
     explicit_model_provider_prefix, fresh_transport_client, grok_build_model_spec, inferred_reasoning_efforts,
     model_name_for_provider, normalize_copilot_model_name, provider_from_model_key, shared_http_client,
     summarize_model_catalog_refresh,
@@ -68,18 +58,15 @@ pub use horon_agent_provider_core::{
     normalize_model_route_provider_label, pick_next_fallback_route, pick_next_fallback_route_with_options,
 };
 pub use route_builders::{
-    build_chatgpt_web_route, build_openai_api_key_route, build_openai_oauth_route, is_listable_model_name,
-    listable_model_names_from_routes, openrouter_catalog_model_id,
+    build_openai_api_key_route, is_listable_model_name, listable_model_names_from_routes, openrouter_catalog_model_id,
 };
 
 /// Process-wide handle to the live agent provider.
 ///
 /// The memory sidecar ([`crate::sidecar::Sidecar`]) needs to make small,
-/// cheap model calls (rerank / relevance / extraction). It has a dedicated fast
-/// path for OpenAI (codex-spark) OAuth, so the sidecar falls
-/// back to *this* handle and dispatches through the already-working
-/// [`Provider::complete_simple`] path. `Server::new` registers the active
-/// provider here at startup.
+/// cheap model calls (rerank / relevance / extraction), so it dispatches
+/// through *this* handle and the already-working [`Provider::complete_simple`]
+/// path. `Server::new` registers the active provider here at startup.
 static ACTIVE_PROVIDER: RwLock<Option<Arc<dyn Provider>>> = RwLock::new(None);
 
 /// Register the live agent provider so background helpers (memory sidecar) can
@@ -216,18 +203,6 @@ fn direct_openai_compatible_profile_routes(
     routes
 }
 
-/// Strip an explicit HoronAgent subscription prefix (`horon-agent:` or
-/// `horon-agent-subscription:`) from a model spec.
-pub(crate) fn horon_agent_subscription_model_prefix(model: &str) -> Option<&str> {
-    let (prefix, rest) = model.split_once(':')?;
-    let prefix = prefix.trim();
-    if !(prefix.eq_ignore_ascii_case("horon-agent") || prefix.eq_ignore_ascii_case("horon-agent-subscription")) {
-        return None;
-    }
-    let rest = rest.trim();
-    (!rest.is_empty()).then_some(rest)
-}
-
 use self::dispatch::CompletionMode;
 
 mod session_restore;
@@ -299,11 +274,6 @@ pub struct MultiProvider {
 }
 
 impl MultiProvider {
-    #[cfg(test)]
-    fn same_provider_account_candidates(provider: ActiveProvider) -> Vec<String> {
-        account_failover::same_provider_account_candidates(provider)
-    }
-
     async fn complete_with_failover(
         &self,
         messages: &[Message],
@@ -312,7 +282,6 @@ impl MultiProvider {
         resume_session_id: Option<&str>,
         context: Option<&ProviderRequestContext>,
     ) -> Result<EventStream> {
-        self.bind_auto_account_for_request(self.active_provider())?;
         self.spawn_openai_catalog_refresh_if_needed();
 
         // Provider capabilities are authoritative at this request chokepoint.
@@ -341,240 +310,63 @@ impl MultiProvider {
         };
 
         let active = self.active_provider();
-        // Saved account requests remain session-local. Only configured pool
-        // members may propose another exact account after a startup failure.
-        if let Some(bound_label) = self.selected_account_for_provider(active) {
-            let key = Self::provider_key(active);
-            let exists = crate::auth::codex::list_accounts()?
-                .iter()
-                .any(|a| a.label == bound_label);
-            if !exists {
-                anyhow::bail!(
-                    "Saved account '{}' no longer exists. Select an account with /model.",
-                    bound_label
-                );
-            }
-            if let Some(reason) = models::provider_unavailability_detail_for_account_label(key, Some(&bound_label)) {
-                self.try_same_provider_account_failover(active, messages, tools, mode, &reason, &mut Vec::new())
-                    .await?;
-                anyhow::bail!(
-                    "{} ({}) is unavailable: {}",
-                    Self::provider_label(active),
-                    bound_label,
-                    reason
-                );
-            }
-            let attempt = match mode {
-                CompletionMode::Unified { system } => {
-                    self.complete_on_provider(active, messages, tools, system, resume_session_id, context)
-                        .await
-                }
-                CompletionMode::Split {
-                    system_static,
-                    system_dynamic,
-                } => {
-                    self.complete_split_on_provider(
-                        active,
-                        messages,
-                        tools,
-                        system_static,
-                        system_dynamic,
-                        resume_session_id,
-                        context,
-                    )
+        let key = self.provider_runtime_cooldown_key(active);
+
+        // A stale cooldown from a previous credential would otherwise skip the
+        // only configured provider for the rest of its TTL.
+        let attempt = match mode {
+            CompletionMode::Unified { system } => {
+                self.complete_on_provider(active, messages, tools, system, resume_session_id, context)
                     .await
-                }
-            };
-            let attempt = self.await_account_stream_start(active, attempt).await;
-            match attempt {
-                Ok(stream) => {
-                    if active == ActiveProvider::OpenAI {
-                        models::clear_openai_provider_unavailability_for_account_label(Some(&bound_label));
-                    }
-                    return Ok(stream);
-                }
-                Err(err) => {
-                    let decision = Self::classify_failover_error(&err);
-                    if decision.should_failover() {
-                        let reason = Self::summarize_error(&err);
-                        if decision.should_mark_provider_unavailable() {
-                            models::record_provider_unavailable_for_account_label(key, Some(&bound_label), &reason);
-                        }
-                        self.try_same_provider_account_failover(
-                            active,
-                            messages,
-                            tools,
-                            mode,
-                            &reason,
-                            &mut Vec::new(),
-                        )
-                        .await?;
-                    }
-                    return Err(err);
-                }
             }
-        }
-        let sequence = Self::fallback_sequence(active);
-        let mut notes: Vec<String> = Vec::new();
-        let mut failover_reason: Option<String> = None;
-        let (estimated_input_chars, estimated_input_tokens) = Self::estimate_request_input(messages, tools, mode);
-
-        for candidate in sequence {
-            let label = Self::provider_label(candidate);
-            let key = self.provider_runtime_cooldown_key(candidate);
-
-            if candidate != active {
-                // Account rotation may have exhausted the pool since the first
-                // error. Render guidance from current cooldowns, never from an
-                // annotation captured before alternate logins were attempted.
-                let reason = failover_reason
-                    .clone()
-                    .unwrap_or_else(|| "provider unavailable".to_string());
-                let reason = if self.provider_uses_oauth_accounts(active) {
-                    maybe_annotate_limit_summary(active, reason)
-                } else {
-                    reason
-                };
-                if let Some(prompt) = self.cross_provider_pool_prompt(
+            CompletionMode::Split {
+                system_static,
+                system_dynamic,
+            } => {
+                self.complete_split_on_provider(
                     active,
-                    candidate,
-                    reason,
-                    estimated_input_chars,
-                    estimated_input_tokens,
-                ) {
-                    return Err(anyhow::Error::new(FailoverRequired { prompt }));
-                }
-                continue;
-            }
-
-            if !self.provider_is_configured(candidate) {
-                let note = format!("{}: not configured", label);
-                if candidate == active {
-                    crate::logging::warn(&format!(
-                        "Failover{}: skipping active provider {} (not configured)",
-                        mode.log_suffix(),
-                        label
-                    ));
-                }
-                notes.push(note);
-                continue;
-            }
-
-            let cached_unavailability = provider_unavailability_detail_for_account(key);
-            if let Some(reason) = cached_unavailability.clone() {
-                let note = format!("{}: {}", label, reason);
-                if candidate == active {
-                    crate::logging::warn(&format!(
-                        "Failover{}: skipping active provider {} - {}",
-                        mode.log_suffix(),
-                        label,
-                        reason
-                    ));
-                    failover_reason = Some(reason.clone());
-                }
-                notes.push(note);
-                if cached_unavailability.is_none() {
-                    record_provider_unavailable_for_account(key, &reason);
-                }
-                if candidate == active
-                    && let Some(stream) = self
-                        .try_same_provider_account_failover(candidate, messages, tools, mode, &reason, &mut notes)
-                        .await?
-                {
-                    return Ok(stream);
-                }
-                continue;
-            }
-
-            let attempt = match mode {
-                CompletionMode::Unified { system } => {
-                    self.complete_on_provider(candidate, messages, tools, system, resume_session_id, context)
-                        .await
-                }
-                CompletionMode::Split {
+                    messages,
+                    tools,
                     system_static,
                     system_dynamic,
-                } => {
-                    self.complete_split_on_provider(
-                        candidate,
-                        messages,
-                        tools,
-                        system_static,
-                        system_dynamic,
-                        resume_session_id,
-                        context,
-                    )
-                    .await
-                }
-            };
-            let attempt = self.await_account_stream_start(candidate, attempt).await;
+                    resume_session_id,
+                    context,
+                )
+                .await
+            }
+        };
 
-            match attempt {
-                Ok(stream) => {
-                    clear_provider_unavailable_for_account(key);
-                    self.record_provider_activity(candidate);
-                    if candidate != active {
-                        self.set_active_provider(candidate);
-                        let from_label = Self::provider_label(active);
-                        let to_label = Self::provider_label(candidate);
-                        crate::logging::info(&format!(
-                            "{}: switched from {} to {}",
-                            mode.switch_log_prefix(),
-                            from_label,
-                            to_label
-                        ));
-                        self.startup_notices
-                            .write()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .push(format!(
-                                "⚡ Auto-fallback: {} unavailable, switched to {}",
-                                from_label, to_label
-                            ));
-                    }
-                    return Ok(stream);
+        match attempt {
+            Ok(stream) => {
+                clear_provider_unavailable_for_account(key);
+                self.record_provider_activity(active);
+                Ok(stream)
+            }
+            Err(err) => {
+                let summary = Self::summarize_error(&err);
+                let decision = Self::classify_failover_error(&err);
+                crate::logging::info(&format!(
+                    "Provider {} failed{}: {} (failover={} decision={})",
+                    Self::provider_label(active),
+                    mode.log_suffix(),
+                    summary,
+                    decision.should_failover(),
+                    decision.as_str()
+                ));
+                if decision.should_failover() && decision.should_mark_provider_unavailable() {
+                    record_provider_unavailable_for_account(key, &summary);
                 }
-                Err(err) => {
-                    let summary = Self::summarize_error(&err);
-                    let display_summary = if self.provider_uses_oauth_accounts(candidate) {
-                        maybe_annotate_limit_summary(candidate, summary.clone())
-                    } else {
-                        summary.clone()
-                    };
-                    let decision = Self::classify_failover_error(&err);
-                    crate::logging::info(&format!(
-                        "Provider {} failed{}: {} (failover={} decision={})",
-                        label,
-                        mode.log_suffix(),
-                        display_summary,
-                        decision.should_failover(),
-                        decision.as_str()
-                    ));
-                    notes.push(format!("{}: {}", label, display_summary));
-                    if decision.should_failover() {
-                        if decision.should_mark_provider_unavailable() {
-                            record_provider_unavailable_for_account(key, &summary);
-                        }
-                        if candidate == active
-                            && decision.should_mark_provider_unavailable()
-                            && let Some(stream) = self
-                                .try_same_provider_account_failover(
-                                    candidate, messages, tools, mode, &summary, &mut notes,
-                                )
-                                .await?
-                        {
-                            return Ok(stream);
-                        }
-                        if candidate == active {
-                            failover_reason = Some(summary);
-                        }
-                    } else {
-                        return Err(err);
-                    }
-                }
+                Err(err)
             }
         }
+    }
 
-        Err(self.no_provider_available_error(&notes))
+    /// Cooldown bucket for the active runtime.
+    ///
+    /// Only one credential path exists now (an API key resolved from the active
+    /// OpenAI-compatible profile), so the bucket is the shared OpenAI slot.
+    fn provider_runtime_cooldown_key(&self, _provider: ActiveProvider) -> &'static str {
+        "openai-api"
     }
 
     /// Record which login/credential just served a request in the
@@ -597,20 +389,7 @@ impl MultiProvider {
         if let Some(profile_id) = ProviderRegistry::new(self).active_compatible_profile_id() {
             return format!("provider-profile:{profile_id}");
         }
-        let uses_api_key = self
-            .openai_provider()
-            .map(|openai| match openai.credential_mode() {
-                openai::OpenAICredentialMode::ApiKey => true,
-                openai::OpenAICredentialMode::OAuth => false,
-                openai::OpenAICredentialMode::Auto => crate::auth::codex::load_oauth_credentials().is_err(),
-            })
-            .unwrap_or(false);
-        if uses_api_key {
-            "openai:api-key".to_string()
-        } else {
-            let label = crate::auth::codex::active_account_label().unwrap_or_else(|| "default".to_string());
-            format!("openai:oauth:{}", label)
-        }
+        "openai:api-key".to_string()
     }
 
     fn openai_compatible_model_prefix(model: &str) -> Option<(crate::provider_catalog::OpenAiCompatibleProfile, &str)> {
@@ -716,7 +495,7 @@ impl MultiProvider {
     }
 
     fn set_model_on_provider(&self, provider: ActiveProvider, model: &str) -> Result<()> {
-        self.set_model_on_provider_with_credential_modes(provider, model, None, true)
+        self.set_model_on_builtin_provider(provider, model, true)
     }
 
     /// Bind an explicitly prefixed OpenAI spec (`openai:`, `openai-api:`) to
@@ -729,82 +508,13 @@ impl MultiProvider {
     /// selected built-in OpenAI. Without the built-in runtime the switch must
     /// fail and say so instead of silently landing on the profile.
     fn set_model_on_explicit_provider(&self, provider: ActiveProvider, model: &str) -> Result<()> {
-        self.set_model_on_provider_with_credential_modes(provider, model, None, false)
+        self.set_model_on_builtin_provider(provider, model, false)
     }
 
-    /// Bind the shared OpenAI-compatible slot to the managed horon-agent endpoint.
-    ///
-    /// Subscription model ids intentionally overlap with [OI] ids.
-    /// A picker selection therefore cannot be reduced to a bare
-    /// model name: doing so lets `set_model`'s family heuristic spend the
-    /// user's unrelated provider credentials instead of their subscription.
-    fn set_model_on_horon_agent_subscription(&self, model: &str) -> Result<()> {
-        let model = model.trim();
-        if model.is_empty() {
-            anyhow::bail!("Model cannot be empty");
-        }
-        models::ensure_model_allowed_for_subscription(model)?;
-        crate::subscription_catalog::apply_runtime_env();
-        crate::provider::activation::ProviderActivation::horon_agent_subscription(model).apply_env()?;
-
-        // Always construct a fresh environment-derived runtime. Reusing the
-        // slot is unsafe because it may currently hold another
-        // OpenAI-compatible profile with different credentials and endpoint.
-        let base_url = std::env::var("HORON_AGENT_OPENROUTER_API_BASE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or_else(crate::subscription_catalog::configured_api_base)
-            .unwrap_or_else(|| crate::subscription_catalog::DEFAULT_HORON_AGENT_API_BASE.to_string());
-        let key_env = std::env::var("HORON_AGENT_OPENROUTER_API_KEY_NAME")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| crate::subscription_catalog::HORON_AGENT_API_KEY_ENV.to_string());
-        let env_file = std::env::var("HORON_AGENT_OPENROUTER_ENV_FILE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| crate::subscription_catalog::HORON_AGENT_ENV_FILE.to_string());
-        let api_key = crate::provider_catalog::load_api_key_from_env_or_config(&key_env, &env_file);
-        if api_key.is_none() {
-            anyhow::bail!(
-                "The HoronAgent subscription requires an API key, but {key_env} is not set. \
-                 Run `horon-agent login` or set {key_env}."
-            );
-        }
-        let models = crate::subscription_catalog::curated_models()
-            .iter()
-            .map(|entry| entry.id.to_string())
-            .collect::<Vec<_>>();
-        let runtime = external::build_direct_openai_compatible_runtime(external::DirectOpenAiCompatibleSpec {
-            base_url,
-            auth: horon_agent_provider_openai::ChatAuth::Bearer,
-            api_key,
-            display_name: crate::subscription_catalog::HORON_AGENT_PROVIDER_DISPLAY_NAME.to_string(),
-            profile_id: crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD.to_string(),
-            default_model: model.to_string(),
-            models,
-            headers: Vec::new(),
-            extra_body: None,
-        })?;
-        runtime.set_model(model)?;
-
-        let registry = ProviderRegistry::new(self);
-        registry.install_compatible_profile(
-            crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD,
-            Arc::clone(&runtime),
-        );
-        registry.set_active_compatible_profile(crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD);
-        self.set_active_provider(ActiveProvider::OpenAI);
-        Ok(())
-    }
-
-    fn set_model_on_provider_with_credential_modes(
+    fn set_model_on_builtin_provider(
         &self,
         provider: ActiveProvider,
         model: &str,
-        openai_credential_mode: Option<openai::OpenAICredentialMode>,
         prefer_active_profile: bool,
     ) -> Result<()> {
         let model = model.trim();
@@ -816,10 +526,7 @@ impl MultiProvider {
 
         match provider {
             ActiveProvider::OpenAI => {
-                if prefer_active_profile
-                    && openai_credential_mode.is_none()
-                    && let Some(runtime) = self.execution_provider()
-                {
+                if prefer_active_profile && let Some(runtime) = self.execution_provider() {
                     runtime.set_model(model)?;
                     self.set_active_provider(ActiveProvider::OpenAI);
                     return Ok(());
@@ -856,9 +563,6 @@ impl MultiProvider {
                          type = \"openai-compatible\" to config.toml and select it with --provider-profile <name>."
                     );
                 };
-                if let Some(mode) = openai_credential_mode {
-                    openai.set_credential_mode(mode)?;
-                }
                 // A pinned built-in route must not keep the previous direct
                 // profile as the execution target.
                 self.clear_active_compatible_profile();
@@ -900,11 +604,6 @@ impl MultiProvider {
 
         if let Some(openai) = self.openai_provider() {
             openai.reload_credentials();
-        } else if crate::auth::codex::load_credentials().is_ok()
-            && let Some(openai) = external::instantiate_expected_external_provider(external::OPENAI_RUNTIME)
-        {
-            crate::logging::info("Hot-initialized OpenAI provider after auth change");
-            *self.openai.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(openai);
         }
 
         if let Some(openai) = self.openai_provider() {
@@ -964,32 +663,7 @@ impl MultiProvider {
                 return self.set_model_on_named_provider_profile(profile_name, model);
             }
 
-            // A dual-auth config provider key (`anthropic-api`, `claude-oauth`,
-            // `openai-api`, ...) also pins the OAuth-vs-API credential. Carry
-            // that through so the active credential -- and every surface that
-            // reads it (header auth tag, model picker) -- matches the route the
-            // user configured, instead of leaving the provider in Auto mode
-            // (which prefers OAuth) and silently mislabeling an API default.
-            //
-            // Bare provider keys (`claude`, `anthropic`, `openai`) intentionally
-            // do NOT pin a credential: they keep Auto mode (so an API-only user
-            // with `default_provider = "claude"` still resolves their key
-            // instead of failing to load absent OAuth credentials).
-            let pinned = horon_agent_provider_core::AuthRoute::parse_explicit_credential_prefix(pref);
-            let openai_credential_mode = pinned.and_then(|route| {
-                matches!(route.provider, horon_agent_provider_core::DualAuthProvider::OpenAI).then(|| {
-                    match route.mode {
-                        horon_agent_provider_core::AuthMode::ApiKey => openai::OpenAICredentialMode::ApiKey,
-                        horon_agent_provider_core::AuthMode::Oauth => openai::OpenAICredentialMode::OAuth,
-                    }
-                })
-            });
-            return self.set_model_on_provider_with_credential_modes(
-                selection.active_provider(),
-                model,
-                openai_credential_mode,
-                true,
-            );
+            return self.set_model_on_provider(selection.active_provider(), model);
         }
 
         self.set_model(model)
@@ -1003,9 +677,6 @@ impl MultiProvider {
             // The active direct profile owns the model namespace; a bare id
             // would be reclassified by the family heuristics.
             return format!("{profile_id}:{current_model}");
-        }
-        if let Some(label) = self.selected_account_for_provider(active) {
-            return format!("openai-oauth@{label}:{current_model}");
         }
         let prefix = match active {
             ActiveProvider::OpenAI => {
@@ -1182,14 +853,8 @@ impl Provider for MultiProvider {
         Some(match openai.credential_mode() {
             openai::OpenAICredentialMode::OAuth => ResolvedCredential::Oauth,
             openai::OpenAICredentialMode::ApiKey => ResolvedCredential::ApiKey,
-            // Auto resolves to OAuth first when available, otherwise API key.
-            openai::OpenAICredentialMode::Auto => {
-                if crate::auth::codex::load_oauth_credentials().is_ok() {
-                    ResolvedCredential::Oauth
-                } else {
-                    ResolvedCredential::ApiKey
-                }
-            }
+            // Only an API key can resolve a credential now.
+            openai::OpenAICredentialMode::Auto => ResolvedCredential::ApiKey,
         })
     }
 
@@ -1210,16 +875,10 @@ impl Provider for MultiProvider {
     }
 
     fn oauth_account_label(&self) -> Option<String> {
-        self.selected_account_for_provider(self.active_provider())
+        None
     }
 
-    fn set_oauth_account(&self, label: Option<&str>) -> Result<()> {
-        if let Some(label) = label {
-            return self.set_model_on_saved_account("openai-oauth", label, &self.model());
-        }
-        if let Some(runtime) = self.openai_provider() {
-            runtime.set_oauth_account(None)?;
-        }
+    fn set_oauth_account(&self, _label: Option<&str>) -> Result<()> {
         self.invalidate_routes_memo();
         Ok(())
     }
@@ -1268,29 +927,6 @@ impl Provider for MultiProvider {
             anyhow::bail!("Model cannot be empty");
         }
 
-        if let Some((prefix, target_model)) = requested_model.split_once(':')
-            && let Some((method, label)) = prefix.split_once('@')
-            && method == "openai-oauth"
-        {
-            return self.set_model_on_saved_account(method, label, target_model);
-        }
-        // Bare model changes keep the selected login. Explicit generic routes
-        // opt back into the normal active-account preference.
-        if let Some((prefix, _)) = requested_model.split_once(':')
-            && let Some(route) = horon_agent_provider_core::AuthRoute::parse_explicit_credential_prefix(prefix)
-            && matches!(route.provider, horon_agent_provider_core::DualAuthProvider::OpenAI)
-            && let Some(runtime) = self.openai_provider()
-        {
-            runtime.set_oauth_account(None)?;
-        }
-
-        // `horon-agent:<model>` is the explicit spec for the HoronAgent subscription
-        // runtime. Without this it fell through to the active provider and
-        // `--model horon-agent:gpt-5.5` silently stayed on the previous model.
-        if let Some(target_model) = horon_agent_subscription_model_prefix(requested_model) {
-            return self.set_model_on_horon_agent_subscription(target_model);
-        }
-
         if let Some((profile, target_model)) = Self::openai_compatible_model_prefix(requested_model) {
             return self.set_model_on_openai_compatible_profile(profile, target_model);
         }
@@ -1306,27 +942,7 @@ impl Provider for MultiProvider {
         // Provider-prefixed model names are explicit routing directives. They
         // must never silently fall through to another provider when the target
         // is unavailable.
-        if let Some((target, prefix, target_model)) = explicit_model_provider_prefix(requested_model) {
-            // The single canonical parser decides whether this prefix pins a
-            // dual-auth credential (and which provider/mode). A bare `openai:`
-            // prefix routes without pinning a credential.
-            let pinned = horon_agent_provider_core::AuthRoute::parse_explicit_credential_prefix(prefix);
-            let openai_credential_mode = pinned.and_then(|route| {
-                matches!(route.provider, horon_agent_provider_core::DualAuthProvider::OpenAI).then(|| {
-                    match route.mode {
-                        horon_agent_provider_core::AuthMode::ApiKey => openai::OpenAICredentialMode::ApiKey,
-                        horon_agent_provider_core::AuthMode::Oauth => openai::OpenAICredentialMode::OAuth,
-                    }
-                })
-            });
-            if openai_credential_mode.is_some() {
-                return self.set_model_on_provider_with_credential_modes(
-                    target,
-                    target_model,
-                    openai_credential_mode,
-                    false,
-                );
-            }
+        if let Some((target, _prefix, target_model)) = explicit_model_provider_prefix(requested_model) {
             return self.set_model_on_explicit_provider(target, target_model);
         }
 
@@ -1364,13 +980,6 @@ impl Provider for MultiProvider {
     fn set_route_selection(&self, selection: &RouteSelection) -> Result<()> {
         if selection.model.trim().is_empty() {
             anyhow::bail!("Model cannot be empty");
-        }
-
-        // The subscription is a distinct endpoint/auth runtime, not a model
-        // alias. Handle its structured identity before converting other routes
-        // back into their legacy string specs.
-        if selection.runtime_key == RuntimeKey::HoronAgentSubscription {
-            return self.set_model_on_horon_agent_subscription(&selection.model);
         }
 
         // Routing-prefix policy lives once in RouteSelection::routed_model_spec
@@ -1688,7 +1297,6 @@ impl Provider for MultiProvider {
             );
         }
         self.set_active_provider(target);
-        self.auto_select_multi_account_for_provider(target);
         Ok(())
     }
 }

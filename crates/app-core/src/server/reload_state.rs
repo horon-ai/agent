@@ -426,7 +426,6 @@ fn wait_for_reload_handoff_event_blocking(
 pub struct ReloadSignal {
     pub hash: String,
     pub triggering_session: Option<String>,
-    pub prefer_selfdev_binary: bool,
     pub request_id: String,
 }
 
@@ -501,8 +500,8 @@ type ReloadAckChannel = (
     tokio::sync::watch::Receiver<Option<ReloadAck>>,
 );
 
-/// Global reload signal channel. The selfdev tool and debug commands fire this;
-/// the server awaits it instead of polling the filesystem.
+/// Global reload signal channel. Debug commands fire this; the server awaits it
+/// instead of polling the filesystem.
 static RELOAD_SIGNAL: std::sync::OnceLock<ReloadSignalChannel> = std::sync::OnceLock::new();
 
 static RELOAD_ACK: std::sync::OnceLock<ReloadAckChannel> = std::sync::OnceLock::new();
@@ -520,22 +519,20 @@ pub(super) fn reload_ack() -> &'static ReloadAckChannel {
     RELOAD_ACK.get_or_init(|| tokio::sync::watch::channel(None))
 }
 
-/// Send a reload signal to the server (called by selfdev tool / debug commands).
-pub fn send_reload_signal(hash: String, triggering_session: Option<String>, prefer_selfdev_binary: bool) -> String {
+/// Send a reload signal to the server (called by debug commands).
+pub fn send_reload_signal(hash: String, triggering_session: Option<String>) -> String {
     let request_id = crate::id::new_id("reload");
     crate::logging::info(&format!(
-        "send_reload_signal: request={} hash={} triggering_session={:?} prefer_selfdev_binary={} current_pid={}",
+        "send_reload_signal: request={} hash={} triggering_session={:?} current_pid={}",
         request_id,
         hash,
         triggering_session,
-        prefer_selfdev_binary,
         std::process::id()
     ));
     let (tx, _) = reload_signal();
     let _ = tx.send(Some(ReloadSignal {
         hash,
         triggering_session,
-        prefer_selfdev_binary,
         request_id: request_id.clone(),
     }));
     request_id
@@ -543,8 +540,8 @@ pub fn send_reload_signal(hash: String, triggering_session: Option<String>, pref
 
 pub fn acknowledge_reload_signal(signal: &ReloadSignal) {
     crate::logging::info(&format!(
-        "acknowledge_reload_signal: request={} hash={} triggering_session={:?} prefer_selfdev_binary={}",
-        signal.request_id, signal.hash, signal.triggering_session, signal.prefer_selfdev_binary
+        "acknowledge_reload_signal: request={} hash={} triggering_session={:?}",
+        signal.request_id, signal.hash, signal.triggering_session
     ));
     let (tx, _) = reload_ack();
     let _ = tx.send(Some(ReloadAck {

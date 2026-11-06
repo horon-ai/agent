@@ -148,8 +148,6 @@ Unix 도메인 소켓은 `crates/transport/src/windows.rs`의 Windows 명명된 
 
 세션 기록은 Unix와 같은 `crates/session-store` 이벤트 로그에 남는다. Windows에는 `O_NOFOLLOW`와 권한 비트가 없으므로, 잠금 파일과 원본 파일은 연 뒤에 일반 파일인지와 생성 시각이 열린 핸들과 같은지로 확인하고 소유자 전용 권한은 `%USERPROFILE%\.horon-agent`의 상속 ACL이 맡는다. 디렉터리 항목 자체는 flush하지 않는다. Windows에서는 디렉터리를 `FlushFileBuffers`용으로 열 수 없고 NTFS가 디렉터리 메타데이터를 직접 저널링하므로, 내구성 경계는 파일 자체의 `sync_all`이다.
 
-Windows 실행 단축키 설정은 `crates/setup-hints/src/windows_setup.rs`에 구현되어 있고 사용자가 명시적으로 동의한 뒤에만 설치한다.
-
 ## Windows 문제 보고
 
 GitHub 이슈에 다음을 적는다.

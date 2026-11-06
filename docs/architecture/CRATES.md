@@ -13,7 +13,7 @@
 - 루트 전용 동작, 저장소, 프로세스, TUI, 서버, 제공자 런타임 로직은 의존성 확산을 늘리지 않고 전체 의존 경계를 옮길 수 있을 때까지 루트 크레이트에 둔다.
 - 순환 의존과 `horon-agent-core`의 넓은 재내보내기를 통한 숨은 결합을 피한다.
 - 모든 호출 지점을 의도적으로 고치는 경우가 아니면 마이그레이션 중에도 serde 호환성과 루트 재내보내기를 유지한다.
-- 성공은 컴파일 영향으로 측정한다. 루트 수정이 줄고, 루트가 소유한 DTO가 줄고, 의존성 확산이 작아지고, 흔한 변경 뒤 `cargo check --profile selfdev`와 `selfdev build`가 빨라지는지를 본다.
+- 성공은 컴파일 영향으로 측정한다. 루트 수정이 줄고, 루트가 소유한 DTO가 줄고, 의존성 확산이 작아지고, 흔한 변경 뒤 `cargo check --profile selfdev`와 재빌드가 빨라지는지를 본다.
 
 ## 소유 규칙
 
@@ -26,7 +26,7 @@
 - 파일 시스템, 네트워크, 프로세스, TUI, 제공자 클라이언트, 전역 상태, 저장소 접근이 없어야 한다.
 - 의존성은 serde, chrono, 필요할 때 다른 타입 크레이트로 제한한다.
 
-예: `horon-agent-session-types`, `horon-agent-side-panel-types`, `horon-agent-selfdev-types`, `horon-agent-background-types`.
+예: `horon-agent-session-types`, `horon-agent-background-types`, `horon-agent-todo-policy`.
 
 ### 도메인 동작 모듈은 루트 런타임 동작을 소유한다
 
@@ -64,7 +64,7 @@
 
 1. 타입을 대상 크레이트로 옮긴다.
 2. 호출 지점을 유지하려고 기존 루트 경로를 `pub use ...`로 남긴다.
-3. 좁은 테스트와 selfdev 빌드·재적재를 검증한다.
+3. 좁은 테스트와 재적재를 검증한다.
 4. 나중에 하위 크레이트가 도메인 크레이트에 직접 의존할 수 있게 된 뒤에만 불필요해진 루트 재내보내기를 지운다.
 
 ## 이동 점검 목록
@@ -91,7 +91,7 @@
    - [ ] `cargo check --profile selfdev -p <type-crate> -p horon-agent --bin horon-agent`가 통과했는가?
    - [ ] 관련된 좁은 루트 테스트가 통과했는가?
    - [ ] `cargo fmt`가 통과했는가?
-   - [ ] 깨끗하게 커밋된 HEAD에서 selfdev 빌드와 재적재가 통과했는가?
+   - [ ] 깨끗하게 커밋된 HEAD에서 재적재가 통과했는가?
 
 ## 의존 경계 가드
 
@@ -109,7 +109,6 @@ python3 scripts/ci/check_dependency_boundaries.py
 
 모듈화 중에 관찰한 넓은 필터의 위험:
 
-- `side_panel`은 관계없는 고정 UI·레이아웃 테스트와 지연 벤치마크 테스트까지 고른다.
 - `usage`는 순수 사용량 테스트에 더해 앱 표시 테스트까지 고른다.
 - `session::`은 세션 영속화를 넘어 라이브 접속 서버 테스트와 피커 동작까지 고른다.
 - `ambient`는 ambient 모듈의 영속화·런타임 테스트를 넘어 설정과 스케줄 상태를 다루는 헬퍼 통합 테스트까지 고른다.
@@ -317,11 +316,10 @@ headless 전환 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gat
 
 ### 와이어 버전 상수는 소유 크레이트와 함께 적는다
 
-- 와이어 버전 상수는 한 계약으로 모으고, 각 상수의 소유 크레이트를 이름 옆에 적는다. 지금은 다섯 상수가 세 크레이트에 흩어져 있고 통합 타입은 아직 코드에 없다.
-- `PROTOCOL_VERSION`은 companion 로컬 소켓의 요청 의미가 호환 불가로 바뀔 때 올린다: `crates/base/src/companion_client.rs`.
+- 와이어 버전 상수는 한 계약으로 모으고, 각 상수의 소유 크레이트를 이름 옆에 적는다. 지금은 네 상수가 두 크레이트에 흩어져 있고 통합 타입은 아직 코드에 없다.
 - `REPLICATION_PROTOCOL_VERSION`은 이름이 같고 값도 같지만 소유가 둘이다. 저장소 쪽 원본 이벤트 교환 계약은 `crates/session-store/src/replication.rs`, 브리지 쪽 같은 이름의 두 번째 정의는 `crates/harness-api/src/replication.rs`다.
 - 하네스 API 프레임의 major와 minor는 `API_VERSION_MAJOR`와 `API_VERSION_MINOR`이고 둘 다 `crates/harness-api/src/lib.rs`가 소유한다. 지금 프레임의 `v`에는 major만 실리므로 minor가 올라가도 클라이언트가 알 수 없다. 통합할 때는 major와 minor를 한 쌍으로 싣고, 이름이 같은 두 복제 상수는 `STORE_REPLICATION_VERSION`과 `REPLICATION_VERSION`으로 갈라 값의 일치를 테스트가 단언하게 한다.
-- companion 소켓과 MCP는 이 계약에 넣지 않는다. MCP `protocol_version`은 상대 서버가 정하는 값이라 우리가 올리거나 내릴 수 없다.
+- MCP는 이 계약에 넣지 않는다. MCP `protocol_version`은 상대 서버가 정하는 값이라 우리가 올리거나 내릴 수 없다.
 
 ### IRC 버스 크레이트는 동기화 원시만 쓴다
 

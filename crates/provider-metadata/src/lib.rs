@@ -1,124 +1,4 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginProviderAuthKind {
-    OAuth,
-    ApiKey,
-    DeviceCode,
-    Cli,
-    Hybrid,
-    Local,
-}
-
-impl LoginProviderAuthKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::OAuth => "OAuth",
-            Self::ApiKey => "API key",
-            Self::DeviceCode => "device code",
-            Self::Cli => "CLI",
-            Self::Hybrid => "API key / CLI",
-            Self::Local => "local endpoint",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginProviderTarget {
-    AutoImport,
-    HoronAgent,
-    Claude,
-    ClaudeApiKey,
-    OpenAi,
-    OpenAiApiKey,
-    OpenRouter,
-    Bedrock,
-    Azure,
-    OpenAiCompatible(OpenAiCompatibleProfile),
-    Cursor,
-    GrokBuild,
-    Copilot,
-    Gemini,
-    Antigravity,
-    Google,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginProviderAuthStateKey {
-    ExternalImport,
-    HoronAgent,
-    Anthropic,
-    OpenAi,
-    Azure,
-    Bedrock,
-    OpenRouterLike,
-    Copilot,
-    Gemini,
-    Antigravity,
-    Cursor,
-    GrokBuild,
-    Google,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginProviderSurface {
-    CliLogin,
-    TuiLogin,
-    ServerBootstrap,
-    AutoInit,
-    AuthStatus,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoginProviderSurfaceOrder {
-    pub cli_login: Option<u8>,
-    pub tui_login: Option<u8>,
-    pub server_bootstrap: Option<u8>,
-    pub auto_init: Option<u8>,
-    pub auth_status: Option<u8>,
-}
-
-impl LoginProviderSurfaceOrder {
-    pub const fn new(
-        cli_login: Option<u8>,
-        tui_login: Option<u8>,
-        server_bootstrap: Option<u8>,
-        auto_init: Option<u8>,
-        auth_status: Option<u8>,
-    ) -> Self {
-        Self {
-            cli_login,
-            tui_login,
-            server_bootstrap,
-            auto_init,
-            auth_status,
-        }
-    }
-
-    pub const fn for_surface(self, surface: LoginProviderSurface) -> Option<u8> {
-        match surface {
-            LoginProviderSurface::CliLogin => self.cli_login,
-            LoginProviderSurface::TuiLogin => self.tui_login,
-            LoginProviderSurface::ServerBootstrap => self.server_bootstrap,
-            LoginProviderSurface::AutoInit => self.auto_init,
-            LoginProviderSurface::AuthStatus => self.auth_status,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LoginProviderDescriptor {
-    pub id: &'static str,
-    pub display_name: &'static str,
-    pub auth_kind: LoginProviderAuthKind,
-    pub auth_state_key: LoginProviderAuthStateKey,
-    pub auth_status_method: &'static str,
-    pub aliases: &'static [&'static str],
-    pub menu_detail: &'static str,
-    pub recommended: bool,
-    pub target: LoginProviderTarget,
-    pub order: LoginProviderSurfaceOrder,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenAiCompatibleProfile {
     pub id: &'static str,
     pub display_name: &'static str,
@@ -144,81 +24,23 @@ pub struct ResolvedOpenAiCompatibleProfile {
 
 mod catalog;
 
+use catalog::OPENAI_COMPAT_PROFILES;
 pub use catalog::*;
-use catalog::{LOGIN_PROVIDERS, OPENAI_COMPAT_PROFILES};
 
 pub fn openai_compatible_profiles() -> &'static [OpenAiCompatibleProfile] {
     &OPENAI_COMPAT_PROFILES
 }
 
-pub fn login_providers() -> &'static [LoginProviderDescriptor] {
-    &LOGIN_PROVIDERS
-}
-
-fn login_providers_for_surface(surface: LoginProviderSurface) -> Vec<LoginProviderDescriptor> {
-    let mut providers = login_providers()
-        .iter()
-        .copied()
-        .filter(|provider| provider.order.for_surface(surface).is_some())
-        .collect::<Vec<_>>();
-    providers.sort_by_key(|provider| provider.order.for_surface(surface).unwrap_or(u8::MAX));
-    providers
-}
-
-pub fn cli_login_providers() -> Vec<LoginProviderDescriptor> {
-    login_providers_for_surface(LoginProviderSurface::CliLogin)
-}
-
-pub fn tui_login_providers() -> Vec<LoginProviderDescriptor> {
-    login_providers_for_surface(LoginProviderSurface::TuiLogin)
-}
-
-pub fn server_bootstrap_login_providers() -> Vec<LoginProviderDescriptor> {
-    login_providers_for_surface(LoginProviderSurface::ServerBootstrap)
-}
-
-pub fn auto_init_login_providers() -> Vec<LoginProviderDescriptor> {
-    login_providers_for_surface(LoginProviderSurface::AutoInit)
-}
-
-pub fn auth_status_login_providers() -> Vec<LoginProviderDescriptor> {
-    login_providers_for_surface(LoginProviderSurface::AuthStatus)
-}
-
-pub fn resolve_login_provider(input: &str) -> Option<LoginProviderDescriptor> {
-    let normalized = normalize_provider_input(input)?;
-    login_providers()
-        .iter()
-        .copied()
-        .find(|provider| provider.id == normalized || provider.aliases.iter().any(|alias| *alias == normalized))
-}
-
-/// Resolve a login provider by id, alias, or display name.
+/// Resolve a built-in OpenAI-compatible profile by its id.
 ///
-/// Login completion events carry the human-readable provider label (e.g.
-/// "Anthropic API") rather than the canonical id/alias, so the stricter
-/// [`resolve_login_provider`] (id/alias only) misses them. Auth-change routing
-/// needs to map those labels back to a provider id; matching the display name
-/// here keeps the post-login model refresh attributed to the correct provider.
-pub fn resolve_login_provider_loose(input: &str) -> Option<LoginProviderDescriptor> {
-    if let Some(provider) = resolve_login_provider(input) {
-        return Some(provider);
-    }
-    let normalized = normalize_provider_input(input)?;
-    login_providers()
+/// This is the only provider-id resolver: the CLI `--provider` value, profile
+/// selection, and auth metadata all resolve through profile ids.
+pub fn openai_compatible_profile_by_id(id: &str) -> Option<OpenAiCompatibleProfile> {
+    let normalized = id.trim().to_ascii_lowercase();
+    openai_compatible_profiles()
         .iter()
         .copied()
-        .find(|provider| provider.display_name.to_ascii_lowercase() == normalized)
-}
-
-pub fn resolve_login_selection(input: &str, providers: &[LoginProviderDescriptor]) -> Option<LoginProviderDescriptor> {
-    let trimmed = input.trim();
-    if let Ok(index) = trimmed.parse::<usize>() {
-        return index.checked_sub(1).and_then(|idx| providers.get(idx)).copied();
-    }
-
-    let provider = resolve_login_provider(trimmed)?;
-    providers.iter().copied().find(|candidate| candidate.id == provider.id)
+        .find(|profile| profile.id == normalized)
 }
 
 pub fn is_safe_env_key_name(name: &str) -> bool {
@@ -283,14 +105,6 @@ fn allows_insecure_http_host(host: &str) -> bool {
     false
 }
 
-fn normalize_provider_input(input: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(trimmed.to_ascii_lowercase())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,27 +122,31 @@ mod tests {
     }
 
     #[test]
-    fn zai_login_identifies_coding_plan_subscription_key() {
-        let provider = resolve_login_provider("zai").expect("Z.AI provider");
-        assert_eq!(provider.auth_kind, LoginProviderAuthKind::ApiKey);
-        assert_eq!(provider.menu_detail, "Coding Plan subscription API key");
+    fn profile_ids_resolve_back_to_the_same_profile() {
+        for profile in openai_compatible_profiles() {
+            assert_eq!(
+                openai_compatible_profile_by_id(profile.id).map(|found| found.id),
+                Some(profile.id)
+            );
+            assert_eq!(
+                openai_compatible_profile_by_id(&profile.id.to_ascii_uppercase()).map(|found| found.id),
+                Some(profile.id)
+            );
+        }
+        assert_eq!(openai_compatible_profile_by_id(""), None);
+        assert_eq!(openai_compatible_profile_by_id("no-such-profile"), None);
+    }
 
-        let LoginProviderTarget::OpenAiCompatible(profile) = provider.target else {
-            panic!("Z.AI must use its OpenAI-compatible Coding Plan endpoint");
-        };
+    #[test]
+    fn zai_profile_keeps_its_coding_plan_endpoint() {
+        let profile = openai_compatible_profile_by_id("zai").expect("Z.AI profile");
         assert_eq!(profile.api_base, "https://api.z.ai/api/coding/paas/v4");
         assert_eq!(profile.setup_url, "https://docs.z.ai/devpack/quick-start");
     }
 
     #[test]
-    fn orcarouter_login_identifies_openai_compatible_endpoint() {
-        let provider =
-            resolve_login_selection("orcarouter", &cli_login_providers()).expect("OrcaRouter CLI login provider");
-        let LoginProviderTarget::OpenAiCompatible(profile) = provider.target else {
-            panic!("OrcaRouter should use the OpenAI-compatible runtime");
-        };
-
-        assert_eq!(profile.id, "orcarouter");
+    fn orcarouter_profile_uses_its_openai_compatible_endpoint() {
+        let profile = openai_compatible_profile_by_id("orcarouter").expect("OrcaRouter profile");
         assert_eq!(profile.api_base, "https://api.orcarouter.ai/v1");
         assert_eq!(profile.api_key_env, "ORCAROUTER_API_KEY");
         assert!(profile.requires_api_key);
@@ -373,64 +191,19 @@ mod tests {
     }
 
     #[test]
-    fn resolve_login_provider_loose_resolves_every_descriptor_by_id_and_display_name() {
-        // Guards the LoginCompleted attribution path: the TUI publishes either a
-        // descriptor id (OAuth logins) or a display label (API-key paste logins),
-        // and both must resolve so the post-login auth-change refresh is
-        // attributed to the right provider instead of falling back to the
-        // session's active provider.
-        for descriptor in login_providers() {
-            assert_eq!(
-                resolve_login_provider_loose(descriptor.id).map(|d| d.id),
-                Some(descriptor.id),
-                "descriptor id {:?} should resolve",
-                descriptor.id
-            );
-            assert_eq!(
-                resolve_login_provider_loose(descriptor.display_name).map(|d| d.id),
-                Some(descriptor.id),
-                "display name {:?} (id {:?}) should resolve",
-                descriptor.display_name,
-                descriptor.id
-            );
-        }
-    }
-
-    #[test]
     fn minimax_profile_uses_official_openai_compatible_configuration() {
         assert_eq!(MINIMAX_PROFILE.api_base, "https://api.minimax.io/v1");
         assert_eq!(MINIMAX_PROFILE.api_key_env, "MINIMAX_API_KEY");
     }
 
     #[test]
-    fn novita_profile_and_login_are_available_on_all_surfaces() {
+    fn novita_profile_uses_its_documented_openai_compatible_configuration() {
         assert_eq!(NOVITA_PROFILE.api_base, "https://api.novita.ai/openai");
         assert_eq!(NOVITA_PROFILE.api_key_env, "NOVITA_API_KEY");
         assert_eq!(NOVITA_PROFILE.env_file, "novita.env");
         assert_eq!(NOVITA_PROFILE.default_model, Some("zai-org/glm-5.3"));
         const { assert!(NOVITA_PROFILE.requires_api_key) };
         assert!(openai_compatible_profiles().contains(&NOVITA_PROFILE));
-        for input in ["novita", "novita-ai", "novita.ai", " NOVITA "] {
-            assert_eq!(resolve_login_provider(input), Some(NOVITA_LOGIN_PROVIDER));
-        }
-        assert_eq!(resolve_login_provider_loose("Novita AI"), Some(NOVITA_LOGIN_PROVIDER));
-        assert_eq!(NOVITA_LOGIN_PROVIDER.auth_kind, LoginProviderAuthKind::ApiKey);
-        assert_eq!(
-            NOVITA_LOGIN_PROVIDER.target,
-            LoginProviderTarget::OpenAiCompatible(NOVITA_PROFILE)
-        );
-        for providers in [
-            cli_login_providers(),
-            tui_login_providers(),
-            server_bootstrap_login_providers(),
-            auto_init_login_providers(),
-            auth_status_login_providers(),
-        ] {
-            assert_eq!(
-                resolve_login_selection("novita", &providers),
-                Some(NOVITA_LOGIN_PROVIDER)
-            );
-        }
     }
 
     #[test]
@@ -442,10 +215,6 @@ mod tests {
             NVIDIA_NIM_PROFILE.default_model,
             Some("nvidia/llama-3.1-nemotron-ultra-253b-v1")
         );
-        assert!(matches!(
-            NVIDIA_NIM_LOGIN_PROVIDER.target,
-            LoginProviderTarget::OpenAiCompatible(profile) if profile.id == "nvidia-nim"
-        ));
     }
 
     #[test]
@@ -461,15 +230,6 @@ mod tests {
         );
         assert_eq!(CEREBRAS_PROFILE.default_model, Some("gpt-oss-120b"));
         const { assert!(CEREBRAS_PROFILE.requires_api_key) };
-        assert_eq!(CEREBRAS_LOGIN_PROVIDER.auth_kind, LoginProviderAuthKind::ApiKey);
-        assert_eq!(
-            CEREBRAS_LOGIN_PROVIDER.auth_state_key,
-            LoginProviderAuthStateKey::OpenRouterLike
-        );
-        assert!(matches!(
-            CEREBRAS_LOGIN_PROVIDER.target,
-            LoginProviderTarget::OpenAiCompatible(profile) if profile.id == "cerebras"
-        ));
     }
 
     #[test]
@@ -481,10 +241,6 @@ mod tests {
         assert_eq!(BELVEDIR_PROFILE.env_file, "belvedir.env");
         assert_eq!(BELVEDIR_PROFILE.default_model, Some("auto"));
         const { assert!(BELVEDIR_PROFILE.requires_api_key) };
-
-        let provider = resolve_login_provider("belvedir.ai").expect("Belvedir alias resolves");
-        assert_eq!(provider.id, "belvedir");
-        assert_eq!(provider.target, LoginProviderTarget::OpenAiCompatible(BELVEDIR_PROFILE));
     }
 
     #[test]
@@ -500,28 +256,6 @@ mod tests {
         assert_eq!(OLLAMA_PROFILE.default_model, None);
         const {
             assert!(!OLLAMA_PROFILE.requires_api_key);
-        }
-
-        assert_eq!(OLLAMA_LOGIN_PROVIDER.auth_kind, LoginProviderAuthKind::Local);
-        assert_eq!(OLLAMA_LOGIN_PROVIDER.auth_status_method, "local endpoint");
-        assert!(matches!(
-            OLLAMA_LOGIN_PROVIDER.target,
-            LoginProviderTarget::OpenAiCompatible(profile) if profile.id == "ollama"
-        ));
-    }
-
-    #[test]
-    fn matrix_login_provider_ids_and_aliases_are_unique() {
-        let mut seen = HashSet::new();
-        for provider in login_providers() {
-            assert!(
-                seen.insert(provider.id),
-                "duplicate login provider identifier: {}",
-                provider.id
-            );
-            for alias in provider.aliases {
-                assert!(seen.insert(*alias), "duplicate login provider alias: {}", alias);
-            }
         }
     }
 }

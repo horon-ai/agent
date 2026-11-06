@@ -67,9 +67,8 @@ impl Config {
 
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e))?;
-        let mut config = toml::from_str::<Self>(&content)
+        let config = toml::from_str::<Self>(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
-        config.display.apply_legacy_compat();
         // An explicit discovery opt-out is authoritative. Older saves wrote the
         // default endpoint too, so table shape cannot establish user intent.
         Ok(Some(config))
@@ -150,13 +149,6 @@ impl Config {
             model.unwrap_or("(none)"),
             provider.unwrap_or("(auto)")
         ));
-        // The first auto-switch account is the default, so the order follows
-        // whichever path changed it. A failure here must not undo the save.
-        if let Some(route) = provider
-            && let Err(error) = crate::auth::account_pool::sync_order_with_default_route(route)
-        {
-            crate::logging::error(&format!("Could not sync account order: {error}"));
-        }
         Ok(())
     }
 
@@ -218,180 +210,6 @@ impl Config {
             value.unwrap_or("(none)")
         ));
         Ok(())
-    }
-
-    /// Update the persisted default alignment preference.
-    pub fn set_display_centered(centered: bool) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.display.centered = centered;
-        cfg.save()?;
-        crate::logging::info(&format!("Saved display.centered to config: {}", centered));
-        Ok(())
-    }
-
-    /// Update the persisted reasoning display mode preference.
-    pub fn set_reasoning_display(mode: ReasoningDisplayMode) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.display.set_reasoning_display(mode);
-        cfg.save()?;
-        crate::logging::info(&format!("Saved display.reasoning_display to config: {}", mode.label()));
-        Ok(())
-    }
-
-    /// Update the persisted compact-notifications preference.
-    pub fn set_compact_notifications(compact: bool) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.display.compact_notifications = compact;
-        cfg.save()?;
-        crate::logging::info(&format!("Saved display.compact_notifications to config: {}", compact));
-        Ok(())
-    }
-
-    /// Update the persisted pinned-todos preference.
-    pub fn set_pin_todos(pin: bool) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.display.pin_todos = pin;
-        cfg.save()?;
-        crate::logging::info(&format!("Saved display.pin_todos to config: {}", pin));
-        Ok(())
-    }
-
-    /// Update the persisted show-agentgrep-output preference.
-    pub fn set_show_agentgrep_output(show: bool) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.display.show_agentgrep_output = show;
-        cfg.save()?;
-        crate::logging::info(&format!("Saved display.show_agentgrep_output to config: {}", show));
-        Ok(())
-    }
-
-    /// Update the persisted tool-call-details preference.
-    pub fn set_tool_call_details(show: bool) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.display.tool_call_details = show;
-        cfg.save()?;
-        crate::logging::info(&format!("Saved display.tool_call_details to config: {}", show));
-        Ok(())
-    }
-
-    /// Persist the baked global launch-hotkey mapping.
-    ///
-    /// Auto-import calls this once with the per-repo chord -> directory layout it
-    /// inferred. `imported` is set so the bake never runs twice and later manual
-    /// edits are not clobbered.
-    pub fn set_launch_hotkeys(
-        entries: Vec<horon_agent_config_types::LaunchHotkeyEntry>,
-        enabled: bool,
-    ) -> anyhow::Result<()> {
-        let mut cfg = Self::load_for_update()?;
-        cfg.launch_hotkeys.entries = entries;
-        cfg.launch_hotkeys.enabled = Some(enabled);
-        cfg.launch_hotkeys.imported = true;
-        cfg.save()?;
-        crate::logging::info(&format!(
-            "Saved {} launch hotkey(s) to config (enabled={enabled})",
-            cfg.launch_hotkeys.entries.len()
-        ));
-        Ok(())
-    }
-
-    /// One-time bake of per-repo launch hotkeys from session history.
-    ///
-    /// Scans `~/.horon-agent/sessions` for the directories the user works in most,
-    /// ranks them (recency-weighted, git-root folded, home excluded), and writes
-    /// a static chord -> directory mapping into config: top repo on `Cmd+;`, home
-    /// on `Cmd+'`, and the next repos on `Cmd+[` / `Cmd+]` / `Cmd+\`.
-    ///
-    /// Idempotent and side-effect-light:
-    /// - Runs only on platforms with global launch hotkeys (macOS, Linux,
-    ///   Windows).
-    /// - No-ops once `launch_hotkeys.imported` is set, so it bakes exactly once
-    ///   and never overwrites later manual edits.
-    /// - No-ops when there are not at least two rankable repos, so we do not
-    ///   commit a degenerate "everything is home" layout on a fresh machine; the
-    ///   built-in 3 hotkeys keep working until there is real history.
-    ///
-    /// Returns `true` when it wrote a baked mapping (so the caller can trigger a
-    /// hotkey reinstall), `false` otherwise. Best-effort: errors are logged and
-    /// swallowed.
-    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub fn bake_launch_hotkeys_once() -> bool {
-        use horon_agent_import_core::repo_ranking;
-
-        let cfg = Self::load();
-        if cfg.launch_hotkeys.imported {
-            return false;
-        }
-        let Ok(horon_agent_dir) = horon_agent_dir() else {
-            return false;
-        };
-        let sessions_dir = horon_agent_dir.join("sessions");
-        let Some(home) = dirs::home_dir() else {
-            return false;
-        };
-
-        // Cheap gate: count session files without reading them. Skip the full
-        // scan until there is at least a little history, so brand-new installs do
-        // not pay the read cost (and we do not bake a degenerate layout).
-        let session_count = std::fs::read_dir(&sessions_dir)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|e| e.file_name().to_str().is_some_and(|n| n.ends_with(".json")))
-                    .count()
-            })
-            .unwrap_or(0);
-        const MIN_SESSIONS_TO_BAKE: usize = 3;
-        const GIVE_UP_SESSION_COUNT: usize = 50;
-        if session_count < MIN_SESSIONS_TO_BAKE {
-            return false;
-        }
-
-        let plan = repo_ranking::plan_launch_hotkeys_from_sessions(&sessions_dir, &home, chrono::Utc::now());
-
-        // `plan` always contains the home slot; a length of 1 means no rankable
-        // repos were found.
-        if plan.len() < 2 {
-            // If the user has lots of history but still no rankable repos, stop
-            // re-scanning on every launch: mark imported with no custom entries
-            // (the built-in 3 hotkeys keep working).
-            if session_count >= GIVE_UP_SESSION_COUNT
-                && let Err(err) = Self::set_launch_hotkeys(Vec::new(), true)
-            {
-                crate::logging::warn(&format!("launch hotkey bake give-up persist failed: {err}"));
-            }
-            crate::logging::info("launch hotkey bake: not enough repo history yet; keeping defaults");
-            return false;
-        }
-
-        let entries: Vec<horon_agent_config_types::LaunchHotkeyEntry> = plan
-            .into_iter()
-            .map(|p| horon_agent_config_types::LaunchHotkeyEntry {
-                chord: p.chord,
-                // Home keeps the dynamic sentinel so it tracks `$HOME`; repos are
-                // baked to absolute paths.
-                dir: if p.label == "home" { "$HOME".to_string() } else { p.dir },
-                label: p.label,
-                self_dev: false,
-            })
-            .collect();
-
-        match Self::set_launch_hotkeys(entries, true) {
-            Ok(()) => {
-                crate::logging::info("launch hotkey bake: wrote per-repo mapping to config");
-                true
-            }
-            Err(err) => {
-                crate::logging::warn(&format!("launch hotkey bake failed to persist: {err}"));
-                false
-            }
-        }
-    }
-
-    /// No-op bake on platforms without global launch hotkeys.
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-    pub fn bake_launch_hotkeys_once() -> bool {
-        false
     }
 
     /// One-time migration: flip a persisted legacy `swarm_spawn_mode =
@@ -472,87 +290,6 @@ impl Config {
             }
             Err(err) => {
                 crate::logging::warn(&format!("swarm_spawn_mode migration failed to write config: {err}"));
-                false
-            }
-        }
-    }
-
-    /// One-time migration: flip a persisted `idle_animation = true` to `false`.
-    ///
-    /// The idle animation is being turned off for everyone. Users who toggled
-    /// it on earlier (or had the old `true` default baked in by a full
-    /// `Config::save()`) get flipped off once. This rewrites exactly that one
-    /// line (preserving the rest of the file byte-for-byte) and drops a marker
-    /// so it runs at most once. A user who explicitly re-enables it after the
-    /// migration is never flipped again.
-    ///
-    /// Returns `true` when it rewrote the config. Best-effort: errors are
-    /// logged and swallowed.
-    pub fn migrate_idle_animation_off_once() -> bool {
-        let Ok(dir) = horon_agent_dir() else {
-            return false;
-        };
-        let marker = dir.join("migrations").join("idle-animation-off");
-        if marker.exists() {
-            return false;
-        }
-        let write_marker = || {
-            if let Some(parent) = marker.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(&marker, "idle_animation forced migration: true -> false\n");
-        };
-
-        let path = dir.join("config.toml");
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            // No config file (fresh install): nothing to migrate.
-            write_marker();
-            return false;
-        };
-
-        let mut changed = false;
-        let migrated: Vec<String> = content
-            .lines()
-            .map(|line| {
-                if changed {
-                    return line.to_string();
-                }
-                let trimmed = line.trim_start();
-                let Some(rest) = trimmed.strip_prefix("idle_animation") else {
-                    return line.to_string();
-                };
-                let Some(value) = rest.trim_start().strip_prefix('=') else {
-                    return line.to_string();
-                };
-                let value = value.split('#').next().unwrap_or("");
-                if value.trim() == "true" {
-                    changed = true;
-                    let indent = &line[..line.len() - trimmed.len()];
-                    format!("{indent}idle_animation = false")
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect();
-
-        if !changed {
-            write_marker();
-            return false;
-        }
-
-        let mut new_content = migrated.join("\n");
-        if content.ends_with('\n') {
-            new_content.push('\n');
-        }
-        match std::fs::write(&path, new_content) {
-            Ok(()) => {
-                Self::invalidate_cache();
-                write_marker();
-                crate::logging::info("Migrated idle_animation \"true\" to \"false\" in config.toml");
-                true
-            }
-            Err(err) => {
-                crate::logging::warn(&format!("idle_animation migration failed to write config: {err}"));
                 false
             }
         }

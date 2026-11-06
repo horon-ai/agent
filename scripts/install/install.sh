@@ -346,23 +346,7 @@ fi
 
 if [ "$OS" = "Darwin" ]; then
   xattr -d com.apple.quarantine "$launcher_path" 2>/dev/null || true
-  # Generate the architecture-matched, faceless notification broker from the
-  # installed binary and remove legacy CLI launcher bundles from ~/Applications.
-  # HoronAgent Desktop is the only Spotlight/Launchpad entry. Best-effort here: the
-  # first interactive horon-agent launch performs the same version-gated repair.
-  if "$launcher_path" setup-launcher </dev/null >/dev/null 2>&1; then
-    info "Installed macOS turn-notification helper."
-  fi
 fi
-
-hotkey_setup_ready=false
-case "$OS" in
-Darwin|Linux)
-  if "$launcher_path" setup-hotkey </dev/null >/dev/null 2>&1; then
-    hotkey_setup_ready=true
-  fi
-  ;;
-esac
 
 # Retire any background server still running the old binary so the freshly
 # installed version is picked up without the user having to kill a daemon by
@@ -520,14 +504,6 @@ else
   echo ""
   info "✅ horon-agent $VERSION installed successfully!"
   echo ""
-
-  if [ "$OS" = "Darwin" ]; then
-    if [ "$hotkey_setup_ready" = true ]; then
-      info "Global hotkey ready: Cmd+; launches a new horon-agent from anywhere, system-wide"
-    else
-      info "Tip: run 'horon-agent setup-hotkey' so Cmd+; launches horon-agent system-wide on macOS"
-    fi
-  fi
 
   if command -v horon-agent >/dev/null 2>&1; then
     info "Run 'horon-agent' to get started."

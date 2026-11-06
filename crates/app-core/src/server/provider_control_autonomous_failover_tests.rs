@@ -46,15 +46,6 @@ impl Drop for IsolatedHome {
     }
 }
 
-/// Eligibility reads the real account-pool file, so tests write it in full.
-fn save_account_pool(members: &[&str]) {
-    let pool = crate::auth::account_pool::AccountPool {
-        members: members.iter().map(|member| (*member).to_string()).collect(),
-        excluded: Vec::new(),
-    };
-    pool.save().expect("save account pool");
-}
-
 fn api_key_route(model: &str) -> ModelRoute {
     ModelRoute {
         model: model.to_string(),
@@ -157,11 +148,10 @@ fn test_agent(model: &str, routes: Vec<ModelRoute>) -> (Arc<FailoverTestProvider
     (provider, agent)
 }
 
-/// Failover switched on, `openai-api` enrolled in the pool, catalog supplied.
+/// Failover switched on, catalog supplied.
 fn eligible_setup(routes: Vec<ModelRoute>) -> (IsolatedHome, Arc<FailoverTestProvider>, Agent) {
     let home = IsolatedHome::new();
     home.write_provider_settings(true);
-    save_account_pool(&["openai-api"]);
     let (provider, agent) = test_agent("test-model-a", routes);
     (home, provider, agent)
 }
@@ -171,12 +161,7 @@ async fn autonomous_failover_disabled_never_switches_routes() {
     let _guard = crate::storage::lock_test_env();
     let home = IsolatedHome::new();
     home.write_provider_settings(false);
-    save_account_pool(&["openai-api"]);
     let (provider, mut agent) = test_agent("test-model-a", vec![api_key_route("gpt-5.4")]);
-    assert!(
-        crate::provider::MultiProvider::is_failover_route_pool_approved("openai-api:gpt-5.4"),
-        "precondition: only the settings flag stands between this prompt and a switch"
-    );
 
     let error = apply_autonomous_failover(&failover_prompt(Some("openai-api:gpt-5.4")), &mut agent)
         .await
@@ -191,10 +176,6 @@ async fn autonomous_failover_disabled_never_switches_routes() {
 async fn eligible_prompt_switches_the_route_to_the_catalog_selection() {
     let _guard = crate::storage::lock_test_env();
     let (_home, provider, mut agent) = eligible_setup(vec![api_key_route("gpt-5.4")]);
-    assert!(
-        crate::provider::MultiProvider::is_failover_route_pool_approved("openai-api:gpt-5.4"),
-        "precondition: the pool makes this exact route eligible"
-    );
     assert_eq!(agent.provider_model(), "test-model-a");
 
     apply_autonomous_failover(&failover_prompt(Some("openai-api:gpt-5.4")), &mut agent)
@@ -224,26 +205,6 @@ async fn a_cold_catalog_still_applies_the_self_describing_route() {
     let applied = provider.applied_routes();
     assert_eq!(applied.len(), 1);
     assert_eq!(applied[0].routed_model_spec(), "openai-api:gpt-5.4");
-}
-
-#[tokio::test]
-async fn ineligible_target_route_is_refused_without_touching_the_route() {
-    let _guard = crate::storage::lock_test_env();
-    let home = IsolatedHome::new();
-    home.write_provider_settings(true);
-    // No pool membership: metered API keys stay out of automatic rotation.
-    let (provider, mut agent) = test_agent("test-model-a", vec![api_key_route("gpt-5.4")]);
-    assert!(!crate::provider::MultiProvider::is_failover_route_pool_approved(
-        "openai-api:gpt-5.4"
-    ));
-
-    let error = apply_autonomous_failover(&failover_prompt(Some("openai-api:gpt-5.4")), &mut agent)
-        .await
-        .expect_err("an ineligible account must be refused");
-
-    assert!(error.to_string().contains("no longer eligible"), "{error}");
-    assert_eq!(agent.provider_model(), "test-model-a", "the route must not move");
-    assert!(provider.applied_routes().is_empty());
 }
 
 #[tokio::test]

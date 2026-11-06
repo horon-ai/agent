@@ -34,7 +34,7 @@ pub fn github_public_api_token() -> Option<String> {
 }
 
 fn gh_cli_token() -> Option<String> {
-    if !crate::auth::command_exists("gh") {
+    if !crate::auth::env_facts::binary_on_path("gh") {
         return None;
     }
     let output = std::process::Command::new("gh").args(["auth", "token"]).output().ok()?;

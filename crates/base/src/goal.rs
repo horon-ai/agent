@@ -6,26 +6,6 @@ use std::path::{Path, PathBuf};
 
 pub use horon_agent_task_types::{Goal, GoalMilestone, GoalScope, GoalStatus, GoalStep, GoalUpdate};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GoalDisplayMode {
-    Auto,
-    Focus,
-    UpdateOnly,
-    None,
-}
-
-impl GoalDisplayMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "auto" => Some(Self::Auto),
-            "focus" => Some(Self::Focus),
-            "update_only" => Some(Self::UpdateOnly),
-            "none" => Some(Self::None),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct GoalCreateInput {
     pub id: Option<String>,
@@ -64,12 +44,6 @@ struct GoalAttachment {
     project_hash: Option<String>,
     title: String,
     attached_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GoalDisplayResult {
-    pub goal: Goal,
-    pub snapshot: crate::side_panel::SidePanelSnapshot,
 }
 
 pub fn create_goal(input: GoalCreateInput, working_dir: Option<&Path>) -> Result<Goal> {
@@ -237,130 +211,6 @@ pub fn load_attached_goal(session_id: &str, working_dir: Option<&Path>) -> Resul
     load_goal(&attachment.goal_id, Some(attachment.scope), working_dir)
 }
 
-pub fn open_goals_overview_for_session(
-    session_id: &str,
-    working_dir: Option<&Path>,
-    focus: bool,
-) -> Result<crate::side_panel::SidePanelSnapshot> {
-    let goals = list_relevant_goals(working_dir)?;
-    crate::side_panel::write_markdown_page(
-        session_id,
-        "goals",
-        Some("Goals"),
-        &render_goals_overview(&goals),
-        focus,
-    )
-}
-
-pub fn refresh_goals_overview_for_session(
-    session_id: &str,
-    working_dir: Option<&Path>,
-) -> Result<Option<crate::side_panel::SidePanelSnapshot>> {
-    let snapshot = crate::side_panel::snapshot_for_session(session_id)?;
-    if !snapshot.pages.iter().any(|page| page.id == "goals") {
-        return Ok(None);
-    }
-
-    let focus = snapshot.focused_page_id.as_deref() == Some("goals");
-    Ok(Some(open_goals_overview_for_session(session_id, working_dir, focus)?))
-}
-
-pub fn open_goal_for_session(
-    session_id: &str,
-    working_dir: Option<&Path>,
-    id: &str,
-    explicit_focus: bool,
-) -> Result<Option<GoalDisplayResult>> {
-    let Some(goal) = load_goal(id, None, working_dir)? else {
-        return Ok(None);
-    };
-    let snapshot = write_goal_page(
-        session_id,
-        working_dir,
-        &goal,
-        if explicit_focus {
-            GoalDisplayMode::Focus
-        } else {
-            GoalDisplayMode::Auto
-        },
-    )?;
-    Ok(Some(GoalDisplayResult { goal, snapshot }))
-}
-
-pub fn resume_goal_for_session(
-    session_id: &str,
-    working_dir: Option<&Path>,
-    explicit_focus: bool,
-) -> Result<Option<GoalDisplayResult>> {
-    let Some(goal) = resume_goal(session_id, working_dir)? else {
-        return Ok(None);
-    };
-    let snapshot = write_goal_page(
-        session_id,
-        working_dir,
-        &goal,
-        if explicit_focus {
-            GoalDisplayMode::Focus
-        } else {
-            GoalDisplayMode::Auto
-        },
-    )?;
-    Ok(Some(GoalDisplayResult { goal, snapshot }))
-}
-
-pub fn write_goal_page(
-    session_id: &str,
-    working_dir: Option<&Path>,
-    goal: &Goal,
-    display: GoalDisplayMode,
-) -> Result<crate::side_panel::SidePanelSnapshot> {
-    let page_id = goal_page_id(&goal.id);
-    let page_title = format!("Goal: {}", goal.title);
-    let focus = match display {
-        GoalDisplayMode::None => false,
-        GoalDisplayMode::Focus => true,
-        GoalDisplayMode::UpdateOnly => false,
-        GoalDisplayMode::Auto => should_focus_goal_page(session_id, &page_id)?,
-    };
-    let snapshot = crate::side_panel::write_markdown_page(
-        session_id,
-        &page_id,
-        Some(&page_title),
-        &render_goal_detail(goal),
-        focus,
-    )?;
-    attach_goal_to_session(session_id, goal, working_dir)?;
-    Ok(snapshot)
-}
-
-pub fn goal_page_id(id: &str) -> String {
-    format!("goal.{}", horon_agent_task_types::sanitize_goal_id(id))
-}
-
-pub fn header_badge(working_dir: Option<&Path>, snapshot: &crate::side_panel::SidePanelSnapshot) -> Option<String> {
-    if let Some(page) = snapshot.focused_page()
-        && page.id.starts_with("goal.")
-    {
-        return Some(format!("🎯 {}*", truncate_title(&page.title, 28)));
-    }
-
-    let goals = list_relevant_goals(working_dir).ok()?;
-    let active: Vec<_> = goals
-        .into_iter()
-        .filter(|goal| {
-            matches!(
-                goal.status,
-                GoalStatus::Active | GoalStatus::Blocked | GoalStatus::Draft
-            )
-        })
-        .collect();
-    match active.as_slice() {
-        [] => None,
-        [goal] => Some(format!("🎯 {}", truncate_title(&goal.title, 28))),
-        many => Some(format!("🎯 {} active", many.len())),
-    }
-}
-
 pub fn render_goals_overview(goals: &[Goal]) -> String {
     let mut out = String::from("# Goals\n\n");
     if goals.is_empty() {
@@ -466,16 +316,6 @@ pub fn render_goal_detail(goal: &Goal) -> String {
     out
 }
 
-fn should_focus_goal_page(session_id: &str, page_id: &str) -> Result<bool> {
-    let snapshot = crate::side_panel::snapshot_for_session(session_id)?;
-    let has_goal_page = snapshot
-        .pages
-        .iter()
-        .any(|page| page.id == "goals" || page.id.starts_with("goal."));
-    let focused = snapshot.focused_page_id.as_deref();
-    Ok(!has_goal_page || focused == Some(page_id) || focused == Some("goals"))
-}
-
 fn save_goal(goal: &Goal, working_dir: Option<&Path>) -> Result<()> {
     let path = goal_file(goal, working_dir)?;
     crate::storage::write_json_fast(&path, goal)
@@ -570,19 +410,6 @@ fn trim_vec(values: Vec<String>) -> Vec<String> {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .collect()
-}
-
-fn truncate_title(title: &str, max_chars: usize) -> String {
-    let raw = title.trim_start_matches("Goal: ").trim();
-    let char_count = raw.chars().count();
-    if char_count <= max_chars {
-        raw.to_string()
-    } else if max_chars <= 1 {
-        "…".to_string()
-    } else {
-        let clipped: String = raw.chars().take(max_chars - 1).collect();
-        format!("{}…", clipped)
-    }
 }
 
 fn sync_goal_memory(goal: &Goal, working_dir: Option<&Path>) -> Result<String> {

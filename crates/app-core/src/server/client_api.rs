@@ -1,5 +1,5 @@
 use super::{connect_socket, debug_socket_path, socket_path};
-use crate::protocol::{HistoryMessage, Request, ServerEvent, TranscriptMode};
+use crate::protocol::{HistoryMessage, Request, ServerEvent};
 use crate::transport::{ReadHalf, WriteHalf};
 use anyhow::Result;
 use std::path::PathBuf;
@@ -61,13 +61,12 @@ impl Client {
 
     /// Subscribe to events
     pub async fn subscribe(&mut self) -> Result<u64> {
-        self.subscribe_with_info(None, None, None, false, false).await
+        self.subscribe_with_info(None, None, false, false).await
     }
 
     pub async fn subscribe_with_info(
         &mut self,
         working_dir: Option<String>,
-        selfdev: Option<bool>,
         target_session_id: Option<String>,
         client_has_local_history: bool,
         allow_session_takeover: bool,
@@ -81,12 +80,10 @@ impl Client {
 
         let request = Request::Subscribe {
             system_prompt: None,
-            supports_pdf_panels: false,
             supports_user_response: false,
             supports_ask_requests: false,
             id,
             working_dir: Some(working_dir),
-            selfdev,
             target_session_id,
             client_instance_id: None,
             client_has_local_history,
@@ -246,26 +243,6 @@ impl Client {
         self.next_id += 1;
 
         let request = Request::ResumeAllSessions { id };
-        let json = serde_json::to_string(&request)? + "\n";
-        self.writer.write_all(json.as_bytes()).await?;
-        Ok(id)
-    }
-
-    pub async fn send_transcript(
-        &mut self,
-        text: &str,
-        mode: TranscriptMode,
-        session_id: Option<String>,
-    ) -> Result<u64> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let request = Request::Transcript {
-            id,
-            text: text.to_string(),
-            mode,
-            session_id,
-        };
         let json = serde_json::to_string(&request)? + "\n";
         self.writer.write_all(json.as_bytes()).await?;
         Ok(id)

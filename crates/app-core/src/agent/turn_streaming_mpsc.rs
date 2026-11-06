@@ -86,10 +86,6 @@ fn send_tool_exit(session_id: &str, call_id: &str, tool_name: &str, output: &cra
 }
 
 fn reload_interrupted_tool_result(tc: &ToolCall, elapsed_secs: f64) -> (String, bool) {
-    if tc.name == "selfdev" {
-        return ("Reload initiated. Process restarting...".to_string(), false);
-    }
-
     let action = tc
         .input
         .get("action")
@@ -328,15 +324,6 @@ impl Agent {
                 }
                 request_suffix.push(memory_msg);
             }
-            // Surface background plan-limit hits once so the user sees the
-            // upgrade prompt in the reply (see turn_loops for rationale).
-            if let Some(notice) = self.memory_enabled.then(crate::subscription_notice::take).flatten() {
-                crate::subscription_notice::show_upgrade_card(&notice, &self.session.id);
-                let reminder = Message::user(&Self::plan_limit_reminder(&notice));
-                ephemeral_signature_messages.push(reminder.clone());
-                request_suffix.push(reminder);
-            }
-
             logging::info(&format!(
                 "API call starting: {} messages, {} tools",
                 messages.len() + request_suffix.len(),
@@ -434,11 +421,10 @@ impl Agent {
                             return Ok(());
                         }
                         result = &mut complete_future => {
-                            self.sync_bound_account_route();
-                            match result {
+                                            match result {
                                 Ok(stream) => break Some(stream),
                                 Err(e) => {
-                                    self.record_failed_account_route(&e.to_string());
+                                    self.record_failed_credential_route(&e.to_string());
                                     let attached_client =
                                         crate::server::session_has_attached_client(&self.session.id);
                                     match self.handle_provider_error(&e, attached_client).await {
@@ -616,7 +602,7 @@ impl Agent {
                 let event = match event {
                     Ok(event) => event,
                     Err(e) => {
-                        self.record_failed_account_route(&e.to_string());
+                        self.record_failed_credential_route(&e.to_string());
                         let attached_client = crate::server::session_has_attached_client(&self.session.id);
                         match self.handle_provider_error(&e, attached_client).await {
                             super::turn_failover::ProviderErrorAction::Resend { attempt, max } => {

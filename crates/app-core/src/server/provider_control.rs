@@ -1,7 +1,10 @@
 #![cfg_attr(test, allow(clippy::items_after_test_module))]
 
+#[path = "provider_control_auth_env.rs"]
+mod provider_control_auth_env;
+use provider_control_auth_env::{activate_auth_profile, auth_change_saved_credentials};
+
 use crate::agent::Agent;
-use crate::auth::lifecycle::{AuthActivationRequest, AuthActivationResult};
 use crate::protocol::{AuthChanged, NotificationType, ServerEvent};
 use crate::provider::{ModelCatalogRefreshSummary, ModelRoute, Provider, ProviderFailoverPrompt, RouteSelection};
 use horon_agent_provider_core::ModelCatalogSnapshot;
@@ -258,8 +261,118 @@ fn spawn_deferred_auth_refreshes(agents: Vec<Arc<Mutex<Agent>>>) {
     }
 }
 
+/// Provider id of an auth change: the protocol field, else the legacy hint.
+/// Unknown values stay display labels; only OpenAI-compatible profiles resolve.
+fn auth_provider_id(legacy_provider_hint: Option<String>, auth: Option<AuthChanged>) -> Option<String> {
+    auth.map(|auth| auth.provider.0)
+        .or(legacy_provider_hint)
+        .map(|provider| provider.trim().to_string())
+        .filter(|provider| !provider.is_empty())
+}
+
+/// Pin a model switch to the auth change's profile (`profile:model`) when known.
+fn auth_model_switch_request(provider_id: Option<&str>, model: &str) -> String {
+    match provider_id.map(str::trim).filter(|provider| !provider.is_empty()) {
+        Some(provider_id) if crate::provider_catalog::openai_compatible_profile_by_id(provider_id).is_some() => {
+            format!("{provider_id}:{model}")
+        }
+        _ => model.to_string(),
+    }
+}
+
+fn route_matches_provider(route: &ModelRoute, provider_id: Option<&str>) -> bool {
+    provider_id
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+        .is_none_or(|provider_id| route_provider_id(route) == provider_id)
+}
+
+fn route_provider_id(route: &ModelRoute) -> &str {
+    let method = route.api_method.as_str();
+    if let Some(profile) = method.strip_prefix("openai-compatible:") {
+        return profile;
+    }
+    match method {
+        "openai-oauth" | "openai-api-key" | "openai-api" => "openai",
+        "claude-oauth" | "claude-api-key" | "claude-api" => "anthropic",
+        other => other,
+    }
+}
+
+/// Pick the strongest available route across provider groups.
+fn globally_preferred_default_route(routes: &[ModelRoute]) -> Option<ModelRoute> {
+    let available: Vec<&ModelRoute> = routes.iter().filter(|route| route.available).collect();
+    let mut methods: Vec<&str> = Vec::new();
+    for route in &available {
+        if !methods.contains(&route.api_method.as_str()) {
+            methods.push(route.api_method.as_str());
+        }
+    }
+    let mut best: Option<(usize, ModelRoute)> = None;
+    for method in methods {
+        let group: Vec<&ModelRoute> = available
+            .iter()
+            .copied()
+            .filter(|route| route.api_method == method)
+            .collect();
+        let ids: Vec<&str> = group.iter().map(|route| route.model.as_str()).collect();
+        let provider_id = group
+            .first()
+            .map(|route| route_provider_id(route))
+            .unwrap_or("openai-compatible");
+        let route = crate::provider::model_rank::ranked_flagship_for_provider(provider_id, &ids)
+            .and_then(|model| group.iter().find(|route| route.model == model).copied())
+            .or_else(|| group.first().copied());
+        let Some(route) = route else {
+            continue;
+        };
+        let rank = crate::provider::model_rank::preferred_model_rank(provider_id, &route.model);
+        if best.as_ref().is_none_or(|(best_rank, _)| rank < *best_rank) {
+            best = Some((rank, route.clone()));
+        }
+    }
+    best.map(|(_, route)| route)
+}
+
+/// Model to select after an auth change: keep the configured default when it is
+/// available, keep the current model when it is still available, else rank the
+/// provider's routes.
+fn auth_model_to_select(
+    provider_id: Option<&str>,
+    configured_model: Option<&str>,
+    current_model: Option<&str>,
+    routes: &[ModelRoute],
+) -> Option<String> {
+    let matching: Vec<&ModelRoute> = routes
+        .iter()
+        .filter(|route| route.available && route_matches_provider(route, provider_id))
+        .collect();
+    if matching.is_empty() {
+        return None;
+    }
+    if let Some(configured) = configured_model.map(str::trim).filter(|model| !model.is_empty()) {
+        let bare = horon_agent_provider_core::selection::explicit_model_provider_prefix(configured)
+            .map(|(_, _, bare)| bare)
+            .unwrap_or(configured);
+        if matching.iter().any(|route| route.model == bare) && current_model != Some(bare) {
+            return Some(bare.to_string());
+        }
+    }
+    if let Some(current) = current_model
+        && matching.iter().any(|route| route.model == current)
+    {
+        return None;
+    }
+    let ids: Vec<&str> = matching.iter().map(|route| route.model.as_str()).collect();
+    let ranked = matching
+        .first()
+        .map(|route| route_provider_id(route))
+        .and_then(|provider| crate::provider::model_rank::ranked_flagship_for_provider(provider, &ids));
+    ranked.or_else(|| matching.first().map(|route| route.model.clone()))
+}
+
 async fn apply_auth_runtime_model_to_agent(
-    activation: &AuthActivationResult,
+    provider_id: Option<&str>,
     model: Option<&str>,
     agent: &Arc<Mutex<Agent>>,
     unless_user_selected_after: Option<u64>,
@@ -268,7 +381,7 @@ async fn apply_auth_runtime_model_to_agent(
         return;
     };
 
-    let provider = activation.provider_id.as_deref().unwrap_or("auth");
+    let provider = provider_id.unwrap_or("auth");
     let result = {
         let mut agent_guard = agent.lock().await;
         if unless_user_selected_after
@@ -281,8 +394,7 @@ async fn apply_auth_runtime_model_to_agent(
             );
             return;
         }
-        let provider_name = agent_guard.provider_handle().name().to_string();
-        let model_request = activation.model_switch_request(&provider_name, model);
+        let model_request = auth_model_switch_request(provider_id, model);
         let result = agent_guard.set_model_from_auth(&model_request);
         if result.is_ok() {
             agent_guard.reset_provider_session();
@@ -571,47 +683,6 @@ fn apply_set_model(id: u64, model: String, agent: &mut Agent, client_event_tx: &
     send_model_changed_result(id, result, current, agent, client_event_tx);
 }
 
-fn automatic_failover_source_is_pool_member(agent: &Agent) -> bool {
-    let provider = agent.provider_handle();
-    let name = provider.name().to_ascii_lowercase();
-    let name = match name.as_str() {
-        "anthropic" | "claude" => "claude",
-        "openai" => "openai",
-        "copilot" | "gemini" | "cursor" | "antigravity" | "bedrock" | "openrouter" => name.as_str(),
-        _ => return false,
-    };
-    let key = match (name, provider.active_resolved_credential()) {
-        ("openai", Some(horon_agent_provider_core::ResolvedCredential::Oauth)) => {
-            let Some(label) = provider.oauth_account_label() else {
-                return false;
-            };
-            let exists = crate::auth::codex::list_accounts()
-                .unwrap_or_default()
-                .iter()
-                .any(|account| account.label == label);
-            if !exists {
-                return false;
-            }
-            crate::auth::account_pool::account_key(name, Some(&label))
-        }
-        ("openai", Some(horon_agent_provider_core::ResolvedCredential::ApiKey)) => "openai-api".to_string(),
-        ("openai", _) => return false,
-        _ => name.to_string(),
-    };
-    let pool = crate::auth::account_pool::AccountPool::load();
-    // Shared with the autonomous failover path: both sides must read an
-    // unplaced account's default membership the same way, or the attended
-    // path refuses spend the autonomous one would start.
-    !pool.excluded.contains(&key)
-        && pool.is_member(
-            &key,
-            crate::auth::account_pool::failover_default_member(
-                &key,
-                provider.active_resolved_credential() == Some(horon_agent_provider_core::ResolvedCredential::ApiKey),
-            ),
-        )
-}
-
 /// Apply a route the caller already validated and drop the provider session so
 /// the next turn resends its context on the new route.
 ///
@@ -630,7 +701,7 @@ fn apply_validated_route(agent: &mut Agent, selection: &RouteSelection) -> anyho
 fn apply_set_route(
     id: u64,
     selection: crate::provider::RouteSelection,
-    automatic_failover: bool,
+    _automatic_failover: bool,
     agent: &mut Agent,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
@@ -648,18 +719,7 @@ fn apply_set_route(
 
     let current = agent.provider_model();
     let result = {
-        let result = if automatic_failover
-            && (crate::config::Config::load().provider.cross_provider_failover
-                != crate::config::CrossProviderFailoverMode::Countdown
-                || !automatic_failover_source_is_pool_member(agent)
-                || !crate::provider::MultiProvider::is_failover_route_pool_approved(&selection.routed_model_spec()))
-        {
-            Err(anyhow::anyhow!(
-                "Auto-switch canceled: target account is no longer eligible in your auto-switch group."
-            ))
-        } else {
-            apply_validated_route(agent, &selection)
-        };
+        let result = apply_validated_route(agent, &selection);
         result.map(|_| {
             (
                 agent.provider_model(),
@@ -752,10 +812,6 @@ pub(crate) async fn apply_autonomous_failover(
     let Some(selection) = autonomous_failover_selection(target_route, agent) else {
         anyhow::bail!("Autonomous failover target '{target_route}' is not a route this session can apply.");
     };
-
-    if !crate::provider::MultiProvider::is_failover_route_pool_approved(&selection.routed_model_spec()) {
-        anyhow::bail!("Autonomous failover canceled: target account is no longer eligible in your auto-switch group.");
-    }
 
     let previous_model = agent.provider_model();
     apply_validated_route(agent, &selection)?;
@@ -1138,7 +1194,11 @@ pub(super) async fn handle_notify_auth_changed(
         )
     };
     let auth_refresh_generation = begin_auth_refresh(&session_id);
-    let activation_request = AuthActivationRequest::new(provider_hint, auth);
+    let saved_credentials_changed = auth_change_saved_credentials(auth.as_ref());
+    let auth_provider_id = auth_provider_id(provider_hint, auth);
+    if let Some(provider_id) = auth_provider_id.as_deref() {
+        activate_auth_profile(provider_id, saved_credentials_changed);
+    }
     crate::bus::Bus::global().publish(crate::bus::BusEvent::UiActivity(crate::bus::UiActivity::auth(
         Some(session_id.clone()),
         "",
@@ -1151,10 +1211,9 @@ pub(super) async fn handle_notify_auth_changed(
         if !auth_refresh_is_current(&session_id, auth_refresh_generation) {
             return;
         }
-        let activation = crate::auth::lifecycle::activate_auth_change(&activation_request);
-        if let Some(provider_id) = activation.provider_id.as_deref() {
-            // A renewed login must get a real request instead of inheriting the
-            // previous credential's cached runtime failure.
+        if let Some(provider_id) = auth_provider_id.as_deref() {
+            // A renewed credential must get a real request instead of inheriting
+            // the previous credential's cached runtime failure.
             crate::provider::clear_provider_unavailable_for_account(provider_id);
         }
         // Snapshot which providers horon-agent now believes are configured right after
@@ -1186,14 +1245,6 @@ pub(super) async fn handle_notify_auth_changed(
             provider.on_auth_changed_preserve_current_provider();
         }
 
-        // Auth refresh is global so every live session learns about newly
-        // configured credentials, but the automatic post-login model switch is
-        // session-local. A user logging Groq/Cerebras into one workspace should
-        // not silently move unrelated sessions off their chosen provider/model.
-        if auth_refresh_is_current(&session_id, auth_refresh_generation) {
-            apply_auth_runtime_model_to_agent(&activation, activation.activated_model.as_deref(), &agent_clone, None)
-                .await;
-        }
         let auth_selection_generation = {
             let agent_guard = agent_clone.lock().await;
             agent_guard.provider_model_selection_generation()
@@ -1265,28 +1316,24 @@ pub(super) async fn handle_notify_auth_changed(
         if manual_model_selected_during_auth_refresh {
             crate::logging::auth_event(
                 "auth_changed_auto_model_skipped_after_manual_switch",
-                activation.provider_id.as_deref().unwrap_or("auth"),
+                auth_provider_id.as_deref().unwrap_or("auth"),
                 &[("reason", "user_selected_provider_model_during_refresh")],
             );
             latest_snapshot = available_models_snapshot(&agent_clone).await;
             let _ = client_event_tx_clone.send(available_models_snapshot_into_event(latest_snapshot.clone()));
         } else {
             if prefer_strongest {
-                if let Some(route) =
-                    crate::auth::lifecycle::globally_preferred_default_route(&latest_snapshot.model_routes)
-                {
+                if let Some(route) = globally_preferred_default_route(&latest_snapshot.model_routes) {
                     apply_auth_route_to_agent(&route, &agent_clone, Some(auth_selection_generation)).await;
                 }
-            } else if let Some(model_to_select) =
-                crate::auth::lifecycle::provider_model_to_select_after_auth_with_configured_default(
-                    &activation,
-                    crate::config::config().provider.default_model.as_deref(),
-                    latest_snapshot.provider_model.as_deref(),
-                    &latest_snapshot.model_routes,
-                )
-            {
+            } else if let Some(model_to_select) = auth_model_to_select(
+                auth_provider_id.as_deref(),
+                crate::config::config().provider.default_model.as_deref(),
+                latest_snapshot.provider_model.as_deref(),
+                &latest_snapshot.model_routes,
+            ) {
                 apply_auth_runtime_model_to_agent(
-                    &activation,
+                    auth_provider_id.as_deref(),
                     Some(&model_to_select),
                     &agent_clone,
                     Some(auth_selection_generation),
@@ -1303,24 +1350,12 @@ pub(super) async fn handle_notify_auth_changed(
             before_snapshot.model_routes,
             latest_snapshot.model_routes.clone(),
         );
-        let catalog_invariants = crate::auth::lifecycle::validate_catalog_invariants(
-            &activation,
-            latest_snapshot.provider_model.as_deref(),
-            &latest_snapshot.model_routes,
-        );
-        let catalog_warning = catalog_invariants.warning_message();
         let catalog_message = format_auth_catalog_refresh_complete(
-            activation
-                .provider_label
-                .as_deref()
-                .or(latest_snapshot.provider_name.as_deref()),
+            latest_snapshot.provider_name.as_deref(),
             latest_snapshot.provider_model.as_deref(),
             &summary,
-            catalog_warning.is_some(),
+            false,
         );
-        if let Some(warning) = catalog_warning.as_deref() {
-            crate::logging::warn(&format!("Auth catalog invariant warning: {warning}"));
-        }
         crate::logging::event_info(
             "SERVER_AUTH_MODEL_REFRESH_COMPLETED",
             vec![
@@ -1344,110 +1379,14 @@ pub(super) async fn handle_notify_auth_changed(
 #[path = "provider_control_tests.rs"]
 mod provider_control_tests;
 
-pub(super) async fn handle_switch_openai_account(
-    id: u64,
-    label: String,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    match crate::auth::codex::set_active_account(&label) {
-        Ok(()) => {
-            crate::auth::AuthStatus::invalidate_cache();
-            spawn_account_switch_refresh(id, "openai", label, Arc::clone(agent), client_event_tx.clone());
-        }
-        Err(e) => {
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: format!("Failed to switch OpenAI account: {}", e),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
-
 pub(super) async fn handle_invalidate_openai_usage(
     id: u64,
-    account_label: Option<String>,
+    _account_label: Option<String>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
-    // Only local state changes here. A retry of this request is harmless and
-    // cannot spend another reset. Acknowledge after invalidation so a following
-    // prompt cannot be rejected by the pre-reset quota cooldown.
-    crate::usage::invalidate_openai_usage_reset_state(account_label.as_deref()).await;
+    // Usage is reported from the local activity ledger in this build; there is
+    // no vendor quota state to invalidate. A retry is harmless, so acknowledge.
     let _ = client_event_tx.send(ServerEvent::Done { id });
-}
-
-fn spawn_account_switch_refresh(
-    id: u64,
-    provider_kind: &'static str,
-    account_label: String,
-    agent: Arc<Mutex<Agent>>,
-    client_event_tx: mpsc::UnboundedSender<ServerEvent>,
-) {
-    // Clear the selected login's failure before waiting for a busy agent. The
-    // global active account can change while the asynchronous refresh waits.
-    match provider_kind {
-        "anthropic" => {
-            crate::provider::clear_claude_provider_unavailability_for_account_label(Some(&account_label));
-        }
-        "openai" => {
-            crate::provider::clear_openai_provider_unavailability_for_account_label(Some(&account_label));
-            crate::provider::clear_all_model_unavailability_for_account();
-        }
-        _ => {}
-    }
-    tokio::spawn(async move {
-        let started = Instant::now();
-        crate::logging::event_info(
-            "SERVER_PROVIDER_CONTROL_ACCOUNT_SWITCH",
-            vec![
-                ("phase", "refresh_start".to_string()),
-                ("provider", provider_kind.to_string()),
-                ("request_id", id.to_string()),
-            ],
-        );
-        let provider = if let Ok(mut agent_guard) = agent.try_lock() {
-            let provider = agent_guard.provider_handle();
-            agent_guard.reset_provider_session();
-            provider
-        } else {
-            let queued_at = log_provider_control_deferred("account_switch_refresh", id);
-            let mut agent_guard = agent.lock().await;
-            log_provider_control_lock_acquired("account_switch_refresh", id, queued_at);
-            let provider = agent_guard.provider_handle();
-            agent_guard.reset_provider_session();
-            log_provider_control_completed("account_switch_refresh", id, queued_at);
-            provider
-        };
-        provider.invalidate_credentials().await;
-
-        if provider_kind == "openai" {
-            tokio::spawn(async {
-                let _ = crate::usage::get_openai_usage().await;
-            });
-        }
-
-        crate::bus::Bus::global().publish_models_updated();
-        let event = available_models_updated_event(&agent).await;
-        // Account activation remains valid if its requesting client disconnected.
-        if let Err(error) = client_event_tx.send(event) {
-            crate::logging::debug(&format!(
-                "Account switch catalog notification was not delivered: {error}"
-            ));
-        }
-        if let Err(error) = client_event_tx.send(ServerEvent::Done { id }) {
-            crate::logging::debug(&format!("Account switch completion was not delivered: {error}"));
-        }
-        crate::logging::event_info(
-            "SERVER_PROVIDER_CONTROL_ACCOUNT_SWITCH",
-            vec![
-                ("phase", "refresh_done".to_string()),
-                ("provider", provider_kind.to_string()),
-                ("request_id", id.to_string()),
-                ("elapsed_ms", started.elapsed().as_millis().to_string()),
-            ],
-        );
-    });
 }
 
 #[cfg(test)]
@@ -1457,7 +1396,3 @@ mod tests;
 #[cfg(test)]
 #[path = "provider_control_autonomous_failover_tests.rs"]
 mod autonomous_failover_tests;
-
-#[cfg(test)]
-#[path = "provider_control_set_route_tests.rs"]
-mod set_route_tests;

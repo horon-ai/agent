@@ -67,7 +67,6 @@ fn create_visible_spawn_session(
     provider_key_override: Option<&str>,
     route_api_method_override: Option<&str>,
     effort_override: Option<&str>,
-    selfdev_requested: bool,
 ) -> anyhow::Result<(String, PathBuf)> {
     let cwd = working_dir
         .map(PathBuf::from)
@@ -92,9 +91,6 @@ fn create_visible_spawn_session(
         // provider/model) by `restore_reasoning_effort_from_session` when the
         // headed client attaches to this session.
         session.reasoning_effort = Some(effort.to_string());
-    }
-    if selfdev_requested {
-        session.set_canary("self-dev");
     }
     // The headed client attaches in a separate process and must find the
     // prepared model/provider/effort on disk, so bypass the untouched-session
@@ -145,19 +141,14 @@ async fn resolve_spawn_working_dir(
 fn spawn_visible_session_window_with_context(
     session_id: &str,
     cwd: &std::path::Path,
-    selfdev_requested: bool,
     provider_key: Option<&str>,
     context: &crate::session_launch::SessionSpawnContext,
 ) -> anyhow::Result<bool> {
-    let exe = crate::build::client_update_candidate(selfdev_requested)
+    let exe = crate::build::client_update_candidate()
         .map(|(path, _label)| path)
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("horon-agent"));
-    if selfdev_requested {
-        crate::session_launch::spawn_selfdev_in_new_terminal_with_context(&exe, session_id, cwd, provider_key, context)
-    } else {
-        crate::session_launch::spawn_resume_in_new_terminal_with_context(&exe, session_id, cwd, provider_key, context)
-    }
+    crate::session_launch::spawn_resume_in_new_terminal_with_context(&exe, session_id, cwd, provider_key, context)
 }
 
 fn provider_key_for_spawn_model(model: Option<&str>, provider_key_override: Option<&str>) -> Option<String> {
@@ -195,7 +186,6 @@ pub(super) struct CoordinatorSpawnIdentity {
     pub model: Option<String>,
     pub provider_key: Option<String>,
     pub route_api_method: Option<String>,
-    pub is_canary: bool,
 }
 
 /// The resolved model + auth route a spawned swarm agent should be created
@@ -227,7 +217,6 @@ async fn resolve_coordinator_spawn_identity(
             model: Some(agent_guard.provider_model()),
             provider_key: agent_guard.session_provider_key(),
             route_api_method: agent_guard.session_route_api_method(),
-            is_canary: agent_guard.is_canary(),
         };
     }
 
@@ -239,11 +228,10 @@ async fn resolve_coordinator_spawn_identity(
                 model: session.model.clone(),
                 provider_key: session.provider_key.clone(),
                 route_api_method: session.route_api_method.clone(),
-                is_canary: session.is_canary,
             };
             crate::logging::info(&format!(
-                "Swarm spawn: coordinator {} agent busy/unavailable, inheriting identity from persisted session (model={:?} provider_key={:?} route={:?} canary={})",
-                req_session_id, identity.model, identity.provider_key, identity.route_api_method, identity.is_canary,
+                "Swarm spawn: coordinator {} agent busy/unavailable, inheriting identity from persisted session (model={:?} provider_key={:?} route={:?})",
+                req_session_id, identity.model, identity.provider_key, identity.route_api_method,
             ));
             identity
         }
@@ -383,23 +371,7 @@ fn resolve_swarm_spawn_selection(
     }
 }
 
-fn persist_headed_startup_message(session_id: &str, message: &str) {
-    crate::logging::info(&format!(
-        "Headed spawn: persisting startup submission for {session_id} (chars={}) to client-input handoff file",
-        message.chars().count(),
-    ));
-    crate::client_input::save_startup_submission_for_session(session_id, message.to_string(), Vec::new());
-}
-
-fn clear_headed_startup_message(session_id: &str) {
-    if let Ok(horon_agent_dir) = crate::storage::horon_agent_dir() {
-        let path = horon_agent_dir.join(format!("client-input-{}", session_id));
-        let _ = std::fs::remove_file(path);
-    }
-}
-
 fn cleanup_prepared_visible_spawn_session(session_id: &str) {
-    clear_headed_startup_message(session_id);
     // A prepared session can sit in the event store's directory or in the legacy
     // file pair; the session layer removes whichever exists so a failed launch
     // leaves no orphan behind.
@@ -413,12 +385,10 @@ fn prepare_visible_spawn_session<F>(
     provider_key_override: Option<&str>,
     route_api_method_override: Option<&str>,
     effort_override: Option<&str>,
-    selfdev_requested: bool,
-    startup_message: Option<&str>,
     launch_visible: F,
 ) -> anyhow::Result<(String, bool)>
 where
-    F: FnOnce(&str, &std::path::Path, bool, Option<&str>) -> anyhow::Result<bool>,
+    F: FnOnce(&str, &std::path::Path, Option<&str>) -> anyhow::Result<bool>,
 {
     let provider_key = provider_key_for_spawn_model(model_override, provider_key_override);
     let (new_session_id, cwd) = create_visible_spawn_session(
@@ -427,14 +397,9 @@ where
         provider_key.as_deref(),
         route_api_method_override,
         effort_override,
-        selfdev_requested,
     )?;
 
-    if let Some(message) = startup_message {
-        persist_headed_startup_message(&new_session_id, message);
-    }
-
-    match launch_visible(&new_session_id, &cwd, selfdev_requested, provider_key.as_deref()) {
+    match launch_visible(&new_session_id, &cwd, provider_key.as_deref()) {
         Ok(launched) => {
             if !launched {
                 cleanup_prepared_visible_spawn_session(&new_session_id);
@@ -628,7 +593,6 @@ pub(super) async fn spawn_swarm_agent(
     };
     let worktree_guard = worktree_child.clone().map(comm_worktree::WorktreeGuard::new);
     let coordinator = resolve_coordinator_spawn_identity(req_session_id, sessions).await;
-    let coordinator_is_canary = coordinator.is_canary;
     // Capture the requesting client's terminal env so spawn hooks place the new
     // window in the terminal the user is attached to, not the server's stale
     // startup env (#405).
@@ -685,22 +649,14 @@ pub(super) async fn spawn_swarm_agent(
                 spawn_provider_key.as_deref(),
                 spawn_route_api_method.as_deref(),
                 spawn_effort.as_deref(),
-                coordinator_is_canary,
-                startup_message.as_deref(),
-                |session_id, cwd, selfdev_requested, provider_key| {
+                |session_id, cwd, provider_key| {
                     // Tag the headed window as a swarm-agent spawn so spawn hooks
                     // and terminals can identify and reroute it (HORON_AGENT_SPAWN_*).
                     let context = crate::session_launch::SessionSpawnContext::kind("swarm-agent")
                         .env("HORON_AGENT_SPAWN_SWARM_ID", swarm_id)
                         .env("HORON_AGENT_SPAWN_COORDINATOR_SESSION_ID", req_session_id)
                         .with_client_terminal_env(client_terminal_env.clone());
-                    spawn_visible_session_window_with_context(
-                        session_id,
-                        cwd,
-                        selfdev_requested,
-                        provider_key,
-                        &context,
-                    )
+                    spawn_visible_session_window_with_context(session_id, cwd, provider_key, &context)
                 },
             ),
         }
@@ -724,7 +680,6 @@ pub(super) async fn spawn_swarm_agent(
                 swarm_coordinators,
                 swarm_plans,
                 soft_interrupt_queues,
-                coordinator_is_canary,
                 spawn_model.clone(),
                 spawn_provider_key.clone(),
                 spawn_route_api_method.clone(),

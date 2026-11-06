@@ -24,7 +24,6 @@ import {
   ADVERTISED_CAPABILITIES,
   MAX_REPLICATION_WIRE_BYTES,
   REPLICATION_PROTOCOL_VERSION,
-  type AppletAction,
   type ApiEvent,
   type ApiRequest,
   type AskSelection,
@@ -1271,29 +1270,6 @@ export class HoronAgentClient extends EventEmitter {
   /** Bookmark or unbookmark a session. A label also becomes its title. */
   async setSessionSaved(sessionId: string, saved: boolean, label?: string): Promise<void> {
     await this.requestOk({ req: "set_session_saved", session_id: sessionId, saved, label });
-  }
-
-  /** Report a user action in an agent applet instance. */
-  async appletAction(
-    sessionId: string,
-    instance: string,
-    action: AppletAction,
-    state: Record<string, unknown> = {},
-    sourceKey?: string,
-  ): Promise<void> {
-    await this.requestOk({
-      req: "applet_action",
-      session_id: sessionId,
-      instance,
-      action,
-      state,
-      source_key: sourceKey,
-    });
-  }
-
-  /** Close an agent applet instance. The agent is not woken. */
-  async closeApplet(sessionId: string, instance: string): Promise<void> {
-    await this.requestOk({ req: "close_applet", session_id: sessionId, instance });
   }
 
   /** Restore the history the last `rewind` removed. */

@@ -2,29 +2,6 @@ use super::display::{format_reset_time, usage_reset_passed};
 use super::{CACHE_DURATION, ERROR_BACKOFF, RATE_LIMIT_BACKOFF};
 use std::time::Instant;
 
-pub(super) fn mask_email(email: &str) -> String {
-    let trimmed = email.trim();
-    let Some((local, domain)) = trimmed.split_once('@') else {
-        return trimmed.to_string();
-    };
-
-    if local.is_empty() {
-        return format!("***@{}", domain);
-    }
-
-    let mut chars = local.chars();
-    let first = chars.next().unwrap_or('*');
-    let last = chars.last().unwrap_or(first);
-
-    let masked_local = if local.chars().count() <= 2 {
-        format!("{}*", first)
-    } else {
-        format!("{}***{}", first, last)
-    };
-
-    format!("{}@{}", masked_local, domain)
-}
-
 /// Normalize a provider-supplied reset timestamp to RFC3339. Values arrive as
 /// RFC3339 strings or epoch numbers (seconds, or milliseconds when too large
 /// for seconds); protobuf int64 fields JSON-encode as decimal strings, so
@@ -42,25 +19,6 @@ pub(super) fn reset_timestamp_from_json_value(value: &serde_json::Value) -> Opti
         return Some(dt.to_rfc3339());
     }
     value.as_str().map(|text| text.to_string())
-}
-
-pub(super) fn openai_provider_display_name(
-    label: &str,
-    email: Option<&str>,
-    account_count: usize,
-    is_active: bool,
-) -> String {
-    let email_suffix = email
-        .map(mask_email)
-        .map(|masked| format!(" ({})", masked))
-        .unwrap_or_default();
-
-    if account_count <= 1 {
-        format!("OpenAI (ChatGPT){}", email_suffix)
-    } else {
-        let active_marker = if is_active { " ✦" } else { "" };
-        format!("OpenAI - {}{}{}", label, email_suffix, active_marker)
-    }
 }
 
 /// Usage data from the API

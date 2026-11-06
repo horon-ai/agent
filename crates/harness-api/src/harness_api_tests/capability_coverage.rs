@@ -47,7 +47,6 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("Cancel", Covered),
     ("CancelSoftInterrupts", Covered),
     ("Clear", Covered),
-    ("ClientDebugResponse", ClientInternal),
     ("Compact", Covered),
     ("CycleModel", ClientInternal),
     ("GetCompactedHistory", ClientInternal),
@@ -81,9 +80,7 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("Split", ClientInternal),
     ("StdinResponse", ClientInternal),
     ("Subscribe", Covered),
-    ("SwitchOpenAiAccount", ClientInternal),
     ("InvalidateOpenAiUsage", Covered),
-    ("Transcript", ClientInternal),
     ("Transfer", ClientInternal),
     ("TriggerMemoryExtraction", ClientInternal),
 ];

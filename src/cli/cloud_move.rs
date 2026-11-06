@@ -1097,7 +1097,6 @@ pub(crate) fn run_cli(command: super::args::CloudCommand) -> Result<()> {
             .filter(|s| !s.trim().is_empty()),
     };
     match command {
-        C::Sessions { .. } => unreachable!("handled by the cloud sessions dispatcher"),
         C::Move {
             session,
             target,

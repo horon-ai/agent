@@ -63,8 +63,8 @@ pub(crate) async fn get_shared_mcp_pool(
         .clone()
 }
 
-pub(crate) fn server_update_candidate(is_selfdev_session: bool) -> Option<(PathBuf, &'static str)> {
-    build::shared_server_update_candidate(is_selfdev_session)
+pub(crate) fn server_update_candidate() -> Option<(PathBuf, &'static str)> {
+    build::shared_server_update_candidate()
 }
 
 /// Resolve the binary the reload should actually exec into, with a hard
@@ -83,20 +83,8 @@ pub(crate) fn server_update_candidate(is_selfdev_session: bool) -> Option<(PathB
 /// socket handoff, but no downgrade. Any mtime uncertainty is treated as "do
 /// not downgrade".
 ///
-/// Crucially, the candidate is the *newest* reload candidate across BOTH
-/// self-dev flavors, not just the one matching `is_selfdev_session`. This keeps
-/// the reload target consistent with `server_has_newer_binary`, which also scans
-/// both flavors. Without this, a self-dev/canary daemon whose `shared-server`
-/// channel is pinned to an *old* self-dev build would advertise
-/// `server_has_update = true` (the normal-flavor probe self-heals to the freshly
-/// installed release) yet reload into that same old pinned build -> the server
-/// reports an update it can never apply, so the client upgrades while the server
-/// stays stale and the auto-reload loops until it is suppressed. Selecting the
-/// newest candidate across flavors still preserves a deliberately-pinned self-dev
-/// build whenever that build is the freshest one on disk (the case the pin is
-/// meant to protect).
-pub(crate) fn reload_exec_target(is_selfdev_session: bool) -> Option<(PathBuf, &'static str)> {
-    let candidate = newest_reload_candidate(is_selfdev_session)?;
+pub(crate) fn reload_exec_target() -> Option<(PathBuf, &'static str)> {
+    let candidate = server_update_candidate()?;
     // On Linux a self-dev rebuild rewrites the running binary in place (a dirty
     // build reuses the same `versions/<hash>` path), which unlinks the running
     // inode. `current_exe()` then resolves `/proc/self/exe` to a path with a
@@ -161,59 +149,6 @@ pub(crate) fn reload_exec_target(is_selfdev_session: bool) -> Option<(PathBuf, &
 
 fn binary_mtime(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
-}
-
-/// Pick the newest reload candidate across BOTH self-dev flavors.
-///
-/// The session's own flavor (`is_selfdev_session`) is evaluated first so it wins
-/// any exact-mtime tie, preserving self-dev semantics: a deliberately-pinned
-/// self-dev `shared-server` build is honored whenever it is at least as fresh as
-/// the other flavor's candidate. The other flavor only wins when it is
-/// *strictly newer*, which is exactly the situation that makes
-/// `server_has_newer_binary` report an update (e.g. `/update` installed a newer
-/// release while the self-dev pin stayed on an older build).
-fn newest_reload_candidate(is_selfdev_session: bool) -> Option<(PathBuf, &'static str)> {
-    let ordered = [
-        server_update_candidate(is_selfdev_session),
-        server_update_candidate(!is_selfdev_session),
-    ];
-    let with_mtimes = ordered.into_iter().flatten().map(|candidate| {
-        // Compare payloads, not release wrapper scripts (whose mtimes carry no
-        // version information). Dedup also happens on the payload so a wrapper
-        // and its payload never count as two distinct candidates.
-        let canonical = build::resolve_binary_payload(&candidate.0);
-        let mtime = binary_mtime(canonical.as_path());
-        (candidate, canonical, mtime)
-    });
-    pick_newest_candidate(with_mtimes)
-}
-
-/// Pure, order-sensitive "newest candidate" selection used by
-/// [`newest_reload_candidate`]. Candidates are provided in *preference order*
-/// (the session's own flavor first). A later candidate only displaces an earlier
-/// one when it is provably, strictly newer by mtime, so equal/unknown mtimes
-/// never demote the higher-preference flavor (protecting a self-dev pin on a
-/// tie). Canonical-path duplicates are collapsed to the first occurrence.
-fn pick_newest_candidate(
-    candidates: impl IntoIterator<Item = ((PathBuf, &'static str), PathBuf, Option<std::time::SystemTime>)>,
-) -> Option<(PathBuf, &'static str)> {
-    let mut best: Option<((PathBuf, &'static str), Option<std::time::SystemTime>)> = None;
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    for (candidate, canonical, mtime) in candidates {
-        if !seen.insert(canonical) {
-            continue;
-        }
-        let replace = match (&best, mtime) {
-            (None, _) => true,
-            (Some((_, Some(best_mtime))), Some(new_mtime)) => new_mtime > *best_mtime,
-            (Some((_, None)), Some(_)) => true,
-            (Some(_), None) => false,
-        };
-        if replace {
-            best = Some((candidate, mtime));
-        }
-    }
-    best.map(|(candidate, _)| candidate)
 }
 
 #[derive(Debug)]
@@ -509,10 +444,8 @@ pub(crate) fn server_has_newer_binary() -> bool {
         .and_then(|m| m.modified().ok());
 
     let mut candidates = HashSet::new();
-    for is_selfdev_session in [false, true] {
-        if let Some((candidate, _label)) = server_update_candidate(is_selfdev_session) {
-            candidates.insert(build::resolve_binary_payload(&candidate));
-        }
+    if let Some((candidate, _label)) = server_update_candidate() {
+        candidates.insert(build::resolve_binary_payload(&candidate));
     }
 
     let candidates_with_mtimes = candidates.into_iter().map(|candidate| {
@@ -770,98 +703,12 @@ mod reload_target_tests {
 }
 
 #[cfg(test)]
-mod pick_newest_candidate_tests {
-    use super::pick_newest_candidate;
-    use std::path::PathBuf;
-    use std::time::{Duration, SystemTime};
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn entry(
-        path: &str,
-        label: &'static str,
-        mtime: Option<SystemTime>,
-    ) -> ((PathBuf, &'static str), PathBuf, Option<SystemTime>) {
-        let p = PathBuf::from(path);
-        ((p.clone(), label), p, mtime)
-    }
-
-    #[test]
-    fn other_flavor_wins_when_strictly_newer() {
-        // The /update bug: the session's own (self-dev) flavor is pinned to an
-        // OLD build, but the other (normal) flavor self-healed to a NEWER
-        // release. The reload target must follow the newer release so the daemon
-        // can actually apply the update it advertises.
-        let chosen = pick_newest_candidate([
-            entry("/x/versions/old-selfdev/horon-agent", "shared-server", Some(t(100))),
-            entry("/x/versions/new-release/horon-agent", "stable", Some(t(200))),
-        ])
-        .expect("a candidate");
-        assert_eq!(chosen.0, PathBuf::from("/x/versions/new-release/horon-agent"));
-    }
-
-    #[test]
-    fn own_flavor_wins_on_tie() {
-        // A deliberately-pinned self-dev build that is at least as fresh as the
-        // other flavor must be preserved (self-dev pin protection).
-        let chosen = pick_newest_candidate([
-            entry("/x/versions/selfdev/horon-agent", "shared-server", Some(t(200))),
-            entry("/x/versions/release/horon-agent", "stable", Some(t(200))),
-        ])
-        .expect("a candidate");
-        assert_eq!(chosen.0, PathBuf::from("/x/versions/selfdev/horon-agent"));
-    }
-
-    #[test]
-    fn own_flavor_wins_when_strictly_newer() {
-        let chosen = pick_newest_candidate([
-            entry("/x/versions/fresh-selfdev/horon-agent", "shared-server", Some(t(300))),
-            entry("/x/versions/release/horon-agent", "stable", Some(t(200))),
-        ])
-        .expect("a candidate");
-        assert_eq!(chosen.0, PathBuf::from("/x/versions/fresh-selfdev/horon-agent"));
-    }
-
-    #[test]
-    fn unknown_other_mtime_never_displaces_preferred() {
-        // An unreadable mtime on the other flavor must not let it win, so we
-        // never swap to an unverifiable binary.
-        let chosen = pick_newest_candidate([
-            entry("/x/versions/selfdev/horon-agent", "shared-server", Some(t(100))),
-            entry("/x/versions/release/horon-agent", "stable", None),
-        ])
-        .expect("a candidate");
-        assert_eq!(chosen.0, PathBuf::from("/x/versions/selfdev/horon-agent"));
-    }
-
-    #[test]
-    fn duplicate_canonical_paths_collapse() {
-        // Both flavors resolving to the same binary must not double-count; the
-        // first (preferred) occurrence wins.
-        let chosen = pick_newest_candidate([
-            entry("/x/versions/same/horon-agent", "shared-server", Some(t(100))),
-            entry("/x/versions/same/horon-agent", "stable", Some(t(999))),
-        ])
-        .expect("a candidate");
-        assert_eq!(chosen.1, "shared-server");
-    }
-
-    #[test]
-    fn empty_is_none() {
-        assert!(pick_newest_candidate(std::iter::empty()).is_none());
-    }
-}
-
-#[cfg(test)]
-mod newest_reload_candidate_integration_tests {
-    //! End-to-end-ish coverage that drives `newest_reload_candidate` through the
+mod reload_target_integration_tests {
+    //! End-to-end-ish coverage that drives `server_update_candidate` through the
     //! REAL channel resolution (`build::shared_server_update_candidate`) against
     //! a temp `HORON_AGENT_HOME`. This reproduces the field "/update -> new client,
-    //! stale server" state and proves the fix: a self-dev daemon now reloads into
-    //! the freshly installed release instead of its old pinned binary.
-    use super::{newer_binary_available, newest_reload_candidate};
+    //! stale server" state for a normal install.
+    use super::{newer_binary_available, server_update_candidate};
     use crate::build;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
@@ -880,85 +727,13 @@ mod newest_reload_candidate_integration_tests {
         path
     }
 
-    fn candidate_version_for(is_selfdev: bool) -> Option<String> {
-        let (path, _label) = newest_reload_candidate(is_selfdev)?;
+    fn candidate_version() -> Option<String> {
+        let (path, _label) = server_update_candidate()?;
         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
         canonical
             .parent()
             .and_then(Path::file_name)
             .map(|n| n.to_string_lossy().into_owned())
-    }
-
-    #[test]
-    fn selfdev_daemon_reloads_into_fresh_release_after_update() {
-        let _guard = crate::storage::lock_test_env();
-        let temp = tempfile::TempDir::new().expect("temp dir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
-
-        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
-        // Field state: shared-server pinned to an OLD self-dev build; stable
-        // lags. Then `/update` installs a NEWER release and advances
-        // stable/current (but NOT the pinned shared-server channel).
-        let old_selfdev = "3f160da1-dirty-e756d52efca9";
-        let new_release = "0.15.0";
-        install_versioned_binary(old_selfdev, base);
-        install_versioned_binary(new_release, base + Duration::from_secs(60));
-
-        build::update_shared_server_symlink(old_selfdev).expect("pin shared-server");
-        build::update_stable_symlink(new_release).expect("stable advanced by update");
-        build::update_current_symlink(new_release).expect("current advanced by update");
-
-        // The self-dev session's reload target must now be the fresh release, not
-        // the stale pinned build. This is the fix.
-        assert_eq!(
-            candidate_version_for(true).as_deref(),
-            Some(new_release),
-            "self-dev daemon should reload into the freshly installed release"
-        );
-        // The normal session is unaffected (already healed to stable/release).
-        assert_eq!(
-            candidate_version_for(false).as_deref(),
-            Some(new_release),
-            "normal daemon should also target the fresh release"
-        );
-
-        if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
-        } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
-        }
-    }
-
-    #[test]
-    fn selfdev_pin_is_preserved_when_it_is_the_freshest_build() {
-        let _guard = crate::storage::lock_test_env();
-        let temp = tempfile::TempDir::new().expect("temp dir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
-
-        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
-        // A deliberately-promoted self-dev build that is NEWER than stable must
-        // still be honored: the whole point of pinning shared-server.
-        let stable_old = "0.14.3";
-        let selfdev_new = "56f43c3d-dirty-deadbeef";
-        install_versioned_binary(stable_old, base);
-        install_versioned_binary(selfdev_new, base + Duration::from_secs(120));
-
-        build::update_stable_symlink(stable_old).expect("stable");
-        build::update_shared_server_symlink(selfdev_new).expect("pin newer self-dev");
-
-        assert_eq!(
-            candidate_version_for(true).as_deref(),
-            Some(selfdev_new),
-            "a fresher self-dev pin must be preserved for self-dev sessions"
-        );
-
-        if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
-        } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
-        }
     }
 
     /// Re-implements `server_has_newer_binary`'s decision against an *injected*
@@ -970,10 +745,8 @@ mod newest_reload_candidate_integration_tests {
     fn daemon_reports_update(running: &Path, running_mtime: SystemTime) -> bool {
         let running_canonical = build::resolve_binary_payload(running);
         let mut candidates = std::collections::HashSet::new();
-        for is_selfdev in [false, true] {
-            if let Some((candidate, _label)) = super::server_update_candidate(is_selfdev) {
-                candidates.insert(build::resolve_binary_payload(&candidate));
-            }
+        if let Some((candidate, _label)) = super::server_update_candidate() {
+            candidates.insert(build::resolve_binary_payload(&candidate));
         }
         let with_mtimes = candidates.into_iter().map(|candidate| {
             let m = std::fs::metadata(&candidate).ok().and_then(|m| m.modified().ok());
@@ -1026,7 +799,7 @@ mod newest_reload_candidate_integration_tests {
 
         // (2) The binary it reloads into must be the freshly installed release.
         assert_eq!(
-            candidate_version_for(false).as_deref(),
+            candidate_version().as_deref(),
             Some(new_release),
             "normal-user daemon should reload into the freshly installed release"
         );

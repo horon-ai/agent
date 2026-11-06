@@ -361,23 +361,8 @@ impl Agent {
         }
     }
 
-    pub fn is_canary(&self) -> bool {
-        self.session.is_canary
-    }
-
     pub fn is_debug(&self) -> bool {
         self.session.is_debug
-    }
-
-    pub fn set_canary(&mut self, build_hash: &str) {
-        if !self.session.is_canary {
-            // Self-dev changes the tool surface, including hiding bundled docs.
-            self.unlock_tools();
-        }
-        self.session.set_canary(build_hash);
-        if let Err(err) = self.save_session() {
-            logging::error(&format!("Failed to persist canary session state: {}", err));
-        }
     }
 
     /// Set a persisted custom system prompt override (also used by ambient mode).
@@ -441,9 +426,6 @@ impl Agent {
     /// one-shot late-MCP-discovery check before the first real turn.
     pub(crate) async fn prewarm_provider(&self) {
         self.ensure_listed_tools_index().await;
-        if self.session.is_canary {
-            self.registry.register_selfdev_tools().await;
-        }
         let tools = match &self.locked_tools {
             Some(tools) => tools.clone(),
             None => self.build_filtered_tool_definitions().await,
@@ -470,9 +452,6 @@ impl Agent {
         // whether the frozen index can carry the surface at all.
         self.freeze_mcp_surface();
         self.publish_listed_mcp_surface();
-        if self.session.is_canary {
-            self.registry.register_selfdev_tools().await;
-        }
 
         // Provider-native deferred MCP loading: MCP definitions live outside
         // the cached prefix, so the eager snapshot never changes when servers
@@ -742,7 +721,6 @@ impl Agent {
             HashSet::new()
         };
         let mut tools = self.registry.definitions_filtered(allowed, &disabled).await;
-        Self::apply_selfdev_tool_surface(&mut tools, self.session.is_canary, self.is_desktop_selfdev());
         self.apply_builtin_load_tiers(&mut tools);
         if apply_mcp_exposure {
             self.apply_mcp_tool_exposure(&mut tools);
@@ -878,11 +856,10 @@ impl Agent {
             return Vec::new();
         }
         let listed_mcp_surface = self.mcp_surface_listed();
-        let mut tools = self
+        let tools = self
             .registry
             .definitions_filtered(self.allowed_tools.as_ref(), &self.disabled_tools)
             .await;
-        Self::apply_selfdev_tool_surface(&mut tools, self.session.is_canary, self.is_desktop_selfdev());
         tools
             .into_iter()
             .filter(|tool| tool.name != crate::config::TOOLBOX_TOOL)
@@ -940,34 +917,6 @@ impl Agent {
             }
         } else {
             tools.retain(|tool| !matches!(tool.name.as_str(), "mcp_search" | "mcp_call"));
-        }
-    }
-
-    /// Expose the `selfdev` tool only while running in self-development mode.
-    /// Self-dev agents use the working tree rather than bundled `horon_agent_docs`,
-    /// which can lag behind the source they are editing.
-    ///
-    /// The registry keeps the implementation available for self-dev sessions,
-    /// but regular agents should not spend tool-list context on an internal
-    /// development surface.
-    fn apply_selfdev_tool_surface(tools: &mut Vec<ToolDefinition>, is_canary: bool, is_desktop: bool) {
-        // Desktop development is a separate product mode, not a CLI canary.
-        // Never advertise CLI build/reload or TUI debug sockets in that mode.
-        if is_desktop {
-            tools.retain(|tool| !matches!(tool.name.as_str(), "selfdev" | "debug_socket" | "horon_agent_docs"));
-            return;
-        }
-        tools.retain(|tool| tool.name != "desktop_selfdev");
-        if !is_canary {
-            tools.retain(|tool| tool.name != "selfdev");
-            return;
-        }
-        tools.retain(|tool| tool.name != "horon_agent_docs");
-        for tool in tools.iter_mut() {
-            if tool.name == "selfdev" {
-                tool.description = crate::tool::selfdev::SelfDevTool::description_for(true).to_string();
-                tool.input_schema = crate::tool::selfdev::SelfDevTool::schema_for(true);
-            }
         }
     }
 
@@ -1225,9 +1174,6 @@ impl Agent {
 
     /// Get full tool definitions for debug introspection (bypasses lock)
     pub async fn tool_definitions_for_debug(&self) -> Vec<crate::message::ToolDefinition> {
-        if self.session.is_canary {
-            self.registry.register_selfdev_tools().await;
-        }
         self.build_filtered_tool_definitions().await
     }
 
@@ -1341,23 +1287,6 @@ impl Agent {
                 );
                 sdk_enabled = true;
             }
-        }
-        let is_desktop = self.is_desktop_selfdev();
-        if is_desktop && matches!(name, "selfdev" | "debug_socket") {
-            return Err(anyhow::anyhow!(
-                "Tool '{}' targets HoronAgent CLI, not Desktop. Use 'desktop_selfdev' in Desktop self-development mode.",
-                name
-            ));
-        }
-        if !is_desktop && name == "desktop_selfdev" {
-            return Err(anyhow::anyhow!(
-                "Tool 'desktop_selfdev' is only available in a HoronAgent Desktop source checkout."
-            ));
-        }
-        if (self.session.is_canary || is_desktop) && name == "horon_agent_docs" {
-            return Err(anyhow::anyhow!(
-                "Tool 'horon_agent_docs' is disabled in self-development mode. Read the working tree documentation instead."
-            ));
         }
         if sdk_enabled {
             return Ok(());

@@ -22,7 +22,7 @@ use crate::session::Session;
 use crate::tool;
 use crate::tool::ambient as ambient_tools;
 use chrono::Utc;
-use horon_agent_agent_runtime::{SoftInterruptMessage, SoftInterruptQueue, SoftInterruptSource};
+use horon_agent_agent_runtime::SoftInterruptQueue;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
@@ -98,42 +98,6 @@ impl AmbientRunnerHandle {
     /// Get a reference to the safety system (for debug socket permission commands).
     pub fn safety(&self) -> &Arc<SafetySystem> {
         &self.inner.safety
-    }
-
-    /// Inject a message from an external channel (Telegram, Discord, etc.)
-    /// into the active ambient cycle as a user message.
-    /// If a cycle is running, the message goes in via soft interrupt (immediate).
-    /// If no cycle is running, the message is saved as a directive and a cycle is triggered.
-    /// Returns true if injected into active cycle, false if queued as directive.
-    pub async fn inject_message(&self, text: &str, source: &str) -> bool {
-        let queue = self.inner.active_cycle_queue.read().await;
-        if let Some(ref q) = *queue
-            && let Ok(mut q) = q.lock()
-        {
-            q.push(SoftInterruptMessage {
-                content: format!("[{} message from user]\n{}", source, text),
-                images: Vec::new(),
-                urgent: false,
-                source: SoftInterruptSource::User,
-                client_id: None,
-                input_id: None,
-            });
-            logging::info(&format!(
-                "{} message injected into active ambient cycle: {}",
-                source,
-                crate::util::truncate_str(text, 60)
-            ));
-            return true;
-        }
-        drop(queue);
-
-        // No active cycle — save as directive and trigger a wake
-        let source_id = format!("{}_{}", source, chrono::Utc::now().timestamp());
-        if let Err(e) = ambient::add_directive(text.to_string(), source_id) {
-            logging::error(&format!("Failed to save {} directive: {}", source, e));
-        }
-        self.trigger().await;
-        false
     }
 
     /// Manually trigger an ambient cycle (returns immediately, cycle runs async).
@@ -391,8 +355,6 @@ impl AmbientRunnerHandle {
                 child.improve_mode = parent.improve_mode;
                 child.autoreview_enabled = parent.autoreview_enabled;
                 child.autojudge_enabled = parent.autojudge_enabled;
-                child.is_canary = parent.is_canary;
-                child.testing_build = parent.testing_build.clone();
                 child.is_debug = parent.is_debug;
                 child.memory_injections = parent.memory_injections.clone();
                 child.replay_events = parent.replay_events.clone();
@@ -420,13 +382,9 @@ impl AmbientRunnerHandle {
         child.save()?;
 
         let child_session_id = child.id.clone();
-        let child_is_canary = child.is_canary;
         let child_is_debug = child.is_debug;
         let cycle_provider = provider.fork();
         let registry = tool::Registry::new(cycle_provider.clone()).await;
-        if child_is_canary {
-            registry.register_selfdev_tools().await;
-        }
 
         let mut agent = Agent::new_with_session(cycle_provider, registry, child, None);
         agent.set_debug(child_is_debug);
@@ -499,28 +457,6 @@ impl AmbientRunnerHandle {
             *running = true;
         }
         logging::info("Ambient runner: starting background loop");
-
-        // Spawn reply pollers only when ambient mode is enabled at startup; scheduled
-        // session-targeted scheduled tasks should still work without the ambient-only reply
-        // infrastructure.
-        if config().ambient.enabled {
-            let safety_config = config().safety.clone();
-            if safety_config.email_reply_enabled
-                && safety_config.email_imap_host.is_some()
-                && safety_config.email_enabled
-            {
-                let imap_config = safety_config.clone();
-                tokio::spawn(async move {
-                    crate::notifications::imap_reply_loop(imap_config).await;
-                });
-                logging::info("Ambient runner: IMAP reply poller spawned");
-            }
-
-            // Spawn reply pollers for all configured message channels
-            // (Telegram, Discord, etc.)
-            let channel_registry = crate::channel::ChannelRegistry::from_config(&safety_config);
-            channel_registry.spawn_reply_loops(&self);
-        }
 
         let amb_config = &config().ambient;
         let scheduler_config = AmbientSchedulerConfig {
@@ -807,57 +743,11 @@ impl AmbientRunnerHandle {
 
     /// Run a single ambient cycle. Returns the cycle result.
     async fn run_cycle(&self, provider: &Arc<dyn Provider>) -> anyhow::Result<AmbientCycleResult> {
-        self.run_cycle_with_visible_launcher(provider, config().ambient.visible, || {
-            let horon_agent_bin = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("horon-agent"));
-
-            std::process::Command::new("kitty")
-                .args([
-                    "--title",
-                    "🤖 horon-agent ambient cycle",
-                    "-e",
-                    &horon_agent_bin.to_string_lossy(),
-                    "ambient",
-                    "run-visible",
-                ])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-        })
-        .await
-    }
-
-    async fn run_cycle_with_visible_launcher<F>(
-        &self,
-        provider: &Arc<dyn Provider>,
-        visible: bool,
-        launch_visible: F,
-    ) -> anyhow::Result<AmbientCycleResult>
-    where
-        F: FnOnce() -> std::io::Result<std::process::Child> + Send,
-    {
         let started_at = Utc::now();
 
         self.set_running_detail("gathering context").await;
         let (system_prompt, initial_message) = self.build_cycle_context(provider).await?;
 
-        // Visible mode: spawn a full TUI instead of running headlessly
-        if visible {
-            match self
-                .run_cycle_visible(
-                    started_at,
-                    system_prompt.clone(),
-                    initial_message.clone(),
-                    launch_visible,
-                )
-                .await?
-            {
-                VisibleCycleOutcome::Completed(result) => return Ok(*result),
-                VisibleCycleOutcome::FallBackHeadless => {}
-            }
-        }
-
-        // Headless mode: run agent directly
         self.set_running_detail("setting up tools").await;
 
         let cycle_provider = provider.fork();
@@ -940,90 +830,6 @@ impl AmbientRunnerHandle {
         agent.mark_closed();
         Ok(forced)
     }
-
-    /// Run a visible ambient cycle by spawning a full TUI in a kitty window.
-    async fn run_cycle_visible<F>(
-        &self,
-        started_at: chrono::DateTime<Utc>,
-        system_prompt: String,
-        initial_message: String,
-        launch_visible: F,
-    ) -> anyhow::Result<VisibleCycleOutcome>
-    where
-        F: FnOnce() -> std::io::Result<std::process::Child> + Send,
-    {
-        use crate::ambient::VisibleCycleContext;
-
-        self.set_running_detail("launching visible TUI").await;
-
-        // Save context for the spawned process
-        let context = VisibleCycleContext {
-            system_prompt,
-            initial_message,
-        };
-        context.save()?;
-
-        // Clear any previous result file
-        if let Ok(result_path) = VisibleCycleContext::result_path() {
-            let _ = std::fs::remove_file(&result_path);
-        }
-
-        // Spawn kitty with `horon-agent ambient run-visible`
-        logging::info("Ambient visible: spawning kitty with horon-agent TUI");
-        let child = launch_visible();
-
-        match child {
-            Ok(mut child) => {
-                self.set_running_detail("waiting for TUI cycle").await;
-
-                // Wait for the kitty process to exit (user closes window or cycle completes)
-                let status = tokio::task::spawn_blocking(move || child.wait()).await?;
-                match status {
-                    Ok(s) => logging::info(&format!("Ambient visible: TUI exited with {}", s)),
-                    Err(e) => logging::warn(&format!("Ambient visible: wait error: {}", e)),
-                }
-
-                // Try to read the cycle result from the file
-                if let Ok(result_path) = VisibleCycleContext::result_path()
-                    && result_path.exists()
-                    && let Ok(result) = crate::storage::read_json::<AmbientCycleResult>(&result_path)
-                {
-                    let _ = std::fs::remove_file(&result_path);
-                    return Ok(VisibleCycleOutcome::Completed(Box::new(AmbientCycleResult {
-                        started_at,
-                        ended_at: Utc::now(),
-                        ..result
-                    })));
-                }
-
-                // No result file — user closed the window without end_ambient_cycle
-                Ok(VisibleCycleOutcome::Completed(Box::new(AmbientCycleResult {
-                    summary: "Visible cycle ended (user closed window)".to_string(),
-                    memories_modified: 0,
-                    compactions: 0,
-                    proactive_work: None,
-                    next_schedule: None,
-                    started_at,
-                    ended_at: Utc::now(),
-                    status: CycleStatus::Incomplete,
-                    conversation: None,
-                })))
-            }
-            Err(e) => {
-                logging::warn(&format!(
-                    "Ambient visible: failed to spawn kitty ({}), falling back to headless",
-                    e
-                ));
-                // Fall back to headless mode
-                Ok(VisibleCycleOutcome::FallBackHeadless)
-            }
-        }
-    }
-}
-
-enum VisibleCycleOutcome {
-    Completed(Box<AmbientCycleResult>),
-    FallBackHeadless,
 }
 
 // ---------------------------------------------------------------------------

@@ -610,37 +610,6 @@ fn targeted_notification_does_not_require_subscription() -> Result<()> {
 }
 
 #[test]
-fn test_set_browser_mode_roundtrip() -> Result<()> {
-    for (mode, tag) in [(BrowserMode::User, "user"), (BrowserMode::Agent, "agent")] {
-        let request = Request::SetBrowserMode {
-            id: 71,
-            session_id: "sess_browser".to_string(),
-            mode,
-        };
-        let json = serde_json::to_string(&request)?;
-        assert!(json.contains("\"type\":\"browser_mode\""), "{json}");
-        assert!(json.contains(&format!("\"mode\":\"{tag}\"")), "{json}");
-        let decoded = parse_request_json(&json)?;
-        assert_eq!(decoded.id(), 71);
-        assert!(
-            decoded.is_lightweight_control_request(),
-            "a one-shot push must not need a subscription"
-        );
-        let Request::SetBrowserMode {
-            session_id,
-            mode: decoded_mode,
-            ..
-        } = decoded
-        else {
-            return Err(anyhow!("expected SetBrowserMode"));
-        };
-        assert_eq!(session_id, "sess_browser");
-        assert_eq!(decoded_mode, mode);
-    }
-    Ok(())
-}
-
-#[test]
 fn test_reload_force_defaults_true_for_legacy_clients() -> Result<()> {
     // Old clients (and the desktop Swift enum, which has no reload case) send a
     // reload request with no `force` field. It must default to true so their

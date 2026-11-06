@@ -48,7 +48,6 @@ async fn receive_reload_signal_consumes_already_pending_value() {
     tx.send(Some(ReloadSignal {
         hash: "abc1234".to_string(),
         triggering_session: Some("sess-1".to_string()),
-        prefer_selfdev_binary: true,
         request_id: "reload-1".to_string(),
     }))
     .expect("send pending reload signal");
@@ -63,7 +62,6 @@ async fn receive_reload_signal_consumes_already_pending_value() {
 
     assert_eq!(signal.hash, "abc1234");
     assert_eq!(signal.triggering_session.as_deref(), Some("sess-1"));
-    assert!(signal.prefer_selfdev_binary);
     assert_eq!(signal.request_id, "reload-1");
 }
 
@@ -77,7 +75,6 @@ async fn receive_reload_signal_waits_for_future_value_when_initially_empty() {
     tx.send(Some(ReloadSignal {
         hash: "def5678".to_string(),
         triggering_session: Some("sess-2".to_string()),
-        prefer_selfdev_binary: false,
         request_id: "reload-2".to_string(),
     }))
     .expect("send future reload signal");
@@ -90,7 +87,6 @@ async fn receive_reload_signal_waits_for_future_value_when_initially_empty() {
 
     assert_eq!(signal.hash, "def5678");
     assert_eq!(signal.triggering_session.as_deref(), Some("sess-2"));
-    assert!(!signal.prefer_selfdev_binary);
     assert_eq!(signal.request_id, "reload-2");
 }
 

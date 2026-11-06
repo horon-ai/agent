@@ -906,7 +906,6 @@ def collect_client_peaks(samples: list[Sample]) -> list[dict[str, Any]]:
                 "peak_total_attributed_bytes": total,
                 "peak_display_messages_estimate_bytes": int(sample.totals.get("display_messages_estimate_bytes") or 0),
                 "peak_provider_messages_json_bytes": int(sample.totals.get("provider_messages_json_bytes") or 0),
-                "peak_side_panel_estimate_bytes": int(sample.totals.get("side_panel_estimate_bytes") or 0),
                 "peak_remote_state_bytes": int(sample.totals.get("remote_state_bytes") or 0),
                 "last_seen_timestamp_ms": sample.timestamp_ms,
             }
@@ -923,7 +922,6 @@ def build_client_hints(samples: list[Sample], client_peaks: list[dict[str, Any]]
     total = int(totals.get("total_attributed_bytes") or 0)
     display = int(totals.get("display_messages_estimate_bytes") or 0)
     provider_messages = int(totals.get("provider_messages_json_bytes") or 0)
-    side_panel = int(totals.get("side_panel_estimate_bytes") or 0)
     remote_state = int(totals.get("remote_state_bytes") or 0)
 
     if total > 0 and display / total >= 0.45:
@@ -933,10 +931,6 @@ def build_client_hints(samples: list[Sample], client_peaks: list[dict[str, Any]]
     if total > 0 and provider_messages / total >= 0.20:
         hints.append(
             f"Resident provider-message copies are a meaningful share of client memory ({provider_messages / total:.0%}). Prefer borrowing or lazy hydration where possible."
-        )
-    if total > 0 and side_panel / total >= 0.15:
-        hints.append(
-            f"Side-panel state is materially retained ({side_panel / total:.0%} of attributed client memory). Focus on page content retention and render-cache discipline."
         )
     if total > 0 and remote_state / total >= 0.10:
         hints.append(
@@ -1223,7 +1217,7 @@ def print_human(summary: dict[str, Any], paths: list[Path]) -> None:
             print("No per-client attribution data yet.")
         for item in clients:
             print(
-                f"{item['session_id']} | peak attributed {fmt_mb(item['peak_total_attributed_bytes'])} | display {fmt_mb(item['peak_display_messages_estimate_bytes'])} | provider view {fmt_mb(item['peak_provider_messages_json_bytes'])} | side panel {fmt_mb(item['peak_side_panel_estimate_bytes'])} | provider={item.get('provider') or 'unknown'} model={item.get('model') or 'unknown'}"
+                f"{item['session_id']} | peak attributed {fmt_mb(item['peak_total_attributed_bytes'])} | display {fmt_mb(item['peak_display_messages_estimate_bytes'])} | provider view {fmt_mb(item['peak_provider_messages_json_bytes'])} | provider={item.get('provider') or 'unknown'} model={item.get('model') or 'unknown'}"
             )
 
     print("\nOptimization hints")

@@ -219,11 +219,19 @@ fn metadata_is_replaced_completely_when_only_selected_ancestry_applies() {
 }
 
 #[test]
-fn runtime_and_body_metadata_are_refused_when_not_inert_extensions() {
-    // Given a complete metadata object polluted with runtime or body values.
-    for key in ["pid", "socket", "messages", "status", "unknown"] {
+fn body_metadata_extensions_are_refused_and_retired_keys_stay_inert() {
+    // Given metadata that smuggles another event kind's body through the
+    // preserved extension map.
+    for key in [
+        "messages",
+        "compaction",
+        "env_snapshots",
+        "memory_injections",
+        "replay_events",
+        "persist_state",
+    ] {
         let mut metadata = json!(SessionMetadata::default());
-        metadata[key] = json!(123);
+        metadata["legacy_extensions"] = json!({key: 123});
         let record = event(
             2,
             Some(1),
@@ -231,8 +239,23 @@ fn runtime_and_body_metadata_are_refused_when_not_inert_extensions() {
         );
         // When building the typed projection graph.
         let error = graph(&[root(), record]).unwrap_err();
-        // Then untyped merge input never becomes current state.
-        assert_eq!(error.code, StoreErrorCode::InvalidRecord);
+        // Then that key is refused instead of being preserved as an extension.
+        assert_eq!(error.code, StoreErrorCode::InvalidRecord, "{key}");
+    }
+    // Given top-level runtime fields this build no longer interprets.
+    for key in ["pid", "socket", "status", "unknown"] {
+        let mut metadata = json!(SessionMetadata::default());
+        metadata[key] = json!(123);
+        let record = event(
+            2,
+            Some(1),
+            (KnownEventKind::MetadataChanged, json!({"metadata":metadata})),
+        );
+        // When replaying, then the session loads and the retired field never
+        // becomes current state.
+        let projection = graph(&[root(), record]).unwrap().replay(None).unwrap();
+        assert_eq!(projection.metadata(), &SessionMetadata::default());
+        assert!(projection.metadata().legacy_extensions.is_empty());
     }
 }
 
@@ -816,7 +839,7 @@ fn all_auxiliary_variants_and_blocked_outcomes_survive_replay() {
     let env = json!({"aux_kind":"env_snapshot","captured_at":chrono::DateTime::UNIX_EPOCH,
         "reason":"record","session_id":"legacy","working_dir":"/foreign","provider":"openai",
         "model":"other","horon_agent_version":"old","os":"foreign","arch":"other","pid":123,
-        "is_selfdev":true,"is_debug":true,"is_canary":true});
+        "is_debug":true});
     let replay = json!({"aux_kind":"replay_event","schema_version":9,"value":{"job":"inert"}});
     let blocked = CompactionBlockedPayload {
         source_head_id: Some(id(4)),
@@ -844,6 +867,41 @@ fn all_auxiliary_variants_and_blocked_outcomes_survive_replay() {
     assert_eq!(projection.blocked()[0].1, blocked);
     assert_eq!(projection.metadata().working_dir, None);
     assert!(projection.compaction().is_none());
+}
+
+#[test]
+fn legacy_canary_metadata_loads_as_a_normal_session() {
+    // Given a session file written by a build that had canary sessions. The
+    // retired field name is spelled indirectly so it never reappears in this tree.
+    const LEGACY_CANARY_KEY: &str = concat!("is_", "canary");
+    let mut metadata = json!({
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "title": "legacy canary session",
+        "working_dir": "/tmp/legacy-canary",
+        "saved": true,
+        "testing_build": "self-dev"
+    });
+    metadata
+        .as_object_mut()
+        .expect("metadata is an object")
+        .insert(LEGACY_CANARY_KEY.to_string(), json!(true));
+    let created = event(
+        1,
+        None,
+        (
+            KnownEventKind::SessionCreated,
+            json!({"branch_root": false, "metadata": metadata}),
+        ),
+    );
+    // When replaying, then the session loads and the retired flags stay inert.
+    let projection = graph(&[created]).unwrap().replay(None).unwrap();
+    assert_eq!(projection.metadata().title.as_deref(), Some("legacy canary session"));
+    assert_eq!(projection.metadata().working_dir.as_deref(), Some("/tmp/legacy-canary"));
+    assert!(
+        projection.metadata().legacy_extensions.is_empty(),
+        "retired canary flags must not become session state"
+    );
 }
 
 #[test]
