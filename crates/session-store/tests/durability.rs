@@ -84,11 +84,7 @@ fn recreate_marker(path: &Path) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    horon_agent_platform::fs::request_owner_only_mode(&mut options);
     let mut file = options.open(path)?;
     file.write_all(b"dirty\n")
 }

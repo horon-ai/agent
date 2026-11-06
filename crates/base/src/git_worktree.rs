@@ -38,18 +38,10 @@ pub enum MergeOutcome {
 }
 
 fn git_command() -> Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
-        let mut command = Command::new("git");
-        command.creation_flags(CREATE_NO_WINDOW);
-        command
-    }
-    #[cfg(not(windows))]
-    {
-        Command::new("git")
-    }
+    let mut command = Command::new("git");
+    // Git is background work: on Windows it must not flash a console window.
+    horon_agent_platform::process::hide_console_window(&mut command);
+    command
 }
 
 fn git_output(working_dir: &str, args: &[&str]) -> Result<std::process::Output> {

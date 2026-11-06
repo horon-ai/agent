@@ -1,16 +1,10 @@
 //! Wire-only whole-record transfer. Never an event payload_ref or rewritten log.
 use crate::blob_exchange::{BLOB_CHUNK_BYTES, BlobTransferStatus, SessionBlobChunk};
-use crate::blobs::checked_file;
-#[cfg(unix)]
-use crate::blobs::unsafe_path;
-#[cfg(not(unix))]
-use crate::blobs::unsupported;
+use crate::blobs::{checked_file, unsafe_path, unsupported};
 use crate::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 pub use crate::record_reference::CanonicalRecordRef;
 
@@ -34,23 +28,18 @@ fn invalid(message: &str) -> StoreError {
 
 // Separate role/namespace, while reusing the proven blob engine and the OUTER lock.
 pub(crate) fn transfer_paths(paths: &SessionPaths, id: &SessionId) -> Result<SessionPaths, StoreError> {
+    // The transfer directory is trusted only when its owner can be verified
+    // against the session directory; a platform that cannot prove ownership
+    // keeps the original refusal instead of running the exchange unverified.
+    if !horon_agent_platform::fs::supports_record_exchange() {
+        return Err(unsupported());
+    }
     let session = paths.session_dir(id)?;
     let root = session.join(".record-transfer");
     match fs::symlink_metadata(&root) {
         Ok(meta) => {
-            #[cfg(unix)]
-            {
-                if !meta.is_dir()
-                    || meta.permissions().mode() & 0o777 != 0o700
-                    || meta.uid() != fs::metadata(&session)?.uid()
-                {
-                    return Err(unsafe_path(&root));
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = (&meta, &session);
-                return Err(unsupported());
+            if !horon_agent_platform::fs::is_private_dir_owned_by(&meta, &fs::metadata(&session)?) {
+                return Err(unsafe_path(&root));
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

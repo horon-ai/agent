@@ -20,43 +20,19 @@ pub fn runtime_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir);
     }
-    #[cfg(target_os = "macos")]
-    if let Ok(dir) = std::env::var("TMPDIR") {
-        return PathBuf::from(dir);
+    // macOS hands every session a private temporary directory; the other
+    // systems share one and the discriminator below keeps users apart.
+    if let Some(dir) = horon_agent_platform::paths::user_runtime_dir() {
+        return dir;
     }
     fallback_runtime_dir()
 }
 
 fn fallback_runtime_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("horon-agent-{}", runtime_user_discriminator()))
-}
-
-#[cfg(unix)]
-fn runtime_user_discriminator() -> String {
-    // Read the uid without pulling in libc: the API crate is deliberately
-    // dependency-light, and this only needs to disambiguate users in $TMPDIR.
-    std::env::var("UID")
-        .ok()
-        .or_else(|| std::env::var("USER").ok())
-        .map(sanitize)
-        .unwrap_or_else(|| "user".to_string())
-}
-
-#[cfg(not(unix))]
-fn runtime_user_discriminator() -> String {
-    std::env::var("USERNAME")
-        .or_else(|_| std::env::var("USER"))
-        .map(sanitize)
-        .unwrap_or_else(|_| "user".to_string())
-}
-
-fn sanitize(raw: String) -> String {
-    let out: String = raw
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-        .take(64)
-        .collect();
-    if out.is_empty() { "user".to_string() } else { out }
+    std::env::temp_dir().join(format!(
+        "horon-agent-{}",
+        horon_agent_platform::paths::user_discriminator()
+    ))
 }
 
 /// Path of the versioned harness API socket. `HORON_AGENT_API_SOCKET` overrides it.
@@ -100,9 +76,17 @@ mod tests {
         );
     }
 
+    /// The discriminator becomes a path component, so it may only hold
+    /// characters that cannot escape the directory or break a shell word.
     #[test]
-    fn sanitize_strips_path_and_shell_characters() {
-        assert_eq!(sanitize("../root; rm".into()), "rootrm");
-        assert_eq!(sanitize("!!!".into()), "user");
+    fn the_user_discriminator_is_path_safe() {
+        let token = horon_agent_platform::paths::user_discriminator();
+        assert!(!token.is_empty(), "a discriminator is never empty");
+        assert!(
+            token
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')),
+            "unexpected character in {token}"
+        );
     }
 }

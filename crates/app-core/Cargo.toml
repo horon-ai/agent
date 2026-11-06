@@ -147,5 +147,3 @@ horon-agent-base = { path = "../base", default-features = false, features = ["te
 # bytes/4 heuristic, and cl100k is only reachable through this crate.
 horon-agent-token-estimate = { path = "../token-estimate" }
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }

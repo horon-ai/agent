@@ -614,10 +614,8 @@ pub use self::reload_state::{
 use self::reload_state::{clear_reload_marker_if_stale_for_pid, publish_reload_socket_ready};
 
 pub use self::lifecycle::configure_temporary_server;
-#[cfg(unix)]
+use self::socket::acquire_daemon_lock_for;
 pub use self::socket::spawn_server_notify;
-#[cfg(unix)]
-use self::socket::{acquire_daemon_lock_for, mark_close_on_exec};
 pub use self::socket::{
     cleanup_socket_pair, connect_socket, debug_socket_path, default_socket_path, has_live_listener, is_server_ready,
     is_shared_socket, reap_stale_socket_if_dead, set_socket_path, socket_path, socket_path_is_custom,
@@ -1343,25 +1341,23 @@ impl Server {
         });
 
         // On SIGTERM: log, unregister, let in-flight session saves finish, exit.
-        #[cfg(unix)]
+        // Where the platform has no termination signal to deliver, the watcher
+        // never resolves and this handler simply never runs.
         {
             let sigterm_server_name = self.identity.name.clone();
             let sigterm_sessions = Arc::clone(&self.sessions);
             tokio::spawn(async move {
-                use tokio::signal::unix::{SignalKind, signal};
-                if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
-                    sigterm.recv().await;
-                    let _ = crate::registry::unregister_server(&sigterm_server_name).await;
-                    // A job that is still summarizing must not race the save or
-                    // apply after the transcript is drained.
-                    for agent in sigterm_sessions.read().await.values() {
-                        if let Ok(mut agent) = agent.try_lock() {
-                            agent.cancel_background_compaction(crate::compaction::jobs::CancelReason::Shutdown);
-                        }
+                horon_agent_platform::signal::wait_for_termination().await;
+                let _ = crate::registry::unregister_server(&sigterm_server_name).await;
+                // A job that is still summarizing must not race the save or
+                // apply after the transcript is drained.
+                for agent in sigterm_sessions.read().await.values() {
+                    if let Ok(mut agent) = agent.try_lock() {
+                        agent.cancel_background_compaction(crate::compaction::jobs::CancelReason::Shutdown);
                     }
-                    lifecycle::drain_session_saves_before_exit().await;
-                    std::process::exit(0);
                 }
+                lifecycle::drain_session_saves_before_exit().await;
+                std::process::exit(0);
             });
         }
 
@@ -2325,7 +2321,6 @@ impl Server {
             std::fs::create_dir_all(parent)?;
         }
 
-        #[cfg(unix)]
         let _daemon_lock = acquire_daemon_lock_for(&self.socket_path)?;
 
         if socket_has_live_listener(&self.socket_path).await {
@@ -2343,13 +2338,12 @@ impl Server {
         let debug_listener = Listener::bind(&self.debug_socket_path)?;
         irc::install(self);
 
-        #[cfg(unix)]
-        {
-            // Server reload uses exec. Force the published listener fds to close
-            // across exec so the replacement daemon can safely rebind them.
-            mark_close_on_exec(&main_listener);
-            mark_close_on_exec(&debug_listener);
-        }
+        // Server reload replaces the process image where the platform supports
+        // it. Force the published listener descriptors to close across that
+        // replacement so the new daemon can safely rebind them; where handles
+        // are not inherited there is nothing to mark.
+        horon_agent_platform::ipc::mark_listener_close_on_exec(&main_listener);
+        horon_agent_platform::ipc::mark_listener_close_on_exec(&debug_listener);
 
         // Preserve an in-flight reload marker for exec-based reloads owned by this
         // process, but clear stale markers from unrelated/stale processes.
@@ -2412,8 +2406,8 @@ impl Server {
         }
 
         // Restrict socket files to owner-only so other local users cannot connect.
-        let _ = horon_agent_core::fs::set_permissions_owner_only(&self.socket_path);
-        let _ = horon_agent_core::fs::set_permissions_owner_only(&self.debug_socket_path);
+        let _ = horon_agent_platform::fs::set_file_permissions_owner_only(&self.socket_path);
+        let _ = horon_agent_platform::fs::set_file_permissions_owner_only(&self.debug_socket_path);
 
         // Set logging context for this server
         crate::logging::set_server(&self.identity.name);

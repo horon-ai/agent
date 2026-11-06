@@ -39,11 +39,7 @@ pub fn origin_id(paths: &SessionPaths) -> Result<OriginId, StoreError> {
     let path = paths.root().join(".origin-id");
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    horon_agent_platform::fs::request_owner_only_mode(&mut options);
     match options.open(&path) {
         Ok(mut file) => {
             let id = OriginId::new_v4();

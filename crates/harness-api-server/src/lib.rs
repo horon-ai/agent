@@ -23,15 +23,15 @@ pub mod replication;
 pub mod translate;
 mod writer;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod large_reply_tests;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod pending_drain_tests;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod session_presence_tests;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod stdio_tests;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod writer_tests;
 
 use anyhow::{Context, Result};
@@ -221,41 +221,16 @@ where
     Ok(frame.len())
 }
 
-/// Run the bridge accept loop forever.
-#[cfg(unix)]
-pub(crate) struct InstanceLock {
-    _file: std::fs::File,
-    path: PathBuf,
-}
-
-#[cfg(unix)]
-impl Drop for InstanceLock {
-    fn drop(&mut self) {
-        // Best effort: the flock is released by the fd close regardless, and a
-        // leftover empty lock file is harmless (the next bridge re-locks it).
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 /// Take the exclusive bridge lock beside the API socket, or report that a live
-/// bridge already holds it. `flock` is released by the kernel when the holder
-/// dies, so a crashed bridge never wedges the next one out.
-#[cfg(unix)]
-pub(crate) fn single_instance_lock(api_socket: &std::path::Path) -> Result<Option<InstanceLock>> {
-    use std::os::fd::AsRawFd;
-
+/// bridge already holds it.
+///
+/// The lock is released when the holder exits, however it exits, so a crashed
+/// bridge never wedges the next one out.
+pub(crate) fn single_instance_lock(
+    api_socket: &std::path::Path,
+) -> Result<Option<horon_agent_platform::ipc::InstanceLock>> {
     let path = api_socket.with_extension("lock");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(&path)
-        .with_context(|| format!("open bridge lock {}", path.display()))?;
-    let taken = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
-    Ok(taken.then_some(InstanceLock { _file: file, path }))
+    horon_agent_platform::ipc::lock_instance_file(&path).with_context(|| format!("open bridge lock {}", path.display()))
 }
 
 pub async fn run_bridge(api_socket: PathBuf, legacy_socket: PathBuf) -> Result<()> {
@@ -279,7 +254,6 @@ async fn run_bridge_with_deadline(
     // Whoever lost the race had its clients dropped. Refusing to start when a
     // live bridge holds the lock makes on-demand spawning idempotent, which is
     // what every caller already assumes.
-    #[cfg(unix)]
     let _lock = match single_instance_lock(&api_socket)? {
         Some(lock) => lock,
         None => {
@@ -290,24 +264,19 @@ async fn run_bridge_with_deadline(
             return Ok(());
         }
     };
-    // A stale socket file blocks bind on Unix. On Windows there is no file to
-    // remove: the pipe namespace is not the filesystem. Safe to unlink here
-    // only because we hold the exclusive lock above, so no live bridge owns it.
-    #[cfg(unix)]
-    let _ = std::fs::remove_file(&api_socket);
+    // A stale socket file blocks bind. On Windows there is no file to remove:
+    // the pipe namespace is not the filesystem, and the adapter leaves the
+    // call empty. Safe to unlink here only because we hold the exclusive lock
+    // above, so no live bridge owns the path.
+    horon_agent_platform::ipc::remove_socket(&api_socket);
     if let Some(parent) = api_socket.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    // `mut` only on Windows: the named-pipe listener republishes a pipe
-    // instance on every accept, so accepting takes `&mut self`. Unix's
-    // UnixListener::accept takes `&self`, and an unconditional `mut` there is
-    // an unused_mut warning, so the binding is declared per platform rather
-    // than warning on every build.
-    #[cfg(windows)]
+    // Accepting takes `&mut self` on both platforms: a Windows named-pipe
+    // listener republishes a pipe instance for every accept, and the adapter
+    // gives the Unix socket the same shape so callers never branch.
     let mut listener =
         Listener::bind(&api_socket).with_context(|| format!("bind API socket {}", api_socket.display()))?;
-    #[cfg(unix)]
-    let listener = Listener::bind(&api_socket).with_context(|| format!("bind API socket {}", api_socket.display()))?;
     // Restrict the socket to its owner, matching the daemon socket it fronts.
     //
     // Without this the bridge widens access to everything behind it: the
@@ -316,14 +285,10 @@ async fn run_bridge_with_deadline(
     // owner's provider tokens. A bridge must never be more permissive than
     // the thing it bridges to.
     //
-    // Unix only: a Windows named pipe carries an ACL rather than a file mode,
-    // and the transport applies it when publishing the pipe.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&api_socket, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("restrict API socket {}", api_socket.display()))?;
-    }
+    // A Windows named pipe carries an ACL rather than a file mode, so the
+    // adapter's restriction is empty there and the pipe keeps its own access.
+    horon_agent_platform::ipc::restrict_socket_to_owner(&api_socket)
+        .with_context(|| format!("restrict API socket {}", api_socket.display()))?;
     eprintln!(
         "harness API bridge: listening on {} -> {}",
         api_socket.display(),
@@ -852,13 +817,13 @@ where
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod public_acceptance_tests {
     use super::*;
+    use horon_agent_platform::ipc::{Listener, Stream};
     use serde_json::json;
     use std::ffi::OsString;
     use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::net::{UnixListener, UnixStream};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn stdio_stream_handshake_ping_and_eof() {
@@ -870,7 +835,7 @@ mod public_acceptance_tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let listener = UnixListener::bind(&path).unwrap();
+        let mut listener = Listener::bind(&path).unwrap();
         let (client, bridge) = tokio::io::duplex(4096);
         let (read, write) = tokio::io::split(bridge);
         let task = tokio::spawn(run_bridge_stream(read, write, path.clone()));
@@ -960,7 +925,7 @@ mod public_acceptance_tests {
         .unwrap();
         let api_path = root.join("api.sock");
         let legacy_path = root.join("legacy.sock");
-        let legacy_listener = UnixListener::bind(&legacy_path).unwrap();
+        let mut legacy_listener = Listener::bind(&legacy_path).unwrap();
 
         let fake_daemon = tokio::spawn(async move {
             let (stream, _) = legacy_listener.accept().await.unwrap();
@@ -1001,7 +966,7 @@ mod public_acceptance_tests {
 
         let bridge = tokio::spawn(run_bridge(api_path.clone(), legacy_path));
         let stream = loop {
-            match UnixStream::connect(&api_path).await {
+            match Stream::connect(&api_path).await {
                 Ok(stream) => break stream,
                 Err(_) => tokio::task::yield_now().await,
             }
@@ -1035,7 +1000,7 @@ mod public_acceptance_tests {
 #[path = "framing_tests.rs"]
 mod framing_tests;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod single_instance_tests {
     /// Two bridges must never both own the API socket.
     ///
@@ -1063,7 +1028,7 @@ mod single_instance_tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod socket_permission_tests {
     /// The API socket must never be more permissive than the daemon socket it
     /// fronts.
@@ -1075,8 +1040,6 @@ mod socket_permission_tests {
     /// provider tokens.
     #[tokio::test]
     async fn the_api_socket_is_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = std::env::temp_dir().join(format!("horon-agent-api-perm-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let api_socket = dir.join("api.sock");
@@ -1088,10 +1051,10 @@ mod socket_permission_tests {
         });
 
         // Wait for the bind, which happens before the accept loop.
-        let mut mode = None;
+        let mut owner_only = None;
         for _ in 0..100 {
-            if let Ok(meta) = std::fs::metadata(&api_socket) {
-                mode = Some(meta.permissions().mode() & 0o777);
+            if horon_agent_platform::ipc::is_socket_path(&api_socket) {
+                owner_only = Some(horon_agent_platform::ipc::socket_is_owner_only(&api_socket));
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -1100,15 +1063,15 @@ mod socket_permission_tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(
-            mode,
-            Some(0o600),
+            owner_only,
+            Some(true),
             "API socket must be owner-only (0600); a wider mode exposes every \
              session behind the bridge to other local users"
         );
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod capability_contract_tests {
     use super::*;
 
@@ -1163,17 +1126,17 @@ mod capability_contract_tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod fragmented_reply_tests {
     use super::*;
+    use horon_agent_platform::ipc::Listener;
     use serde_json::json;
-    use tokio::net::UnixListener;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_history_replies_survive_api_requests_between_fragments() {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             let path = std::env::temp_dir().join(format!("horon-agent-fragments-{}-{}.sock", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-            let listener = UnixListener::bind(&path).unwrap();
+            let mut listener = Listener::bind(&path).unwrap();
             let (client, bridge) = tokio::io::duplex(4 * 1024 * 1024);
             let (bridge_read, bridge_write) = tokio::io::split(bridge);
             let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, path.clone()));

@@ -97,27 +97,7 @@ pub fn canonical_watch_path(raw: &Path) -> MonitorResult<PathBuf> {
 }
 
 fn describe_kind(metadata: &std::fs::Metadata) -> &'static str {
-    if metadata.is_dir() {
-        return "directory";
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileTypeExt;
-        let kind = metadata.file_type();
-        if kind.is_socket() {
-            return "socket";
-        }
-        if kind.is_fifo() {
-            return "fifo";
-        }
-        if kind.is_block_device() {
-            return "block device";
-        }
-        if kind.is_char_device() {
-            return "character device";
-        }
-    }
-    "non-regular file"
+    horon_agent_platform::fs::describe_file_kind(metadata)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,31 +110,16 @@ struct FileStamp {
 }
 
 fn stamp_of(metadata: &std::fs::Metadata) -> FileStamp {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        FileStamp {
-            dev: metadata.dev(),
-            ino: metadata.ino(),
-            len: metadata.len(),
-            mtime_secs: metadata.mtime(),
-            mtime_nanos: metadata.mtime_nsec() as u32,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let mtime = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .unwrap_or_default();
-        FileStamp {
-            dev: 0,
-            ino: 0,
-            len: metadata.len(),
-            mtime_secs: mtime.as_secs() as i64,
-            mtime_nanos: mtime.subsec_nanos(),
-        }
+    // The adapter fills the identity and timestamps its kernel reports; a
+    // platform without a device or inode leaves those zero, and every field it
+    // does report still changes when the file changes.
+    let stamp = horon_agent_platform::fs::file_stamp(metadata);
+    FileStamp {
+        dev: stamp.device,
+        ino: stamp.inode,
+        len: stamp.len,
+        mtime_secs: stamp.modified.0,
+        mtime_nanos: u32::try_from(stamp.modified.1).unwrap_or(0),
     }
 }
 

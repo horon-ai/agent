@@ -5,7 +5,7 @@
 //! and every other Unix target, where Linux handles FreeBSD as well), so no
 //! dynamic dispatch is involved anywhere on this path.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::process::{Child, Command};
@@ -16,6 +16,15 @@ use std::time::Duration;
 use rustls::ClientConfig;
 
 pub use horon_agent_platform_api::{PlatformAdapter, SleepAssertion, SyncMode};
+
+pub mod fs;
+pub mod ipc;
+pub mod paths;
+pub mod power;
+pub mod process;
+pub mod signal;
+pub mod term;
+pub mod watch;
 
 #[cfg(target_os = "macos")]
 pub type Current = horon_agent_platform_macos::Adapter;
@@ -38,7 +47,7 @@ pub fn sync_file(file: &File, mode: SyncMode) -> io::Result<()> {
 /// operating-system call happens. Windows then has nothing left to flush and
 /// returns `Ok(())`.
 pub fn sync_dir(path: &Path, mode: SyncMode) -> io::Result<()> {
-    if !fs::symlink_metadata(path)?.is_dir() {
+    if !std::fs::symlink_metadata(path)?.is_dir() {
         return Err(io::Error::new(io::ErrorKind::NotADirectory, "not a directory"));
     }
     Current::sync_dir(path, mode)
@@ -120,6 +129,22 @@ pub fn spawn_detached_without_console_window(cmd: &mut Command) -> io::Result<Ch
     Current::spawn_detached_without_console_window(cmd)
 }
 
+/// Spawn a fire-and-forget child that must not flash a console window and keeps
+/// the caller's session on Unix.
+///
+/// The SDK launches the runtime this way from a host that owns its own session;
+/// the child is not reaped by the platform, so the caller drops it.
+pub fn spawn_background_consoleless(cmd: &mut Command) -> io::Result<Child> {
+    Current::spawn_background_consoleless(cmd)
+}
+
+/// Spawn `cmd` with a readiness pipe the child inherits where the platform can
+/// pass a descriptor.
+///
+/// Re-exported from [`process`], where the rest of the spawn family lives: the
+/// daemon spawn path reads it at the crate root next to `spawn_detached`.
+pub use process::spawn_with_ready_pipe;
+
 /// Reap a detached child without blocking the caller.
 pub fn reap_detached(child: Child) {
     Current::reap_detached(child);
@@ -146,6 +171,30 @@ pub fn symlink_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
 /// Make a file executable (0o755). A no-op on Windows.
 pub fn set_permissions_executable(path: &Path) -> io::Result<()> {
     Current::set_permissions_executable(path)
+}
+
+/// Create a directory its owner alone can enter, creating missing parents when
+/// `recursive` is set.
+///
+/// An already existing directory is accepted: callers use this to reach a known
+/// state, not to detect that a directory is new.
+pub fn create_private_dir(path: &Path, recursive: bool) -> io::Result<()> {
+    if recursive
+        && let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    match Current::create_private_dir(path) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        other => other,
+    }
+}
+
+/// Restrict an existing directory to its owner, whether or not this process
+/// created it.
+pub fn set_permissions_private_dir(path: &Path) -> io::Result<()> {
+    Current::set_dir_permissions_owner_only(path)
 }
 
 /// A sleep-prevention assertion held for as long as the value lives.
@@ -186,7 +235,7 @@ mod tests {
         sync_file(file.as_file(), SyncMode::Full).expect("full sync");
         sync_file(file.as_file(), SyncMode::Fast).expect("fast sync");
 
-        let contents = fs::read(file.path()).expect("read back");
+        let contents = std::fs::read(file.path()).expect("read back");
         assert_eq!(contents, b"platform sync\n");
     }
 
@@ -201,7 +250,7 @@ mod tests {
     fn sync_dir_rejects_non_directory() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("file.txt");
-        fs::write(&path, b"data").expect("write file");
+        std::fs::write(&path, b"data").expect("write file");
 
         let error = sync_dir(&path, SyncMode::Full).expect_err("a file path must be rejected");
         eprintln!("sync_dir(file) -> {error:?}");

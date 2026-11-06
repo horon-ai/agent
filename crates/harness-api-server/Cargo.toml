@@ -14,6 +14,7 @@ anyhow = "1"
 horon-agent-app-core = { path = "../app-core" }
 horon-agent-base = { path = "../base", default-features = false }
 horon-agent-harness-api = { path = "../harness-api" }
+horon-agent-platform = { path = "../platform" }
 horon-agent-todo-policy = { path = "../todo-policy" }
 horon-agent-perf-counters = { path = "../perf-counters" }
 horon-agent-session-types = { path = "../session-types" }
@@ -24,7 +25,8 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["net", "io-util", "io-std", "rt-multi-thread", "macros", "sync", "time"] }
 
-[target.'cfg(unix)'.dependencies]
+# Only the glibc allocator tuning in `allocator.rs` reaches libc.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

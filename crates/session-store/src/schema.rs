@@ -1365,13 +1365,9 @@ pub(crate) fn ensure_safe_component(root: &Path, candidate: &Path) -> Result<(),
         if !is_last && !metadata.is_dir() {
             return Err(unsafe_path("path component is not a directory"));
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // Match Disk::directory even when a clean cache avoids the writer.
-            if metadata.permissions().mode() & 0o777 != 0o700 {
-                return Err(unsafe_path("path component is not owner-private"));
-            }
+        // Match Disk::directory even when a clean cache avoids the writer.
+        if !horon_agent_platform::fs::is_private_dir(&metadata) {
+            return Err(unsafe_path("path component is not owner-private"));
         }
     }
     Ok(())

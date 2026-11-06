@@ -85,26 +85,12 @@ pub fn workspace_root(file: &Path, spec: &ServerSpec, fallback: &Path) -> PathBu
 /// Whether the server's executable can be found on `PATH`.
 pub fn is_installed(spec: &ServerSpec) -> bool {
     if spec.program.contains('/') || spec.program.contains('\\') {
-        return is_executable(Path::new(spec.program));
+        return horon_agent_platform::fs::is_executable(Path::new(spec.program));
     }
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
-    std::env::split_paths(&path).any(|dir| is_executable(&dir.join(spec.program)))
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    match std::fs::metadata(path) {
-        Ok(metadata) => metadata.is_file() && metadata.permissions().mode() & 0o111 != 0,
-        Err(_) => false,
-    }
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
+    std::env::split_paths(&path).any(|dir| horon_agent_platform::fs::is_executable(&dir.join(spec.program)))
 }
 
 #[cfg(test)]

@@ -469,18 +469,14 @@ fn read_surface(path: &Path) -> SurfaceRead {
     SurfaceRead::Present { bytes, identity }
 }
 
-#[cfg(unix)]
 fn identity_of(metadata: &std::fs::Metadata) -> Option<FileIdentity> {
-    use std::os::unix::fs::MetadataExt;
-    Some(FileIdentity {
-        device: metadata.dev(),
-        inode: metadata.ino(),
+    let ids = horon_agent_platform::fs::file_ids(metadata);
+    // A platform without a device or inode reports zeros; there the digest
+    // alone decides whether the file changed.
+    (ids.device != 0 || ids.inode != 0).then_some(FileIdentity {
+        device: ids.device,
+        inode: ids.inode,
     })
-}
-
-#[cfg(not(unix))]
-fn identity_of(_metadata: &std::fs::Metadata) -> Option<FileIdentity> {
-    None
 }
 
 fn canonical_root(project_root: &Path) -> PathBuf {
@@ -751,20 +747,21 @@ mod tests {
         assert!(trust_file(home.path()).exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn digest_covers_the_opened_file_identity() {
-        use std::os::unix::fs::MetadataExt;
-
         let home = tempfile::tempdir().expect("home");
         let _env = EnvGuard::install(home.path());
         let project = workspace(&[(".mcp.json", r#"{"mcpServers":{"alpha":{"command":"alpha-bin"}}}"#)]);
 
         let first = snapshot(project.path());
-        let identity = first.files[0].identity.expect("unix identity");
+        let Some(identity) = first.files[0].identity else {
+            // A platform with no inode has nothing to compare here.
+            return;
+        };
         let metadata = std::fs::metadata(project.path().join(".mcp.json")).expect("metadata");
-        assert_eq!(identity.device, metadata.dev());
-        assert_eq!(identity.inode, metadata.ino());
+        let ids = horon_agent_platform::fs::file_ids(&metadata);
+        assert_eq!(identity.device, ids.device);
+        assert_eq!(identity.inode, ids.inode);
 
         let replacement = project.path().join("replacement.json");
         std::fs::write(&replacement, r#"{"mcpServers":{"alpha":{"command":"alpha-bin"}}}"#).expect("write");

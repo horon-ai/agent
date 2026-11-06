@@ -9,6 +9,7 @@ description = "Rust SDK for the horon-agent harness API: connect, drive sessions
 anyhow = "1"
 horon-agent-base = { path = "../base", default-features = false }
 horon-agent-harness-api = { path = "../harness-api" }
+horon-agent-platform = { path = "../platform" }
 horon-agent-todo-policy = { path = "../todo-policy" }
 horon-agent-transport = { path = "../transport" }
 jsonschema = { version = "0.49.3", default-features = false }

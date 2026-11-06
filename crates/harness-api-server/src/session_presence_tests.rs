@@ -1,7 +1,7 @@
 //! Transport-level regression tests for globally connected user metadata.
 use super::*;
+use horon_agent_platform::ipc::Listener;
 use serde_json::json;
-use tokio::net::UnixListener;
 
 struct SocketDir(std::path::PathBuf);
 impl SocketDir {
@@ -28,7 +28,7 @@ impl Drop for SocketDir {
 async fn snapshot(reply: Value) -> std::collections::HashSet<String> {
     let dir = SocketDir::new();
     let path = dir.path().join("presence.sock");
-    let listener = UnixListener::bind(&path).unwrap();
+    let mut listener = Listener::bind(&path).unwrap();
     let server = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
         let mut reader = BufReader::new(socket);
@@ -83,7 +83,7 @@ async fn old_malformed_and_disconnected_sources_never_claim_connected_users() {
 async fn stalled_presence_probe_is_bounded() {
     let dir = SocketDir::new();
     let path = dir.path().join("stalled.sock");
-    let listener = UnixListener::bind(&path).unwrap();
+    let listener = Listener::bind(&path).unwrap();
     let start = std::time::Instant::now();
     assert!(daemon_user_connections(&path).await.is_empty());
     assert!(start.elapsed() < std::time::Duration::from_secs(2));

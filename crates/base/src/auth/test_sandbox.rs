@@ -60,7 +60,7 @@ impl AuthTestSandbox {
         let path = self.env_file_path(file_name);
         std::fs::create_dir_all(self.config_dir())?;
         std::fs::write(&path, format!("{}={}\n", env_key, value))?;
-        horon_agent_core::fs::set_permissions_owner_only(&path)?;
+        horon_agent_platform::fs::set_file_permissions_owner_only(&path)?;
         reset_global_auth_state();
         Ok(path)
     }

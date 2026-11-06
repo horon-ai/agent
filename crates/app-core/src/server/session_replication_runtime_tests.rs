@@ -13,18 +13,32 @@ fn session_replication_local_publication_is_private_and_catalog_readable() {
     let listed = crate::recent_session_index::recent(10).unwrap();
     // Then every local state file is owner-only and the normal listing works.
     let directory = session.event_log_path().unwrap().parent().unwrap().to_owned();
-    for name in [
-        "local-runtime.json",
-        "local-head.json",
-        "local-head-explicit.json",
-        "facade-cache.json",
-    ] {
+    // A plain commit publishes the local runtime, the explicit-selection flag
+    // and the derived caches; every one of them stays owner-only.
+    for name in ["local-runtime.json", "local-head-explicit.json", "facade-cache.json"] {
         assert_eq!(
-            std::fs::metadata(directory.join(name)).unwrap().permissions().mode() & 0o777,
-            0o600
+            std::fs::metadata(directory.join(name))
+                .unwrap_or_else(|error| panic!("{name} is published: {error}"))
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "{name} must be owner-only"
         );
     }
-    assert_eq!(listed[0].session_id, session.id);
+    // An implicit commit records no local-head.json: every reader ignores the
+    // file without the explicit flag, so recording it would cost a flush per
+    // commit for a value nothing reads. An explicit selection still writes it,
+    // and then it is owner-only like the rest.
+    let head = directory.join("local-head.json");
+    if let Ok(metadata) = std::fs::metadata(&head) {
+        assert_eq!(
+            metadata.permissions().mode() & 0o777,
+            0o600,
+            "local-head.json must be owner-only"
+        );
+    }
+    assert!(!head.exists(), "an implicit commit must not write local-head.json");
 }
 
 #[tokio::test]

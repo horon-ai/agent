@@ -155,7 +155,10 @@ impl ServerRuntime {
         let runtime = self.clone();
         let cancellation = self.tasks.cancellation.child_token();
         tokio::spawn(async move {
-            #[cfg(windows)]
+            // A named-pipe listener republishes an instance per accept and needs
+            // `&mut`; a Unix listener accepts through `&self`, so the binding is
+            // not mutated there.
+            #[allow(unused_mut)]
             let mut listener = listener;
 
             loop {
@@ -187,7 +190,10 @@ impl ServerRuntime {
         let runtime = self.clone();
         let cancellation = self.tasks.cancellation.child_token();
         tokio::spawn(async move {
-            #[cfg(windows)]
+            // A named-pipe listener republishes an instance per accept and needs
+            // `&mut`; a Unix listener accepts through `&self`, so the binding is
+            // not mutated there.
+            #[allow(unused_mut)]
             let mut listener = listener;
 
             loop {

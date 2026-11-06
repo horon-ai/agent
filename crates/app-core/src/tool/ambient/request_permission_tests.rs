@@ -34,17 +34,7 @@ impl TestHome {
         // another test's writer created with the default umask is refused as
         // "unsafe or non-private path" for the rest of this test.
         let sessions = dir.path().join("sessions");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            std::fs::DirBuilder::new()
-                .mode(0o700)
-                .recursive(true)
-                .create(&sessions)
-                .expect("private store root");
-        }
-        #[cfg(not(unix))]
-        std::fs::create_dir_all(&sessions).expect("store root");
+        horon_agent_platform::fs::create_private_dir(&sessions).expect("private store root");
         crate::config::Config::invalidate_cache();
         Self {
             previous,

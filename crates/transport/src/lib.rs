@@ -4,17 +4,12 @@
 //! and `Stream` with the same shape as `tokio::net::Unix*`. Callers write one
 //! code path and get the platform's native mechanism.
 //!
-//! This lives in its own crate so the harness API bridge can use it without
-//! depending on `horon-agent-base`. The bridge is deliberately free of the
-//! application foundation, and the alternative was duplicating 450 lines of
-//! named pipe handling into it.
+//! The implementation lives in the platform adapter's `ipc` module, which is
+//! the only place in the workspace that may speak an operating system's local
+//! IPC. This crate stays as the name the bridge, the SDK and the daemon import,
+//! so those three never have to know which mechanism they got.
 
-#[cfg(unix)]
-mod unix;
-#[cfg(unix)]
-pub use unix::*;
-
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-pub use windows::*;
+pub use horon_agent_platform::ipc::{
+    Addr, InstanceLock, Listener, ReadHalf, Stream, SyncStream, WriteHalf, is_socket_path, lock_instance_file,
+    remove_socket, restrict_socket_to_owner, stream_pair, sync_stream_shutdown_handle,
+};

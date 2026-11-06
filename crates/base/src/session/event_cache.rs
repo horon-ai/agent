@@ -30,30 +30,17 @@ fn stamp(paths: &store::SessionPaths, id: &store::SessionId) -> Result<String> {
     // The facade embeds this string in a record with a byte budget, so a clock or a log size that
     // happens to change its digit count must not move the publish decision at the limit.
     // Comparison is plain string equality, so padding changes no meaning.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(format!(
-            "{}:{}:{:012}:{}:{:09}:{}:{:09}",
-            meta.dev(),
-            meta.ino(),
-            meta.len(),
-            meta.mtime(),
-            meta.mtime_nsec(),
-            meta.ctime(),
-            meta.ctime_nsec()
-        ))
-    }
-    #[cfg(not(unix))]
-    {
-        let modified = meta.modified()?.duration_since(std::time::UNIX_EPOCH)?;
-        Ok(format!(
-            "{:012}:{:012}:{:09}",
-            meta.len(),
-            modified.as_secs(),
-            modified.subsec_nanos()
-        ))
-    }
+    let stamp = horon_agent_platform::fs::file_stamp(&meta);
+    Ok(format!(
+        "{}:{}:{:012}:{}:{:09}:{}:{:09}",
+        stamp.device,
+        stamp.inode,
+        meta.len(),
+        stamp.modified.0,
+        stamp.modified.1,
+        stamp.changed.0,
+        stamp.changed.1
+    ))
 }
 
 /// UTF-8 bytes of every string in `value`, which bounds its canonical JSON text from below:

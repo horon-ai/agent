@@ -33,18 +33,10 @@ pub fn lock_test_env() -> MutexGuard<'static, ()> {
 
 /// Creates a directory the way the durable store expects one: owner-only where
 /// the platform carries POSIX modes, and a plain create elsewhere, because the
-/// store's `0700` requirement itself is unix-only (`session-store` checks it
-/// under `#[cfg(unix)]`).
+/// store's `0700` requirement itself is unix-only.
 #[cfg(any(test, feature = "test-support"))]
 pub fn create_store_dir(path: &Path, recursive: bool) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(recursive);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path)
+    horon_agent_platform::create_private_dir(path, recursive)
 }
 
 #[cfg(test)]

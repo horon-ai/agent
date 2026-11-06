@@ -1,5 +1,4 @@
 //! Host-local listing index. Session locks are acquired only outside catalog locks.
-#[cfg(any(unix, windows))]
 use crate::blobs::new_file;
 use crate::blobs::{Disk, checked_file, log_file};
 use crate::cache_io::{Stamp, decode, encode, publish_derived};
@@ -17,38 +16,21 @@ pub fn needs_compaction(dead: u64, live: u64) -> bool {
 }
 
 fn lock(paths: &SessionPaths) -> Result<File, StoreError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::symlink_metadata(paths.root())?;
-        if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
-            return Err(crate::blobs::unsafe_path(paths.root()));
-        }
+    // The store root is the anchor for every other private path: a permissive
+    // root would let another user replace the catalog underneath this lock.
+    // Windows keeps it private through the agent home's inherited ACL, so only
+    // its type is verified there.
+    if !horon_agent_platform::fs::is_private_dir(&fs::symlink_metadata(paths.root())?) {
+        return Err(crate::blobs::unsafe_path(paths.root()));
     }
-    // Windows has no owner-only mode bits; the store root is kept private by the
-    // inherited ACL of the agent home, so only its type is verified here.
-    #[cfg(windows)]
-    {
-        if !fs::symlink_metadata(paths.root())?.is_dir() {
-            return Err(crate::blobs::unsafe_path(paths.root()));
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = paths;
-        return Err(crate::blobs::unsupported());
-    }
-    #[cfg(any(unix, windows))]
-    {
-        let path = paths.root().join(".catalog.lock");
-        let file = match new_file(&path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
-            Err(e) => return Err(e.into()),
-        };
-        crate::writer::lock_exclusive_named(&file, "catalog index")?;
-        Ok(file)
-    }
+    let path = paths.root().join(".catalog.lock");
+    let file = match new_file(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
+        Err(e) => return Err(e.into()),
+    };
+    crate::writer::lock_exclusive_named(&file, "catalog index")?;
+    Ok(file)
 }
 fn sessions(paths: &SessionPaths) -> Result<Vec<SessionId>, StoreError> {
     let mut ids = Vec::new();

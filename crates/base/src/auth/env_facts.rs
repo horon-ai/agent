@@ -192,22 +192,12 @@ fn probe_browser() -> Tri {
     if std::env::var("BROWSER").is_ok_and(|value| !value.trim().is_empty()) {
         return Tri::Yes;
     }
-    if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
-        // `open` / `start` are always present.
-        return Tri::Yes;
-    }
-    // On Linux a launcher without a display server cannot show anything.
-    let has_display = ["DISPLAY", "WAYLAND_DISPLAY"]
-        .iter()
-        .any(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()));
-    if !has_display {
-        return Tri::No;
-    }
-    match binary_on_path("xdg-open") {
-        // A display but no launcher is unusual; stay optimistic rather than
-        // downgrading a user who has some other mechanism.
-        false => Tri::Unknown,
-        true => Tri::Yes,
+    match horon_agent_platform::paths::browser_launcher_state() {
+        Some(true) => Tri::Yes,
+        Some(false) => Tri::No,
+        // A display but no known launcher is unusual; stay optimistic rather
+        // than downgrading a user who has some other mechanism.
+        None => Tri::Unknown,
     }
 }
 
@@ -247,7 +237,7 @@ fn probe_container() -> Tri {
             return Tri::Yes;
         }
     }
-    if cfg!(target_os = "linux") && std::path::Path::new("/.dockerenv").exists() {
+    if horon_agent_platform::paths::is_container() {
         return Tri::Yes;
     }
     // WSL forwards browser launches to Windows and works fine, so it is

@@ -4,76 +4,6 @@ use serde::de::DeserializeOwned;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[cfg(windows)]
-use std::collections::{HashMap, HashSet};
-#[cfg(windows)]
-use std::sync::{LazyLock, Mutex};
-#[cfg(windows)]
-use std::time::{Duration, Instant};
-
-#[cfg(windows)]
-const SECRET_HARDEN_CACHE_TTL: Duration = Duration::from_secs(60);
-#[cfg(windows)]
-const SECRET_HARDEN_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
-#[cfg(windows)]
-const SECRET_HARDEN_DEFER_DELAY: Duration = Duration::from_secs(30);
-
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-enum SecretHardenAttempt {
-    InFlight,
-    Succeeded(Instant),
-    Failed(Instant),
-}
-
-#[cfg(windows)]
-#[derive(Default)]
-struct SecretHardenState {
-    directories: HashMap<PathBuf, SecretHardenAttempt>,
-    files: HashMap<PathBuf, SecretHardenAttempt>,
-    pending_directories: HashSet<PathBuf>,
-    pending_files: HashSet<PathBuf>,
-    worker_running: bool,
-}
-
-#[cfg(windows)]
-impl SecretHardenState {
-    /// Queue a path for best-effort hardening. Returns true when the caller
-    /// should start the single worker for this process.
-    fn enqueue(&mut self, path: &Path, directory: bool, now: Instant) -> bool {
-        let attempted = if directory { &self.directories } else { &self.files };
-        let should_suppress = match attempted.get(path) {
-            Some(SecretHardenAttempt::InFlight) => true,
-            Some(SecretHardenAttempt::Succeeded(attempted_at)) => {
-                now.saturating_duration_since(*attempted_at) < SECRET_HARDEN_CACHE_TTL
-            }
-            Some(SecretHardenAttempt::Failed(attempted_at)) => {
-                now.saturating_duration_since(*attempted_at) < SECRET_HARDEN_FAILURE_BACKOFF
-            }
-            None => false,
-        };
-        if should_suppress {
-            return false;
-        }
-
-        if directory {
-            self.pending_directories.insert(path.to_path_buf());
-        } else {
-            self.pending_files.insert(path.to_path_buf());
-        }
-        if self.worker_running {
-            false
-        } else {
-            self.worker_running = true;
-            true
-        }
-    }
-}
-
-#[cfg(windows)]
-static SECRET_HARDEN_STATE: LazyLock<Mutex<SecretHardenState>> =
-    LazyLock::new(|| Mutex::new(SecretHardenState::default()));
-
 mod active_pids;
 pub use active_pids::{
     SessionCounts, SessionPresence, StreamingGuard, active_pids_dir, active_session_ids, find_active_session_id_by_pid,
@@ -110,11 +40,8 @@ pub fn runtime_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir);
     }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(dir) = std::env::var("TMPDIR") {
-            return PathBuf::from(dir);
-        }
+    if let Some(dir) = horon_agent_platform::paths::user_runtime_dir() {
+        return dir;
     }
 
     let dir = fallback_runtime_dir();
@@ -123,37 +50,15 @@ pub fn runtime_dir() -> PathBuf {
 }
 
 fn fallback_runtime_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("horon-agent-{}", runtime_user_discriminator()))
-}
-
-#[cfg(unix)]
-fn runtime_user_discriminator() -> String {
-    unsafe { libc::geteuid() }.to_string()
-}
-
-#[cfg(not(unix))]
-fn runtime_user_discriminator() -> String {
-    let raw = std::env::var("USERNAME")
-        .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| "user".to_string());
-    let sanitized: String = raw
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-        .take(64)
-        .collect();
-    if sanitized.is_empty() {
-        "user".to_string()
-    } else {
-        sanitized
-    }
+    std::env::temp_dir().join(format!(
+        "horon-agent-{}",
+        horon_agent_platform::paths::user_discriminator()
+    ))
 }
 
 fn ensure_private_runtime_dir(path: &Path) {
     let _ = std::fs::create_dir_all(path);
-    #[cfg(unix)]
-    {
-        let _ = horon_agent_core::fs::set_directory_permissions_owner_only(path);
-    }
+    horon_agent_platform::fs::harden_dir_permissions(path);
 }
 
 pub fn horon_agent_dir() -> Result<PathBuf> {
@@ -247,37 +152,20 @@ pub fn user_home_path(relative: impl AsRef<Path>) -> Result<PathBuf> {
 /// This intentionally ignores failures so startup does not fail on exotic
 /// filesystems, but it narrows exposure on typical Unix systems.
 pub fn harden_user_config_permissions() {
-    #[cfg(windows)]
-    {
-        if let Some(config_dir) = dirs::config_dir() {
-            let horon_agent_config_dir = config_dir.join("horon-agent");
-            if horon_agent_config_dir.exists() {
-                schedule_windows_path_hardening(&horon_agent_config_dir, true);
-            }
+    // The platform decides how far this can go and how much it may cost: Unix
+    // chmods now, while Windows defers the ACL replacement so startup does not
+    // inherit its latency.
+    if let Some(config_dir) = dirs::config_dir() {
+        let horon_agent_config_dir = config_dir.join("horon-agent");
+        if horon_agent_config_dir.exists() {
+            horon_agent_platform::fs::harden_credential_dir_permissions(&horon_agent_config_dir);
         }
-
-        if let Ok(horon_agent_home) = horon_agent_dir()
-            && horon_agent_home.exists()
-        {
-            schedule_windows_path_hardening(&horon_agent_home, true);
-        }
-        return;
     }
 
-    #[cfg(not(windows))]
+    if let Ok(horon_agent_home) = horon_agent_dir()
+        && horon_agent_home.exists()
     {
-        if let Some(config_dir) = dirs::config_dir() {
-            let horon_agent_config_dir = config_dir.join("horon-agent");
-            if horon_agent_config_dir.exists() {
-                let _ = horon_agent_core::fs::set_directory_permissions_owner_only(&horon_agent_config_dir);
-            }
-        }
-
-        if let Ok(horon_agent_home) = horon_agent_dir()
-            && horon_agent_home.exists()
-        {
-            let _ = horon_agent_core::fs::set_directory_permissions_owner_only(&horon_agent_home);
-        }
+        horon_agent_platform::fs::harden_credential_dir_permissions(&horon_agent_home);
     }
 }
 
@@ -286,133 +174,11 @@ pub fn harden_user_config_permissions() {
 /// This is used before reading credential files so legacy permissive modes can
 /// be tightened opportunistically.
 pub fn harden_secret_file_permissions(path: &Path) {
-    #[cfg(windows)]
-    {
-        harden_secret_file_permissions_windows(path);
-        return;
-    }
-
-    #[cfg(not(windows))]
-    {
-        if let Some(parent) = path.parent() {
-            let _ = horon_agent_core::fs::set_directory_permissions_owner_only(parent);
-        }
-        if path.exists() {
-            let _ = horon_agent_core::fs::set_permissions_owner_only(path);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn harden_secret_file_permissions_windows(path: &Path) {
-    // Windows ACL replacement is substantially more expensive than chmod and
-    // security products can amplify it into seconds. Credential readers call
-    // this helper frequently, including on the startup and TUI render paths.
-    // Read-time hardening is opportunistic, while HoronAgent's own secret writes
-    // harden synchronously below. Defer the opportunistic repair so first-frame
-    // latency does not inherit multi-second SetNamedSecurityInfoW calls. The
-    // worker coalesces repeated probes and retries paths after a short TTL.
     if let Some(parent) = path.parent() {
-        schedule_windows_path_hardening(parent, true);
+        horon_agent_platform::fs::harden_credential_dir_permissions(parent);
     }
     if path.exists() {
-        schedule_windows_path_hardening(path, false);
-    }
-}
-
-#[cfg(windows)]
-fn schedule_windows_path_hardening(path: &Path, directory: bool) {
-    let should_spawn = {
-        let Ok(mut state) = SECRET_HARDEN_STATE.lock() else {
-            return;
-        };
-        state.enqueue(path, directory, Instant::now())
-    };
-
-    if !should_spawn {
-        return;
-    }
-
-    if std::thread::Builder::new()
-        .name("horon-agent-windows-acl-harden".to_string())
-        .spawn(|| {
-            std::thread::sleep(SECRET_HARDEN_DEFER_DELAY);
-            run_windows_hardening_worker();
-        })
-        .is_err()
-        && let Ok(mut state) = SECRET_HARDEN_STATE.lock()
-    {
-        state.worker_running = false;
-    }
-}
-
-#[cfg(windows)]
-fn run_windows_hardening_worker() {
-    loop {
-        let (directories, files) = {
-            let Ok(mut state) = SECRET_HARDEN_STATE.lock() else {
-                return;
-            };
-            if state.pending_directories.is_empty() && state.pending_files.is_empty() {
-                state.worker_running = false;
-                return;
-            }
-            let directories = std::mem::take(&mut state.pending_directories);
-            let files = std::mem::take(&mut state.pending_files);
-            // Mark attempts before releasing the lock. Otherwise render-time
-            // probes can requeue the same paths while a slow ACL call is in
-            // flight, keeping the worker in an endless hardening loop.
-            for path in &directories {
-                state.directories.insert(path.clone(), SecretHardenAttempt::InFlight);
-            }
-            for path in &files {
-                state.files.insert(path.clone(), SecretHardenAttempt::InFlight);
-            }
-            (directories, files)
-        };
-
-        let mut directory_results = Vec::with_capacity(directories.len());
-        for path in &directories {
-            let succeeded = horon_agent_core::fs::set_directory_permissions_owner_only(path).is_ok();
-            directory_results.push((path.clone(), succeeded));
-        }
-        let mut file_results = Vec::with_capacity(files.len());
-        for path in &files {
-            let succeeded = !path.exists() || horon_agent_core::fs::set_permissions_owner_only(path).is_ok();
-            file_results.push((path.clone(), succeeded));
-        }
-
-        let Ok(mut state) = SECRET_HARDEN_STATE.lock() else {
-            return;
-        };
-        let completed_at = Instant::now();
-        for (path, succeeded) in directory_results {
-            state.directories.insert(
-                path,
-                if succeeded {
-                    SecretHardenAttempt::Succeeded(completed_at)
-                } else {
-                    SecretHardenAttempt::Failed(completed_at)
-                },
-            );
-        }
-        for (path, succeeded) in file_results {
-            state.files.insert(
-                path,
-                if succeeded {
-                    SecretHardenAttempt::Succeeded(completed_at)
-                } else {
-                    SecretHardenAttempt::Failed(completed_at)
-                },
-            );
-        }
-        if state.pending_directories.is_empty() && state.pending_files.is_empty() {
-            state.worker_running = false;
-            return;
-        }
-        // New paths arrived while the ACL calls were running. Process them in
-        // this worker without another startup delay.
-        drop(state);
+        horon_agent_platform::fs::harden_credential_file_permissions(path);
     }
 }
 
@@ -437,7 +203,7 @@ pub fn validate_external_auth_file(path: &Path) -> Result<PathBuf> {
 pub fn ensure_dir(path: &Path) -> Result<()> {
     if !path.exists() {
         std::fs::create_dir_all(path)?;
-        horon_agent_core::fs::set_directory_permissions_owner_only(path)?;
+        horon_agent_platform::fs::set_dir_permissions_owner_only(path)?;
     }
     Ok(())
 }
@@ -521,7 +287,7 @@ fn write_bytes_inner(path: &Path, bytes: &[u8], durable: bool, secret: bool) -> 
             // deferred on Windows. Harden the container before any secret
             // bytes are created so a permissive inherited ACL is never
             // published, even briefly.
-            horon_agent_core::fs::set_directory_permissions_owner_only(parent)?;
+            horon_agent_platform::fs::set_dir_permissions_owner_only(parent)?;
         }
     }
 
@@ -532,7 +298,7 @@ fn write_bytes_inner(path: &Path, bytes: &[u8], durable: bool, secret: bool) -> 
     let result = (|| -> Result<()> {
         let file = std::fs::File::create(&tmp_path)?;
         if secret {
-            horon_agent_core::fs::set_permissions_owner_only(&tmp_path)?;
+            horon_agent_platform::fs::set_file_permissions_owner_only(&tmp_path)?;
         }
         let mut writer = std::io::BufWriter::new(file);
         writer.write_all(bytes)?;
@@ -547,45 +313,32 @@ fn write_bytes_inner(path: &Path, bytes: &[u8], durable: bool, secret: bool) -> 
         if path.exists() {
             let bak_path = path.with_extension("bak");
             if secret {
-                horon_agent_core::fs::set_permissions_owner_only(path)?;
+                horon_agent_platform::fs::set_file_permissions_owner_only(path)?;
             }
             // Preserve the previous version as .bak without ever leaving the
-            // primary path missing. On Unix, rename(tmp, path) atomically
-            // replaces the destination, so the backup can be a hard link to
-            // the old inode: concurrent readers always see either the old or
-            // the new content, never ENOENT. (The old rename-away approach
-            // opened a window where the primary did not exist, which made
-            // concurrent load-all style readers silently drop entries, e.g.
-            // self-dev build requests "disappearing" from the queue.)
-            #[cfg(unix)]
-            {
-                let _ = std::fs::remove_file(&bak_path);
-                let _ = std::fs::hard_link(path, &bak_path);
-            }
-            // On Windows, rename fails when the destination exists, so the
-            // primary must be moved away first; the brief missing window is
-            // unavoidable without platform-specific replace APIs.
-            #[cfg(not(unix))]
-            {
-                let _ = std::fs::remove_file(&bak_path);
-                let _ = std::fs::rename(path, &bak_path);
-            }
+            // primary path missing where the platform allows it: the backup is a
+            // hard link to the old inode, so concurrent readers always see
+            // either the old or the new content, never ENOENT. (The old
+            // rename-away approach opened a window where the primary did not
+            // exist, which made concurrent load-all style readers silently drop
+            // entries, e.g. self-dev build requests "disappearing" from the
+            // queue.) Windows has no hard-linked replace, so the primary is
+            // briefly absent there.
+            let _ = horon_agent_platform::fs::rotate_backup(path, &bak_path);
             if secret && bak_path.exists() {
-                horon_agent_core::fs::set_permissions_owner_only(&bak_path)?;
+                horon_agent_platform::fs::set_file_permissions_owner_only(&bak_path)?;
             }
         }
 
         std::fs::rename(&tmp_path, path)?;
         if secret {
-            horon_agent_core::fs::set_permissions_owner_only(path)?;
+            horon_agent_platform::fs::set_file_permissions_owner_only(path)?;
         }
 
-        #[cfg(unix)]
-        if durable
-            && let Some(parent) = path.parent()
-            && let Ok(dir) = std::fs::File::open(parent)
-        {
-            let _ = dir.sync_all();
+        // A durable write also has to reach the directory entry that names it;
+        // Windows journals that entry itself and does nothing here.
+        if durable {
+            let _ = horon_agent_platform::fs::sync_parent_directory(path);
         }
 
         Ok(())
@@ -671,65 +424,6 @@ pub fn append_json_line_fast<T: Serialize + ?Sized>(path: &Path, value: &T) -> R
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(&line)?;
     Ok(())
-}
-
-#[cfg(all(test, windows))]
-mod windows_hardening_tests {
-    use super::*;
-
-    #[test]
-    fn first_path_starts_one_worker_and_repeated_paths_are_coalesced() {
-        let mut state = SecretHardenState::default();
-        let now = Instant::now();
-        let directory = Path::new(r"C:\Users\test\.horon-agent");
-        let file = directory.join("auth.json");
-
-        assert!(state.enqueue(directory, true, now));
-        assert!(!state.enqueue(directory, true, now));
-        assert!(!state.enqueue(&file, false, now));
-        assert!(state.worker_running);
-        assert_eq!(state.pending_directories.len(), 1);
-        assert_eq!(state.pending_files.len(), 1);
-    }
-
-    #[test]
-    fn recently_attempted_paths_are_not_requeued() {
-        let mut state = SecretHardenState::default();
-        let attempted_at = Instant::now();
-        let file = PathBuf::from(r"C:\Users\test\.horon-agent\auth.json");
-        state
-            .files
-            .insert(file.clone(), SecretHardenAttempt::Succeeded(attempted_at));
-
-        assert!(!state.enqueue(&file, false, attempted_at));
-        assert!(!state.worker_running);
-        assert!(state.pending_files.is_empty());
-    }
-
-    #[test]
-    fn failed_paths_retry_after_shorter_backoff() {
-        let mut state = SecretHardenState::default();
-        let attempted_at = Instant::now();
-        let file = PathBuf::from(r"C:\Users\test\.horon-agent\auth.json");
-        state
-            .files
-            .insert(file.clone(), SecretHardenAttempt::Failed(attempted_at));
-
-        assert!(!state.enqueue(&file, false, attempted_at));
-        let retry_at = attempted_at + SECRET_HARDEN_FAILURE_BACKOFF;
-        assert!(state.enqueue(&file, false, retry_at));
-    }
-
-    #[test]
-    fn in_flight_paths_are_not_requeued() {
-        let mut state = SecretHardenState::default();
-        let now = Instant::now();
-        let file = PathBuf::from(r"C:\Users\test\.horon-agent\auth.json");
-        state.files.insert(file.clone(), SecretHardenAttempt::InFlight);
-
-        assert!(!state.enqueue(&file, false, now));
-        assert!(state.pending_files.is_empty());
-    }
 }
 
 #[cfg(test)]

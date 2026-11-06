@@ -73,7 +73,7 @@ impl ServerRegistry {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
-            if let Err(e) = horon_agent_core::fs::set_directory_permissions_owner_only(parent) {
+            if let Err(e) = horon_agent_platform::fs::set_dir_permissions_owner_only(parent) {
                 crate::logging::info(&format!(
                     "Registry save: failed to harden directory permissions for {}: {}",
                     parent.display(),
@@ -84,7 +84,7 @@ impl ServerRegistry {
 
         let content = serde_json::to_string_pretty(self)?;
         fs::write(&path, content).await?;
-        if let Err(e) = horon_agent_core::fs::set_permissions_owner_only(&path) {
+        if let Err(e) = horon_agent_platform::fs::set_file_permissions_owner_only(&path) {
             crate::logging::info(&format!(
                 "Registry save: failed to harden file permissions for {}: {}",
                 path.display(),

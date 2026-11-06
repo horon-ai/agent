@@ -4,8 +4,6 @@ use crate::{IoPoint, StoreError, sha256_hex};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -171,35 +169,15 @@ impl Stamp {
         }
     }
     pub fn read(path: &Path) -> Result<Self, StoreError> {
-        let m = checked_file(path, false)?.metadata()?;
-        // Windows has no device, inode or change time on the stable standard
-        // library surface. The stamp keeps its fields for wire compatibility and
-        // leans on what the platform does expose: the file's length and last
-        // write time, both read through the handle.
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-
-            return Ok(Self {
-                device: 0,
-                inode: 0,
-                len: m.file_size(),
-                modified: (m.last_write_time() as i64, 0),
-                changed: (m.creation_time() as i64, 0),
-            });
-        }
-        #[cfg(not(any(unix, windows)))]
-        {
-            let _ = &m;
-            return Err(crate::blobs::unsupported());
-        }
-        #[cfg(unix)]
+        // The stamp is read through the verified handle, so a path swap between
+        // the open and the metadata call cannot report a different file.
+        let stamp = horon_agent_platform::fs::file_stamp(&checked_file(path, false)?.metadata()?);
         Ok(Self {
-            device: m.dev(),
-            inode: m.ino(),
-            len: m.len(),
-            modified: (m.mtime(), m.mtime_nsec()),
-            changed: (m.ctime(), m.ctime_nsec()),
+            device: stamp.device,
+            inode: stamp.inode,
+            len: stamp.len,
+            modified: stamp.modified,
+            changed: stamp.changed,
         })
     }
 }
@@ -229,42 +207,26 @@ pub(crate) fn json_error(error: serde_json::Error) -> StoreError {
 }
 
 pub(crate) fn dirty_present(paths: &crate::SessionPaths, id: Option<&crate::SessionId>) -> Result<bool, StoreError> {
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (paths, id);
-        return Err(crate::blobs::unsupported());
-    }
-    #[cfg(any(unix, windows))]
-    {
-        let directory = paths.root().join(".catalog.dirty");
-        match fs::symlink_metadata(&directory) {
-            Ok(metadata) => {
-                if !metadata.is_dir() {
-                    return Err(crate::blobs::unsafe_path(&directory));
-                }
-                // The owner-only mode is a Unix property. Windows keeps the
-                // marker private through the agent home's inherited ACL, so only
-                // the directory type is checked there.
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-
-                    if metadata.permissions().mode() & 0o777 != 0o700 {
-                        return Err(crate::blobs::unsafe_path(&directory));
-                    }
-                }
+    let directory = paths.root().join(".catalog.dirty");
+    match fs::symlink_metadata(&directory) {
+        Ok(metadata) => {
+            // The owner-only mode is a Unix property; Windows keeps the marker
+            // private through the agent home's inherited ACL, which the platform
+            // check accounts for.
+            if !horon_agent_platform::fs::is_private_dir(&metadata) {
+                return Err(crate::blobs::unsafe_path(&directory));
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error.into()),
         }
-        match id {
-            Some(id) => match checked_file(&directory.join(id.as_str()), false) {
-                Ok(_) => Ok(true),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-                Err(error) => Err(error.into()),
-            },
-            None => Ok(fs::read_dir(directory)?.next().transpose()?.is_some()),
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    }
+    match id {
+        Some(id) => match checked_file(&directory.join(id.as_str()), false) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        },
+        None => Ok(fs::read_dir(directory)?.next().transpose()?.is_some()),
     }
 }
 

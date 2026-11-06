@@ -503,11 +503,7 @@ impl DurableRuntimeStore {
     fn preserve_tail_locked(&mut self, path: &Path, bytes: &[u8]) -> JournalResult<()> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options
             .open(path)
             .map_err(|error| JournalError::io_context("create the recovery tail", path, error))?;
@@ -534,11 +530,7 @@ impl DurableRuntimeStore {
     fn write_and_rename_locked(&mut self, temp: &Path, bytes: &[u8]) -> JournalResult<()> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options
             .open(temp)
             .map_err(|error| JournalError::io_context("create the journal temp file", temp, error))?;
@@ -758,11 +750,7 @@ impl DurableRuntimeStore {
         let path = self.journal_path.clone();
         let mut options = OpenOptions::new();
         options.create(true).append(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options
             .open(&path)
             .map_err(|error| JournalError::io_context("open the journal for append", &path, error))?;
@@ -882,14 +870,10 @@ fn process_lock_for(dir: &Path) -> Arc<Mutex<()>> {
 }
 
 fn ensure_private_dir(path: &Path) -> JournalResult<()> {
-    std::fs::create_dir_all(path)
+    horon_agent_platform::create_private_dir(path, true)
         .map_err(|error| JournalError::io_context("create the journal directory", path, error))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| JournalError::io_context("restrict the journal directory", path, error))?;
-    }
+    horon_agent_platform::set_permissions_private_dir(path)
+        .map_err(|error| JournalError::io_context("restrict the journal directory", path, error))?;
     Ok(())
 }
 

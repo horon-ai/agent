@@ -5,8 +5,6 @@ use crate::*;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn stage_path(paths: &SessionPaths, id: &SessionId, hash: &str) -> Result<PathBuf, StoreError> {
@@ -17,15 +15,8 @@ pub(crate) fn stage_path(paths: &SessionPaths, id: &SessionId, hash: &str) -> Re
         match fs::symlink_metadata(path) {
             Ok(meta) if !meta.is_dir() => return Err(unsafe_path(path)),
             Ok(meta) => {
-                #[cfg(unix)]
-                if meta.permissions().mode() & 0o777 != 0o700
-                    || meta.uid() != fs::metadata(paths.session_dir(id)?)?.uid()
-                {
+                if !horon_agent_platform::fs::is_private_dir_owned_by(&meta, &fs::metadata(paths.session_dir(id)?)?) {
                     return Err(unsafe_path(path));
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = &meta;
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

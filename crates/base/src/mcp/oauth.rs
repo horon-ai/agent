@@ -156,57 +156,36 @@ fn private_directory(path: &Path) -> Result<()> {
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         bail!("OAuth credential directory must be a real directory");
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if metadata.uid() != unsafe { libc::geteuid() } {
-            bail!("OAuth credential directory is not owned by the current user");
-        }
-    }
-    horon_agent_core::fs::set_directory_permissions_owner_only(path)
+    horon_agent_platform::fs::verify_private_dir_metadata(&metadata)
+        .context("OAuth credential directory is not owned by the current user")?;
+    horon_agent_platform::fs::set_dir_permissions_owner_only(path)
         .context("could not secure OAuth credential directory")
 }
 
-fn secure_file(file: &File, _path: &Path) -> Result<()> {
+fn secure_file(file: &File, path: &Path) -> Result<()> {
     let metadata = file.metadata()?;
     if !metadata.is_file() {
         bail!("OAuth credential path must be a regular file");
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if metadata.uid() != unsafe { libc::geteuid() } || metadata.nlink() != 1 {
-            bail!("OAuth credential file must be owned by this user and not hard-linked");
-        }
-        // Repair legacy permissive files through the already-open descriptor.
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    horon_agent_core::fs::set_permissions_owner_only(_path)?;
+    horon_agent_platform::fs::verify_private_file_metadata(&metadata)
+        .context("OAuth credential file must be owned by this user and not hard-linked")?;
+    // Repair legacy permissive files through the already-open descriptor, then
+    // apply the path-based form where the platform keeps permissions in the
+    // directory ACL instead.
+    horon_agent_platform::fs::set_permissions_owner_only_file(file)?;
+    horon_agent_platform::fs::set_file_permissions_owner_only(path)?;
     Ok(())
 }
 
-fn secret_options() -> OpenOptions {
-    let options = OpenOptions::new();
-    #[cfg(unix)]
-    let mut options = options;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    options
+fn secret_options(path: &Path) -> Result<OpenOptions> {
+    let mut options = OpenOptions::new();
+    horon_agent_platform::fs::harden_credential_open(&mut options, path)
+        .context("could not secure the OAuth credential open")?;
+    Ok(options)
 }
 
 fn load_store_at(path: &Path) -> Result<Store> {
-    // Windows has no O_NOFOLLOW. Reject obvious symlinks before opening there.
-    #[cfg(not(unix))]
-    if let Ok(meta) = std::fs::symlink_metadata(path)
-        && meta.file_type().is_symlink()
-    {
-        bail!("OAuth credential file must not be a symlink");
-    }
-    let mut file = match secret_options().read(true).open(path) {
+    let mut file = match secret_options(path)?.read(true).open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Store {
@@ -243,7 +222,7 @@ fn save_store_at(path: &Path, store: &Store) -> Result<()> {
     // The general storage writer keeps .bak copies. OAuth must not leave old
     // refresh tokens or logged-out credentials in such a backup.
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    horon_agent_core::fs::set_permissions_owner_only(temp.path())?;
+    horon_agent_platform::fs::set_file_permissions_owner_only(temp.path())?;
     let bytes = serde_json::to_vec(store)?;
     if bytes.len() > MAX_JSON_BYTES {
         bail!("OAuth credential store is too large");
@@ -258,8 +237,7 @@ fn save_store_at(path: &Path, store: &Store) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
         Err(_) => bail!("could not remove legacy OAuth credential backup"),
     }
-    #[cfg(unix)]
-    File::open(parent)?.sync_all()?;
+    horon_agent_platform::sync_dir(parent, horon_agent_platform::SyncMode::Full)?;
     Ok(())
 }
 
@@ -269,13 +247,7 @@ fn open_store_lock(path: &Path) -> Result<File> {
 
 fn open_lock_file(lock_path: &Path) -> Result<File> {
     private_directory(lock_path.parent().context("OAuth lock has no directory")?)?;
-    #[cfg(not(unix))]
-    if let Ok(meta) = std::fs::symlink_metadata(lock_path)
-        && meta.file_type().is_symlink()
-    {
-        bail!("OAuth lock must not be a symlink");
-    }
-    let lock = secret_options()
+    let lock = secret_options(lock_path)?
         .read(true)
         .write(true)
         .create(true)

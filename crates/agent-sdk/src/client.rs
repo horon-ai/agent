@@ -120,19 +120,10 @@ impl UnixTransport {
 
 impl Transport for UnixTransport {
     fn shutdown_handle(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
-        #[cfg(unix)]
-        {
-            let socket = self.0.try_clone().ok()?;
-            Some(Arc::new(move || {
-                let _ = socket.shutdown(std::net::Shutdown::Both);
-            }))
-        }
-        #[cfg(windows)]
-        {
-            // Closing the reader and writer handles interrupts named-pipe I/O.
-            // They are owned by the client and dropped during shutdown.
-            None
-        }
+        // A Unix socket can be shut down from a cloned descriptor, which wakes a
+        // blocked reader immediately. A named pipe cannot, so the adapter
+        // reports no handle there and closing the transport interrupts it.
+        horon_agent_platform::ipc::sync_stream_shutdown_handle(&self.0)
     }
 
     fn split(self: Box<Self>) -> Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {

@@ -61,12 +61,8 @@ fn install(home: &Path, id: &str, events: usize) -> Installed {
     let sid = store::SessionId::parse(id).expect("session id");
     let directory = paths.session_dir(&sid).expect("session dir");
     std::fs::create_dir_all(&directory).expect("create session dir");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(home.join("sessions"), std::fs::Permissions::from_mode(0o700)).expect("private root");
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).expect("private session dir");
-    }
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&home.join("sessions")).expect("private root");
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&directory).expect("private session dir");
     let mut bytes = Vec::new();
     let mut parent: Option<store::EventId> = None;
     for index in 0..events {
@@ -107,11 +103,7 @@ fn install(home: &Path, id: &str, events: usize) -> Installed {
     }
     let log = directory.join("events.jsonl");
     std::fs::write(&log, &bytes).expect("write log");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o600)).expect("private log");
-    }
+    horon_agent_platform::fs::set_file_permissions_owner_only(&log).expect("private log");
     Installed { paths, id: sid, log }
 }
 
@@ -364,19 +356,11 @@ fn install_from(home: &Path, id: &str, fixture: &Path) -> Installed {
     let sid = store::SessionId::parse(id).expect("session id");
     let directory = paths.session_dir(&sid).expect("session dir");
     std::fs::create_dir_all(&directory).expect("create session dir");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(home.join("sessions"), std::fs::Permissions::from_mode(0o700)).expect("private root");
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).expect("private session dir");
-    }
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&home.join("sessions")).expect("private root");
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&directory).expect("private session dir");
     let log = directory.join("events.jsonl");
     std::fs::copy(fixture, &log).expect("copy fixture log");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o600)).expect("private log");
-    }
+    horon_agent_platform::fs::set_file_permissions_owner_only(&log).expect("private log");
     Installed { paths, id: sid, log }
 }
 

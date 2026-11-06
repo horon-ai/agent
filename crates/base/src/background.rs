@@ -1510,18 +1510,14 @@ impl BackgroundTaskManager {
                 return Ok(false);
             };
 
-            #[cfg(unix)]
-            {
-                let _ = horon_agent_platform::signal_detached_process_group(pid, libc::SIGTERM);
-                tokio::time::sleep(graceful_timeout).await;
-                if horon_agent_platform::is_process_running(pid) {
-                    let _ = horon_agent_platform::signal_detached_process_group(pid, libc::SIGKILL);
-                }
-            }
-            #[cfg(windows)]
-            {
-                let _ = horon_agent_platform::signal_detached_process_group(pid, 0);
-            }
+            // The daemon's cancel path and the platform adapter agree on one
+            // meaning: ask the group to stop, wait up to the grace period, then
+            // force it. Windows has no catchable signal and terminates the tree
+            // immediately. The wait polls, so it runs off the async worker.
+            let termination = tokio::task::spawn_blocking(move || {
+                horon_agent_platform::terminate_process_group(pid, graceful_timeout)
+            });
+            drop(termination.await);
 
             let completed_at = Utc::now();
             status.status = BackgroundTaskStatus::Failed;

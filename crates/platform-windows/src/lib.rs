@@ -6,16 +6,27 @@
 //! `horon-agent-platform` selects it, and only on Windows.
 #![cfg(windows)]
 
+mod fs;
+pub mod ipc;
+mod power;
+pub mod signal;
+pub mod term;
 mod tls;
+pub mod watch;
 
-use std::fs::File;
+pub use power::PowerGuard;
+
+use std::fs::{File, Metadata, OpenOptions};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::Duration;
 
-use horon_agent_platform_api::{PlatformAdapter, SleepAssertion, SyncMode};
+use horon_agent_platform_api::{
+    FileIds, FileStamp, PlatformAdapter, ProcessMemoryFacts, ReadyChild, SleepAssertion, StdinState, StopRequest,
+    SyncMode,
+};
 use rustls::ClientConfig;
 
 /// Windows implementation of [`PlatformAdapter`].
@@ -24,6 +35,7 @@ pub struct Adapter;
 
 impl PlatformAdapter for Adapter {
     type PowerAssertion = PowerAssertion;
+    type Inhibitor = PowerGuard;
 
     fn sync_file(file: &File, _mode: SyncMode) -> io::Result<()> {
         // `sync_all` is FlushFileBuffers; there is no cheaper durable call, so
@@ -153,6 +165,17 @@ impl PlatformAdapter for Adapter {
         cmd.spawn()
     }
 
+    fn spawn_background_consoleless(cmd: &mut Command) -> io::Result<Child> {
+        // Same flags as the SDK has always used for the runtime it launches: a
+        // new process group keeps the host's Ctrl+C or exit from reaching the
+        // daemon, and `CREATE_NO_WINDOW` keeps the console hidden.
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        cmd.spawn()
+    }
+
     fn reap_detached(child: Child) {
         // Closing the process handle is sufficient on Windows. Unlike Unix,
         // the child does not need to be waited on to avoid a zombie process.
@@ -181,6 +204,315 @@ impl PlatformAdapter for Adapter {
     fn set_permissions_executable(_path: &Path) -> io::Result<()> {
         // Executability is determined by the file extension on Windows.
         Ok(())
+    }
+
+    fn set_file_permissions_owner_only(path: &Path) -> io::Result<()> {
+        fs::set_file_permissions_owner_only(path)
+    }
+
+    fn set_dir_permissions_owner_only(path: &Path) -> io::Result<()> {
+        fs::set_dir_permissions_owner_only(path)
+    }
+
+    fn harden_credential_file_permissions(path: &Path) {
+        fs::harden_credential_file_permissions(path);
+    }
+
+    fn harden_credential_dir_permissions(path: &Path) {
+        fs::harden_credential_dir_permissions(path);
+    }
+
+    fn harden_dir_permissions(path: &Path) {
+        fs::harden_dir_permissions(path);
+    }
+
+    fn is_private_dir(metadata: &Metadata) -> bool {
+        fs::is_private_dir(metadata)
+    }
+
+    fn is_private_dir_owned_by(metadata: &Metadata, owner: &Metadata) -> bool {
+        fs::is_private_dir_owned_by(metadata, owner)
+    }
+
+    fn is_private_file(metadata: &Metadata) -> bool {
+        fs::is_private_file(metadata)
+    }
+
+    fn is_executable(path: &Path) -> bool {
+        fs::is_executable(path)
+    }
+
+    fn no_follow_open_options() -> OpenOptions {
+        fs::no_follow_open_options()
+    }
+
+    fn request_owner_only_mode(options: &mut OpenOptions) {
+        fs::request_owner_only_mode(options);
+    }
+
+    fn create_private_dir(path: &Path) -> io::Result<()> {
+        fs::create_private_dir(path)
+    }
+
+    fn verify_private_file(path: &Path, file: &File) -> io::Result<()> {
+        fs::verify_private_file(path, file)
+    }
+
+    fn file_stamp(metadata: &Metadata) -> FileStamp {
+        fs::file_stamp(metadata)
+    }
+
+    fn file_ids(metadata: &Metadata) -> FileIds {
+        fs::file_ids(metadata)
+    }
+
+    fn mtime_ns(metadata: &Metadata) -> i128 {
+        fs::mtime_ns(metadata)
+    }
+
+    fn rotate_backup(primary: &Path, backup: &Path) -> io::Result<()> {
+        fs::rotate_backup(primary, backup)
+    }
+
+    fn sync_parent_directory(path: &Path) -> io::Result<()> {
+        fs::sync_parent_directory(path)
+    }
+
+    fn isolate_process_group(_command: &mut Command) {
+        // Windows has no process groups; job objects cover the same ground and
+        // are not created here.
+    }
+
+    fn fd_diagnostic_snapshot() -> String {
+        // There is no `/proc` to read another process's descriptor table from.
+        format!("pid={} fd snapshot unsupported on this platform", std::process::id())
+    }
+
+    fn stdin_state(pid: u32) -> StdinState {
+        term::stdin_state(pid)
+    }
+
+    fn process_tree_stdin_state(pid: u32) -> StdinState {
+        term::process_tree_stdin_state(pid)
+    }
+
+    fn direct_children(pid: u32) -> Vec<u32> {
+        term::direct_children(pid)
+    }
+
+    fn user_discriminator() -> String {
+        let raw = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_else(|_| "user".to_string());
+        let sanitized: String = raw
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+            .take(64)
+            .collect();
+        if sanitized.is_empty() {
+            "user".to_string()
+        } else {
+            sanitized
+        }
+    }
+
+    fn user_runtime_dir() -> Option<PathBuf> {
+        // The shared temporary directory is already per-user on Windows.
+        None
+    }
+
+    fn user_config_home() -> Option<PathBuf> {
+        // Roaming application data, or the same place under the profile when
+        // the environment variable is missing.
+        std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|home| PathBuf::from(home).join("AppData/Roaming"))
+        })
+    }
+
+    fn atomic_replace(from: &Path, to: &Path) -> io::Result<()> {
+        fs::atomic_replace(from, to)
+    }
+
+    fn symlink_file(src: &Path, dst: &Path) -> io::Result<()> {
+        fs::symlink_file(src, dst)
+    }
+
+    fn terminate_child(child: &mut Child) {
+        // `Child::kill` is `TerminateProcess`, and Windows has no zombie state,
+        // so the child is gone as soon as it is terminated and waited on.
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        drop(child.kill());
+        drop(child.wait());
+    }
+
+    fn describe_file_kind(metadata: &Metadata) -> &'static str {
+        if metadata.is_dir() {
+            "directory"
+        } else {
+            // Windows exposes no sockets, FIFOs or device nodes through the
+            // metadata surface.
+            "non-regular file"
+        }
+    }
+
+    fn harden_credential_open(_options: &mut OpenOptions, path: &Path) -> io::Result<()> {
+        // There is no `O_NOFOLLOW` here, so refuse a symlink at the leaf before
+        // the open instead: following it would leave the private tree.
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "a credential file must not be a symlink",
+            ));
+        }
+        Ok(())
+    }
+
+    fn set_permissions_owner_only_file(_file: &File) -> io::Result<()> {
+        // Access comes from the inherited ACL, which the caller sets by path.
+        Ok(())
+    }
+
+    fn verify_private_file_metadata(metadata: &Metadata) -> io::Result<()> {
+        if metadata.is_file() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "a credential file must be a regular file",
+            ))
+        }
+    }
+
+    fn verify_private_dir_metadata(metadata: &Metadata) -> io::Result<()> {
+        if metadata.is_dir() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "a credential directory must be a directory",
+            ))
+        }
+    }
+
+    fn clone_tree(_src: &Path, _dst: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this platform has no copy-on-write directory clone",
+        ))
+    }
+
+    fn hide_console_window(cmd: &mut Command) {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        // The flag is inherited, so a script that shells out stays invisible
+        // too.
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    fn shell_command(command: &str, _temp_dir: Option<&Path>) -> Command {
+        use std::os::windows::process::CommandExt;
+
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(["/D", "/S", "/C"]);
+        // `arg` re-escapes the string for CommandLineToArgvW, which rewrites the
+        // quotes a command such as `gh issue create --title "a b"` relies on;
+        // `raw_arg` passes the single `/C` argument exactly as written.
+        cmd.raw_arg(format!("\"{command}\""));
+        cmd
+    }
+
+    fn shell_command_escaped(command: &str, _temp_dir: Option<&Path>) -> Command {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(["/D", "/S", "/C"]).arg(command);
+        cmd
+    }
+
+    fn process_working_dirs() -> Vec<PathBuf> {
+        // No process table lists working directories without extra privileges.
+        Vec::new()
+    }
+
+    fn process_memory_facts() -> ProcessMemoryFacts {
+        ProcessMemoryFacts::default()
+    }
+
+    fn set_process_name(_name: &str) {
+        // The process name comes from the executable image.
+    }
+
+    fn browser_launcher_state() -> Option<bool> {
+        // `start` ships with the operating system.
+        Some(true)
+    }
+
+    fn is_container() -> bool {
+        false
+    }
+
+    fn kill_process_group(_pid: u32) {
+        // There is no group-wide signal; the caller terminates the child.
+    }
+
+    fn configure_system_allocator(_use_system_allocator: bool) {
+        // The allocator knobs this tunes are glibc's; Windows' heap has its own
+        // defaults and no equivalent switch.
+    }
+
+    fn main_thread_stack_size() -> Option<usize> {
+        // Windows executables default to a much smaller main-thread stack than
+        // the Unix environments where most development happens. The CLI and
+        // provider setup can exceed that reserve before Tokio takes over,
+        // producing an unrecoverable STATUS_STACK_OVERFLOW, so the entry point
+        // runs on a deliberately sized thread instead.
+        Some(8 * 1024 * 1024)
+    }
+
+    fn bind_process_lifetime_to_parent() -> bool {
+        // Job objects can tie a child to its parent, but this adapter creates
+        // none, and a silently armed kill-on-close would change how a detached
+        // daemon outlives its client.
+        false
+    }
+
+    fn request_graceful_stop(pid: u32) -> io::Result<StopRequest> {
+        // There is no catchable termination signal; the tree is terminated at
+        // once, so there is nothing left for an escalation step.
+        Self::signal_detached_process_group(pid, 0)?;
+        Ok(StopRequest::Terminated)
+    }
+
+    fn force_stop_process_group(pid: u32) -> io::Result<()> {
+        Self::signal_detached_process_group(pid, 0)
+    }
+
+    fn spawn_with_ready_pipe(cmd: &mut Command, _ready_env_var: &str) -> io::Result<ReadyChild> {
+        // A descriptor cannot be handed to a child through CreateProcess, so
+        // the caller polls the child's own effect instead of waiting for a
+        // readiness byte.
+        Ok(ReadyChild {
+            child: cmd.spawn()?,
+            ready: None,
+        })
+    }
+
+    fn signal_name(signal: i32) -> String {
+        signal::signal_name(signal)
+    }
+
+    fn signal_crash_reason(signal: i32) -> String {
+        signal::signal_crash_reason(signal)
+    }
+
+    fn spawn_termination_signal_watchers<F>(on_signal: F)
+    where
+        F: Fn(i32) + Send + Sync + 'static,
+    {
+        signal::spawn_termination_signal_watchers(on_signal);
     }
 }
 

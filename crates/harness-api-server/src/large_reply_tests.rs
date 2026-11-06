@@ -10,8 +10,8 @@
 //! reply writable.
 use super::*;
 use crate::writer::PENDING_BYTES;
+use horon_agent_platform::ipc::Listener;
 use serde_json::json;
-use tokio::net::UnixListener;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_reply_larger_than_the_pending_buffer_reaches_the_client() {
@@ -25,7 +25,7 @@ async fn a_reply_larger_than_the_pending_buffer_reaches_the_client() {
                 .as_nanos()
                 % 1_000_000_000
         ));
-        let listener = UnixListener::bind(&path).unwrap();
+        let mut listener = Listener::bind(&path).unwrap();
         let (client, bridge) = tokio::io::duplex(1024 * 1024);
         let (bridge_read, bridge_write) = tokio::io::split(bridge);
         let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, path.clone()));

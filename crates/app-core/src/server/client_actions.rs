@@ -35,19 +35,7 @@ fn derive_subagent_description(prompt: &str) -> String {
 }
 
 fn build_input_shell_command(command: &str) -> Command {
-    #[cfg(windows)]
-    {
-        let mut cmd = Command::new("cmd.exe");
-        cmd.arg("/C").arg(command);
-        cmd
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut cmd = Command::new("bash");
-        cmd.arg("-c").arg(command);
-        cmd
-    }
+    Command::from(horon_agent_platform::process::shell_command(command, None))
 }
 
 fn combine_input_shell_output(stdout: &[u8], stderr: &[u8]) -> (String, bool) {

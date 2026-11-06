@@ -51,10 +51,9 @@ fn local_head_and_runtime_survive_reopen() -> Result<()> {
         serde_json::from_slice::<store::EventId>(&std::fs::read(directory.join("local-head.json"))?)?,
         head
     );
-    assert_eq!(
-        serde_json::from_slice::<bool>(&std::fs::read(directory.join("local-head-explicit.json"))?)?,
-        true
-    );
+    assert!(serde_json::from_slice::<bool>(&std::fs::read(
+        directory.join("local-head-explicit.json")
+    )?)?);
     drop(session);
 
     // When the session is reopened from its originals.
@@ -90,11 +89,10 @@ fn local_head_and_runtime_survive_reopen() -> Result<()> {
 /// on Unix, the inode a rename produces.
 fn publication_token(path: &std::path::Path) -> Result<Vec<u8>> {
     let mut token = std::fs::read(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        token.extend_from_slice(&std::fs::metadata(path)?.ino().to_le_bytes());
-    }
+    // On a platform with inodes the token also covers the inode a rename
+    // produces; elsewhere the adapter reports zero and the bytes alone decide.
+    let stamp = horon_agent_platform::fs::file_stamp(&std::fs::metadata(path)?);
+    token.extend_from_slice(&stamp.inode.to_le_bytes());
     Ok(token)
 }
 

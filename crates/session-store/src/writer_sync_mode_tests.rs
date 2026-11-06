@@ -8,11 +8,9 @@ fn private_root() -> std::path::PathBuf {
         .expect("the OS temporary directory resolves")
         .join(format!("session-sync-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).expect("fixture root");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("private root");
-    }
+    // The writer verifies that its root is owner-private, so the fixture has to
+    // be as private as a real store root.
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&root).expect("private root");
     root
 }
 

@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::writer::{CONTROL_QUEUE_FRAMES, CloseOutcome, OutboundQueue, write_loop};
+use horon_agent_platform::ipc::{Listener, Stream};
 use serde_json::json;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,7 +16,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -73,7 +73,7 @@ impl FakeDaemon {
     async fn start(tag: &str, flood: bool) -> Self {
         let dir = temp_dir(tag);
         let socket = dir.join("legacy.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
+        let mut listener = Listener::bind(&socket).unwrap();
         let seen: Arc<tokio::sync::Mutex<Vec<(String, Instant)>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let closed: Arc<tokio::sync::Mutex<Vec<(bool, Instant)>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let recorder = seen.clone();
@@ -221,7 +221,7 @@ async fn connect_api(
     tokio::net::unix::OwnedWriteHalf,
     BufReader<tokio::net::unix::OwnedReadHalf>,
 ) {
-    let stream = UnixStream::connect(path).await.unwrap();
+    let stream = Stream::connect(path).await.unwrap();
     let (read, mut write) = stream.into_split();
     let mut reader = BufReader::new(read);
     write_json_line(

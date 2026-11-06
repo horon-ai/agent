@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[cfg(target_os = "linux")]
-const RELOAD_HANDOFF_EVENT_POLL_MS: i32 = 100;
+/// How long the handoff wait blocks before rechecking the reload state.
+const RELOAD_HANDOFF_EVENT_POLL_MS: u64 = 100;
 
 pub fn reload_marker_path() -> PathBuf {
     crate::storage::runtime_dir().join("horon-agent.reload")
@@ -158,25 +158,9 @@ pub(super) fn publish_reload_socket_ready(policy: ForeignMarkerPolicy) {
 }
 
 pub fn reload_process_alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        let rc = unsafe { libc::kill(pid as i32, 0) };
-        if rc == 0 {
-            return true;
-        }
-        let err = std::io::Error::last_os_error();
-        matches!(err.raw_os_error(), Some(libc::EPERM))
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        true
-    }
+    // Pid 0 names a process group rather than a process, so it is never the
+    // reloading server.
+    pid != 0 && horon_agent_platform::is_process_running(pid)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,21 +277,12 @@ pub async fn wait_for_reload_handoff_event(reloading_pid: Option<u32>, socket_pa
         socket_path.display(),
         reloading_pid
     ));
-    #[cfg(target_os = "linux")]
-    {
-        let marker_path = reload_marker_path();
-        let socket_path = socket_path.to_path_buf();
-        let _ = tokio::task::spawn_blocking(move || {
-            wait_for_reload_handoff_event_blocking(&marker_path, &socket_path, reloading_pid)
-        })
-        .await;
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (reloading_pid, socket_path);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let marker_path = reload_marker_path();
+    let watched_socket = socket_path.to_path_buf();
+    let _ = tokio::task::spawn_blocking(move || {
+        wait_for_reload_handoff_event_blocking(&marker_path, &watched_socket, reloading_pid)
+    })
+    .await;
     crate::logging::info(&format!(
         "wait_for_reload_handoff_event: wake socket={} pid={:?}",
         socket_path.display(),
@@ -315,15 +290,18 @@ pub async fn wait_for_reload_handoff_event(reloading_pid: Option<u32>, socket_pa
     ));
 }
 
-#[cfg(target_os = "linux")]
+/// Block until something that could change the reload handoff changes.
+///
+/// The marker and the socket live in the runtime directory, and the reloading
+/// process's own directory disappearing is the third signal. The wait is an
+/// event where the platform offers one and the poll interval otherwise, so a
+/// missed event only costs one interval.
 fn wait_for_reload_handoff_event_blocking(
     marker_path: &std::path::Path,
     socket_path: &std::path::Path,
     reloading_pid: Option<u32>,
 ) {
     use std::collections::HashSet;
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
 
     let mut watch_paths: HashSet<std::path::PathBuf> = HashSet::new();
     if let Some(parent) = marker_path.parent() {
@@ -352,73 +330,15 @@ fn wait_for_reload_handoff_event_blocking(
         watch_paths
     ));
 
-    unsafe {
-        let fd = libc::inotify_init1(libc::IN_CLOEXEC);
-        if fd < 0 {
-            crate::logging::warn(&format!(
-                "wait_for_reload_handoff_event_blocking: inotify_init1 failed: {} ({})",
-                std::io::Error::last_os_error(),
-                crate::util::process_fd_diagnostic_snapshot()
-            ));
-            return;
-        }
-
-        let mask = libc::IN_CREATE
-            | libc::IN_MOVED_TO
-            | libc::IN_ATTRIB
-            | libc::IN_MODIFY
-            | libc::IN_CLOSE_WRITE
-            | libc::IN_DELETE
-            | libc::IN_MOVE_SELF
-            | libc::IN_DELETE_SELF;
-
-        let mut has_watch = false;
-        for path in watch_paths {
-            let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
-                continue;
-            };
-            if libc::inotify_add_watch(fd, path.as_ptr(), mask) >= 0 {
-                has_watch = true;
-            }
-        }
-
-        if !has_watch {
-            crate::logging::warn("wait_for_reload_handoff_event_blocking: failed to register any inotify watches");
-            let _ = libc::close(fd);
-            return;
-        }
-
-        let mut poll_fd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-
-        loop {
-            let ready = libc::poll(&mut poll_fd, 1, RELOAD_HANDOFF_EVENT_POLL_MS);
-            if ready > 0 && (poll_fd.revents & libc::POLLIN) != 0 {
-                let mut buf = [0u8; 512];
-                let _ = libc::read(fd, buf.as_mut_ptr() as *mut _, buf.len());
-                crate::logging::info("wait_for_reload_handoff_event_blocking: observed filesystem/process event");
-                break;
-            }
-            if ready == 0 {
-                crate::logging::info(
-                    "wait_for_reload_handoff_event_blocking: timed poll elapsed; rechecking reload state",
-                );
-                break;
-            }
-            if ready < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                crate::logging::warn(&format!("wait_for_reload_handoff_event_blocking: poll failed: {}", err));
-                break;
-            }
-        }
-
-        let _ = libc::close(fd);
+    let paths: Vec<std::path::PathBuf> = watch_paths.into_iter().collect();
+    match horon_agent_platform::watch::wait_for_any_change(&paths, Duration::from_millis(RELOAD_HANDOFF_EVENT_POLL_MS))
+    {
+        Ok(()) => crate::logging::info(
+            "wait_for_reload_handoff_event_blocking: observed an event or reached the poll interval; rechecking reload state",
+        ),
+        Err(err) => crate::logging::warn(&format!(
+            "wait_for_reload_handoff_event_blocking: filesystem watch failed: {err}"
+        )),
     }
 }
 
@@ -736,13 +656,9 @@ mod tests {
     /// dead at the moment of selection. Retries guard against the (extremely
     /// rare) case where the kernel immediately recycles the pid for another
     /// test thread's process.
-    #[cfg(unix)]
     fn spawn_and_reap_dead_pid() -> u32 {
-        use std::process::Command;
         for _ in 0..16 {
-            let mut child = Command::new("/bin/sh")
-                .arg("-c")
-                .arg("exit 0")
+            let mut child = horon_agent_platform::process::shell_command("exit 0", None)
                 .spawn()
                 .expect("spawn short-lived child");
             let pid = child.id();
@@ -761,7 +677,6 @@ mod tests {
     // preservation, corrupt-marker tolerance, and the dead last-known-pid
     // fallback.
 
-    #[cfg(unix)]
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn inspect_reload_wait_status_idle_when_last_known_pid_is_dead_without_marker() {
@@ -905,7 +820,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn reload_process_alive_handles_zero_and_dead_pids() {
         assert!(!reload_process_alive(0), "pid 0 is never a live reload pid");

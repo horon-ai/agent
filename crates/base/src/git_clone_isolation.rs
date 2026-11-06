@@ -129,53 +129,8 @@ fn has_no_new_commits(path: &Path, base_head: &str) -> bool {
 
 /// Copy `src` to `dst` with the filesystem's reflink primitive. `dst` must not
 /// exist. The error text ends up in the caller's user-facing message.
-#[cfg(target_os = "macos")]
 fn clone_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    unsafe extern "C" {
-        // Declared here because the pinned `libc` does not expose `clonefile`.
-        fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32) -> libc::c_int;
-    }
-
-    let src = CString::new(src.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "source path contains a NUL byte"))?;
-    let dst = CString::new(dst.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "destination path contains a NUL byte"))?;
-    // SAFETY: both pointers are valid NUL-terminated strings for the duration
-    // of the call, and `dst` does not exist (checked by the caller).
-    let rc = unsafe { clonefile(src.as_ptr(), dst.as_ptr(), 0) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn clone_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
-    let status = Command::new("cp")
-        .arg("-a")
-        .arg("--reflink=always")
-        .arg(src)
-        .arg(dst)
-        .status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "cp -a --reflink=always exited with {status}"
-        )))
-    }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn clone_tree(_src: &Path, _dst: &Path) -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "this platform has no copy-on-write directory clone",
-    ))
+    horon_agent_platform::fs::clone_tree(src, dst)
 }
 
 /// Create a clone of the repository that owns `working_dir` on a new

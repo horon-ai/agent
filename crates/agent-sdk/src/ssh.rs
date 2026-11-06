@@ -219,7 +219,7 @@ impl SshConnectOptions {
     fn command_for(&self, control: Option<(&std::path::Path, bool)>, remote: &str) -> Result<Command> {
         self.validate()?;
         let mut command = Command::new("ssh");
-        crate::process::no_console_window(&mut command);
+        horon_agent_platform::process::hide_console_window(&mut command);
         if self.isolated_config {
             command.args(["-F", "/dev/null"]);
         }
@@ -355,13 +355,12 @@ impl SharedSshTransport {
     }
 
     pub fn new(options: SshConnectOptions) -> Result<Self> {
-        use std::os::unix::fs::PermissionsExt;
         options.validate()?;
         let directory = tempfile::Builder::new()
             .prefix("horon-agent-ssh-")
             .tempdir()
             .map_err(|e| Error::new(ErrorKind::ConnectFailed, format!("private SSH directory: {e}")))?;
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        horon_agent_platform::fs::set_dir_permissions_owner_only(directory.path())
             .map_err(|e| Error::new(ErrorKind::ConnectFailed, format!("private SSH permissions: {e}")))?;
         if directory.path().join("master").as_os_str().len() >= 100 {
             return Err(Error::new(
@@ -515,11 +514,9 @@ impl SshProcess {
         if let Ok(mut child) = self.child.lock()
             && let Some(mut child) = child.take()
         {
-            // A dedicated process group also closes ProxyCommand helpers.
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
+            // A dedicated process group also closes ProxyCommand helpers; the
+            // adapter signals the group where the platform has one.
+            horon_agent_platform::process::kill_process_group(child.id());
             let _ = child.kill();
             if let Ok(status) = child.wait()
                 && let Ok(mut saved) = self.status.lock()
@@ -584,11 +581,8 @@ impl SshTransport {
     }
 
     pub(crate) fn spawn_command(mut command: Command) -> Result<Self> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
+        // A dedicated process group lets shutdown close ProxyCommand helpers.
+        horon_agent_platform::process::isolate_process_group(&mut command);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

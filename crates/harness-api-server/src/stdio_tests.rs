@@ -19,7 +19,7 @@ async fn stdio_stream_handshake_ping_and_eof_release_daemon_connection() {
     ));
     std::fs::create_dir_all(&root).unwrap();
     let socket = root.join("daemon.sock");
-    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let mut listener = Listener::bind(&socket).unwrap();
     let (client, bridge) = tokio::io::duplex(8192);
     let (bridge_read, bridge_write) = tokio::io::split(bridge);
     let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, socket));
@@ -103,7 +103,7 @@ async fn session_tools_negotiation_and_stream_translation() {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let socket = root.join("daemon.sock");
-        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let mut listener = Listener::bind(&socket).unwrap();
         let (client, bridge) = tokio::io::duplex(8192);
         let (bridge_read, bridge_write) = tokio::io::split(bridge);
         let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, socket));

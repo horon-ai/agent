@@ -1,5 +1,7 @@
 //! Secure credential binding and atomic owner-only persistence.
 
+use std::io::Write;
+
 use super::*;
 
 impl BridgeState {
@@ -73,11 +75,7 @@ impl BridgeState {
         ));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options.open(&temp).map_err(|error| error.to_string())?;
         let write_result = file.write_all(bytes).and_then(|()| file.sync_all());
         drop(file);
@@ -91,22 +89,15 @@ impl BridgeState {
             }
             return Err(error.to_string());
         }
-        Self::atomic_replace(&temp, path).map_err(|error| match std::fs::remove_file(&temp) {
+        horon_agent_platform::fs::atomic_replace(&temp, path).map_err(|error| match std::fs::remove_file(&temp) {
             Ok(()) => error.to_string(),
             Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => error.to_string(),
             Err(cleanup_error) => {
                 format!("credential replace failed: {error}; temporary-file cleanup failed: {cleanup_error}")
             }
         })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|error| error.to_string())?;
-        }
-        #[cfg(unix)]
-        std::fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        horon_agent_platform::fs::set_file_permissions_owner_only(path).map_err(|error| error.to_string())?;
+        horon_agent_platform::fs::sync_parent_directory(path)
             .map_err(|error| format!("sync owner-only directory: {error}"))?;
         Ok(())
     }
@@ -117,15 +108,9 @@ impl BridgeState {
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(format!("{} must be a non-symlink directory", path.display()));
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{MetadataExt, PermissionsExt};
-            if metadata.uid() != unsafe { libc::geteuid() } {
-                return Err(format!("{} is not owned by the current user", path.display()));
-            }
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-                .map_err(|error| error.to_string())?;
-        }
+        horon_agent_platform::fs::verify_private_dir_metadata(&metadata)
+            .map_err(|_| format!("{} is not owned by the current user", path.display()))?;
+        horon_agent_platform::fs::set_dir_permissions_owner_only(path).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -138,42 +123,8 @@ impl BridgeState {
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(format!("{} must be a regular, non-symlink file", path.display()));
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if metadata.uid() != unsafe { libc::geteuid() } {
-                return Err(format!("{} is not owned by the current user", path.display()));
-            }
-        }
+        horon_agent_platform::fs::verify_private_file_metadata(&metadata)
+            .map_err(|_| format!("{} is not owned by the current user", path.display()))?;
         Ok(())
-    }
-
-    #[cfg(not(windows))]
-    pub(super) fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-        std::fs::rename(from, to)
-    }
-
-    #[cfg(windows)]
-    pub(super) fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-        use std::os::windows::ffi::OsStrExt;
-        unsafe extern "system" {
-            fn MoveFileExW(from: *const u16, to: *const u16, flags: u32) -> i32;
-        }
-        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-        const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-        let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
-        let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
-        let replaced = unsafe {
-            MoveFileExW(
-                from.as_ptr(),
-                to.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if replaced == 0 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
     }
 }

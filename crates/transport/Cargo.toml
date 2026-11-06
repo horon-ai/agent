@@ -8,15 +8,8 @@ description = "Local IPC transport: Unix sockets, or Windows named pipes behind 
 # Deliberately tiny. This exists so the harness API bridge can speak the
 # platform's local IPC without depending on `horon-agent-base`: the bridge is meant to
 # stay free of the application foundation, and duplicating 450 lines of named
-# pipe handling into it would have been the other way to get there.
+# pipe handling into it would have been the other way to get there. The
+# mechanism itself moved into the platform adapter's `ipc` module, which is the
+# only crate allowed to name an operating system's local IPC.
 [dependencies]
-tokio = { version = "1", features = ["io-util", "net", "time"] }
-
-[target.'cfg(windows)'.dependencies]
-sha2 = "0.10"
-hex = "0.4"
-# Only the error constants the pipe retry loops branch on.
-windows-sys = { version = "0.59", features = ["Win32_Foundation"] }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
+horon-agent-platform = { path = "../platform" }

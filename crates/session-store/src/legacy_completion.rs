@@ -8,8 +8,6 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 const HEADER: &str = ".legacy-index-completed.json";
@@ -57,15 +55,8 @@ fn bounded(probe: &ReadProbe, path: &Path, limit: u64) -> Result<Vec<u8>, StoreE
 
 fn private_root(paths: &SessionPaths) -> Result<(), StoreError> {
     crate::legacy_bundle::safe_path(paths.root())?;
-    let metadata = fs::symlink_metadata(paths.root())?;
-    if !metadata.is_dir() {
+    if !horon_agent_platform::fs::is_private_dir(&fs::symlink_metadata(paths.root())?) {
         return Err(crate::blobs::unsafe_path(paths.root()));
-    }
-    #[cfg(unix)]
-    {
-        if metadata.permissions().mode() & 0o777 != 0o700 {
-            return Err(crate::blobs::unsafe_path(paths.root()));
-        }
     }
     Ok(())
 }
@@ -124,15 +115,10 @@ pub(crate) fn check(paths: &SessionPaths, probe: &ReadProbe) -> Result<(), Store
         {
             return Err(migration_required());
         }
-        let original = fs::symlink_metadata(paths.events_log(&row.session_id)?)?;
-        if !original.is_file() {
+        // The original log must still be the private single-link file the
+        // migration wrote; anything else means the source changed underneath.
+        if !horon_agent_platform::fs::is_private_file(&fs::symlink_metadata(paths.events_log(&row.session_id)?)?) {
             return Err(migration_required());
-        }
-        #[cfg(unix)]
-        {
-            if original.nlink() != 1 || original.mode() & 0o777 != 0o600 {
-                return Err(migration_required());
-            }
         }
         previous = Some(row.session_id);
     }

@@ -1,0 +1,325 @@
+{
+  "version": 1,
+  "files": {
+    "crates/agent-sdk/src/client.rs": {
+      "count": 4,
+      "reason": "the shared-SSH-transport surface of the client (`shared_ssh_transport`, the reconnect branch and its fallback): it exists only where OpenSSH ControlMaster multiplexing does."
+    },
+    "crates/agent-sdk/src/launch.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` module holding the daemon-launch fixture that runs a `/bin/sh` stand-in daemon."
+    },
+    "crates/agent-sdk/src/lib.rs": {
+      "count": 1,
+      "reason": "re-export of the Unix-only shared SSH transport types, which do not exist on Windows."
+    },
+    "crates/agent-sdk/src/ssh.rs": {
+      "count": 14,
+      "reason": "OpenSSH ControlMaster channel sharing: the SDK multiplexes extra API channels over one `ssh -M` master with a Unix control socket, which OpenSSH only exposes on Unix. Windows starts a plain ssh child per channel instead."
+    },
+    "crates/agent-sdk/tests/client_behavior.rs": {
+      "count": 1,
+      "reason": "whole test file is a Unix socket-pair fixture (#![cfg(unix)]); Windows has no socket pair to hand the client."
+    },
+    "crates/agent-sdk/tests/durable_runtime_api.rs": {
+      "count": 1,
+      "reason": "test fixture spawns a stub daemon through a Unix socket path."
+    },
+    "crates/agent-sdk/tests/lifecycle_events.rs": {
+      "count": 1,
+      "reason": "test fixture drives a stub daemon over a Unix socket."
+    },
+    "crates/agent-sdk/tests/session_replication.rs": {
+      "count": 1,
+      "reason": "test fixture replicates sessions over a Unix socket pair."
+    },
+    "crates/agent-sdk/tests/structured_output.rs": {
+      "count": 1,
+      "reason": "test fixture serves structured output from a stub daemon over a Unix socket."
+    },
+    "crates/agent-sdk/tests/user_response_capability.rs": {
+      "count": 1,
+      "reason": "test fixture drives a stub daemon over a Unix socket."
+    },
+    "crates/app-core/src/agent/durable_input_tests.rs": {
+      "count": 1,
+      "reason": "read-only directory fixture built from POSIX mode bits."
+    },
+    "crates/app-core/src/agent/failover_budget.rs": {
+      "count": 1,
+      "reason": "read-only directory fixture built from POSIX mode bits."
+    },
+    "crates/app-core/src/agent/soft_interrupt_commit_tests.rs": {
+      "count": 1,
+      "reason": "read-only directory fixture built from POSIX mode bits."
+    },
+    "crates/app-core/src/ambient/runner_resume_crash_tests.rs": {
+      "count": 1,
+      "reason": "crash matrix kills a child with `kill -9` and reads `ExitStatusExt::signal`."
+    },
+    "crates/app-core/src/ambient/runner_resume_tests.rs": {
+      "count": 1,
+      "reason": "gate for the crash matrix below."
+    },
+    "crates/app-core/src/network_retry.rs": {
+      "count": 10,
+      "reason": "connectivity-wait strategy per OS: `ip monitor` on Linux, `route -n monitor` on macOS, reconnect-probe polling elsewhere."
+    },
+    "crates/app-core/src/notifications.rs": {
+      "count": 6,
+      "reason": "desktop notifications: `osascript` on macOS, `notify-send` on Linux, nothing elsewhere."
+    },
+    "crates/app-core/src/overnight.rs": {
+      "count": 10,
+      "reason": "overnight scheduling hooks that exist only on Linux (process and session hooks) plus their non-Linux fallbacks."
+    },
+    "crates/app-core/src/perf.rs": {
+      "count": 11,
+      "reason": "host load, memory and terminal probes chosen at compile time: /proc readers on Linux, sysctlbyname/getloadavg on macOS, GlobalMemoryStatusEx on Windows. The perf tier is cross-platform; each probe is the platform's own measurement API."
+    },
+    "crates/app-core/src/server/client_lifecycle.rs": {
+      "count": 1,
+      "reason": "read-only directory fixture built from POSIX mode bits."
+    },
+    "crates/app-core/src/server/client_lifecycle_tests/acp_session_mcp.rs": {
+      "count": 2,
+      "reason": "uses the FIFO watch fixtures above."
+    },
+    "crates/app-core/src/server/session_replication_runtime_tests.rs": {
+      "count": 1,
+      "reason": "asserts unix ownership and permission bits on published session files."
+    },
+    "crates/app-core/src/server/socket_tests.rs": {
+      "count": 13,
+      "reason": "binds real Unix socket files and holds daemon flock files; Windows uses named pipes with no filesystem node or lock file."
+    },
+    "crates/app-core/src/server/tests.rs": {
+      "count": 1,
+      "reason": "raw pipe-descriptor readiness test (FromRawFd)."
+    },
+    "crates/app-core/src/session_launch.rs": {
+      "count": 10,
+      "reason": "launching a terminal or session window per OS (macOS `open`/osascript, Linux terminal-emulator argv, Windows `cmd start`). The window is the product; there is no portable primitive."
+    },
+    "crates/app-core/src/tool/bash.rs": {
+      "count": 1,
+      "reason": "`#[path]` gate for the POSIX-only bash test suite."
+    },
+    "crates/app-core/src/tool/bash_destructive_gate.rs": {
+      "count": 1,
+      "reason": "`#[path]` gate for its POSIX-only test file."
+    },
+    "crates/app-core/src/tool/bash_interceptor.rs": {
+      "count": 1,
+      "reason": "`#[path]` gate for its POSIX-only test file."
+    },
+    "crates/app-core/src/tool/bash_tests.rs": {
+      "count": 20,
+      "reason": "drives real POSIX shells: bash syntax, pty allocation, chmod'd stub binaries and process groups. On Windows the tool runs cmd.exe, so these assertions have no equivalent."
+    },
+    "crates/app-core/src/tool/communicate/transport.rs": {
+      "count": 1,
+      "reason": "binds a real Unix socket to produce a refused connection."
+    },
+    "crates/app-core/src/tool/git_guard.rs": {
+      "count": 1,
+      "reason": "`#[path]` gate for its POSIX-only test file."
+    },
+    "crates/app-core/src/tool/hook_serialization_tests.rs": {
+      "count": 15,
+      "reason": "hook tests write and execute POSIX shell scripts; hook execution is script-based by design, not an adapter primitive."
+    },
+    "crates/app-core/src/tool/session_mcp_tests.rs": {
+      "count": 2,
+      "reason": "FIFO-based stub fixtures (mkfifo); Windows has no FIFO."
+    },
+    "crates/app-core/src/tool/tests.rs": {
+      "count": 6,
+      "reason": "hook-gate dispatch tests write chmod'd POSIX shell scripts."
+    },
+    "crates/app-core/src/tool/toolbox_tests.rs": {
+      "count": 5,
+      "reason": "hook-gate tests write chmod'd POSIX shell scripts."
+    },
+    "crates/base/src/claude_live.rs": {
+      "count": 13,
+      "reason": "live Claude Code takeover reads /proc/<pid>/stat start time and signals through pidfd_open/pidfd_send_signal; both interfaces are Linux-only and every other platform answers not supported."
+    },
+    "crates/base/src/durable_input_tests.rs": {
+      "count": 1,
+      "reason": "test premise is a read-only directory, which only exists where the filesystem carries POSIX write bits; Windows accepts the write."
+    },
+    "crates/base/src/git_worktree.rs": {
+      "count": 1,
+      "reason": "test refuses a symlinked worktree destination created with std::os::unix::fs::symlink; the adapter copies on Windows, which the test must not exercise."
+    },
+    "crates/base/src/hooks.rs": {
+      "count": 20,
+      "reason": "hook tests write #!/bin/sh scripts and chmod them (one asserts Linux pid timing); Windows has no POSIX shell and the adapter has no test-fixture shell abstraction, so they assert hook semantics, not OS primitives."
+    },
+    "crates/base/src/import_tests.rs": {
+      "count": 8,
+      "reason": "tests for the Linux-only live-Claude takeover: they fabricate /proc records and pidfd hand-offs."
+    },
+    "crates/base/src/mcp/client.rs": {
+      "count": 1,
+      "reason": "the whole test module drives a stdio MCP server through a POSIX shell script."
+    },
+    "crates/base/src/mcp/manager.rs": {
+      "count": 2,
+      "reason": "a test writes a bash fake MCP server and asserts its mode, plus the unix-only test module that holds it."
+    },
+    "crates/base/src/mcp/oauth_tests.rs": {
+      "count": 2,
+      "reason": "asserts POSIX mode bits (0600) and symlink/hard-link refusal of the credential store; the platform crates assert the same property on their own OS."
+    },
+    "crates/base/src/monitor/tests.rs": {
+      "count": 3,
+      "reason": "symlink retarget, permission-denied pause and unix-socket refusal: POSIX filesystem entries with no Windows form."
+    },
+    "crates/base/src/process_memory.rs": {
+      "count": 20,
+      "reason": "glibc mallinfo2/malloc_trim statistics and the glibc/musl tests exist only where the system allocator is glibc/musl, and the PSS/RssAnon/RssFile breakdown only exists in Linux /proc; the cross-platform facts moved to platform::process::process_memory_facts."
+    },
+    "crates/base/src/prompt_tests.rs": {
+      "count": 2,
+      "reason": "tests dedupe symlinked AGENTS.md/guidance aliases with std::os::unix::fs::symlink; the adapter's copy fallback would remove the alias being tested."
+    },
+    "crates/base/src/provider/tests/catalog_memo.rs": {
+      "count": 1,
+      "reason": "asserts behaviour for a non-UTF-8 home path, expressible only through unix OsString bytes."
+    },
+    "crates/base/src/registry_tests.rs": {
+      "count": 2,
+      "reason": "binds a live unix-socket listener to prove stale-socket cleanup; Windows has no socket file to preserve."
+    },
+    "crates/base/src/scratch_maintenance.rs": {
+      "count": 1,
+      "reason": "test creates a symlink inside the scratch tree and asserts the pruner never follows it out; Windows symlinks need privileges and the adapter copies instead."
+    },
+    "crates/base/src/secrets.rs": {
+      "count": 1,
+      "reason": "test asserts the key file's POSIX mode is 0600."
+    },
+    "crates/base/src/session_tests/cases.rs": {
+      "count": 5,
+      "reason": "the streaming guard's macOS test reads `pmset -g assertions` to observe the real IOKit assertion the macOS adapter creates."
+    },
+    "crates/base/src/skill.rs": {
+      "count": 2,
+      "reason": "tests chmod a skill to 0755 and relink a skills directory with symlink; same POSIX premise."
+    },
+    "crates/base/src/sponsors/provenance.rs": {
+      "count": 1,
+      "reason": "unix-only integration test module that writes a shell-script stand-in for the sponsor report transport."
+    },
+    "crates/base/src/storage/tests.rs": {
+      "count": 3,
+      "reason": "assert POSIX owner-only modes after hardening and symlink refusal of an external auth file."
+    },
+    "crates/base/src/terminal_launch.rs": {
+      "count": 2,
+      "reason": "the spawn-hook test writes an executable #!/bin/sh hook (module gate plus the chmod inside it)."
+    },
+    "crates/base/tests/loading_probe_contract.rs": {
+      "count": 1,
+      "reason": "widens directory modes to 0755 to simulate a preflight failure, which needs POSIX mode bits."
+    },
+    "crates/base/tests/prompt_guidance_integration.rs": {
+      "count": 1,
+      "reason": "POSIX-shell integration test file: the whole file is gated to unix because it drives the CLI through a real shell and HOME/cwd resolution."
+    },
+    "crates/build-support/src/lib.rs": {
+      "count": 8,
+      "reason": "build-script platform plumbing: it emits target link flags and target identity while compiling on the build host, which cannot depend on the runtime platform adapter."
+    },
+    "crates/build-support/src/paths.rs": {
+      "count": 5,
+      "reason": "build-time path conventions of the build host (separator, case, exe suffix) used to generate build metadata."
+    },
+    "crates/build-support/src/platform_support.rs": {
+      "count": 5,
+      "reason": "target triple and OS detection for the build script, plus its host-only tests."
+    },
+    "crates/build-support/src/storage_helpers.rs": {
+      "count": 1,
+      "reason": "the build script picks the host path separator when it writes generated paths."
+    },
+    "crates/build-support/src/tests.rs": {
+      "count": 1,
+      "reason": "build-script test asserting host path handling."
+    },
+    "crates/build-support/src/version_gc.rs": {
+      "count": 2,
+      "reason": "version garbage collection at build time chooses its file-list rule by build host kernel (Linux uses link-count and hardlink identity)."
+    },
+    "crates/codemode/src/lib.rs": {
+      "count": 5,
+      "reason": "the embedded JavaScript engine (QuickJS/wasm) has no FreeBSD build, so the cfg selects a stub there; it is an engine availability fact, not an OS primitive."
+    },
+    "crates/core/src/console.rs": {
+      "count": 4,
+      "reason": "Windows virtual-terminal handling: enabling and restoring ENABLE_VIRTUAL_TERMINAL_PROCESSING on the console handle, plus its Windows-only test. A console exists only on Windows."
+    },
+    "crates/harness-api-server/src/allocator.rs": {
+      "count": 3,
+      "reason": "glibc malloc tuning (mallopt) exists only on linux-gnu; the cfg selects the tuned allocator and its tests, and every other target keeps std's allocator."
+    },
+    "crates/harness-api-server/src/lib.rs": {
+      "count": 1,
+      "reason": "the `server --stdio` bridge entry point exists only on Unix: it connects to the daemon's Unix socket and has no Windows transport."
+    },
+    "crates/harness-api-server/src/translate_tests.rs": {
+      "count": 2,
+      "reason": "tests that create symlinks (unix-only) to assert the bridge refuses credential and path redirections."
+    },
+    "crates/logging/src/watchdog.rs": {
+      "count": 2,
+      "reason": "Linux-only watchdog detail: it reads /proc/self/status for the thread stack and virtual-memory figures while other platforms log the default."
+    },
+    "crates/lsp/src/server_tests.rs": {
+      "count": 1,
+      "reason": "test binds a real Unix socket to prove the server's socket/stdio selection."
+    },
+    "crates/session-store/src/cache_coordination.rs": {
+      "count": 2,
+      "reason": "test-only: a unix-only test module that runs two processes with a pipe to prove cross-process cache coordination."
+    },
+    "crates/session-store/tests/contract.rs": {
+      "count": 1,
+      "reason": "test asserts unix ownership and mode bits of the published cache directory."
+    },
+    "crates/storage/src/active_pids.rs": {
+      "count": 1,
+      "reason": "test asserts the unix euid-derived user discriminator in the active-pid directory name."
+    },
+    "crates/terminal-launch/src/lib.rs": {
+      "count": 62,
+      "reason": "launching a terminal window is the product: macOS `open`/osascript, Linux terminal-emulator argv plus DISPLAY detection, Windows `cmd start`/ConPTY argv, and the tests assert each platform's argv and quoting. There is no portable primitive for opening a terminal window."
+    },
+    "crates/update-core/src/lib.rs": {
+      "count": 7,
+      "reason": "the release asset name and SHA-256 pin for each supported target triple (linux/macos/windows/freebsd x x86_64/aarch64); the mapping is the product of the updater."
+    },
+    "src/cli/args.rs": {
+      "count": 2,
+      "reason": "the `api-bridge` subcommand and the hidden `server stdio` subcommand exist only on Unix: both speak to a Unix domain socket and neither has a Windows transport, so the Windows parse surface stays byte-identical to the released binary."
+    },
+    "src/cli/args/tests.rs": {
+      "count": 3,
+      "reason": "tests of the two Unix-only subcommands above; the clap variants do not exist on Windows."
+    },
+    "src/cli/dispatch.rs": {
+      "count": 3,
+      "reason": "match arms for the Unix-only `api-bridge` and `server stdio` subcommands; no OS primitive is left in the file."
+    },
+    "src/cli/mod.rs": {
+      "count": 1,
+      "reason": "`ssh_transport` bridges the native protocol over tokio::net::UnixStream, so the module exists only on Unix."
+    },
+    "src/cli/proctitle.rs": {
+      "count": 1,
+      "reason": "one match arm labelling the Unix-only `api-bridge` command."
+    }
+  }
+}

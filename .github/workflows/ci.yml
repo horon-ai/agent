@@ -165,6 +165,16 @@ jobs:
         shell: bash
         run: python3 scripts/ci/check_wildcard_reexports.py
 
+      - name: Platform cfg gate contract tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_check_platform_cfg.py
+
+      - name: Enforce platform cfg allowlist
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_platform_cfg.py
+
       - name: Install cargo-machete
         # The crate is published as a binary; building it from source on every
         # run costs minutes and hundreds of MB on a job that already has the

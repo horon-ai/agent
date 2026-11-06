@@ -33,16 +33,10 @@ pub(crate) fn safe_path(path: &Path) -> Result<(), StoreError> {
 
 fn optional(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
     safe_path(path)?;
-    let mut options = fs::OpenOptions::new();
+    // The leaf is opened without following a symlink; `safe_path` above already
+    // refused a symlinked component.
+    let mut options = horon_agent_platform::fs::no_follow_open_options();
     options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        #[cfg(target_os = "macos")]
-        options.custom_flags(0x100);
-        #[cfg(target_os = "linux")]
-        options.custom_flags(0x20000);
-    }
     match options.open(path) {
         Ok(mut file) => {
             if !file.metadata()?.is_file() {

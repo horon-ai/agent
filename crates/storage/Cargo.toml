@@ -8,6 +8,7 @@ publish = false
 anyhow = "1"
 dirs = "5"
 horon-agent-core = { path = "../core" }
+horon-agent-platform = { path = "../platform" }
 libc = "0.2"
 rand = "0.9.3"
 serde = { version = "1", features = ["derive"] }

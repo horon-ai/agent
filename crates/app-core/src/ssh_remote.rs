@@ -45,7 +45,7 @@ pub fn save_config(config: &SshRemoteConfig) -> Result<()> {
     let path = config_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-        let _ = horon_agent_core::fs::set_directory_permissions_owner_only(parent);
+        let _ = horon_agent_platform::fs::set_dir_permissions_owner_only(parent);
     }
     let bytes = serde_json::to_vec_pretty(config)?;
     std::fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))?;

@@ -1035,7 +1035,7 @@ async fn process_group_kill_guard_terminates_descendants() {
         .parse::<u32>()
         .expect("numeric descendant pid");
 
-    let guard = ProcessGroupKillGuard::new(child.id());
+    let guard = horon_agent_platform::process::ProcessGroupGuard::new(child.id());
     drop(guard);
     tokio::time::timeout(Duration::from_secs(2), child.wait())
         .await

@@ -1619,7 +1619,6 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1782,8 +1781,8 @@ name = "horon-agent-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "horon-agent-platform",
  "horon-agent-token-estimate",
- "libc",
  "rand 0.9.3",
  "unicode-properties",
  "unicode-segmentation",
@@ -1832,6 +1831,7 @@ dependencies = [
 name = "horon-agent-harness-api"
 version = "0.1.0"
 dependencies = [
+ "horon-agent-platform",
  "horon-agent-session-store",
  "horon-agent-session-types",
  "horon-agent-todo-policy",
@@ -1852,6 +1852,7 @@ dependencies = [
  "horon-agent-base",
  "horon-agent-harness-api",
  "horon-agent-perf-counters",
+ "horon-agent-platform",
  "horon-agent-session-store",
  "horon-agent-session-types",
  "horon-agent-todo-policy",
@@ -1889,6 +1890,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "horon-agent-core",
+ "horon-agent-platform-api",
  "horon-agent-storage",
  "serde_json",
  "tokio",
@@ -1900,7 +1902,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "horon-agent-logging",
- "libc",
+ "horon-agent-platform",
  "lsp-types",
  "serde_json",
  "tempfile",
@@ -1986,13 +1988,13 @@ dependencies = [
 name = "horon-agent-platform-linux"
 version = "0.1.0"
 dependencies = [
- "horon-agent-logging",
  "horon-agent-platform-api",
  "libc",
  "rcgen",
  "rustls",
  "rustls-native-certs",
  "tempfile",
+ "tokio",
  "webpki-roots",
 ]
 
@@ -2000,13 +2002,13 @@ dependencies = [
 name = "horon-agent-platform-macos"
 version = "0.1.0"
 dependencies = [
- "horon-agent-logging",
  "horon-agent-platform-api",
  "libc",
  "rcgen",
  "rustls",
  "rustls-platform-verifier",
  "tempfile",
+ "tokio",
  "webpki-root-certs",
 ]
 
@@ -2014,11 +2016,14 @@ dependencies = [
 name = "horon-agent-platform-windows"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "horon-agent-platform-api",
  "rcgen",
  "rustls",
  "rustls-platform-verifier",
+ "sha2",
  "tempfile",
+ "tokio",
  "webpki-root-certs",
  "windows-sys 0.59.0",
 ]
@@ -2029,6 +2034,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "horon-agent-platform",
  "horon-agent-storage",
  "rayon",
  "resvg",
@@ -2132,6 +2138,7 @@ dependencies = [
  "anyhow",
  "horon-agent-base",
  "horon-agent-harness-api",
+ "horon-agent-platform",
  "horon-agent-todo-policy",
  "horon-agent-transport",
  "jsonschema",
@@ -2175,6 +2182,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "horon-agent-core",
+ "horon-agent-platform",
  "libc",
  "rand 0.9.3",
  "serde",
@@ -2247,10 +2255,7 @@ dependencies = [
 name = "horon-agent-transport"
 version = "0.1.0"
 dependencies = [
- "hex",
- "sha2",
- "tokio",
- "windows-sys 0.59.0",
+ "horon-agent-platform",
 ]
 
 [[package]]

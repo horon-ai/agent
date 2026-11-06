@@ -69,11 +69,7 @@ fn seed(directory: &Path, name: &str, messages: usize) -> Seeded {
     let id = SessionId::parse(name).unwrap();
     let session = paths.session_dir(&id).unwrap();
     std::fs::create_dir_all(&session).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&session).unwrap();
     let root = created(&id);
     let mut bytes = encode_record_line(root.envelope()).unwrap();
     let mut previous = root;
@@ -86,11 +82,7 @@ fn seed(directory: &Path, name: &str, messages: usize) -> Seeded {
     }
     let log = paths.events_log(&id).unwrap();
     std::fs::write(&log, &bytes).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
+    horon_agent_platform::fs::set_file_permissions_owner_only(&log).unwrap();
     Seeded {
         paths,
         id,

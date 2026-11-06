@@ -232,7 +232,7 @@ fn resolve_launch_path(exe: PathBuf) -> PathBuf {
     std::fs::canonicalize(&exe).unwrap_or(exe)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod running_server_binary_tests {
     /// The server is started through a channel link; installing a new build
     /// repoints the link. The pinned path must stay on the binary the server
@@ -248,13 +248,17 @@ mod running_server_binary_tests {
         }
         let link = dir.path().join("stable/horon-agent");
         std::fs::create_dir_all(link.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&old, &link).unwrap();
+        if horon_agent_platform::fs::symlink_file(&old, &link).is_err() {
+            // A platform that cannot create a symlink cannot exercise a
+            // channel link either.
+            return;
+        }
 
         // Server start: what running_server_binary pins.
         let pinned = super::resolve_launch_path(link.clone());
         // An install repoints the channel.
         std::fs::remove_file(&link).unwrap();
-        std::os::unix::fs::symlink(&new, &link).unwrap();
+        horon_agent_platform::fs::symlink_file(&new, &link).unwrap();
 
         assert_eq!(pinned, std::fs::canonicalize(&old).unwrap());
         // Re-resolving the launch path now (the old behavior) lands on the new

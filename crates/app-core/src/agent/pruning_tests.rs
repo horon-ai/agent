@@ -26,12 +26,7 @@ fn isolated_home() -> (tempfile::TempDir, RestoreHome) {
     crate::env::set_var("HORON_AGENT_HOME", home.path());
     let sessions = home.path().join("sessions");
     std::fs::create_dir_all(&sessions).expect("session store root");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o700))
-            .expect("owner-only session store root");
-    }
+    horon_agent_platform::fs::set_dir_permissions_owner_only(&sessions).expect("owner-only session store root");
     crate::config::Config::invalidate_cache();
     (home, restore)
 }

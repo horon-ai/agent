@@ -688,11 +688,7 @@ mod batch_crash_tests {
             use std::io::Write;
             let mut options = std::fs::OpenOptions::new();
             options.create_new(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
+            horon_agent_platform::fs::request_owner_only_mode(&mut options);
             let mut file = options.open(corrupt_dir.join("events.jsonl")).expect("corrupt log");
             file.write_all(b"{not a record}\n").expect("bytes");
         }

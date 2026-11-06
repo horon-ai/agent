@@ -133,12 +133,10 @@ fn canonical_output_path(path: PathBuf) -> Result<PathBuf> {
 }
 
 fn create_private_dir(path: &Path) -> Result<()> {
-    std::fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    }
+    // The directory is created owner-only and then re-restricted, so a path
+    // that already existed with a wider mode ends up private as well.
+    horon_agent_platform::create_private_dir(path, true)?;
+    horon_agent_platform::set_permissions_private_dir(path)?;
     Ok(())
 }
 
