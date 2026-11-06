@@ -69,15 +69,6 @@ pub enum ServerEvent {
     #[serde(rename = "ack")]
     Ack { id: u64 },
 
-    /// Authoritative worker routing after a successful session preference update.
-    #[serde(rename = "agent_models_changed")]
-    AgentModelsChanged {
-        id: u64,
-        session_id: String,
-        #[serde(default)]
-        overrides: std::collections::BTreeMap<String, String>,
-    },
-
     /// Streaming text delta
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
@@ -689,21 +680,6 @@ pub enum ServerEvent {
         acp_protocol_version: Option<u32>,
     },
 
-    /// Expanded compacted-history window (response to GetCompactedHistory).
-    #[serde(rename = "compacted_history")]
-    CompactedHistory {
-        id: u64,
-        session_id: String,
-        messages: Vec<HistoryMessage>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        images: Vec<horon_agent_session_types::RenderedImage>,
-        compacted_total: usize,
-        compacted_visible: usize,
-        compacted_remaining: usize,
-        #[serde(default)]
-        compacted_hidden_prompts: usize,
-    },
-
     /// Server is reloading (clients should reconnect)
     #[serde(rename = "reloading")]
     Reloading {
@@ -770,35 +746,6 @@ pub enum ServerEvent {
         error: Option<String>,
     },
 
-    /// Service tier changed (response to set_service_tier)
-    #[serde(rename = "service_tier_changed")]
-    ServiceTierChanged {
-        id: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        service_tier: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
-    /// Transport changed (response to set_transport)
-    #[serde(rename = "transport_changed")]
-    TransportChanged {
-        id: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        transport: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
-    /// Compaction mode changed (response to set_compaction_mode)
-    #[serde(rename = "compaction_mode_changed")]
-    CompactionModeChanged {
-        id: u64,
-        mode: horon_agent_config_types::CompactionMode,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
     /// Usage delta for a route, independent of catalog availability or Agent locks.
     #[serde(rename = "model_usage_updated")]
     ModelUsageUpdated {
@@ -830,10 +777,6 @@ pub enum ServerEvent {
         /// Human-readable message describing what happened
         message: String,
     },
-
-    /// Completed `!cmd` shell execution for a connected remote client.
-    #[serde(rename = "input_shell_result")]
-    InputShellResult { result: InputShellResult },
 
     /// Response to comm_read request
     #[serde(rename = "comm_context")]
@@ -976,20 +919,6 @@ pub enum ServerEvent {
         resumed_sessions: Vec<String>,
         /// Human-readable summary suitable for direct display.
         message: String,
-    },
-
-    /// A running command is waiting for stdin input from the user
-    #[serde(rename = "stdin_request")]
-    StdinRequest {
-        /// Unique request ID for matching the response
-        request_id: String,
-        /// The last line(s) of output (the prompt, e.g. "Password: ")
-        prompt: String,
-        /// Whether the input should be masked (password field)
-        #[serde(default)]
-        is_password: bool,
-        /// Tool call ID this is associated with
-        tool_call_id: String,
     },
 
     /// The `ask` tool needs a human answer, and at least one attached client

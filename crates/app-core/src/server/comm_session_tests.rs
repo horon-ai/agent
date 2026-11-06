@@ -634,43 +634,7 @@ async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() 
 }
 
 #[tokio::test]
-async fn global_agent_model_request_updates_server_config_not_session() {
-    let _env = crate::storage::lock_test_env();
-    let temp = tempfile::TempDir::new().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
-    let agent = test_agent_with_working_dir("routing_global", "/tmp/coord").await;
-    let overrides = crate::server::client_actions::set_global_agent_model(
-        &agent,
-        "routing_global",
-        "swarm",
-        Some("openai-api:gpt-5.5".into()),
-    )
-    .await
-    .unwrap();
-    assert!(overrides.is_empty(), "a global change must not pin the session");
-    assert_eq!(
-        crate::config::Config::load().agents.swarm_model.as_deref(),
-        Some("openai-api:gpt-5.5")
-    );
-    crate::server::client_actions::set_global_agent_model(&agent, "routing_global", "swarm", None)
-        .await
-        .unwrap();
-    assert_eq!(crate::config::Config::load().agents.swarm_model, None);
-    assert!(
-        crate::server::client_actions::set_global_agent_model(&agent, "routing_global", "bogus", Some("m".into()))
-            .await
-            .is_err()
-    );
-    if let Some(previous) = previous {
-        crate::env::set_var("HORON_AGENT_HOME", previous);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}
-
-#[tokio::test]
-async fn session_agent_models_update_and_spawn_while_coordinator_busy() {
+async fn session_agent_models_drive_spawn_selection() {
     let _env = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
     let previous = std::env::var_os("HORON_AGENT_HOME");
@@ -685,19 +649,11 @@ async fn session_agent_models_update_and_spawn_while_coordinator_busy() {
         "routing_busy".to_string(),
         agent.clone(),
     )])));
-    let held = agent.lock().await;
-    tokio::time::timeout(
-        std::time::Duration::from_millis(250),
-        crate::server::client_actions::set_session_agent_model(
-            &agent,
-            "routing_busy",
-            "swarm",
-            Some("openai-api:gpt-5.5".into()),
-        ),
-    )
-    .await
-    .expect("setter must not await busy Agent lock")
-    .unwrap();
+    agent
+        .lock()
+        .await
+        .set_agent_model_override("swarm", Some("openai-api:gpt-5.5".into()))
+        .unwrap();
     let coordinator = resolve_coordinator_spawn_identity("routing_busy", &sessions).await;
     let configured = super::session_swarm_model("routing_busy", &sessions, Some("global-model".into())).await;
     let selection = resolve_swarm_spawn_selection(None, configured, &coordinator);
@@ -743,23 +699,22 @@ async fn session_agent_models_update_and_spawn_while_coordinator_busy() {
     assert_eq!(child.provider_model(), "gpt-5.5");
     assert_eq!(child.session_provider_key().as_deref(), Some("openai-api"));
     drop(child);
-    crate::server::client_actions::set_session_agent_model(&agent, "routing_busy", "swarm", Some("inherit".into()))
+    agent
+        .lock()
         .await
+        .set_agent_model_override("swarm", Some("inherit".into()))
         .unwrap();
     let configured = super::session_swarm_model("routing_busy", &sessions, Some("global-model".into())).await;
     let selection = resolve_swarm_spawn_selection(None, configured, &coordinator);
     assert_eq!(selection.model.as_deref(), Some("claude-opus-4-6"));
     assert_eq!(selection.provider_key.as_deref(), Some("claude-api"));
-    crate::server::client_actions::set_session_agent_model(&agent, "routing_busy", "swarm", None)
-        .await
-        .unwrap();
+    agent.lock().await.set_agent_model_override("swarm", None).unwrap();
     assert_eq!(
         super::session_swarm_model("routing_busy", &sessions, Some("global-model".into()))
             .await
             .as_deref(),
         Some("global-model")
     );
-    drop(held);
     if let Some(previous) = previous {
         crate::env::set_var("HORON_AGENT_HOME", previous);
     } else {

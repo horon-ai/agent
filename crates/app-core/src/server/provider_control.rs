@@ -72,11 +72,6 @@ fn available_models_snapshot_from_provider(provider: &Arc<dyn Provider>) -> Mode
     snapshot
 }
 
-pub(super) async fn available_models_updated_event(agent: &Arc<Mutex<Agent>>) -> ServerEvent {
-    let agent_guard = agent.lock().await;
-    super::available_models_cache::for_agent(&agent_guard).event.clone()
-}
-
 pub(super) fn try_available_models_catalog(
     agent: &Arc<Mutex<Agent>>,
 ) -> Option<Arc<super::available_models_cache::Catalog>> {
@@ -175,27 +170,6 @@ fn spawn_deferred_agent_mutation<F>(
         let mut agent_guard = agent.lock().await;
         log_provider_control_lock_acquired(operation, id, queued_at);
         apply(&mut agent_guard, &client_event_tx);
-        log_provider_control_completed(operation, id, queued_at);
-    });
-}
-
-fn spawn_deferred_provider_operation<F>(
-    operation: &'static str,
-    id: u64,
-    agent: Arc<Mutex<Agent>>,
-    client_event_tx: mpsc::UnboundedSender<ServerEvent>,
-    apply: F,
-) where
-    F: FnOnce(Arc<dyn Provider>, &mpsc::UnboundedSender<ServerEvent>) + Send + 'static,
-{
-    let queued_at = log_provider_control_deferred(operation, id);
-    tokio::spawn(async move {
-        let provider = {
-            let agent_guard = agent.lock().await;
-            log_provider_control_lock_acquired(operation, id, queued_at);
-            agent_guard.provider_handle()
-        };
-        apply(provider, &client_event_tx);
         log_provider_control_completed(operation, id, queued_at);
     });
 }
@@ -529,131 +503,6 @@ fn send_model_changed_result(
     }
 }
 
-fn apply_cycle_model(id: u64, direction: i8, agent: &mut Agent, client_event_tx: &mpsc::UnboundedSender<ServerEvent>) {
-    let models = agent.available_models_for_switching();
-    if models.is_empty() {
-        let _ = client_event_tx.send(ServerEvent::ModelChanged {
-            id,
-            model: agent.provider_model(),
-            provider_name: None,
-            context_window: Some(agent.provider_context_window() as u64),
-            error: Some("Model switching is not available for this provider.".to_string()),
-            resolved_credential: None,
-            reasoning_effort: None,
-        });
-        return;
-    }
-
-    let current = agent.provider_model();
-    let current_index = models.iter().position(|m| *m == current).unwrap_or(0);
-    let len = models.len();
-    let next_index = if direction >= 0 {
-        (current_index + 1) % len
-    } else {
-        (current_index + len - 1) % len
-    };
-    let next_model = models[next_index].clone();
-    crate::logging::event_info(
-        "server_cycle_model_request",
-        vec![
-            ("id", id.to_string()),
-            ("direction", (direction as i64).to_string()),
-            ("current_model", current.clone()),
-            ("next_model", next_model.clone()),
-            ("available_models", len.to_string()),
-        ],
-    );
-    let result = {
-        let result = agent.set_model(&next_model);
-        if result.is_ok() {
-            agent.reset_provider_session();
-        }
-        result.map(|_| {
-            (
-                agent.provider_model(),
-                agent.provider_name(),
-                agent.active_resolved_credential(),
-                agent.provider_reasoning_effort(),
-            )
-        })
-    };
-    send_model_changed_result(id, result, current, agent, client_event_tx);
-}
-
-pub(super) async fn handle_cycle_model(
-    id: u64,
-    direction: i8,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    if let Ok(mut agent_guard) = agent.try_lock() {
-        apply_cycle_model(id, direction, &mut agent_guard, client_event_tx);
-    } else {
-        spawn_deferred_agent_mutation(
-            "cycle_model",
-            id,
-            Arc::clone(agent),
-            client_event_tx.clone(),
-            move |agent_guard, client_event_tx| {
-                apply_cycle_model(id, direction, agent_guard, client_event_tx);
-            },
-        );
-    }
-}
-
-fn premium_mode_label(mode: crate::provider::PremiumMode) -> &'static str {
-    use crate::provider::PremiumMode;
-    match mode {
-        PremiumMode::Zero => "zero premium requests",
-        PremiumMode::OnePerSession => "one premium per session",
-        PremiumMode::Normal => "normal",
-    }
-}
-
-fn apply_set_premium_mode(
-    id: u64,
-    mode: u8,
-    premium_mode: crate::provider::PremiumMode,
-    agent: &Agent,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    agent.set_premium_mode(premium_mode);
-    crate::logging::info(&format!(
-        "Server: premium mode set to {} ({})",
-        mode,
-        premium_mode_label(premium_mode)
-    ));
-    let _ = client_event_tx.send(ServerEvent::Ack { id });
-}
-
-pub(super) async fn handle_set_premium_mode(
-    id: u64,
-    mode: u8,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    use crate::provider::PremiumMode;
-
-    let premium_mode = match mode {
-        2 => PremiumMode::Zero,
-        1 => PremiumMode::OnePerSession,
-        _ => PremiumMode::Normal,
-    };
-    if let Ok(agent_guard) = agent.try_lock() {
-        apply_set_premium_mode(id, mode, premium_mode, &agent_guard, client_event_tx);
-    } else {
-        spawn_deferred_agent_mutation(
-            "set_premium_mode",
-            id,
-            Arc::clone(agent),
-            client_event_tx.clone(),
-            move |agent_guard, client_event_tx| {
-                apply_set_premium_mode(id, mode, premium_mode, agent_guard, client_event_tx);
-            },
-        );
-    }
-}
-
 fn apply_set_model(id: u64, model: String, agent: &mut Agent, client_event_tx: &mpsc::UnboundedSender<ServerEvent>) {
     crate::logging::event_info(
         "server_set_model_request",
@@ -686,50 +535,14 @@ fn apply_set_model(id: u64, model: String, agent: &mut Agent, client_event_tx: &
 /// Apply a route the caller already validated and drop the provider session so
 /// the next turn resends its context on the new route.
 ///
-/// The interactive `Request::SetRoute` path and the server-side autonomous
-/// failover executor both switch routes through this one function, so the
-/// switch itself can never drift between them; only their eligibility rules
-/// differ.
+/// The server-side autonomous failover executor is the only caller, so the
+/// switch itself cannot drift from the eligibility rule that guards it.
 fn apply_validated_route(agent: &mut Agent, selection: &RouteSelection) -> anyhow::Result<()> {
     let result = agent.set_route_selection(selection);
     if result.is_ok() {
         agent.reset_provider_session();
     }
     result
-}
-
-fn apply_set_route(
-    id: u64,
-    selection: crate::provider::RouteSelection,
-    _automatic_failover: bool,
-    agent: &mut Agent,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    crate::logging::event_info(
-        "server_set_route_request",
-        vec![
-            ("id", id.to_string()),
-            ("requested_model", selection.model.clone()),
-            ("requested_provider", selection.provider_label.clone()),
-            ("requested_api_method", selection.api_method.clone()),
-            ("current_model", agent.provider_model()),
-            ("current_provider", agent.provider_name()),
-        ],
-    );
-
-    let current = agent.provider_model();
-    let result = {
-        let result = apply_validated_route(agent, &selection);
-        result.map(|_| {
-            (
-                agent.provider_model(),
-                agent.provider_name(),
-                agent.active_resolved_credential(),
-                agent.provider_reasoning_effort(),
-            )
-        })
-    };
-    send_model_changed_result(id, result, current, agent, client_event_tx);
 }
 
 /// Recover the structured route a failover prompt's `target_route` names.
@@ -848,96 +661,6 @@ pub(super) async fn handle_set_model(
     }
 }
 
-pub(super) async fn handle_set_route(
-    id: u64,
-    selection: crate::provider::RouteSelection,
-    automatic_failover: bool,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    if let Ok(mut agent_guard) = agent.try_lock() {
-        apply_set_route(id, selection, automatic_failover, &mut agent_guard, client_event_tx);
-    } else {
-        spawn_deferred_agent_mutation(
-            "set_route",
-            id,
-            Arc::clone(agent),
-            client_event_tx.clone(),
-            move |agent_guard, client_event_tx| {
-                apply_set_route(id, selection, automatic_failover, agent_guard, client_event_tx);
-            },
-        );
-    }
-}
-
-pub(super) async fn handle_refresh_models(
-    id: u64,
-    provider: &Arc<dyn Provider>,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let provider_clone = provider.clone();
-    let agent_clone = agent.clone();
-    let client_event_tx_clone = client_event_tx.clone();
-    tokio::spawn(async move {
-        send_catalog_activity(
-            &client_event_tx_clone,
-            &crate::message::format_model_refresh_progress_markdown("Starting provider model catalog refresh", Some(5)),
-        );
-
-        let refresh_started = Instant::now();
-        let refresh_future = provider_clone.refresh_model_catalog();
-        tokio::pin!(refresh_future);
-        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
-        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        let result = loop {
-            tokio::select! {
-                result = &mut refresh_future => break result,
-                _ = heartbeat.tick() => {
-                    let elapsed_secs = refresh_started.elapsed().as_secs();
-                    if elapsed_secs > 0 {
-                        send_catalog_activity(
-                            &client_event_tx_clone,
-                            &crate::message::format_model_refresh_progress_markdown(
-                                &format!("Waiting on provider APIs ({elapsed_secs}s elapsed)"),
-                                None,
-                            ),
-                        );
-                    }
-                }
-            }
-        };
-        match result {
-            Ok(_) => {
-                send_catalog_activity(
-                    &client_event_tx_clone,
-                    &crate::message::format_model_refresh_progress_markdown("Updating model picker", Some(95)),
-                );
-                crate::bus::Bus::global().publish_models_updated();
-                let event = available_models_updated_event(&agent_clone).await;
-                let _ = client_event_tx_clone.send(event);
-                send_catalog_activity(
-                    &client_event_tx_clone,
-                    &crate::message::format_model_refresh_progress_markdown("Model list refresh complete", Some(100)),
-                );
-            }
-            Err(err) => {
-                send_catalog_activity(
-                    &client_event_tx_clone,
-                    &crate::message::format_model_refresh_progress_markdown("Model list refresh failed", None),
-                );
-                let _ = client_event_tx_clone.send(ServerEvent::Error {
-                    id,
-                    message: format!("Failed to refresh models: {}", err),
-                    retry_after_secs: None,
-                });
-            }
-        }
-    });
-    let _ = client_event_tx.send(ServerEvent::Done { id });
-}
-
 fn send_catalog_activity(client_event_tx: &mpsc::UnboundedSender<ServerEvent>, message: &str) {
     let _ = client_event_tx.send(ServerEvent::Notification {
         from_session: "horon-agent".to_string(),
@@ -1009,151 +732,6 @@ fn spawn_deferred_reasoning_effort_change(
         ));
         send_reasoning_effort_result(id, result, &client_event_tx);
         log_provider_control_completed("set_reasoning_effort", id, queued_at);
-    });
-}
-
-pub(super) async fn handle_set_service_tier(
-    id: u64,
-    service_tier: String,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let apply = move |provider: Arc<dyn Provider>, client_event_tx: &mpsc::UnboundedSender<ServerEvent>| match provider
-        .set_service_tier(&service_tier)
-    {
-        Ok(()) => {
-            let _ = client_event_tx.send(ServerEvent::ServiceTierChanged {
-                id,
-                service_tier: provider.service_tier(),
-                error: None,
-            });
-        }
-        Err(e) => {
-            let _ = client_event_tx.send(ServerEvent::ServiceTierChanged {
-                id,
-                service_tier: None,
-                error: Some(e.to_string()),
-            });
-        }
-    };
-
-    if let Ok(agent_guard) = agent.try_lock() {
-        apply(agent_guard.provider_handle(), client_event_tx);
-    } else {
-        spawn_deferred_provider_operation(
-            "set_service_tier",
-            id,
-            Arc::clone(agent),
-            client_event_tx.clone(),
-            apply,
-        );
-    }
-}
-
-pub(super) async fn handle_set_transport(
-    id: u64,
-    transport: String,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let apply = move |provider: Arc<dyn Provider>, client_event_tx: &mpsc::UnboundedSender<ServerEvent>| match provider
-        .set_transport(&transport)
-    {
-        Ok(()) => {
-            let _ = client_event_tx.send(ServerEvent::TransportChanged {
-                id,
-                transport: provider.transport(),
-                error: None,
-            });
-        }
-        Err(e) => {
-            let _ = client_event_tx.send(ServerEvent::TransportChanged {
-                id,
-                transport: None,
-                error: Some(e.to_string()),
-            });
-        }
-    };
-
-    if let Ok(agent_guard) = agent.try_lock() {
-        apply(agent_guard.provider_handle(), client_event_tx);
-    } else {
-        spawn_deferred_provider_operation("set_transport", id, Arc::clone(agent), client_event_tx.clone(), apply);
-    }
-}
-
-pub(super) async fn handle_set_compaction_mode(
-    id: u64,
-    mode: crate::config::CompactionMode,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    if let Ok(agent_guard) = agent.try_lock() {
-        // Not a tool-execution path, so it keeps the plain clone: the budget
-        // this registry carries is never read by the overflow guard here.
-        // NOTE (GAP-11 in the work plan): `apply_set_compaction_mode` writes the
-        // mode into THIS clone's own `CompactionManager`, which `Clone` made a
-        // throwaway, and it persists nothing. The client is told the mode
-        // changed while the session keeps the previous one. That is a separate
-        // defect from the fresh-budget paths this change closes.
-        let registry = agent_guard.registry();
-        drop(agent_guard);
-        apply_set_compaction_mode(id, mode, registry, client_event_tx).await;
-    } else {
-        spawn_deferred_set_compaction_mode(id, mode, Arc::clone(agent), client_event_tx.clone());
-    }
-}
-
-async fn apply_set_compaction_mode(
-    id: u64,
-    mode: crate::config::CompactionMode,
-    registry: crate::tool::Registry,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let result = {
-        let compaction = registry.compaction();
-        let mut manager = compaction.write().await;
-        manager.set_mode(mode);
-        Ok::<(), anyhow::Error>(())
-    };
-
-    match result {
-        Ok(()) => {
-            let updated_mode = registry.compaction().read().await.mode();
-            let _ = client_event_tx.send(ServerEvent::CompactionModeChanged {
-                id,
-                mode: updated_mode,
-                error: None,
-            });
-        }
-        Err(e) => {
-            let fallback_mode = registry.compaction().read().await.mode();
-            let _ = client_event_tx.send(ServerEvent::CompactionModeChanged {
-                id,
-                mode: fallback_mode,
-                error: Some(e.to_string()),
-            });
-        }
-    }
-}
-
-fn spawn_deferred_set_compaction_mode(
-    id: u64,
-    mode: crate::config::CompactionMode,
-    agent: Arc<Mutex<Agent>>,
-    client_event_tx: mpsc::UnboundedSender<ServerEvent>,
-) {
-    let queued_at = log_provider_control_deferred("set_compaction_mode", id);
-    tokio::spawn(async move {
-        // Same as the fast path above: not a tool-execution path, and GAP-11
-        // records the separate defect that the mode is written into a clone.
-        let registry = {
-            let agent_guard = agent.lock().await;
-            log_provider_control_lock_acquired("set_compaction_mode", id, queued_at);
-            agent_guard.registry()
-        };
-        apply_set_compaction_mode(id, mode, registry, &client_event_tx).await;
-        log_provider_control_completed("set_compaction_mode", id, queued_at);
     });
 }
 

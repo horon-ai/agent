@@ -294,14 +294,6 @@ pub enum Request {
         subscribe_usage_updates: bool,
     },
 
-    /// Get a bounded view of compacted historical messages for lazy transcript expansion.
-    #[serde(rename = "get_compacted_history")]
-    GetCompactedHistory {
-        id: u64,
-        /// Number of leading compacted messages the client wants rendered before the live tail.
-        visible_messages: usize,
-    },
-
     /// Trigger server hot reload (build new version, restart)
     #[serde(rename = "reload")]
     Reload {
@@ -328,12 +320,6 @@ pub enum Request {
         allow_session_takeover: bool,
     },
 
-    /// Resume/continue every live session that was interrupted and would
-    /// auto-continue on a reload (e.g. crashed/errored mid-turn). This is the
-    /// on-demand equivalent of the automatic post-reload recovery sweep.
-    #[serde(rename = "resume_all_sessions")]
-    ResumeAllSessions { id: u64 },
-
     /// Deliver a scheduled task to a currently live session.
     #[serde(rename = "notify_session")]
     NotifySession {
@@ -342,21 +328,6 @@ pub enum Request {
         message: String,
     },
 
-    /// Execute a shell command from `!cmd` in the active remote session.
-    #[serde(rename = "input_shell")]
-    InputShell { id: u64, command: String },
-
-    /// Cycle the active model (direction: 1 for next, -1 for previous)
-    #[serde(rename = "cycle_model")]
-    CycleModel {
-        id: u64,
-        #[serde(default = "default_model_direction")]
-        direction: i8,
-    },
-
-    #[serde(rename = "refresh_models")]
-    RefreshModels { id: u64 },
-
     /// Set the active model by name.
     ///
     /// A legacy/desktop compatibility shape (`{"type":"set_route","model":...}`)
@@ -364,54 +335,9 @@ pub enum Request {
     /// [`crate::decode_request`] rather than via a serde `alias`. A serde alias
     /// would make this variant *also* answer to the `set_route` tag, and serde's
     /// internally-tagged enums pick the first matching variant by tag (not by
-    /// fields), so it would shadow the structured [`Request::SetRoute`] variant
-    /// below and make every structured route switch fail with
-    /// `missing field \`model\``.
+    /// fields), so the bare-model shape would shadow a structured route switch.
     #[serde(rename = "set_model")]
     SetModel { id: u64, model: String },
-
-    /// Set the active model by structured route identity.
-    #[serde(rename = "set_route")]
-    SetRoute {
-        id: u64,
-        selection: horon_agent_provider_core::RouteSelection,
-        /// Automatic retries must revalidate the server's current account pool.
-        #[serde(default, skip_serializing_if = "is_false")]
-        automatic_failover: bool,
-    },
-
-    /// Set or clear the session-scoped subagent model preference.
-    #[serde(rename = "set_subagent_model")]
-    SetSubagentModel {
-        id: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-    },
-
-    /// Set routing for a worker role. None clears to the global default.
-    /// With `global`, the server updates its own configuration instead of the
-    /// session, so remote clients never write a default only they can see.
-    #[serde(rename = "set_agent_model")]
-    SetAgentModel {
-        id: u64,
-        target: String,
-        #[serde(default)]
-        model: Option<String>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        global: bool,
-    },
-
-    /// Launch a subagent immediately in the active session.
-    #[serde(rename = "run_subagent")]
-    RunSubagent {
-        id: u64,
-        prompt: String,
-        subagent_type: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
-    },
 
     /// Set reasoning effort for providers that expose it (OpenAI: none|minimal|low|medium|high|xhigh|max; Anthropic: none|low|medium|high|xhigh|max; DeepSeek: none|low|medium|high|max)
     #[serde(rename = "set_reasoning_effort")]
@@ -422,14 +348,6 @@ pub enum Request {
         target_session_id: Option<String>,
     },
 
-    /// Set service tier for OpenAI models (priority|fast|flex|off)
-    #[serde(rename = "set_service_tier")]
-    SetServiceTier { id: u64, service_tier: String },
-
-    /// Set connection transport for OpenAI models (auto|https|websocket)
-    #[serde(rename = "set_transport")]
-    SetTransport { id: u64, transport: String },
-
     /// Non-presentation command executed against the attached live runtime.
     #[serde(rename = "runtime_command")]
     RuntimeCommand {
@@ -437,25 +355,6 @@ pub enum Request {
         command: String,
         #[serde(default)]
         args: Vec<String>,
-    },
-
-    /// Set Copilot premium request conservation mode (0=normal, 1=one-per-session, 2=zero)
-    #[serde(rename = "set_premium_mode")]
-    SetPremiumMode { id: u64, mode: u8 },
-
-    /// Toggle a runtime feature for this session
-    #[serde(rename = "set_feature")]
-    SetFeature {
-        id: u64,
-        feature: FeatureToggle,
-        enabled: bool,
-    },
-
-    /// Set the compaction mode for this session
-    #[serde(rename = "set_compaction_mode")]
-    SetCompactionMode {
-        id: u64,
-        mode: horon_agent_config_types::CompactionMode,
     },
 
     /// Set or clear the active session's custom display title.
@@ -500,10 +399,6 @@ pub enum Request {
     #[serde(rename = "compact")]
     Compact { id: u64 },
 
-    /// Trigger immediate memory extraction for the current session
-    #[serde(rename = "trigger_memory_extraction")]
-    TriggerMemoryExtraction { id: u64 },
-
     /// Notify server that auth credentials changed (e.g., after login)
     #[serde(rename = "notify_auth_changed")]
     NotifyAuthChanged {
@@ -531,16 +426,6 @@ pub enum Request {
     /// account scope, not whichever account is active when the request arrives.
     #[serde(rename = "invalidate_openai_usage")]
     InvalidateOpenAiUsage { id: u64, account_label: Option<String> },
-
-    /// Send stdin input to a running command that requested it
-    #[serde(rename = "stdin_response")]
-    StdinResponse {
-        id: u64,
-        /// Matches the request_id from StdinRequest
-        request_id: String,
-        /// The user's input (line of text)
-        input: String,
-    },
 
     /// Client acknowledgement of [`ServerEvent::ApprovalResolved`].
     ///
@@ -641,36 +526,6 @@ pub enum Request {
         #[serde(default)]
         mode: Option<String>,
     },
-
-    // === Agent-to-agent communication ===
-    /// Register as an external agent
-    #[serde(rename = "agent_register")]
-    AgentRegister {
-        id: u64,
-        agent_name: String,
-        capabilities: Vec<String>,
-    },
-
-    /// Send a task to horon-agent agent
-    #[serde(rename = "agent_task")]
-    AgentTask {
-        id: u64,
-        from_agent: String,
-        task: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        context: Option<serde_json::Value>,
-        /// Whether to wait for completion or return immediately
-        #[serde(default)]
-        async_: bool,
-    },
-
-    /// Query horon-agent agent's capabilities
-    #[serde(rename = "agent_capabilities")]
-    AgentCapabilities { id: u64 },
-
-    /// Get conversation context (for handoff between agents)
-    #[serde(rename = "agent_context")]
-    AgentContext { id: u64 },
 
     // === Agent communication ===
     /// Share context with other agents
