@@ -467,14 +467,7 @@ impl HistoryPages {
         // under the stamp the replay started with therefore serves the page the caller asked for,
         // and the next request compares that stamp against the log, sees the append and rebuilds.
         // Reuse is guarded by that comparison, never by this function, so no stale page is served.
-        publish(
-            &mut Disk {
-                hook: Box::new(|_| Ok(())),
-            },
-            &path,
-            &bytes,
-            probe,
-        )?;
+        publish(&mut Disk::new(Box::new(|_| Ok(()))), &path, &bytes, probe)?;
         Ok(Self {
             paths: paths.clone(),
             id: id.clone(),

@@ -6,7 +6,7 @@ use crate::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader, Read};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -232,9 +232,7 @@ fn publish_complete(
     {
         return Ok(value);
     }
-    let mut disk = Disk {
-        hook: Box::new(|_| Ok(())),
-    };
+    let mut disk = Disk::new(Box::new(|_| Ok(())));
     publish(
         &mut disk,
         &paths
@@ -246,7 +244,7 @@ fn publish_complete(
     hook(MigrationPoint::IndexInventoryPublished)?;
     hook(MigrationPoint::IndexHeaderPublish)?;
     publish(&mut disk, &paths.root().join(HEADER), &raw, &ReadProbe::default())?;
-    File::open(paths.root())?.sync_all()?;
+    crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
     Ok(value)
 }
 
@@ -274,9 +272,7 @@ pub fn complete_index_migration_with_hook(
     if !bundle.has_index() {
         return Err(StoreError::unknown_session("legacy index absent"));
     }
-    let mut disk = Disk {
-        hook: Box::new(|_| Ok(())),
-    };
+    let mut disk = Disk::new(Box::new(|_| Ok(())));
     disk.directory(destination.root())?;
     let stage = destination
         .root()

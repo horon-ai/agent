@@ -1,6 +1,6 @@
 //! Rebuildable current context. Original graphs are only reconstructed cold.
 use crate::blobs::Disk;
-use crate::cache_io::{Stamp, decode, encode, publish};
+use crate::cache_io::{Stamp, decode, encode, publish_derived};
 use crate::cache_tools::ToolHistory;
 use crate::catalog_row::CatalogEntry;
 use crate::context_cache::CachedContext;
@@ -286,10 +286,10 @@ impl SessionCache {
     ) -> Result<crate::catalog::RowWrite, StoreError> {
         let (context, selected) = current;
         let dir = self.paths.session_dir(&context.session_id)?;
-        publish(disk, &dir.join("sparse-index.jsonl"), &index.bytes()?, &self.probe)?;
+        publish_derived(disk, &dir.join("sparse-index.jsonl"), &index.bytes()?, &self.probe)?;
         let summary =
             crate::catalog_row::CatalogEntry::new(context, Stamp::read(&self.paths.events_log(&context.session_id)?)?);
-        publish(disk, &dir.join("summary.json"), &encode(&summary)?, &self.probe)?;
+        publish_derived(disk, &dir.join("summary.json"), &encode(&summary)?, &self.probe)?;
         let anchor_hash = index
             .rows
             .last()
@@ -305,7 +305,7 @@ impl SessionCache {
             context: context.clone(),
         };
         let bytes = encode(&checkpoint)?;
-        publish(disk, &dir.join("checkpoint.json"), &bytes, &self.probe)?;
+        publish_derived(disk, &dir.join("checkpoint.json"), &bytes, &self.probe)?;
         crate::catalog::publish_row(&self.paths, &summary, disk, &self.probe)
     }
 }
@@ -415,7 +415,7 @@ impl BlockingWriter {
         }
         self.dirty()?;
         let probe = self.state.probe.clone();
-        publish(
+        publish_derived(
             &mut self.disk,
             &self.paths.session_dir(&id)?.join("summary.json"),
             &encode(&entry)?,

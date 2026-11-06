@@ -48,7 +48,7 @@ fn cache_reader_case(fail_repair: bool) -> Result<(), StoreError> {
     let (release, release_rx) = mpsc::channel();
     let mut held = false;
     *cache.repair_hook.lock().expect("repair hook") = Some(Box::new(move |point| {
-        if point == IoPoint::CacheFileSync && !held {
+        if point == IoPoint::CacheStaged && !held {
             held = true;
             entered
                 .send(())

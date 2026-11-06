@@ -1,5 +1,5 @@
 //! Read-only full validation and exclusive tail recovery.
-use crate::blobs::{Disk, checked_file, io_error, new_file, read_file};
+use crate::blobs::{Disk, checked_file, new_file, read_file};
 use crate::*;
 use std::collections::BTreeMap;
 use std::fs;
@@ -121,14 +121,13 @@ pub(crate) fn quarantine(disk: &mut Disk, log: &std::path::Path, report: &ScanRe
     let path = parent.join(format!(".quarantine-{}.raw", uuid::Uuid::new_v4()));
     let mut copy = new_file(&path)?;
     copy.write_all(&report.torn_tail)?;
-    disk.hit(IoPoint::QuarantineFileSync)?;
-    copy.sync_all().map_err(io_error)?;
+    disk.sync_file(&copy, IoPoint::QuarantineFileSync)?;
     disk.sync_dir(parent, IoPoint::QuarantineDirectorySync)?;
     disk.hit(IoPoint::QuarantinePublished)?;
     let original = checked_file(log, true)?;
     original.set_len(report.complete_offset)?;
     disk.hit(IoPoint::TailTruncated)?;
-    original.sync_all().map_err(io_error)?;
+    crate::blobs::sync_file(&original, SyncMode::Full)?;
     disk.sync_dir(parent, IoPoint::DirectorySync)
 }
 

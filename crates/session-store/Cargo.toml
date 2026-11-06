@@ -11,6 +11,7 @@ legacy-session-index-import = ["dep:rusqlite"]
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 horon-agent-perf-counters = { path = "../perf-counters" }
+horon-agent-platform = { path = "../platform" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-message-types = { path = "../message-types" }
 serde = { version = "1", features = ["derive"] }

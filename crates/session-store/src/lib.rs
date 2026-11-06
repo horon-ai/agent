@@ -73,6 +73,10 @@ pub use cache_values::INLINE_TAIL_BYTES;
 pub use error::{StoreError, StoreErrorCategory, StoreErrorCode, StoreErrorDetails};
 pub use heads::EventGraph;
 pub use history_page::HistoryPages;
+/// The durability level every original publication is confirmed with.
+///
+/// Derived files are never flushed, so this reaches only original writes.
+pub use horon_agent_platform::SyncMode;
 pub use projection::{ProjectedMessage, Projection};
 pub use projection_operations::{EventStamp, ForkRequest, LocalHead, RewindPoint};
 pub use recovery::{ScanReport, full_scan, recover_to};
@@ -81,8 +85,14 @@ pub use writer::{AppendOutcome, BlockingWriter, WriterHandle};
 
 /// Observable syscall boundaries. Hooks run on the real filesystem backend,
 /// immediately before the named sync, or after the named completed operation.
+///
+/// The derived points (`CacheStaged`, `CacheRenamed`, `CatalogRowStaged`,
+/// `CatalogPublished`, `DirtyRemoved`) mark stages of a publication that is
+/// intentionally not flushed, so a caller can still inject a failure there
+/// even though no syscall follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IoPoint {
+    LockFileSync,
     DirectorySync,
     DirtyFileSync,
     DirtyDirectorySync,
@@ -104,14 +114,13 @@ pub enum IoPoint {
     QuarantinePublished,
     TailTruncated,
     CacheFileSync,
+    CacheStaged,
     CacheRenamed,
     CacheDirectorySync,
     CatalogWrite,
-    CatalogFileSync,
+    CatalogRowStaged,
     CatalogPublished,
-    CatalogDirectorySync,
     DirtyRemoved,
-    DirtyRemovalDirectorySync,
 }
 
 /// Per-writer instrumentation; no environment variables or global fault state.

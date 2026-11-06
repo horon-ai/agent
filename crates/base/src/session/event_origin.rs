@@ -15,7 +15,7 @@ pub(super) fn origin(paths: &store::SessionPaths) -> Result<store::OriginId> {
         Ok(mut file) => {
             let id = store::OriginId::new_v4();
             file.write_all(id.as_str().as_bytes())?;
-            file.sync_all()?;
+            horon_agent_platform::sync_file(&file, horon_agent_platform::SyncMode::Full)?;
             horon_agent_platform::sync_dir(paths.root(), horon_agent_platform::SyncMode::Full)?;
             Ok(id)
         }

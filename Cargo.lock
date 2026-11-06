@@ -2148,6 +2148,7 @@ dependencies = [
  "chrono",
  "horon-agent-message-types",
  "horon-agent-perf-counters",
+ "horon-agent-platform",
  "horon-agent-session-types",
  "rusqlite",
  "serde",

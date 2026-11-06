@@ -204,16 +204,13 @@ fn dirty_live_owner_returns_busy_instead_of_stale_success() {
 
 #[test]
 fn cache_failure_keeps_durable_original_and_dirty_retry() {
-    // Given each actual cache publication syscall boundary.
+    // Given each actual cache publication stage.
     for point in [
-        IoPoint::CacheFileSync,
+        IoPoint::CacheStaged,
         IoPoint::CacheRenamed,
-        IoPoint::CacheDirectorySync,
         IoPoint::CatalogWrite,
         IoPoint::CatalogPublished,
-        IoPoint::CatalogDirectorySync,
         IoPoint::DirtyRemoved,
-        IoPoint::DirtyRemovalDirectorySync,
     ] {
         let (paths, id) = fixture();
         let event = created(&id);
@@ -469,15 +466,15 @@ fn uncertain_cached_retry_preserves_reserved_identity() {
 }
 
 #[test]
-fn catalog_file_sync_failure_is_warning_after_original_commit() {
-    // Given a populated catalog and a one-shot append sync failure.
+fn catalog_row_stage_failure_is_warning_after_original_commit() {
+    // Given a populated catalog and a one-shot row publication failure.
     let (paths, id, previous) = seeded();
     let mut armed = true;
     let mut writer = BlockingWriter::with_hook(
         paths.clone(),
         id.clone(),
         Box::new(move |p| {
-            if armed && p == IoPoint::CatalogFileSync {
+            if armed && p == IoPoint::CatalogRowStaged {
                 armed = false;
                 return Err(std::io::ErrorKind::Interrupted.into());
             }
@@ -574,13 +571,11 @@ fn process_interruptions_preserve_originals_and_repair_catalog() {
     // Given exact pipe barriers at real publication boundaries.
     let repeated_fixture = fixture();
     for (point, repeated) in [
+        ("CacheStaged", false),
         ("CacheRenamed", false),
-        ("CacheDirectorySync", false),
         ("CatalogWrite", false),
         ("CatalogPublished", false),
-        ("CatalogDirectorySync", false),
         ("DirtyRemoved", false),
-        ("DirtyRemovalDirectorySync", false),
         ("ACK", false),
         ("CatalogPublished", true),
         ("DirtyRemoved", true),

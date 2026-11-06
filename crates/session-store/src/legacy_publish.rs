@@ -3,7 +3,7 @@ use crate::blobs::{Disk, checked_file, new_file, read_file};
 use crate::legacy::*;
 use crate::legacy_bundle::{Bundle, guard, safe_path, sync_tree};
 use crate::*;
-use std::fs::{self, File};
+use std::fs;
 use std::io::Write;
 
 const MANIFEST: &str = "legacy-source-manifest.json";
@@ -23,9 +23,7 @@ pub(crate) fn migrate(
     hit(&mut hook, MigrationPoint::SourceCaptured)?;
     bundle.verify(source)?;
     safe_path(destination.root())?;
-    let mut disk = Disk {
-        hook: Box::new(|_| Ok(())),
-    };
+    let mut disk = Disk::new(Box::new(|_| Ok(())));
     disk.directory(destination.root())?;
     let lock_path = destination.root().join(format!(".legacy-{}.lock", source.id.as_str()));
     let lock = match new_file(&lock_path) {
@@ -34,7 +32,7 @@ pub(crate) fn migrate(
         Err(e) => return Err(e.into()),
     };
     crate::writer::lock_exclusive(&lock)?;
-    lock.sync_all()?;
+    disk.sync_file(&lock, IoPoint::LockFileSync)?;
     disk.sync_dir(destination.root(), IoPoint::DirectorySync)?;
     let target = destination.session_dir(&source.id)?;
     let previous = if target.exists() {
@@ -137,7 +135,7 @@ pub(crate) fn migrate(
     let mut file = new_file(&stage.join(MANIFEST))?;
     file.write_all(bytes.as_bytes())?;
     hit(&mut hook, MigrationPoint::ManifestSync)?;
-    file.sync_all()?;
+    crate::blobs::sync_file(&file, SyncMode::Full)?;
     if source.runtime {
         crate::legacy_runtime::mark_first_file(&staged, &source.id)?;
     }
@@ -145,8 +143,8 @@ pub(crate) fn migrate(
     hit(&mut hook, MigrationPoint::OriginalsSync)?;
     sync_tree(&stage)?;
     hit(&mut hook, MigrationPoint::StageDirectorySync)?;
-    File::open(&stage)?.sync_all()?;
-    File::open(staged.root())?.sync_all()?;
+    crate::blobs::sync_directory(&stage, SyncMode::Full)?;
+    crate::blobs::sync_directory(staged.root(), SyncMode::Full)?;
     bundle.verify(source)?;
     if manifest.index_stamps != crate::legacy_runtime::index_stamps(&source.home)? {
         return Err(conflict());
@@ -201,7 +199,7 @@ pub(crate) fn migrate(
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&dirty.join(source.id.as_str()), true)?,
         Err(e) => return Err(e.into()),
     };
-    dirty_file.sync_all()?;
+    disk.sync_file(&dirty_file, IoPoint::DirtyFileSync)?;
     disk.sync_dir(&dirty, IoPoint::DirtyDirectorySync)?;
     hit(&mut hook, MigrationPoint::BeforePublish)?;
     guard(source)?;
@@ -274,7 +272,7 @@ fn validate(paths: &SessionPaths, manifest: &MigrationReceipt) -> Result<(), Sto
 fn finish(paths: &SessionPaths, manifest: &MigrationReceipt, hook: &mut MigrationHook) -> Result<(), StoreError> {
     let target = paths.session_dir(&manifest.session_id)?;
     hit(hook, MigrationPoint::ParentSync)?;
-    File::open(paths.root())?.sync_all()?;
+    crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
     hit(hook, MigrationPoint::ParentSynced)?;
     let digest = sha256_hex(&read_file(&target.join(MANIFEST))?);
     crate::legacy_runtime::publish_runtime_sources(paths, manifest, &digest)?;
@@ -288,21 +286,19 @@ fn finish(paths: &SessionPaths, manifest: &MigrationReceipt, hook: &mut Migratio
     if current.as_deref() != Some(digest.as_bytes()) {
         hit(hook, MigrationPoint::ReceiptSync)?;
         crate::cache_io::publish(
-            &mut Disk {
-                hook: Box::new(|_| Ok(())),
-            },
+            &mut Disk::new(Box::new(|_| Ok(()))),
             &path,
             digest.as_bytes(),
             &ReadProbe::default(),
         )?;
     }
     hit(hook, MigrationPoint::ReceiptDirectorySync)?;
-    File::open(&target)?.sync_all()?;
+    crate::blobs::sync_directory(&target, SyncMode::Full)?;
     let pending = target.join(".legacy-first-file.json");
     if pending.try_exists()? {
         checked_file(&pending, false)?;
         fs::remove_file(pending)?;
-        File::open(&target)?.sync_all()?;
+        crate::blobs::sync_directory(&target, SyncMode::Full)?;
     }
     Ok(())
 }
@@ -321,8 +317,8 @@ pub(crate) fn receipt(paths: &SessionPaths, id: &SessionId) -> Result<MigrationR
     }
     validate(paths, &manifest)?;
     // A surviving marker is re-synced before it can authorize runtime activation.
-    File::open(paths.root())?.sync_all()?;
-    checked_file(&path, false)?.sync_all()?;
-    File::open(paths.session_dir(id)?)?.sync_all()?;
+    crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
+    crate::blobs::sync_file(&checked_file(&path, false)?, SyncMode::Full)?;
+    crate::blobs::sync_directory(&paths.session_dir(id)?, SyncMode::Full)?;
     Ok(manifest)
 }

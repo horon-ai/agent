@@ -1,37 +1,65 @@
 //! Original blob publication and strict filesystem primitives (not cache I/O).
 use crate::{EventEnvelope, IoHook, IoPoint, SessionId, SessionPaths, StoreError, StoreErrorCode};
+use horon_agent_platform::SyncMode;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
+/// The durability policy every original this store publishes is confirmed with.
+///
+/// Derived files are never flushed, so the mode reaches only original writes and
+/// the dirty marker that protects them.
 pub(crate) struct Disk {
     pub hook: IoHook,
+    pub mode: SyncMode,
 }
 
 impl Disk {
+    pub fn new(hook: IoHook) -> Self {
+        Self {
+            hook,
+            mode: SyncMode::Full,
+        }
+    }
+
     pub fn hit(&mut self, point: IoPoint) -> Result<(), StoreError> {
         (self.hook)(point).map_err(io_error)
     }
 
+    /// Flush an original file's contents, observing `point` first.
+    pub fn sync_file(&mut self, file: &File, point: IoPoint) -> Result<(), StoreError> {
+        self.hit(point)?;
+        sync_file(file, self.mode)
+    }
+
+    /// Flush a directory entry, observing `point` first.
+    ///
+    /// The leaf must be a directory: a file path is refused before the platform
+    /// call, and Windows then has nothing left to flush because NTFS journals
+    /// directory entries itself.
     pub fn sync_dir(&mut self, path: &Path, point: IoPoint) -> Result<(), StoreError> {
         self.hit(point)?;
         let metadata = fs::symlink_metadata(path)?;
         if !metadata.is_dir() {
             return Err(unsafe_path(path));
         }
-        // A directory cannot be opened for `sync_all` on Windows without backup
-        // semantics, and NTFS journals directory entries itself. The file's own
-        // `sync_all` is what makes its bytes durable there, so this flush keeps
-        // the identity check above and then has nothing left to do.
-        #[cfg(windows)]
-        {
-            Ok(())
-        }
-        #[cfg(not(windows))]
-        {
-            File::open(path).map_err(io_error)?.sync_all().map_err(io_error)
+        sync_directory(path, self.mode)
+    }
+
+    /// Ensure `path` is a private directory, flushing its entry only when this
+    /// call creates it.
+    ///
+    /// An existing directory needs no flush: its entry was confirmed when it was
+    /// created, and a crash that lost that entry also lost the directory. This is
+    /// the difference between the dirty marker's directory costing one flush per
+    /// session and one flush per append.
+    pub fn ensure_dir(&mut self, path: &Path) -> Result<(), StoreError> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => check_private_dir(path, &metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => self.directory(path),
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -43,16 +71,10 @@ impl Disk {
         #[cfg(windows)]
         {
             match fs::symlink_metadata(path) {
-                Ok(metadata) => {
-                    if !metadata.is_dir() {
-                        return Err(unsafe_path(path));
-                    }
-                }
+                Ok(metadata) => return check_private_dir(path, &metadata),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     fs::create_dir_all(path)?;
-                    if !fs::symlink_metadata(path)?.is_dir() {
-                        return Err(unsafe_path(path));
-                    }
+                    check_private_dir(path, &fs::symlink_metadata(path)?)?;
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -62,9 +84,7 @@ impl Disk {
         {
             match fs::symlink_metadata(path) {
                 Ok(metadata) => {
-                    if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
-                        return Err(unsafe_path(path));
-                    }
+                    check_private_dir(path, &metadata)?;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     let parent = path.parent().ok_or_else(|| unsafe_path(path))?;
@@ -101,16 +121,14 @@ impl Disk {
             Ok(existing) => {
                 let existing_bytes = read_file(path)?;
                 envelope.hydrate_from_blob(&existing_bytes)?;
-                self.hit(IoPoint::BlobFileSync)?;
-                existing.sync_all().map_err(io_error)?;
+                self.sync_file(&existing, IoPoint::BlobFileSync)?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let temp = parent.join(format!(".blob-{}.tmp", uuid::Uuid::new_v4()));
                 let mut file = new_file(&temp)?;
                 self.hit(IoPoint::BlobWrite)?;
                 file.write_all(bytes)?;
-                self.hit(IoPoint::BlobFileSync)?;
-                file.sync_all().map_err(io_error)?;
+                self.sync_file(&file, IoPoint::BlobFileSync)?;
                 envelope.hydrate_from_blob(&read_file(&temp)?)?;
                 self.hit(IoPoint::BlobVerified)?;
                 fs::rename(&temp, path)?;
@@ -130,20 +148,18 @@ pub(crate) fn io_error(error: std::io::Error) -> StoreError {
     }
 }
 
-/// Flush a directory entry so a file published in it survives a crash.
-#[cfg(not(windows))]
-pub(crate) fn sync_directory(path: &Path) -> Result<(), StoreError> {
-    File::open(path).map_err(io_error)?.sync_all().map_err(io_error)
+/// Flush an original file's contents through the platform adapter.
+pub(crate) fn sync_file(file: &File, mode: SyncMode) -> Result<(), StoreError> {
+    horon_agent_platform::sync_file(file, mode).map_err(io_error)
 }
 
-/// Flush a directory entry, where the platform can.
+/// Flush a directory entry so a file published in it survives a crash.
 ///
-/// Windows cannot open a directory for flushing without backup semantics, and
-/// NTFS journals directory metadata itself, so the published file's own
-/// `sync_all` is the durability boundary there.
-#[cfg(windows)]
-pub(crate) fn sync_directory(_path: &Path) -> Result<(), StoreError> {
-    Ok(())
+/// Windows cannot open a directory for flushing without backup semantics and
+/// NTFS journals directory metadata itself, so the platform adapter returns
+/// `Ok(())` there and the published file's own flush is the boundary.
+pub(crate) fn sync_directory(path: &Path, mode: SyncMode) -> Result<(), StoreError> {
+    horon_agent_platform::sync_dir(path, mode).map_err(io_error)
 }
 
 pub(crate) fn unsupported() -> StoreError {
@@ -158,6 +174,31 @@ pub(crate) fn unsafe_path(path: &Path) -> StoreError {
         StoreErrorCode::UnsafePath,
         format!("unsafe or non-private path: {}", path.display()),
     )
+}
+
+/// Refuse a path that is not the private directory this store requires.
+///
+/// Windows carries the owner-only property in the inherited ACL of the agent
+/// home, so only the type is checked there.
+#[cfg(any(unix, windows))]
+fn check_private_dir(path: &Path, metadata: &fs::Metadata) -> Result<(), StoreError> {
+    if !metadata.is_dir() {
+        return Err(unsafe_path(path));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata.permissions().mode() & 0o777 != 0o700 {
+            return Err(unsafe_path(path));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn check_private_dir(_path: &Path, _metadata: &fs::Metadata) -> Result<(), StoreError> {
+    Err(unsupported())
 }
 
 fn options() -> Result<OpenOptions, std::io::Error> {

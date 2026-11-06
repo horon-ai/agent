@@ -40,6 +40,9 @@ pub(super) mod cases;
 #[path = "tool_image_decay.rs"]
 mod tool_image_decay;
 
+#[path = "durability.rs"]
+mod durability;
+
 #[path = "history_page.rs"]
 mod history_page;
 

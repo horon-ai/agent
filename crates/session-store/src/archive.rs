@@ -48,8 +48,8 @@ pub fn origin_id(paths: &SessionPaths) -> Result<OriginId, StoreError> {
         Ok(mut file) => {
             let id = OriginId::new_v4();
             file.write_all(id.as_str().as_bytes())?;
-            file.sync_all()?;
-            crate::blobs::sync_directory(paths.root())?;
+            crate::blobs::sync_file(&file, SyncMode::Full)?;
+            crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
             Ok(id)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -135,9 +135,7 @@ pub fn record(
     let mut warning = None;
     if head_file.symlink_metadata().is_ok()
         && let Err(error) = crate::cache_io::publish(
-            &mut crate::blobs::Disk {
-                hook: Box::new(|_| Ok(())),
-            },
+            &mut crate::blobs::Disk::new(Box::new(|_| Ok(()))),
             &head_file,
             &serde_json::to_vec(&event_id).map_err(crate::cache_io::json_error)?,
             &ReadProbe::default(),

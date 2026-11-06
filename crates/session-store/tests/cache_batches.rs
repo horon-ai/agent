@@ -151,7 +151,7 @@ fn batched_commit_keeps_originals_when_its_single_rebuild_fails_and_retry_repair
         paths.clone(),
         id.clone(),
         Box::new(move |point| {
-            if point == IoPoint::CacheFileSync && gate.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            if point == IoPoint::CacheStaged && gate.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 return Err(std::io::Error::from_raw_os_error(28));
             }
             Ok(())

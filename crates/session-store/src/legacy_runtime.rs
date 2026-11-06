@@ -123,9 +123,7 @@ pub(crate) fn publish_runtime_sources(
         return Ok(());
     }
     crate::cache_io::publish(
-        &mut crate::blobs::Disk {
-            hook: Box::new(|_| Ok(())),
-        },
+        &mut crate::blobs::Disk::new(Box::new(|_| Ok(()))),
         &target,
         &bytes,
         &ReadProbe::default(),
@@ -272,9 +270,7 @@ pub(crate) fn mark_first_file(paths: &SessionPaths, id: &SessionId) -> Result<()
         manifest: crate::cache_io::Stamp::read(&directory.join("legacy-source-manifest.json"))?,
     };
     crate::cache_io::publish(
-        &mut crate::blobs::Disk {
-            hook: Box::new(|_| Ok(())),
-        },
+        &mut crate::blobs::Disk::new(Box::new(|_| Ok(()))),
         &directory.join(".legacy-first-file.json"),
         &crate::cache_io::encode(&value)?,
         &ReadProbe::default(),

@@ -61,7 +61,7 @@ fn cache_failure_remains_warning_after_import_ack_and_retry_repairs_it() {
         h.paths(),
         sid(),
         Box::new(move |point| {
-            if !fired && point == IoPoint::CacheFileSync {
+            if !fired && point == IoPoint::CacheStaged {
                 fired = true;
                 return Err(std::io::ErrorKind::StorageFull.into());
             }

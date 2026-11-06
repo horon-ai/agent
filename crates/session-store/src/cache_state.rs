@@ -17,6 +17,8 @@ pub(crate) struct WriterState {
     pub batch_dirty: Option<Stamp>,
     pub warning: Option<StoreError>,
     pub blobs: std::collections::BTreeMap<String, Stamp>,
+    /// Whether the log's directory entry has been confirmed with a flush.
+    pub log_directory_durable: bool,
 }
 
 impl BlockingWriter {

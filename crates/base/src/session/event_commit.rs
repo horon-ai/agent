@@ -49,14 +49,19 @@ impl Session {
                     writer.append(&event)?;
                 }
                 if let Some(source) = external_source {
-                    event_store::publish_local(
+                    event_store::publish_local_durable(
                         &commit_paths.session_dir(&commit_id)?.join("local-explicit-source.json"),
                         &source,
                     )?;
                 }
-                // Selection is local, durable, and never exported as replica state.
-                event_store::select(&commit_paths, &commit_id, &selected, explicit_head)?;
-                runtime.publish(&commit_paths, &commit_id)?;
+                // Selection and the runtime binding are local, durable, and never
+                // exported as replica state. Their files are flushed individually
+                // and the session directory once, after both.
+                let runtime_changed = runtime.publish(&commit_paths, &commit_id)?;
+                let selected_changed = event_store::select(&commit_paths, &commit_id, &selected, explicit_head)?;
+                if runtime_changed || selected_changed {
+                    event_store::sync_local_state(&commit_paths, &commit_id)?;
+                }
                 // One derived rebuild for the whole commit: every original above is
                 // durable and the head is already selected, so the checkpoint and the
                 // shared catalog are published once here instead of once per event.

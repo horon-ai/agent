@@ -268,6 +268,33 @@ pub(crate) fn dirty_present(paths: &crate::SessionPaths, id: Option<&crate::Sess
     }
 }
 
+/// Publish a derived file that is rebuilt from the originals after a crash.
+///
+/// The bytes go to a temporary file and are renamed into place, so a reader
+/// sees either the previous file or the new one. Nothing is flushed: a crash
+/// may lose the rename, and the load that follows rebuilds from the originals
+/// instead of trusting a half-written publication.
+pub(crate) fn publish_derived(disk: &mut Disk, path: &Path, bytes: &[u8], probe: &ReadProbe) -> Result<(), StoreError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| crate::recovery::corrupt("cache parent absent"))?;
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            checked_file(path, false)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let temp = parent.join(format!(".cache-{}.tmp", uuid::Uuid::new_v4()));
+    let mut file = new_file(&temp)?;
+    file.write_all(bytes)?;
+    disk.hit(IoPoint::CacheStaged)?;
+    fs::rename(&temp, path)?;
+    disk.hit(IoPoint::CacheRenamed)?;
+    probe.note_write(path, 0, bytes.len())
+}
+
+/// Publish a file the originals cannot rebuild, so the rename itself is durable.
 pub(crate) fn publish(disk: &mut Disk, path: &Path, bytes: &[u8], probe: &ReadProbe) -> Result<(), StoreError> {
     let parent = path
         .parent()
@@ -282,8 +309,7 @@ pub(crate) fn publish(disk: &mut Disk, path: &Path, bytes: &[u8], probe: &ReadPr
     let temp = parent.join(format!(".cache-{}.tmp", uuid::Uuid::new_v4()));
     let mut file = new_file(&temp)?;
     file.write_all(bytes)?;
-    disk.hit(IoPoint::CacheFileSync)?;
-    file.sync_all()?;
+    disk.sync_file(&file, IoPoint::CacheFileSync)?;
     fs::rename(&temp, path)?;
     disk.hit(IoPoint::CacheRenamed)?;
     probe.note_write(path, 0, bytes.len())?;

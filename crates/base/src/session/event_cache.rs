@@ -193,9 +193,9 @@ pub(super) fn publish(session: &Session) -> Result<()> {
     }
     let encoded = json!({"payload":payload,"sha256":store::sha256_hex(bytes.as_bytes())});
     if let Some(writer) = &session.event_state.writer {
-        writer.call(move |_| event_store::publish_local(&file, &encoded))?;
+        writer.call(move |_| event_store::publish_local_derived(&file, &encoded))?;
     } else {
-        event_store::publish_local(&file, &encoded)?;
+        event_store::publish_local_derived(&file, &encoded)?;
     }
     Ok(())
 }

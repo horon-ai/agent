@@ -75,11 +75,13 @@ impl BlockingWriter {
         observation: (IoHook, ReadProbe),
     ) -> Result<Self, StoreError> {
         let (hook, probe) = observation;
-        let mut disk = Disk { hook };
+        let mut disk = Disk::new(hook);
         disk.directory(paths.root())?;
         let paths = SessionPaths::new(paths.root().canonicalize()?);
         let directory = paths.session_dir(&id)?;
-        disk.directory(&directory)?;
+        // The session directory's entry is what has to survive a crash; it is
+        // flushed when this call creates it.
+        disk.ensure_dir(&directory)?;
         let lock_path = directory.join(".writer.lock");
         let lock = match new_file(&lock_path) {
             Ok(file) => file,
@@ -87,8 +89,11 @@ impl BlockingWriter {
             Err(error) => return Err(io_error(error)),
         };
         lock_exclusive(&lock)?;
-        lock.sync_all().map_err(io_error)?;
-        disk.sync_dir(&directory, IoPoint::DirectorySync)?;
+        // The writer lock is not an original: it carries no data that has to
+        // survive a crash and the operating system releases it when the process
+        // dies, so it is closed over without a flush. The point stays as the
+        // observable end of the acquire sequence.
+        disk.hit(IoPoint::LockFileSync)?;
         let writer = Self {
             paths,
             id,
@@ -134,25 +139,26 @@ impl BlockingWriter {
 
     pub(crate) fn dirty(&mut self) -> Result<(), StoreError> {
         let directory = self.paths.root().join(".catalog.dirty");
-        self.disk.directory(&directory)?;
         let path = directory.join(self.id.as_str());
         // One unchanged, already-durable marker covers every original in this
         // batch. Recheck its identity and safety: publication may have removed it
-        // or a path change may have replaced it since the previous append.
+        // or a path change may have replaced it since the previous append. This
+        // check runs before the marker directory is touched, so a batch pays the
+        // directory work once instead of once per append.
         if self.state.batch
             && let Some(durable) = &self.state.batch_dirty
             && crate::cache_io::Stamp::optional(&path)?.as_ref() == Some(durable)
         {
             return Ok(());
         }
+        self.disk.ensure_dir(&directory)?;
         let mut file = match new_file(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
             Err(error) => return Err(error.into()),
         };
         file.write_all(b"dirty\n")?;
-        self.disk.hit(IoPoint::DirtyFileSync)?;
-        file.sync_all().map_err(io_error)?;
+        self.disk.sync_file(&file, IoPoint::DirtyFileSync)?;
         self.disk.sync_dir(&directory, IoPoint::DirtyDirectorySync)?;
         if self.state.batch {
             self.state.batch_dirty = Some(crate::cache_io::Stamp::read(&path)?);
@@ -208,7 +214,8 @@ impl BlockingWriter {
                 Some(bytes) => self.disk.publish_blob(&path, (event, bytes))?,
                 None => {
                     verify_blob(&self.paths, &self.id, event)?;
-                    checked_file(&path, false)?.sync_all().map_err(io_error)?;
+                    let blob = checked_file(&path, false)?;
+                    self.disk.sync_file(&blob, IoPoint::BlobFileSync)?;
                     self.disk
                         .sync_dir(&self.paths.blobs_dir(&self.id)?, IoPoint::BlobDirectorySync)?;
                 }
@@ -227,13 +234,22 @@ impl BlockingWriter {
             self.disk.hit(IoPoint::LogBodyWritten)?;
             self.state.probe.append(&mut file, (&log_path, &[*newline]))?;
         }
+        // One platform flush confirms both stages: the adapter maps the data and
+        // the full flush to the same call on every supported OS, so a second one
+        // would repeat the syscall. The point stays observable for failure
+        // injection at the data boundary.
         self.disk.hit(IoPoint::LogDataSync)?;
-        file.sync_data().map_err(io_error)?;
         // Also on retries: a prior failed attempt may have created this file.
-        self.disk.hit(IoPoint::LogFileSync)?;
-        file.sync_all().map_err(io_error)?;
-        self.disk
-            .sync_dir(&self.paths.session_dir(&self.id)?, IoPoint::LogDirectorySync)?;
+        self.disk.sync_file(&file, IoPoint::LogFileSync)?;
+        // The directory entry only changes when the log is created; after that
+        // the name is already durable and only the file's contents move.
+        if created || !self.state.log_directory_durable {
+            self.disk
+                .sync_dir(&self.paths.session_dir(&self.id)?, IoPoint::LogDirectorySync)?;
+            self.state.log_directory_durable = true;
+        } else {
+            self.disk.hit(IoPoint::LogDirectorySync)?;
+        }
         self.disk.hit(IoPoint::LogPublished)?;
         self.finish_original(sealed);
         Ok(if existing {

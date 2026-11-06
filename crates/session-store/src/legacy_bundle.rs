@@ -205,7 +205,7 @@ impl Bundle {
             disk.directory(parent)?;
             let mut file = crate::blobs::new_file(&path)?;
             file.write_all(bytes)?;
-            file.sync_all()?;
+            crate::blobs::sync_file(&file, SyncMode::Full)?;
             disk.sync_dir(parent, IoPoint::DirectorySync)?;
         }
         Ok(())
@@ -219,13 +219,12 @@ pub(crate) fn sync_tree(path: &Path) -> Result<(), StoreError> {
         if kind.is_dir() {
             sync_tree(&entry.path())?;
         } else if kind.is_file() {
-            File::open(entry.path())?.sync_all()?;
+            crate::blobs::sync_file(&File::open(entry.path())?, SyncMode::Full)?;
         } else {
             return Err(crate::blobs::unsafe_path(&entry.path()));
         }
     }
-    File::open(path)?.sync_all()?;
-    Ok(())
+    crate::blobs::sync_directory(path, SyncMode::Full)
 }
 
 pub(crate) fn capture_index(home: &Path) -> Result<Bundle, StoreError> {
