@@ -166,7 +166,89 @@ class DaemonArgvTests(unittest.TestCase):
         )
 
 
+class StraceTests(unittest.TestCase):
+    """fsync accounting comes from `strace -c` output, so its parsing is pinned."""
+
+    SUMMARY = """\
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 62.50    0.000412          82         5           fsync
+ 36.67    0.000247          61         4           fdatasync
+  0.83    0.000007           7         1           openat
+------ ----------- --------- --------- ----------------
+100.00    0.000666                    10           total
+"""
+
+    def test_strace_summary_parser_counts_fsync_and_fdatasync(self) -> None:
+        parsed = bench.parse_strace_summary(self.SUMMARY)
+        self.assertEqual(parsed, {"total": 9, "fsync": 5, "fdatasync": 4})
+
+    def test_strace_summary_parser_handles_the_errors_column(self) -> None:
+        # With failed calls strace fills the errors column, which must not be
+        # mistaken for the call count.
+        text = "100.00 0.000001 1 3 2 fsync\n100.00 0.000001 1 3 fdatasync"
+        parsed = bench.parse_strace_summary(text)
+        self.assertEqual(parsed, {"total": 6, "fsync": 3, "fdatasync": 3})
+
+    def test_strace_summary_parser_returns_none_without_matching_rows(self) -> None:
+        self.assertIsNone(bench.parse_strace_summary("strace: nothing matched\n"))
+        self.assertIsNone(bench.parse_strace_summary(""))
+
+    def test_strace_argv_keeps_the_measured_command(self) -> None:
+        argv = bench.strace_argv(["/bin/tool", "run", "hi"], "/tmp/summary.txt")
+        self.assertEqual(argv[0], "strace")
+        self.assertIn("-f", argv)
+        self.assertEqual(argv[argv.index("-e") + 1], "trace=fsync,fdatasync")
+        self.assertEqual(argv[argv.index("-o") + 1], "/tmp/summary.txt")
+        self.assertEqual(argv[-3:], ["/bin/tool", "run", "hi"])
+
+    def test_summarize_oneshot_reports_the_median_calls(self) -> None:
+        runs = [
+            {"ms": 10.0, "fsync_calls": 40, "fsync_breakdown": {"total": 40, "fsync": 40, "fdatasync": 0}},
+            {"ms": 11.0, "fsync_calls": 44, "fsync_breakdown": {"total": 44, "fsync": 44, "fdatasync": 0}},
+            {"ms": 12.0, "fsync_calls": 42, "fsync_breakdown": {"total": 42, "fsync": 42, "fdatasync": 0}},
+        ]
+        summary = bench.summarize_oneshot(runs)
+        self.assertEqual(summary["fsync_calls"], 42)
+        self.assertEqual(summary["fsync_calls_runs"], [40, 44, 42])
+
+    def test_summarize_oneshot_without_syscalls_stays_empty(self) -> None:
+        summary = bench.summarize_oneshot([{"ms": 10.0, "fsync_calls": None}])
+        self.assertIsNone(summary["fsync_calls"])
+        self.assertEqual(summary["fsync_calls_runs"], [])
+
+    def test_markdown_shows_the_fsync_column_when_measured(self) -> None:
+        result = {
+            "name": "horon",
+            "label": "horon",
+            "oneshot": {"ms": 100.0, "peak_rss_bytes": 40e6, "tool_roundtrip": True, "fsync_calls": 41},
+            "sessions_memory": {},
+        }
+        report = bc.build_report("compare", [result], [])
+        markdown = bench.render_markdown(report, [1], 1)
+        self.assertIn("fsync calls", markdown)
+        self.assertIn("| 41 |", markdown)
+
+
 class ReportShapeTests(unittest.TestCase):
+    def test_markdown_survives_a_failed_version_probe(self) -> None:
+        # A binary that cannot execute has version_ms.summary == None; the
+        # report must still render the row instead of raising.
+        result = {
+            "name": "horon",
+            "label": "horon",
+            "version": None,
+            "version_ms": {"summary": None, "error": "Exec format error"},
+            "oneshot": {"ms": None, "summary": None, "peak_rss_bytes": None, "tool_roundtrip": None,
+                        "errors": ["exit 126: Exec format error"], "error": "exit 126: Exec format error"},
+            "sessions_memory": {},
+        }
+        report = bc.build_report("compare", [result], [])
+        markdown = bench.render_markdown(report, [1], 1)
+        self.assertIn("| horon |", markdown)
+        self.assertIn("Exec format error", markdown)
+
+
     def test_envelope_contract(self) -> None:
         report = bc.build_report("compare", [{"name": "horon"}], [{"name": "pi", "reason": "missing"}])
         for key in ("suite", "schema", "host", "started_at", "results", "skipped"):

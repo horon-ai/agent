@@ -92,6 +92,20 @@ jobs:
         shell: bash
         run: python3 scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
 
+      - name: Install strace
+        # The compare suite counts fsync/fdatasync calls with --syscalls. On a
+        # runner without strace (macOS) the script records that as skipped and
+        # still exits 0, so this step is Linux-only.
+        if: ${{ steps.sel.outputs.compare == 'true' && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          if command -v strace >/dev/null 2>&1; then
+            strace --version | head -n 1
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq strace
+          fi
+
       - name: Build release binary and probes
         shell: bash
         run: |
@@ -121,7 +135,7 @@ jobs:
           # shellcheck disable=SC2086
           python3 scripts/perf/bench_compare.py \
             --bin horon=./target/release/horon-agent $bins_args \
-            --sessions $SESSIONS --turns "$TURNS" \
+            --sessions $SESSIONS --turns "$TURNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
       - name: "Suite: startup"
