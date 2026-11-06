@@ -1,15 +1,12 @@
 use super::*;
 
 #[test]
-fn keybinding_edit_reports_as_live() {
-    let report = summarize_toml_change(
-        "[keybindings]\nscroll_up = \"ctrl+k\"\n",
-        "[keybindings]\nscroll_up = \"ctrl+y\"\n",
-    )
-    .expect("changed key should produce a report");
+fn tool_profile_edit_reports_as_live() {
+    let report = summarize_toml_change("[tools]\nprofile = \"core\"\n", "[tools]\nprofile = \"full\"\n")
+        .expect("changed key should produce a report");
 
-    assert!(report.contains("`keybindings.scroll_up`"), "{report}");
-    assert!(report.contains("\"ctrl+k\" -> \"ctrl+y\""), "{report}");
+    assert!(report.contains("`tools.profile`"), "{report}");
+    assert!(report.contains("\"core\" -> \"full\""), "{report}");
     assert!(report.contains("live now"), "{report}");
     assert!(report.contains("no restart needed"), "{report}");
 }
@@ -102,14 +99,13 @@ fn the_restart_required_list_is_the_reviewed_set() {
 #[test]
 fn commonly_edited_sections_are_live() {
     for key in [
-        "keybindings.scroll_up",
         "display.centered",
         "features.thinking",
         "provider.openai_reasoning_effort",
         "agents.swarm_spawn_mode",
         "tools.profile",
         "websearch.engine",
-        "notifications.enabled",
+        "safety.desktop_notifications",
     ] {
         assert_eq!(
             liveness_for_key(key),
