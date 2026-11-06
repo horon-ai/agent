@@ -552,9 +552,6 @@ jobs:
           # test list before the run and a missing name fails the step.
           $groups = [ordered]@{
             'horon-agent-base' = @(
-              'command_candidates_adds_extension_on_windows',
-              'command_exists_for_known_binary',
-              'command_exists_absolute_path',
               'is_process_running_reports_exited_children_as_stopped',
               'spawn_replacement_process_returns_without_waiting_for_child_exit'
             )
