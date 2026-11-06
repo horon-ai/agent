@@ -1006,9 +1006,6 @@ pub(crate) enum AmbientCommand {
     Trigger,
     /// Stop ambient mode
     Stop,
-    /// Run an ambient cycle in a visible TUI (internal, spawned by the ambient runner)
-    #[command(hide = true)]
-    RunVisible,
 }
 
 #[derive(Subcommand, Debug)]

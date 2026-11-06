@@ -61,7 +61,6 @@ members = [
     "crates/tool-types",
     "crates/update-core",
     "crates/terminal-launch",
-    "crates/render-core",
     "crates/perf-counters",
 ]
 

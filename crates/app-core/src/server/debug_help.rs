@@ -1,14 +1,22 @@
-pub(super) fn parse_namespaced_command(command: &str) -> (&str, &str) {
+/// Split an optional `server:` prefix from a debug command.
+///
+/// The old `client` and `tester` namespaces belonged to the terminal UI and are
+/// gone; naming one now returns an error instead of silently running it as a
+/// server command. Every other namespace runs on the server, so commands like
+/// `clients:map` or `queue_interrupt:<text>` pass through unchanged.
+pub(super) fn parse_namespaced_command(command: &str) -> Result<&str, String> {
     let trimmed = command.trim();
-    if let Some(idx) = trimmed.find(':') {
-        let namespace = &trimmed[..idx];
-        let rest = &trimmed[idx + 1..];
-        match namespace {
-            "server" | "client" | "tester" => (namespace, rest),
-            _ => ("server", trimmed),
-        }
-    } else {
-        ("server", trimmed)
+    let Some(idx) = trimmed.find(':') else {
+        return Ok(trimmed);
+    };
+    let namespace = &trimmed[..idx];
+    let rest = &trimmed[idx + 1..];
+    match namespace {
+        "server" => Ok(rest),
+        "client" | "tester" => Err(format!(
+            "Unknown debug namespace '{namespace}'. The client and tester namespaces were removed with the terminal UI."
+        )),
+        _ => Ok(trimmed),
     }
 }
 
@@ -55,7 +63,6 @@ SERVER COMMANDS (server: prefix or no prefix):
   embeddings:load          - Force-load the shared embedding model
   embeddings:unload        - Force-unload the shared embedding model and cache
   sessions                 - List all sessions (with full metadata)
-  clients                  - List connected TUI clients
   clients:map              - Map connected clients to sessions
   server:info              - Server identity, health, uptime
   swarm                    - List swarm members + status (alias: swarm:members)
@@ -107,78 +114,10 @@ EVENTS COMMANDS (events: prefix):
   events:subscribe         - Subscribe to all events (streaming)
   events:subscribe:<types> - Subscribe filtered (e.g. status_change,member_change)
 
-CLIENT COMMANDS (client: prefix):
-  client:state             - Get TUI state
-  client:picker            - Get live inline picker state (filter/counts/visible rows)
-  client:picker:<n>        - Get live inline picker state with n-row render window
-  client:model-picker      - Materialize source-of-truth TUI model picker entries/routes
-  client:model-picker:<n>  - Materialize TUI model picker with n-row/route sample limit
-  client:frame             - Get latest visual debug frame (JSON)
-  client:frame-normalized  - Get normalized frame (for diffs)
-  client:screen            - Dump visual debug to file
-  client:layout            - Get latest layout JSON
-  client:margins           - Get layout margins JSON
-  client:widgets           - Get info widget summary/placements
-  client:render-stats      - Get render timing + order + draw-call attribution JSON
-  client:draw-stats [n]    - Get per-draw attribution history (render_ms, changed cells)
-  client:render-order      - Get render order list
-  client:anomalies         - Get latest visual debug anomalies
-  client:theme             - Get palette snapshot
-  client:mermaid:stats     - Get mermaid render/cache stats
-  client:mermaid:memory    - Mermaid memory profile (RSS + cache estimates)
-  client:mermaid:memory-bench [n] - Synthetic Mermaid memory benchmark
-  client:mermaid:flicker-bench [n] - Benchmark viewport protocol churn / flicker risk
-  client:image-scroll-bench [imgs] [frames] [visible] - Benchmark inline-image scroll latency (stat syscalls + fit-state rebuilds)
-  client:mermaid:ui-bench[:<j>] - Benchmark live Mermaid UI render path
-  client:mermaid:cache     - List mermaid cache entries
-  client:mermaid:state     - Get image state (resize modes)
-  client:mermaid:test      - Render test diagram
-  client:mermaid:scroll    - Run scroll simulation test
-  client:mermaid:render <c> - Render arbitrary mermaid
-  client:mermaid:evict     - Clear mermaid cache
-  client:markdown:stats    - Get markdown render stats
-  client:markdown:memory   - Markdown highlight cache memory estimate
-  client:memory            - Aggregate client memory profile
-  client:memory-history    - Recent client process memory samples
-  client:allocator         - Get the target TUI client's allocator stats
-  client:allocator:purge   - Release the target TUI client's retained heap
-  client:flicker-frames [n] - Recent frame-stability / flicker records
-  client:slow-frames [n]  - Recent slow-frame records
-  client:overlay:on/off    - Toggle overlay boxes
-  client:input             - Get current input buffer
-  client:set_input:<text>  - Set input buffer
-  client:keys:<keyspec>    - Inject key events
-  client:message:<text>    - Inject and submit message
-  client:inject:<role>:<t> - Inject display message (no send)
-  client:scroll:<dir>      - Scroll (up/down/top/bottom)
-  client:scroll-test[:<j>] - Run offscreen scroll+diagram test
-  client:scroll-suite[:<j>] - Run scroll+diagram test suite
-  client:side-panel-latency[:<j>] - Benchmark headless side-panel input->frame latency
-  client:side-panel:stats  - Current side-panel debug snapshot, including live Mermaid utilization
-  client:diagram-pane:stats - Current pinned diagram pane snapshot, including live Mermaid utilization
-  client:wait              - Check if processing
-  client:history           - Get display messages
-  client:help              - Client command help
-
-TESTER COMMANDS (tester: prefix):
-  tester:spawn             - Spawn new tester instance
-  tester:list              - List active testers
-  tester:<id>:frame        - Get frame from tester
-  tester:<id>:message:<t>  - Send message to tester
-  tester:<id>:inject:<t>   - Inject display message (no send)
-  tester:<id>:state        - Get tester state
-  tester:<id>:scroll-test  - Run offscreen scroll+diagram test
-  tester:<id>:scroll-suite - Run scroll+diagram test suite
-  tester:<id>:side-panel-latency - Benchmark headless side-panel input->frame latency
-  tester:<id>:mermaid-ui-bench - Benchmark live Mermaid UI render path
-  tester:<id>:stop         - Stop tester
-
 Examples:
   {"type":"debug_command","id":1,"command":"state"}
-  {"type":"debug_command","id":2,"command":"client:frame"}
-  {"type":"debug_command","id":3,"command":"tester:list"}
-  {"type":"debug_command","id":4,"command":"set_provider:openai","session_id":"..."}
-  {"type":"debug_command","id":5,"command":"swarm:info:/home/user/project"}"#
+  {"type":"debug_command","id":2,"command":"set_provider:openai","session_id":"..."}
+  {"type":"debug_command","id":3,"command":"swarm:info:/home/user/project"}"#
         .to_string()
 }
 

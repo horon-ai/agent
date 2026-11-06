@@ -5,7 +5,7 @@
 //! (`compact_process_title`, `session_name`, `set_title`) live in the
 //! `process_title` core module.
 
-use crate::cli::args::{AmbientCommand, Args, Command};
+use crate::cli::args::{Args, Command};
 use crate::process_title::{compact_process_title, session_name, set_title};
 
 pub(crate) fn initial_title(args: &Args) -> String {
@@ -30,10 +30,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Provider(_)) => "horon-agent provider".to_string(),
         Some(Command::Memory(_)) => "horon-agent memory".to_string(),
         Some(Command::Session(_)) => "horon-agent session".to_string(),
-        Some(Command::Ambient(subcommand)) => match subcommand {
-            AmbientCommand::RunVisible => "horon-agent ambient visible".to_string(),
-            _ => "horon-agent ambient".to_string(),
-        },
+        Some(Command::Ambient(_)) => "horon-agent ambient".to_string(),
         Some(Command::Cloud(_)) => "horon-agent cloud".to_string(),
         Some(Command::Pair { .. }) => "horon-agent pair".to_string(),
         Some(Command::Permissions) => "horon-agent permissions".to_string(),

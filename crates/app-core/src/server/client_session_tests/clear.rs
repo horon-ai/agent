@@ -76,7 +76,6 @@ async fn handle_clear_session_keeps_identity_and_replaces_runtime_handles() -> R
             client_id: "conn_clear".to_string(),
             session_id: old_session_id.to_string(),
             client_instance_id: None,
-            debug_client_id: Some("debug_clear".to_string()),
             connected_at: now,
             last_seen: now,
             is_processing: false,

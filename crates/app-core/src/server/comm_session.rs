@@ -371,23 +371,7 @@ fn resolve_swarm_spawn_selection(
     }
 }
 
-fn persist_headed_startup_message(session_id: &str, message: &str) {
-    crate::logging::info(&format!(
-        "Headed spawn: persisting startup submission for {session_id} (chars={}) to client-input handoff file",
-        message.chars().count(),
-    ));
-    crate::client_input::save_startup_submission_for_session(session_id, message.to_string(), Vec::new());
-}
-
-fn clear_headed_startup_message(session_id: &str) {
-    if let Ok(horon_agent_dir) = crate::storage::horon_agent_dir() {
-        let path = horon_agent_dir.join(format!("client-input-{}", session_id));
-        let _ = std::fs::remove_file(path);
-    }
-}
-
 fn cleanup_prepared_visible_spawn_session(session_id: &str) {
-    clear_headed_startup_message(session_id);
     // A prepared session can sit in the event store's directory or in the legacy
     // file pair; the session layer removes whichever exists so a failed launch
     // leaves no orphan behind.
@@ -401,7 +385,6 @@ fn prepare_visible_spawn_session<F>(
     provider_key_override: Option<&str>,
     route_api_method_override: Option<&str>,
     effort_override: Option<&str>,
-    startup_message: Option<&str>,
     launch_visible: F,
 ) -> anyhow::Result<(String, bool)>
 where
@@ -415,10 +398,6 @@ where
         route_api_method_override,
         effort_override,
     )?;
-
-    if let Some(message) = startup_message {
-        persist_headed_startup_message(&new_session_id, message);
-    }
 
     match launch_visible(&new_session_id, &cwd, provider_key.as_deref()) {
         Ok(launched) => {
@@ -670,7 +649,6 @@ pub(super) async fn spawn_swarm_agent(
                 spawn_provider_key.as_deref(),
                 spawn_route_api_method.as_deref(),
                 spawn_effort.as_deref(),
-                startup_message.as_deref(),
                 |session_id, cwd, provider_key| {
                     // Tag the headed window as a swarm-agent spawn so spawn hooks
                     // and terminals can identify and reroute it (HORON_AGENT_SPAWN_*).

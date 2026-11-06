@@ -33,158 +33,13 @@ impl Config {
 #       MCP config (.horon-agent/mcp.json, .mcp.json, .claude/mcp.json) is skipped
 #       unless its current digest was trusted; --trust-workspace records that decision.
 
-[keybindings]
-# Scroll keys (vim-style by default)
-# Supports: ctrl, alt, shift modifiers + any key
-# Examples: "ctrl+k", "alt+j", "ctrl+shift+up", "pageup"
-scroll_up = "ctrl+k"
-scroll_down = "ctrl+j"
-scroll_page_up = "alt+u"
-scroll_page_down = "alt+d"
-
-# Model switching
-model_switch_next = "ctrl+tab"
-model_switch_prev = "ctrl+shift+tab"
-
-# Reasoning effort switching (OpenAI models)
-# Defaults: cmd+right / cmd+left on macOS, alt+right / alt+left elsewhere.
-# Alt/Option+Left/Right move by word in the input box.
-effort_increase = "@EFFORT_INCREASE@"
-effort_decrease = "@EFFORT_DECREASE@"
-
-# Speed tier switching: Standard -> Fast -> Ultrafast (OpenAI), Fast on/off elsewhere.
-# Ctrl/Cmd+Up/Down still recall prompt history.
-speed_increase = "alt+up"
-speed_decrease = "alt+down"
-
-# Centered mode toggle key
-centered_toggle = "alt+c"
-
-# Jump between user prompts
-# Ctrl+1..4 resizes the pinned side panel to 25/50/75/100%.
-# Ctrl+5..9 jumps by recency rank (5 = 5th most recent).
-scroll_prompt_up = "ctrl+["
-scroll_prompt_down = "ctrl+]"
-
-# Scroll bookmark toggle (stash position, jump to bottom, press again to return)
-scroll_bookmark = "ctrl+g"
-
-# Auto-poke toggle. Set "" to disable.
-auto_poke_toggle = "ctrl+p"
-
-# Optional fallback scroll bindings (useful on macOS terminals that forward Command)
-# Leave unset by default; on macOS Cmd+K / Cmd+J move up / down by prompt instead.
-scroll_up_fallback = ""
-scroll_down_fallback = ""
-
-# Workspace navigation (Niri-style)
-# Comma-separate multiple bindings to add aliases.
-workspace_left = "alt+h"
-workspace_down = "alt+j"
-workspace_up = "alt+k"
-workspace_right = "alt+l"
-
-# Pane / mode toggles
-copy_selection_toggle = "alt+y"
-diagram_pane_toggle = "alt+t"
-diagram_pane_visibility_toggle = "alt+shift+m"
-typing_scroll_lock_toggle = "alt+s"
-# Cycle the diff display mode (unbound by default; /diff does the same).
-diff_mode_cycle = ""
-# Show the git commit log of the project you are in.
-commit_log = "alt+g"
-info_widget_toggle = "alt+i"
-# Focus the inline swarm panel (list of agents this session manages). Press
-# again to cycle agents. While focused: alt+↑/↓ select, alt+o pops the agent
-# out to a new terminal, esc exits. Plain typing still goes to the chat input.
-# Active only with agents.swarm_spawn_mode = "inline".
-swarm_panel_focus = "alt+n"
-
-# Spawn a fresh horon-agent session in a new terminal window, reusing the current
-# session's working directory.
-# Default: Cmd+Shift+; on macOS, Alt+Shift+; elsewhere. Set "" to disable.
-# Note: some macOS terminals intercept Cmd combos; if so, pick another binding.
-# new_terminal = "cmd+shift+;"
-
-# Open the /resume session picker.
-# Default: Cmd+B on macOS, Alt+R on Windows/Linux. Set "" to disable.
-# open_resume = "cmd+b"
-
-# Built-in voice input: press to record, press again to send the transcript.
-# Esc cancels. Needs a Nari API key (NARI_API_KEY or ~/.config/horon-agent/nari.env).
-# Default: Ctrl+Space. Set "" to disable.
-# voice_input = "ctrl+space"
-
-# /resume picker Enter behavior. Options: "current-terminal" or "new-terminal".
-# By default Enter resumes in this terminal; Ctrl+Enter performs the alternate action.
-session_picker_enter = "current-terminal"
-
-[dictation]
-# External speech-to-text command.
-# The command should record/transcribe speech and print the final transcript to stdout.
-# You can include any tool-specific flags here too, for example a grammar target.
-# Examples:
-# command = "~/.local/bin/my-whisper-script"
-# command = "~/.local/bin/my-whisper-script --grammar-target code"
-command = ""
-
-# How to apply the transcript inside horon-agent: insert|append|replace|send
-mode = "send"
-
-# Optional in-app hotkey to trigger dictation. Set to "off" to disable.
-# Example: "alt+;"
-key = "off"
-
-# Max seconds to wait for the dictation command to finish (0 = no timeout)
-timeout_secs = 90
-
-# Extra names or terms to help built-in voice transcription recognize them.
-# HoronAgent's own product names are always included.
-# vocabulary = ["Kubernetes", "Alice Zhang"]
-
-# Microphone recorder for built-in voice input (keybindings.voice_input).
-# Empty auto-detects pw-record, parecord, arecord, rec (SoX), or ffmpeg.
-# A custom command must print raw mono 16 kHz signed 16-bit little-endian PCM.
-# recorder = "arecord -q -t raw -f S16_LE -r 16000 -c 1 -"
-
-# Copilot-key push-to-talk in `horon-agent companion` (Linux). List keyboard evdev
-# nodes to watch, e.g. ["/dev/input/by-id/usb-Foo-event-kbd"]. Holding the key
-# while a HoronAgent terminal is focused sends the transcript to that session, even
-# without HoronAgent Desktop. Empty disables it.
-# global_devices = []
-
 [display]
-# Diff display mode: "off", "inline" (default), "full-inline", or "file"
-diff_mode = "inline"
-
-# Center all content by default (default: false)
-centered = false
-
-# Pin read images to a side pane (default: true)
-pin_images = true
-
-# Pin the full session todo list to the top of the chat transcript while it
-# scrolls, like the sticky previous-prompt preview (default: false)
-# pin_todos = true
-
-# Queue mode: wait until assistant is done before sending next message
-queue_mode = false
-
-# Automatically reload the remote server when a newer server binary is detected (default: true)
-auto_server_reload = true
-
-# Capture mouse events (enables scroll wheel; disables terminal text selection)
-mouse_capture = true
-
 # Enable debug socket for external control/testing (default: false)
 debug_socket = false
 
-# Render emoji in terminal-facing TUI and CLI output (default: true).
+# Render emoji in server output (default: true).
 # Set false here or set HORON_AGENT_NO_EMOJI=1 for ASCII fallbacks.
 emoji = true
-
-# Usage percentage wording: "left" (default) or "used".
-usage_display = "left"
 
 # Show thinking/reasoning content (default: true)
 show_thinking = true
@@ -196,104 +51,8 @@ show_thinking = true
 #             an assistant message or runs a tool, then show the next one
 # When unset, falls back to show_thinking (true => full, false => off).
 reasoning_display = "full"
-
-# Markdown spacing style: "compact" (chat/TUI) or "document" (docs-like)
-# markdown_spacing = "compact"
-
-# LaTeX rendering: "none" (show source), "unicode" (terminal text), or "image" (typeset PNG, default).
-# Image mode uses `latex` + `dvipng`, or `pdflatex` + `pdftocairo` as a fallback.
-# When neither toolchain is available, formulas fall back to Unicode.
-latex_rendering = "image"
-
-# Show idle animation before first prompt (default: false)
-idle_animation = false
-
-# Briefly animate a user prompt line when it enters the viewport (default: true)
-prompt_entry_animation = true
-
-# Render swarm/file-activity notifications in a compact single-line form
-# instead of the full multi-line card with diff preview (default: false)
-# compact_notifications = false
-
-# Show the full agentgrep tool output inline in the transcript instead of just
-# the one-line summary (default: false). Useful when you want to read search
-# results directly in the chat.
-# show_agentgrep_output = false
-
-# Show up to the last three non-empty lines of bash output beneath the tool
-# summary (default: false).
-# show_bash_output = false
-
-# Show the dimmed technical detail (command, file path, args) next to the
-# model-provided intent on tool rows (default: false). When false, tool rows
-# with an intent show just the intent; rows without an intent still show the
-# technical detail.
-# tool_call_details = false
-
-# Occasionally surface a "learn this keybinding" nudge (in a distinct color)
-# when you keep doing something the slow way (e.g. /resume) instead of using
-# its configured shortcut. Set false to disable all such hints (default: true).
-# keybinding_hints = true
-
-# Active sessions manager: pressing Left arrow on an empty input opens a
-# picker scoped to live (open) sessions, showing which are still working on a
-# response and which are ready for input (default: false). The /active
-# command is always available regardless of this setting.
-# active_sessions_manager = false
-
-# Include transcripts from other agent CLIs (Claude Code, Codex, Pi, OpenCode,
-# Cursor) in the session picker so they can be resumed or imported
-# (default: true). Set false to list only horon-agent's own sessions.
-# external_sessions = true
-
-# Open /resume filtered to sessions from the current project (same directory,
-# subdirectories, and sibling git worktrees) when that project has sessions
-# (default: false). Resume is global by default. Press `s` to cycle filters.
-# resume_project_scope = false
-
-# Disable specific animation variants by name.
-# Examples: ["donut"] or ["donut", "orbit_rings"]
-# Legacy aliases such as "three_rings" and "gyroscope" are still accepted.
-# disabled_animations = []
-
-# Performance tier: auto/full/reduced/minimal (default: auto)
-# auto = detect system load, memory, terminal type, SSH, and apply extra caps for WSL/Windows Terminal
-# full = all animations enabled
-# reduced = skip idle animations, keep spinners
-# minimal = disable all animations, slower redraw rate
-# performance = "auto"
-
-# Animation FPS (idle animation): 1-120 (default: 60)
-# Runtime policy may cap this lower on slower environments such as WSL/Windows Terminal.
-# animation_fps = 60
-
-# Active redraw FPS (processing, streaming, spinners): 1-120 (default: 60)
-# Runtime policy may cap this lower on slower environments such as WSL/Windows Terminal.
-# redraw_fps = 60
-
-# Label shown for the Alt/Option modifier in copy badges.
-# Empty = auto ("⌥" on macOS, "Alt" elsewhere). Examples: "Option", "Alt", "⌥".
-# copy_badge_alt_label = ""
-
-# Color theme: "auto" (query the terminal background), "dark", or "light".
-# theme = "auto"
-
-# Per-role color overrides. Every color the TUI renders is configurable: the
-# named roles below are substituted directly, and the ad hoc shades individual
-# widgets use follow whichever role they belong to.
-#
-# Easiest path: run `/colors generate #8ab4f8` to derive a whole harmonious
-# palette from one color you like, then `/colors harmony` to score it and see
-# exactly what to fix. `/colors` lists every role, and `/colors export` prints
-# this section for you.
-#
-# [display.colors]
-# user = "#8ab4f8"
-# ai = "#81c784"
-# accent = "#ba8bff"
-# success = "#64c864"
-# warning = "#ffc864"
-# error = "#ff6464"
+# Display and hidden option summaries are intentionally minimal: the headless
+# build has no terminal UI to configure.
 
 [features]
 # Check for and install updates during startup. Set to false for the persistent
@@ -303,9 +62,6 @@ check_updates = true
 memory = true
 # Swarm: multi-session coordination features
 swarm = true
-# Mermaid: render Mermaid code blocks and tell the model that diagrams are supported.
-# Off by default: no horon client renders Mermaid, so the guidance is dead weight.
-mermaid = false
 # Auto-poke: automatically nudge the model to continue when it stops with
 # incomplete todos. /poke on and /poke off still override this per session.
 auto_poke = true
@@ -906,8 +662,6 @@ pause_on_active_session = true
 proactive_work = true
 # Branch prefix for proactive work
 work_branch_prefix = "ambient/"
-# Show ambient cycle in a terminal window (default: true)
-# visible = true
 # Seconds an unattended run waits for a permission decision before it applies
 # approval_timeout_secs (default: 1800)
 # approval_timeout_secs = 1800
@@ -945,12 +699,6 @@ bind_addr = "0.0.0.0"
 # Set HORON_AGENT_DISABLE_POWER_INHIBIT=1 to force-disable regardless of this setting.
 prevent_sleep_while_streaming = true
 
-[menubar]
-# macOS only: show the horon-agent session count in the menu bar. Set to false to
-# stop the menu bar helper (a running helper exits within a second).
-# HORON_AGENT_NO_MENUBAR=1 also disables it.
-enabled = true
-
 [safety]
 # Notification settings for ambient mode events
 
@@ -972,14 +720,7 @@ desktop_notifications = true
 # enabled = true
 # endpoint = "https://api.horon-agent.sh/v1/discovery"
 	"##;
-
-        // Substitute platform-specific defaults from the keybinding registry.
-        let p = horon_agent_config_types::KeybindingPlatform::current();
-        let effort_increase = horon_agent_config_types::default_binding("effort_increase", p).unwrap_or("alt+right");
-        let effort_decrease = horon_agent_config_types::default_binding("effort_decrease", p).unwrap_or("alt+left");
-        default_content
-            .replace("@EFFORT_INCREASE@", effort_increase)
-            .replace("@EFFORT_DECREASE@", effort_decrease)
+        default_content.to_string()
     }
 }
 
@@ -1030,49 +771,5 @@ mod tests {
         assert_eq!(reread.tools.bash_interceptor, parsed.tools.bash_interceptor);
         assert_eq!(reread.tools.bash_patterns, parsed.tools.bash_patterns);
         assert_eq!(reread.tools.git_guard, parsed.tools.git_guard);
-    }
-
-    /// Colors are only discoverable if the template mentions them, since most
-    /// users read the generated config rather than the docs.
-    #[test]
-    fn default_config_template_documents_colors() {
-        let template = Config::default_config_file_contents();
-        assert!(
-            template.contains("[display.colors]"),
-            "the template should show how to configure colors"
-        );
-        assert!(
-            template.contains("/colors"),
-            "the template should point at the /colors command"
-        );
-    }
-
-    /// Uncommenting the documented color example must actually work, which is
-    /// the thing a user will literally do.
-    #[test]
-    fn documented_color_example_is_valid_when_uncommented() {
-        let template = Config::default_config_file_contents();
-        let start = template
-            .find("# [display.colors]")
-            .expect("template documents a colors section");
-        let example: String = template[start..]
-            .lines()
-            .take_while(|line| line.starts_with("# ") || line == &"#")
-            .map(|line| format!("{}\n", line.trim_start_matches("# ").trim_start_matches('#')))
-            .collect();
-
-        let parsed: Config = toml::from_str(&example).expect("uncommented example must parse");
-        assert!(
-            !parsed.display.colors.is_empty(),
-            "the example should set some colors, got {:?}",
-            parsed.display.colors
-        );
-        for (role, value) in &parsed.display.colors {
-            assert!(
-                horon_agent_config_types::DisplayConfig::default().colors.is_empty(),
-                "colors should default to empty"
-            );
-            assert_eq!(value.len(), 7, "{role} example should be #rrggbb: {value}");
-        }
     }
 }

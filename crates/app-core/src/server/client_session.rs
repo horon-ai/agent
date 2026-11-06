@@ -6,11 +6,11 @@ use super::client_disconnect_cleanup::{
 use super::client_state::{handle_get_history, spawn_model_prefetch_update};
 use super::swarm::notify_owner_of_unrestored_idle_workers;
 use super::{
-    ClientConnectionInfo, ClientDebugState, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmMember,
-    SwarmState, VersionedPlan, broadcast_swarm_status, fanout_live_client_event, persist_swarm_state_for,
-    register_background_tool_signal, register_session_event_sender, register_session_interrupt_queue,
-    remove_background_tool_signal, remove_plan_participant, remove_session_channel_subscriptions,
-    remove_session_from_swarm, remove_session_interrupt_queue, rename_background_tool_signal, rename_plan_participant,
+    ClientConnectionInfo, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmMember, SwarmState, VersionedPlan,
+    broadcast_swarm_status, fanout_live_client_event, persist_swarm_state_for, register_background_tool_signal,
+    register_session_event_sender, register_session_interrupt_queue, remove_background_tool_signal,
+    remove_plan_participant, remove_session_channel_subscriptions, remove_session_from_swarm,
+    remove_session_interrupt_queue, rename_background_tool_signal, rename_plan_participant,
     rename_session_interrupt_queue, send_swarm_plan_to_session, swarm_id_for_session, unregister_session_event_sender,
     update_member_status,
 };
@@ -1248,7 +1248,6 @@ pub(super) async fn handle_resume_session(
     shutdown_signals: &Arc<RwLock<HashMap<String, InterruptSignal>>>,
     soft_interrupt_queues: &SessionInterruptQueues,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
-    client_debug_state: &Arc<RwLock<ClientDebugState>>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     file_touch: &FileTouchService,
@@ -1383,23 +1382,13 @@ pub(super) async fn handle_resume_session(
                 allow_session_takeover && client_has_local_history && !distinct_client_instances;
 
             if can_take_over_live_session {
-                let (disconnect_tx, debug_client_id, transferred_processing, transferred_tool_name) = {
+                let (disconnect_tx, transferred_processing, transferred_tool_name) = {
                     let mut connections = client_connections.write().await;
                     let removed = connections.remove(&conflict.client_id);
                     if let Some(info) = removed {
-                        (
-                            Some(info.disconnect_tx),
-                            info.debug_client_id,
-                            info.is_processing,
-                            info.current_tool_name,
-                        )
+                        (Some(info.disconnect_tx), info.is_processing, info.current_tool_name)
                     } else {
-                        (
-                            None,
-                            conflict.debug_client_id,
-                            conflict.is_processing,
-                            conflict.current_tool_name,
-                        )
+                        (None, conflict.is_processing, conflict.current_tool_name)
                     }
                 };
                 if transferred_processing {
@@ -1420,11 +1409,6 @@ pub(super) async fn handle_resume_session(
                         info.is_processing = transferred_processing;
                         info.current_tool_name = transferred_tool_name;
                     }
-                }
-
-                if let Some(debug_client_id) = debug_client_id.as_deref() {
-                    let mut debug_state = client_debug_state.write().await;
-                    debug_state.unregister(debug_client_id);
                 }
 
                 if let Some(disconnect_tx) = disconnect_tx {
@@ -1582,23 +1566,13 @@ pub(super) async fn handle_resume_session(
                 session_id, client_connection_id, conflict.client_id
             ));
 
-            let (disconnect_tx, debug_client_id, transferred_processing, transferred_tool_name) = {
+            let (disconnect_tx, transferred_processing, transferred_tool_name) = {
                 let mut connections = client_connections.write().await;
                 let removed = connections.remove(&conflict.client_id);
                 if let Some(info) = removed {
-                    (
-                        Some(info.disconnect_tx),
-                        info.debug_client_id,
-                        info.is_processing,
-                        info.current_tool_name,
-                    )
+                    (Some(info.disconnect_tx), info.is_processing, info.current_tool_name)
                 } else {
-                    (
-                        None,
-                        conflict.debug_client_id,
-                        conflict.is_processing,
-                        conflict.current_tool_name,
-                    )
+                    (None, conflict.is_processing, conflict.current_tool_name)
                 }
             };
 
@@ -1608,11 +1582,6 @@ pub(super) async fn handle_resume_session(
                     info.is_processing = transferred_processing;
                     info.current_tool_name = transferred_tool_name;
                 }
-            }
-
-            if let Some(debug_client_id) = debug_client_id.as_deref() {
-                let mut debug_state = client_debug_state.write().await;
-                debug_state.unregister(debug_client_id);
             }
 
             if let Some(disconnect_tx) = disconnect_tx {

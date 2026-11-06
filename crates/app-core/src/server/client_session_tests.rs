@@ -11,8 +11,7 @@ use crate::message::{Message, ToolDefinition};
 use crate::protocol::ServerEvent;
 use crate::provider::{EventStream, Provider};
 use crate::server::{
-    ClientConnectionInfo, ClientDebugState, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmMember,
-    VersionedPlan,
+    ClientConnectionInfo, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmMember, VersionedPlan,
 };
 use crate::tool::Registry;
 use anyhow::Result;
@@ -326,7 +325,6 @@ async fn live_target_claim_is_atomic_with_detached_source_cleanup() {
                 client_id: "incoming".to_string(),
                 session_id: source_id,
                 client_instance_id: None,
-                debug_client_id: None,
                 connected_at: now,
                 last_seen: now,
                 is_processing: false,
@@ -415,7 +413,6 @@ async fn detached_source_removal_drops_the_source_event_sink() {
             client_id: "incoming".to_string(),
             session_id: source_id.to_string(),
             client_instance_id: None,
-            debug_client_id: None,
             connected_at: now,
             last_seen: now,
             is_processing: false,
@@ -474,7 +471,6 @@ async fn detached_source_removal_returns_its_close_guard_only_on_removal() {
                 client_id: name.to_string(),
                 session_id: source_id.to_string(),
                 client_instance_id: None,
-                debug_client_id: None,
                 connected_at: now,
                 last_seen: now,
                 is_processing: false,

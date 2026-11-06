@@ -1,5 +1,5 @@
 {
-  "total": 138,
+  "total": 125,
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": 15,
     "crates/agent-sdk/src/auth/callback.rs": 2,
@@ -34,7 +34,6 @@
     "crates/base/src/monitor/mod.rs": 4,
     "crates/base/src/provider_activity_oauth.rs": 3,
     "crates/base/src/secrets.rs": 3,
-    "crates/base/src/voice_intent.rs": 5,
     "crates/base/src/workspace_trust.rs": 1,
     "crates/edit-bench/src/generate.rs": 1,
     "crates/edit-bench/src/run.rs": 2,
@@ -46,9 +45,6 @@
     "crates/provider-openai/src/chat/mod.rs": 1,
     "crates/provider-openai/src/chat/request.rs": 1,
     "crates/provider-openai/src/stream.rs": 3,
-    "crates/render-core/src/math.rs": 4,
-    "crates/render-core/src/preprocess.rs": 2,
-    "crates/render-core/src/reasoning.rs": 1,
     "crates/session-store/examples/schema_roundtrip.rs": 4,
     "crates/terminal-launch/src/lib.rs": 1,
     "src/cli/acp/util.rs": 1,

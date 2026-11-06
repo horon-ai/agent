@@ -27,8 +27,6 @@ pub mod bus;
 pub mod cache_invalidation;
 pub mod cache_tracker;
 pub mod claude_live;
-pub mod client_focus;
-pub mod client_input;
 pub mod compaction;
 pub mod config;
 pub mod console;
@@ -111,7 +109,6 @@ pub mod transcript_sample;
 pub mod transport;
 pub mod usage;
 pub mod util;
-pub mod voice_intent;
 pub mod workspace_trust;
 #[cfg(not(feature = "embeddings"))]
 pub use embedding_stub as embedding;

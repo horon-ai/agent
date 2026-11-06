@@ -36,7 +36,6 @@ async fn handle_resume_session_keeps_the_sink_when_the_id_is_unchanged() -> Resu
             client_id: "conn_same".to_string(),
             session_id: session_id.to_string(),
             client_instance_id: None,
-            debug_client_id: Some("debug_same".to_string()),
             connected_at: now,
             last_seen: now,
             is_processing: false,
@@ -45,7 +44,6 @@ async fn handle_resume_session_keeps_the_sink_when_the_id_is_unchanged() -> Resu
             disconnect_tx: mpsc::unbounded_channel().0,
         },
     )])));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
     let swarm_members = Arc::new(RwLock::new(HashMap::<String, SwarmMember>::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()));
     let file_touch = FileTouchService::new();
@@ -87,7 +85,6 @@ async fn handle_resume_session_keeps_the_sink_when_the_id_is_unchanged() -> Resu
         &shutdown_signals,
         &soft_interrupt_queues,
         &client_connections,
-        &client_debug_state,
         &swarm_members,
         &swarms_by_id,
         &file_touch,

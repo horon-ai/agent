@@ -303,7 +303,6 @@ async fn target_subscribe_refused_by_a_busy_writer_sends_the_refusal() {
     held.append(&message).unwrap();
 
     let (server_stream, client_stream) = crate::transport::Stream::pair().unwrap();
-    let (debug_response_tx, _) = broadcast::channel(8);
     let (global_event_tx, _) = broadcast::channel(8);
     let (swarm_event_tx, _) = broadcast::channel(8);
     let server = tokio::spawn(handle_client(
@@ -323,8 +322,6 @@ async fn target_subscribe_refused_by_a_busy_writer_sends_the_refusal() {
         FileTouchService::new(),
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(RwLock::new(HashMap::new())),
-        Arc::new(RwLock::new(ClientDebugState::default())),
-        debug_response_tx,
         Arc::new(RwLock::new(std::collections::VecDeque::new())),
         Arc::new(std::sync::atomic::AtomicU64::new(0)),
         swarm_event_tx,

@@ -16,72 +16,6 @@ fn test_default_system_prompt_no_claude_code_identity() {
     );
 }
 
-#[test]
-fn mermaid_prompt_module_follows_capability() {
-    let (enabled, _) = build_system_prompt_split_with_capabilities(
-        None,
-        &[],
-        None,
-        None,
-        PromptCapabilities {
-            mermaid: true,
-            foreign_rules: false,
-        },
-    );
-    assert!(enabled.static_part.contains(MERMAID_PROMPT));
-
-    let (disabled, _) = build_system_prompt_split_with_capabilities(
-        None,
-        &[],
-        None,
-        None,
-        PromptCapabilities {
-            mermaid: false,
-            foreign_rules: false,
-        },
-    );
-    assert!(!disabled.static_part.contains("Mermaid diagrams"));
-    assert!(!disabled.static_part.contains("fenced `mermaid` code block"));
-}
-
-/// The shipped default leaves the Mermaid module out of the prompt; the
-/// documented environment switch still turns it back on.
-#[test]
-fn mermaid_section_is_off_by_default_and_the_env_override_turns_it_on() {
-    let _guard = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("temp home");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let previous_mermaid = std::env::var_os("HORON_AGENT_ENABLE_MERMAID");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-    crate::env::remove_var("HORON_AGENT_ENABLE_MERMAID");
-    crate::config::invalidate_config_cache();
-
-    assert!(!PromptCapabilities::default().mermaid, "the shipped default is off");
-    let (default_split, _) = build_system_prompt_split(None, &[], None, None);
-    assert!(
-        !default_split.static_part.contains(MERMAID_PROMPT),
-        "the default prompt split carries no Mermaid module"
-    );
-
-    crate::env::set_var("HORON_AGENT_ENABLE_MERMAID", "1");
-    crate::config::invalidate_config_cache();
-    let (enabled_split, _) = build_system_prompt_split(None, &[], None, None);
-    assert!(
-        enabled_split.static_part.contains("# Mermaid"),
-        "HORON_AGENT_ENABLE_MERMAID=1 still adds the Mermaid module"
-    );
-
-    match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
-    }
-    match previous_mermaid {
-        Some(value) => crate::env::set_var("HORON_AGENT_ENABLE_MERMAID", value),
-        None => crate::env::remove_var("HORON_AGENT_ENABLE_MERMAID"),
-    }
-    crate::config::invalidate_config_cache();
-}
-
 /// Verify skill prompts don't accidentally introduce "Claude Code" identity
 #[test]
 fn test_skill_prompt_integration() {
@@ -927,10 +861,7 @@ fn foreign_rules_section_is_absent_unless_enabled() {
         &[],
         None,
         Some(project.path()),
-        PromptCapabilities {
-            mermaid: false,
-            foreign_rules: false,
-        },
+        PromptCapabilities { foreign_rules: false },
     );
     assert!(!off.static_part.contains("cursor body"));
     assert!(!off.static_part.contains("# Imported Foreign Rules"));
@@ -940,10 +871,7 @@ fn foreign_rules_section_is_absent_unless_enabled() {
         &[],
         None,
         Some(project.path()),
-        PromptCapabilities {
-            mermaid: false,
-            foreign_rules: true,
-        },
+        PromptCapabilities { foreign_rules: true },
     );
     assert!(on.static_part.contains("# Imported Foreign Rules"));
     assert!(on.static_part.contains("cursor body"));
@@ -1043,10 +971,7 @@ fn foreign_rules_section_follows_native_agents_md() {
         &[],
         None,
         Some(project.path()),
-        PromptCapabilities {
-            mermaid: false,
-            foreign_rules: true,
-        },
+        PromptCapabilities { foreign_rules: true },
     );
     let native = prompt.find("NATIVE AGENTS BODY").expect("native AGENTS.md body");
     let foreign = prompt.find("foreign body").expect("foreign rule body");

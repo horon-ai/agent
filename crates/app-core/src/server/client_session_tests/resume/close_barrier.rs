@@ -83,8 +83,6 @@ async fn run_disconnect_cleanup(
         &FileTouchService::new(),
         &Arc::new(RwLock::new(HashMap::new())),
         &Arc::new(RwLock::new(HashMap::new())),
-        &Arc::new(RwLock::new(ClientDebugState::default())),
-        "debug_close",
         connections,
         "conn_old",
         &Arc::new(RwLock::new(HashMap::new())),
@@ -151,7 +149,6 @@ async fn cold_resume_with_agent(
     let registry = Registry::new(Arc::clone(provider)).await;
     let shutdown_signals = Arc::new(RwLock::new(HashMap::<String, InterruptSignal>::new()));
     let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
@@ -183,7 +180,6 @@ async fn cold_resume_with_agent(
         &shutdown_signals,
         &soft_interrupt_queues,
         client_connections,
-        &client_debug_state,
         members,
         &swarms_by_id,
         &file_touch,
@@ -231,7 +227,6 @@ fn connection(session_id: &str, processing: bool) -> ClientConnectionInfo {
         client_id: String::new(),
         session_id: session_id.to_string(),
         client_instance_id: None,
-        debug_client_id: None,
         connected_at: now,
         last_seen: now,
         is_processing: processing,
@@ -707,7 +702,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
             let mut agent = source_agent;
             let registry = Registry::new(Arc::clone(&provider)).await;
             let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
-            let debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
             let swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>> = Arc::new(RwLock::new(HashMap::new()));
             let file_touch = FileTouchService::new();
             let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
@@ -741,7 +735,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     &shutdown_signals,
                     &soft_interrupt_queues,
                     &client_connections,
-                    &debug_state,
                     &members,
                     &swarms_by_id,
                     &file_touch,

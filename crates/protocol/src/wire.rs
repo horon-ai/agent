@@ -228,14 +228,6 @@ pub enum Request {
         session_id: Option<String>,
     },
 
-    /// Execute a client debug command (forwarded to TUI)
-    #[serde(rename = "client_debug_command")]
-    ClientDebugCommand { id: u64, command: String },
-
-    /// Response from TUI for client debug command
-    #[serde(rename = "client_debug_response")]
-    ClientDebugResponse { id: u64, output: String },
-
     /// Subscribe to events (for TUI clients)
     #[serde(rename = "subscribe")]
     Subscribe {
@@ -348,17 +340,6 @@ pub enum Request {
         id: u64,
         session_id: String,
         message: String,
-    },
-
-    /// Inject externally transcribed text into a live TUI session.
-    #[serde(rename = "transcript")]
-    Transcript {
-        id: u64,
-        text: String,
-        #[serde(default)]
-        mode: TranscriptMode,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
     },
 
     /// Execute a shell command from `!cmd` in the active remote session.

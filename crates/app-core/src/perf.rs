@@ -79,18 +79,6 @@ impl SyntheticSystemProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TuiPerfPolicy {
-    pub tier: PerformanceTier,
-    pub redraw_fps: u32,
-    pub animation_fps: u32,
-    pub enable_decorative_animations: bool,
-    pub enable_focus_change: bool,
-    pub enable_mouse_capture: bool,
-    pub enable_keyboard_enhancement: bool,
-    pub simplified_model_picker: bool,
-}
-
 impl SystemProfile {
     pub fn load_ratio(&self) -> Option<f64> {
         match (self.load_avg_1m, self.cpu_count) {
@@ -182,75 +170,6 @@ pub fn synthetic_profile(kind: SyntheticSystemProfile) -> SystemProfile {
     }
 }
 
-pub fn tui_policy() -> TuiPerfPolicy {
-    tui_policy_for(profile(), &crate::config::config().display)
-}
-
-pub fn tui_policy_for(profile: &SystemProfile, display: &crate::config::DisplayConfig) -> TuiPerfPolicy {
-    let mut redraw_fps = display.redraw_fps.clamp(1, 120);
-    let mut animation_fps = display.animation_fps.clamp(1, 120);
-    let mut enable_decorative_animations = !matches!(profile.tier, PerformanceTier::Minimal);
-    let mut enable_focus_change = true;
-    let enable_mouse_capture = display.mouse_capture;
-    let mut enable_keyboard_enhancement = true;
-    let mut simplified_model_picker = false;
-
-    if profile.is_wsl || profile.is_windows_terminal_family() {
-        enable_decorative_animations = false;
-    }
-
-    // Glyph-safe mode for terminals with a fragile GPU glyph atlas (macOS 26
-    // VS Code integrated terminal / Apple Terminal). The primary fix lives in
-    // `horon-agent-tui-style`: colors are quantized to the 256-palette there, which
-    // bounds the distinct (glyph, color) atlas keys so the animations no longer
-    // overflow the cache (#330). Here we only trim full-frame repaint pressure
-    // as cheap insurance; decorative animations stay ON so the experience is
-    // unchanged apart from slightly reduced color fidelity.
-    if profile.fragile_glyph_cache {
-        redraw_fps = redraw_fps.min(30);
-    }
-
-    if profile.is_wsl {
-        redraw_fps = redraw_fps.min(30);
-    }
-
-    if profile.is_wsl_windows_terminal() {
-        redraw_fps = redraw_fps.min(20);
-        enable_focus_change = false;
-        enable_keyboard_enhancement = false;
-        simplified_model_picker = true;
-    }
-
-    match profile.tier {
-        PerformanceTier::Full => {}
-        PerformanceTier::Reduced => {
-            redraw_fps = redraw_fps.min(30);
-            if enable_decorative_animations {
-                animation_fps = animation_fps.min(24);
-            }
-        }
-        PerformanceTier::Minimal => {
-            redraw_fps = redraw_fps.min(12);
-            enable_decorative_animations = false;
-        }
-    }
-
-    if !enable_decorative_animations {
-        animation_fps = 1;
-    }
-
-    TuiPerfPolicy {
-        tier: profile.tier,
-        redraw_fps,
-        animation_fps,
-        enable_decorative_animations,
-        enable_focus_change,
-        enable_mouse_capture,
-        enable_keyboard_enhancement,
-        simplified_model_picker,
-    }
-}
-
 pub fn init_background() {
     std::thread::spawn(|| {
         let p = PROFILE.get_or_init(detect);
@@ -301,12 +220,7 @@ fn detect() -> SystemProfile {
                 _ => None,
             });
 
-    let tier = env_tier.unwrap_or_else(|| match crate::config::config().display.performance.as_str() {
-        "full" => PerformanceTier::Full,
-        "reduced" => PerformanceTier::Reduced,
-        "minimal" => PerformanceTier::Minimal,
-        _ => auto_tier,
-    });
+    let tier = env_tier.unwrap_or(auto_tier);
 
     SystemProfile {
         load_avg_1m,
@@ -677,134 +591,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tui_policy_caps_wsl_windows_terminal() {
-        let profile = synthetic_profile(SyntheticSystemProfile::WslWindowsTerminal);
-        let mut display = crate::config::DisplayConfig::default();
-        display.mouse_capture = true;
-        display.redraw_fps = 60;
-        display.animation_fps = 60;
-        let policy = tui_policy_for(&profile, &display);
-        assert_eq!(policy.tier, PerformanceTier::Reduced);
-        assert_eq!(policy.redraw_fps, 20);
-        assert_eq!(policy.animation_fps, 1);
-        assert!(!policy.enable_decorative_animations);
-        assert!(!policy.enable_focus_change);
-        assert!(!policy.enable_keyboard_enhancement);
-        assert!(policy.simplified_model_picker);
-        assert!(policy.enable_mouse_capture);
-    }
-
-    #[test]
-    fn test_tui_policy_keeps_native_defaults() {
-        let profile = synthetic_profile(SyntheticSystemProfile::Native);
-        let mut display = crate::config::DisplayConfig::default();
-        display.mouse_capture = true;
-        display.redraw_fps = 48;
-        display.animation_fps = 50;
-        let policy = tui_policy_for(&profile, &display);
-        assert_eq!(policy.tier, PerformanceTier::Full);
-        assert_eq!(policy.redraw_fps, 48);
-        assert_eq!(policy.animation_fps, 50);
-        assert!(policy.enable_decorative_animations);
-        assert!(policy.enable_focus_change);
-        assert!(policy.enable_keyboard_enhancement);
-        assert!(!policy.simplified_model_picker);
-        assert!(policy.enable_mouse_capture);
-    }
-
-    #[test]
-    fn test_tui_policy_caps_generic_wsl_without_disabling_terminal_features() {
-        let profile = synthetic_profile(SyntheticSystemProfile::Wsl);
-        let mut display = crate::config::DisplayConfig::default();
-        display.mouse_capture = false;
-        display.redraw_fps = 60;
-        display.animation_fps = 60;
-        let policy = tui_policy_for(&profile, &display);
-        assert_eq!(policy.redraw_fps, 30);
-        assert_eq!(policy.animation_fps, 1);
-        assert!(!policy.enable_decorative_animations);
-        assert!(policy.enable_focus_change);
-        assert!(policy.enable_keyboard_enhancement);
-        assert!(!policy.simplified_model_picker);
-        assert!(!policy.enable_mouse_capture);
-    }
-
-    #[test]
-    fn test_tui_policy_disables_decorative_animation_on_windows_terminal_family() {
-        let profile = SystemProfile {
-            load_avg_1m: Some(0.2),
-            cpu_count: Some(8),
-            available_memory_mb: Some(8192),
-            total_memory_mb: Some(16384),
-            is_ssh: false,
-            is_wsl: false,
-            terminal: "windows-terminal".to_string(),
-            tier: PerformanceTier::Full,
-            fragile_glyph_cache: false,
-        };
-        let mut display = crate::config::DisplayConfig::default();
-        display.redraw_fps = 60;
-        display.animation_fps = 60;
-        let policy = tui_policy_for(&profile, &display);
-        assert_eq!(policy.redraw_fps, 60);
-        assert_eq!(policy.animation_fps, 1);
-        assert!(!policy.enable_decorative_animations);
-    }
-
-    #[test]
     fn test_detect_runs() {
         let p = detect();
         assert!(!p.terminal.is_empty());
     }
 
-    fn glyph_safe_profile(terminal: &str) -> SystemProfile {
-        SystemProfile {
-            load_avg_1m: Some(0.2),
-            cpu_count: Some(8),
-            available_memory_mb: Some(8192),
-            total_memory_mb: Some(16384),
-            is_ssh: false,
-            is_wsl: false,
-            terminal: terminal.to_string(),
-            tier: PerformanceTier::Full,
-            fragile_glyph_cache: true,
-        }
-    }
-
-    #[test]
-    fn test_glyph_safe_mode_keeps_animations_and_caps_redraw() {
-        // VS Code integrated terminal / Apple Terminal on macOS 26 corrupt the
-        // GPU glyph atlas under truecolor color churn (#330). The root-cause fix
-        // is color quantization in horon-agent-tui-style, so the perf policy keeps
-        // decorative animations ON and only trims full-frame repaint pressure.
-        let profile = glyph_safe_profile("vscode");
-        let mut display = crate::config::DisplayConfig::default();
-        display.redraw_fps = 60;
-        display.animation_fps = 60;
-        let policy = tui_policy_for(&profile, &display);
-        assert_eq!(policy.tier, PerformanceTier::Full);
-        assert!(policy.enable_decorative_animations);
-        assert_eq!(policy.redraw_fps, 30);
-        // Interactive features stay on; this is purely a rendering mitigation.
-        assert!(policy.enable_focus_change);
-        assert!(policy.enable_keyboard_enhancement);
-    }
-
-    #[test]
-    fn test_non_fragile_terminal_keeps_decorative_animations() {
-        let profile = SystemProfile {
-            fragile_glyph_cache: false,
-            ..glyph_safe_profile("ghostty")
-        };
-        let mut display = crate::config::DisplayConfig::default();
-        display.redraw_fps = 60;
-        display.animation_fps = 60;
-        let policy = tui_policy_for(&profile, &display);
-        assert!(policy.enable_decorative_animations);
-        assert_eq!(policy.redraw_fps, 60);
-    }
-
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_detect_fragile_glyph_cache_targets_macos_terminals() {
         // Env override must not leak between cases.

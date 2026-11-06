@@ -1,9 +1,9 @@
 {
-  "total": 2406,
+  "total": 2254,
   "totals_by_pattern": {
-    "dot_ok": 863,
-    "let_underscore": 968,
-    "unwrap_or_default": 575
+    "dot_ok": 820,
+    "let_underscore": 894,
+    "unwrap_or_default": 540
   },
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": {
@@ -158,7 +158,7 @@
     },
     "crates/app-core/src/ambient/runner.rs": {
       "dot_ok": 0,
-      "let_underscore": 13,
+      "let_underscore": 11,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/ambient/scheduler.rs": {
@@ -192,9 +192,9 @@
       "unwrap_or_default": 0
     },
     "crates/app-core/src/notifications.rs": {
-      "dot_ok": 3,
-      "let_underscore": 7,
-      "unwrap_or_default": 4
+      "dot_ok": 0,
+      "let_underscore": 5,
+      "unwrap_or_default": 1
     },
     "crates/app-core/src/overnight.rs": {
       "dot_ok": 12,
@@ -258,7 +258,7 @@
     },
     "crates/app-core/src/server/client_lifecycle.rs": {
       "dot_ok": 2,
-      "let_underscore": 72,
+      "let_underscore": 69,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/server/client_lifecycle_logging.rs": {
@@ -288,7 +288,7 @@
     },
     "crates/app-core/src/server/comm_control.rs": {
       "dot_ok": 0,
-      "let_underscore": 37,
+      "let_underscore": 35,
       "unwrap_or_default": 4
     },
     "crates/app-core/src/server/comm_graph.rs": {
@@ -303,7 +303,7 @@
     },
     "crates/app-core/src/server/comm_session.rs": {
       "dot_ok": 4,
-      "let_underscore": 12,
+      "let_underscore": 11,
       "unwrap_or_default": 13
     },
     "crates/app-core/src/server/comm_sync.rs": {
@@ -345,11 +345,6 @@
       "dot_ok": 0,
       "let_underscore": 3,
       "unwrap_or_default": 3
-    },
-    "crates/app-core/src/server/debug_testers.rs": {
-      "dot_ok": 1,
-      "let_underscore": 8,
-      "unwrap_or_default": 0
     },
     "crates/app-core/src/server/durable_state.rs": {
       "dot_ok": 1,
@@ -766,11 +761,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/base/examples/voice_intent_latency.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/artifacts.rs": {
       "dot_ok": 2,
       "let_underscore": 0,
@@ -861,11 +851,6 @@
       "let_underscore": 2,
       "unwrap_or_default": 0
     },
-    "crates/base/src/client_input.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/compaction/mod.rs": {
       "dot_ok": 1,
       "let_underscore": 1,
@@ -893,7 +878,7 @@
     },
     "crates/base/src/config/config_file.rs": {
       "dot_ok": 4,
-      "let_underscore": 4,
+      "let_underscore": 2,
       "unwrap_or_default": 3
     },
     "crates/base/src/config/env_overrides.rs": {
@@ -1434,7 +1419,7 @@
     "crates/config-types/src/serde_lenient.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/core/src/stdin_detect.rs": {
       "dot_ok": 3,
@@ -1681,16 +1666,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 6
     },
-    "crates/render-core/src/math.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
-    },
-    "crates/render-core/src/preprocess.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/schema-dialect/src/dialect.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -1932,7 +1907,7 @@
       "unwrap_or_default": 6
     },
     "src/cli/commands.rs": {
-      "dot_ok": 9,
+      "dot_ok": 8,
       "let_underscore": 2,
       "unwrap_or_default": 4
     },
@@ -1941,19 +1916,14 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "src/cli/commands/restart.rs": {
-      "dot_ok": 1,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
     "src/cli/debug.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 1
     },
     "src/cli/dispatch.rs": {
-      "dot_ok": 4,
-      "let_underscore": 5,
+      "dot_ok": 3,
+      "let_underscore": 3,
       "unwrap_or_default": 3
     },
     "src/cli/hot_exec.rs": {

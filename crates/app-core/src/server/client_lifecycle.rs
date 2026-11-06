@@ -27,8 +27,7 @@ use super::client_state::{
 use super::client_writer::write_direct_event;
 use super::comm_await::{CommAwaitMembersContext, handle_comm_await_members};
 use super::comm_control::{
-    handle_client_debug_command, handle_client_debug_response, handle_comm_assign_next, handle_comm_assign_role,
-    handle_comm_assign_task, handle_comm_task_control,
+    handle_comm_assign_next, handle_comm_assign_role, handle_comm_assign_task, handle_comm_task_control,
 };
 use super::comm_plan::{handle_comm_approve_plan, handle_comm_propose_plan, handle_comm_reject_plan};
 use super::comm_session::{handle_comm_spawn, handle_comm_stop};
@@ -43,10 +42,10 @@ use super::provider_control::{
     try_available_models_catalog,
 };
 use super::{
-    AwaitMembersRuntime, ClientConnectionInfo, ClientDebugState, FileTouchService, SessionControlHandle,
-    SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan,
-    format_structured_completion_report, register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail,
-    update_member_status, update_member_status_with_report, update_member_status_with_report_tldr,
+    AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, SessionControlHandle, SessionInterruptQueues,
+    SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan, format_structured_completion_report,
+    register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail, update_member_status,
+    update_member_status_with_report, update_member_status_with_report_tldr,
 };
 use crate::agent::Agent;
 use crate::bus::{Bus, BusEvent};
@@ -473,8 +472,6 @@ pub(super) async fn handle_client(
     file_touch: FileTouchService,
     channel_subscriptions: ChannelSubscriptions,
     channel_subscriptions_by_session: ChannelSubscriptions,
-    client_debug_state: Arc<RwLock<ClientDebugState>>,
-    client_debug_response_tx: broadcast::Sender<(u64, String)>,
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: broadcast::Sender<SwarmEvent>,
@@ -665,7 +662,6 @@ pub(super) async fn handle_client(
                 client_id: client_connection_id.clone(),
                 session_id: client_session_id.clone(),
                 client_instance_id: None,
-                debug_client_id: None,
                 connected_at,
                 last_seen: connected_at,
                 is_processing: false,
@@ -817,21 +813,6 @@ pub(super) async fn handle_client(
     // Note: Don't send initial SessionId here - it's sent by the Subscribe handler
     // Sending it via the channel causes race conditions where it can arrive after
     // other events (like History) that are written directly to the socket.
-
-    // Set up client debug command channel
-    // This client becomes the "active" debug client that receives client: commands
-    let (debug_cmd_tx, mut debug_cmd_rx) = mpsc::unbounded_channel::<(u64, String)>();
-    let client_debug_id = id::new_id("client");
-    {
-        let mut debug_state = client_debug_state.write().await;
-        debug_state.register(client_debug_id.clone(), debug_cmd_tx);
-    }
-    {
-        let mut connections = client_connections.write().await;
-        if let Some(info) = connections.get_mut(&client_connection_id) {
-            info.debug_client_id = Some(client_debug_id.clone());
-        }
-    }
 
     let stdin_responses: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -996,23 +977,6 @@ pub(super) async fn handle_client(
                         });
                     }
                     _ => {}
-                }
-                continue;
-            }
-            // Handle client debug commands from debug socket
-            debug_cmd = debug_cmd_rx.recv() => {
-                if let Some((request_id, command)) = debug_cmd
-                    && client_event_tx
-                        .send(ServerEvent::ClientDebugRequest {
-                            id: request_id,
-                            command,
-                        })
-                        .is_err()
-                {
-                    let _ = client_debug_response_tx.send((
-                        request_id,
-                        "No TUI client connected".to_string(),
-                    ));
                 }
                 continue;
             }
@@ -1856,7 +1820,6 @@ pub(super) async fn handle_client(
                                 &shutdown_signals,
                                 &soft_interrupt_queues,
                                 &client_connections,
-                                &client_debug_state,
                                 &swarm_members,
                                 &swarms_by_id,
                                 &file_touch,
@@ -2185,7 +2148,6 @@ pub(super) async fn handle_client(
                         &shutdown_signals,
                         &soft_interrupt_queues,
                         &client_connections,
-                        &client_debug_state,
                         &swarm_members,
                         &swarms_by_id,
                         &file_touch,
@@ -2798,36 +2760,6 @@ pub(super) async fn handle_client(
                     },
                 )
                 .await;
-            }
-
-            Request::Transcript {
-                id,
-                text,
-                mode,
-                session_id,
-            } => {
-                match super::debug::inject_transcript(
-                    id,
-                    text,
-                    mode,
-                    session_id,
-                    &client_connections,
-                    &client_debug_state,
-                    &swarm_members,
-                )
-                .await
-                {
-                    Ok(event) => {
-                        let _ = client_event_tx.send(event);
-                    }
-                    Err(error) => {
-                        let _ = client_event_tx.send(ServerEvent::Error {
-                            id,
-                            message: error.to_string(),
-                            retry_after_secs: None,
-                        });
-                    }
-                }
             }
 
             Request::InputShell { id, command } => {
@@ -3623,17 +3555,6 @@ pub(super) async fn handle_client(
             Request::SetSessionApprovalMode { .. } => unreachable!("approval mode replies only after validation"),
 
             // These are handled via channels, not direct requests from TUI
-            Request::ClientDebugCommand { id, .. } => {
-                handle_client_debug_command(id, &client_event_tx).await;
-            }
-            Request::ClientDebugResponse { id, output } => {
-                handle_client_debug_response(id, output, &client_debug_response_tx);
-            }
-
-            // A v2 prompt can be taken back while its turn still waits for the
-            // agent. Only this connection's queued task is dropped: no
-            // TurnStopped, no session cancel, so a turn another surface is
-            // running keeps running.
             Request::WithdrawMessage { id, message_request_id } => {
                 let queued = last_v2_message
                     .as_ref()
@@ -3760,8 +3681,6 @@ pub(super) async fn handle_client(
                 &file_touch,
                 &channel_subscriptions,
                 &channel_subscriptions_by_session,
-                &client_debug_state,
-                &client_debug_id,
                 &client_connections,
                 &client_connection_id,
                 &shutdown_signals,
@@ -3790,9 +3709,7 @@ pub(super) async fn handle_client(
         detach_client_attachment(
             &client_session_id,
             &client_connection_id,
-            &client_debug_id,
             &client_connections,
-            &client_debug_state,
             &swarm_members,
         )
         .await;
@@ -3862,8 +3779,6 @@ pub(super) async fn handle_client(
             &file_touch,
             &channel_subscriptions,
             &channel_subscriptions_by_session,
-            &client_debug_state,
-            &client_debug_id,
             &client_connections,
             &client_connection_id,
             &shutdown_signals,

@@ -28,20 +28,14 @@ pub enum AmbientSubcommand {
     Log,
     Trigger,
     Stop,
-    RunVisible,
 }
 
 pub async fn run_ambient_command(cmd: AmbientSubcommand) -> Result<()> {
-    if let AmbientSubcommand::RunVisible = cmd {
-        return run_ambient_visible().await;
-    }
-
     let debug_cmd = match cmd {
         AmbientSubcommand::Status => "ambient:status",
         AmbientSubcommand::Log => "ambient:log",
         AmbientSubcommand::Trigger => "ambient:trigger",
         AmbientSubcommand::Stop => "ambient:stop",
-        AmbientSubcommand::RunVisible => unreachable!(),
     };
 
     super::debug::run_debug_command(debug_cmd, "", None, None, false).await
@@ -92,10 +86,6 @@ pub fn run_session_rename_command(session_ref: &str, name: Option<&str>, clear: 
     }
 
     Ok(())
-}
-
-async fn run_ambient_visible() -> Result<()> {
-    anyhow::bail!("the visible ambient cycle is an interactive-TUI feature and is unavailable in this headless build")
 }
 
 pub enum MemorySubcommand {

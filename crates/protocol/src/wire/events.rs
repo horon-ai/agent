@@ -570,10 +570,6 @@ pub enum ServerEvent {
         servers: Vec<String>,
     },
 
-    /// Client debug command forwarded from debug socket to TUI
-    #[serde(rename = "client_debug_request")]
-    ClientDebugRequest { id: u64, command: String },
-
     /// Session ID assigned
     #[serde(rename = "session")]
     SessionId { session_id: String },
@@ -834,10 +830,6 @@ pub enum ServerEvent {
         /// Human-readable message describing what happened
         message: String,
     },
-
-    /// External transcript text targeted at the active TUI input.
-    #[serde(rename = "transcript")]
-    Transcript { text: String, mode: TranscriptMode },
 
     /// Completed `!cmd` shell execution for a connected remote client.
     #[serde(rename = "input_shell_result")]

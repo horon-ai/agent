@@ -45,7 +45,6 @@ async fn handle_resume_session_allows_attach_from_different_client_instance() ->
                 client_id: "conn_existing".to_string(),
                 session_id: target_session_id.to_string(),
                 client_instance_id: Some("client_instance_existing".to_string()),
-                debug_client_id: Some("debug_existing".to_string()),
                 connected_at: now,
                 last_seen: now,
                 is_processing: false,
@@ -60,7 +59,6 @@ async fn handle_resume_session_allows_attach_from_different_client_instance() ->
                 client_id: "conn_new".to_string(),
                 session_id: temp_session_id.to_string(),
                 client_instance_id: Some("client_instance_new".to_string()),
-                debug_client_id: Some("debug_new".to_string()),
                 connected_at: now,
                 last_seen: now,
                 is_processing: false,
@@ -70,7 +68,6 @@ async fn handle_resume_session_allows_attach_from_different_client_instance() ->
             },
         ),
     ])));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
     let swarm_members = Arc::new(RwLock::new(HashMap::<String, SwarmMember>::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()));
     let file_touch = FileTouchService::new();
@@ -110,7 +107,6 @@ async fn handle_resume_session_allows_attach_from_different_client_instance() ->
         &shutdown_signals,
         &soft_interrupt_queues,
         &client_connections,
-        &client_debug_state,
         &swarm_members,
         &swarms_by_id,
         &file_touch,

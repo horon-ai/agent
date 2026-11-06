@@ -47,7 +47,6 @@ mod debug_server_state;
 mod debug_session_admin;
 mod debug_swarm_read;
 mod debug_swarm_write;
-mod debug_testers;
 mod durable_state;
 pub mod foreground_state;
 mod headless;
@@ -78,7 +77,7 @@ use self::background_tasks::{
     dispatch_swarm_await_completion, dispatch_swarm_batch_progress, dispatch_swarm_output_tail,
     dispatch_swarm_runtime_status, dispatch_swarm_todo_progress, dispatch_swarm_tool_activity, dispatch_ui_activity,
 };
-use self::debug::{ClientConnectionInfo, ClientDebugState};
+use self::debug::ClientConnectionInfo;
 use self::debug_jobs::DebugJob;
 use self::headless::create_headless_session;
 use self::reload::await_reload_signal;
@@ -755,10 +754,6 @@ pub struct Server {
     swarm_state: SwarmState,
     /// Shared context by swarm (swarm_id -> key -> SharedContext)
     shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
-    /// Active and available TUI debug channels (request_id, command)
-    client_debug_state: Arc<RwLock<ClientDebugState>>,
-    /// Channel to receive client debug responses from TUI (request_id, response)
-    client_debug_response_tx: broadcast::Sender<(u64, String)>,
     /// Background debug jobs (async debug commands)
     debug_jobs: Arc<RwLock<HashMap<String, DebugJob>>>,
     /// Channel subscriptions (swarm_id -> channel -> session_ids)
@@ -803,7 +798,6 @@ impl Server {
         crate::provider::set_active_provider(Arc::clone(&provider));
 
         let (event_tx, _) = broadcast::channel(1024);
-        let (client_debug_response_tx, _) = broadcast::channel(64);
 
         // Generate a memorable server name unless the operator configured a
         // stable one for long-lived remote runtimes.
@@ -858,8 +852,6 @@ impl Server {
                 restored_swarm_coordinators,
             ),
             shared_context: Arc::new(RwLock::new(HashMap::new())),
-            client_debug_state: Arc::new(RwLock::new(ClientDebugState::default())),
-            client_debug_response_tx,
             debug_jobs: Arc::new(RwLock::new(HashMap::new())),
             channel_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             channel_subscriptions_by_session: Arc::new(RwLock::new(HashMap::new())),

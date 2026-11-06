@@ -27,6 +27,5 @@ pub(super) fn map_ambient_subcommand(subcmd: AmbientCommand) -> commands::Ambien
         AmbientCommand::Log => commands::AmbientSubcommand::Log,
         AmbientCommand::Trigger => commands::AmbientSubcommand::Trigger,
         AmbientCommand::Stop => commands::AmbientSubcommand::Stop,
-        AmbientCommand::RunVisible => commands::AmbientSubcommand::RunVisible,
     }
 }

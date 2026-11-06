@@ -31,9 +31,6 @@ pub fn load_base_system_prompt(working_dir: Option<&Path>) -> String {
     DEFAULT_SYSTEM_PROMPT.to_string()
 }
 
-/// Prompt guidance for the optional Mermaid rendering capability.
-pub const MERMAID_PROMPT: &str = "# Mermaid\n\nRender fenced `mermaid` blocks inline.";
-
 /// Tool-selection hint for sessions that can call `todo`.
 ///
 /// Appended by the agent's prompt builder only when the session's tool
@@ -41,31 +38,21 @@ pub const MERMAID_PROMPT: &str = "# Mermaid\n\nRender fenced `mermaid` blocks in
 pub const TODO_HINT: &str = "Track multi-step work with the todo tool; editors show it as the plan.";
 
 /// Harness capabilities that conditionally contribute prompt modules.
-///
-/// The default keeps every optional module off: the Mermaid guidance stays out of
-/// the prompt unless the operator turns `[features] mermaid` or
-/// `HORON_AGENT_ENABLE_MERMAID` on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PromptCapabilities {
-    pub mermaid: bool,
     pub foreign_rules: bool,
 }
 
 impl PromptCapabilities {
     fn current() -> Self {
         Self {
-            mermaid: crate::config::config().features.mermaid,
             foreign_rules: crate::config::config().features.foreign_rules,
         }
     }
 }
 
-fn base_system_prompt_parts(capabilities: PromptCapabilities, working_dir: Option<&Path>) -> Vec<String> {
-    let mut parts = vec![load_base_system_prompt(working_dir)];
-    if capabilities.mermaid {
-        parts.push(MERMAID_PROMPT.to_string());
-    }
-    parts
+fn base_system_prompt_parts(working_dir: Option<&Path>) -> Vec<String> {
+    vec![load_base_system_prompt(working_dir)]
 }
 
 /// Imported foreign agent rules (`.cursorrules`, Copilot instructions, ...),
@@ -653,7 +640,7 @@ pub fn build_system_prompt_full_with_capabilities(
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
 ) -> (String, ContextInfo) {
-    let mut parts = base_system_prompt_parts(capabilities, working_dir);
+    let mut parts = base_system_prompt_parts(working_dir);
     let mut info = ContextInfo {
         system_prompt_chars: parts.join("\n\n").len(),
         ..Default::default()
@@ -777,7 +764,7 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     capabilities: PromptCapabilities,
     agents_md: (Option<String>, ContextInfo),
 ) -> (SplitSystemPrompt, ContextInfo) {
-    let mut static_parts = base_system_prompt_parts(capabilities, working_dir);
+    let mut static_parts = base_system_prompt_parts(working_dir);
     let mut dynamic_parts = Vec::new();
     let mut info = ContextInfo {
         system_prompt_chars: static_parts.join("\n\n").len(),

@@ -143,8 +143,6 @@ impl Fixture {
             &FileTouchService::new(),
             &Arc::new(RwLock::new(HashMap::new())),
             &Arc::new(RwLock::new(HashMap::new())),
-            &Arc::new(RwLock::new(ClientDebugState::default())),
-            "debug-original",
             &self.connections,
             "original",
             &Arc::new(RwLock::new(HashMap::new())),
@@ -190,7 +188,6 @@ fn connection(name: &str, id: &str) -> ClientConnectionInfo {
         client_id: name.into(),
         session_id: id.into(),
         client_instance_id: None,
-        debug_client_id: None,
         connected_at: Instant::now(),
         last_seen: Instant::now(),
         is_processing: false,
@@ -266,15 +263,7 @@ async fn old_grace_cannot_remove_successor_that_already_detached_again() {
     tokio::join!(fixture.cleanup(false, Duration::from_millis(100)), async {
         fixture.wait_for_detach().await;
         fixture.attach_successor().await;
-        detach_client_attachment(
-            &fixture.id,
-            "successor",
-            "successor-debug",
-            &fixture.connections,
-            &Arc::new(RwLock::new(ClientDebugState::default())),
-            &fixture.members,
-        )
-        .await;
+        detach_client_attachment(&fixture.id, "successor", &fixture.connections, &fixture.members).await;
     });
     assert!(fixture.connections.read().await.is_empty());
     assert!(

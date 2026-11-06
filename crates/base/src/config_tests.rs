@@ -1,9 +1,8 @@
 use super::{
-    AmbientConfig, ApprovalMode, AskPolicy, BashInterceptorMode, BashPatternApproval, BashPatternRule, BashPtyMode,
-    CORE_TOOL_PROFILE, Config, DiffDisplayMode, DisplayConfig, ForeignRulesMode, HookCommands, LatexRenderingMode,
-    LoadMode, McpToolsMode, ProviderConfig, SecretsMode, SessionPickerResumeAction, StreamRuleConfig,
-    StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, ToolConfig, TurnRecoveryMode, config_env_fingerprint,
-    populate_context_limits_from_config_ref,
+    ApprovalMode, AskPolicy, BashInterceptorMode, BashPatternApproval, BashPatternRule, BashPtyMode, CORE_TOOL_PROFILE,
+    Config, DisplayConfig, ForeignRulesMode, HookCommands, LoadMode, McpToolsMode, ProviderConfig, SecretsMode,
+    StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, ToolConfig, TurnRecoveryMode,
+    config_env_fingerprint, populate_context_limits_from_config_ref,
 };
 use std::ffi::OsString;
 use std::path::Path;
@@ -154,27 +153,6 @@ fn swarm_max_concurrent_agents_defaults_to_safe_live_worker_budget() {
     // Keep enough parallelism for deep fan-out without allowing recursive ad hoc
     // spawns to grow until the 1000-member hard cap exhausts machine memory.
     assert_eq!(Config::default().agents.swarm_max_concurrent_agents, 32);
-}
-
-#[test]
-fn mermaid_feature_defaults_off_and_parses_true() {
-    assert!(!Config::default().features.mermaid);
-
-    let cfg: Config = toml::from_str("[features]\nmermaid = true\n").expect("features.mermaid should parse");
-    assert!(cfg.features.mermaid);
-}
-
-#[test]
-fn mermaid_environment_override_uses_standard_boolean_values() {
-    let _guard = crate::storage::lock_test_env();
-    let previous = std::env::var_os("HORON_AGENT_ENABLE_MERMAID");
-    crate::env::set_var("HORON_AGENT_ENABLE_MERMAID", "off");
-
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-    assert!(!cfg.features.mermaid);
-
-    restore_env_var("HORON_AGENT_ENABLE_MERMAID", previous);
 }
 
 #[test]
@@ -331,7 +309,7 @@ browser = "essential"
     assert_eq!(cfg.tools.load_mode.get("browser"), Some(&LoadMode::Essential));
 
     // An unrelated key must not disturb the new defaults.
-    let other: Config = toml::from_str("[features]\nmermaid = false\n").expect("an unrelated key should parse");
+    let other: Config = toml::from_str("[features]\nswarm = false\n").expect("an unrelated key should parse");
     assert!(other.features.crash_bundles);
     assert!(!other.features.stream_rules);
     assert_eq!(other.tools.bash_pty, BashPtyMode::Auto);
@@ -421,24 +399,9 @@ fn parallel_tools_and_loop_guard_feature_defaults_and_parse() {
     assert!(!cfg.features.loop_guard);
 
     // An unrelated [features] key must not disturb either toggle's default.
-    let other: Config =
-        toml::from_str("[features]\nmermaid = false\n").expect("an unrelated features key should parse");
+    let other: Config = toml::from_str("[features]\nswarm = false\n").expect("an unrelated features key should parse");
     assert!(other.features.parallel_tools);
     assert!(other.features.loop_guard);
-}
-
-#[test]
-fn auto_poke_toggle_key_defaults_parses_and_reports_disabled() {
-    assert_eq!(Config::default().keybindings.auto_poke_toggle, "ctrl+p");
-
-    let remapped: Config = toml::from_str("[keybindings]\nauto_poke_toggle = \"alt+p\"\n")
-        .expect("keybindings.auto_poke_toggle should parse");
-    assert_eq!(remapped.keybindings.auto_poke_toggle, "alt+p");
-
-    let disabled: Config =
-        toml::from_str("[keybindings]\nauto_poke_toggle = \"\"\n").expect("an empty auto-poke toggle should parse");
-    assert!(disabled.keybindings.auto_poke_toggle.is_empty());
-    assert!(disabled.display_string().contains("- Auto-poke toggle: `disabled`"));
 }
 
 #[test]
@@ -452,39 +415,6 @@ fn auto_poke_environment_override_uses_standard_boolean_values() {
     assert!(!cfg.features.auto_poke);
 
     restore_env_var("HORON_AGENT_AUTO_POKE", previous);
-}
-
-#[test]
-fn latex_rendering_defaults_to_image_and_parses_all_modes() {
-    assert_eq!(Config::default().display.latex_rendering, LatexRenderingMode::Image);
-    for (value, expected) in [
-        ("none", LatexRenderingMode::None),
-        ("unicode", LatexRenderingMode::Unicode),
-        ("image", LatexRenderingMode::Image),
-    ] {
-        let cfg: Config = toml::from_str(&format!("[display]\nlatex_rendering = \"{value}\"\n"))
-            .expect("latex rendering mode should parse");
-        assert_eq!(cfg.display.latex_rendering, expected);
-        assert_eq!(LatexRenderingMode::parse(expected.as_str()), Some(expected));
-    }
-    // An unknown mode degrades to the default instead of failing the whole
-    // config parse, which used to silently discard every other setting in
-    // config.toml (issue #689).
-    let cfg: Config = toml::from_str("[display]\ncentered = true\nlatex_rendering = \"canvas\"\n")
-        .expect("an unknown latex mode must not invalidate the config");
-    assert_eq!(cfg.display.latex_rendering, LatexRenderingMode::Image);
-    assert!(cfg.display.centered, "unrelated settings must survive");
-}
-
-#[test]
-fn latex_rendering_environment_override_accepts_aliases() {
-    let _guard = crate::storage::lock_test_env();
-    let previous = std::env::var_os("HORON_AGENT_LATEX_RENDERING");
-    crate::env::set_var("HORON_AGENT_LATEX_RENDERING", "png");
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.display.latex_rendering, LatexRenderingMode::Image);
-    restore_env_var("HORON_AGENT_LATEX_RENDERING", previous);
 }
 
 #[test]
@@ -1159,22 +1089,6 @@ fn test_generated_default_config_has_expected_user_defaults() {
         "generated default config must not document the test-only VCR_* variables"
     );
 
-    // Effort keys come from the per-platform keybinding registry; the template
-    // placeholders must always be substituted.
-    assert!(
-        !content.contains("@EFFORT_INCREASE@") && !content.contains("@EFFORT_DECREASE@"),
-        "generated default config should substitute effort key placeholders"
-    );
-    let expected_increase = if cfg!(target_os = "macos") {
-        "effort_increase = \"cmd+right\""
-    } else {
-        "effort_increase = \"alt+right\""
-    };
-    assert!(
-        content.contains(expected_increase),
-        "generated default config should use the platform effort_increase default"
-    );
-
     // The generated file must always be valid TOML for the current Config schema.
     let parsed: Config = toml::from_str(&content).expect("generated default config should parse as Config");
     assert_eq!(parsed.agents.swarm_spawn_mode, SwarmSpawnMode::Inline);
@@ -1205,15 +1119,15 @@ fn global_config_cache_reloads_after_manual_file_edit() {
 
     let path = Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config parent");
-    std::fs::write(&path, "[display]\ncentered = false\n").expect("write initial config");
+    std::fs::write(&path, "[display]\nemoji = false\n").expect("write initial config");
 
-    assert!(!crate::config::config().display.centered);
+    assert!(!crate::config::config().display.emoji);
 
     // Different length as well as mtime so the metadata fingerprint notices the
     // manual edit even on filesystems with coarse timestamp resolution.
-    std::fs::write(&path, "[display]\ncentered = true\n# edited\n").expect("edit config");
+    std::fs::write(&path, "[display]\nemoji = true\n# edited\n").expect("edit config");
 
-    assert!(crate::config::config().display.centered);
+    assert!(crate::config::config().display.emoji);
 
     restore_env_var("HORON_AGENT_HOME", prev_home);
     Config::invalidate_cache();
@@ -1228,13 +1142,13 @@ fn config_save_invalidates_global_config_cache() {
     Config::invalidate_cache();
 
     let mut cfg = Config::default();
-    cfg.display.centered = false;
+    cfg.display.emoji = false;
     cfg.save().expect("save initial config");
-    assert!(!crate::config::config().display.centered);
+    assert!(!crate::config::config().display.emoji);
 
-    cfg.display.centered = true;
+    cfg.display.emoji = true;
     cfg.save().expect("save updated config");
-    assert!(crate::config::config().display.centered);
+    assert!(crate::config::config().display.emoji);
 
     restore_env_var("HORON_AGENT_HOME", prev_home);
     Config::invalidate_cache();
@@ -1245,23 +1159,23 @@ fn config_env_fingerprint_ignores_runtime_only_horon_agent_vars() {
     let _guard = crate::storage::lock_test_env();
     let prev_runtime_provider = std::env::var_os("HORON_AGENT_RUNTIME_PROVIDER");
     let prev_active_provider = std::env::var_os("HORON_AGENT_ACTIVE_PROVIDER");
-    let prev_display_centered = std::env::var_os("HORON_AGENT_DISPLAY_CENTERED");
+    let prev_show_thinking = std::env::var_os("HORON_AGENT_SHOW_THINKING");
 
     crate::env::remove_var("HORON_AGENT_RUNTIME_PROVIDER");
     crate::env::remove_var("HORON_AGENT_ACTIVE_PROVIDER");
-    crate::env::remove_var("HORON_AGENT_DISPLAY_CENTERED");
+    crate::env::remove_var("HORON_AGENT_SHOW_THINKING");
     let baseline = config_env_fingerprint();
 
     crate::env::set_var("HORON_AGENT_RUNTIME_PROVIDER", "openai");
     crate::env::set_var("HORON_AGENT_ACTIVE_PROVIDER", "openai");
     assert_eq!(baseline, config_env_fingerprint());
 
-    crate::env::set_var("HORON_AGENT_DISPLAY_CENTERED", "1");
+    crate::env::set_var("HORON_AGENT_SHOW_THINKING", "1");
     assert_ne!(baseline, config_env_fingerprint());
 
     restore_env_var("HORON_AGENT_RUNTIME_PROVIDER", prev_runtime_provider);
     restore_env_var("HORON_AGENT_ACTIVE_PROVIDER", prev_active_provider);
-    restore_env_var("HORON_AGENT_DISPLAY_CENTERED", prev_display_centered);
+    restore_env_var("HORON_AGENT_SHOW_THINKING", prev_show_thinking);
 }
 
 #[test]
@@ -1406,21 +1320,6 @@ fn tool_switches_load_from_a_real_config_file() {
 }
 
 #[test]
-fn test_ambient_visible_defaults_to_true() {
-    assert!(AmbientConfig::default().visible);
-}
-
-#[test]
-fn test_display_auto_server_reload_defaults_to_true() {
-    assert!(DisplayConfig::default().auto_server_reload);
-}
-
-#[test]
-fn test_display_alignment_defaults_to_left() {
-    assert!(!DisplayConfig::default().centered);
-}
-
-#[test]
 fn display_emoji_defaults_on_and_deserializes_off() {
     assert!(DisplayConfig::default().emoji);
     let cfg: Config = toml::from_str("[display]\nemoji = false\n").expect("config parses");
@@ -1454,73 +1353,6 @@ fn test_provider_failover_disabled_aliases_parse_as_manual() {
 }
 
 #[test]
-fn test_native_scrollbars_default_to_enabled() {
-    let display = DisplayConfig::default();
-    assert!(display.native_scrollbars.chat);
-}
-
-#[test]
-fn test_copy_badge_alt_label_defaults_to_auto_and_deserializes() {
-    assert!(DisplayConfig::default().copy_badge_alt_label.is_empty());
-
-    let cfg: Config = toml::from_str(
-        r#"
-        [display]
-        copy_badge_alt_label = "Option"
-        "#,
-    )
-    .expect("config should deserialize");
-
-    assert_eq!(cfg.display.copy_badge_alt_label, "Option");
-}
-
-#[test]
-fn test_session_picker_resume_action_defaults_to_current_terminal() {
-    assert_eq!(
-        Config::default().keybindings.session_picker_enter,
-        SessionPickerResumeAction::CurrentTerminal
-    );
-    assert_eq!(
-        SessionPickerResumeAction::CurrentTerminal.alternate(),
-        SessionPickerResumeAction::NewTerminal
-    );
-}
-
-#[test]
-fn test_session_picker_resume_action_deserializes_kebab_case() {
-    let cfg: Config = toml::from_str(
-        r#"
-        [keybindings]
-        session_picker_enter = "current-terminal"
-        "#,
-    )
-    .expect("config should deserialize");
-
-    assert_eq!(
-        cfg.keybindings.session_picker_enter,
-        SessionPickerResumeAction::CurrentTerminal
-    );
-}
-
-#[test]
-fn test_env_override_auto_server_reload() {
-    let _guard = crate::storage::lock_test_env();
-    let prev = std::env::var_os("HORON_AGENT_AUTO_SERVER_RELOAD");
-    crate::env::set_var("HORON_AGENT_AUTO_SERVER_RELOAD", "false");
-
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-
-    assert!(!cfg.display.auto_server_reload);
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_AUTO_SERVER_RELOAD", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_AUTO_SERVER_RELOAD");
-    }
-}
-
-#[test]
 fn no_emoji_environment_override_disables_emoji() {
     let _guard = crate::storage::lock_test_env();
     let prev = std::env::var_os("HORON_AGENT_NO_EMOJI");
@@ -1535,67 +1367,6 @@ fn no_emoji_environment_override_disables_emoji() {
     assert!(cfg.display.emoji);
 
     restore_env_var("HORON_AGENT_NO_EMOJI", prev);
-}
-
-#[test]
-fn test_env_override_native_scrollbars() {
-    let _guard = crate::storage::lock_test_env();
-    let prev_chat = std::env::var_os("HORON_AGENT_CHAT_NATIVE_SCROLLBAR");
-    crate::env::set_var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR", "true");
-
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-
-    assert!(cfg.display.native_scrollbars.chat);
-
-    if let Some(prev) = prev_chat {
-        crate::env::set_var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR");
-    }
-}
-
-#[test]
-fn test_removed_pinned_diff_mode_falls_back_inline() {
-    let cfg: Config = toml::from_str("[display]\ndiff_mode = 'pinned'\ndiff_line_wrap = false\ncentered = true\n")
-        .expect("legacy pinned diff settings must not invalidate the config");
-    assert_eq!(cfg.display.diff_mode, DiffDisplayMode::Inline);
-    assert!(cfg.display.centered, "unrelated settings must survive");
-}
-
-#[test]
-fn test_env_override_removed_pinned_diff_mode_is_ignored() {
-    let _guard = crate::storage::lock_test_env();
-    let prev = std::env::var_os("HORON_AGENT_DIFF_MODE");
-    for removed in ["pinned", "pin"] {
-        crate::env::set_var("HORON_AGENT_DIFF_MODE", removed);
-        let mut cfg = Config::default();
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.display.diff_mode, DiffDisplayMode::Inline);
-
-        cfg.display.diff_mode = DiffDisplayMode::File;
-        cfg.apply_env_overrides();
-        assert_eq!(cfg.display.diff_mode, DiffDisplayMode::File);
-    }
-    restore_env_var("HORON_AGENT_DIFF_MODE", prev);
-}
-
-#[test]
-fn test_env_override_diff_mode_full_inline() {
-    let _guard = crate::storage::lock_test_env();
-    let prev = std::env::var_os("HORON_AGENT_DIFF_MODE");
-    crate::env::set_var("HORON_AGENT_DIFF_MODE", "full-inline");
-
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-
-    assert_eq!(cfg.display.diff_mode, DiffDisplayMode::FullInline);
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_DIFF_MODE", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_DIFF_MODE");
-    }
 }
 
 #[test]
@@ -1669,11 +1440,11 @@ fn unknown_update_channel_value_falls_back_to_stable_instead_of_failing_parse() 
 
     // Other settings in the same config must survive the fallback.
     let cfg: Config =
-        toml::from_str("[features]\nupdate_channel = \"manual\"\nmemory = false\n\n[display]\ncentered = true\n")
+        toml::from_str("[features]\nupdate_channel = \"manual\"\nmemory = false\n\n[display]\nemoji = true\n")
             .expect("config with unknown update_channel should parse");
     assert_eq!(cfg.features.update_channel, super::UpdateChannel::Stable);
     assert!(!cfg.features.memory);
-    assert!(cfg.display.centered);
+    assert!(cfg.display.emoji);
 }
 
 #[test]
@@ -1816,7 +1587,7 @@ fn migrate_legacy_swarm_spawn_mode_flips_visible_to_inline_once() {
 
     let config_path = dir.path().join("config.toml");
     let original =
-        "[display]\ncentered = true\n\n[agents]\nswarm_spawn_mode = \"visible\"\nswarm_max_concurrent_agents = 32\n";
+        "[display]\nemoji = true\n\n[agents]\nswarm_spawn_mode = \"visible\"\nswarm_max_concurrent_agents = 32\n";
     std::fs::write(&config_path, original).expect("write config");
 
     assert!(
@@ -1829,7 +1600,7 @@ fn migrate_legacy_swarm_spawn_mode_flips_visible_to_inline_once() {
         "spawn mode should be flipped to inline: {migrated}"
     );
     // The rest of the file is untouched.
-    assert!(migrated.contains("centered = true"));
+    assert!(migrated.contains("emoji = true"));
     assert!(migrated.contains("swarm_max_concurrent_agents = 32"));
     let parsed: Config = toml::from_str(&migrated).expect("migrated config parses");
     assert_eq!(parsed.agents.swarm_spawn_mode, SwarmSpawnMode::Inline);
@@ -1873,73 +1644,6 @@ fn migrate_legacy_swarm_spawn_mode_noops_without_visible_value() {
     restore_env_var("HORON_AGENT_HOME", prev_home);
 }
 
-#[test]
-fn migrate_idle_animation_off_flips_true_to_false_once() {
-    let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    let config_path = dir.path().join("config.toml");
-    let original = "[display]\ncentered = true\nidle_animation = true\nanimation_fps = 60\n";
-    std::fs::write(&config_path, original).expect("write config");
-
-    assert!(
-        Config::migrate_idle_animation_off_once(),
-        "migration should rewrite an enabled idle animation"
-    );
-    let migrated = std::fs::read_to_string(&config_path).expect("read config");
-    assert!(
-        migrated.contains("idle_animation = false"),
-        "idle animation should be flipped off: {migrated}"
-    );
-    // The rest of the file is untouched.
-    assert!(migrated.contains("centered = true"));
-    assert!(migrated.contains("animation_fps = 60"));
-    let parsed: Config = toml::from_str(&migrated).expect("migrated config parses");
-    assert!(!parsed.display.idle_animation);
-
-    // Marker written: a later explicit re-enable survives future launches.
-    std::fs::write(&config_path, "[display]\nidle_animation = true\n").expect("write config");
-    assert!(
-        !Config::migrate_idle_animation_off_once(),
-        "migration must run at most once"
-    );
-    let content = std::fs::read_to_string(&config_path).expect("read config");
-    assert!(content.contains("idle_animation = true"));
-
-    restore_env_var("HORON_AGENT_HOME", prev_home);
-}
-
-#[test]
-fn migrate_idle_animation_off_noops_without_enabled_value() {
-    let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    // No config file at all: no migration, but the marker is written.
-    assert!(!Config::migrate_idle_animation_off_once());
-    assert!(
-        dir.path().join("migrations").join("idle-animation-off").exists(),
-        "marker should be written even when there is nothing to migrate"
-    );
-
-    // Already-false values are never rewritten (fresh home to bypass marker).
-    let dir2 = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir2.path());
-    let config_path = dir2.path().join("config.toml");
-    let original = "[display]\nidle_animation = false\n";
-    std::fs::write(&config_path, original).expect("write config");
-    assert!(!Config::migrate_idle_animation_off_once());
-    let content = std::fs::read_to_string(&config_path).expect("read config");
-    assert_eq!(content, original);
-
-    restore_env_var("HORON_AGENT_HOME", prev_home);
-}
-
-/// Explicit opt-outs, including the shape written by older versions, must
-/// survive real config loads, saves, and unrelated preference updates.
 #[test]
 fn sponsors_optout_survives_config_save_and_reload() {
     let _guard = crate::storage::lock_test_env();
@@ -2021,8 +1725,6 @@ fn swarm_root_effort_config_defaults_and_independent_modes() {
     assert_eq!(cfg.agents.root_effort_for_swarm(false), "low");
     assert_eq!(cfg.agents.root_effort_for_swarm(true), "high");
     assert_eq!(cfg.agents.swarm_effort.as_deref(), Some("medium"));
-    assert!(cfg.display_string().contains("Swarm root effort: low"));
-    assert!(cfg.display_string().contains("Deep swarm root effort: high"));
     let serialized = toml::to_string(&cfg).unwrap();
     let round_trip: Config = toml::from_str(&serialized).unwrap();
     assert_eq!(round_trip.agents.root_effort_for_swarm(true), "high");
@@ -2114,7 +1816,7 @@ fn cli_config_save_round_trips_desktop_tables() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "[display]\ncentered = false\n\n[desktop.voice]\nglobal_hold = true\n\
+        "[display]\nemoji = false\n\n[desktop.voice]\nglobal_hold = true\n\
          global_devices = [\"/dev/input/event3\"]\n\n[desktop.appearance]\ntheme = \"warm-neutral\"\n",
     )
     .unwrap();
@@ -2131,7 +1833,7 @@ fn cli_config_save_round_trips_desktop_tables() {
     assert_eq!(desktop["appearance"]["theme"].as_str(), Some("warm-neutral"));
 
     // Configs without Desktop tables stay free of an empty [desktop] header.
-    std::fs::write(&path, "[display]\ncentered = false\n").unwrap();
+    std::fs::write(&path, "[display]\nemoji = false\n").unwrap();
     Config::set_default_model(Some("gpt-test"), None).expect("save");
     assert!(!std::fs::read_to_string(&path).unwrap().contains("[desktop"));
 
@@ -2142,12 +1844,12 @@ fn cli_config_save_round_trips_desktop_tables() {
 /// `display.overscroll_status` was removed; configs that still set it (users
 /// had `"on"` written by older versions) must load without losing settings.
 #[test]
-fn removed_overscroll_status_key_still_loads_config() {
-    let config =
-        toml::from_str::<Config>("[display]\ncentered = true\noverscroll_status = \"on\"\nusage_display = \"used\"\n")
-            .expect("legacy key must not break config");
-    assert!(config.display.centered);
-    assert_eq!(config.display.usage_display, "used");
+fn removed_display_keys_still_load_config() {
+    let config = toml::from_str::<Config>(
+        "[display]\nemoji = true\noverscroll_status = \"on\"\nusage_display = \"used\"\ndiff_mode = \"inline\"\n",
+    )
+    .expect("legacy keys must not break config");
+    assert!(config.display.emoji);
 }
 
 #[test]
