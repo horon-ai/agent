@@ -327,6 +327,7 @@ fn retry_after(response: &Response) -> Option<Duration> {
 
 fn client_builder() -> reqwest::ClientBuilder {
     Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(25))
         .redirect(reqwest::redirect::Policy::none())

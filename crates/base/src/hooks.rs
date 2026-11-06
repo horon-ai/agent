@@ -333,9 +333,9 @@ pub fn dispatch_observer(event: HookEvent) {
                 cmd.stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null());
-                match crate::platform::spawn_detached_without_console_window(&mut cmd) {
+                match horon_agent_platform::spawn_detached_without_console_window(&mut cmd) {
                     Ok(child) => {
-                        crate::platform::reap_detached(child);
+                        horon_agent_platform::reap_detached(child);
                         crate::logging::debug(&format!(
                             "Hook '{event_name}' dispatched to '{command_line}' (session={:?})",
                             event.session_id

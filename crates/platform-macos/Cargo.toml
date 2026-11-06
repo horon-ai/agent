@@ -10,6 +10,7 @@ name = "horon_agent_platform_macos"
 path = "src/lib.rs"
 
 [dependencies]
+horon-agent-logging = { path = "../logging" }
 horon-agent-platform-api = { path = "../platform-api" }
 libc = "0.2"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }

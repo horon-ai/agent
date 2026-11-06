@@ -485,6 +485,7 @@ fn custom_request(
 async fn search_custom(config: &CustomWebSearchConfig, query: &str, count: usize) -> Result<Vec<SearchResult>> {
     // Never forward user-configured credentials to redirect destinations.
     let client = reqwest::Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .build()

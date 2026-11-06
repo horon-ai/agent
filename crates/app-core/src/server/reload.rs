@@ -186,7 +186,7 @@ pub(super) async fn await_reload_signal(
                     cmd.env("HORON_AGENT_RELOAD_AUTH_STATUS", auth_status);
                 }
                 prepare_server_exec(&mut cmd, &socket);
-                let err = crate::platform::replace_process(&mut cmd);
+                let err = horon_agent_platform::replace_process(&mut cmd);
                 crate::server::write_reload_state(
                     &signal.request_id,
                     &signal.hash,

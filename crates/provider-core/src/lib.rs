@@ -5,6 +5,7 @@ pub mod catalog_refresh;
 pub mod failover;
 pub mod fallback_pick;
 pub mod fingerprint;
+mod http_tls;
 pub mod model_id;
 pub mod model_names;
 pub mod models;
@@ -821,7 +822,7 @@ pub fn shared_http_client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            http_tls::with_platform_tls(reqwest::Client::builder())
                 .user_agent(HORON_AGENT_USER_AGENT)
                 .connect_timeout(Duration::from_secs(15))
                 .tcp_keepalive(Some(Duration::from_secs(30)))
@@ -838,18 +839,12 @@ pub fn shared_http_client() -> reqwest::Client {
                 .build()
                 .unwrap_or_else(|err| {
                     eprintln!("horon-agent: failed to build shared provider HTTP client: {err}");
-                    match reqwest::Client::builder()
-                        .user_agent(HORON_AGENT_USER_AGENT)
-                        .build()
-                    {
-                        Ok(client) => client,
-                        Err(fallback_err) => {
-                            eprintln!(
-                                "horon-agent: failed to build fallback provider HTTP client: {fallback_err}"
-                            );
-                            reqwest::Client::new()
-                        }
-                    }
+                    let builder = http_tls::with_platform_tls(reqwest::Client::builder())
+                        .user_agent(HORON_AGENT_USER_AGENT);
+                    builder.build().unwrap_or_else(|fallback_err| {
+                        eprintln!("horon-agent: failed to build fallback provider HTTP client: {fallback_err}");
+                        http_tls::fallback_client()
+                    })
                 })
         })
         .clone()
@@ -865,7 +860,7 @@ pub fn shared_http_client() -> reqwest::Client {
 /// that makes transport-fault retries actually succeed). Building a client
 /// costs ~10ms, which is fine on a retry path that already backs off >=1s.
 pub fn fresh_transport_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    http_tls::with_platform_tls(reqwest::Client::builder())
         .user_agent(HORON_AGENT_USER_AGENT)
         .connect_timeout(Duration::from_secs(15))
         .tcp_keepalive(Some(Duration::from_secs(30)))

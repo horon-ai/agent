@@ -746,13 +746,13 @@ impl Drop for ProcessGroupKillGuard {
             let spawned = std::thread::Builder::new()
                 .name(format!("horon-agent-term-{pid}"))
                 .spawn(move || {
-                    crate::platform::terminate_process_group(pid, Duration::from_secs(1));
+                    horon_agent_platform::terminate_process_group(pid, Duration::from_secs(1));
                 });
             if let Err(err) = spawned {
                 crate::logging::warn(&format!(
                     "bash process-group guard could not start a terminator for pid {pid}: {err}"
                 ));
-                let _ = crate::platform::signal_detached_process_group(pid, libc::SIGKILL);
+                let _ = horon_agent_platform::signal_detached_process_group(pid, libc::SIGKILL);
             }
         }
     }
@@ -2277,7 +2277,7 @@ impl BashTool {
             cmd.current_dir(dir);
         }
 
-        let mut child = crate::platform::spawn_detached(&mut cmd)?;
+        let mut child = horon_agent_platform::spawn_detached(&mut cmd)?;
         let pid = child.id();
         let shutdown_signal = ctx.graceful_shutdown_signal.clone();
 
@@ -2529,7 +2529,7 @@ impl BashTool {
                                             // Give the group a second to run its
                                             // TERM handler, then take it down.
                                             let _ = tokio::task::spawn_blocking(move || {
-                                                crate::platform::terminate_process_group(
+                                                horon_agent_platform::terminate_process_group(
                                                     pid,
                                                     Duration::from_secs(1),
                                                 )

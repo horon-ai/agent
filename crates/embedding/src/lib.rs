@@ -407,6 +407,7 @@ fn download_model(model_dir: &Path) -> Result<()> {
 
 fn download_model_blocking(model_dir: &Path) -> Result<()> {
     let client = reqwest::blocking::Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .user_agent(concat!("horon-agent-embedding/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(300))
         .build()?;

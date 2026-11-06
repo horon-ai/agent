@@ -15,14 +15,14 @@ use crate::storage::{active_pids_dir, register_active_pid, unregister_active_pid
 pub struct StreamingGuard {
     _marker: crate::storage::StreamingGuard,
     #[allow(dead_code)]
-    sleep_assertion: crate::platform::PowerAssertion,
+    sleep_assertion: horon_agent_platform::PowerAssertion,
 }
 
 impl StreamingGuard {
     pub fn new(session_id: impl Into<String>) -> Self {
         Self {
             _marker: crate::storage::StreamingGuard::new(session_id),
-            sleep_assertion: crate::platform::PowerAssertion::prevent_user_idle_system_sleep(
+            sleep_assertion: horon_agent_platform::PowerAssertion::prevent_user_idle_system_sleep(
                 "HoronAgent streaming model response",
             ),
         }

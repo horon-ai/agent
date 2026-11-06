@@ -214,7 +214,7 @@ impl Drop for AmbientLock {
 }
 
 fn is_pid_alive(pid: u32) -> bool {
-    crate::platform::is_process_running(pid)
+    horon_agent_platform::is_process_running(pid)
 }
 
 // ---------------------------------------------------------------------------

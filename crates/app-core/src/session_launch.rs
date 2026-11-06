@@ -154,7 +154,7 @@ pub fn focus_session_via_hook_with_env(
         cmd.env(key, value);
         cmd.env(format!("HORON_AGENT_CLIENT_{key}"), value);
     }
-    match crate::platform::spawn_detached(&mut cmd) {
+    match horon_agent_platform::spawn_detached(&mut cmd) {
         Ok(_) => true,
         Err(error) => {
             crate::logging::warn(&format!(
@@ -201,7 +201,7 @@ fn focus_title_best_effort(title: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    let _ = crate::platform::spawn_detached(&mut cmd);
+    let _ = horon_agent_platform::spawn_detached(&mut cmd);
 }
 
 #[cfg(any(not(unix), target_os = "macos"))]
@@ -383,7 +383,7 @@ pub fn spawn_resume_in_new_terminal_with_context(
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
-                crate::platform::spawn_detached(&mut cmd)
+                horon_agent_platform::spawn_detached(&mut cmd)
             }
             "wt" | "windows-terminal" => {
                 if !wt_available {
@@ -397,7 +397,7 @@ pub fn spawn_resume_in_new_terminal_with_context(
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
-                crate::platform::spawn_detached(&mut cmd)
+                horon_agent_platform::spawn_detached(&mut cmd)
             }
             "alacritty" => {
                 if !alacritty_available {
@@ -411,7 +411,7 @@ pub fn spawn_resume_in_new_terminal_with_context(
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
-                crate::platform::spawn_detached(&mut cmd)
+                horon_agent_platform::spawn_detached(&mut cmd)
             }
             _ => continue,
         };

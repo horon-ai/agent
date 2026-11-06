@@ -85,7 +85,7 @@ fn restore(path: &Path, previous: &Previous) -> Result<()> {
             }
             let parent = path.parent().context("activation target has no parent")?;
             let temporary = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
-            crate::platform::atomic_symlink_swap(target, path, &temporary)?;
+            horon_agent_platform::atomic_symlink_swap(target, path, &temporary)?;
         }
         Previous::File {
             backup,

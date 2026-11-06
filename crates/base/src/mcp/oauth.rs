@@ -580,6 +580,7 @@ fn http_for(endpoint: &url::Url) -> Result<reqwest::Client> {
         return Ok(client.clone());
     }
     let client = reqwest::Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .redirect(reqwest::redirect::Policy::none())
         .timeout(DISCOVERY_TIMEOUT)
         .build()
@@ -593,6 +594,7 @@ fn http() -> Result<reqwest::Client> {
         return Ok(client.clone());
     }
     let client = reqwest::Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .redirect(reqwest::redirect::Policy::none())
         // Never proxy plaintext loopback credentials via environment proxies.
         .no_proxy()

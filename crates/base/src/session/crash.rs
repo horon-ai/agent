@@ -439,7 +439,7 @@ fn find_crashed_legacy_scan() -> Vec<(String, String)> {
 }
 
 pub(super) fn is_pid_running(pid: u32) -> bool {
-    crate::platform::is_process_running(pid)
+    horon_agent_platform::is_process_running(pid)
 }
 
 // ---------------------------------------------------------------------------

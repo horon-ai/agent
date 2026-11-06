@@ -308,6 +308,7 @@ fn updater_client() -> Result<&'static reqwest::blocking::Client> {
         return Ok(client);
     }
     let built = reqwest::blocking::Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
         .user_agent("horon-agent-updater")
         .build()?;

@@ -335,7 +335,7 @@ pub fn sweep_orphans(working_dir: &str) -> Result<Vec<String>> {
             let Some(marker) = read_owner_marker(&checkout) else {
                 continue;
             };
-            if crate::platform::is_process_running(marker.pid) {
+            if horon_agent_platform::is_process_running(marker.pid) {
                 continue;
             }
             if !checkout_is_clean(&checkout) || !has_no_new_commits(&checkout, &marker.base_head) {

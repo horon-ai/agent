@@ -1519,6 +1519,7 @@ dependencies = [
  "horon-agent-build-meta",
  "horon-agent-harness-api",
  "horon-agent-harness-api-server",
+ "horon-agent-platform",
  "horon-agent-provider-core",
  "horon-agent-sdk",
  "jsonschema",
@@ -1588,6 +1589,7 @@ dependencies = [
  "horon-agent-pdf",
  "horon-agent-perf-counters",
  "horon-agent-plan",
+ "horon-agent-platform",
  "horon-agent-productivity-core",
  "horon-agent-provider-core",
  "horon-agent-schema-dialect",
@@ -1675,6 +1677,7 @@ dependencies = [
  "horon-agent-message-types",
  "horon-agent-perf-counters",
  "horon-agent-plan",
+ "horon-agent-platform",
  "horon-agent-protocol",
  "horon-agent-provider-core",
  "horon-agent-provider-env",
@@ -1811,6 +1814,7 @@ name = "horon-agent-embedding"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "horon-agent-platform",
  "reqwest",
  "tokenizers",
  "tract-hir",
@@ -1965,6 +1969,7 @@ dependencies = [
  "horon-agent-platform-linux",
  "horon-agent-platform-macos",
  "horon-agent-platform-windows",
+ "rcgen",
  "reqwest",
  "rustls",
  "tempfile",
@@ -1981,7 +1986,9 @@ dependencies = [
 name = "horon-agent-platform-linux"
 version = "0.1.0"
 dependencies = [
+ "horon-agent-logging",
  "horon-agent-platform-api",
+ "libc",
  "rcgen",
  "rustls",
  "rustls-native-certs",
@@ -1993,6 +2000,7 @@ dependencies = [
 name = "horon-agent-platform-macos"
 version = "0.1.0"
 dependencies = [
+ "horon-agent-logging",
  "horon-agent-platform-api",
  "libc",
  "rcgen",
@@ -2012,6 +2020,7 @@ dependencies = [
  "rustls-platform-verifier",
  "tempfile",
  "webpki-root-certs",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2055,6 +2064,7 @@ dependencies = [
  "futures",
  "horon-agent-logging",
  "horon-agent-message-types",
+ "horon-agent-platform",
  "horon-agent-schema-dialect",
  "horon-agent-usage-types",
  "httpdate",
@@ -2336,12 +2346,10 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
- "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots",
 ]
 
 [[package]]
@@ -3875,7 +3883,6 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls",
- "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -3892,7 +3899,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
- "webpki-roots",
 ]
 
 [[package]]
@@ -4885,11 +4891,7 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite",
 ]
 
@@ -5343,8 +5345,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.6",
- "rustls",
- "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

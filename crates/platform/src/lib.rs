@@ -8,12 +8,14 @@
 use std::fs::{self, File};
 use std::io;
 use std::path::Path;
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use rustls::ClientConfig;
 
-pub use horon_agent_platform_api::{PlatformAdapter, SyncMode};
+pub use horon_agent_platform_api::{PlatformAdapter, SleepAssertion, SyncMode};
 
 #[cfg(target_os = "macos")]
 pub type Current = horon_agent_platform_macos::Adapter;
@@ -66,6 +68,108 @@ pub fn tls_client_config() -> Arc<ClientConfig> {
 /// build.
 pub fn tls_config_builds() -> u64 {
     TLS_CONFIG_BUILDS.load(Ordering::Relaxed)
+}
+
+/// Build an adapter configuration that also trusts `extra_roots`.
+///
+/// Production code uses [`tls_client_config`]. This hook exists for tests: it
+/// proves a root the operating system trusts and the bundled webpki roots do
+/// not is accepted, without installing that root into the real trust store.
+/// The result is not cached, so the process-wide configuration stays untouched.
+#[doc(hidden)]
+pub fn tls_client_config_with_extra_roots(
+    extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
+) -> Result<Arc<ClientConfig>, rustls::Error> {
+    Current::client_config_with_extra_roots(extra_roots).map(Arc::new)
+}
+
+/// Whether a process with `pid` exists.
+pub fn is_process_running(pid: u32) -> bool {
+    Current::is_process_running(pid)
+}
+
+/// Send `signal` to the detached process group or session led by `pid`.
+pub fn signal_detached_process_group(pid: u32, signal: i32) -> io::Result<()> {
+    Current::signal_detached_process_group(pid, signal)
+}
+
+/// Stop the process group led by `pid`: ask politely, wait up to `grace`, then
+/// force it. Returns whether the group is gone.
+pub fn terminate_process_group(pid: u32, grace: Duration) -> bool {
+    Current::terminate_process_group(pid, grace)
+}
+
+/// Reap a child of the current process without blocking.
+pub fn try_reap_child_process(pid: u32) -> io::Result<Option<i32>> {
+    Current::try_reap_child_process(pid)
+}
+
+/// Atomically replace the symlink `dst` with one pointing at `src`, using
+/// `temp` as the staging name.
+pub fn atomic_symlink_swap(src: &Path, dst: &Path, temp: &Path) -> io::Result<()> {
+    Current::atomic_symlink_swap(src, dst, temp)
+}
+
+/// Spawn a process detached from the current client session.
+pub fn spawn_detached(cmd: &mut Command) -> io::Result<Child> {
+    Current::spawn_detached(cmd)
+}
+
+/// Spawn a fire-and-forget child that must never flash a console window.
+pub fn spawn_detached_without_console_window(cmd: &mut Command) -> io::Result<Child> {
+    Current::spawn_detached_without_console_window(cmd)
+}
+
+/// Reap a detached child without blocking the caller.
+pub fn reap_detached(child: Child) {
+    Current::reap_detached(child);
+}
+
+/// Replace the current process with `cmd` (exec on Unix).
+///
+/// Returns the error when the replacement fails; on Unix success never
+/// returns.
+pub fn replace_process(cmd: &mut Command) -> io::Error {
+    Current::replace_process(cmd)
+}
+
+/// Best-effort increase of the soft `RLIMIT_NOFILE` limit on Unix.
+pub fn raise_nofile_limit_best_effort(minimum_soft_limit: u64) {
+    Current::raise_nofile_limit_best_effort(minimum_soft_limit);
+}
+
+/// Create a symlink (Unix) or copy the file (Windows).
+pub fn symlink_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
+    Current::symlink_or_copy(src, dst)
+}
+
+/// Make a file executable (0o755). A no-op on Windows.
+pub fn set_permissions_executable(path: &Path) -> io::Result<()> {
+    Current::set_permissions_executable(path)
+}
+
+/// A sleep-prevention assertion held for as long as the value lives.
+///
+/// The wrapper keeps the operating-system type behind the adapter while giving
+/// core code a plain type with inherent methods.
+pub struct PowerAssertion(<Current as PlatformAdapter>::PowerAssertion);
+
+impl PowerAssertion {
+    /// Acquire the assertion. `reason` is shown by the operating system.
+    pub fn prevent_user_idle_system_sleep(reason: &str) -> Self {
+        Self(<Current as PlatformAdapter>::PowerAssertion::prevent_user_idle_system_sleep(reason))
+    }
+
+    /// Whether an operating-system assertion is currently held.
+    pub fn is_active(&self) -> bool {
+        SleepAssertion::is_active(&self.0)
+    }
+
+    /// Release the underlying assertion early; dropping the value does the
+    /// same.
+    pub fn release(&mut self) {
+        SleepAssertion::release(&mut self.0);
+    }
 }
 
 #[cfg(test)]

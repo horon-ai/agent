@@ -784,12 +784,12 @@ Re-run with `--force` if you really want to stop the server.";
 
     if let Some(info) = server_info.as_ref() {
         let pid = info.pid;
-        if crate::platform::is_process_running(pid) {
+        if horon_agent_platform::is_process_running(pid) {
             #[cfg(unix)]
             {
                 // The daemon spawns detached with setsid(), so it leads its own
                 // process group. Signal the group so any helper children exit too.
-                match crate::platform::signal_detached_process_group(pid, libc::SIGTERM) {
+                match horon_agent_platform::signal_detached_process_group(pid, libc::SIGTERM) {
                     Ok(()) => {
                         signaled_pid = Some(pid);
                         detail = format!("Sent SIGTERM to horon-agent server (pid {pid}).");
@@ -801,7 +801,7 @@ Re-run with `--force` if you really want to stop the server.";
             }
             #[cfg(not(unix))]
             {
-                match crate::platform::signal_detached_process_group(pid, 0) {
+                match horon_agent_platform::signal_detached_process_group(pid, 0) {
                     Ok(()) => {
                         signaled_pid = Some(pid);
                         detail = format!("Terminated horon-agent server (pid {pid}).");
@@ -833,7 +833,7 @@ Re-run with `--force` if you really want to stop the server.";
         loop {
             let listener_gone = !crate::server::has_live_listener(&socket).await;
             let process_gone = signaled_pid
-                .map(|pid| !crate::platform::is_process_running(pid))
+                .map(|pid| !horon_agent_platform::is_process_running(pid))
                 .unwrap_or(true);
             if listener_gone && process_gone {
                 stopped = true;
@@ -846,9 +846,9 @@ Re-run with `--force` if you really want to stop the server.";
             if !escalated
                 && Instant::now() + Duration::from_secs(2) >= deadline
                 && let Some(pid) = signaled_pid
-                && crate::platform::is_process_running(pid)
+                && horon_agent_platform::is_process_running(pid)
             {
-                let _ = crate::platform::signal_detached_process_group(pid, libc::SIGKILL);
+                let _ = horon_agent_platform::signal_detached_process_group(pid, libc::SIGKILL);
                 escalated = true;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;

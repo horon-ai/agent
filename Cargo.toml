@@ -87,7 +87,7 @@ async-trait = "0.1"
 
 # HTTP client
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -125,6 +125,7 @@ horon-agent-build-meta = { path = "crates/build-meta" }
 # default-features=false so the root feature set fully controls the downstream
 # features (see [features]).
 horon-agent-app-core = { path = "crates/app-core", default-features = false }
+horon-agent-platform = { path = "crates/platform" }
 
 # Archive extraction (for auto-update)
 tempfile = "3"

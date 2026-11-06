@@ -2412,8 +2412,8 @@ impl Server {
         }
 
         // Restrict socket files to owner-only so other local users cannot connect.
-        let _ = crate::platform::set_permissions_owner_only(&self.socket_path);
-        let _ = crate::platform::set_permissions_owner_only(&self.debug_socket_path);
+        let _ = horon_agent_core::fs::set_permissions_owner_only(&self.socket_path);
+        let _ = horon_agent_core::fs::set_permissions_owner_only(&self.debug_socket_path);
 
         // Set logging context for this server
         crate::logging::set_server(&self.identity.name);

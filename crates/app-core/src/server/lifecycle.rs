@@ -264,7 +264,7 @@ pub(crate) fn process_alive(pid: u32) -> bool {
         return false;
     }
 
-    crate::platform::is_process_running(pid)
+    horon_agent_platform::is_process_running(pid)
 }
 
 #[cfg(test)]
@@ -349,6 +349,6 @@ mod tests {
     /// it rather than trusting it.
     #[test]
     fn platform_process_running_detects_this_process() {
-        assert!(crate::platform::is_process_running(std::process::id()));
+        assert!(horon_agent_platform::is_process_running(std::process::id()));
     }
 }

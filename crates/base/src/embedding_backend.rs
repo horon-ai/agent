@@ -179,6 +179,7 @@ impl OpenAiEmbeddingBackend {
             scope
                 .spawn(move || -> Result<Vec<Vec<f32>>> {
                     let client = reqwest::blocking::Client::builder()
+                        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
                         .timeout(std::time::Duration::from_secs(60))
                         .build()?;
                     let body = serde_json::json!({
