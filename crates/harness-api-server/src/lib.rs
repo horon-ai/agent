@@ -1144,20 +1144,31 @@ mod capability_contract_tests {
             (root.join("crates/agent-sdk/src/client.rs"), "require_capability(\""),
             (root.join("sdk/typescript/src/client.ts"), "requireCapability(\""),
         ] {
-            let Ok(source) = std::fs::read_to_string(&path) else {
-                continue;
-            };
+            let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!(
+                    "cannot read {}: {error}. A missing SDK would make this gate pass by \
+                     checking nothing, which is the failure it exists to catch",
+                    path.display()
+                )
+            });
+            let mut gates_here = 0;
             for (index, _) in source.match_indices(marker) {
                 let rest = &source[index + marker.len()..];
                 let Some(end) = rest.find('"') else { continue };
                 let capability = &rest[..end];
                 checked += 1;
+                gates_here += 1;
                 assert!(
                     BRIDGE_CAPABILITIES.contains(&capability),
                     "{} gates on {capability}, which the bridge never advertises",
                     path.display()
                 );
             }
+            assert!(
+                gates_here > 0,
+                "{} contains no `{marker}` gate; the scan would silently check nothing",
+                path.display()
+            );
         }
         assert!(checked > 0, "the capability gate scan found no gates to check");
     }
