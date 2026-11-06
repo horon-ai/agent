@@ -15,6 +15,104 @@
 - 모든 호출 지점을 의도적으로 고치는 경우가 아니면 마이그레이션 중에도 serde 호환성과 루트 재내보내기를 유지한다.
 - 성공은 컴파일 영향으로 측정한다. 루트 수정이 줄고, 루트가 소유한 DTO가 줄고, 의존성 확산이 작아지고, 흔한 변경 뒤 `cargo check --profile selfdev`와 재빌드가 빨라지는지를 본다.
 
+## 플랫폼 어댑터
+
+OS별 시스템 호출은 `crates/platform*` 다섯 크레이트에만 있다. core 크레이트(`base`, `session-store`, `provider-core`, `app-core`)는 `horon_agent_platform`의 자유 함수만 부르고 자신이 어느 OS에서 컴파일되는지 모른다.
+
+```text
+crates/base · session-store · provider-core · app-core
+   │  horon_agent_platform::{sync_file, sync_dir, tls_client_config, spawn_detached, ...}
+   ▼
+crates/platform           cfg로 Current를 고르고 모듈 fs·ipc·paths·power·process·signal·term·watch를 노출
+   ▼
+crates/platform-macos | platform-linux | platform-windows   PlatformAdapter 구현, 빌드마다 하나만 컴파일
+   ▼
+crates/platform-api       PlatformAdapter 트레이트, 공유 타입, 로그 싱크
+```
+
+| 크레이트 | 패키지 | 소유 |
+| --- | --- | --- |
+| `crates/platform-api` | `horon-agent-platform-api` | `PlatformAdapter` 트레이트와 공유 타입(`SyncMode`, `SleepAssertion`, `SleepInhibitor`, `FileStamp`, `FileIds`, `StdinState`, `ReadyChild`), 그리고 `log` 싱크. 트레이트가 `rustls::ClientConfig`를 반환하므로 의존성은 `rustls`뿐이다. |
+| `crates/platform` | `horon-agent-platform` | `cfg`로 `pub type Current`를 정하고 자유 함수로 노출한다. TLS 설정을 프로세스당 한 번 만들어 `Arc`로 돌려준다. |
+| `crates/platform-macos` | `horon-agent-platform-macos` | macOS 구현 |
+| `crates/platform-linux` | `horon-agent-platform-linux` | Linux와 나머지 Unix 구현. FreeBSD도 이 크레이트가 맡는다. |
+| `crates/platform-windows` | `horon-agent-platform-windows` | Windows 구현 |
+
+선택 규칙은 컴파일 시점에 정해진다. `target_os = "macos"`는 macOS, `windows`는 Windows, `all(unix, not(target_os = "macos"))`는 Linux다. `crates/platform`은 이 선택을 대상별 의존성으로 선언하므로 최종 바이너리에는 어댑터 하나만 들어간다. macOS와 Windows 크레이트는 자기 대상이 아니면 `#![cfg(...)]`로 빈 라이브러리가 되고, Linux 크레이트는 POSIX 코드라 Unix 대상에서 컴파일되며 선택도 Unix에서만 된다. macOS와 Linux는 POSIX 코드(`unix.rs`, `unix_fs.rs`, `unix_term.rs`, `signal.rs`, `ipc.rs`)를 `#[path]`로 공유하고 다른 부분만 각자 구현한다.
+
+트레이트 메서드는 연관 함수이고 상태를 들지 않는다. 호출자는 컴파일된 `Current`에 대해 호출하므로 이 경로에 `dyn` 디스패치가 없다.
+
+`crates/platform`의 모듈은 이런 경계를 나른다.
+
+| 모듈 | 하는 일 |
+| --- | --- |
+| `fs` | 개인 디렉터리 생성, 안전한 파일 열기와 검증, 캐시 stamp, 백업 회전 |
+| `ipc` | Unix 소켓과 Windows 이름 있는 파이프를 같은 타입 이름으로 노출 |
+| `paths` | OS별 설정·런타임 디렉터리 규칙 |
+| `power` | 작업 중 잠자기 방지 정책과 OS 어서션 |
+| `process` | 프로세스 그룹 신호, 자식 배치, 준비 파이프, 진단 |
+| `signal` | 신호 해석, 프로세스 신원, 종료 요청 |
+| `term` | 표준 입력 상태와 터미널 판정 |
+| `watch` | 파일 시스템 변경 알림 |
+
+어댑터는 로그를 `horon_agent_platform_api::log` 싱크로 보낸다. `horon-agent-logging`은 애플리케이션 기반에 의존하고 기반은 어댑터에 의존하므로, 어댑터가 로깅 크레이트를 직접 부르면 의존 순환이 된다. 로깅이 초기화할 때 자기 함수를 싱크로 설치하므로 메시지는 같은 로그 파일에 같은 등급으로 남는다.
+
+### OS `cfg`는 어댑터 안에만 둔다
+
+OS 기본 동작 때문에 core 크레이트에 `#[cfg(unix)]`, `#[cfg(windows)]`, `#[cfg(target_os = ...)]` 분기를 새로 넣지 않는다. 필요한 동작은 `crates/platform`의 함수로 부르고, 그 함수가 없으면 `PlatformAdapter` 트레이트를 넓힌다.
+
+이 규칙은 `scripts/ci/check_platform_cfg.py`가 지킨다.
+
+- `#[cfg(`, `#[cfg_attr(`, `#![cfg(`, `#![cfg_attr(`, `cfg!(` 가운데 `unix`, `windows`, `target_os`, `target_family`를 언급하는 줄을 센다. 테스트 모듈과 주석 처리된 줄도 센다.
+- 플랫폼 크레이트 다섯 개 밖에서 남은 줄은 `scripts/ci/platform_cfg_allowlist.json`에 파일별 개수와 사유로 기록한다. 새 줄은 `path:line: text`로 지목되며 게이트가 실패한다.
+- 개수가 줄어도 `--update`로 예산을 내릴 때까지 실패한다. 래칫이므로 게이트가 스스로 느슨해지지 않는다.
+- `--update`는 개수만 다시 쓰고 사유를 만들지 않는다. 새로 들어간 파일의 사유는 `TODO: classify`이고, 사유를 적을 때까지 게이트가 계속 실패한다.
+- `--report <경로>`는 남은 줄을 `path<TAB>count<TAB>reason`으로 쓴다.
+
+허용 목록에 남는 줄은 기능 자체가 한 OS에만 있는 제품 코드다. Windows 콘솔 처리, macOS 알림, OpenSSH ControlMaster처럼 어댑터로 옮길 시스템 호출이 아니라 그 OS에만 존재하는 표면이다. 남길 때는 왜 어댑터의 기본 요소가 아닌지 사유에 적는다.
+
+### TLS 신뢰 집합
+
+HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루트의 합집합이고, 어느 OS에서도 이 합집합보다 좁지 않다.
+
+| OS | 구현 |
+| --- | --- |
+| macOS | `rustls-platform-verifier` 0.7의 `Verifier::new_with_extra_roots`에 `webpki-root-certs`의 `TLS_SERVER_ROOT_CERTS`를 넘긴다. 키체인 인증서를 시작할 때 한꺼번에 읽지 않는다. |
+| Windows | 같은 검증기와 같은 루트 집합을 쓴다. |
+| Linux와 나머지 Unix | `rustls-native-certs`로 OS 저장소를 프로세스당 한 번 읽고 `webpki-roots`의 루트와 함께 `RootCertStore`에 넣는다. 파싱할 수 없는 인증서는 건너뛰므로 잘못된 파일 하나가 나머지 루트를 잃게 하지 않는다. 저장소가 없으면 webpki 루트만으로 동작한다. |
+
+- ALPN은 `h2`, `http/1.1` 순서다.
+- 암호화 제공자는 aws-lc-rs를 명시한다.
+- `horon_agent_platform::tls_client_config()`가 `LazyLock`으로 한 번만 만들고 같은 `Arc`를 돌려준다. 클라이언트가 여러 개여도 OS 검증기 준비는 프로세스당 한 번이고, `tls_config_builds()`가 그 횟수를 노출한다.
+- 구축에 실패하는 경로는 정해진 합집합의 부분집합인 webpki 루트만 쓰므로 받아들이는 대상을 넓히지 않는다.
+- 모든 reqwest 선언은 `rustls-tls-manual-roots`를 쓰고, 클라이언트는 `.use_preconfigured_tls(tls_client_config().as_ref().clone())`로 만든다. 어댑터를 거치지 않은 클라이언트는 HTTPS에 실패하므로 TLS 설정 경로가 둘로 갈리지 않는다.
+- 테스트는 `tls_client_config_with_extra_roots`로 OS가 신뢰하고 webpki에는 없는 루트가 통하는지 확인한다. 실제 신뢰 저장소는 건드리지 않는다.
+
+### 저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다
+
+무엇을 확정할지는 OS와 무관한 core가 정하고, 어떤 시스템 호출로 확정할지만 어댑터가 고른다. `SyncMode`는 보장 수준의 이름이지 특정 호출의 이름이 아니다.
+
+| 모드 | 뜻 | macOS | Linux | Windows |
+| --- | --- | --- | --- | --- |
+| `Full`(기본) | 정전에도 남는 가장 강한 보장 | `F_FULLFSYNC`(std `sync_all`), 드라이브 쓰기 캐시까지 flush | `fdatasync`(std `sync_data`) | `FlushFileBuffers`(std `sync_all`) |
+| `Fast` | OS 크래시는 견디는 가장 싼 flush | `fsync(2)` | 더 싼 호출이 없어 `Full`과 같다 | 더 싼 호출이 없어 `Full`과 같다 |
+
+원본은 `sync_file`과 `sync_dir`로 확정한다.
+
+- 이벤트 로그 append, 원본 표식(`event_origin.rs`), 아카이브
+- 런타임 저널(`durable_runtime/store.rs`)과 durable input
+- 블롭
+- 더티 표식 생성(`writer.rs`의 `.catalog.dirty/<id>`)
+- 원본에서 다시 만들 수 없는 로컬 상태: `local-head.json`, `local-head-explicit.json`, `local-explicit-source.json`, `local-runtime.json`
+
+파생은 임시 파일에 쓰고 rename만 한다. `cache_io::publish_derived`와 `event_store::publish_local_derived`가 그 경로이고 fsync하지 않는다.
+
+- 파생 대상: `checkpoint.json`, `sparse-index.jsonl`, `summary.json`, 카탈로그 행(`.catalog.index.jsonl`), `facade-cache.json`, 더티 표식 삭제
+
+크래시 뒤에 rename 결과가 남지 않았으면 다음 로드가 원본에서 다시 만든다. 파생을 믿는 조건은 `Stamp`다. device, inode, 길이, mtime, ctime이 원본 이벤트 로그와 맞아야 하고, 저장한 값은 sha256으로 한 번 더 검사한다(`cache_io::decode`). 맞지 않으면 캐시를 버리고 원본에서 다시 만든다. `.catalog.dirty` 표식이 있는 세션의 카탈로그 행도 같은 이유로 신뢰하지 않는다.
+
+`[storage] sync`가 이 모드를 고르고 `HORON_AGENT_STORAGE_SYNC`가 프로세스 하나에 대해 덮어쓴다. 모르는 값은 `full`로 떨어지고 프로세스당 한 번만 경고한다. 기본값은 `full`이고 맥 기본값을 `fast`로 바꾸지 않는다.
+
 ## 소유 규칙
 
 ### 타입 크레이트는 안정적인 데이터 계약을 소유한다

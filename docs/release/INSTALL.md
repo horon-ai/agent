@@ -37,7 +37,13 @@ Windows 설치 경로와 서명 절차는 [`WINDOWS.md`](WINDOWS.md)에 있다.
 
 ### 인증서
 
-모델 HTTPS 호출은 reqwest가 내장한 webpki 루트를 쓴다. 그래서 `ca-certificates` 없이도 `serve`, `run`, `api-bridge`가 동작한다.
+모델 HTTPS 호출이 신뢰하는 루트는 바이너리에 내장한 webpki 루트와 OS가 신뢰하는 루트의 합집합이다. 그래서 `ca-certificates`가 없어도 `serve`, `run`, `api-bridge`가 동작하고, OS 저장소에 설치한 사설 CA도 신뢰한다.
+
+- macOS와 Windows는 `rustls-platform-verifier`로 OS 검증기를 쓴다. 키체인이나 인증서 저장소의 인증서를 프로세스 시작 때 전부 읽지 않는다.
+- Linux와 나머지 Unix는 `rustls-native-certs`로 OS 저장소(`/etc/ssl/certs` 등)를 프로세스당 한 번 읽어 webpki 루트와 합친다. 저장소가 없는 이미지에서도 webpki 루트만으로 연결된다.
+- 설정은 프로세스당 한 번만 만들고 모든 HTTPS 클라이언트가 공유한다. ALPN은 `h2`와 `http/1.1`을 제시한다.
+
+신뢰 집합을 좁히거나 검증을 끄는 설정은 없다. 사내 CA를 쓰려면 그 CA를 OS 저장소에 넣는다. 구현은 [`../architecture/CRATES.md`](../architecture/CRATES.md)의 "TLS 신뢰 집합"에 적혀 있다.
 
 ### 준비
 

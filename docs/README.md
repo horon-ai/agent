@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | `docs/` | [`README.md`](README.md) | 이 색인과 갱신 규칙 |
 | `architecture/` | [`SERVER.md`](architecture/SERVER.md) | 서버·세션·소켓 구조 |
-| | [`CRATES.md`](architecture/CRATES.md) | 크레이트 소유권 경계 |
+| | [`CRATES.md`](architecture/CRATES.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, 영속 런타임 저널 |
@@ -35,10 +35,10 @@
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.md`](safety/SECURITY.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
-| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | 구조 게이트, A/B 측정 |
+| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | 구조 게이트, A/B 측정과 `fsync` 호출 수 |
 | | [`RESULTS.md`](performance/RESULTS.md) | 측정 결과와 한계 |
 | | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산과 사고 대응 절차 |
-| `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행 |
+| `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |
 | | [`WINDOWS.md`](release/WINDOWS.md) | Windows 빌드와 서명 |
 
 ## 갱신 규칙

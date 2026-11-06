@@ -175,7 +175,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare,tools -f competitors=c
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 | `runner` | `ubuntu-latest` | `macos-persistent` 를 고르면 저장소의 상주 macOS 러너에서 돈다. 수치가 덜 흔들린다. |
 
-모든 묶음은 한 작업, 한 기계에서 돌아 비교 행이 같은 CPU·디스크·부하를 공유한다. 모델이 필요한 측정은 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙으므로 시크릿과 API 요금이 없다. 결과는 작업 요약(step summary)의 표와 `benchmark-<run_id>` 아티팩트(JSON, 마크다운)로 남고, 임계값으로 실패하지 않는다. 스크립트 자체가 오류를 낼 때만 실패한다.
+모든 묶음은 한 작업, 한 기계에서 돌아 비교 행이 같은 CPU·디스크·부하를 공유한다. `compare` 묶음은 항상 `--syscalls`를 켜고, Linux 러너에서만 `strace`를 설치한다. macOS 러너에는 `strace`가 없어 `fsync calls` 열이 생기지 않고 `skipped`에 사유가 남는다. 모델이 필요한 측정은 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙으므로 시크릿과 API 요금이 없다. 결과는 작업 요약(step summary)의 표와 `benchmark-<run_id>` 아티팩트(JSON, 마크다운)로 남고, 임계값으로 실패하지 않는다. 스크립트 자체가 오류를 낼 때만 실패한다.
 
 새 스크립트는 같은 계약을 따른다. `--json-out` 과 `--markdown-out` 을 받고, 측정 실패는 0 이 아니라 `null` 과 `error` 로 남기며, 도구나 바이너리가 없으면 `skipped` 에 사유를 적고 종료 코드 0 으로 끝난다. 통계는 중앙값, p95, 최소, 최대, 표본 수다.
 
@@ -183,7 +183,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare,tools -f competitors=c
 
 | 묶음 | 스크립트 | 재는 것 |
 | --- | --- | --- |
-| `compare` | `bench_compare.py`, `install_competitors.sh` | horon 과 경쟁 도구의 `--version` 시간, 헤드리스 1회 실행 시간과 최대 RSS, 세션 수에 따른 메모리(첫 세션, 세션당 증가분), 설치 크기. horon 대비 배수를 표에 적는다. |
+| `compare` | `bench_compare.py`, `install_competitors.sh` | horon 과 경쟁 도구의 `--version` 시간, 헤드리스 1회 실행 시간과 최대 RSS, 세션 수에 따른 메모리(첫 세션, 세션당 증가분), 설치 크기, `--syscalls`를 켰을 때 one-shot 1건의 `fsync`·`fdatasync` 호출 수. horon 대비 배수를 표에 적는다. |
 | `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, 하네스 브리지 단계별 준비 시간 |
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD 와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓 `tool:` 명령으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 케이스의 지연 |
@@ -206,8 +206,24 @@ python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent $
 | --- | --- |
 | `version_ms` | `--version` 실행 N 회(기본 5)의 통계 |
 | `oneshot_ms` | 헤드리스 프롬프트 1건(기동, `ls` 도구 1회, 최종 응답)을 끝내는 시간, 그동안의 최대 프로세스 트리 RSS, 도구 왕복 여부(mock `/__stats` 근거) |
+| `fsync_calls` | `--syscalls`를 켰을 때 one-shot 1건이 부르는 `fsync`와 `fdatasync` 호출 수의 중앙값과 표본 목록. Linux에서만 재고, `strace`가 없으면 `skipped`에 사유가 남는다 |
 | `sessions_memory` | N 개 동시 세션 × K 턴 뒤 idle 과 턴 직후의 프로세스 트리 RSS(Linux 는 PSS 도). 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다. 실패한 측정점은 기울기에서 빼고, 음수 기울기는 0 으로 적는다. |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성(플랫폼별 선택 의존성 포함)의 합 |
+
+##### 시스템 호출 수
+
+`--syscalls`를 붙이면 one-shot 표본마다 `fsync`와 `fdatasync` 호출 수를 함께 센다. I/O를 줄이는 변경이 실제 호출 수를 줄였는지 보는 지표다.
+
+```bash
+python3 scripts/perf/bench_compare.py --syscalls --oneshot-runs 5 \
+  --bin horon=./target/release/horon-agent $(cat /tmp/bench-tools/bins.args) \
+  --sessions 1 --turns 1 --json-out compare.json --markdown-out compare.md
+```
+
+- Linux에서 `strace`가 있으면 표본마다 `strace -f -c -e trace=fsync,fdatasync -o <임시 파일>`로 감싸고, 그 합계를 도구별로 적는다. JSON에는 `fsync_calls`(표본 중앙값), `fsync_calls_runs`(표본 목록), `fsync_calls_summary`(중앙값·p95·최소·최대·표본 수)가 들어가고, 마크다운 표에는 `fsync calls` 열이 생긴다.
+- `strace`가 없으면(대표적으로 macOS) 측정을 건너뛰고 종료 코드 0으로 끝난다. JSON `skipped`에 `{"name": "syscalls", "reason": "strace not available"}`가 남고 표에는 이 열이 생기지 않는다.
+- 표본은 `--oneshot-runs`(기본 3)만큼 돈다. 표본이 하나면 중앙값은 그 값이다.
+- `strace`는 프로세스를 실제보다 느리게 만든다. 이 옵션을 켠 실행의 `oneshot_ms`는 호출 수를 보려고 쓴 값이고, 시간 비교는 옵션 없이 잰 실행으로 한다.
 
 배수는 모두 horon 을 1.0× 로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon 과 jcode 는 임시 HOME 의 `[providers.mock]` 와 데몬 1개의 debug 소켓 세션을 쓴다. Claude Code 는 `ANTHROPIC_BASE_URL` 과 상주 `stream-json` 프로세스를 쓴다. Codex 는 `model_providers` 설정과 `app-server` 를 쓴다. OpenCode 는 `opencode.json` 의 `baseURL` 과 `serve` 를 쓰고, pi 는 `models.json` 과 `--mode rpc` 를 쓴다.
 

@@ -23,9 +23,14 @@ sessions/
   <id>/                      canonical session directory
     events.jsonl             append-only canonical event log (the original)
     blobs/<sha256>.json      externalized payload bytes, named by their own hash
+    local-head.json          local original: the selected head, written only for an explicit selection
+    local-head-explicit.json local original: whether the head selection is explicit
+    local-explicit-source.json local original: path and SHA-256 of the explicit snapshot the session came from
+    local-runtime.json       local original: resume binding (working_dir, migration_epoch, provider_session_id, status)
     checkpoint.json          derived cache: head, source stamp, metadata, compaction, tail
     sparse-index.jsonl       derived cache: every 128th event plus message offsets
     summary.json             derived cache: one catalog row for this session
+    facade-cache.json        derived cache: session facade payload and its hash
     .writer.lock             session-lifetime exclusive writer lock (never unlinked)
     .blob-staging/<sha256>/  resumable inbound blob chunks
     .record-transfer/        resumable inbound whole-record staging
@@ -34,15 +39,24 @@ sessions/
   <id>.bak                   legacy recoverable snapshot (preserved)
   .catalog.index.jsonl       derived cache: one row per session, for listing
   .catalog.lock              catalog write lock
-  .catalog.dirty/<id>        marker: the catalog row for <id> is being rebuilt
+  .catalog.dirty/<id>        durable marker: the catalog row for <id> is being rebuilt (creation flushed, removal not)
   .origin-id                 this HOME's writer identity, created once at 0600
   edit-stats/                per-session edit counters (not a session)
 ```
 
-원본은 `events.jsonl`과 `blobs/`뿐이다. 세션 디렉터리 아래의 나머지와 `.catalog.index.jsonl`은
-파생물이고 다시 만들 수 있다. 지워도 재생성 비용만 들 뿐 데이터는 잃지 않는다. `doctor`는 원본의
-손상을 보고하며 고치지는 않는다. 자체 스탬프 검사에 실패한 파생 파일은 writer 락 아래에서 다시
-만든다.
+세션 내용의 원본은 `events.jsonl`과 `blobs/`다. 여기에 이벤트 로그로 다시 만들 수 없는 로컬 상태
+파일 네 개가 원본으로 더해진다. `local-head.json`은 선택이 명시적일 때만 기록하고,
+`local-head-explicit.json`은 그 선택 여부를, `local-explicit-source.json`은 세션을 만든 명시
+스냅샷의 경로와 해시를, `local-runtime.json`은 재개에 쓰는 `working_dir`, `migration_epoch`,
+`provider_session_id`와 표시용 `status`를 담는다. `local-runtime.json`은 이 필드 가운데 하나가
+바뀔 때만 다시 쓰고, `last_pid`와 `last_active_at`만 움직인 배치는 파일을 쓰지 않는다.
+
+원본은 `sync_file`과 `sync_dir`로 확정한다. `checkpoint.json`, `sparse-index.jsonl`, `summary.json`,
+`facade-cache.json`과 `.catalog.index.jsonl`은 파생물이다. 파생물은 임시 파일에 쓰고 rename만 하며
+flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 sha256 검사에 실패한 파생 파일은 writer
+락 아래에서 다시 만든다. 원본과 파생의 경계, 재생성 조건, `[storage] sync`는
+[`../architecture/CRATES.md`](../architecture/CRATES.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
+있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
 
 `edit-stats/`는 세션이 아닌 장부를 담는 루트의 예약된 자식이고, 카탈로그는 이를 명시적으로
 건너뛴다(`reader.rs::EDIT_STATS_DIR`).
@@ -157,6 +171,8 @@ sessions/
   재생 없이 바이트 범위로 가져온다.
 - `summary.json`과 `.catalog.index.jsonl`은 목록 행이다. 목록 조회는 트랜스크립트를 파싱하지
   않는다.
+- `facade-cache.json`은 세션 파사드 레코드와 그 해시를 담는다. 크기 상한을 넘는 세션은 캐시를
+  두지 않고 원본에서 다시 만든다.
 - 캐시 적중은 `checkpoint.json`과 꼬리만 읽는다. 크기 감소, inode/epoch 변경, 앵커 불일치, 같은
   길이 편집이면 전체 재생을 강제한다. 변하지 않은 접두부 안의 임의 변조를 찾는 일은 `doctor`의
   몫이고, 웜 연결은 접두부 전체를 해시한다고 주장하지 않는다.
@@ -171,7 +187,7 @@ sessions/
 ### 복제 전송
 
 두 인스턴스는 **원본만** 교환한다. 정규 이벤트 레코드와 원본 blob이다. 체크포인트, 인덱스, PID,
-리스, 로컬 헤드 선택은 보내지 않고, 로컬 파일 오프셋을 원격 커서로 쓰지 않는다
+리스, 로컬 헤드 선택과 로컬 런타임 바인딩은 보내지 않고, 로컬 파일 오프셋을 원격 커서로 쓰지 않는다
 (`crates/session-store/src/replication*.rs`).
 
 - `protocol_version`은 `1`이다. 페이지는 이벤트를 최대 256개(`MAX_PAGE_EVENTS`), 알려진 id를 최대
