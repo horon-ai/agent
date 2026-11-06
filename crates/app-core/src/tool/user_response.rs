@@ -25,7 +25,7 @@ impl Tool for UserResponseTool {
     }
 
     fn description(&self) -> &str {
-        "Respond to the user with Markdown rendered inline in HoronAgent Desktop. Use this for user-visible answers, explanations, and completion summaries. Put the full response in content, with an optional title. Do not duplicate this response in a normal assistant message. This is a response, not a separate panel or an applet."
+        "Respond to the user with Markdown rendered inline in HoronAgent Desktop. Use this for user-visible answers, explanations, and completion summaries. Put the full response in content, with an optional title. Do not duplicate this response in a normal assistant message."
     }
 
     fn parameters_schema(&self) -> Value {

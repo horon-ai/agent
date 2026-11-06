@@ -26,7 +26,7 @@
 - 파일 시스템, 네트워크, 프로세스, TUI, 제공자 클라이언트, 전역 상태, 저장소 접근이 없어야 한다.
 - 의존성은 serde, chrono, 필요할 때 다른 타입 크레이트로 제한한다.
 
-예: `horon-agent-session-types`, `horon-agent-side-panel-types`, `horon-agent-background-types`.
+예: `horon-agent-session-types`, `horon-agent-background-types`, `horon-agent-todo-policy`.
 
 ### 도메인 동작 모듈은 루트 런타임 동작을 소유한다
 
@@ -109,7 +109,6 @@ python3 scripts/ci/check_dependency_boundaries.py
 
 모듈화 중에 관찰한 넓은 필터의 위험:
 
-- `side_panel`은 관계없는 고정 UI·레이아웃 테스트와 지연 벤치마크 테스트까지 고른다.
 - `usage`는 순수 사용량 테스트에 더해 앱 표시 테스트까지 고른다.
 - `session::`은 세션 영속화를 넘어 라이브 접속 서버 테스트와 피커 동작까지 고른다.
 - `ambient`는 ambient 모듈의 영속화·런타임 테스트를 넘어 설정과 스케줄 상태를 다루는 헬퍼 통합 테스트까지 고른다.

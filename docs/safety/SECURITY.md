@@ -173,7 +173,7 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 | `tract-nnef` | 있다 | `RUSTSEC-2026-0097`, 아래 `RUSTSEC-2026-0217` 항목 |
 | `lopdf` | 있다 | `RUSTSEC-2026-0187` |
 | `rustls-webpki` | 있다 | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
-| `crossterm` | 있다 | `horon-agent-terminal-image`의 선택 기능 `display`로 남아 있다(`crates/terminal-image/Cargo.toml:14`, `:20`) |
+| `crossterm` | 없다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다 |
 
 ### 참고
 

@@ -1,9 +1,9 @@
 {
-  "total": 2441,
+  "total": 2406,
   "totals_by_pattern": {
-    "dot_ok": 877,
-    "let_underscore": 975,
-    "unwrap_or_default": 589
+    "dot_ok": 863,
+    "let_underscore": 968,
+    "unwrap_or_default": 575
   },
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": {
@@ -243,7 +243,7 @@
     },
     "crates/app-core/src/server/client_actions.rs": {
       "dot_ok": 2,
-      "let_underscore": 53,
+      "let_underscore": 49,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/server/client_comm_channels.rs": {
@@ -268,7 +268,7 @@
     },
     "crates/app-core/src/server/client_lifecycle.rs": {
       "dot_ok": 2,
-      "let_underscore": 74,
+      "let_underscore": 72,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/server/client_lifecycle_logging.rs": {
@@ -289,7 +289,7 @@
     "crates/app-core/src/server/client_state.rs": {
       "dot_ok": 2,
       "let_underscore": 1,
-      "unwrap_or_default": 4
+      "unwrap_or_default": 0
     },
     "crates/app-core/src/server/comm_await.rs": {
       "dot_ok": 0,
@@ -510,11 +510,6 @@
       "dot_ok": 5,
       "let_underscore": 2,
       "unwrap_or_default": 2
-    },
-    "crates/app-core/src/tool/applet.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 4
     },
     "crates/app-core/src/tool/apply_patch.rs": {
       "dot_ok": 2,
@@ -786,11 +781,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/applets.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/base/src/artifacts.rs": {
       "dot_ok": 2,
       "let_underscore": 0,
@@ -974,11 +964,6 @@
     "crates/base/src/gateway/registry.rs": {
       "dot_ok": 0,
       "let_underscore": 4,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/generated_image.rs": {
-      "dot_ok": 5,
-      "let_underscore": 0,
       "unwrap_or_default": 1
     },
     "crates/base/src/git_clone_isolation.rs": {
@@ -1311,11 +1296,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/side_panel.rs": {
-      "dot_ok": 3,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/skill.rs": {
       "dot_ok": 4,
       "let_underscore": 0,
@@ -1517,9 +1497,9 @@
       "unwrap_or_default": 1
     },
     "crates/harness-api-server/src/translate.rs": {
-      "dot_ok": 30,
+      "dot_ok": 28,
       "let_underscore": 0,
-      "unwrap_or_default": 53
+      "unwrap_or_default": 50
     },
     "crates/harness-api-server/src/writer.rs": {
       "dot_ok": 0,
@@ -1882,11 +1862,6 @@
       "unwrap_or_default": 0
     },
     "crates/swarm-core/src/lib.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/terminal-image/src/display.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 1

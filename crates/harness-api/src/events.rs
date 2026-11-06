@@ -145,22 +145,6 @@ pub enum ApiEvent {
         images: Vec<RenderedImage>,
     },
 
-    /// Complete session-scoped Markdown side-panel state. Replace the previous
-    /// snapshot, including when pages is empty. Sent live and during attachment
-    /// hydration, possibly before `Attached`. Subscribe before attaching.
-    SidePanelState {
-        session_id: String,
-        snapshot: crate::SidePanelSnapshot,
-    },
-
-    /// Complete set of agent-mounted applet instances for a session. Replace
-    /// the previous snapshot, including when empty. Sent live and during
-    /// attachment hydration, like `SidePanelState`.
-    AppletState {
-        session_id: String,
-        snapshot: horon_agent_applet_types::AgentApplets,
-    },
-
     /// Usage for the latest provider call, not cumulative session or turn totals.
     /// Input/cache accounting is provider-specific: Anthropic reports cache
     /// reads and writes separately, while OpenAI includes cache reads in input.

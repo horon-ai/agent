@@ -996,10 +996,8 @@ async fn tool_descriptions_stay_under_token_cap() {
     // batch_tests::description_includes_parallel_tool_call_example).
     // todo carries a deliberate "use it very often" directive requested by the
     // user, so planning happens proactively rather than only when prompted.
-    // applet carries the whole view-node vocabulary inline, since the model has
-    // no other way to learn which node types and props the host renders.
     // codemode documents its sandbox API; irc states delivery, addressing, and reply etiquette inline.
-    const EXEMPT: &[&str] = &["integration_tools", "swarm", "batch", "todo", "applet", "codemode"];
+    const EXEMPT: &[&str] = &["integration_tools", "swarm", "batch", "todo", "codemode"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -1059,12 +1057,7 @@ async fn tool_parameter_descriptions_stay_under_token_cap() {
     // The feedback-loop relevance rubric defines every enum state inline
     // (abb0baabc, d21916db5) and todo::tests pins each concept, so it is
     // deliberately longer than the cap.
-    // applet placement lists every shorthand so the model can pick a surface
-    // without a round trip.
-    const EXEMPT: &[(&str, &str)] = &[
-        ("todo", "$.properties.goals.items.properties.feedback_loop_relevance"),
-        ("applet", "$.properties.placement"),
-    ];
+    const EXEMPT: &[(&str, &str)] = &[("todo", "$.properties.goals.items.properties.feedback_loop_relevance")];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -2187,10 +2180,9 @@ fn the_dialect_sweep_catches_the_issue_754_schema() {
 async fn only_the_known_open_world_tools_are_ineligible_for_openai_strict_mode() {
     /// Built-ins that legitimately cannot be strict. Verified against master
     /// before the #711/#713 eligibility changes, so this is pre-existing.
-    // applet's view is a recursive, open-ended node tree. goal's milestone
-    // steps are open maps (`additionalProperties: true`) so a caller can send
-    // step shapes the schema does not enumerate.
-    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["applet", "batch", "goal", "swarm"];
+    // goal's milestone steps are open maps (`additionalProperties: true`) so a
+    // caller can send step shapes the schema does not enumerate.
+    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["batch", "goal", "swarm"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;

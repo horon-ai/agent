@@ -72,7 +72,6 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     "streaming",
     "text_framing",
     "turn_stop_reasons",
-    "side_panel",
     "persisted_session_discovery",
     "runtime_info",
     "api_key_provisioning",

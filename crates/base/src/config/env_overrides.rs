@@ -75,9 +75,6 @@ impl Config {
         if let Ok(v) = std::env::var("HORON_AGENT_WORKSPACE_RIGHT_KEY") {
             self.keybindings.workspace_right = v;
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_SIDE_PANEL_TOGGLE_KEY") {
-            self.keybindings.side_panel_toggle = v;
-        }
         if let Ok(v) = std::env::var("HORON_AGENT_COPY_SELECTION_TOGGLE_KEY") {
             self.keybindings.copy_selection_toggle = v;
         }
@@ -362,11 +359,6 @@ impl Config {
         if let Ok(v) = std::env::var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.display.native_scrollbars.chat = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.native_scrollbars.side_panel = parsed;
             }
         }
 

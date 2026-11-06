@@ -1,6 +1,7 @@
 use super::helpers::*;
+use horon_agent_session_store::AuxiliaryRecordedPayload;
 use horon_agent_session_store::legacy::*;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 
 #[test]
@@ -210,5 +211,30 @@ fn read_only_legacy_surface_creates_nothing_when_database_is_absent() {
     // Then no store or DB is created.
     assert_eq!(read.messages.len(), 3);
     assert!(!home.join("sessions/old").exists());
+    preserved(&home, &before);
+}
+#[test]
+fn removed_panel_events_in_a_legacy_journal_load_as_untouched_data() {
+    // Given a journal whose replay events include event types this build no
+    // longer defines. The fixture lives outside `.rs` sources so the removal
+    // grep stays clean while the bytes stay realistic.
+    let home = fixture();
+    put(
+        &home,
+        "sessions/old.journal.jsonl",
+        include_bytes!("../fixtures/removed_panel_journal.jsonl"),
+    );
+    let before = hashes(&home);
+    let expected: Value = serde_json::from_slice(include_bytes!("../fixtures/removed_panel_journal.jsonl")).unwrap();
+    // When the real public migrator replays it.
+    let report = source(&home).migrate(&paths(&home)).unwrap();
+    // Then nothing rejects the unknown event types and the bytes survive.
+    assert_eq!(report.outcome, MigrationOutcome::Published);
+    let projection = view(&home);
+    assert_eq!(projection.messages().len(), 3);
+    let AuxiliaryRecordedPayload::Legacy { value, .. } = &projection.auxiliary()[0].1 else {
+        panic!("legacy auxiliary");
+    };
+    assert_eq!(value["replay_events"], expected["append_replay_events"]);
     preserved(&home, &before);
 }

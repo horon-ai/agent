@@ -63,7 +63,6 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
         let continue_on_disconnect = rng.random_bool(0.5);
         let req = Request::Subscribe {
             system_prompt: None,
-            supports_pdf_panels: false,
             supports_user_response: false,
             supports_ask_requests: false,
             id,
@@ -80,7 +79,6 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
         let decoded = parse_request_json(&serde_json::to_string(&req)?)?;
         let Request::Subscribe {
             system_prompt: _,
-            supports_pdf_panels: _,
             supports_user_response: _,
             supports_ask_requests: _,
             id: decoded_id,

@@ -19,11 +19,6 @@ pub use notifications::{FeatureToggle, NotificationType};
 use horon_agent_batch_types::BatchProgress;
 use horon_agent_message_types::{InputShellResult, ToolCall};
 use horon_agent_plan::{PlanItem, VersionedPlan, next_runnable_item_ids, summarize_plan_graph};
-use horon_agent_side_panel_types::{SidePanelSnapshot, snapshot_is_empty};
-
-fn applets_is_empty(applets: &horon_agent_applet_types::AgentApplets) -> bool {
-    applets.instances.is_empty()
-}
 use std::collections::BTreeMap;
 
 #[path = "protocol_memory.rs"]
@@ -644,8 +639,6 @@ impl Request {
             Request::ResumeSession { id, .. } => *id,
             Request::ResumeAllSessions { id } => *id,
             Request::NotifySession { id, .. } => *id,
-            Request::AppletAction { id, .. } => *id,
-            Request::CloseApplet { id, .. } => *id,
             Request::Transcript { id, .. } => *id,
             Request::InputShell { id, .. } => *id,
             Request::CycleModel { id, .. } => *id,
@@ -726,8 +719,6 @@ impl Request {
                 // one-shot client can send it without subscribing to a session.
                 | Request::InvalidateOpenAiUsage { .. }
                 | Request::NotifySession { .. }
-                | Request::AppletAction { .. }
-                | Request::CloseApplet { .. }
                 | Request::CommShare { .. }
                 | Request::CommRead { .. }
                 | Request::CommMessage { .. }

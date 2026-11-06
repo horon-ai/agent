@@ -127,8 +127,7 @@ async fn handle_resume_session_allows_reconnect_takeover_with_local_history() ->
         &event_history,
         &event_counter,
         &swarm_event_tx,
-        false,
-        false,
+                false,
     )
     .await?;
 

@@ -147,7 +147,6 @@ pub fn horon_agent_bindings(cfg: &KeybindingsConfig) -> Vec<HoronAgentBinding> {
             "Scroll down (fallback)",
             cfg.scroll_down_fallback.as_str(),
         ),
-        ("side_panel_toggle", "Toggle side panel", cfg.side_panel_toggle.as_str()),
         (
             "copy_selection_toggle",
             "Toggle copy/selection mode",
@@ -449,7 +448,7 @@ mod tests {
     #[test]
     fn deduplicates_repeated_interceptor_chords() {
         let cfg = KeybindingsConfig {
-            side_panel_toggle: "cmd+1".to_string(),
+            copy_selection_toggle: "cmd+1".to_string(),
             ..Default::default()
         };
         // Ghostty lists both super+1 and super+digit_1 for goto_tab:1.

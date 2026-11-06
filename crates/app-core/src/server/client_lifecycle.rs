@@ -595,7 +595,6 @@ pub(super) async fn handle_client(
     let mut current_client_instance_id: Option<String> = None;
     let mut continue_on_disconnect = false;
     let mut model_usage_updates_enabled = false;
-    let mut supports_pdf_panels = false;
     let mut supports_user_response = false;
     let mut supports_ask_requests = false;
     let mut ask_installation: Option<(String, u64)> = None;
@@ -985,23 +984,6 @@ pub(super) async fn handle_client(
                     Ok(BusEvent::BatchProgress(progress)) => {
                         if progress.session_id == client_session_id {
                             let _ = client_event_tx.send(ServerEvent::BatchProgress { progress });
-                        }
-                    }
-                    Ok(BusEvent::SidePanelUpdated(update)) => {
-                        if update.session_id == client_session_id {
-                            let _ = client_event_tx.send(ServerEvent::SidePanelState {
-                                snapshot: super::client_writer::side_panel_for_client(
-                                    update.snapshot, supports_pdf_panels,
-                                ),
-                            });
-                        }
-                    }
-                    Ok(BusEvent::AppletsUpdated(update)) => {
-                        if update.session_id == client_session_id {
-                            let _ = client_event_tx.send(ServerEvent::AppletState {
-                                session_id: update.session_id,
-                                snapshot: update.snapshot,
-                            });
                         }
                     }
                     Ok(BusEvent::CompactionFinished) => {
@@ -1658,7 +1640,6 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            supports_pdf_panels,
                             acp_v2.load(Ordering::Acquire),
                         )
                         .await
@@ -1720,7 +1701,6 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            supports_pdf_panels,
                             acp_v2.load(Ordering::Acquire),
                         )
                         .await
@@ -1784,7 +1764,6 @@ pub(super) async fn handle_client(
             Request::Subscribe {
                 id,
                 system_prompt,
-                supports_pdf_panels: requested_pdf_panels,
                 supports_user_response: requested_user_response,
                 supports_ask_requests: requested_ask_requests,
                 working_dir: subscribe_working_dir,
@@ -1829,7 +1808,6 @@ pub(super) async fn handle_client(
                 // snapshot must clear terminal vars inherited by the daemon
                 // rather than retaining a prior pane's values.
                 continue_on_disconnect = requested_continuation;
-                supports_pdf_panels = requested_pdf_panels;
                 supports_user_response = requested_user_response;
                 supports_ask_requests = requested_ask_requests;
                 // Read before the attach below writes History, which carries
@@ -1895,7 +1873,6 @@ pub(super) async fn handle_client(
                                 &event_history,
                                 &event_counter,
                                 &swarm_event_tx,
-                                supports_pdf_panels,
                                 acp_v2.load(Ordering::Acquire),
                             ),
                         )
@@ -2099,7 +2076,6 @@ pub(super) async fn handle_client(
                     &server_name,
                     &server_icon,
                     None,
-                    supports_pdf_panels,
                     acp_v2.load(Ordering::Acquire),
                 )
                 .await
@@ -2226,7 +2202,6 @@ pub(super) async fn handle_client(
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
-                        supports_pdf_panels,
                         acp_v2.load(Ordering::Acquire),
                     ),
                 )
@@ -2823,49 +2798,6 @@ pub(super) async fn handle_client(
                     },
                 )
                 .await;
-            }
-
-            Request::AppletAction {
-                id,
-                session_id,
-                instance,
-                action,
-                state,
-                source_key,
-            } => {
-                super::client_actions::handle_applet_action(
-                    id,
-                    session_id,
-                    instance,
-                    action,
-                    state,
-                    source_key,
-                    NotifySessionContext {
-                        sessions: &sessions,
-                        soft_interrupt_queues: &soft_interrupt_queues,
-                        client_connections: &client_connections,
-                        swarm_members: &swarm_members,
-                        swarms_by_id: &swarms_by_id,
-                        event_history: &event_history,
-                        event_counter: &event_counter,
-                        swarm_event_tx: &swarm_event_tx,
-                        client_event_tx: &client_event_tx,
-                    },
-                )
-                .await;
-            }
-
-            Request::CloseApplet {
-                id,
-                session_id,
-                instance,
-            } => {
-                super::client_actions::handle_close_applet(
-                    id,
-                    session_id,
-                    instance,
-                    &client_event_tx,
-                );
             }
 
             Request::Transcript {

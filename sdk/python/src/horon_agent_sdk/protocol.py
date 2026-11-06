@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 14
+API_VERSION_MINOR = 15
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -580,39 +580,6 @@ class StoreErrorDetail(TypedDict, total=False):
     conflict_heads: list[str]
 
 
-SidePanelPageFormat: TypeAlias = Literal["markdown", "pdf"]
-SidePanelPageSource: TypeAlias = Literal["managed", "linked_file", "ephemeral"]
-
-
-class SidePanelPage(TypedDict, total=False):
-    """Markdown/PDF panel state, shared with the native runtime."""
-
-    id: str
-    title: str
-    file_path: str
-    format: SidePanelPageFormat
-    source: SidePanelPageSource
-    content: str
-    # Base64 PDF bytes, separate from the human-readable Markdown fallback.
-    pdf_data: str
-    updated_at_ms: int
-
-
-class AppletAction(TypedDict, total=False):
-    """A user intent from an applet node (``horon-agent.applet/1``)."""
-
-    action: str
-    args: Any
-
-
-class SidePanelSnapshot(TypedDict, total=False):
-    # Monotonic explicit-focus intent. Absent on older servers.
-    focus_revision: int
-    focused_page_id: str | None
-    # Omitted by the runtime when empty.
-    pages: list[SidePanelPage]
-
-
 TurnStopReason: TypeAlias = Literal[
     "interrupted",
     "failure",
@@ -649,8 +616,6 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "session_forked",
     "history",
     "side_pane_images",
-    "side_panel_state",
-    "applet_state",
     "pong",
     "text_delta",
     "text_done",
@@ -758,8 +723,6 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "compact",
     "rename_session",
     "set_session_saved",
-    "applet_action",
-    "close_applet",
     "rewind_undo",
     "cancel_soft_interrupts",
     "background_tool",

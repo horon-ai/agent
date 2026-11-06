@@ -75,7 +75,6 @@ horon-agent-provider-openai = { path = "../provider-openai" }
 # `horon-agent-session-types` and reasoning-line markup lives in
 # `session/render_markup.rs`, so the layering inversion is gone.
 horon-agent-terminal-launch = { path = "../terminal-launch" }
-horon-agent-terminal-image = { path = "../terminal-image" }
 horon-agent-usage-types = { path = "../usage-types" }
 
 # NOTE: microphone capture and transcription live in `horon-agent-voice`, a
@@ -108,8 +107,6 @@ horon-agent-task-types = { path = "../task-types" }
 horon-agent-todo-policy = { path = "../todo-policy" }
 horon-agent-tool-core = { path = "../tool-core" }
 horon-agent-tool-types = { path = "../tool-types" }
-horon-agent-side-panel-types = { path = "../side-panel-types" }
-horon-agent-applet-types = { path = "../applet-types" }
 
 # Temporary files and directories for provider import helpers.
 tempfile = "3"

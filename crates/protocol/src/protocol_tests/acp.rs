@@ -1,7 +1,6 @@
 fn plain_subscribe(id: u64) -> Request {
     Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: false,
         supports_user_response: false,
         supports_ask_requests: false,
         id,
@@ -20,7 +19,6 @@ fn plain_subscribe(id: u64) -> Request {
 fn acp_subscribe(id: u64, acp: AcpSubscribeOptions) -> Request {
     let Request::Subscribe {
         system_prompt,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         working_dir,
@@ -38,7 +36,6 @@ fn acp_subscribe(id: u64, acp: AcpSubscribeOptions) -> Request {
     };
     Request::Subscribe {
         system_prompt,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,

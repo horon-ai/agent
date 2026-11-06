@@ -346,7 +346,6 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
         &mut socket,
         &Request::Subscribe {
             system_prompt: None,
-            supports_pdf_panels: false,
             supports_user_response: false,
             supports_ask_requests: false,
             id: 1,

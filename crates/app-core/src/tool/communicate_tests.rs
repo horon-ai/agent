@@ -1423,7 +1423,6 @@ impl RawClient {
         self.next_id += 1;
         self.send_request(Request::Subscribe {
             system_prompt: None,
-            supports_pdf_panels: false,
             supports_user_response: false,
             supports_ask_requests: false,
             id,

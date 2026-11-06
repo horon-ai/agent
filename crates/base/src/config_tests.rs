@@ -879,7 +879,6 @@ fn tool_config_acp_profile_allows_core_coding_plus_batch() {
     assert!(allowed.contains("todo"));
     assert!(!allowed.contains("swarm"));
     assert!(!allowed.contains("subagent"));
-    assert!(!allowed.contains("side_panel"));
 }
 
 /// The editor's surface is exactly this list: a tool that silently joins it
@@ -1042,9 +1041,6 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "selfdev",
         "desktop_selfdev",
         "compile_remote",
-        "panel",
-        "side_panel",
-        "applet",
         "calendar",
         "gmail",
         "schedule",
@@ -1461,7 +1457,6 @@ fn test_provider_failover_disabled_aliases_parse_as_manual() {
 fn test_native_scrollbars_default_to_enabled() {
     let display = DisplayConfig::default();
     assert!(display.native_scrollbars.chat);
-    assert!(display.native_scrollbars.side_panel);
 }
 
 #[test]
@@ -1546,25 +1541,17 @@ fn no_emoji_environment_override_disables_emoji() {
 fn test_env_override_native_scrollbars() {
     let _guard = crate::storage::lock_test_env();
     let prev_chat = std::env::var_os("HORON_AGENT_CHAT_NATIVE_SCROLLBAR");
-    let prev_side = std::env::var_os("HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR");
     crate::env::set_var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR", "true");
-    crate::env::set_var("HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR", "false");
 
     let mut cfg = Config::default();
     cfg.apply_env_overrides();
 
     assert!(cfg.display.native_scrollbars.chat);
-    assert!(!cfg.display.native_scrollbars.side_panel);
 
     if let Some(prev) = prev_chat {
         crate::env::set_var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR", prev);
     } else {
         crate::env::remove_var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR");
-    }
-    if let Some(prev) = prev_side {
-        crate::env::set_var("HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR");
     }
 }
 

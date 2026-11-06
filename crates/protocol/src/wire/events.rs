@@ -685,12 +685,6 @@ pub enum ServerEvent {
         /// Current live processing state for this session, if known.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         activity: Option<SessionActivitySnapshot>,
-        /// Session-scoped side panel pages and active focus state
-        #[serde(default, skip_serializing_if = "snapshot_is_empty")]
-        side_panel: SidePanelSnapshot,
-        /// Session-scoped agent applet instances.
-        #[serde(default, skip_serializing_if = "applets_is_empty")]
-        applets: horon_agent_applet_types::AgentApplets,
         /// ACP protocol version this connection subscribed with, echoed only
         /// to that connection. `Some(2)` tells a v2 adapter the daemon serves
         /// its protocol; absent means an older daemon that ignores the
@@ -712,17 +706,6 @@ pub enum ServerEvent {
         compacted_remaining: usize,
         #[serde(default)]
         compacted_hidden_prompts: usize,
-    },
-
-    /// Side panel state changed for the active session
-    #[serde(rename = "side_panel_state")]
-    SidePanelState { snapshot: SidePanelSnapshot },
-
-    /// Agent applet instances changed for the active session (full snapshot).
-    #[serde(rename = "applet_state")]
-    AppletState {
-        session_id: String,
-        snapshot: horon_agent_applet_types::AgentApplets,
     },
 
     /// Server is reloading (clients should reconnect)

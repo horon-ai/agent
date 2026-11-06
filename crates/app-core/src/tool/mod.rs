@@ -1,7 +1,6 @@
 pub(crate) mod acp_session;
 mod agentgrep;
 pub mod ambient;
-pub mod applet;
 mod apply_patch;
 pub(crate) mod approval_override;
 mod arg_repair;
@@ -45,7 +44,6 @@ mod minimizer;
 mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
-mod panel;
 mod patch;
 pub mod path_policy;
 mod path_suffix;
@@ -59,7 +57,6 @@ pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
 mod session_search;
 pub(crate) mod session_search_index;
-mod side_panel;
 mod skill;
 mod submit_plan;
 mod todo;
@@ -949,15 +946,6 @@ impl Registry {
         }
         if build_allows("agentgrep") {
             Self::insert_tool_timed(&mut m, &mut timings, "agentgrep", agentgrep::AgentGrepTool::new);
-        }
-        if build_allows("side_panel") {
-            Self::insert_tool_timed(&mut m, &mut timings, "side_panel", side_panel::SidePanelTool::new);
-        }
-        if build_allows("panel") {
-            Self::insert_tool_timed(&mut m, &mut timings, "panel", panel::PanelTool::new);
-        }
-        if build_allows("applet") {
-            Self::insert_tool_timed(&mut m, &mut timings, "applet", applet::AppletTool::new);
         }
         if build_allows("edit") {
             Self::insert_tool_timed(&mut m, &mut timings, "edit", edit::EditTool::new);

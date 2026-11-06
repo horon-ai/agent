@@ -1339,8 +1339,6 @@ pub struct KeybindingsConfig {
     pub workspace_up: String,
     /// Workspace navigation right key (default: "alt+l")
     pub workspace_right: String,
-    /// Toggle the side panel (default: "alt+m")
-    pub side_panel_toggle: String,
     /// Toggle copy/selection mode (default: "alt+y")
     pub copy_selection_toggle: String,
     /// Toggle the diagram pane position (default: "alt+t")
@@ -1407,7 +1405,6 @@ impl Default for KeybindingsConfig {
             workspace_down: get("workspace_down", "alt+j"),
             workspace_up: get("workspace_up", "alt+k"),
             workspace_right: get("workspace_right", "alt+l"),
-            side_panel_toggle: get("side_panel_toggle", "alt+m"),
             copy_selection_toggle: get("copy_selection_toggle", "alt+y"),
             diagram_pane_toggle: get("diagram_pane_toggle", "alt+t"),
             diagram_pane_visibility_toggle: get("diagram_pane_visibility_toggle", "alt+shift+m"),
@@ -1430,15 +1427,10 @@ impl Default for KeybindingsConfig {
 pub struct NativeScrollbarConfig {
     /// Show a native terminal scrollbar in the chat viewport (default: true)
     pub chat: bool,
-    /// Show a native terminal scrollbar in the side panel (default: true)
-    pub side_panel: bool,
 }
 impl Default for NativeScrollbarConfig {
     fn default() -> Self {
-        Self {
-            chat: true,
-            side_panel: true,
-        }
+        Self { chat: true }
     }
 }
 fn default_true() -> bool {

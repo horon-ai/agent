@@ -243,9 +243,6 @@ pub enum Request {
         /// Full system prompt override for a new session only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt: Option<String>,
-        /// Opt in to PDF panel payloads. Older clients only accept Markdown.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        supports_pdf_panels: bool,
         /// Desktop can render user_response tool calls as inline answers.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         supports_user_response: bool,
@@ -351,29 +348,6 @@ pub enum Request {
         id: u64,
         session_id: String,
         message: String,
-    },
-
-    /// The user pressed something in an agent-mounted applet instance. The
-    /// server stores `state`, then wakes the agent (or resolves a waiting
-    /// `applet` tool call).
-    #[serde(rename = "applet_action")]
-    AppletAction {
-        id: u64,
-        session_id: String,
-        instance: String,
-        action: horon_agent_applet_types::Action,
-        #[serde(default)]
-        state: serde_json::Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        source_key: Option<String>,
-    },
-
-    /// The user closed an agent-mounted applet instance. No agent wake.
-    #[serde(rename = "close_applet")]
-    CloseApplet {
-        id: u64,
-        session_id: String,
-        instance: String,
     },
 
     /// Inject externally transcribed text into a live TUI session.

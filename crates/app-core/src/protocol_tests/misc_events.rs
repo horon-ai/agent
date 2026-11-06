@@ -199,7 +199,6 @@ fn test_set_feature_roundtrip() -> Result<()> {
 fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result<()> {
     let req = Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: false,
         supports_user_response: false,
         supports_ask_requests: false,
         id: 89,
@@ -218,7 +217,6 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
     let decoded = parse_request_json(&json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels: _,
         supports_user_response: _,
         supports_ask_requests: _,
         id,
@@ -256,7 +254,6 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
     let decoded = parse_request_json(json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels: _,
         supports_user_response: _,
         supports_ask_requests: _,
         id,

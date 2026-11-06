@@ -19,7 +19,6 @@
 )]
 
 pub mod account_login;
-pub mod applets;
 pub mod artifacts;
 pub mod auth;
 pub mod aux_completion;
@@ -49,7 +48,6 @@ pub mod env;
 pub mod external_auth;
 pub mod foreign_rules;
 pub mod gateway;
-pub mod generated_image;
 pub mod git_clone_isolation;
 pub mod git_worktree;
 pub mod github;
@@ -98,7 +96,6 @@ pub mod secrets;
 pub mod session;
 pub mod session_list_cache;
 pub mod session_metrics;
-pub mod side_panel;
 pub mod sidecar;
 pub mod skill;
 pub mod soft_interrupt_store;

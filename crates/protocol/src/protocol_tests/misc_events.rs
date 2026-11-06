@@ -399,7 +399,6 @@ fn test_unknown_runtime_key_other_set_route_is_wire_safe() -> Result<()> {
 fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result<()> {
     let req = Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: true,
         supports_user_response: true,
         supports_ask_requests: true,
         id: 89,
@@ -418,7 +417,6 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
     let decoded = parse_request_json(&json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,
@@ -436,7 +434,6 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 89);
-    assert!(supports_pdf_panels);
     assert!(supports_user_response);
     assert!(supports_ask_requests);
     assert_eq!(working_dir.as_deref(), Some("/tmp/project"));
@@ -459,7 +456,6 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
     let decoded = parse_request_json(json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,
@@ -477,7 +473,6 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 91);
-    assert!(!supports_pdf_panels);
     assert!(!supports_user_response);
     assert!(!supports_ask_requests);
     assert_eq!(working_dir, None);

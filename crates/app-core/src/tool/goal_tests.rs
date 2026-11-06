@@ -80,7 +80,7 @@ async fn initiative_tool_list_renders_goals_overview_as_tool_output() {
     let ctx = goal_ctx("ses_goal_list", &home.project);
     // Older clients still send `display`; it must be accepted and change nothing.
     let list = tool
-        .execute(json!({"action": "list", "display": "side_panel"}), ctx)
+        .execute(json!({"action": "list", "display": "inline"}), ctx)
         .await
         .expect("list goals");
 

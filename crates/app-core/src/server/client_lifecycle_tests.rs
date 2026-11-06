@@ -1072,7 +1072,6 @@ fn ping_request_is_lightweight_control_request() {
 fn subscribe_request(working_dir: Option<&str>) -> Request {
     Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: false,
         supports_user_response: false,
         supports_ask_requests: false,
         id: 1,
@@ -1887,7 +1886,6 @@ async fn sdk_socket_workflow(response_only: bool) {
                     "type": "subscribe",
                     "id": id,
                     "working_dir": home._home.path(),
-                    "supports_pdf_panels": true,
                     "supports_user_response": capability,
                 }),
             )

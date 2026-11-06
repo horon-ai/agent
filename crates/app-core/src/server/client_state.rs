@@ -146,7 +146,6 @@ pub(super) async fn handle_get_history(
     server_name: &str,
     server_icon: &str,
     was_interrupted: Option<bool>,
-    supports_pdf_panels: bool,
     include_message_ids: bool,
 ) -> Result<()> {
     let history_start = Instant::now();
@@ -171,7 +170,6 @@ pub(super) async fn handle_get_history(
             server_icon,
             was_interrupted,
             activity,
-            supports_pdf_panels,
             include_message_ids,
         )
         .await?;
@@ -196,7 +194,6 @@ pub(super) async fn handle_get_history(
         activity,
         HistoryPayloadMode::Full,
         true,
-        supports_pdf_panels,
         include_message_ids,
     )
     .await?;
@@ -314,8 +311,6 @@ pub(super) async fn handle_get_model_catalog(
         autojudge_enabled: None,
         compaction_mode: Default::default(),
         activity: None,
-        side_panel: Default::default(),
-        applets: Default::default(),
         acp_protocol_version: None,
     };
     let json = encode_event(&event);
@@ -534,7 +529,6 @@ async fn send_history_from_persisted_session(
     server_icon: &str,
     was_interrupted: Option<bool>,
     activity: Option<SessionActivitySnapshot>,
-    supports_pdf_panels: bool,
     include_message_ids: bool,
 ) -> Result<()> {
     let session = match crate::session::Session::load_for_remote_startup(session_id)
@@ -574,10 +568,6 @@ async fn send_history_from_persisted_session(
     drop(session);
 
     super::session_observation::observe_conversation(session_id, &messages);
-    let side_panel = super::client_writer::side_panel_for_client(
-        crate::side_panel::snapshot_for_session(session_id).unwrap_or_default(),
-        supports_pdf_panels,
-    );
 
     let (all_sessions, current_client_count) = {
         let sessions_guard = sessions.read().await;
@@ -622,8 +612,6 @@ async fn send_history_from_persisted_session(
         service_tier: provider.service_tier(),
         compaction_mode: crate::config::config().compaction.mode.clone(),
         activity,
-        side_panel,
-        applets: crate::applets::snapshot_for_session(session_id).unwrap_or_default(),
         acp_protocol_version: include_message_ids.then_some(2),
     };
 
@@ -669,7 +657,6 @@ async fn send_history_with_guard(
     activity: Option<SessionActivitySnapshot>,
     payload_mode: HistoryPayloadMode,
     include_model_catalog: bool,
-    supports_pdf_panels: bool,
     include_message_ids: bool,
 ) -> Result<()> {
     let history_start = Instant::now();
@@ -784,13 +771,6 @@ async fn send_history_with_guard(
         None => (Vec::new(), 0),
     };
 
-    let side_panel_start = Instant::now();
-    let side_panel = super::client_writer::side_panel_for_client(
-        crate::side_panel::snapshot_for_session(session_id).unwrap_or_default(),
-        supports_pdf_panels,
-    );
-    let side_panel_ms = side_panel_start.elapsed().as_millis();
-
     let mut mcp_map: BTreeMap<String, usize> = BTreeMap::new();
     for name in &tool_names {
         if let Some(rest) = name.strip_prefix("mcp__")
@@ -811,7 +791,7 @@ async fn send_history_with_guard(
         let count = *client_count.read().await;
         let sessions_snapshot_ms = sessions_snapshot_start.elapsed().as_millis();
         crate::logging::info(&format!(
-            "[TIMING] send_history prep: session={}, mode={:?}, messages={}, images={}, mcp_servers={}, history={}ms, images={}ms, tool_names={}ms, models={}ms, routes={}ms, skills={}ms, provider_meta={}ms, compaction={}ms, side_panel={}ms, sessions={}ms, total={}ms",
+            "[TIMING] send_history prep: session={}, mode={:?}, messages={}, images={}, mcp_servers={}, history={}ms, images={}ms, tool_names={}ms, models={}ms, routes={}ms, skills={}ms, provider_meta={}ms, compaction={}ms, sessions={}ms, total={}ms",
             session_id,
             payload_mode,
             messages.len(),
@@ -825,7 +805,6 @@ async fn send_history_with_guard(
             skills_ms,
             provider_meta_ms,
             compaction_mode_ms,
-            side_panel_ms,
             sessions_snapshot_ms,
             history_start.elapsed().as_millis(),
         ));
@@ -865,8 +844,6 @@ async fn send_history_with_guard(
         service_tier,
         compaction_mode,
         activity,
-        side_panel,
-        applets: crate::applets::snapshot_for_session(session_id).unwrap_or_default(),
         acp_protocol_version: include_message_ids.then_some(2),
     };
     let encode_start = Instant::now();

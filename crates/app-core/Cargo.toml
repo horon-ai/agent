@@ -52,7 +52,6 @@ regex = "1"
 fancy-regex = "0.20"
 urlencoding = "2"        # URL encoding for web search
 uuid = { version = "1", features = ["v4", "v5"] }
-horon-agent-applet-types = { path = "../applet-types" }
 horon-agent-ast = { path = "../ast" }
 
 # Embeddings (local inference) live in horon-agent-base; this crate forwards the

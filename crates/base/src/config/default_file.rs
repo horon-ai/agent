@@ -85,7 +85,6 @@ workspace_up = "alt+k"
 workspace_right = "alt+l"
 
 # Pane / mode toggles
-side_panel_toggle = "alt+m"
 copy_selection_toggle = "alt+y"
 diagram_pane_toggle = "alt+t"
 diagram_pane_visibility_toggle = "alt+shift+m"

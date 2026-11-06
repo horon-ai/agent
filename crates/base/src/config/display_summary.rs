@@ -55,7 +55,6 @@ impl Config {
 - Prompt entry animation: {}
 - Compact notifications: {}
 - Chat native scrollbar: {}
-- Side panel native scrollbar: {}
 - Disabled animations: {}
 - Performance tier: {}
 - Animation FPS: {}
@@ -181,7 +180,6 @@ impl Config {
             self.display.prompt_entry_animation,
             self.display.compact_notifications,
             self.display.native_scrollbars.chat,
-            self.display.native_scrollbars.side_panel,
             if self.display.disabled_animations.is_empty() {
                 "(none)".to_string()
             } else {

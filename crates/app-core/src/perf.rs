@@ -89,7 +89,6 @@ pub struct TuiPerfPolicy {
     pub enable_mouse_capture: bool,
     pub enable_keyboard_enhancement: bool,
     pub simplified_model_picker: bool,
-    pub linked_side_panel_refresh_interval: std::time::Duration,
 }
 
 impl SystemProfile {
@@ -195,7 +194,6 @@ pub fn tui_policy_for(profile: &SystemProfile, display: &crate::config::DisplayC
     let enable_mouse_capture = display.mouse_capture;
     let mut enable_keyboard_enhancement = true;
     let mut simplified_model_picker = false;
-    let mut linked_side_panel_refresh_interval = std::time::Duration::from_millis(250);
 
     if profile.is_wsl || profile.is_windows_terminal_family() {
         enable_decorative_animations = false;
@@ -214,7 +212,6 @@ pub fn tui_policy_for(profile: &SystemProfile, display: &crate::config::DisplayC
 
     if profile.is_wsl {
         redraw_fps = redraw_fps.min(30);
-        linked_side_panel_refresh_interval = std::time::Duration::from_millis(500);
     }
 
     if profile.is_wsl_windows_terminal() {
@@ -222,7 +219,6 @@ pub fn tui_policy_for(profile: &SystemProfile, display: &crate::config::DisplayC
         enable_focus_change = false;
         enable_keyboard_enhancement = false;
         simplified_model_picker = true;
-        linked_side_panel_refresh_interval = std::time::Duration::from_millis(1000);
     }
 
     match profile.tier {
@@ -232,14 +228,10 @@ pub fn tui_policy_for(profile: &SystemProfile, display: &crate::config::DisplayC
             if enable_decorative_animations {
                 animation_fps = animation_fps.min(24);
             }
-            linked_side_panel_refresh_interval =
-                linked_side_panel_refresh_interval.max(std::time::Duration::from_millis(500));
         }
         PerformanceTier::Minimal => {
             redraw_fps = redraw_fps.min(12);
             enable_decorative_animations = false;
-            linked_side_panel_refresh_interval =
-                linked_side_panel_refresh_interval.max(std::time::Duration::from_millis(1000));
         }
     }
 
@@ -256,7 +248,6 @@ pub fn tui_policy_for(profile: &SystemProfile, display: &crate::config::DisplayC
         enable_mouse_capture,
         enable_keyboard_enhancement,
         simplified_model_picker,
-        linked_side_panel_refresh_interval,
     }
 }
 
@@ -701,10 +692,6 @@ mod tests {
         assert!(!policy.enable_keyboard_enhancement);
         assert!(policy.simplified_model_picker);
         assert!(policy.enable_mouse_capture);
-        assert_eq!(
-            policy.linked_side_panel_refresh_interval,
-            std::time::Duration::from_millis(1000)
-        );
     }
 
     #[test]
@@ -723,10 +710,6 @@ mod tests {
         assert!(policy.enable_keyboard_enhancement);
         assert!(!policy.simplified_model_picker);
         assert!(policy.enable_mouse_capture);
-        assert_eq!(
-            policy.linked_side_panel_refresh_interval,
-            std::time::Duration::from_millis(250)
-        );
     }
 
     #[test]
@@ -744,10 +727,6 @@ mod tests {
         assert!(policy.enable_keyboard_enhancement);
         assert!(!policy.simplified_model_picker);
         assert!(!policy.enable_mouse_capture);
-        assert_eq!(
-            policy.linked_side_panel_refresh_interval,
-            std::time::Duration::from_millis(500)
-        );
     }
 
     #[test]

@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 14;
+export const API_VERSION_MINOR = 15;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -613,15 +613,6 @@ export type ApiRequest =
   | { req: "compact"; session_id: string }
   | { req: "rename_session"; session_id: string; title?: string }
   | { req: "set_session_saved"; session_id: string; saved: boolean; label?: string }
-  | {
-      req: "applet_action";
-      session_id: string;
-      instance: string;
-      action: AppletAction;
-      state?: Record<string, unknown>;
-      source_key?: string;
-    }
-  | { req: "close_applet"; session_id: string; instance: string }
   | { req: "rewind_undo"; session_id: string }
   /** Without `client_ids`, clears the queue (replies `ok`). With them, replies `soft_interrupts_cancelled`. */
   | { req: "cancel_soft_interrupts"; session_id: string; client_ids?: string[] }
@@ -699,55 +690,6 @@ export type ApiRequest =
   | { req: "get_snapshot"; session_id: string; tail?: number; max_bytes?: number }
   | { req: "ping" };
 
-/** Markdown/PDF panel state, shared with the native runtime. */
-export type SidePanelPageFormat = "markdown" | "pdf";
-export type SidePanelPageSource = "managed" | "linked_file" | "ephemeral";
-export interface SidePanelPage {
-  id: string;
-  title: string;
-  file_path: string;
-  format: SidePanelPageFormat;
-  source: SidePanelPageSource;
-  content: string;
-  /** Base64 PDF bytes, separate from the human-readable Markdown fallback. */
-  pdf_data?: string;
-  updated_at_ms: number;
-}
-/** A user intent from an applet node (`horon-agent.applet/1`). */
-export interface AppletAction {
-  action: string;
-  args?: unknown;
-}
-
-/** One mounted applet instance. `document` follows the `horon-agent.applet/1` schema. */
-export interface AppletInstance {
-  id: string;
-  applet: string;
-  placement: { kind: string; [key: string]: unknown };
-  scope?: { kind: string; [key: string]: unknown };
-  lifetime?: "ephemeral" | "session" | "persistent";
-  document: {
-    revision: number;
-    title: string;
-    view: { type: string; [key: string]: unknown };
-    state?: Record<string, unknown>;
-    assets?: unknown[];
-  };
-}
-
-/** All agent-mounted applet instances for one session, in mount order. */
-export interface AgentApplets {
-  instances: AppletInstance[];
-}
-
-export interface SidePanelSnapshot {
-  /** Monotonic explicit-focus intent. Absent on older servers. */
-  focus_revision?: number;
-  focused_page_id: string | null;
-  /** Omitted by the runtime when empty. */
-  pages?: SidePanelPage[];
-}
-
 export type ApiEvent =
   | { ev: "hello_ok"; version: number; server: string; capabilities?: string[] }
   | { ev: "ok" }
@@ -776,8 +718,6 @@ export type ApiEvent =
       output: string;
       error?: string;
     }
-  | { ev: "side_panel_state"; session_id: string; snapshot: SidePanelSnapshot }
-  | { ev: "applet_state"; session_id: string; snapshot: AgentApplets }
   | { ev: "side_pane_images"; session_id: string; images: RenderedImage[] }
   | {
       ev: "token_usage";
@@ -1059,8 +999,6 @@ export const KNOWN_EVENT_KINDS = [
   "session_forked",
   "history",
   "side_pane_images",
-  "side_panel_state",
-  "applet_state",
   "pong",
   "text_delta",
   "text_done",
@@ -1168,8 +1106,6 @@ export const KNOWN_REQUEST_KINDS = [
   "compact",
   "rename_session",
   "set_session_saved",
-  "applet_action",
-  "close_applet",
   "rewind_undo",
   "cancel_soft_interrupts",
   "background_tool",

@@ -317,7 +317,6 @@ pub(super) fn subscribe_request(
 ) -> Request {
     Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: false,
         supports_user_response: false,
         supports_ask_requests,
         crash_on_disconnect: false,

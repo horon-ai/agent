@@ -161,7 +161,6 @@ pub use client::{
 };
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
-pub use horon_agent_applet_types as applet;
 pub use horon_agent_harness_api::{
     RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary, RuntimeQueueSummary,
     RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary, SessionEditStats,
@@ -192,8 +191,7 @@ pub use horon_agent_harness_api::{
     ApiEvent, ApiRequest, AskSelection, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage, ModelRouteInfo,
     PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor, RenderedImageSource, ResponseStats,
     SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage, SessionImportResult,
-    SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, SidePanelPage, SidePanelPageFormat,
-    SidePanelPageSource, SidePanelSnapshot, StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason,
-    api_socket_path,
+    SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, StoreErrorDetail, TextMatch, ToolConfiguration,
+    TurnStopReason, api_socket_path,
 };
 pub use horon_agent_harness_api::{ModelUsage, RuntimeCommand, RuntimeCommandOutput, compare_model_usage};
