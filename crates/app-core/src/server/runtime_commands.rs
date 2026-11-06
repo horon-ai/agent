@@ -228,16 +228,6 @@ pub(super) async fn execute(
             }
             json!({"service_tier": provider.service_tier(), "provider": provider.display_name()})
         }
-        RuntimeCommand::Subscription => {
-            status_only(args)?;
-            let configured = crate::subscription_catalog::has_credentials();
-            if configured {
-                let me = crate::subscription_api::fetch_subscription_me().await?;
-                json!({"configured": true, "source": "live", "account": me})
-            } else {
-                json!({"configured": false, "source": "local", "cached_tier": crate::subscription_catalog::cached_tier().map(|tier| tier.as_str()), "message": "Log in to HoronAgent to fetch live hosted usage and spending limit."})
-            }
-        }
         RuntimeCommand::Overnight
         | RuntimeCommand::Productivity
         | RuntimeCommand::Initiatives

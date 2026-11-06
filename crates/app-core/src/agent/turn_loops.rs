@@ -674,12 +674,6 @@ impl Agent {
         );
     }
 
-    pub(super) fn plan_limit_reminder(notice: &crate::subscription_notice::QuotaExceeded) -> String {
-        format!(
-            "<system-reminder>HoronAgent plan limit: {notice} An upgrade card with a button is already shown to the user in the chat. Mention the limit in one short sentence, including the upgrade link if one is given. Do not open checkout or purchase anything. Continue the task without that feature.</system-reminder>"
-        )
-    }
-
     pub(super) async fn run_turn(&mut self, print_output: bool) -> Result<String> {
         // Loop-detection state belongs to one turn, and a system reminder this
         // turn's guard set must not leak into the next one. The streaming entry
@@ -854,14 +848,6 @@ impl Agent {
             {
                 request_suffix.push(Message::user(Self::BATCH_NUDGE));
             }
-            // Background features (memory recall) can hit a plan limit with no
-            // visible failure. Surface it once as a reminder message instead of
-            // silently degrading. Agents without memory (auth smoke tests,
-            // headless probes) leave the notice for a user-facing session.
-            if let Some(notice) = self.memory_enabled.then(crate::subscription_notice::take).flatten() {
-                request_suffix.push(Message::user(&Self::plan_limit_reminder(&notice)));
-            }
-
             logging::info(&format!(
                 "API call starting: {} messages, {} tools",
                 messages.len() + request_suffix.len(),
@@ -917,11 +903,10 @@ impl Agent {
                     &self.provider_request_context(),
                 )
                 .await;
-            self.sync_bound_account_route();
             let mut stream = match completion {
                 Ok(stream) => stream,
                 Err(e) => {
-                    self.record_failed_account_route(&e.to_string());
+                    self.record_failed_credential_route(&e.to_string());
                     let attached_client = crate::server::session_has_attached_client(&self.session.id);
                     match self.handle_provider_error(&e, attached_client).await {
                         ProviderErrorAction::Resend { .. } => continue,
@@ -1010,7 +995,7 @@ impl Agent {
                     Ok(event) => event,
                     Err(e) => {
                         let err_str = e.to_string();
-                        self.record_failed_account_route(&err_str);
+                        self.record_failed_credential_route(&err_str);
                         let attached_client = crate::server::session_has_attached_client(&self.session.id);
                         match self.handle_provider_error(&e, attached_client).await {
                             ProviderErrorAction::Resend { .. } => {

@@ -4,7 +4,7 @@
     "crates/agent-sdk/tests/client_behavior.rs": 1540,
     "crates/app-core/src/agent/turn_loops_round_tests.rs": 2097,
     "crates/app-core/src/agent/turn_streaming_mpsc_round_tests.rs": 2374,
-    "crates/app-core/src/agent_tests.rs": 3672,
+    "crates/app-core/src/agent_tests.rs": 3620,
     "crates/app-core/src/server/client_lifecycle_tests.rs": 2514,
     "crates/app-core/src/server/client_lifecycle_tests/acp_v2_events.rs": 1553,
     "crates/app-core/src/server/comm_control_tests/dag_e2e.rs": 1332,

@@ -3,19 +3,23 @@
 use super::*;
 
 impl BridgeState {
+    /// Map a client-facing API-key provider name to the OpenAI-compatible
+    /// profile the daemon can actually activate, its env key, and its env file.
+    ///
+    /// The canonical name returned here travels in the auth-changed
+    /// notification, so it must be a profile id from
+    /// `horon_agent_provider_metadata` (`anthropic-api`, `gemini-api`, …).
+    /// Legacy aliases (`claude-api`, `gemini`, …) are accepted and normalized;
+    /// providers with no surviving profile (for example `cursor`) are rejected.
     pub(super) fn credential_binding(provider: &str) -> Option<(&'static str, &'static [&'static str], &'static str)> {
         match provider.trim().to_ascii_lowercase().as_str() {
             "claude-api" | "anthropic-api" | "anthropic-key" | "claude-key" => {
-                Some(("claude-api", &["ANTHROPIC_API_KEY"], "anthropic.env"))
+                Some(("anthropic-api", &["ANTHROPIC_API_KEY"], "anthropic.env"))
             }
             "openai-api" | "openai-key" | "openai-apikey" => Some(("openai-api", &["OPENAI_API_KEY"], "openai.env")),
             "openrouter" => Some(("openrouter", &["OPENROUTER_API_KEY"], "openrouter.env")),
-            "cursor" => Some(("cursor", &["CURSOR_API_KEY"], "cursor.env")),
             "gemini" | "gemini-api" | "google-gemini" => {
-                Some(("gemini", &["GEMINI_API_KEY", "GOOGLE_API_KEY"], "gemini.env"))
-            }
-            "horon-agent" | "subscription" | "horon-agent-subscription" => {
-                Some(("horon-agent", &["HORON_AGENT_API_KEY"], "horon-agent-subscription.env"))
+                Some(("gemini-api", &["GEMINI_API_KEY", "GOOGLE_API_KEY"], "gemini.env"))
             }
             _ => None,
         }

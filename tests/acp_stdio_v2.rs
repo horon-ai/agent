@@ -2316,7 +2316,7 @@ fn credential_snapshot_ignores_runtime_state() {
         home.join("external/.config/github-copilot/hosts.json"),
         home.join("external/.openclaw/agents/main/agent/auth-profiles.json"),
         home.join("config/horon-agent/openai.env"),
-        home.join("config/horon-agent/horon-agent-subscription.env"),
+        home.join("config/horon-agent/anthropic.env"),
     ];
     for path in &appearing {
         let before = snapshot();

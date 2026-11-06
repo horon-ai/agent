@@ -53,7 +53,6 @@ RuntimeCommand: TypeAlias = Literal[
     "autojudge",
     "transport",
     "fast",
-    "subscription",
     "overnight",
     "productivity",
     "initiatives",

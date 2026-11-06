@@ -10,7 +10,6 @@ mod dispatch;
 pub mod external;
 mod failover;
 mod fingerprint;
-pub mod horon_agent;
 mod image_clamp;
 pub mod model_rank;
 pub mod models;
@@ -49,7 +48,7 @@ pub use horon_agent_provider_core::{
     CHEAPNESS_REFERENCE_OUTPUT_TOKENS, CredentialMode, DEFAULT_CONTEXT_LIMIT, EventStream, HORON_AGENT_USER_AGENT,
     ModelCapabilities, ModelCatalogRefreshSummary, ModelRoute, ModelRouteApiMethod, NativeCompactionResult,
     NativeToolResult, NativeToolResultSender, PremiumMode, Provider, ProviderRequestContext, RouteBillingKind,
-    RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource, RouteSelection, RuntimeKey, dedupe_model_routes,
+    RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource, RouteSelection, dedupe_model_routes,
     explicit_model_provider_prefix, fresh_transport_client, grok_build_model_spec, inferred_reasoning_efforts,
     model_name_for_provider, normalize_copilot_model_name, provider_from_model_key, shared_http_client,
     summarize_model_catalog_refresh,
@@ -202,18 +201,6 @@ fn direct_openai_compatible_profile_routes(
     }
 
     routes
-}
-
-/// Strip an explicit HoronAgent subscription prefix (`horon-agent:` or
-/// `horon-agent-subscription:`) from a model spec.
-pub(crate) fn horon_agent_subscription_model_prefix(model: &str) -> Option<&str> {
-    let (prefix, rest) = model.split_once(':')?;
-    let prefix = prefix.trim();
-    if !(prefix.eq_ignore_ascii_case("horon-agent") || prefix.eq_ignore_ascii_case("horon-agent-subscription")) {
-        return None;
-    }
-    let rest = rest.trim();
-    (!rest.is_empty()).then_some(rest)
 }
 
 use self::dispatch::CompletionMode;
@@ -522,74 +509,6 @@ impl MultiProvider {
     /// fail and say so instead of silently landing on the profile.
     fn set_model_on_explicit_provider(&self, provider: ActiveProvider, model: &str) -> Result<()> {
         self.set_model_on_builtin_provider(provider, model, false)
-    }
-
-    /// Bind the shared OpenAI-compatible slot to the managed horon-agent endpoint.
-    ///
-    /// Subscription model ids intentionally overlap with [OI] ids.
-    /// A picker selection therefore cannot be reduced to a bare
-    /// model name: doing so lets `set_model`'s family heuristic spend the
-    /// user's unrelated provider credentials instead of their subscription.
-    fn set_model_on_horon_agent_subscription(&self, model: &str) -> Result<()> {
-        let model = model.trim();
-        if model.is_empty() {
-            anyhow::bail!("Model cannot be empty");
-        }
-        models::ensure_model_allowed_for_subscription(model)?;
-        crate::subscription_catalog::apply_runtime_env();
-        crate::provider::activation::ProviderActivation::horon_agent_subscription(model).apply_env()?;
-
-        // Always construct a fresh environment-derived runtime. Reusing the
-        // slot is unsafe because it may currently hold another
-        // OpenAI-compatible profile with different credentials and endpoint.
-        let base_url = std::env::var("HORON_AGENT_OPENROUTER_API_BASE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or_else(crate::subscription_catalog::configured_api_base)
-            .unwrap_or_else(|| crate::subscription_catalog::DEFAULT_HORON_AGENT_API_BASE.to_string());
-        let key_env = std::env::var("HORON_AGENT_OPENROUTER_API_KEY_NAME")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| crate::subscription_catalog::HORON_AGENT_API_KEY_ENV.to_string());
-        let env_file = std::env::var("HORON_AGENT_OPENROUTER_ENV_FILE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| crate::subscription_catalog::HORON_AGENT_ENV_FILE.to_string());
-        let api_key = crate::provider_catalog::load_api_key_from_env_or_config(&key_env, &env_file);
-        if api_key.is_none() {
-            anyhow::bail!(
-                "The HoronAgent subscription requires an API key, but {key_env} is not set. \
-                 Run `horon-agent login` or set {key_env}."
-            );
-        }
-        let models = crate::subscription_catalog::curated_models()
-            .iter()
-            .map(|entry| entry.id.to_string())
-            .collect::<Vec<_>>();
-        let runtime = external::build_direct_openai_compatible_runtime(external::DirectOpenAiCompatibleSpec {
-            base_url,
-            auth: horon_agent_provider_openai::ChatAuth::Bearer,
-            api_key,
-            display_name: crate::subscription_catalog::HORON_AGENT_PROVIDER_DISPLAY_NAME.to_string(),
-            profile_id: crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD.to_string(),
-            default_model: model.to_string(),
-            models,
-            headers: Vec::new(),
-            extra_body: None,
-        })?;
-        runtime.set_model(model)?;
-
-        let registry = ProviderRegistry::new(self);
-        registry.install_compatible_profile(
-            crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD,
-            Arc::clone(&runtime),
-        );
-        registry.set_active_compatible_profile(crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD);
-        self.set_active_provider(ActiveProvider::OpenAI);
-        Ok(())
     }
 
     fn set_model_on_builtin_provider(
@@ -1008,13 +927,6 @@ impl Provider for MultiProvider {
             anyhow::bail!("Model cannot be empty");
         }
 
-        // `horon-agent:<model>` is the explicit spec for the HoronAgent subscription
-        // runtime. Without this it fell through to the active provider and
-        // `--model horon-agent:gpt-5.5` silently stayed on the previous model.
-        if let Some(target_model) = horon_agent_subscription_model_prefix(requested_model) {
-            return self.set_model_on_horon_agent_subscription(target_model);
-        }
-
         if let Some((profile, target_model)) = Self::openai_compatible_model_prefix(requested_model) {
             return self.set_model_on_openai_compatible_profile(profile, target_model);
         }
@@ -1068,13 +980,6 @@ impl Provider for MultiProvider {
     fn set_route_selection(&self, selection: &RouteSelection) -> Result<()> {
         if selection.model.trim().is_empty() {
             anyhow::bail!("Model cannot be empty");
-        }
-
-        // The subscription is a distinct endpoint/auth runtime, not a model
-        // alias. Handle its structured identity before converting other routes
-        // back into their legacy string specs.
-        if selection.runtime_key == RuntimeKey::HoronAgentSubscription {
-            return self.set_model_on_horon_agent_subscription(&selection.model);
         }
 
         // Routing-prefix policy lives once in RouteSelection::routed_model_spec

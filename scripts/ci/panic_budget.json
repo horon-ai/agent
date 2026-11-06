@@ -1,5 +1,5 @@
 {
-  "total": 107,
+  "total": 104,
   "tracked_files": {
     "crates/agent-sdk/src/ssh.rs": 8,
     "crates/agent-sdk/src/structured.rs": 1,
@@ -29,7 +29,6 @@
     "crates/base/src/mcp/manager.rs": 2,
     "crates/base/src/memory_jev.rs": 1,
     "crates/base/src/monitor/mod.rs": 4,
-    "crates/base/src/provider_activity_oauth.rs": 3,
     "crates/base/src/secrets.rs": 3,
     "crates/base/src/workspace_trust.rs": 1,
     "crates/edit-bench/src/generate.rs": 1,

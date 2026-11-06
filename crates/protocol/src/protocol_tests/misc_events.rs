@@ -204,44 +204,6 @@ fn test_structured_set_route_decodes_as_set_route_not_set_model() -> Result<()> 
 }
 
 #[test]
-fn test_horon_agent_subscription_set_route_is_wire_safe() -> Result<()> {
-    let request = Request::SetRoute {
-        automatic_failover: false,
-        id: 8,
-        selection: horon_agent_provider_core::RouteSelection {
-            model: "gpt-5.5".to_string(),
-            runtime_key: horon_agent_provider_core::RuntimeKey::HoronAgentSubscription,
-            api_method: "horon-agent-subscription".to_string(),
-            provider_label: "HoronAgent Subscription".to_string(),
-            detail: "horon-agent subscription routing · managed server-side".to_string(),
-        },
-    };
-
-    let line = serde_json::to_string(&request)?;
-    assert!(line.contains("\"type\":\"set_route\""));
-    assert!(line.contains("\"kind\":\"horon-agent-subscription\""));
-
-    let decoded = decode_request(&line)?;
-    let Request::SetRoute {
-        id,
-        selection,
-        automatic_failover,
-    } = decoded
-    else {
-        return Err(anyhow!("expected HoronAgent SetRoute, got {decoded:?}"));
-    };
-    assert!(!automatic_failover);
-    assert_eq!(id, 8);
-    assert_eq!(selection.model, "gpt-5.5");
-    assert_eq!(
-        selection.runtime_key,
-        horon_agent_provider_core::RuntimeKey::HoronAgentSubscription
-    );
-    assert_eq!(selection.routed_model_spec(), "gpt-5.5");
-    Ok(())
-}
-
-#[test]
 fn test_automatic_failover_set_route_marker_and_legacy_default() -> Result<()> {
     let selection = horon_agent_provider_core::RouteSelection {
         model: "gpt-6.1-sol".to_string(),

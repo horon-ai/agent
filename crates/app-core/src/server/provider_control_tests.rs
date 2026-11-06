@@ -59,6 +59,67 @@ async fn notify_auth_changed_clears_renewed_login_failure() {
     assert!(crate::provider::provider_unavailability_detail_for_account("openai").is_none());
 }
 
+/// A live daemon inherits its environment at launch. When `SetApiKey` saves a
+/// new key to the profile's env file, the stale inherited env var must not keep
+/// winning at resolution time (issue #453).
+#[tokio::test]
+async fn notify_auth_changed_replaces_stale_process_api_key_with_saved_credential() {
+    let _guard = EnvGuard::save(&[
+        "OPENAI_API_KEY",
+        "HORON_AGENT_OPENROUTER_API_BASE",
+        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
+        "HORON_AGENT_OPENROUTER_ENV_FILE",
+        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
+        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
+        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
+        "HORON_AGENT_OPENROUTER_ALLOW_NO_AUTH",
+        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
+        "HORON_AGENT_OPENROUTER_MODEL",
+        "HORON_AGENT_OPENROUTER_STATIC_MODELS",
+        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
+        "HORON_AGENT_OPENROUTER_AUTH_HEADER_NAME",
+        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
+        "HORON_AGENT_OPENROUTER_PROVIDER",
+        "HORON_AGENT_OPENROUTER_NO_FALLBACK",
+        "HORON_AGENT_NAMED_PROVIDER_PROFILE",
+        "HORON_AGENT_PROVIDER_PROFILE_ACTIVE",
+        "HORON_AGENT_PROVIDER_PROFILE_NAME",
+    ]);
+    crate::env::set_var("OPENAI_API_KEY", "stale-inherited-key");
+    let config_dir = crate::storage::app_config_dir().expect("resolve app config dir");
+    std::fs::create_dir_all(&config_dir).expect("create app config dir");
+    std::fs::write(config_dir.join("openai.env"), "OPENAI_API_KEY=fresh-saved-key\n").expect("write saved credential");
+
+    let provider: Arc<dyn Provider> = Arc::new(AuthChangeMockProvider::new());
+    let agent = Arc::new(Mutex::new(Agent::new(provider.clone(), Registry::empty())));
+    let session_id = agent.lock().await.session_id().to_string();
+    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut auth = crate::protocol::AuthChanged::new("openai-api");
+    auth.credential_source = Some(crate::protocol::AuthCredentialSource::ApiKeyFile);
+    auth.auth_method = Some(crate::protocol::AuthMethod::RemoteTuiPasteApiKey);
+
+    handle_notify_auth_changed(
+        73,
+        None,
+        Some(auth),
+        false,
+        &provider,
+        &provider,
+        &sessions,
+        &session_id,
+        &agent,
+        &tx,
+    )
+    .await;
+
+    assert_eq!(
+        crate::provider_catalog::load_api_key_from_env_or_config("OPENAI_API_KEY", "openai.env").as_deref(),
+        Some("fresh-saved-key"),
+        "the saved credential must win over the stale inherited env var"
+    );
+}
+
 #[test]
 fn compact_auth_catalog_activity_reports_changed_and_unchanged_in_two_lines() {
     let changed = ModelCatalogRefreshSummary {

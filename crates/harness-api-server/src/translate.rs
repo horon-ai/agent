@@ -228,8 +228,6 @@ pub struct BridgeState {
     model_usage_updates: BTreeMap<(String, String, String), horon_agent_harness_api::ModelUsage>,
     /// Live usage figures the daemon pushed on this connection.
     usage: usage_report::Cache,
-    /// API ids of `usage_report` requests waiting on the subscription probe.
-    pending_usage_reports: Vec<(u64, Value)>,
     /// Bytes the client actually sent for the request being translated, set by
     /// the connection loop before each translation.
     ///
@@ -429,7 +427,6 @@ impl BridgeState {
             self.pending_fork_id.is_some() as u64,
             self.pending_model_probe.is_some() as u64,
             self.pending_no_reply_message_id.is_some() as u64,
-            self.pending_usage_reports.len() as u64,
             self.pending_control_done_ids.len() as u64,
             self.pending_activity_snapshots.len() as u64,
         ];
@@ -1031,7 +1028,7 @@ impl BridgeState {
                     return Self::error_reply(
                         api_id,
                         ErrorCode::InvalidRequest,
-                        "unsupported API-key provider; supported: claude-api, openai-api, openrouter, cursor, gemini, horon-agent",
+                        "unsupported API-key provider; supported: anthropic-api, openai-api, openrouter, gemini-api",
                     );
                 };
                 let configured = req == "set_api_key";
@@ -1672,10 +1669,6 @@ impl BridgeState {
         let kind = event["type"].as_str().unwrap_or("");
         if kind == "runtime_command_result" {
             let legacy_id = event["id"].as_u64().unwrap_or(0);
-            let waiting = usage_report::finish(self, legacy_id, Some(&event["data"]));
-            if !waiting.is_empty() {
-                return waiting;
-            }
             let Some(api_id) = self.take_simple(legacy_id, SimpleKind::RuntimeCommand) else {
                 return vec![];
             };
@@ -2545,10 +2538,6 @@ impl BridgeState {
                 // A rejected tool configuration/result is not a failed model
                 // turn. Preserve streaming state and correlate only its request.
                 let id = event["id"].as_u64().unwrap_or(0);
-                let waiting = usage_report::finish(self, id, None);
-                if !waiting.is_empty() {
-                    return waiting;
-                }
                 if let Some(index) = self.pending_simple.iter().position(|(pending_id, _, kind)| {
                     *pending_id == id && matches!(kind, SimpleKind::Tools | SimpleKind::ToolControl)
                 }) {
@@ -3753,6 +3742,10 @@ mod tests;
 #[cfg(test)]
 #[path = "translate/usage_report_tests.rs"]
 mod usage_report_tests;
+
+#[cfg(test)]
+#[path = "translate_tests/credential_profile_tests.rs"]
+mod credential_profile_tests;
 
 #[cfg(test)]
 #[path = "user_response_capability_tests.rs"]

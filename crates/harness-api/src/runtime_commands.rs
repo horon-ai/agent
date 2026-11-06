@@ -16,7 +16,6 @@ pub enum RuntimeCommand {
     Autojudge,
     Transport,
     Fast,
-    Subscription,
     Overnight,
     Productivity,
     Initiatives,

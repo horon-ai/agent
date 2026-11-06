@@ -41,7 +41,6 @@ export type RuntimeCommand =
   | "autojudge"
   | "transport"
   | "fast"
-  | "subscription"
   | "overnight"
   | "productivity"
   | "initiatives"

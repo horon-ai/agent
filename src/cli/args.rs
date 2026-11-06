@@ -175,12 +175,6 @@ pub(crate) enum Command {
         /// The message to send
         message: String,
     },
-    /// Log in to and manage your HoronAgent account
-    Account {
-        #[command(subcommand)]
-        action: AccountCommand,
-    },
-
     /// Run in simple REPL mode (no TUI)
     Repl,
 
@@ -358,20 +352,6 @@ pub(crate) enum RuntimeStateAction {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum AccountCommand {
-    /// Show canonical account, plan, and usage status from /v1/me
-    Status {
-        /// Emit JSON instead of human-readable output
-        #[arg(long)]
-        json: bool,
-    },
-    /// Open the public HoronAgent account management page
-    Manage,
-    /// Revoke the current key when reachable, then securely clear local state
-    Logout,
 }
 
 #[derive(Subcommand, Debug)]

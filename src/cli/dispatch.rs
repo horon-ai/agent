@@ -10,7 +10,7 @@ use super::args::{
 };
 use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 
-use super::{account, acp, commands, debug, hot_exec, output, provider_init, terminal};
+use super::{acp, commands, debug, hot_exec, output, provider_init, terminal};
 use provider_init::ProviderChoice;
 
 #[cfg(any(target_os = "linux", test))]
@@ -302,11 +302,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             )
             .await?;
         }
-        Some(Command::Account { action }) => match action {
-            super::args::AccountCommand::Status { json } => account::run_status(json).await?,
-            super::args::AccountCommand::Manage => account::run_manage()?,
-            super::args::AccountCommand::Logout => account::run_logout().await?,
-        },
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref()).await?;

@@ -1,4 +1,3 @@
-use super::subscription::horon_agent_usage_report;
 use super::*;
 
 #[test]
@@ -217,11 +216,6 @@ fn test_reports_sort_most_recently_used_first() {
 
 #[test]
 fn test_activity_sweeper_skips_sources_with_dedicated_reports() {
-    // The subscription is reported by its own fetcher once a key is configured.
-    assert_eq!(
-        activity_source_has_dedicated_report("horon-agent"),
-        crate::subscription_catalog::configured_api_key().is_some()
-    );
     // Direct OpenAI-compatible profiles are reported by the API-key module;
     // every other source falls through to the sweeper.
     assert!(!activity_source_has_dedicated_report("claude:oauth:claude-1"));
@@ -253,55 +247,6 @@ fn anthropic_model_scoped_exhaustion_matches_display_name_to_catalog_id() {
         ..Default::default()
     };
     assert!(!below_limit.model_scoped_exhausted("claude-fable-5"));
-}
-
-fn horon_agent_me(memory_used: u64, upgrade: bool) -> crate::subscription_api::SubscriptionMe {
-    serde_json::from_value(serde_json::json!({
-        "account_id": "a", "email": "e@example.com", "tier": "plus", "status": "active",
-        "jev_usage": {
-            "memory": {"used": memory_used, "limit": 1000},
-            "browser": {"used": 10, "limit": 2000},
-            "resets_at": "2026-09-27T00:00:00.000Z",
-            "upgrade_tier": if upgrade { serde_json::json!("pro") } else { serde_json::Value::Null },
-            "upgrade_url": if upgrade { serde_json::json!("https://horon-agent.sh/pricing") } else { serde_json::Value::Null }
-        }
-    }))
-    .unwrap()
-}
-
-#[test]
-fn horon_agent_usage_shows_daily_allowances_without_upsell_when_low() {
-    let report = horon_agent_usage_report(&horon_agent_me(100, true));
-    assert_eq!(report.provider_name, "HoronAgent subscription");
-    assert_eq!(report.limits.len(), 2);
-    assert_eq!(report.limits[0].name, "Memory recall (daily)");
-    assert!((report.limits[0].usage_percent - 10.0).abs() < 0.01);
-    assert!(!report.hard_limit_reached);
-    assert!(report.extra_info.iter().all(|(key, _)| key != "Upgrade"));
-}
-
-#[test]
-fn horon_agent_usage_suggests_upgrade_near_and_at_the_limit() {
-    let near = horon_agent_usage_report(&horon_agent_me(850, true));
-    let hint = near.extra_info.iter().find(|(key, _)| key == "Upgrade").unwrap();
-    assert!(hint.1.contains("https://horon-agent.sh/pricing"));
-    assert!(!near.hard_limit_reached);
-    let full = horon_agent_usage_report(&horon_agent_me(1000, true));
-    assert!(full.hard_limit_reached);
-    // The top plan has nowhere to upgrade, so no hint is shown.
-    let top = horon_agent_usage_report(&horon_agent_me(1000, false));
-    assert!(top.extra_info.iter().all(|(key, _)| key != "Upgrade"));
-}
-
-#[test]
-fn horon_agent_usage_tolerates_older_gateways_without_jev_usage() {
-    let me: crate::subscription_api::SubscriptionMe = serde_json::from_value(serde_json::json!({
-        "account_id": "a", "email": "e", "tier": "pro", "status": "active"
-    }))
-    .unwrap();
-    let report = horon_agent_usage_report(&me);
-    assert!(report.limits.is_empty());
-    assert_eq!(report.extra_info[0].0, "Plan");
 }
 
 #[test]

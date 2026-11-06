@@ -138,7 +138,6 @@ async fn memory_cli_semantic_requires_jev_but_keyword_search_remains_local() {
     let _guard = crate::storage::lock_test_env();
     let keys = [
         "HORON_AGENT_HOME",
-        "HORON_AGENT_API_KEY",
         "OPENROUTER_API_KEY",
         "TYPESAFE_API_KEY",
         "AIMLAPI_API_KEY",

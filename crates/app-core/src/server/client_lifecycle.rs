@@ -2713,13 +2713,6 @@ pub(super) async fn handle_client(
                             "swarm_id": member.and_then(|m| m.swarm_id.as_deref()), "role": member.map(|m| &m.role)});
                         return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
                     }
-                    if parsed == horon_agent_harness_api::RuntimeCommand::Subscription {
-                        if !args.is_empty() && args != ["status".to_string()] { anyhow::bail!("Usage: subscription [status]"); }
-                        let data = if crate::subscription_catalog::has_credentials() {
-                            serde_json::to_value(crate::subscription_api::fetch_subscription_me().await?)?
-                        } else { serde_json::json!({"signed_in": false, "status": "not_signed_in"}) };
-                        return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
-                    }
                     let mut guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry this runtime command after the current turn."))?;
                     super::runtime_commands::execute(&mut guard, parsed, &args, swarm_enabled, serde_json::Value::Null).await
                 }.await;

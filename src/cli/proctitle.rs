@@ -16,7 +16,6 @@ pub(crate) fn initial_title(args: &Args) -> String {
         #[cfg(unix)]
         Some(Command::ApiBridge { .. }) => "horon-agent api-bridge".to_string(),
         Some(Command::Run { .. }) => "horon-agent run".to_string(),
-        Some(Command::Account { .. }) => "horon-agent account".to_string(),
         Some(Command::Mcp { .. }) => "horon-agent mcp".to_string(),
         Some(Command::Repl) => "horon-agent repl".to_string(),
         Some(Command::Update) => "horon-agent update".to_string(),

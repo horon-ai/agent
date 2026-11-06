@@ -7,18 +7,22 @@ mod api_keys;
 mod cache;
 mod display;
 mod model;
-mod subscription;
 use api_keys::enqueue_api_key_usage_tasks;
 use cache::*;
 pub use horon_agent_usage_types::{OpenAiResetCredits, ProviderUsage, ProviderUsageProgress, UsageLimit};
 pub use model::*;
-use subscription::fetch_horon_agent_usage_report;
-pub(super) use subscription::usage_percent_from_used_limit;
 
 use display::provider_usage_cache_is_fresh;
 pub use display::{format_reset_time, format_usage_bar};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+pub(crate) fn usage_percent_from_used_limit(used: f64, limit: f64) -> f32 {
+    if !used.is_finite() || !limit.is_finite() || limit <= 0.0 {
+        return 0.0;
+    }
+    ((used.max(0.0) / limit) * 100.0) as f32
+}
 
 /// Cache duration (refresh every 5 minutes - usage data is slow-changing)
 const CACHE_DURATION: Duration = Duration::from_secs(300);
@@ -186,16 +190,6 @@ fn enqueue_provider_usage_tasks(tasks: &mut tokio::task::JoinSet<Option<Provider
 
     total += enqueue_api_key_usage_tasks(tasks);
 
-    if crate::subscription_catalog::configured_api_key().is_some() {
-        tasks.spawn(async {
-            fetch_horon_agent_usage_report().await.map(|mut report| {
-                attach_activity(&mut report, "horon-agent");
-                report
-            })
-        });
-        total += 1;
-    }
-
     total += enqueue_activity_sweeper_task(tasks);
 
     total
@@ -205,21 +199,16 @@ fn enqueue_provider_usage_tasks(tasks: &mut tokio::task::JoinSet<Option<Provider
 /// sweeper skips these so used-but-unreported logins still show recency + local
 /// spend without double-listing covered providers.
 fn activity_source_has_dedicated_report(source_key: &str) -> bool {
-    match source_key {
-        "horon-agent" => crate::subscription_catalog::configured_api_key().is_some(),
-        _ => {
-            // Direct OpenAI-compatible profiles are reported by the API-key
-            // module whenever their key is configured.
-            source_key
-                .strip_prefix("openai-compatible:")
-                .and_then(crate::provider_catalog::openai_compatible_profile_by_id)
-                .map(|profile| {
-                    crate::provider_catalog::load_api_key_from_env_or_config(profile.api_key_env, profile.env_file)
-                        .is_some()
-                })
-                .unwrap_or(false)
-        }
-    }
+    // Direct OpenAI-compatible profiles are reported by the API-key module
+    // whenever their key is configured. Every other source falls through to
+    // the sweeper.
+    source_key
+        .strip_prefix("openai-compatible:")
+        .and_then(crate::provider_catalog::openai_compatible_profile_by_id)
+        .map(|profile| {
+            crate::provider_catalog::load_api_key_from_env_or_config(profile.api_key_env, profile.env_file).is_some()
+        })
+        .unwrap_or(false)
 }
 
 /// One catch-all task that reports every ledger entry without a dedicated

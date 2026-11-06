@@ -1,5 +1,9 @@
 #![cfg_attr(test, allow(clippy::items_after_test_module))]
 
+#[path = "provider_control_auth_env.rs"]
+mod provider_control_auth_env;
+use provider_control_auth_env::{activate_auth_profile, auth_change_saved_credentials};
+
 use crate::agent::Agent;
 use crate::protocol::{AuthChanged, NotificationType, ServerEvent};
 use crate::provider::{ModelCatalogRefreshSummary, ModelRoute, Provider, ProviderFailoverPrompt, RouteSelection};
@@ -274,21 +278,6 @@ fn auth_model_switch_request(provider_id: Option<&str>, model: &str) -> String {
         }
         _ => model.to_string(),
     }
-}
-
-/// Apply the profile named by an auth change so the next request uses its
-/// endpoint and credential; unknown names are ignored.
-fn activate_auth_profile(provider_id: &str) {
-    if crate::config::config().providers.contains_key(provider_id) {
-        if crate::provider_catalog::apply_named_provider_profile_env(provider_id).is_err() {
-            return;
-        }
-    } else if let Some(profile) = crate::provider_catalog::openai_compatible_profile_by_id(provider_id) {
-        crate::provider_catalog::force_apply_openai_compatible_profile_env(Some(profile));
-    } else {
-        return;
-    }
-    crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
 }
 
 fn route_matches_provider(route: &ModelRoute, provider_id: Option<&str>) -> bool {
@@ -1205,9 +1194,10 @@ pub(super) async fn handle_notify_auth_changed(
         )
     };
     let auth_refresh_generation = begin_auth_refresh(&session_id);
+    let saved_credentials_changed = auth_change_saved_credentials(auth.as_ref());
     let auth_provider_id = auth_provider_id(provider_hint, auth);
     if let Some(provider_id) = auth_provider_id.as_deref() {
-        activate_auth_profile(provider_id);
+        activate_auth_profile(provider_id, saved_credentials_changed);
     }
     crate::bus::Bus::global().publish(crate::bus::BusEvent::UiActivity(crate::bus::UiActivity::auth(
         Some(session_id.clone()),
@@ -1255,13 +1245,6 @@ pub(super) async fn handle_notify_auth_changed(
             provider.on_auth_changed_preserve_current_provider();
         }
 
-        // Auth refresh is global so every live session learns about newly
-        // configured credentials, but the automatic post-login model switch is
-        // session-local. A user logging Groq/Cerebras into one workspace should
-        // not silently move unrelated sessions off their chosen provider/model.
-        if auth_refresh_is_current(&session_id, auth_refresh_generation) {
-            apply_auth_runtime_model_to_agent(auth_provider_id.as_deref(), None, &agent_clone, None).await;
-        }
         let auth_selection_generation = {
             let agent_guard = agent_clone.lock().await;
             agent_guard.provider_model_selection_generation()

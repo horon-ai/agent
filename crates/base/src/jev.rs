@@ -1,11 +1,10 @@
 //! Shared Jev typed Decisions transport, separate from chat completions.
 //!
-//! BYOK credentials are bound to fixed provider endpoints. The HoronAgent route uses
-//! the configured trusted account gateway, and checks its live purpose-specific
-//! capability before each evaluation. Credential presence is not entitlement.
+//! BYOK credentials are bound to fixed provider endpoints. Memory and voice
+//! recall use them directly; there is no hosted subscription route.
 
 use anyhow::{Result, anyhow, bail, ensure};
-use reqwest::{Client, Response, Url};
+use reqwest::{Client, Response};
 use serde_json::{Map, Value, json};
 use std::time::Duration;
 
@@ -13,7 +12,6 @@ const PROVIDER_ENV: &str = "HORON_AGENT_MEMORY_JEV_PROVIDER";
 const VOICE_PROVIDER_ENV: &str = "HORON_AGENT_VOICE_JEV_PROVIDER";
 const MAX_REQUEST_BYTES: usize = 80 * 1024;
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
-const MAX_ME_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_QUESTIONS: usize = 24;
 /// Typesafe direct accepts far more (256 verified live on 2026-09-23). A voice
 /// request has at most 26 questions, so it always fits in one round trip.
@@ -43,20 +41,6 @@ enum JevPurpose {
 }
 
 impl JevPurpose {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Memory => "memory",
-            Self::Voice => "voice",
-        }
-    }
-
-    fn capability(self) -> &'static str {
-        // Both purposes use the gateway's existing typed noul contract.
-        match self {
-            Self::Memory | Self::Voice => "memory_jev",
-        }
-    }
-
     fn selector_with(
         self,
         env: impl FnOnce(&str) -> Result<String, std::env::VarError>,
@@ -82,7 +66,6 @@ enum JevProvider {
     OpenRouter,
     TypeSafe,
     Aimlapi,
-    HoronAgent,
 }
 
 impl JevProvider {
@@ -91,7 +74,6 @@ impl JevProvider {
             Self::OpenRouter => "openrouter",
             Self::TypeSafe => "typesafe",
             Self::Aimlapi => "aimlapi",
-            Self::HoronAgent => "horon-agent",
         }
     }
 
@@ -100,10 +82,6 @@ impl JevProvider {
             Self::OpenRouter => ("OPENROUTER_API_KEY", "openrouter.env"),
             Self::TypeSafe => ("TYPESAFE_API_KEY", "typesafe.env"),
             Self::Aimlapi => ("AIMLAPI_API_KEY", "aimlapi.env"),
-            Self::HoronAgent => (
-                crate::subscription_catalog::HORON_AGENT_API_KEY_ENV,
-                crate::subscription_catalog::HORON_AGENT_ENV_FILE,
-            ),
         }
     }
 
@@ -116,19 +94,18 @@ impl JevProvider {
 
     fn model(self) -> &'static str {
         match self {
-            Self::OpenRouter | Self::HoronAgent => "typesafe/jev-1.13",
+            Self::OpenRouter => "typesafe/jev-1.13",
             Self::TypeSafe => "jev-latest",
             Self::Aimlapi => "typesafe/jev",
         }
     }
 
-    fn endpoint(self, gateway_base: &str) -> Result<String> {
-        Ok(match self {
-            Self::OpenRouter => "https://openrouter.ai/api/alpha/decisions".into(),
-            Self::TypeSafe => "https://api.typesafe.ai/v1/systemone".into(),
-            Self::Aimlapi => "https://api.aimlapi.com/v1/decisions".into(),
-            Self::HoronAgent => format!("{}/decisions", trusted_gateway_base(gateway_base)?),
-        })
+    fn endpoint(self) -> &'static str {
+        match self {
+            Self::OpenRouter => "https://openrouter.ai/api/alpha/decisions",
+            Self::TypeSafe => "https://api.typesafe.ai/v1/systemone",
+            Self::Aimlapi => "https://api.aimlapi.com/v1/decisions",
+        }
     }
 }
 
@@ -143,12 +120,10 @@ pub struct JevClient {
     provider: JevProvider,
     api_key: String,
     endpoint: String,
-    me_endpoint: Option<String>,
 }
 
 impl JevClient {
-    /// A configured credential route exists. This is not a health or entitlement
-    /// probe. In particular, HoronAgent entitlement is checked live by `evaluate`.
+    /// A configured credential route exists. This is not a health probe.
     pub fn available() -> bool {
         Self::resolve(JevPurpose::Memory).is_ok()
     }
@@ -157,16 +132,15 @@ impl JevClient {
         Self::for_purpose(JevPurpose::Memory)
     }
 
-    /// Voice uses included HoronAgent access (whose gateway uses Typesafe directly),
-    /// then Typesafe BYOK when no HoronAgent credential exists. Other provider keys and
-    /// memory configuration are ignored. HORON_AGENT_VOICE_JEV_PROVIDER may
-    /// explicitly select typesafe or horon-agent. Evaluation never changes accounts.
+    /// Voice uses Typesafe directly. Other provider keys and memory configuration
+    /// are ignored. HORON_AGENT_VOICE_JEV_PROVIDER may explicitly select
+    /// typesafe. Evaluation never changes accounts.
     pub fn for_voice() -> Result<Self> {
         Self::for_purpose(JevPurpose::Voice)
     }
 
     fn for_purpose(purpose: JevPurpose) -> Result<Self> {
-        let (provider, api_key, endpoint, me_endpoint) = Self::resolve(purpose)?;
+        let (provider, api_key) = Self::resolve(purpose)?;
         let build = || {
             client_builder()
                 .build()
@@ -184,12 +158,11 @@ impl JevClient {
             purpose,
             provider,
             api_key,
-            endpoint,
-            me_endpoint,
+            endpoint: provider.endpoint().to_string(),
         })
     }
 
-    fn resolve(purpose: JevPurpose) -> Result<(JevProvider, String, String, Option<String>)> {
+    fn resolve(purpose: JevPurpose) -> Result<(JevProvider, String)> {
         let selector = purpose.selector_with(
             |key| std::env::var(key),
             || crate::config::config().agents.memory_jev_provider.clone(),
@@ -202,18 +175,7 @@ impl JevClient {
         } else {
             resolve_with(&selector, load)?
         };
-        let base = if provider == JevProvider::HoronAgent {
-            crate::subscription_api::configured_api_base()
-        } else {
-            String::new()
-        };
-        let endpoint = provider.endpoint(&base)?;
-        let me_endpoint = if provider == JevProvider::HoronAgent {
-            Some(format!("{}/me", trusted_gateway_base(&base)?))
-        } else {
-            None
-        };
-        Ok((provider, api_key, endpoint, me_endpoint))
+        Ok((provider, api_key))
     }
 
     pub fn provider_name(&self) -> &str {
@@ -229,31 +191,6 @@ impl JevClient {
     /// failure. Callers own the relevance threshold and uncertainty policy.
     pub async fn evaluate(&self, state: Value, questions: Map<String, Value>) -> Result<Value> {
         let body = request_body_for(self.provider, state, &questions)?;
-        if let Some(endpoint) = &self.me_endpoint {
-            let response = self
-                .client
-                .get(endpoint)
-                .bearer_auth(&self.api_key)
-                .timeout(crate::subscription_api::ME_FETCH_TIMEOUT)
-                .send()
-                .await
-                .map_err(|_| {
-                    anyhow!(
-                        "Could not verify HoronAgent {} entitlement; try again later",
-                        self.purpose.name()
-                    )
-                })?;
-            let me = read_response(response, MAX_ME_BYTES, self.provider).await?;
-            ensure!(
-                me["capabilities"]
-                    .get(self.purpose.capability())
-                    .and_then(Value::as_bool)
-                    == Some(true),
-                "HoronAgent Jev {} is unavailable for this account or gateway. An active entitled subscription and a gateway with {} support are required. Configure a Jev BYOK provider to use your own account.",
-                self.purpose.name(),
-                self.purpose.capability()
-            );
-        }
         if self.purpose == JevPurpose::Voice {
             return self.send_hedged(body, &questions).await;
         }
@@ -334,7 +271,7 @@ impl JevClient {
                 tokio::time::sleep(delay).await;
                 continue;
             }
-            return read_response(response, MAX_RESPONSE_BYTES, self.provider).await;
+            return read_response(response, MAX_RESPONSE_BYTES).await;
         }
     }
 
@@ -397,22 +334,19 @@ fn client_builder() -> reqwest::ClientBuilder {
 
 fn resolve_voice_with(selector: &str, load: impl FnMut(&str, &str) -> Option<String>) -> Result<(JevProvider, String)> {
     match selector.trim().to_ascii_lowercase().as_str() {
-        "auto" => resolve_providers(&[JevProvider::HoronAgent, JevProvider::TypeSafe], load),
-        "typesafe" | "horon-agent" | "subscription" | "horon-agent-subscription" => resolve_with(selector, load),
-        _ => bail!(
-            "Invalid voice Jev provider. Choose auto, typesafe, or horon-agent; voice never uses OpenRouter or AIMLAPI"
+        "auto" => resolve_providers(&[JevProvider::TypeSafe], load),
+        "typesafe" => resolve_with(selector, load),
+        "horon-agent" | "subscription" | "horon-agent-subscription" => bail!(
+            "The hosted HoronAgent Jev subscription was removed. Set HORON_AGENT_VOICE_JEV_PROVIDER=typesafe and configure TYPESAFE_API_KEY"
         ),
+        _ => bail!("Invalid voice Jev provider. Choose auto or typesafe; voice never uses OpenRouter or AIMLAPI"),
     }
 }
 
 fn resolve_with(selector: &str, load: impl FnMut(&str, &str) -> Option<String>) -> Result<(JevProvider, String)> {
     let providers: &[JevProvider] = match selector.trim().to_ascii_lowercase().as_str() {
         "auto" => &[
-            // Included subscriber access wins over personal paid provider keys.
-            // Entitlement is checked live before evaluation. Failure must not
-            // silently spend a BYOK balance; users can select BYOK explicitly.
             // Typesafe serves Jev directly, so it beats resellers of the same model.
-            JevProvider::HoronAgent,
             JevProvider::TypeSafe,
             JevProvider::OpenRouter,
             JevProvider::Aimlapi,
@@ -420,8 +354,10 @@ fn resolve_with(selector: &str, load: impl FnMut(&str, &str) -> Option<String>) 
         "openrouter" => &[JevProvider::OpenRouter],
         "typesafe" => &[JevProvider::TypeSafe],
         "aimlapi" => &[JevProvider::Aimlapi],
-        "horon-agent" | "subscription" | "horon-agent-subscription" => &[JevProvider::HoronAgent],
-        _ => bail!("Invalid Jev provider. Choose auto, openrouter, typesafe, aimlapi, or horon-agent"),
+        "horon-agent" | "subscription" | "horon-agent-subscription" => {
+            bail!("The hosted HoronAgent Jev subscription was removed. Choose auto, openrouter, typesafe, or aimlapi")
+        }
+        _ => bail!("Invalid Jev provider. Choose auto, openrouter, typesafe, or aimlapi"),
     };
     resolve_providers(providers, load)
 }
@@ -465,28 +401,6 @@ fn resolve_providers(
     )
 }
 
-fn trusted_gateway_base(base: &str) -> Result<String> {
-    let url = Url::parse(base.trim()).map_err(|_| anyhow!("Invalid HoronAgent gateway base URL"))?;
-    let loopback = url.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
-    ensure!(
-        url.host_str().is_some()
-            && (url.scheme() == "https" || (url.scheme() == "http" && loopback))
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "HoronAgent Jev gateway requires HTTPS (HTTP only for loopback), without URL credentials, query, or fragment"
-    );
-    Ok(url.as_str().trim_end_matches('/').to_owned())
-}
-
 #[cfg(test)]
 fn request_body(provider: JevProvider, state: Value, questions: &Map<String, Value>) -> Result<Vec<u8>> {
     request_body_for(provider, state, questions)
@@ -528,19 +442,10 @@ fn request_body_for(provider: JevProvider, state: Value, questions: &Map<String,
             ),
             _ => bail!("Unsupported Jev question type; expected noul, choice, or score"),
         }
-        if provider == JevProvider::HoronAgent {
-            ensure!(
-                question["type"] == "noul"
-                    && instructions.as_str().is_some_and(|s| !s.trim().is_empty())
-                    && question["criteria"]["true"].is_string()
-                    && question["criteria"]["false"].is_string(),
-                "HoronAgent memory Decisions supports noul questions with text instructions and true/false criteria"
-            );
-        }
     }
     // String state is accepted by every provider and preserves the existing
     // OpenRouter Decisions wire contract. Direct providers retain structured data.
-    let state = if matches!(provider, JevProvider::OpenRouter | JevProvider::HoronAgent) && !state.is_string() {
+    let state = if provider == JevProvider::OpenRouter && !state.is_string() {
         Value::String(serde_json::to_string(&state).map_err(|_| anyhow!("Invalid Jev state"))?)
     } else {
         state
@@ -556,46 +461,9 @@ fn request_body_for(provider: JevProvider, state: Value, questions: &Map<String,
     Ok(body)
 }
 
-/// Parse the gateway's plan-quota body. Only trusted, bounded fields are kept,
-/// and the upgrade link must be an https horon-agent.sh URL so a compromised or
-/// misconfigured gateway cannot inject an arbitrary link into the UI.
-async fn read_quota_exceeded(response: Response) -> Option<crate::subscription_notice::QuotaExceeded> {
-    let bytes = response.bytes().await.ok()?;
-    if bytes.len() > 4096 {
-        return None;
-    }
-    let body: Value = serde_json::from_slice(&bytes).ok()?;
-    let error = body.get("error")?;
-    if error.get("code")?.as_str()? != "quota_exceeded" {
-        return None;
-    }
-    let text = |key: &str| {
-        error
-            .get(key)
-            .and_then(Value::as_str)
-            .map(|value| value.chars().take(300).collect::<String>())
-    };
-    let upgrade_url = text("upgrade_url")
-        .filter(|url| url.starts_with("https://horon-agent.sh/") || url.starts_with("https://www.horon-agent.sh/"));
-    Some(crate::subscription_notice::QuotaExceeded {
-        feature: text("purpose").unwrap_or_else(|| "decision".into()),
-        tier: text("tier"),
-        upgrade_tier: text("upgrade_tier"),
-        upgrade_url,
-        resets_at: text("resets_at"),
-    })
-}
-
-async fn read_response(mut response: Response, limit: usize, provider: JevProvider) -> Result<Value> {
+async fn read_response(mut response: Response, limit: usize) -> Result<Value> {
     let status = response.status();
     if !status.is_success() {
-        if provider == JevProvider::HoronAgent && status.as_u16() == 429 {
-            if let Some(quota) = read_quota_exceeded(response).await {
-                crate::subscription_notice::record(quota.clone());
-                return Err(quota.into());
-            }
-            bail!("Jev returned HTTP 429: selected provider is rate limited or overloaded; try again later");
-        }
         let hint = match status.as_u16() {
             401 => "selected provider credential is invalid or revoked",
             403 => "selected provider denied access or the account is not entitled",
@@ -670,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn voice_routes_independently_to_subscription_or_typesafe_only() {
+    fn voice_routes_only_to_typesafe() {
         let selector = JevPurpose::Voice
             .selector_with(
                 |key| {
@@ -693,43 +561,20 @@ mod tests {
                 .unwrap(),
             "typesafe"
         );
-        for (available, expected) in [
-            ("HORON_AGENT_API_KEY", JevProvider::HoronAgent),
-            ("TYPESAFE_API_KEY", JevProvider::TypeSafe),
-        ] {
-            let (provider, _) = resolve_voice_with(&selector, |env, _| {
-                assert!(matches!(env, "HORON_AGENT_API_KEY" | "TYPESAFE_API_KEY"));
-                (env == available).then(|| "test-key".into())
-            })
-            .unwrap();
-            assert_eq!(provider, expected);
-        }
-        assert_eq!(
-            resolve_voice_with("auto", |_, _| Some("present".into())).unwrap().0,
-            JevProvider::HoronAgent
-        );
-        let (provider, _) = resolve_voice_with("typesafe", |env, file| {
-            assert_eq!((env, file), ("TYPESAFE_API_KEY", "typesafe.env"));
-            Some("typesafe-test-key".into())
+        let (provider, _) = resolve_voice_with("auto", |env, _| {
+            assert_eq!(env, "TYPESAFE_API_KEY");
+            Some("test-key".into())
         })
         .unwrap();
         assert_eq!(provider, JevProvider::TypeSafe);
-        assert_eq!(provider.model(), "jev-latest");
-        assert_eq!(provider.endpoint("").unwrap(), "https://api.typesafe.ai/v1/systemone");
-        for selector in ["auto", "typesafe", "horon-agent"] {
-            let error = resolve_voice_with(selector, |env, _| {
-                assert!(matches!(env, "HORON_AGENT_API_KEY" | "TYPESAFE_API_KEY"));
-                // Other credentials cannot make this route available.
-                (env == "OPENROUTER_API_KEY" || env == "AIMLAPI_API_KEY").then(|| "other-account-key".into())
-            })
-            .unwrap_err();
-            assert!(!error.to_string().contains("OPENROUTER_API_KEY"));
-            assert!(!error.to_string().contains("AIMLAPI_API_KEY"));
+        for selector in ["horon-agent", "subscription", "horon-agent-subscription"] {
+            let error = resolve_voice_with(selector, |_, _| panic!("removed route must not load keys")).unwrap_err();
+            assert!(error.to_string().contains("was removed"), "{error}");
         }
         for selector in ["openrouter", "aimlapi", ""] {
             assert!(resolve_voice_with(selector, |_, _| panic!("invalid voice route must not load keys")).is_err());
         }
-        assert_eq!(JevPurpose::Voice.capability(), "memory_jev");
+        assert!(resolve_voice_with("auto", |_, _| None).is_err());
     }
 
     #[test]
@@ -788,14 +633,6 @@ mod tests {
                 "https://api.aimlapi.com/v1/decisions",
                 "typesafe/jev",
             ),
-            (
-                "horon-agent",
-                JevProvider::HoronAgent,
-                "HORON_AGENT_API_KEY",
-                "horon-agent-subscription.env",
-                "https://api.horon-agent.sh/v1/decisions",
-                "typesafe/jev-1.13",
-            ),
         ] {
             let (provider, secret) = resolve_with(selector, |env, env_file| {
                 assert_eq!((env, env_file), (key, file));
@@ -804,7 +641,7 @@ mod tests {
             .unwrap();
             assert_eq!(provider, expected);
             assert_eq!(secret, format!("test-{selector}"));
-            assert_eq!(provider.endpoint("https://api.horon-agent.sh/v1/").unwrap(), endpoint);
+            assert_eq!(provider.endpoint(), endpoint);
             assert_eq!(provider.model(), model);
         }
     }
@@ -825,13 +662,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_prefers_included_subscription_without_shared_slot() {
-        for available in [
-            "OPENROUTER_API_KEY",
-            "TYPESAFE_API_KEY",
-            "AIMLAPI_API_KEY",
-            "HORON_AGENT_API_KEY",
-        ] {
+    fn auto_prefers_typesafe_then_billed_resellers() {
+        for available in ["OPENROUTER_API_KEY", "TYPESAFE_API_KEY", "AIMLAPI_API_KEY"] {
             let (provider, _) = resolve_with("auto", |env, _| {
                 assert!(!env.starts_with("HORON_AGENT_OPENROUTER"));
                 (env == available).then(|| "test-secret".into())
@@ -839,22 +671,19 @@ mod tests {
             .unwrap();
             assert_eq!(provider.credentials().0, available);
         }
-        assert_eq!(
-            resolve_with("auto", |_, _| Some("all-present".into())).unwrap().0,
-            JevProvider::HoronAgent
-        );
         // Typesafe direct wins over resellers of the same model.
         assert_eq!(
-            resolve_with("auto", |env, _| (env != "HORON_AGENT_API_KEY").then(|| "k".into()))
-                .unwrap()
-                .0,
+            resolve_with("auto", |_, _| Some("all-present".into())).unwrap().0,
             JevProvider::TypeSafe
         );
-        // Deliberate BYOK remains available even when a HoronAgent login is present.
         assert_eq!(
             resolve_with("openrouter", |_, _| Some("all-present".into())).unwrap().0,
             JevProvider::OpenRouter
         );
+        for selector in ["horon-agent", "subscription", "horon-agent-subscription"] {
+            let error = resolve_with(selector, |_, _| panic!("removed route must not load keys")).unwrap_err();
+            assert!(error.to_string().contains("was removed"), "{error}");
+        }
         assert!(resolve_with("auto", |_, _| None).is_err());
         assert!(resolve_with("untrusted-selector", |_, _| panic!("must not load any credential")).is_err());
         assert!(resolve_with("", |_, _| panic!("empty override must not choose another account")).is_err());
@@ -869,36 +698,8 @@ mod tests {
     }
 
     #[test]
-    fn gateway_requires_secure_trusted_base() {
-        for base in [
-            "https://api.horon-agent.sh/v1",
-            "https://custom.example/v1/",
-            "http://127.0.0.1:4444/v1",
-            "http://[::1]:4444/v1",
-            "http://localhost/v1",
-        ] {
-            assert!(trusted_gateway_base(base).is_ok(), "{base}");
-        }
-        for base in [
-            "http://remote.example/v1",
-            "https://user:secret@example.com/v1",
-            "https://example.com/v1?key=secret",
-            "https://example.com/v1#secret",
-            "file:///secret",
-            "not-a-url",
-        ] {
-            assert!(trusted_gateway_base(base).is_err());
-        }
-    }
-
-    #[test]
     fn request_uses_decisions_not_chat_and_preserves_provider_models() {
-        for provider in [
-            JevProvider::OpenRouter,
-            JevProvider::TypeSafe,
-            JevProvider::Aimlapi,
-            JevProvider::HoronAgent,
-        ] {
+        for provider in [JevProvider::OpenRouter, JevProvider::TypeSafe, JevProvider::Aimlapi] {
             let body: Value =
                 serde_json::from_slice(&request_body(provider, json!({"memory": "example"}), &questions()).unwrap())
                     .unwrap();
@@ -921,21 +722,12 @@ mod tests {
         assert!(request_body(JevProvider::OpenRouter, Value::Null, &questions()).is_err());
         assert!(request_body(JevProvider::OpenRouter, json!("state"), &Map::new()).is_err());
         let many = (0..25).map(|i| (format!("m{i}"), questions()["m0"].clone())).collect();
-        assert!(request_body(JevProvider::HoronAgent, json!("state"), &many).is_err());
+        assert!(request_body(JevProvider::OpenRouter, json!("state"), &many).is_err());
         let choice = json!({"pick": {"type": "choice", "instructions": "Pick", "criteria": {"a": "A", "b": "B"}}})
             .as_object()
             .unwrap()
             .clone();
         assert!(request_body(JevProvider::OpenRouter, json!("state"), &choice).is_ok());
-        assert!(request_body(JevProvider::HoronAgent, json!("state"), &choice).is_err());
-        let mut missing_criteria = questions();
-        missing_criteria
-            .get_mut("m0")
-            .unwrap()
-            .as_object_mut()
-            .unwrap()
-            .remove("criteria");
-        assert!(request_body(JevProvider::HoronAgent, json!("state"), &missing_criteria).is_err());
     }
 
     #[test]
@@ -1045,43 +837,6 @@ mod tests {
             provider,
             api_key: "test-route-secret".into(),
             endpoint: format!("{base}/v1/decisions"),
-            me_endpoint: (provider == JevProvider::HoronAgent).then(|| format!("{base}/v1/me")),
-        }
-    }
-
-    #[tokio::test]
-    async fn voice_subscription_uses_existing_noul_entitlement_without_bypassing_it() {
-        for entitled in [false, true] {
-            let mut replies = vec![(
-                200,
-                json!({"capabilities": {"memory_jev": entitled}}).to_string(),
-                vec![],
-            )];
-            if entitled {
-                replies.push((200, response().to_string(), vec![]));
-            }
-            let (base, worker) = mock_server(replies);
-            let mut client = mock_client(&base, JevProvider::HoronAgent);
-            client.purpose = JevPurpose::Voice;
-            let result = client.evaluate(json!({"transcript": "synthetic"}), questions()).await;
-            let requests = worker.join().unwrap();
-            assert!(requests[0].starts_with("GET /v1/me "));
-            if entitled {
-                result.unwrap();
-                assert_eq!(requests.len(), 2);
-                let body: Value = serde_json::from_str(requests[1].split_once("\r\n\r\n").unwrap().1).unwrap();
-                assert_eq!(body["model"], "typesafe/jev-1.13");
-                assert!(body["state"].is_string());
-                assert!(
-                    !requests[1].to_ascii_lowercase().contains("x-horon-agent-jev-purpose"),
-                    "voice decisions must not claim a purpose-scoped budget"
-                );
-            } else {
-                let error = result.unwrap_err().to_string();
-                assert!(error.contains("voice"));
-                assert!(error.contains("memory_jev"));
-                assert_eq!(requests.len(), 1, "denied voice entitlement must not send a decision");
-            }
         }
     }
 
@@ -1154,43 +909,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscription_requires_live_capability_then_sends_bound_bearer() {
-        let (base, worker) = mock_server(vec![
-            (200, json!({"capabilities": {"memory_jev": true}}).to_string(), vec![]),
-            (200, response().to_string(), vec![]),
-        ]);
-        let client = mock_client(&base, JevProvider::HoronAgent);
-        let value = client.evaluate(json!("state"), questions()).await.unwrap();
-        assert_eq!(value, response());
-        let requests = worker.join().unwrap();
-        assert!(requests[0].starts_with("GET /v1/me "));
-        assert!(requests[1].starts_with("POST /v1/decisions "));
-        for request in requests {
-            assert!(
-                request
-                    .to_ascii_lowercase()
-                    .contains("authorization: bearer test-route-secret\r\n")
-            );
-            assert!(!request.lines().next().unwrap().contains("secret"));
-        }
-    }
-
-    #[tokio::test]
-    async fn missing_or_false_capability_never_posts_decisions() {
-        for me in [
-            json!({"tier": "flagship", "status": "active"}),
-            json!({"capabilities": {"memory_jev": false}}),
-            json!({"capabilities": {"memory_jev": "true"}}),
-        ] {
-            let (base, worker) = mock_server(vec![(200, me.to_string(), vec![])]);
-            let client = mock_client(&base, JevProvider::HoronAgent);
-            let error = client.evaluate(json!("state"), questions()).await.unwrap_err();
-            assert!(error.to_string().contains("memory_jev"));
-            assert_eq!(worker.join().unwrap().len(), 1);
-        }
-    }
-
-    #[tokio::test]
     async fn transient_overload_is_retried_on_same_route_then_succeeds() {
         for status in [429, 502, 503, 504, 529] {
             let (base, worker) = mock_server(vec![
@@ -1205,44 +923,6 @@ mod tests {
             assert_eq!(requests.len(), 3);
             assert!(requests.iter().all(|r| r.starts_with("POST /v1/decisions ")));
         }
-    }
-
-    #[tokio::test]
-    async fn gateway_plan_quota_is_not_retried_and_becomes_upgrade_prompt() {
-        let quota = json!({"error": {
-            "code": "quota_exceeded", "message": "server text", "purpose": "memory", "scope": "day",
-            "limit": 2000, "tier": "plus", "upgrade_tier": "pro",
-            "upgrade_url": "https://horon-agent.sh/pricing", "resets_at": "2026-09-27T00:00:00.000Z"
-        }});
-        let (base, worker) = mock_server(vec![
-            (200, json!({"capabilities": {"memory_jev": true}}).to_string(), vec![]),
-            (429, quota.to_string(), vec![("Retry-After".into(), "80000".into())]),
-        ]);
-        let client = mock_client(&base, JevProvider::HoronAgent);
-        let error = client.evaluate(json!("p"), questions()).await.unwrap_err();
-        let notice = crate::subscription_notice::from_error(&error).expect("typed quota notice");
-        assert_eq!(notice.feature, "memory");
-        assert_eq!(notice.upgrade_tier.as_deref(), Some("pro"));
-        assert!(error.to_string().contains("Upgrade to Pro"));
-        assert!(error.to_string().contains("https://horon-agent.sh/pricing"));
-        // One /me preflight and exactly one decision: plan quotas are never retried.
-        assert_eq!(worker.join().unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn gateway_quota_rejects_non_horon_agent_upgrade_links() {
-        let quota = json!({"error": {"code": "quota_exceeded", "purpose": "memory", "tier": "plus",
-            "upgrade_tier": "pro", "upgrade_url": "https://evil.example/pay"}});
-        let (base, worker) = mock_server(vec![
-            (200, json!({"capabilities": {"memory_jev": true}}).to_string(), vec![]),
-            (429, quota.to_string(), vec![("Retry-After".into(), "80000".into())]),
-        ]);
-        let client = mock_client(&base, JevProvider::HoronAgent);
-        let error = client.evaluate(json!("s"), questions()).await.unwrap_err();
-        let notice = crate::subscription_notice::from_error(&error).unwrap();
-        assert_eq!(notice.upgrade_url, None);
-        assert!(!error.to_string().contains("evil.example"));
-        worker.join().unwrap();
     }
 
     #[tokio::test]
@@ -1310,26 +990,5 @@ mod tests {
         let error = client.evaluate(json!("state"), questions()).await.unwrap_err();
         assert!(error.to_string().contains("bounded response size"));
         worker.join().unwrap();
-    }
-
-    #[tokio::test]
-    async fn failed_preflight_does_not_send_decision_request() {
-        for (status, body, headers) in [
-            (401, "private-account-response".into(), vec![]),
-            (200, "x".repeat(MAX_ME_BYTES + 1), vec![]),
-            (
-                307,
-                "private-account-response".into(),
-                vec![("Location".into(), "https://untrusted.example/me".into())],
-            ),
-        ] {
-            let (base, worker) = mock_server(vec![(status, body, headers)]);
-            let client = mock_client(&base, JevProvider::HoronAgent);
-            let error = client.evaluate(json!("state"), questions()).await.unwrap_err();
-            assert!(!format!("{error:#}").contains("private-account-response"));
-            let requests = worker.join().unwrap();
-            assert_eq!(requests.len(), 1);
-            assert!(requests[0].starts_with("GET /v1/me "));
-        }
     }
 }

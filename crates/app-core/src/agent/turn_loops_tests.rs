@@ -121,22 +121,6 @@ fn pending_nudge_is_injected_only_when_batch_is_available() {
     assert!(Agent::BATCH_NUDGE.contains("result is required"));
 }
 
-#[test]
-fn plan_limit_reminder_relays_upgrade_link_without_purchasing() {
-    let reminder = Agent::plan_limit_reminder(&crate::subscription_notice::QuotaExceeded {
-        feature: "memory".into(),
-        tier: Some("plus".into()),
-        upgrade_tier: Some("pro".into()),
-        upgrade_url: Some("https://horon-agent.sh/pricing".into()),
-        resets_at: None,
-    });
-    assert!(reminder.starts_with("<system-reminder>"));
-    assert!(reminder.contains("Daily memory recall limit reached on your Plus plan"));
-    assert!(reminder.contains("Upgrade to Pro"));
-    assert!(reminder.contains("https://horon-agent.sh/pricing"));
-    assert!(reminder.contains("Do not open checkout"));
-}
-
 /// Provider that answers every request with plain text, so a turn completes
 /// without a tool round and the turn-boundary cleanup can be observed.
 struct TextOnlyProvider;
@@ -401,18 +385,12 @@ async fn a_guard_warning_keeps_an_earlier_reminder_and_the_turn_boundary_clears_
     );
 
     // A reminder this turn already carried before the guard ran. The slot is
-    // shared by every reminder a turn sets (the plan-limit text here, the
-    // turn-level reminder a reload or a soft interrupt supplies), so the guard
-    // must add to it rather than replace it. The merge is bounded, but one
-    // guard warning plus this notice is well inside the bound, so both survive.
-    let plan_limit = Agent::plan_limit_reminder(&crate::subscription_notice::QuotaExceeded {
-        feature: "memory".into(),
-        tier: Some("plus".into()),
-        upgrade_tier: Some("pro".into()),
-        upgrade_url: Some("https://horon-agent.sh/pricing".into()),
-        resets_at: None,
-    });
-    agent.current_turn_system_reminder = Some(plan_limit.clone());
+    // shared by every reminder a turn sets (the turn-level reminder a reload
+    // or a soft interrupt supplies), so the guard must add to it rather than
+    // replace it. The merge is bounded, but one guard warning plus this notice
+    // is well inside the bound, so both survive.
+    let earlier = "<system-reminder>Earlier reminder: continue the task.</system-reminder>".to_string();
+    agent.current_turn_system_reminder = Some(earlier.clone());
 
     // Three identical calls reach the guard's warning tier. The warning is a
     // different subsystem's reminder and must be added, not swapped in.
@@ -435,11 +413,11 @@ async fn a_guard_warning_keeps_an_earlier_reminder_and_the_turn_boundary_clears_
     );
     // The two reminders are framed apart by a line that names each one, so the
     // reader never infers a boundary from a blank line inside a reminder.
-    let plan_limit_at = merged.find(&plan_limit).expect("the plan-limit reminder is present");
+    let earlier_at = merged.find(&earlier).expect("the earlier reminder is present");
     let guard_at = merged.find("Loop guard:").expect("the guard warning is present");
     assert!(
-        plan_limit_at < guard_at,
-        "the plan-limit reminder survives in front: {merged}"
+        earlier_at < guard_at,
+        "the earlier reminder survives in front: {merged}"
     );
     assert!(
         merged.contains("[system reminder 1 of 2, ") && merged.contains("[system reminder 2 of 2, "),
@@ -451,7 +429,7 @@ async fn a_guard_warning_keeps_an_earlier_reminder_and_the_turn_boundary_clears_
     let prompt = agent.build_system_prompt_split(None);
     std::println!("QA system prompt tail:\n---\n{}\n---", prompt.dynamic_part);
     assert!(
-        prompt.dynamic_part.contains(&plan_limit),
+        prompt.dynamic_part.contains(&earlier),
         "the earlier reminder must reach the request: {}",
         prompt.dynamic_part
     );

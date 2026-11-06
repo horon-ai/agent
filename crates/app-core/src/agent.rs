@@ -275,8 +275,7 @@ impl Agent {
         }
         match self.provider.active_explicit_credential() {
             Some(horon_agent_provider_core::ResolvedCredential::ApiKey) => "openai-api".into(),
-            Some(horon_agent_provider_core::ResolvedCredential::Oauth) => "openai-oauth".into(),
-            None => name,
+            Some(horon_agent_provider_core::ResolvedCredential::Oauth) | None => name,
         }
     }
 

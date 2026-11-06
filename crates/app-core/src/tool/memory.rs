@@ -478,7 +478,6 @@ mod tests {
             let keys = [
                 "HORON_AGENT_HOME",
                 "OPENROUTER_API_KEY",
-                "HORON_AGENT_API_KEY",
                 "TYPESAFE_API_KEY",
                 "AIMLAPI_API_KEY",
                 "HORON_AGENT_MEMORY_JEV_PROVIDER",

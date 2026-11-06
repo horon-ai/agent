@@ -190,33 +190,6 @@ fn trust_workspace_is_global_and_defaults_off() {
 }
 
 #[test]
-fn account_subcommands_parse() {
-    let status = Args::try_parse_from(["horon-agent", "account", "status", "--json"]).expect("account status");
-    assert!(matches!(
-        status.command,
-        Some(Command::Account {
-            action: AccountCommand::Status { json: true }
-        })
-    ));
-
-    let manage = Args::try_parse_from(["horon-agent", "account", "manage"]).expect("account manage");
-    assert!(matches!(
-        manage.command,
-        Some(Command::Account {
-            action: AccountCommand::Manage
-        })
-    ));
-
-    let logout = Args::try_parse_from(["horon-agent", "account", "logout"]).expect("account logout");
-    assert!(matches!(
-        logout.command,
-        Some(Command::Account {
-            action: AccountCommand::Logout
-        })
-    ));
-}
-
-#[test]
 fn quiet_global_flag_parses() {
     let args = Args::try_parse_from(["horon-agent", "--quiet", "model", "list"]).unwrap();
     assert!(args.quiet);

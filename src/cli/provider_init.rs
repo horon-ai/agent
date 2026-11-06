@@ -181,6 +181,16 @@ async fn init_provider_for_control_plane(
     }
 }
 
+/// Provider names a previous build shipped and this one no longer resolves.
+/// A config that still names one must load; the CLI warns and falls back to
+/// auto discovery instead of failing every launch.
+fn is_removed_provider_name(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "horon-agent" | "horon-agent-subscription" | "subscription"
+    )
+}
+
 fn auto_provider_is_unconfigured() -> bool {
     named_profile_from_env().is_none()
         && crate::config::config()
@@ -188,7 +198,7 @@ fn auto_provider_is_unconfigured() -> bool {
             .default_provider
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.is_empty() && !is_removed_provider_name(value))
             .is_none()
         && std::env::var("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE")
             .ok()
@@ -346,8 +356,15 @@ async fn init_provider_with_options(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                init_notice(&format!("Using configured default provider '{}'", default));
-                return provider_for_configured_name(default, model, strict_model);
+                if is_removed_provider_name(default) {
+                    output::stderr_info(format!(
+                        "Warning: unknown default_provider '{}'; the HoronAgent subscription was removed. Falling back to automatic provider discovery.",
+                        default
+                    ));
+                } else {
+                    init_notice(&format!("Using configured default provider '{}'", default));
+                    return provider_for_configured_name(default, model, strict_model);
+                }
             }
             let projected = std::env::var("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE").ok();
             if let Some(profile) = projected.as_deref().and_then(builtin_profile_by_id) {

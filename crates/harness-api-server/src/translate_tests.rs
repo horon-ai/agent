@@ -744,14 +744,14 @@ fn horon_agent_protocol_like_kv_miss() -> Value {
     })
 }
 
-struct ScopedHoronAgentHome {
-    path: PathBuf,
+pub(super) struct ScopedHoronAgentHome {
+    pub(super) path: PathBuf,
     previous: Option<OsString>,
     _guard: MutexGuard<'static, ()>,
 }
 
 impl ScopedHoronAgentHome {
-    fn new(label: &str) -> Self {
+    pub(super) fn new(label: &str) -> Self {
         let guard = horon_agent_home_test_lock();
         let previous = std::env::var_os("HORON_AGENT_HOME");
         let unique = SystemTime::now()
@@ -845,7 +845,7 @@ fn persisted_metadata_reads_large_transcripts_from_bounded_windows() {
     assert_eq!(metadata.display_title().as_deref(), Some("Pinned title"));
 }
 
-fn only_reply_event(outbound: Vec<Outbound>) -> ApiEvent {
+pub(super) fn only_reply_event(outbound: Vec<Outbound>) -> ApiEvent {
     assert_eq!(outbound.len(), 1, "expected exactly one reply");
     match outbound.into_iter().next().expect("one outbound") {
         Outbound::Reply(frame) => frame.event,
@@ -2887,7 +2887,7 @@ fn usage_invalidation_maps_each_provider_and_rejects_bad_input() {
 }
 
 #[test]
-fn credential_provisioning_normalizes_gemini_and_supports_horon_agent() {
+fn credential_provisioning_normalizes_gemini_and_rejects_removed_providers() {
     let home = ScopedHoronAgentHome::new("credentials");
     let config = home.path.join("config/horon-agent");
     std::fs::create_dir_all(&config).unwrap();
@@ -2903,33 +2903,33 @@ fn credential_provisioning_normalizes_gemini_and_supports_horon_agent() {
     let [Outbound::Legacy(notify)] = outbound.as_slice() else {
         panic!("credential change should notify the daemon: {outbound:?}");
     };
-    assert_eq!(notify["provider"], "gemini");
+    assert_eq!(notify["provider"], "gemini-api");
     let legacy_id = notify["id"].as_u64().unwrap();
     let frames = state.legacy_event_to_api(&json!({"type": "ack", "id": legacy_id}));
     assert!(matches!(
         &frames[0].event,
         ApiEvent::CredentialUpdated { provider, configured }
-            if provider == "gemini" && *configured
+            if provider == "gemini-api" && *configured
     ));
     let gemini = std::fs::read_to_string(config.join("gemini.env")).unwrap();
     assert!(gemini.contains("GEMINI_API_KEY=gemini-secret\n"));
     assert!(gemini.contains("KEEP_ME=yes\n"));
     assert!(!gemini.contains("GOOGLE_API_KEY"));
 
-    let outbound = state.api_request_to_legacy(&json!({
-        "req": "set_api_key",
-        "id": 8,
-        "provider": "subscription",
-        "api_key": "horon-agent-secret"
-    }));
-    let [Outbound::Legacy(notify)] = outbound.as_slice() else {
-        panic!("horon-agent credential should notify the daemon: {outbound:?}");
-    };
-    assert_eq!(notify["provider"], "horon-agent");
-    assert_eq!(
-        std::fs::read_to_string(config.join("horon-agent-subscription.env")).unwrap(),
-        "HORON_AGENT_API_KEY=horon-agent-secret\n"
-    );
+    // The hosted subscription is gone: its names are unknown providers, so nothing is written.
+    for provider in ["horon-agent", "subscription", "horon-agent-subscription"] {
+        let event = only_reply_event(state.api_request_to_legacy(&json!({
+            "req": "set_api_key",
+            "id": 8,
+            "provider": provider,
+            "api_key": "horon-agent-secret"
+        })));
+        match event {
+            ApiEvent::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidRequest),
+            other => panic!("{provider} must be rejected: {other:?}"),
+        }
+    }
+    assert_eq!(std::fs::read_dir(&config).unwrap().count(), 1);
 
     let event = only_reply_event(state.api_request_to_legacy(&json!({
         "req": "set_api_key",
@@ -2995,7 +2995,7 @@ fn owner_only_writes_refuse_symlink_targets_and_directories() {
     let event = only_reply_event(BridgeState::default().api_request_to_legacy(&json!({
         "req": "set_api_key",
         "id": 2,
-        "provider": "horon-agent",
+        "provider": "openrouter",
         "api_key": "must-not-land"
     })));
     assert!(matches!(
@@ -3005,7 +3005,7 @@ fn owner_only_writes_refuse_symlink_targets_and_directories() {
             ..
         }
     ));
-    assert!(!outside_dir.join("horon-agent-subscription.env").exists());
+    assert!(!outside_dir.join("openrouter.env").exists());
 }
 
 #[cfg(unix)]

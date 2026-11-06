@@ -18,7 +18,6 @@
     clippy::useless_conversion
 )]
 
-pub mod account_login;
 pub mod artifacts;
 pub mod auth;
 pub mod aux_completion;
@@ -97,9 +96,6 @@ pub mod soft_interrupt_store;
 pub mod sponsors;
 pub mod stdin_detect;
 pub mod storage;
-pub mod subscription_api;
-pub mod subscription_catalog;
-pub mod subscription_notice;
 pub mod terminal_launch;
 pub mod todo;
 pub mod transcript_sample;

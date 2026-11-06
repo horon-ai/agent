@@ -11,7 +11,6 @@ fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
     register_test_external_runtimes();
     let temp = tempfile::tempdir().expect("tempdir");
     let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    let prev_subscription = std::env::var_os(crate::subscription_catalog::HORON_AGENT_SUBSCRIPTION_ACTIVE_ENV);
     let mut profile_env_keys = vec![
         "OPENROUTER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -57,7 +56,6 @@ fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
     for (key, _) in &saved_profile_env {
         crate::env::remove_var(key);
     }
-    crate::subscription_catalog::clear_runtime_env();
     // The in-memory model catalog services are process-global; earlier tests
     // may have hydrated scopes (fixture models) that would corrupt this test's
     // known_*_model_ids() validation, and vice versa. Reset on entry and exit
@@ -72,14 +70,6 @@ fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
     } else {
         crate::env::remove_var("HORON_AGENT_HOME");
     }
-    if let Some(prev_subscription) = prev_subscription {
-        crate::env::set_var(
-            crate::subscription_catalog::HORON_AGENT_SUBSCRIPTION_ACTIVE_ENV,
-            prev_subscription,
-        );
-    } else {
-        crate::env::remove_var(crate::subscription_catalog::HORON_AGENT_SUBSCRIPTION_ACTIVE_ENV);
-    }
     for (key, value) in saved_profile_env {
         if let Some(value) = value {
             crate::env::set_var(key, value);
@@ -87,7 +77,6 @@ fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
             crate::env::remove_var(key);
         }
     }
-    crate::subscription_catalog::clear_runtime_env();
     result
 }
 
@@ -307,21 +296,6 @@ fn profile_catalog_cache_needs_refresh_for_missing_cache() {
             "a missing catalog cache must be reported as needing a refresh"
         );
     });
-}
-
-#[test]
-fn horon_agent_subscription_model_prefix_parses_explicit_specs() {
-    assert_eq!(
-        super::horon_agent_subscription_model_prefix("horon-agent:gpt-5.5"),
-        Some("gpt-5.5")
-    );
-    assert_eq!(
-        super::horon_agent_subscription_model_prefix("horon-agent-subscription: gpt-5.5 "),
-        Some("gpt-5.5")
-    );
-    assert_eq!(super::horon_agent_subscription_model_prefix("horon-agent:"), None);
-    assert_eq!(super::horon_agent_subscription_model_prefix("gpt-5.5"), None);
-    assert_eq!(super::horon_agent_subscription_model_prefix("openai:gpt-5.5"), None);
 }
 
 fn write_provider_config(contents: &str) {

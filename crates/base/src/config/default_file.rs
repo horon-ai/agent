@@ -482,16 +482,14 @@ swarm_stall_after_secs = 600
 # swarm_strip_layout = "vertical"
 #
 # Recall uses Jev typed Decisions directly, without embeddings or a sidecar LLM.
-# Provider values: auto, horon-agent, openrouter, typesafe, aimlapi.
-# auto prefers HoronAgent, then OpenRouter, TypeSafe, AI/ML API credentials.
+# Provider values: auto, openrouter, typesafe, aimlapi.
+# auto prefers TypeSafe, then OpenRouter, then AI/ML API credentials.
 # Env override: HORON_AGENT_MEMORY_JEV_PROVIDER
 # memory_jev_provider = "auto"
 # Minimum relevance probability (0.8..=1.0). Invalid values fail closed.
 # memory_jev_threshold = 0.8
 # BYOK: OPENROUTER_API_KEY, TYPESAFE_API_KEY, or AIMLAPI_API_KEY.
-# HoronAgent requires an eligible subscription and gateway memory_jev capability.
-# With a HoronAgent login and an older gateway, explicitly select a BYOK provider.
-# No fallback after entitlement, auth, billing, or network failure; no silent BYOK spend.
+# No fallback after auth, billing, or network failure; no silent BYOK spend.
 # Memories remain local; the query and candidate memories go to the selected provider.
 # No keys? Local memory list/search/remember/forget still work.
 #

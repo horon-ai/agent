@@ -8,7 +8,6 @@ use horon_agent_provider_core::{ActiveProvider, provider_key};
 /// HTTP transport, but its runtime identity is still that profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeProviderId {
-    HoronAgent,
     Claude,
     ClaudeApiKey,
     OpenAi,
@@ -27,7 +26,6 @@ pub enum RuntimeProviderId {
 impl RuntimeProviderId {
     pub const fn key(self) -> &'static str {
         match self {
-            Self::HoronAgent => "horon-agent",
             Self::Claude => "claude",
             Self::ClaudeApiKey => "claude-api",
             Self::OpenAi => "openai",
@@ -46,7 +44,6 @@ impl RuntimeProviderId {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::HoronAgent => "HoronAgent Subscription",
             Self::Claude => "Anthropic/Claude",
             Self::ClaudeApiKey => "Anthropic API",
             Self::OpenAi => "OpenAI",
@@ -139,17 +136,9 @@ impl ProviderActivation {
         }
     }
 
-    pub fn horon_agent_subscription(model: impl Into<String>) -> Self {
-        Self::initial(RuntimeProviderId::HoronAgent, ActiveProvider::OpenAI)
-            .with_model_hint("HORON_AGENT_OPENROUTER_MODEL", model)
-    }
-
     pub fn apply_env(&self) -> Result<()> {
         crate::env::set_var("HORON_AGENT_RUNTIME_PROVIDER", self.runtime_id.key());
         match self.runtime_id {
-            RuntimeProviderId::HoronAgent => {
-                crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "horon-agent-subscription")
-            }
             RuntimeProviderId::OpenRouter => {
                 crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "openrouter-api-key")
             }
