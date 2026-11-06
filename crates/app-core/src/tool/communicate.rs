@@ -2006,7 +2006,7 @@ impl Tool for CommunicateTool {
                 "spawn_mode": {
                     "type": "string",
                     "enum": ["headless", "inline", "auto"],
-                    "description": "Omit to use the user's configured mode. Every mode runs the worker in this process; the agent never opens a terminal window."
+                    "description": "Omit to use the configured mode. Every mode runs in-process; no terminal window opens."
                 },
                 "isolation": {
                     "type": "string",
