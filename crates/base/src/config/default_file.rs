@@ -111,15 +111,9 @@ stream_rules = false
 # repeat_gap = 20
 
 [websearch]
-# Use the model provider's own server-side search (Anthropic web_search on the
-# first-party API, OpenAI Responses web_search) whenever the active
-# provider/model supports it. Searches then run on the provider's side, so they
-# work on servers where DuckDuckGo/Bing scraping is blocked and need no extra
-# key. Providers without native search use the local engines below.
-# Anthropic API keys are billed about $10 per 1,000 searches.
-prefer_native = true
-# Local websearch engine: "duckduckgo", "bing", "searxng", "custom", or "native"
-# ("native" forces prefer_native on and otherwise runs fallback_engines).
+# Local websearch engine: "duckduckgo", "bing", "searxng", or "custom".
+# Search runs in this process against the provider you pick here; the model
+# provider is never asked to search on its behalf.
 engine = "duckduckgo"
 # Keyless HTML engines to try if the preferred engine fails. Default falls back to Bing HTML.
 fallback_engines = ["bing"]
@@ -136,18 +130,8 @@ bing_market = "en-US"
 # this. Configure here or via the HORON_AGENT_SEARXNG_URL environment variable, then
 # set engine = "searxng" or add it to fallback_engines.
 # searxng_url = "https://searx.example.org"
-# Native search options (prefer_native):
-# Max provider searches per request (Anthropic only). Caps spend. 0 = no cap.
-# native_max_uses = 5
-# Restrict results to these domains (Anthropic and OpenAI), or block domains
-# (Anthropic only). Set one list, not both.
-# native_allowed_domains = ["docs.rs", "developer.mozilla.org"]
-# native_blocked_domains = ["example.com"]
-# Anthropic tool version. "web_search_20260209" and newer are sent with
-# allowed_callers = ["direct"].
-# native_anthropic_tool_version = "web_search_20250305"
 
-# Custom HTTP JSON search: set engine = "custom" and prefer_native = false above.
+# Custom HTTP JSON search: set engine = "custom" above.
 # Set fallback_engines = [] above if private queries must not reach Bing on failure.
 # See docs/provider/INTEGRATIONS.md for GET/POST, authentication and JSON pointers.
 # [websearch.custom]
@@ -172,11 +156,12 @@ bing_market = "en-US"
 # Controls which built-in tools are sent to the model.
 # Profiles: "core" (headless default), "full", "acp", "minimal"/"lite", or "none".
 # core is the headless default: bash, read, write, edit, replace, apply_patch,
-# agentgrep, ls, webfetch, websearch, skill, mcp, undo, and ask. Set "full" to
-# expose every built-in tool.
-# acp keeps core coding tools plus batch for generic ACP clients.
-# minimal keeps core coding tools only: bash, read, write, edit, multiedit,
-# apply_patch, patch, agentgrep, glob, grep, and ls.
+# agentgrep, ls, webfetch, websearch, skill_manage, mcp, monitor, undo, and ask.
+# Set "full" to expose every built-in tool.
+# acp keeps the core coding tools plus batch, mcp, todo, and ask for generic
+# ACP clients.
+# minimal keeps core coding tools only: bash, read, write, edit, replace,
+# apply_patch, agentgrep, and ls.
 profile = "core"
 # Explicit allow-list. When non-empty, only these tools are exposed.
 # enabled = ["bash", "read", "write", "apply_patch", "agentgrep", "ls"]
@@ -348,34 +333,42 @@ tool_profile = "acp"
 # protocol_v2 = true
 
 [provider]
-# Default model (optional, uses provider default if not set)
-# Set via /model picker with Ctrl+B to save as default
-# default_model = "claude-opus-5-5"
-# Default provider (optional: claude|anthropic-api|openai|openai-api|copilot|openrouter|...)
-# When set, this provider is preferred on startup if available.
-#   claude        = Claude via OAuth/subscription (token in ~/.horon-agent/auth.json)
-#   anthropic-api = Claude via direct Anthropic API key (ANTHROPIC_API_KEY env
-#                   or ~/.config/horon-agent/anthropic.env). API-key mode does NOT fall
-#                   back to OAuth; configure the key first.
-# `claude` and `anthropic-api` are distinct providers with distinct credentials.
-# default_provider = "copilot"
+# Default model (optional; the selected profile's default applies when unset).
+#   default_model = "gpt-5.6-luna"
+# Default provider profile (optional). The value is either a built-in profile id
+# (openrouter, deepseek, anthropic-api, openai-api, ...) or the name of a
+# [providers.<name>] table below. `--provider-profile <name>` overrides this for
+# one launch.
+#   default_provider = "openrouter"
+# A profile is one OpenAI-compatible endpoint:
+#   [providers.myprofile]
+#   type = "openai-compatible"
+#   base_url = "https://api.example.com/v1"   # the /v1 prefix is part of it
+#   api_key_env = "MYPROFILE_API_KEY"         # or api_key, or env_file
+#   auth = "bearer"                           # bearer, header, or none
+#   default_model = "my-model"
+#   [[providers.myprofile.models]]
+#   id = "my-model"
+# Every model request posts to <base_url>/chat/completions with that profile's
+# credential. Nothing else serves models in this build: no second provider
+# runtime, no router process, no plugin host.
 # OpenAI reasoning effort (none|minimal|low|medium|high|xhigh|max)
 openai_reasoning_effort = "low"
-# Anthropic reasoning effort for Claude reasoning models (none|low|medium|high|xhigh|max)
+# Reasoning effort for models that accept it (none|low|medium|high|xhigh|max).
 # xhigh needs Opus 4.7/4.8 or Fable 5; max needs an output_config effort model (Opus/Sonnet 4.6+).
 # Defaults to xhigh for Claude Opus 4.7/4.8 (high on older Opus) when unset; other models keep their own default.
 # anthropic_reasoning_effort = "medium"
 # OpenAI transport mode (auto|websocket|https)
 # openai_transport = "auto"
 # OpenAI service tier override (priority|flex|off)
-# Defaults to `priority` to match Codex /fast behavior for OpenAI OAuth
-# (higher speed, higher usage). Set to "off" (or "standard") to disable.
+# Defaults to `priority` for the OpenAI route (higher speed, higher usage).
+# Set to "off" (or "standard") to disable.
 openai_service_tier = "priority"
 # Preserve provider-native reasoning/thinking for future-turn context when supported.
-# Applies to OpenRouter, Anthropic, and OpenAI native reasoning replay. Display is separate.
+# Applies to reasoning replay on the OpenRouter and OpenAI-compatible routes. Display is separate.
 preserve_reasoning_context = true
 # Cross-provider failover when the same prompt would be resent elsewhere.
-# countdown = 3-second countdown before retrying on another provider; press Esc to cancel (default)
+# countdown = 3-second countdown before retrying on another provider (default)
 # manual = show a notice and let you switch yourself
 # cross_provider_failover = "manual"
 # Try another account on the same provider before switching providers (default: true)
@@ -386,21 +379,11 @@ cross_provider_failover = "countdown"
 # autonomous_failover = false
 # Route switches allowed per execution chain; 0 disables switching (default: 3)
 # autonomous_failover_max_attempts = 3
-# Copilot premium mode: "normal" (default), "one" (first msg only), "zero" (all free)
-# Set to "zero" if you have premium Copilot and want free requests
-# copilot_premium = "zero"
-# Only list these providers in the /model picker (issue #460). Entries match
-# provider labels ("openai", "anthropic", "copilot", "openrouter", ...), route
-# api methods ("claude-oauth", "openai-compatible:myprofile"), or bare
-# openai-compatible profile ids ("myprofile"). The active model's routes always
-# stay visible. Unset or empty = show everything.
-# model_picker_providers = ["myprofile", "openrouter"]
 # Max seconds to wait for streaming data before timing out a request with no
 # data received. Raise this for slow reasoning models (e.g. DeepSeek) that think
 # silently for minutes before emitting tokens. Default: 180.
-# Applies to every streaming provider path (OpenAI native, Anthropic, Copilot,
-# OpenRouter/OpenAI-compatible). The TUI's client-side stall guard also extends
-# to match this value. Also overridable per-launch via HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS.
+# Applies to every streaming request. Also overridable per-launch via
+# HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS.
 # This is the base budget: high reasoning efforts scale it up automatically
 # (high 2x, xhigh 3x, max/swarm 4x) since they think silently for much longer.
 # stream_idle_timeout_secs = 600
@@ -444,12 +427,13 @@ wake_mode = "internal"
 swarm_root_effort = "max"
 swarm_deep_root_effort = "max"
 #
-# How swarm-created agents are spawned:
-#   "inline"   - in-process (no window), shown as a live gallery viewport in the coordinator (default)
-#   "visible"  - open a headed terminal window (alias: "headed")
-#   "headless" - create the worker in-process with no terminal window
-#   "auto"     - try visible first, fall back to headless if no window can open
-# The swarm tool's per-call `spawn_mode` overrides this when set.
+# How swarm-created agents are spawned. Every mode runs the worker in this
+# process; horon-agent never opens a terminal window.
+#   "inline"   - in-process, reported as a live gallery viewport (default)
+#   "headless" - in-process with no gallery viewport
+#   "auto"     - historical "try a window first" mode; resolves to the
+#                configured mode, so an old config keeps working
+# `visible`/`headed` from older configs still parse and mean "inline".
 # Env override: HORON_AGENT_SWARM_SPAWN_MODE
 swarm_spawn_mode = "inline"
 #
@@ -468,18 +452,6 @@ swarm_max_concurrent_agents = 32
 # Env overrides: HORON_AGENT_SWARM_STALL_AFTER_SECS, HORON_AGENT_SWARM_STALL_NUDGE
 swarm_stall_after_secs = 600
 # swarm_stall_nudge = false
-#
-# Max percentage (1-90) of the chat height the inline swarm gallery band may use.
-# Unset = built-in default (40%). Lower values keep more transcript visible; set
-# near the minimum to collapse the gallery to a thin strip.
-# swarm_gallery_max_pct = 40
-#
-# Layout of the inline swarm strip above the status line:
-#   "vertical"   - one agent per row (session icon + status + task), capped to
-#                  a few rows with a "+N more" overflow marker (default)
-#   "horizontal" - all agents packed as chips on a single row
-# Env override: HORON_AGENT_SWARM_STRIP_LAYOUT
-# swarm_strip_layout = "vertical"
 #
 # Recall uses Jev typed Decisions directly, without embeddings or a sidecar LLM.
 # Provider values: auto, openrouter, typesafe, aimlapi.
@@ -516,21 +488,20 @@ max_notes_per_update = 4
 immune_turns = 3
 
 [terminal]
+# Hooks for the built-in terminal launcher, which only the SSH control-master
+# path uses in this build; a daemon session never opens a terminal window.
 # Without a hook, clients inside tmux automatically use a right-side pane.
 # Set HORON_AGENT_TERMINAL to force a supported terminal emulator instead.
-# External command that takes over headed session spawns (swarm agents,
-# resume-in-new-terminal).
+# External command that takes over such a launch.
 #
 # When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
 # opening a terminal emulator itself. The hook receives HORON_AGENT_SPAWN_* env vars
 # describing the spawn so multiplexers/wrappers can decide where it appears:
-#   HORON_AGENT_SPAWN_KIND        - "swarm-agent", "resume", ...
 #   HORON_AGENT_SPAWN_SESSION_ID  - session the window will run
 #   HORON_AGENT_SPAWN_TITLE       - suggested window/tab title
 #   HORON_AGENT_SPAWN_CWD         - session working directory (also the hook's cwd)
 #   HORON_AGENT_SPAWN_PROGRAM     - horon-agent binary path
 #   HORON_AGENT_SPAWN_COMMAND     - full shell-escaped command line
-#   HORON_AGENT_SPAWN_SWARM_ID / HORON_AGENT_SPAWN_COORDINATOR_SESSION_ID (swarm spawns)
 # If the hook fails to start, horon-agent falls back to built-in terminal detection.
 # Env override: HORON_AGENT_SPAWN_HOOK (set empty to disable a config hook).
 #
@@ -550,31 +521,10 @@ immune_turns = 3
 #   focus_hook = "~/bin/horon-agent-focus-router"
 # focus_hook = ""
 #
-# macOS only: terminal that in-app session spawns open horon-agent into. One of:
+# macOS only: terminal emulator the built-in launcher prefers. One of:
 # ghostty, iterm2, wezterm, warp, alacritty, vscode, terminal (Apple Terminal).
 # Preferred over the legacy ~/.horon-agent/preferred_terminal.json file.
 # preferred = "ghostty"
-
-[notifications]
-# Desktop notifications for interactive sessions (macOS Notification Center /
-# Linux notify-send). Separate from [safety], which covers ambient-mode
-# ntfy/email/channel notifications.
-#
-# Notify when an agent turn finishes. Fires only for long turns and, by
-# default, only while the terminal window is unfocused. The notification is a
-# compact summary: session name, duration, todo progress, and a snippet of the
-# final assistant message.
-# turn_complete = true
-# Minimum turn duration (seconds) before notifying (default: 120)
-# turn_complete_min_secs = 120
-# Lower threshold (seconds) when the session has todos, since todos indicate
-# task-style work worth reporting sooner (default: 30)
-# turn_complete_todo_min_secs = 30
-# Only notify while the terminal window is unfocused (default: true)
-# turn_complete_only_when_unfocused = true
-# macOS Notification Center sound played on completion (e.g. "Glass", "Ping",
-# "Hero"). Empty string disables the sound. Ignored on non-macOS. (default: "Glass")
-# turn_complete_sound = "Glass"
 
 [hooks]
 # Synchronous tool-input transformers. Each receives the tool input JSON on
@@ -682,7 +632,7 @@ wait_max_secs = 300
 broadcast_concurrency = 16
 
 [gateway]
-# Enable WebSocket gateway for iOS/web clients
+# Enable the WebSocket gateway for remote daemon clients
 enabled = false
 # TCP port for gateway listener
 port = 7643
@@ -707,9 +657,9 @@ prevent_sleep_while_streaming = true
 # Desktop notifications via notify-send (default: true)
 desktop_notifications = true
 
-# [sponsors] # Legacy config section name retained for compatibility.
+# [sponsors]
 # Integration discovery (enabled by default; set enabled = false to opt out).
-# When enabled, the agent gains a `discover_tools` tool listing third-party
+# When enabled, the agent gains an `integration_tools` tool listing third-party
 # developer tools from HoronAgent's hosted integration directory. These providers
 # have integrated with the agent to make setup and use seamless. Some providers
 # may share revenue with HoronAgent when a referred user becomes a customer, but

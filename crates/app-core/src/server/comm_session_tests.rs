@@ -1,15 +1,15 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 use super::{
-    CoordinatorSpawnIdentity, ensure_spawn_coordinator_swarm, prepare_visible_spawn_session,
-    register_visible_spawned_member, resolve_coordinator_spawn_identity, resolve_spawn_working_dir,
-    resolve_stop_target_session, resolve_swarm_spawn_selection, spawn_admission_lock, swarm_stop_allowed_by_owner,
+    CoordinatorSpawnIdentity, ensure_spawn_coordinator_swarm, resolve_coordinator_spawn_identity,
+    resolve_spawn_working_dir, resolve_stop_target_session, resolve_swarm_spawn_selection, spawn_admission_lock,
+    swarm_stop_allowed_by_owner,
 };
 use crate::agent::Agent;
 use crate::message::{Message, ToolDefinition};
 use crate::protocol::{NotificationType, ServerEvent};
 use crate::provider::{EventStream, Provider};
-use crate::server::{SwarmEventType, SwarmMember, VersionedPlan};
+use crate::server::{SwarmMember, VersionedPlan};
 use crate::tool::Registry;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -201,180 +201,6 @@ async fn stop_target_rejects_ambiguous_friendly_name() {
         .await
         .expect_err("ambiguous friendly names should be rejected");
     assert!(err.contains("Ambiguous swarm session 'bear'"));
-}
-
-#[tokio::test]
-async fn register_visible_spawned_member_marks_startup_as_running() {
-    let swarm_members = Arc::new(RwLock::new(HashMap::new()));
-    let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
-    let event_history = Arc::new(RwLock::new(VecDeque::new()));
-    let event_counter = Arc::new(AtomicU64::new(0));
-    let (swarm_event_tx, _swarm_event_rx) = broadcast::channel(8);
-
-    register_visible_spawned_member(
-        "child-1",
-        "swarm-1",
-        Some("/tmp/worktree"),
-        true,
-        Some("owner"),
-        &swarm_members,
-        &swarms_by_id,
-        &event_history,
-        &event_counter,
-        &swarm_event_tx,
-    )
-    .await;
-
-    let members = swarm_members.read().await;
-    let member = members.get("child-1").expect("spawned member should exist");
-    assert_eq!(member.status, "running");
-    assert_eq!(member.detail.as_deref(), Some("startup queued"));
-    assert_eq!(member.swarm_id.as_deref(), Some("swarm-1"));
-    assert_eq!(
-        member.working_dir.as_deref(),
-        Some(std::path::Path::new("/tmp/worktree"))
-    );
-    drop(members);
-
-    assert!(
-        swarms_by_id
-            .read()
-            .await
-            .get("swarm-1")
-            .is_some_and(|members| members.contains("child-1"))
-    );
-
-    let history = event_history.read().await;
-    assert!(history.iter().any(|event| {
-        event.session_id == "child-1"
-            && matches!(event.event, SwarmEventType::MemberChange { ref action } if action == "joined")
-    }));
-}
-
-#[test]
-fn prepare_visible_spawn_session_cleans_session_when_launch_errors() {
-    let _guard = crate::storage::lock_test_env();
-    let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-    let worktree = tempfile::TempDir::new().expect("temp worktree");
-
-    let error = prepare_visible_spawn_session(
-        Some(worktree.path().to_str().expect("utf8 worktree path")),
-        None,
-        None,
-        None,
-        None,
-        |_session_id, _cwd: &std::path::Path, _provider_key| Err(anyhow::anyhow!("launch failed")),
-    )
-    .expect_err("visible spawn preparation should surface launch error");
-
-    assert!(error.to_string().contains("launch failed"));
-    let sessions_dir = crate::storage::horon_agent_dir()
-        .expect("horon-agent dir")
-        .join("sessions");
-    // The store keeps its own bookkeeping (origin id, catalog index, dirty
-    // markers, locks) beside the session directories, so only a directory that
-    // holds an event log is a prepared session.
-    let remaining_sessions = std::fs::read_dir(&sessions_dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|entry| entry.path().join("events.jsonl").exists())
-                .count()
-        })
-        .unwrap_or(0);
-    assert_eq!(
-        remaining_sessions, 0,
-        "failed visible launch should not leave orphan prepared sessions"
-    );
-
-    crate::env::remove_var("HORON_AGENT_HOME");
-}
-
-#[test]
-fn prepare_visible_spawn_session_persists_and_launches_provider_key_for_openrouter_model() {
-    let _guard = crate::storage::lock_test_env();
-    let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-    let worktree = tempfile::TempDir::new().expect("temp worktree");
-    let (session_id, launched) = prepare_visible_spawn_session(
-        Some(worktree.path().to_str().expect("utf8 worktree path")),
-        Some("openai/gpt-5.4@OpenAI"),
-        None,
-        None,
-        None,
-        |_session_id, _cwd: &std::path::Path, provider_key| {
-            assert_eq!(provider_key, Some("openrouter"));
-            Ok(true)
-        },
-    )
-    .expect("visible spawn preparation should succeed");
-
-    assert!(launched);
-    let session = crate::session::Session::load(&session_id).expect("prepared session should save");
-    assert_eq!(session.model.as_deref(), Some("openai/gpt-5.4@OpenAI"));
-    assert_eq!(session.provider_key.as_deref(), Some("openrouter"));
-
-    crate::env::remove_var("HORON_AGENT_HOME");
-}
-
-#[test]
-fn prepare_visible_spawn_session_persists_requested_effort() {
-    let _guard = crate::storage::lock_test_env();
-    let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-    let worktree = tempfile::TempDir::new().expect("temp worktree");
-    let (session_id, launched) = prepare_visible_spawn_session(
-        Some(worktree.path().to_str().expect("utf8 worktree path")),
-        Some("gpt-5.5"),
-        None,
-        None,
-        Some("low"),
-        |_session_id, _cwd: &std::path::Path, _provider_key| Ok(true),
-    )
-    .expect("visible spawn preparation should succeed");
-
-    assert!(launched);
-    let session = crate::session::Session::load(&session_id).expect("prepared session should save");
-    assert_eq!(session.model.as_deref(), Some("gpt-5.5"));
-    assert_eq!(
-        session.reasoning_effort.as_deref(),
-        Some("low"),
-        "requested effort should persist so the headed client restores it"
-    );
-
-    crate::env::remove_var("HORON_AGENT_HOME");
-}
-
-#[test]
-fn prepare_visible_spawn_session_prefers_parent_provider_key_over_model_guess() {
-    let _guard = crate::storage::lock_test_env();
-    let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-    let worktree = tempfile::TempDir::new().expect("temp worktree");
-    let (session_id, launched) = prepare_visible_spawn_session(
-        Some(worktree.path().to_str().expect("utf8 worktree path")),
-        Some("gpt-5.4"),
-        Some("ollama"),
-        None,
-        None,
-        |_session_id, _cwd: &std::path::Path, provider_key| {
-            assert_eq!(provider_key, Some("ollama"));
-            Ok(true)
-        },
-    )
-    .expect("visible spawn preparation should succeed");
-
-    assert!(launched);
-    let session = crate::session::Session::load(&session_id).expect("prepared session should save");
-    assert_eq!(session.model.as_deref(), Some("gpt-5.4"));
-    assert_eq!(session.provider_key.as_deref(), Some("ollama"));
-
-    crate::env::remove_var("HORON_AGENT_HOME");
 }
 
 fn coordinator_identity(
@@ -1100,20 +926,19 @@ fn swarm_spawn_effort_prefers_explicit_then_config_pin_then_inherit() {
 #[test]
 fn per_call_auto_spawn_mode_defers_to_configured_mode() {
     use super::resolve_swarm_spawn_mode;
-    use crate::config::SwarmSpawnMode::{Auto, Headless, Inline, Visible};
+    use crate::config::SwarmSpawnMode::{Auto, Headless, Inline};
 
-    // A model passing `auto` must not override an inline config with a
-    // visible-terminal attempt (workers opened outside VS Code).
+    // A model passing `auto` expresses no preference, so the configured mode
+    // decides. Every mode runs the worker in this process.
     assert_eq!(resolve_swarm_spawn_mode(Some(Auto), Inline), Inline);
     assert_eq!(resolve_swarm_spawn_mode(Some(Auto), Headless), Headless);
     assert_eq!(resolve_swarm_spawn_mode(None, Inline), Inline);
-    // A configured `auto` keeps its visible-then-headless behavior.
+    // A configured `auto` stays `auto` when nothing overrides it.
     assert_eq!(resolve_swarm_spawn_mode(Some(Auto), Auto), Auto);
     assert_eq!(resolve_swarm_spawn_mode(None, Auto), Auto);
     // Explicit concrete modes still win over config.
-    assert_eq!(resolve_swarm_spawn_mode(Some(Visible), Inline), Visible);
-    assert_eq!(resolve_swarm_spawn_mode(Some(Headless), Visible), Headless);
-    assert_eq!(resolve_swarm_spawn_mode(Some(Inline), Visible), Inline);
+    assert_eq!(resolve_swarm_spawn_mode(Some(Headless), Inline), Headless);
+    assert_eq!(resolve_swarm_spawn_mode(Some(Inline), Headless), Inline);
 }
 /// Provider whose first request is a scripted stream and whose later requests
 /// answer with plain text, so one child turn runs exactly one tool round.

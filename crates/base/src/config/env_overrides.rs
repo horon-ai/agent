@@ -191,11 +191,6 @@ impl Config {
                 self.agents.swarm_spawn_mode = parsed;
             }
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_SWARM_STRIP_LAYOUT") {
-            if let Some(parsed) = SwarmStripLayout::parse(&v) {
-                self.agents.swarm_strip_layout = parsed;
-            }
-        }
         if let Ok(v) = std::env::var("HORON_AGENT_SWARM_MAX_CONCURRENT_AGENTS") {
             if let Ok(parsed) = v.trim().parse::<usize>() {
                 self.agents.swarm_max_concurrent_agents = parsed;
@@ -362,22 +357,6 @@ impl Config {
             && !v.trim().is_empty()
         {
             self.websearch.searxng_url = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_PREFER_NATIVE")
-            && let Some(parsed) = parse_env_bool(&v)
-        {
-            self.websearch.prefer_native = parsed;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_NATIVE_MAX_USES")
-            && let Ok(parsed) = v.trim().parse::<u32>()
-        {
-            self.websearch.native_max_uses = (parsed > 0).then_some(parsed);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_NATIVE_ALLOWED_DOMAINS") {
-            self.websearch.native_allowed_domains = parse_env_list(&v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_NATIVE_BLOCKED_DOMAINS") {
-            self.websearch.native_blocked_domains = parse_env_list(&v);
         }
 
         if let Ok(v) = std::env::var("HORON_AGENT_TRUSTED_EXTERNAL_AUTH_SOURCES") {
@@ -573,21 +552,6 @@ impl Config {
             && parsed > 0
         {
             self.provider.retry_backoff_cap_secs = parsed;
-        }
-
-        // Copilot premium mode: env var overrides config
-        // If set in config but not in env, propagate config -> env
-        if let Ok(v) = std::env::var("HORON_AGENT_COPILOT_PREMIUM") {
-            self.provider.copilot_premium = Some(v);
-        } else if let Some(ref mode) = self.provider.copilot_premium {
-            let env_val = match mode.as_str() {
-                "zero" | "0" => "0",
-                "one" | "1" => "1",
-                _ => "",
-            };
-            if !env_val.is_empty() {
-                crate::env::set_var("HORON_AGENT_COPILOT_PREMIUM", env_val);
-            }
         }
 
         // Explicit environment overrides win, but never export config values:

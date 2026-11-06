@@ -438,9 +438,9 @@ fn swarm_spawn_mode_parses_supported_values() {
         toml::from_str("[agents]\nswarm_spawn_mode = \"auto\"\n").expect("auto swarm_spawn_mode should parse");
     assert_eq!(cfg.agents.swarm_spawn_mode, SwarmSpawnMode::Auto);
 
-    let cfg: Config =
-        toml::from_str("[agents]\nswarm_spawn_mode = \"visible\"\n").expect("visible swarm_spawn_mode should parse");
-    assert_eq!(cfg.agents.swarm_spawn_mode, SwarmSpawnMode::Visible);
+    let cfg: Config = toml::from_str("[agents]\nswarm_spawn_mode = \"visible\"\n")
+        .expect("a legacy visible swarm_spawn_mode must keep parsing");
+    assert_eq!(cfg.agents.swarm_spawn_mode, SwarmSpawnMode::Inline);
 }
 
 #[test]
@@ -451,7 +451,7 @@ fn swarm_spawn_mode_rejects_invalid_values() {
 
 #[test]
 fn swarm_spawn_mode_as_str_round_trips() {
-    for mode in [SwarmSpawnMode::Visible, SwarmSpawnMode::Headless, SwarmSpawnMode::Auto] {
+    for mode in [SwarmSpawnMode::Headless, SwarmSpawnMode::Inline, SwarmSpawnMode::Auto] {
         assert_eq!(SwarmSpawnMode::parse(mode.as_str()), Some(mode));
     }
 }
@@ -968,9 +968,7 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "batch",
         "bg",
         "memory",
-        "selfdev",
-        "desktop_selfdev",
-        "compile_remote",
+        "irc",
         "schedule",
         "session_search",
         "conversation_search",

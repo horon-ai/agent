@@ -45,7 +45,6 @@ pub mod running_tool_registry;
 pub mod server;
 pub mod server_spawn;
 pub mod session_effort;
-pub mod session_launch;
 pub mod session_rebuild;
 pub mod ssh_remote;
 pub mod startup_profile;
