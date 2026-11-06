@@ -1,62 +1,29 @@
 use anyhow::Result;
 use horon_agent_provider_core::{ActiveProvider, provider_key};
 
-/// Stable product/runtime identity selected by login or provider initialization.
+/// Stable product/runtime identity selected by provider initialization.
 ///
-/// This intentionally differs from the lower-level [`ActiveProvider`] execution slot.
-/// For example a direct OpenAI-compatible profile reuses the OpenAI-compatible
-/// HTTP transport, but its runtime identity is still that profile.
+/// This intentionally differs from the lower-level [`ActiveProvider`] execution
+/// slot. A direct OpenAI-compatible profile reuses the OpenAI-compatible HTTP
+/// transport, but its runtime identity is still that profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeProviderId {
-    Claude,
-    ClaudeApiKey,
-    OpenAi,
-    OpenAiApiKey,
     OpenRouter,
     OpenAiCompatible,
-    Bedrock,
-    Cursor,
-    GrokBuild,
-    Copilot,
-    Gemini,
-    Antigravity,
-    AutoImport,
 }
 
 impl RuntimeProviderId {
     pub const fn key(self) -> &'static str {
         match self {
-            Self::Claude => "claude",
-            Self::ClaudeApiKey => "claude-api",
-            Self::OpenAi => "openai",
-            Self::OpenAiApiKey => "openai-api",
             Self::OpenRouter => "openrouter",
             Self::OpenAiCompatible => "openai-compatible",
-            Self::Bedrock => "bedrock",
-            Self::Cursor => "cursor",
-            Self::GrokBuild => "grok-build",
-            Self::Copilot => "copilot",
-            Self::Gemini => "gemini",
-            Self::Antigravity => "antigravity",
-            Self::AutoImport => "auto-import",
         }
     }
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Claude => "Anthropic/Claude",
-            Self::ClaudeApiKey => "Anthropic API",
-            Self::OpenAi => "OpenAI",
-            Self::OpenAiApiKey => "OpenAI API",
             Self::OpenRouter => "OpenRouter",
             Self::OpenAiCompatible => "OpenAI-compatible",
-            Self::Bedrock => "AWS Bedrock",
-            Self::Cursor => "Cursor",
-            Self::GrokBuild => "Grok Build",
-            Self::Copilot => "GitHub Copilot",
-            Self::Gemini => "Gemini",
-            Self::Antigravity => "Antigravity",
-            Self::AutoImport => "Auto Import",
         }
     }
 }
@@ -146,9 +113,6 @@ impl ProviderActivation {
                 if std::env::var_os("HORON_AGENT_OPENROUTER_TRANSPORT_STATE").is_none() {
                     crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "direct-api-key");
                 }
-            }
-            _ => {
-                crate::env::remove_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE");
             }
         }
 

@@ -1234,11 +1234,10 @@ impl Provider for MultiProvider {
         let current_model = self.model();
         let active = self.active_provider();
 
-        let openai = if self.openai_provider().is_some() {
-            external::instantiate_expected_external_provider(external::OPENAI_RUNTIME)
-        } else {
-            None
-        };
+        // Nothing can create a built-in OpenAI runtime, so the slot is empty in
+        // production. Preserve whatever it holds (tests inject a stub) by
+        // forking the provider instead of rebuilding it.
+        let openai = self.openai_provider().map(|provider| provider.fork());
 
         let provider = Self {
             openai: RwLock::new(openai),
