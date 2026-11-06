@@ -144,6 +144,28 @@ class InstallSizeTests(unittest.TestCase):
             self.assertEqual(size, len("#!/bin/sh\nexec \"$0.bin\"\n") + 1000)
 
 
+class DaemonArgvTests(unittest.TestCase):
+    """The horon daemon argv must match the flags `serve` currently accepts.
+
+    A stale flag makes `serve` exit before binding, and the harness only reports
+    the downstream "daemon socket not ready".
+    """
+
+    def test_horon_serve_argv_omits_the_removed_debug_socket_flag(self) -> None:
+        socket_path = "/tmp/bench/run/bench.sock"
+        argv = bench.horon_daemon_argv("/usr/local/bin/horon-agent", socket_path)
+        removed = "--" + "debug-socket"
+        self.assertNotIn(removed, argv)
+        self.assertEqual(argv[0], "/usr/local/bin/horon-agent")
+        self.assertIn("serve", argv)
+        self.assertEqual(argv[argv.index("--socket") + 1], socket_path)
+
+    def test_debug_socket_is_derived_from_the_main_socket(self) -> None:
+        self.assertEqual(
+            bench.debug_socket_for("/tmp/bench/run/bench.sock"), "/tmp/bench/run/bench-debug.sock"
+        )
+
+
 class ReportShapeTests(unittest.TestCase):
     def test_envelope_contract(self) -> None:
         report = bc.build_report("compare", [{"name": "horon"}], [{"name": "pi", "reason": "missing"}])

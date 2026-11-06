@@ -827,18 +827,21 @@ def measure_daemon_sessions(
             daemon.close()
 
 
-def make_horon_daemon(binary: str, root: str, cwd: str):
-    socket_path = os.path.join(root, "run", "bench.sock")
-    debug_socket = socket_path.replace(".sock", "-debug.sock")
-    env = horon_env(root, binary)
-    argv = [
+def horon_daemon_argv(binary: str, socket_path: str) -> list[str]:
+    """argv for the isolated horon daemon under test.
+
+    There is no debug-socket argument. `serve` derives the debug socket from the
+    main one by substituting the `-debug.sock` suffix
+    (`crates/app-core/src/server/socket.rs`), and debug commands are gated by
+    `HORON_AGENT_DEBUG_CONTROL`, which `horon_env` sets.
+    """
+    return [
         binary,
         "--no-update",
         "serve",
         "--no-selfdev",
         "--socket",
         socket_path,
-        "--debug-socket",
         "--provider-profile",
         "mock",
         "--model",
@@ -846,6 +849,18 @@ def make_horon_daemon(binary: str, root: str, cwd: str):
         "--tools",
         "bash",
     ]
+
+
+def debug_socket_for(socket_path: str) -> str:
+    """Debug socket the daemon publishes beside its main socket."""
+    return socket_path.replace(".sock", "-debug.sock")
+
+
+def make_horon_daemon(binary: str, root: str, cwd: str):
+    socket_path = os.path.join(root, "run", "bench.sock")
+    debug_socket = debug_socket_for(socket_path)
+    env = horon_env(root, binary)
+    argv = horon_daemon_argv(binary, socket_path)
 
     def factory(count: int):
         daemon = start_daemon(
