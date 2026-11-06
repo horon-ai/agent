@@ -10,7 +10,6 @@ pub mod dispatch;
 pub mod hot_exec;
 pub mod install_release;
 pub mod login;
-pub mod macos_notification_broker;
 pub mod mcp;
 pub mod output;
 pub mod proctitle;

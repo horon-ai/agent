@@ -86,8 +86,11 @@ if [ "${1:-}" = "install-release" ]; then
   chmod +x "$install_dir/horon-agent"
   exit 0
 fi
-if [ "${1:-}" = "setup-hotkey" ]; then
-  [ -z "${HOTKEY_SETUP_LOG:-}" ] || printf "%s\n" "$*" >> "$HOTKEY_SETUP_LOG"
+# Desktop setup verbs (hotkeys, launchers) are no longer part of installation.
+# Anything other than `install-release` is recorded so the test can assert the
+# installer never asks the binary to configure the desktop again.
+if [ -n "${1:-}" ]; then
+  [ -z "${DESKTOP_SETUP_LOG:-}" ] || printf "%s\n" "$*" >> "$DESKTOP_SETUP_LOG"
   exit 0
 fi
 exit 0
@@ -112,7 +115,7 @@ build_assets() {
 assets="$tmp/assets"
 build_assets "$assets" horon-agent-linux-x86_64
 
-hotkey_setup_log="$tmp/hotkey-setup.log"
+desktop_setup_log="$tmp/desktop-setup.log"
 url_log="$tmp/urls.log"
 cli_arg_log="$tmp/cli-args.log"
 
@@ -123,7 +126,7 @@ run_install() {
     HORON_AGENT_INSTALL_DIR="$tmp/install" \
     ASSET_SOURCE_DIR="$assets" \
     CLI_ARG_LOG="$cli_arg_log" \
-    HOTKEY_SETUP_LOG="$hotkey_setup_log" \
+    DESKTOP_SETUP_LOG="$desktop_setup_log" \
     DOWNLOAD_URL_LOG="$url_log" \
     HORON_AGENT_SKIP_SERVER_RELOAD=1 \
     bash "$repo_dir/scripts/install/install.sh"
@@ -135,12 +138,12 @@ PATH="$tmp/bin:$PATH" \
   HORON_AGENT_INSTALL_DIR="$tmp/install" \
   ASSET_SOURCE_DIR="$assets" \
   CLI_ARG_LOG="$cli_arg_log" \
-  HOTKEY_SETUP_LOG="$hotkey_setup_log" \
+  DESKTOP_SETUP_LOG="$desktop_setup_log" \
   DOWNLOAD_URL_LOG="$url_log" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
   bash "$repo_dir/scripts/install/install.sh" >/dev/null
 
-test "$(cat "$hotkey_setup_log")" = "setup-hotkey"
+test ! -e "$desktop_setup_log"
 test "$(cat "$tmp/home/.horon-agent/builds/current-version")" = "1.2.3"
 
 # The installer hands the executable a local asset directory holding exactly the

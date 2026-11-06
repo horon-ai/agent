@@ -32,9 +32,6 @@ fn validate(args: &Args) -> Result<()> {
             "provider/tool startup flags cannot configure an existing SSH server; use the remote /model command or configure the remote host"
         )
     }
-    if args.onboarding_sim || args.update_sim {
-        bail!("local onboarding/update simulators cannot run in an SSH session")
-    }
     Ok(())
 }
 
@@ -85,7 +82,6 @@ mod tests {
             vec!["--resume"],
             vec!["run", "test"],
             vec!["--model", "local-model"],
-            vec!["--onboarding-sim"],
             vec!["--tools", "bash"],
         ] {
             let mut argv = vec!["horon-agent", "--ssh", "dev"];

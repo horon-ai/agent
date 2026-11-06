@@ -8,7 +8,7 @@ pub struct TerminalCommand {
     pub args: Vec<String>,
     pub title: Option<String>,
     pub fresh_spawn: bool,
-    /// What this spawn is for (e.g. "resume", "selfdev", "swarm-agent").
+    /// What this spawn is for (e.g. "resume", "swarm-agent").
     /// Exported as `HORON_AGENT_SPAWN_KIND` to spawn hooks and spawned terminals.
     pub kind: Option<String>,
     /// The horon-agent session this terminal will run, when known.
@@ -536,7 +536,7 @@ pub fn expand_home(program: &str) -> PathBuf {
 /// The `HORON_AGENT_SPAWN_*` metadata env exported to spawn hooks and to terminals
 /// launched by the built-in fallback:
 ///
-/// - `HORON_AGENT_SPAWN_KIND`: why this spawn happened ("resume", "selfdev",
+/// - `HORON_AGENT_SPAWN_KIND`: why this spawn happened ("resume",
 ///   "swarm-agent", ...), when known.
 /// - `HORON_AGENT_SPAWN_SESSION_ID`: the horon-agent session the window will run.
 /// - `HORON_AGENT_SPAWN_TITLE`: the suggested window/tab title.

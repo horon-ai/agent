@@ -2,15 +2,13 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::ToSocketAddrs;
 
 use crate::{gateway, memory, session, storage};
 
-mod menubar;
 mod provider_setup;
 mod report_info;
-mod restart;
 
 pub(crate) use super::sessions::run_session_command;
 
@@ -23,12 +21,7 @@ pub(crate) use super::auth_test::{
 pub use super::auth_test::{
     run_auth_test_command, run_auth_test_context_audit_command, run_auth_test_coverage_command,
 };
-pub use menubar::{ensure_menubar_helper_running, run_menubar_command};
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
-pub use restart::{
-    maybe_run_pending_restart_restore_on_startup, run_restart_clear_command, run_restart_restore_command,
-    run_restart_save_command, run_restart_status_command,
-};
 
 pub enum AmbientSubcommand {
     Status,
@@ -52,78 +45,6 @@ pub async fn run_ambient_command(cmd: AmbientSubcommand) -> Result<()> {
     };
 
     super::debug::run_debug_command(debug_cmd, "", None, None, false).await
-}
-
-pub async fn run_transcript_command(
-    text: Option<String>,
-    mode: crate::protocol::TranscriptMode,
-    session: Option<String>,
-) -> Result<()> {
-    let text = if let Some(text) = text {
-        text
-    } else {
-        let mut stdin = String::new();
-        std::io::stdin().read_to_string(&mut stdin)?;
-        let trimmed = stdin.trim_end_matches(['\r', '\n']);
-        if trimmed.is_empty() {
-            anyhow::bail!("Provide transcript text as an argument or pipe it via stdin")
-        }
-        trimmed.to_string()
-    };
-
-    // Focused-window lookup needs the user's compositor, so it happens here in
-    // the client rather than in the (possibly remote) server.
-    let session = session.or_else(|| {
-        horon_agent_voice::dictation::focused_horon_agent_session()
-            .ok()
-            .flatten()
-    });
-    let mut client = crate::server::Client::connect_debug().await?;
-    let request_id = client.send_transcript(&text, mode, session).await?;
-
-    loop {
-        match client.read_event().await? {
-            crate::protocol::ServerEvent::Ack { id } if id == request_id => {}
-            crate::protocol::ServerEvent::Done { id } if id == request_id => return Ok(()),
-            crate::protocol::ServerEvent::Error { id, message, .. } if id == request_id => {
-                anyhow::bail!(message)
-            }
-            _ => {}
-        }
-    }
-}
-
-pub async fn run_companion_command(status: bool, no_voice: bool) -> Result<()> {
-    use crate::companion_client::{CompanionRequest, request_async};
-    if status {
-        match request_async(CompanionRequest::Status, std::time::Duration::from_secs(2)).await {
-            Ok(response) => {
-                println!(
-                    "{} at {} (capabilities: {})",
-                    response.message,
-                    crate::companion_client::socket_path().display(),
-                    response.capabilities.join(", ")
-                );
-                return Ok(());
-            }
-            Err(error) => anyhow::bail!("{error}"),
-        }
-    }
-    horon_agent_companion::run(horon_agent_companion::CompanionOptions {
-        voice: !no_voice,
-        ..Default::default()
-    })
-    .await
-}
-
-pub async fn run_dictate_command(type_output: bool) -> Result<()> {
-    let run = horon_agent_voice::dictation::run_configured().await?;
-
-    if type_output {
-        horon_agent_voice::dictation::type_text(&run.text)
-    } else {
-        run_transcript_command(Some(run.text), run.mode, None).await
-    }
 }
 
 #[derive(Serialize)]

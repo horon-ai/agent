@@ -31,7 +31,7 @@ class PublicReleaseTests(unittest.TestCase):
         for name in self.names - {"SHA256SUMS"}:
             (self.directory / name).write_bytes(b"fixture")
         (self.directory / "release-provenance.json").write_text(json.dumps({
-            "tag": TAG, "tag_commit": SHA, "repair": "none",
+            "tag": TAG, "tag_commit": SHA,
             "eligibility_policy": "exact-sha-main-ci"}))
         self.write_checksums()
 
@@ -142,11 +142,11 @@ class PublicReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing or unsafe"):
             self.verify()
 
-    def test_wrong_commit_or_repaired_provenance_rejected(self):
+    def test_wrong_commit_or_provenance_policy_rejected(self):
         path = self.directory / "release-provenance.json"
         original = json.loads(path.read_text())
         for field, value in (("tag", "v0.98.0"), ("tag_commit", "b" * 40),
-                             ("repair", "windows-listener"), ("eligibility_policy", "bypassed")):
+                             ("eligibility_policy", "bypassed")):
             with self.subTest(field=field):
                 data = dict(original, **{field: value})
                 path.write_text(json.dumps(data))

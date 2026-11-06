@@ -7,9 +7,9 @@ use std::time::Instant;
 
 use super::args::{
     AmbientCommand, ApprovalVerdictArg, ApprovalsCommand, Args, AuthCommand, Command, MemoryCommand, ModelCommand,
-    ProviderCommand, RestartCommand, ServerCommand, TranscriptModeArg,
+    ProviderCommand, ServerCommand,
 };
-use crate::{agent, auth, build, provider_catalog, server, session, setup_hints, startup_profile};
+use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 
 use super::{account, acp, commands, debug, hot_exec, login, output, provider_init, terminal};
 use provider_init::ProviderChoice;
@@ -212,9 +212,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 args.tool_profile.is_some(),
             )
             .await?;
-        }
-        Some(Command::Connect) => {
-            anyhow::bail!("the interactive client is unavailable in this headless build");
         }
         #[cfg(unix)]
         Some(Command::ApiBridge { api_socket, stdio }) => {
@@ -463,69 +460,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 resolve_blocked_approval(&store, &request_id, &tool_call_id, verdict, note.as_deref())?;
             }
         },
-        Some(Command::Transcript { text, mode, session }) => {
-            commands::run_transcript_command(text, map_transcript_mode(mode), session).await?;
-        }
-        Some(Command::Companion { status, no_voice }) => {
-            commands::run_companion_command(status, no_voice).await?;
-        }
-        Some(Command::Dictate { r#type }) => {
-            commands::run_dictate_command(r#type).await?;
-        }
-        Some(Command::SetupHotkey {
-            listen_macos_hotkey,
-            notify_cli_launch,
-            listen_windows_hotkey,
-            uninstall,
-        }) => {
-            setup_hints::run_setup_hotkey(
-                listen_macos_hotkey,
-                listen_windows_hotkey,
-                uninstall,
-                notify_cli_launch.as_deref(),
-            )?;
-        }
-        Some(Command::SetupLauncher) => {
-            setup_hints::run_setup_launcher()?;
-        }
-        Some(Command::Replay {
-            session,
-            swarm,
-            export,
-            speed,
-            timeline,
-            auto_edit,
-            video,
-            cols,
-            rows,
-            fps,
-            centered,
-            no_centered,
-        }) => {
-            let centered_override = if centered {
-                Some(true)
-            } else if no_centered {
-                Some(false)
-            } else {
-                None
-            };
-            let _ = (
-                &session,
-                swarm,
-                export,
-                auto_edit,
-                speed,
-                &timeline,
-                &video,
-                cols,
-                rows,
-                fps,
-                centered_override,
-            );
-            anyhow::bail!(
-                "session replay rendering is an interactive-TUI feature and is unavailable in this headless build"
-            );
-        }
         Some(Command::Model(subcmd)) => match subcmd {
             ModelCommand::List { json, verbose } => {
                 commands::run_model_command(&args.provider, args.model.as_deref(), json, verbose).await?;
@@ -599,15 +533,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 )
                 .await?;
             }
-        }
-        Some(Command::Restart { action }) => match action {
-            RestartCommand::Save { auto_restore } => commands::run_restart_save_command(auto_restore).await?,
-            RestartCommand::Restore => commands::run_restart_restore_command()?,
-            RestartCommand::Status => commands::run_restart_status_command()?,
-            RestartCommand::Clear => commands::run_restart_clear_command()?,
-        },
-        Some(Command::Menubar { once, json }) => {
-            commands::run_menubar_command(once, json)?;
         }
         None => run_default_command(args).await?,
     }
@@ -758,76 +683,22 @@ use subcommand_mapping::*;
 
 async fn run_default_command(args: Args) -> Result<()> {
     startup_profile::mark("run_main_none_branch");
-    // The TUI's first frame reads the auth snapshot (welcome/onboarding gate).
-    // Probe it now on a side thread so it overlaps the setup work below.
+    // The auth snapshot is read by every client surface, so probe it now on a
+    // side thread while the server check below runs.
     crate::auth::AuthStatus::prewarm_fast_in_background();
 
     let explicit_provider_or_model =
         args.provider != ProviderChoice::Auto || args.model.is_some() || args.provider_profile.is_some();
     let explicit_tool_options =
         args.tool_profile.is_some() || args.tools.is_some() || args.disabled_tools.is_some() || args.disable_base_tools;
-    if args.resume.is_none()
-        && !explicit_provider_or_model
-        && !explicit_tool_options
-        && commands::maybe_run_pending_restart_restore_on_startup().await?
-    {
-        return Ok(());
-    }
-
-    let startup_hints = if args.fresh_spawn {
-        None
-    } else {
-        // One-time: bake per-repo launch hotkeys from session history into config,
-        // then reinstall so the new chords take effect. Scanning session history
-        // can take a few hundred ms, so run it on a detached thread to keep it off
-        // the first-frame critical path. It is gated by an `imported` flag, so it
-        // does real work at most once and no-ops on every later launch.
-        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            std::thread::Builder::new()
-                .name("launch-hotkey-bake".to_string())
-                .spawn(|| {
-                    if crate::config::Config::bake_launch_hotkeys_once() {
-                        setup_hints::reinstall_launch_hotkeys_after_config_change();
-                    }
-                })
-                .ok();
-        }
-
-        // Prefer existing setup hints (alignment/welcome/terminal nudges); only
-        // surface the keybinding-conflict heads-up when nothing else is queued,
-        // so we never clobber an early-launch tip. The conflict hint is
-        // self-debouncing (shown once per distinct conflict set).
-        setup_hints::maybe_show_setup_hints()
-            .or_else(|| setup_hints::maybe_show_keymap_conflict_hint(&crate::config::config().keybindings))
-            .or_else(setup_hints::maybe_show_glyph_safe_notice)
-    };
-    startup_profile::mark("setup_hints");
-
-    // Best-effort: make sure the macOS menu bar session-count indicator is
-    // running so it shows up automatically for every macOS user.
-    commands::ensure_menubar_helper_running();
 
     if args.resume.is_none() {
         terminal::show_crash_resume_hint();
     }
     startup_profile::mark("crash_resume_hint");
 
-    let cwd = std::env::current_dir()?;
-
-    // Record where this interactive launch happened so the system-wide launch
-    // hotkeys can reopen horon-agent in the last project directory (Cmd+').
-    // Best-effort; ignored unless a real TTY and not a fresh-spawn re-entry.
-    if !args.fresh_spawn && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        let repo_dir = build::get_repo_dir();
-        setup_hints::record_launch_dirs(&cwd, repo_dir.as_deref());
-    }
-
     startup_profile::mark("client_mode_start");
-    let mut server_running = if args.fresh_spawn {
-        true
-    } else {
-        server_is_running().await
-    };
+    let mut server_running = server_is_running().await;
     startup_profile::mark("server_check");
 
     if !server_running {
@@ -875,8 +746,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         spawn_server(&args.provider, args.model.as_deref(), args.provider_profile.as_deref()).await?;
     }
 
-    startup_profile::mark("pre_tui_client");
-    let _ = startup_hints;
+    startup_profile::mark("client_unavailable");
     anyhow::bail!(
         "the interactive client is unavailable in this headless build; use `horon-agent serve` or `horon-agent run`"
     );

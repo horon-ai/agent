@@ -1,9 +1,10 @@
 //! Mixed new/old HOME parity for every surface Task16 converted.
 //!
 //! One HOME holds a canonical session, a preserved legacy session, and a
-//! migrated session whose legacy snapshot is still on disk. Replay, search,
-//! peek, edit stats, and startup listing must report the same thing they report
-//! for a legacy-only HOME, and a corrupt session must not remove a neighbour.
+//! migrated session whose legacy snapshot is still on disk. Session loading,
+//! search, peek, edit stats, and startup listing must report the same thing they
+//! report for a legacy-only HOME, and a corrupt session must not remove a
+//! neighbour.
 use crate::message::{ContentBlock, Role};
 use crate::session::Session;
 use crate::tool::{search_options_for_test, session_search_report_for_test};
@@ -137,9 +138,9 @@ fn mixed_new_and_old_home_matches_a_legacy_only_home_on_every_surface() {
     ] {
         assert_eq!(peek_body(id), body, "peek must read every layout");
         assert_eq!(
-            crate::replay::load_session(id).expect("replay").id,
+            Session::load(id).expect("session load reads every layout").id,
             id,
-            "replay must read every layout"
+            "session loading must read every layout"
         );
         assert_eq!(
             stats(id),

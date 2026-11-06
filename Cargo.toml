@@ -44,7 +44,6 @@ members = [
     "crates/protocol",
     "crates/session-types",
     "crates/session-store",
-    "crates/setup-hints",
     "crates/storage",
     "crates/azure-auth",
     "crates/provider-metadata",
@@ -62,9 +61,6 @@ members = [
     "crates/tool-types",
     "crates/update-core",
     "crates/terminal-launch",
-    "crates/voice",
-    "crates/desktop-open",
-    "crates/companion",
     "crates/render-core",
     "crates/perf-counters",
 ]
@@ -128,8 +124,6 @@ horon-agent-build-meta = { path = "crates/build-meta" }
 # default-features=false so the root feature set fully controls the downstream
 # features (see [features]).
 horon-agent-app-core = { path = "crates/app-core", default-features = false }
-horon-agent-voice = { path = "crates/voice" }
-horon-agent-companion = { path = "crates/companion" }
 
 # Archive extraction (for auto-update)
 tempfile = "3"
@@ -169,43 +163,6 @@ horon-agent-harness-api-server = { path = "crates/harness-api-server" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-global-hotkey = "0.7"
-objc2 = "0.6"
-block2 = "0.6"
-objc2-foundation = { version = "0.3", features = [
-    "NSString",
-    "NSThread",
-    "NSRunLoop",
-    "NSDate",
-    "NSTimer",
-    "NSUserDefaults",
-    "NSValue",
-    "NSAttributedString",
-    "NSDictionary",
-    "block2",
-] }
-objc2-app-kit = { version = "0.3", features = [
-    "NSAppearance",
-    "NSApplication",
-    "NSResponder",
-    "NSStatusBar",
-    "NSStatusItem",
-    "NSStatusBarButton",
-    "NSButton",
-    "NSCell",
-    "NSColor",
-    "NSControl",
-    "NSFont",
-    "NSFontDescriptor",
-    "NSImage",
-    "NSAttributedString",
-    "NSMenu",
-    "NSMenuItem",
-    "NSRunningApplication",
-] }
-objc2-user-notifications = "0.3"
 
 [profile.release]
 opt-level = 1

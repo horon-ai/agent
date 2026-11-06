@@ -745,11 +745,6 @@ impl Config {
                 self.power.prevent_sleep_while_streaming = parsed;
             }
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_BLOCK_LID_CLOSE") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.power.block_lid_close = parsed;
-            }
-        }
 
         // Provider
         if let Ok(v) = std::env::var("HORON_AGENT_MODEL") {

@@ -502,7 +502,7 @@ pub async fn login_openai(no_browser: bool) -> Result<OAuthTokens> {
     let browser_opened = if crate::auth::browser_suppressed(no_browser) {
         false
     } else {
-        crate::companion_client::open_url(&auth_url)
+        crate::open_url::open_url(&auth_url)
     };
 
     if browser_opened {

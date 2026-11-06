@@ -1,8 +1,7 @@
 {
-  "total": 15,
+  "total": 14,
   "files": {
     "crates/app-core/src/lib.rs": 1,
-    "crates/app-core/src/setup_hints.rs": 1,
     "crates/base/src/env.rs": 1,
     "crates/base/src/id.rs": 1,
     "crates/base/src/logging.rs": 1,

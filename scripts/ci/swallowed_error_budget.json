@@ -211,16 +211,6 @@
       "let_underscore": 2,
       "unwrap_or_default": 0
     },
-    "crates/app-core/src/replay.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/app-core/src/restart_snapshot.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/app-core/src/running_tool_registry.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
@@ -1536,11 +1526,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 16
     },
-    "crates/import-core/src/repo_ranking.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
     "crates/logging/src/lib.rs": {
       "dot_ok": 5,
       "let_underscore": 0,
@@ -1796,56 +1781,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/setup-hints/src/cli_launch_hints.rs": {
-      "dot_ok": 0,
-      "let_underscore": 4,
-      "unwrap_or_default": 1
-    },
-    "crates/setup-hints/src/keymap/external.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/setup-hints/src/keymap/macos_hotkeys.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/setup-hints/src/keymap/mod.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 4
-    },
-    "crates/setup-hints/src/launch_hotkeys.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/setup-hints/src/lib.rs": {
-      "dot_ok": 8,
-      "let_underscore": 21,
-      "unwrap_or_default": 15
-    },
-    "crates/setup-hints/src/linux_niri.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/setup-hints/src/macos_launcher.rs": {
-      "dot_ok": 2,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/setup-hints/src/macos_terminal.rs": {
-      "dot_ok": 5,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/setup-hints/src/windows_setup.rs": {
-      "dot_ok": 2,
-      "let_underscore": 11,
-      "unwrap_or_default": 2
-    },
     "crates/storage/src/active_pids.rs": {
       "dot_ok": 30,
       "let_underscore": 9,
@@ -2001,11 +1936,6 @@
       "let_underscore": 2,
       "unwrap_or_default": 4
     },
-    "src/cli/commands/menubar.rs": {
-      "dot_ok": 3,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
     "src/cli/commands/provider_setup.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -2044,11 +1974,6 @@
     "src/cli/login/scriptable.rs": {
       "dot_ok": 0,
       "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "src/cli/macos_notification_broker.rs": {
-      "dot_ok": 6,
-      "let_underscore": 4,
       "unwrap_or_default": 0
     },
     "src/cli/output.rs": {

@@ -1071,7 +1071,7 @@ pub async fn login(mcp_url: &str, browser: BrowserPreference, on_url: impl FnOnc
     }
     let auth_url = auth_url.to_string();
     on_url(&auth_url);
-    if matches!(browser, BrowserPreference::Open) && open::that(&auth_url).is_err() {
+    if matches!(browser, BrowserPreference::Open) && !crate::open_url::open_url(&auth_url) {
         // on_url already presented the URL, so manual opening still works.
         crate::logging::warn("Could not open OAuth browser; open the displayed authorization URL manually");
     }

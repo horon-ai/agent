@@ -77,8 +77,6 @@ horon-agent-provider-openai = { path = "../provider-openai" }
 horon-agent-terminal-launch = { path = "../terminal-launch" }
 horon-agent-usage-types = { path = "../usage-types" }
 
-# NOTE: microphone capture and transcription live in `horon-agent-voice`, a
-# client-only crate. The shared runtime never opens a microphone.
 
 # Streaming
 

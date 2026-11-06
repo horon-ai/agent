@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::process::Command as ProcessCommand;
 
-use crate::{build, logging, perf, server, setup_hints, startup_profile, storage, update};
+use crate::{build, logging, perf, server, startup_profile, storage, update};
 
 use super::{
     args::{Args, Command},
@@ -150,10 +150,6 @@ pub async fn run() -> Result<()> {
 
 fn parse_and_prepare_args(args: Args) -> Result<Args> {
     startup_profile::mark("args_parse");
-
-    if let Some(chord) = args.spawn_hotkey.as_deref() {
-        setup_hints::record_launch_hotkey_use(chord);
-    }
 
     output::set_quiet_enabled(args.quiet);
 
@@ -549,12 +545,6 @@ mod tests {
         assert!(!should_spawn_background_update_check_with_config(&args, false));
     }
 
-    #[test]
-    fn hidden_spawn_hotkey_argument_is_global_and_preserves_canonical_text() {
-        let args = parse_args(&["horon-agent", "--spawn-hotkey", "shift+cmd+'", "login"]);
-        assert_eq!(args.spawn_hotkey.as_deref(), Some("shift+cmd+'"));
-        assert!(matches!(args.command, Some(Command::Login { .. })));
-    }
     #[test]
     fn no_external_provider_runtime_is_registered() {
         // Every external provider runtime was removed. Model requests run on the

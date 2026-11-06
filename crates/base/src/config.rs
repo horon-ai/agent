@@ -8,12 +8,11 @@ pub use horon_agent_config_types::{
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DiagramDisplayMode, DiagramPanePosition,
     DiffDisplayMode, DisplayConfig, FeatureConfig, ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig,
-    IrcConfig, KeybindingsConfig, LatexRenderingMode, LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode,
-    MenubarConfig, NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType,
-    NativeScrollbarConfig, NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SecretsMode, SessionPickerResumeAction, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat,
-    SwarmSpawnMode, SwarmStripLayout, TerminalConfig, TurnRecoveryMode, UpdateChannel, WebSearchConfig,
-    WebSearchEngine,
+    IrcConfig, KeybindingsConfig, LatexRenderingMode, MarkdownSpacingMode, MenubarConfig, NamedProviderAuth,
+    NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, NativeScrollbarConfig, NotificationsConfig,
+    PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, SessionPickerResumeAction,
+    SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, SwarmStripLayout,
+    TerminalConfig, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 use serde::{Deserialize, Serialize};
@@ -96,7 +95,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_AUTO_SERVER_RELOAD",
     "HORON_AGENT_CHECK_UPDATES",
     "HORON_AGENT_BING_API_KEY",
-    "HORON_AGENT_BLOCK_LID_CLOSE",
     "HORON_AGENT_BING_API_KEY_ENV",
     "HORON_AGENT_BING_MARKET",
     "HORON_AGENT_CENTERED_TOGGLE_KEY",
@@ -586,9 +584,6 @@ pub struct Config {
     /// [`sponsors_is_default`]).
     #[serde(skip_serializing_if = "sponsors_is_default")]
     pub sponsors: SponsorsConfig,
-
-    /// Global "launch a new horon-agent" hotkeys (macOS). Baked once by auto-import.
-    pub launch_hotkeys: LaunchHotkeysConfig,
 
     /// `[desktop.*]` tables owned by HoronAgent Desktop (voice, workspace,
     /// appearance, ...). The CLI never interprets them, but it must round-trip

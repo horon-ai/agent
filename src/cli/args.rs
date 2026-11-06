@@ -9,14 +9,6 @@ pub(crate) use google::{GoogleAccessTierArg, GoogleLoginArgs};
 pub(crate) use mcp::McpCommand;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum TranscriptModeArg {
-    Insert,
-    Append,
-    Replace,
-    Send,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
     /// Send the API key as Authorization: Bearer <key> (OpenAI-compatible default)
     Bearer,
@@ -75,28 +67,10 @@ pub(crate) struct Args {
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "")]
     pub(crate) resume: Option<String>,
 
-    /// Internal: launched as a freshly spawned window, so skip heavy local resume bootstrap.
-    #[arg(long, global = true, hide = true)]
-    pub(crate) fresh_spawn: bool,
-
-    /// Internal: canonical global hotkey that launched this process.
-    #[arg(long, global = true, hide = true, value_name = "CHORD")]
-    pub(crate) spawn_hotkey: Option<String>,
-
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
     #[allow(dead_code)]
     pub(crate) no_selfdev: bool,
-
-    /// Rehearse first-run onboarding on launch: the real flow, as if horon-agent
-    /// were new on this machine (same as `/onboarding-sim`).
-    #[arg(long = "onboarding-sim")]
-    pub(crate) onboarding_sim: bool,
-
-    /// Launch the normal TUI, skip onboarding, then autoplay a safe simulation
-    /// of receiving, downloading, installing, and restarting after an update.
-    #[arg(long = "update-sim")]
-    pub(crate) update_sim: bool,
 
     /// Custom socket path for server/client communication.
     ///
@@ -107,10 +81,6 @@ pub(crate) struct Args {
     /// behind on a one-off socket.
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
-
-    /// Enable debug socket (broadcasts all TUI state changes)
-    #[arg(long, global = true)]
-    pub(crate) debug_socket: bool,
 
     /// Model to use (e.g., claude-opus-4-6, gpt-5.5)
     #[arg(short, long, global = true)]
@@ -193,9 +163,6 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: ServerCommand,
     },
-
-    /// Connect to a running server
-    Connect,
 
     /// Run a single message and exit
     Run {
@@ -393,111 +360,6 @@ pub(crate) enum Command {
         action: ApprovalsCommand,
     },
 
-    /// Inject externally transcribed text into the active HoronAgent TUI
-    Transcript {
-        /// Transcript text. If omitted, reads from stdin.
-        text: Option<String>,
-
-        /// How to apply the transcript inside HoronAgent
-        #[arg(long, value_enum, default_value = "send")]
-        mode: TranscriptModeArg,
-
-        /// Target a specific live session instead of the active TUI
-        #[arg(short = 'S', long)]
-        session: Option<String>,
-    },
-
-    /// Run the desktop companion: opens URLs and terminals, global voice and
-    /// the lid override for the shared server, in this login session
-    Companion {
-        /// Report whether a companion is running and exit
-        #[arg(long)]
-        status: bool,
-
-        /// Do not run the global push-to-talk listener
-        #[arg(long)]
-        no_voice: bool,
-    },
-
-    /// Run configured dictation: send to last-focused horon-agent client or type raw text
-    Dictate {
-        /// Type the transcript into the focused app instead of sending to horon-agent
-        #[arg(long)]
-        r#type: bool,
-    },
-
-    /// Set up the platform global hotkey to launch horon-agent
-    SetupHotkey {
-        /// Internal: run as the macOS hotkey listener process.
-        #[arg(long, hide = true)]
-        listen_macos_hotkey: bool,
-
-        /// Internal: show a rate-limited shortcut reminder from a CLI SessionStart hook.
-        #[arg(long, hide = true, value_name = "CLI")]
-        notify_cli_launch: Option<String>,
-
-        /// Internal: run as the Windows hotkey listener process.
-        #[arg(long, hide = true)]
-        listen_windows_hotkey: bool,
-
-        /// Remove the installed platform global hotkey listener.
-        #[arg(long)]
-        uninstall: bool,
-    },
-
-    /// Install platform launcher integration (Windows shortcut; macOS notification helper)
-    SetupLauncher,
-
-    /// Replay a saved session in the TUI
-    Replay {
-        /// Session ID, name, or path to session JSON file
-        session: String,
-
-        /// Replay related swarm sessions together in a synchronized multi-pane view
-        #[arg(long)]
-        swarm: bool,
-
-        /// Export timeline as JSON instead of playing
-        #[arg(long)]
-        export: bool,
-
-        /// Playback speed multiplier (default: 1.0)
-        #[arg(long, default_value = "1.0")]
-        speed: f64,
-
-        /// Path to an edited timeline JSON file (overrides session timing)
-        #[arg(long)]
-        timeline: Option<String>,
-
-        /// Auto-edit timeline: compress tool call wait times and gaps between prompts
-        #[arg(long)]
-        auto_edit: bool,
-
-        /// Export as video file (auto-generates name if no path given)
-        #[arg(long, default_missing_value = "auto", num_args = 0..=1)]
-        video: Option<String>,
-
-        /// Video width in columns (default: 120)
-        #[arg(long, default_value = "120")]
-        cols: u16,
-
-        /// Video height in rows (default: 40)
-        #[arg(long, default_value = "40")]
-        rows: u16,
-
-        /// Video frames per second (default: 60)
-        #[arg(long, default_value = "60")]
-        fps: u32,
-
-        /// Force centered layout (overrides config)
-        #[arg(long, conflicts_with = "no_centered")]
-        centered: bool,
-
-        /// Force left-aligned (non-centered) layout (overrides config)
-        #[arg(long, conflicts_with = "centered")]
-        no_centered: bool,
-    },
-
     /// Model management commands
     #[command(subcommand)]
     Model(ModelCommand),
@@ -585,24 +447,6 @@ pub(crate) enum Command {
         /// Maximum uncovered provider/model gaps to show in the text coverage report
         #[arg(long, requires = "coverage", default_value_t = 50)]
         coverage_limit: usize,
-    },
-
-    /// Save or restore the current set of open horon-agent windows across a system reboot
-    Restart {
-        #[command(subcommand)]
-        action: RestartCommand,
-    },
-
-    /// Show a live macOS menu bar indicator with running/streaming session counts
-    #[command(alias = "menu-bar", alias = "statusbar")]
-    Menubar {
-        /// Print the current counts once as text and exit (no menu bar item)
-        #[arg(long)]
-        once: bool,
-
-        /// Emit the current counts as JSON and exit
-        #[arg(long, conflicts_with = "once")]
-        json: bool,
     },
 
     /// Serve the stable harness API on a Unix socket, for SDK clients.
@@ -886,22 +730,6 @@ pub(crate) struct CloudMoveTarget {
     /// Also read from $HORON_AGENT_CLOUD_TRANSPORT.
     #[arg(long, hide = true)]
     pub(crate) transport: Option<String>,
-}
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum RestartCommand {
-    /// Save a reboot snapshot of currently active horon-agent windows
-    Save {
-        /// Restore this reboot snapshot automatically the next time plain `horon-agent` starts
-        #[arg(long)]
-        auto_restore: bool,
-    },
-    /// Restore the most recently saved reboot snapshot
-    Restore,
-    /// Show the currently saved reboot snapshot
-    Status,
-    /// Remove the currently saved reboot snapshot
-    Clear,
 }
 
 #[derive(Subcommand, Debug)]

@@ -52,8 +52,7 @@
     "crates/session-store/examples/schema_roundtrip.rs": 4,
     "crates/terminal-launch/src/lib.rs": 1,
     "src/cli/acp/util.rs": 1,
-    "src/cli/acp/v2/replay.rs": 1,
-    "src/cli/commands/menubar.rs": 1
+    "src/cli/acp/v2/replay.rs": 1
   },
   "version": 1
 }

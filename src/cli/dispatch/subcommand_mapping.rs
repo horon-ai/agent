@@ -30,12 +30,3 @@ pub(super) fn map_ambient_subcommand(subcmd: AmbientCommand) -> commands::Ambien
         AmbientCommand::RunVisible => commands::AmbientSubcommand::RunVisible,
     }
 }
-
-pub(super) fn map_transcript_mode(mode: TranscriptModeArg) -> crate::protocol::TranscriptMode {
-    match mode {
-        TranscriptModeArg::Insert => crate::protocol::TranscriptMode::Insert,
-        TranscriptModeArg::Append => crate::protocol::TranscriptMode::Append,
-        TranscriptModeArg::Replace => crate::protocol::TranscriptMode::Replace,
-        TranscriptModeArg::Send => crate::protocol::TranscriptMode::Send,
-    }
-}

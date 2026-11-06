@@ -101,7 +101,6 @@ horon-agent-plan = { path = "../plan" }
 horon-agent-swarm-core = { path = "../swarm-core" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }
-horon-agent-setup-hints = { path = "../setup-hints" }
 horon-agent-task-types = { path = "../task-types" }
 horon-agent-tool-core = { path = "../tool-core" }
 horon-agent-codemode = { path = "../codemode" }

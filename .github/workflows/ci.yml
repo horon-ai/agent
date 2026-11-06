@@ -602,14 +602,9 @@ jobs:
               -CargoArgs (@('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', $package, '--lib', '--') + $names + @('--nocapture'))
           }
 
-      - name: Run Windows hotkey and power tests
+      - name: Run Windows power tests
         shell: pwsh
         run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'Windows setup-hints tests' `
-            -TimeoutSeconds 300 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-setup-hints', '--lib', '--', '--nocapture')
-
           & ./scripts/ci/cargo_with_timeout.ps1 `
             -Name 'Windows power-inhibit tests' `
             -TimeoutSeconds 900 `

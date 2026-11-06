@@ -316,11 +316,10 @@ headless 전환 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gat
 
 ### 와이어 버전 상수는 소유 크레이트와 함께 적는다
 
-- 와이어 버전 상수는 한 계약으로 모으고, 각 상수의 소유 크레이트를 이름 옆에 적는다. 지금은 다섯 상수가 세 크레이트에 흩어져 있고 통합 타입은 아직 코드에 없다.
-- `PROTOCOL_VERSION`은 companion 로컬 소켓의 요청 의미가 호환 불가로 바뀔 때 올린다: `crates/base/src/companion_client.rs`.
+- 와이어 버전 상수는 한 계약으로 모으고, 각 상수의 소유 크레이트를 이름 옆에 적는다. 지금은 네 상수가 두 크레이트에 흩어져 있고 통합 타입은 아직 코드에 없다.
 - `REPLICATION_PROTOCOL_VERSION`은 이름이 같고 값도 같지만 소유가 둘이다. 저장소 쪽 원본 이벤트 교환 계약은 `crates/session-store/src/replication.rs`, 브리지 쪽 같은 이름의 두 번째 정의는 `crates/harness-api/src/replication.rs`다.
 - 하네스 API 프레임의 major와 minor는 `API_VERSION_MAJOR`와 `API_VERSION_MINOR`이고 둘 다 `crates/harness-api/src/lib.rs`가 소유한다. 지금 프레임의 `v`에는 major만 실리므로 minor가 올라가도 클라이언트가 알 수 없다. 통합할 때는 major와 minor를 한 쌍으로 싣고, 이름이 같은 두 복제 상수는 `STORE_REPLICATION_VERSION`과 `REPLICATION_VERSION`으로 갈라 값의 일치를 테스트가 단언하게 한다.
-- companion 소켓과 MCP는 이 계약에 넣지 않는다. MCP `protocol_version`은 상대 서버가 정하는 값이라 우리가 올리거나 내릴 수 없다.
+- MCP는 이 계약에 넣지 않는다. MCP `protocol_version`은 상대 서버가 정하는 값이라 우리가 올리거나 내릴 수 없다.
 
 ### IRC 버스 크레이트는 동기화 원시만 쓴다
 

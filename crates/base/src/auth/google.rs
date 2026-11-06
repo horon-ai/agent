@@ -322,7 +322,7 @@ pub async fn login(services: &[GoogleService], tier: GmailAccessTier, no_browser
     let browser_opened = if crate::auth::browser_suppressed(no_browser) {
         false
     } else {
-        crate::companion_client::open_url(&auth_url)
+        crate::open_url::open_url(&auth_url)
     };
 
     let code = if browser_opened {

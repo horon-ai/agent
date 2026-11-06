@@ -101,13 +101,7 @@ info_widget_toggle = "alt+i"
 swarm_panel_focus = "alt+n"
 
 # Spawn a fresh horon-agent session in a new terminal window, reusing the current
-# session's working directory. Companion to the system-wide launch hotkeys.
-# `horon-agent setup-hotkey` installs these three global launch hotkeys on macOS,
-# Linux niri/Hyprland/sway/i3, and Windows. The Cmd modifier maps to Super on
-# Linux and Alt on Windows. Windows also adds the physical Copilot key:
-#   Cmd+;        new horon-agent in your home directory
-#   Cmd+'        new horon-agent in your last project directory
-#   Cmd+Shift+'  new horon-agent self-dev session (last horon-agent repo)
+# session's working directory.
 # Default: Cmd+Shift+; on macOS, Alt+Shift+; elsewhere. Set "" to disable.
 # Note: some macOS terminals intercept Cmd combos; if so, pick another binding.
 # new_terminal = "cmd+shift+;"
@@ -771,12 +765,12 @@ immune_turns = 3
 # Without a hook, clients inside tmux automatically use a right-side pane.
 # Set HORON_AGENT_TERMINAL to force a supported terminal emulator instead.
 # External command that takes over headed session spawns (swarm agents,
-# resume-in-new-terminal, self-dev windows, restart restores).
+# resume-in-new-terminal).
 #
 # When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
 # opening a terminal emulator itself. The hook receives HORON_AGENT_SPAWN_* env vars
 # describing the spawn so multiplexers/wrappers can decide where it appears:
-#   HORON_AGENT_SPAWN_KIND        - "swarm-agent", "resume", "selfdev", "restart", ...
+#   HORON_AGENT_SPAWN_KIND        - "swarm-agent", "resume", ...
 #   HORON_AGENT_SPAWN_SESSION_ID  - session the window will run
 #   HORON_AGENT_SPAWN_TITLE       - suggested window/tab title
 #   HORON_AGENT_SPAWN_CWD         - session working directory (also the hook's cwd)
@@ -802,11 +796,9 @@ immune_turns = 3
 #   focus_hook = "~/bin/horon-agent-focus-router"
 # focus_hook = ""
 #
-# macOS only: terminal that the Cmd+; launch hotkey and in-app session spawns
-# open horon-agent into. One of: ghostty, iterm2, wezterm, warp, alacritty, vscode,
-# terminal (Apple Terminal). Preferred over the legacy
-# ~/.horon-agent/preferred_terminal.json file. After changing this, re-run
-# `horon-agent setup-hotkey` so the generated launcher script (Cmd+;) picks it up.
+# macOS only: terminal that in-app session spawns open horon-agent into. One of:
+# ghostty, iterm2, wezterm, warp, alacritty, vscode, terminal (Apple Terminal).
+# Preferred over the legacy ~/.horon-agent/preferred_terminal.json file.
 # preferred = "ghostty"
 
 [notifications]
@@ -947,17 +939,11 @@ bind_addr = "0.0.0.0"
 
 [power]
 # Prevent automatic system sleep while any horon-agent session is actively working.
-# Linux also blocks lid-switch suspend. On Windows and macOS see block_lid_close.
+# Linux also blocks lid-switch suspend.
 # The display may sleep.
 # The guard is held only for as long as work is in flight. (default: true)
 # Set HORON_AGENT_DISABLE_POWER_INHIBIT=1 to force-disable regardless of this setting.
 prevent_sleep_while_streaming = true
-# Also keep working when the lid closes on macOS and Windows while a session is
-# working. Windows temporarily sets the power plan's lid close action to "Do
-# nothing". macOS runs `sudo -n pmset -a disablesleep 1` and needs a passwordless
-# sudoers rule for /usr/bin/pmset (skipped otherwise). Original settings are
-# saved to ~/.horon-agent/lid_override.json and restored afterwards, even after a crash.
-block_lid_close = true
 
 [menubar]
 # macOS only: show the horon-agent session count in the menu bar. Set to false to

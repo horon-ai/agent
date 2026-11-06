@@ -1970,12 +1970,6 @@ impl Server {
             let mut interval = tokio::time::interval(RECONCILE_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut last_active: Option<bool> = None;
-            // macOS/Windows have no process-scoped lid lock, so lid-close
-            // blocking changes a persistent OS setting. That belongs to the
-            // user's desktop session, not the agent runtime: tell `horon-agent
-            // companion`, which journals and restores it. No companion (a
-            // headless or remote server) means no lid override.
-            let mut lid_reported: Option<bool> = None;
             loop {
                 interval.tick().await;
 
@@ -1983,7 +1977,6 @@ impl Server {
                 // takes effect without restarting the daemon.
                 let power = &crate::config::config().power;
                 let enabled = power.prevent_sleep_while_streaming;
-                let block_lid = enabled && power.block_lid_close;
 
                 let active = enabled && Self::any_session_streaming(&swarm_members).await;
                 if last_active != Some(active) {
@@ -1995,18 +1988,6 @@ impl Server {
                     last_active = Some(active);
                 }
                 inhibitor.set_active(active);
-                let want_lid = active && block_lid;
-                // Re-send while active so a companion started mid-turn engages
-                // too. Idle state is sent once.
-                if want_lid || lid_reported != Some(false) {
-                    let reported = crate::companion_client::request_async(
-                        crate::companion_client::CompanionRequest::PowerActivity { active: want_lid },
-                        Duration::from_secs(2),
-                    )
-                    .await
-                    .is_ok();
-                    lid_reported = reported.then_some(want_lid);
-                }
             }
         });
     }

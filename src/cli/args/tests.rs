@@ -676,28 +676,6 @@ fn provider_add_subcommand_parses_agent_friendly_flags() {
     }
 }
 
-#[test]
-fn restart_save_subcommand_parses() {
-    let args = Args::try_parse_from(["horon-agent", "restart", "save"]).unwrap();
-    match args.command {
-        Some(Command::Restart {
-            action: RestartCommand::Save { auto_restore: false },
-        }) => {}
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn restart_save_auto_restore_flag_parses() {
-    let args = Args::try_parse_from(["horon-agent", "restart", "save", "--auto-restore"]).unwrap();
-    match args.command {
-        Some(Command::Restart {
-            action: RestartCommand::Save { auto_restore: true },
-        }) => {}
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
 /// Contract test for the onboarding agent-repair brief (see
 /// `horon-agent-tui::tui::app::onboarding_repair::build_repair_brief`). The brief
 /// tells a coding agent to run these exact commands to diagnose and fix a
