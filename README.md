@@ -104,6 +104,11 @@ other optional tools stay in the tree but off; enable them with
 `--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, or `[tools] profile` in
 `~/.horon-agent/config.toml`.
 
+Agents in the same daemon and swarm can message each other with the `irc` tool
+(`send`, `wait`, `inbox`, `list`). It is off by default; set `irc = true` under
+`[tools]` to turn it on. Behavior, limits and the `[irc]` settings are in
+`docs/runtime/IRC.md`.
+
 ## Verify
 
 ```bash

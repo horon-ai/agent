@@ -56,6 +56,8 @@ done, regardless of what else it fixes.
 |`[tools] redo`, `hashline_edit`|`false`|`true`|
 |`[tools] ask_policy`|`recommended`|`error`|
 |`[tools] bash_pty`|`auto`|`off`, `always`|
+|`[tools] irc`|`false`|`true`; `HORON_AGENT_IRC` overrides it for one process|
+|`[irc] mailbox_cap`, `max_body_bytes`, `wait_max_secs`, `broadcast_concurrency`|`100`, `65536`, `300`, `16`|any value ≥ 1|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`|`false`|`true`|
@@ -63,8 +65,11 @@ done, regardless of what else it fixes.
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 Tools outside the core set (swarm, memory, browser, computer use, selfdev,
-panels, calendar, gmail, session search, todo) stay in the tree but off. Under
-`full`, they load as deferred definitions behind `toolbox`
+panels, calendar, gmail, session search, todo, irc) stay in the tree but off.
+`irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
+it to every non-empty allow list, and with the switch off it refuses to run
+even under `full` (`docs/runtime/IRC.md`). Under `full`, the optional tools
+load as deferred definitions behind `toolbox`
 (`docs/runtime/TOOLS.md`). `[tools.load_mode]` overrides one tool's tier
 (`essential`, `discoverable`, `off`). `ask = "essential"` sends a listed core
 tool eagerly again, and `toolbox = "off"` turns listing off so all 15 core
