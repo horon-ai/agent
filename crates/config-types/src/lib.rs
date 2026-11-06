@@ -828,51 +828,6 @@ impl SwarmSpawnMode {
     }
 }
 
-/// Terminal window/pane spawning configuration.
-///
-/// Without a `spawn_hook`, Unix clients inside tmux are opened in a right-side
-/// pane by the built-in launcher. `HORON_AGENT_TERMINAL` explicitly selects a terminal
-/// emulator instead.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct TerminalConfig {
-    /// External command that takes over headed session spawns (new terminal
-    /// windows for swarm agents, resume-in-new-terminal, self-dev, restarts).
-    ///
-    /// When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
-    /// opening a terminal emulator itself, with `HORON_AGENT_SPAWN_*` metadata env
-    /// vars describing the spawn (kind, session id, title, cwd, full command).
-    /// This lets multiplexers and wrappers (tmux, kitty remote, zellij, herd
-    /// runners, window managers) decide where and how the session appears.
-    ///
-    /// Example: `spawn_hook = "tmux new-window"` opens each headed spawn as a
-    /// tmux window in the current server. If the hook fails to launch, horon-agent
-    /// falls back to its built-in terminal detection.
-    ///
-    /// Env override: `HORON_AGENT_SPAWN_HOOK` (set empty to disable a config hook).
-    pub spawn_hook: Option<String>,
-    /// External command used to focus/raise an existing session window.
-    ///
-    /// When set, horon-agent runs the hook (instead of wmctrl/xdotool) whenever it
-    /// wants to bring a session's window to the foreground, with
-    /// `HORON_AGENT_FOCUS_SESSION_ID` and `HORON_AGENT_FOCUS_TITLE` env vars. Pair this
-    /// with `spawn_hook` so wrappers that own placement (tmux, kitty remote,
-    /// herd) also own focus (e.g. `tmux select-window`, Wayland compositor
-    /// IPC like `niri msg`).
-    ///
-    /// Env override: `HORON_AGENT_FOCUS_HOOK` (set empty to disable a config hook).
-    pub focus_hook: Option<String>,
-    /// Terminal used by in-app session spawns on macOS.
-    ///
-    /// One of: `ghostty`, `iterm2`, `wezterm`, `warp`, `alacritty`, `vscode`,
-    /// `terminal` (Apple Terminal). When set, this is the source of truth for
-    /// which terminal horon-agent launches into and is preferred over the legacy
-    /// `~/.horon-agent/preferred_terminal.json` file.
-    ///
-    /// macOS only; ignored on other platforms.
-    pub preferred: Option<String>,
-}
-
 /// Lifecycle hooks: external commands horon-agent runs at well-defined points.
 ///
 /// Hook commands are parsed shell-style (quotes work) but executed directly,

@@ -487,45 +487,6 @@ max_notes_per_update = 4
 # User turns after a blocker interrupt when nothing interrupts again.
 immune_turns = 3
 
-[terminal]
-# Hooks for the built-in terminal launcher, which only the SSH control-master
-# path uses in this build; a daemon session never opens a terminal window.
-# Without a hook, clients inside tmux automatically use a right-side pane.
-# Set HORON_AGENT_TERMINAL to force a supported terminal emulator instead.
-# External command that takes over such a launch.
-#
-# When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
-# opening a terminal emulator itself. The hook receives HORON_AGENT_SPAWN_* env vars
-# describing the spawn so multiplexers/wrappers can decide where it appears:
-#   HORON_AGENT_SPAWN_SESSION_ID  - session the window will run
-#   HORON_AGENT_SPAWN_TITLE       - suggested window/tab title
-#   HORON_AGENT_SPAWN_CWD         - session working directory (also the hook's cwd)
-#   HORON_AGENT_SPAWN_PROGRAM     - horon-agent binary path
-#   HORON_AGENT_SPAWN_COMMAND     - full shell-escaped command line
-# If the hook fails to start, horon-agent falls back to built-in terminal detection.
-# Env override: HORON_AGENT_SPAWN_HOOK (set empty to disable a config hook).
-#
-# Examples:
-#   spawn_hook = "tmux new-window"                # tmux window per agent
-#   spawn_hook = "kitty @ launch --type=tab --"   # kitty tab per agent
-#   spawn_hook = "~/bin/horon-agent-spawn-router"       # custom placement script
-# spawn_hook = ""
-#
-# External command used to focus/raise an existing session window, replacing
-# the built-in wmctrl/xdotool title search. Receives HORON_AGENT_FOCUS_SESSION_ID
-# and HORON_AGENT_FOCUS_TITLE env vars. Pair with spawn_hook so the program that
-# placed the window also brings it to the front.
-# Env override: HORON_AGENT_FOCUS_HOOK (set empty to disable a config hook).
-#
-# Example:
-#   focus_hook = "~/bin/horon-agent-focus-router"
-# focus_hook = ""
-#
-# macOS only: terminal emulator the built-in launcher prefers. One of:
-# ghostty, iterm2, wezterm, warp, alacritty, vscode, terminal (Apple Terminal).
-# Preferred over the legacy ~/.horon-agent/preferred_terminal.json file.
-# preferred = "ghostty"
-
 [hooks]
 # Synchronous tool-input transformers. Each receives the tool input JSON on
 # stdin and may print replacement JSON on stdout. Failures and empty output

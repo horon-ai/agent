@@ -252,26 +252,6 @@ impl Config {
             }
         }
 
-        // Terminal spawning
-        if let Ok(v) = std::env::var("HORON_AGENT_SPAWN_HOOK") {
-            let trimmed = v.trim();
-            // An explicitly empty env value disables a config-file hook.
-            self.terminal.spawn_hook = if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            };
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_FOCUS_HOOK") {
-            let trimmed = v.trim();
-            // An explicitly empty env value disables a config-file hook.
-            self.terminal.focus_hook = if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            };
-        }
-
         // Lifecycle hooks. Empty env values disable config-file hooks.
         fn hook_env_override(slot: &mut Option<HookCommands>, key: &str) {
             if let Ok(v) = std::env::var(key) {

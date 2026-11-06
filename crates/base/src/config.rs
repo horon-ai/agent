@@ -10,7 +10,7 @@ pub use horon_agent_config_types::{
     ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
     NamedProviderModelConfig, NamedProviderType, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
     SecretsMode, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode,
-    TerminalConfig, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
+    TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 use serde::{Deserialize, Serialize};
@@ -96,7 +96,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_DIFF_LINE_WRAP",
     "HORON_AGENT_DISABLE_BASE_TOOLS",
     "HORON_AGENT_DISABLED_TOOLS",
-    "HORON_AGENT_FOCUS_HOOK",
     "HORON_AGENT_GATEWAY_BIND_ADDR",
     "HORON_AGENT_GATEWAY_ENABLED",
     "HORON_AGENT_GATEWAY_PORT",
@@ -141,7 +140,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_SAME_PROVIDER_ACCOUNT_FAILOVER",
     "HORON_AGENT_SEARXNG_URL",
     "HORON_AGENT_SHOW_THINKING",
-    "HORON_AGENT_SPAWN_HOOK",
     "HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS",
     "HORON_AGENT_MAX_RETRIES",
     "HORON_AGENT_MCP_TOOLS",
@@ -459,9 +457,6 @@ pub struct Config {
     /// the default and is not written back to the config file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stream_rules: Vec<StreamRuleConfig>,
-
-    /// Terminal window/pane spawning configuration
-    pub terminal: TerminalConfig,
 
     /// Lifecycle hooks (external commands at turn/session/tool boundaries)
     pub hooks: HooksConfig,
