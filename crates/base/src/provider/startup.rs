@@ -54,6 +54,11 @@ impl MultiProvider {
     }
 
     pub(super) fn new_with_auth_status(auth_status: auth::AuthStatus) -> Self {
+        // Earliest point every entry point (run, serve, acp) passes through.
+        // Fetches the models.dev catalog before startup when the operator
+        // enabled it and no catalog exists yet; a no-op otherwise and in test
+        // builds.
+        crate::model_pricing::ensure_fresh_at_startup();
         let provider_init_start = std::time::Instant::now();
         let cfg = crate::config::config();
         let provider_state = ProviderState::from_parts(cfg, &auth_status);
