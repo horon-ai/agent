@@ -53,12 +53,12 @@ struct AmbientRunnerInner {
     running: RwLock<bool>,
     /// Safety system shared with ambient tools
     safety: Arc<SafetySystem>,
-    /// Notification dispatcher for push/email/desktop alerts
+    /// Notification dispatcher for ntfy and desktop alerts
     notifier: NotificationDispatcher,
     /// Number of active user sessions (for pause logic)
     active_user_sessions: RwLock<usize>,
     /// Soft interrupt queue for the currently-running ambient agent (if any).
-    /// Telegram replies push messages here so they arrive mid-cycle.
+    /// Exposed so client replies reach the running cycle between turns.
     active_cycle_queue: RwLock<Option<SoftInterruptQueue>>,
 }
 
@@ -543,12 +543,7 @@ impl AmbientRunnerHandle {
                         let mut qp = self.inner.next_queue_preview.write().await;
                         *qp = mgr.queue().peek_next().map(|i| i.context.clone());
                     }
-                    // Also run if there are pending email reply directives
-                    (
-                        ambient_allowed && (mgr.should_run() || ambient::has_pending_directives()),
-                        ready_direct_items,
-                        next_direct_due,
-                    )
+                    (ambient_allowed && mgr.should_run(), ready_direct_items, next_direct_due)
                 }
                 Err(e) => {
                     logging::error(&format!("Ambient runner: failed to load manager: {}", e));
@@ -763,7 +758,7 @@ impl AmbientRunnerHandle {
         // Clear any previous cycle result
         ambient_tools::take_cycle_result();
 
-        // Expose the agent's soft interrupt queue so Telegram replies can be injected mid-cycle
+        // Expose the agent's soft interrupt queue so client replies can be injected mid-cycle
         {
             let mut aq = self.inner.active_cycle_queue.write().await;
             *aq = Some(agent.soft_interrupt_queue());
