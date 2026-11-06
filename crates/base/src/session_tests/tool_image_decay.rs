@@ -1,5 +1,5 @@
-//! Regression tests for #1680: computer-use screenshots must not accumulate
-//! without bound in the persisted transcript.
+//! Regression tests for #1680: inline tool-result images (`read`) must not
+//! accumulate without bound in the persisted transcript.
 
 use super::*;
 use anyhow::{Result, anyhow};
