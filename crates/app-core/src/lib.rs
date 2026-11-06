@@ -35,7 +35,6 @@ pub mod build;
 pub mod catchup;
 pub mod durable_input_runtime;
 pub use horon_agent_base::external_auth;
-pub mod mission;
 pub mod network_retry;
 pub mod notifications;
 pub mod overnight;
