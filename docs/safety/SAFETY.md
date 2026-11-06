@@ -25,54 +25,17 @@
 
 ### 구조
 
-```mermaid
-graph TB
-    subgraph "Agent (e.g. Ambient Mode)"
-        A[Agent wants to take action]
-        AC{Action classification}
-        AUTO[Auto-allowed<br/>execute immediately]
-        PERM[Requires permission<br/>call request_permission tool]
-    end
-
-    subgraph "Safety System"
-        RQ[(Review Queue<br/>queue.json)]
-        CL[Action Classifier]
-        NF[Notification Dispatcher]
-        TL[Transcript Logger]
-        SR[Session Reporter]
-    end
-
-    subgraph "Notification Channels"
-        NT[ntfy.sh push]
-        DN[Desktop Notification]
-    end
-
-    subgraph "User Review"
-        PH[Phone notification]
-        API[record_decision API]
-    end
-
-    A --> CL
-    CL --> AC
-    AC -->|safe| AUTO
-    AC -->|needs review| PERM
-
-    PERM --> RQ
-    RQ --> NF
-    NF --> NT
-    NF --> DN
-
-    PH -->|approve/deny| RQ
-    API -->|approve/deny| RQ
-    RQ -->|decision| A
-
-    AUTO --> TL
-    PERM --> TL
-    TL --> SR
-
-    style AUTO fill:#e8f5e9
-    style PERM fill:#fff3e0
-    style RQ fill:#e3f2fd
+```text
+Agent (e.g. Ambient Mode)
+  agent wants to take action
+    -> Action Classifier -> action classification
+         safe         -> auto-allowed: execute immediately -> Transcript Logger
+         needs review -> requires permission: request_permission tool -> Review Queue
+Review Queue (queue.json)
+  -> Notification Dispatcher -> ntfy.sh push, Desktop Notification
+  -> user review: phone notification / record_decision API, approve or deny
+  -> decision -> back to the agent
+Transcript Logger -> Session Reporter
 ```
 
 검토 화면은 이 빌드에 없다. TUI 검토 패널은 TUI 크레이트와 함께 삭제됐고(`AGENTS.md`의 삭제 목록), `horon-agent safety review` 같은 CLI 하위 명령도 없다. 사용자는 알림에 답하거나 `SafetySystem::record_decision`을 부르는 경로로 결정을 낸다(`crates/base/src/safety.rs:597`).
@@ -109,7 +72,7 @@ graph TB
 | **사람과의 통신(항상 2단계)** | |
 | 이메일 보내기 | 되돌릴 수 없고 다른 사람이 본다 |
 | 과제 제출 | 학업상 결과가 따른다 |
-| Slack, Discord, 채팅에 게시 | 다른 사람이 본다 |
+| 메신저, 채팅에 게시 | 다른 사람이 본다 |
 | GitHub 이슈와 PR 댓글 만들기 | 공개적으로 보인다 |
 | 어떤 형태든 사람과의 직접 통신 | 보낸 뒤 취소할 수 없다 |
 | **코드 수정** | |
@@ -133,7 +96,7 @@ graph TB
 
 #### 사용자 지정 규칙
 
-이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:2030-2041`), 승인 대기 정책은 `[ambient]`에 있다(`:1557-1595`).
+이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1674-1682`), 승인 대기 정책은 `[ambient]`에 있다(`:1565-1600`).
 
 ```toml
 [safety]
@@ -153,39 +116,20 @@ desktop_notifications = true
 
 ### 권한 요청 흐름
 
-```mermaid
-sequenceDiagram
-    participant AG as Agent
-    participant CL as Classifier
-    participant RQ as Review Queue
-    participant NF as Notifier
-    participant US as User
-
-    AG->>CL: "I want to create a PR"
-    CL->>CL: Classify action → Tier 2
-    CL->>AG: Permission required
-
-    AG->>RQ: request_permission({action, description, rationale})
-    RQ->>RQ: Store pending request in queue.json
-    RQ->>NF: Dispatch notification
-
-    NF->>US: ntfy / desktop notification
-
-    Note over AG: Agent decides: wait or move on?
-    alt Wait for approval
-        AG->>AG: Block on this action, continue other work
-    else Move on
-        AG->>AG: Skip this action, continue with next task
-    end
-
-    US->>RQ: Approve (record_decision)
-    RQ->>AG: Permission granted
-
-    alt Agent waited
-        AG->>AG: Execute the action
-    else Agent moved on
-        AG->>AG: Execute on next ambient cycle
-    end
+```text
+1. Agent -> Classifier   "I want to create a PR"
+2. Classifier            classify action -> Tier 2
+3. Classifier -> Agent   permission required
+4. Agent -> Review Queue request_permission({action, description, rationale})
+5. Review Queue          store the pending request in queue.json
+6. Review Queue -> Notifier dispatch notification
+7. Notifier -> User      ntfy / desktop notification
+8. Agent decides         wait: block on this action, continue other work
+                         move on: skip this action, continue with the next task
+9. User -> Review Queue  approve (record_decision)
+10. Review Queue -> Agent permission granted
+11. Agent                 waited: execute the action now
+                          moved on: execute on the next ambient cycle
 ```
 
 #### `request_permission` 도구
@@ -244,23 +188,10 @@ ambient 세션이 아닌 곳에서 부르면 "request_permission is only availab
 
 #### 채널
 
-```mermaid
-graph LR
-    subgraph "Notification Dispatcher"
-        ND[Dispatcher]
-    end
-
-    subgraph "Channels"
-        NT[ntfy.sh<br/>push]
-        DN[Desktop<br/>notify-send / macOS broker]
-    end
-
-    ND --> NT
-    ND --> DN
-
-    style ND fill:#e3f2fd
-    style NT fill:#fff3e0
-    style DN fill:#e8f5e9
+```text
+Notification Dispatcher
+  -> ntfy.sh push
+  -> Desktop notification (notify-send / macOS broker)
 ```
 
 발송은 실패해도 흐름을 막지 않는다. 오류는 로그에 남기고 계속 진행한다(`crates/app-core/src/notifications.rs:1-7`).
@@ -283,7 +214,7 @@ desktop_notifications = true
 # ntfy_server = "https://ntfy.sh"
 ```
 
-이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:2030-2041`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
+이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:1674-1682`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
 
 묶음 간격, 조용한 시간, 최소 긴급도 같은 선호 항목도 이 빌드에 없다.
 

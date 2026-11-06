@@ -242,18 +242,14 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 - `autoreview`, `autojudge`: 상태를 보여주고 명시적 on/off/toggle을 유지한다.
 - `transport`: 이름만 남아 있고 바꿀 것이 없다. `Provider` 트레이트에서 `transport`는 `None`,
   `set_transport`는 "This provider does not support transport switching" 오류, `available_transports`는
-  빈 배열이 기본값이다. 이 트리의 구현은 그 기본값을 그대로 쓰거나 다른 프로바이더로 넘기는 위임뿐이다
-  (`crates/provider-core/src/lib.rs:463-473`, `crates/base/src/provider/mod.rs:1651-1675`,
-  `crates/base/src/provider/horon_agent.rs:205-215`). 그래서 인자 없이 부르면
+  빈 배열이 기본값이다(`crates/provider-core/src/lib.rs:441-447`). 이 트리의 구현은 그 기본값을
+  그대로 쓴다(`crates/base/src/provider/mod.rs:1134-1146`). 그래서 인자 없이 부르면
   `{"transport": null, "provider": ...}`가 오고, `auto`·`https`·`websocket`을 넘기면 위 오류가 난다
-  (`crates/app-core/src/server/runtime_commands.rs:218-229`).
-  설정 파일과 환경변수의 `openai_transport`도 값을 읽어 표시만 하고 동작을 바꾸지 않는다
-  (`crates/base/src/config/env_overrides.rs:859-864`, `crates/base/src/config/display_summary.rs:261`).
+  (`crates/app-core/src/server/runtime_commands.rs:200-209`).
+  설정 파일과 환경변수의 `openai_transport`는 값을 받아 두기만 하고 어떤 프로바이더도 읽지 않는다
+  (`crates/config-types/src/lib.rs:1422`, `crates/base/src/config/env_overrides.rs:510-516`).
 - `fast`: 인자 없는 명령은 우선순위/off를 토글하고, 명시적 on/off/flex/status를 지원한다.
   적용할 수 없는 프로바이더는 실제 오류를 돌려준다.
-- `subscription`: 로그인 상태의 실제 라이브 호스팅 계정 사용량. 자격 증명은
-  돌려주지 않는다. 네트워크/인증 실패는 오류이며 지어낸 상태가 아니다.
-- `provider_test_coverage`: 유지된 커버리지 보고서. 유료 라이브 프로브는 아니다.
 - `refresh_model_list`: 실제 프로바이더 카탈로그 새로고침.
 - `continue`, `resume_all`: 중단된 라이브 세션의 네이티브 이어가기.
   바쁜/완료/새 세션은 건드리지 않는다.
@@ -291,8 +287,8 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 
 새 SDK나 브리지는 실행 중인 데몬을 업그레이드하지 않는다. 런타임과
 브리지를 빌드하고 새 런타임 후보를 설치한 뒤 기존의 우아한 서버
-업그레이드 워크플로를 쓴다. 세션 상태를 보존하고 라이브 데몬이나
-Desktop 하네스 브리지를 죽이지 않는다. 양쪽이 새 코드를 실행할 때까지 그 기능은 쓸 수 없다.
+업그레이드 워크플로를 쓴다. 세션 상태를 보존하고 라이브 데몬이나 하네스
+브리지를 죽이지 않는다. 양쪽이 새 코드를 실행할 때까지 그 기능은 쓸 수 없다.
 
 ## `--resume` 동작
 

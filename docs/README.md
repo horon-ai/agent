@@ -11,7 +11,7 @@
 | 요구사항 | 내용 | 현재 상태 |
 | --- | --- | --- |
 | TUI 제외 | 바이너리는 화면을 열지 않는다. `ratatui`, `crossterm`, `horon-agent-tui*`가 의존성 그래프에 없어야 한다. | 충족 |
-| ACP v1·v2 지원 | `horon-agent acp`가 `protocolVersion` 1과 2를 모두 처리하고, 양쪽이 지원하는 가장 높은 버전으로 답한다. v2를 더하면서 v1을 깨지 않는다. | v1만 구현됨(`src/cli/acp.rs`). v2는 남은 작업 |
+| ACP v1·v2 지원 | `horon-agent acp`가 `protocolVersion` 1과 2를 모두 처리하고, 양쪽이 지원하는 가장 높은 버전으로 답한다. v2를 더하면서 v1을 깨지 않는다. | 충족. v2 협상은 `src/cli/acp/v2/negotiate.rs`, v1은 `src/cli/acp/util.rs` |
 | 성능 회귀 방지 | 같은 기계·빌드 프로필·작업에서 기록된 기준선과 같거나 빨라야 한다. 느려지는 변경은 병합하지 않는다. | 측정 방법과 기록된 수치가 있음(`performance/BENCHMARK.md`, `performance/RESULTS.md`). 기록된 수치가 기준선이다 |
 
 ## 폴더 구조
@@ -22,7 +22,7 @@
 | `architecture/` | [`SERVER.md`](architecture/SERVER.md) | 서버·세션·소켓 구조 |
 | | [`CRATES.md`](architecture/CRATES.md) | 크레이트 소유권 경계 |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
-| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 로그인 흐름과 요청·이벤트 표면 |
+| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, 영속 런타임 저널 |
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, 보조 호출 |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | 도구 스케줄링과 반복 방지 |
