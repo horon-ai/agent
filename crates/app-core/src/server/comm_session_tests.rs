@@ -509,7 +509,6 @@ async fn session_agent_models_drive_spawn_selection() {
             &broadcast::channel(16).0,
             &mcp,
             &Arc::new(RwLock::new(HashMap::new())),
-            &Arc::new(RwLock::new(HashMap::new())),
         ),
     )
     .await
@@ -1055,7 +1054,6 @@ async fn schema_spawn_installs_yield_on_the_child_only() {
             &Arc::new(AtomicU64::new(0)),
             &broadcast::channel(16).0,
             &mcp,
-            &Arc::new(RwLock::new(HashMap::new())),
             &Arc::new(RwLock::new(HashMap::new())),
         ),
     )

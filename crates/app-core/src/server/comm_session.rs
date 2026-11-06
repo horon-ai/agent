@@ -1,4 +1,3 @@
-use super::ClientConnectionInfo;
 use super::client_lifecycle::process_message_streaming_mpsc;
 use super::comm_worktree::{self, IsoApply, Isolation};
 use super::swarm_mutation_state::{
@@ -23,7 +22,6 @@ use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
-type ClientConnections = Arc<RwLock<HashMap<String, ClientConnectionInfo>>>;
 
 /// Serialize spawn admission through member registration within one swarm.
 /// Without a reservation or lock, many recursive agents can all observe the same
@@ -359,7 +357,6 @@ pub(super) async fn spawn_swarm_agent(
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
     mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
     soft_interrupt_queues: &SessionInterruptQueues,
-    _client_connections: &ClientConnections,
 ) -> anyhow::Result<String> {
     if let Some(schema) = output_schema.as_ref() {
         // Reject before a session exists: a child that can never submit a valid
@@ -616,7 +613,6 @@ pub(super) async fn handle_comm_spawn(
     mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
     soft_interrupt_queues: &SessionInterruptQueues,
     swarm_mutation_runtime: &SwarmMutationRuntime,
-    client_connections: &ClientConnections,
 ) {
     // Hold this swarm's admission through member registration so concurrent
     // recursive requests cannot all pass the population check against stale
@@ -717,7 +713,6 @@ pub(super) async fn handle_comm_spawn(
         swarm_event_tx,
         mcp_pool,
         soft_interrupt_queues,
-        client_connections,
     )
     .await
     {

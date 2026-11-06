@@ -2873,7 +2873,6 @@ pub(super) async fn handle_client(
                     &mcp_pool,
                     &soft_interrupt_queues,
                     &swarm_mutation_runtime,
-                    &client_connections,
                 )
                 .await;
             }
