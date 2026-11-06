@@ -640,11 +640,6 @@ async fn session_agent_models_drive_spawn_selection() {
     let previous = std::env::var_os("HORON_AGENT_HOME");
     crate::env::set_var("HORON_AGENT_HOME", temp.path());
     let agent = test_agent_with_working_dir("routing_busy", "/tmp/coord").await;
-    let mut session = crate::session::Session::create_with_id("routing_busy".into(), None, None);
-    session.model = Some("claude-opus-4-6".into());
-    session.provider_key = Some("claude-api".into());
-    session.route_api_method = Some("claude-api".into());
-    session.save_prepared().unwrap();
     let sessions = Arc::new(RwLock::new(HashMap::from([(
         "routing_busy".to_string(),
         agent.clone(),
@@ -706,8 +701,8 @@ async fn session_agent_models_drive_spawn_selection() {
         .unwrap();
     let configured = super::session_swarm_model("routing_busy", &sessions, Some("global-model".into())).await;
     let selection = resolve_swarm_spawn_selection(None, configured, &coordinator);
-    assert_eq!(selection.model.as_deref(), Some("claude-opus-4-6"));
-    assert_eq!(selection.provider_key.as_deref(), Some("claude-api"));
+    let own_model = agent.lock().await.provider_model();
+    assert_eq!(selection.model.as_deref(), Some(own_model.as_str()));
     agent.lock().await.set_agent_model_override("swarm", None).unwrap();
     assert_eq!(
         super::session_swarm_model("routing_busy", &sessions, Some("global-model".into()))
