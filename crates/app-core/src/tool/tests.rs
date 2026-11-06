@@ -218,35 +218,35 @@ async fn test_tool_definitions_are_sorted() {
 }
 
 #[tokio::test]
-async fn gmail_follows_tool_profile_only() {
-    // One registry holding just gmail, so the profile filters are the only thing
-    // that can change its visibility.
+async fn swarm_follows_tool_profile_only() {
+    // One registry holding just swarm, so the profile filters are the only switch.
     let registry = Registry::empty();
     registry
-        .register("gmail".to_string(), Arc::new(super::gmail::GmailTool::new()))
+        .register(
+            "swarm".to_string(),
+            Arc::new(super::communicate::CommunicateTool::new()),
+        )
         .await;
-
-    // The open profile lists every registered built-in, so gmail is visible.
+    // The open profile lists every registered built-in, so swarm is visible.
     let open = registry.definitions_filtered(None, &HashSet::new()).await;
-    assert_eq!(open.iter().filter(|def| def.name == "gmail").count(), 1);
+    assert_eq!(open.iter().filter(|def| def.name == "swarm").count(), 1);
 
-    // The `core` profile is a closed allow-list that omits gmail, so nothing lists it.
+    // The `core` profile is a closed allow-list that omits swarm, so nothing lists it.
     let core: HashSet<String> = crate::config::CORE_TOOLS
         .iter()
         .map(|name| (*name).to_string())
         .collect();
-    assert!(!core.contains("gmail"));
+    assert!(!core.contains("swarm"));
     let closed = registry.definitions_filtered(Some(&core), &HashSet::new()).await;
-    assert!(!closed.iter().any(|def| def.name == "gmail"));
-
+    assert!(!closed.iter().any(|def| def.name == "swarm"));
     // An explicit profile entry is the only other switch: allowing it lists it,
     // disabling it hides it, and no tool surface outside the profile reintroduces it.
-    let allow: HashSet<String> = HashSet::from(["gmail".to_string()]);
+    let allow: HashSet<String> = HashSet::from(["swarm".to_string()]);
     let listed = registry.definitions_filtered(Some(&allow), &HashSet::new()).await;
-    assert_eq!(listed.iter().filter(|def| def.name == "gmail").count(), 1);
-    let disabled: HashSet<String> = HashSet::from(["gmail".to_string()]);
+    assert_eq!(listed.iter().filter(|def| def.name == "swarm").count(), 1);
+    let disabled: HashSet<String> = HashSet::from(["swarm".to_string()]);
     let hidden = registry.definitions_filtered(None, &disabled).await;
-    assert!(!hidden.iter().any(|def| def.name == "gmail"));
+    assert!(!hidden.iter().any(|def| def.name == "swarm"));
 }
 
 #[test]

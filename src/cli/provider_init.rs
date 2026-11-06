@@ -113,13 +113,6 @@ pub enum ProviderChoice {
     AlibabaCodingPlan,
     #[value(alias = "compat", alias = "custom")]
     OpenaiCompatible,
-    #[value(
-        alias = "gemini-key",
-        alias = "gemini-apikey",
-        alias = "google-ai-studio",
-        alias = "ai-studio"
-    )]
-    Google,
     Auto,
 }
 
@@ -171,7 +164,6 @@ impl ProviderChoice {
             Self::Orcarouter => "orcarouter",
             Self::AlibabaCodingPlan => "alibaba-coding-plan",
             Self::OpenaiCompatible => "openai-compatible",
-            Self::Google => "google",
             Self::Auto => "auto",
         }
     }
@@ -298,7 +290,6 @@ const PROVIDER_CHOICE_LOGIN_PROVIDERS: &[(ProviderChoice, LoginProviderDescripto
         ProviderChoice::OpenaiCompatible,
         crate::provider_catalog::OPENAI_COMPAT_LOGIN_PROVIDER,
     ),
-    (ProviderChoice::Google, crate::provider_catalog::GOOGLE_LOGIN_PROVIDER),
 ];
 
 pub fn login_provider_choice_mappings() -> &'static [(ProviderChoice, LoginProviderDescriptor)] {
@@ -527,7 +518,7 @@ pub fn apply_login_provider_profile_env(provider: LoginProviderDescriptor) {
             // not clear these inherited runtime vars before credential detection.
             crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
         }
-        LoginProviderTarget::AutoImport | LoginProviderTarget::Google => {}
+        LoginProviderTarget::AutoImport => {}
         _ => {
             // A later non-compatible login selection must not inherit a stale
             // compatible-provider profile from an earlier bootstrap/login path.

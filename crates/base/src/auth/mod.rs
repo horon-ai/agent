@@ -7,8 +7,6 @@ mod commands;
 pub mod doctor;
 pub mod env_facts;
 pub mod external;
-pub mod google;
-pub(crate) mod google_oauth;
 pub mod integration;
 pub mod lifecycle;
 pub mod login_diagnostics;
@@ -213,7 +211,6 @@ fn log_auth_status_snapshot(event: &str, status: &AuthStatus) {
             ("azure_api_auth", bool_label(status.azure_has_api_key)),
             ("azure_entra", bool_label(status.azure_uses_entra)),
             ("openai_compatible", auth_state_label(status.openai_compatible_any)),
-            ("google", auth_state_label(status.google)),
         ],
     );
 }
@@ -453,7 +450,6 @@ impl AuthStatus {
             LoginProviderAuthStateKey::OpenAi => self.openai,
             LoginProviderAuthStateKey::Azure => self.azure,
             LoginProviderAuthStateKey::OpenRouterLike => self.openai_compatible_any,
-            LoginProviderAuthStateKey::Google => self.google,
             // Backends for these login providers were removed from horon-agent,
             // so no credential can make them available.
             LoginProviderAuthStateKey::Anthropic
@@ -805,20 +801,6 @@ fn assessment_for_key(
                 AuthValidationMethod::TimestampCheck,
             )
         }
-        LoginProviderAuthStateKey::Google => {
-            let (source, detail) = summarize_sources(vec![google_source()]);
-            (
-                source,
-                detail,
-                if state == AuthState::NotConfigured {
-                    AuthExpiryConfidence::Unknown
-                } else {
-                    AuthExpiryConfidence::Exact
-                },
-                AuthRefreshSupport::Automatic,
-                AuthValidationMethod::TimestampCheck,
-            )
-        }
         LoginProviderAuthStateKey::HoronAgent
         | LoginProviderAuthStateKey::Azure
         | LoginProviderAuthStateKey::Bedrock
@@ -865,21 +847,6 @@ fn summarize_sources(sources: Vec<Option<(AuthCredentialSource, String)>>) -> (A
                 .join(" + "),
         ),
     }
-}
-
-fn google_source() -> Option<(AuthCredentialSource, String)> {
-    if let (Ok(tokens_path), Ok(credentials_path)) = (
-        crate::auth::google::tokens_path(),
-        crate::auth::google::credentials_path(),
-    ) && tokens_path.exists()
-        && credentials_path.exists()
-    {
-        return Some((
-            AuthCredentialSource::HoronAgentManagedFile,
-            format!("{} + {}", credentials_path.display(), tokens_path.display()),
-        ));
-    }
-    None
 }
 
 fn env_source(env_key: &str) -> Option<(AuthCredentialSource, String)> {

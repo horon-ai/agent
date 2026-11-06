@@ -32,7 +32,7 @@
 | | [`HOOKS.md`](runtime/HOOKS.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
 | `provider/` | [`MODEL.md`](provider/MODEL.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 사용 메타데이터 |
-| | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | 원격 MCP, 사용자 정의 웹 검색, Google OAuth 설정 |
+| | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.md`](safety/SECURITY.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | 구조 게이트, A/B 측정 |

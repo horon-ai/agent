@@ -47,7 +47,6 @@ fn test_provider_choice_arg_values() {
     assert_eq!(ProviderChoice::Cerebras.as_arg_value(), "cerebras");
     assert_eq!(ProviderChoice::AlibabaCodingPlan.as_arg_value(), "alibaba-coding-plan");
     assert_eq!(ProviderChoice::OpenaiCompatible.as_arg_value(), "openai-compatible");
-    assert_eq!(ProviderChoice::Google.as_arg_value(), "google");
     assert_eq!(ProviderChoice::Auto.as_arg_value(), "auto");
 }
 
@@ -189,7 +188,6 @@ async fn a_builtin_provider_without_a_compatible_profile_is_refused_with_setup_i
         ProviderChoice::Openai,
         ProviderChoice::OpenaiApi,
         ProviderChoice::HoronAgent,
-        ProviderChoice::Google,
     ] {
         let mut errors = Vec::new();
         errors.push(init_provider(&choice, None).await.err());

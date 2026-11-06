@@ -180,10 +180,10 @@ bing_market = "en-US"
 profile = "core"
 # Explicit allow-list. When non-empty, only these tools are exposed.
 # enabled = ["bash", "read", "write", "apply_patch", "agentgrep", "ls"]
-# All built-in tools, including gmail, are exposed by the full profile.
+# All built-in tools are exposed by the full profile.
 # Use enabled = ["*"] to explicitly select the unrestricted full toolset.
 # Hide selected tools after applying the profile/allow-list.
-# disabled = ["calendar", "gmail", "swarm"]
+# disabled = ["mcp", "swarm"]
 # Disable all built-in tools unless enabled is set.
 disable_base_tools = false
 # MCP tool exposure. "auto" never changes the cached tool list when MCP
@@ -332,7 +332,7 @@ dual_confirm_classes = []
 # forces one back into the cached prefix, "off" removes it, and a name this build
 # does not have is ignored. Default: empty, so every tool keeps its profile tier.
 # [tools.load_mode]
-# gmail = "off"
+# mcp = "off"
 # memory = "essential"
 
 [acp]

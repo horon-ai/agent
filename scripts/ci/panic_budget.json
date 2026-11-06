@@ -16,7 +16,6 @@
     "crates/app-core/src/tool/activator_clone.rs": 4,
     "crates/app-core/src/tool/artifacts.rs": 1,
     "crates/app-core/src/tool/bash.rs": 2,
-    "crates/app-core/src/tool/calendar.rs": 1,
     "crates/app-core/src/tool/communicate.rs": 1,
     "crates/app-core/src/tool/discover.rs": 1,
     "crates/app-core/src/tool/generated_guard.rs": 2,

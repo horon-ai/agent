@@ -235,7 +235,6 @@ fn login_no_browser_flag_parses() {
             auth_code,
             json,
             complete,
-            google,
             api_base,
             api_key,
             api_key_env,
@@ -251,10 +250,6 @@ fn login_no_browser_flag_parses() {
             assert!(auth_code.is_none());
             assert!(!json);
             assert!(!complete);
-            assert!(google.google_access_tier.is_none());
-            assert!(google.google_services.is_none());
-            assert!(!google.setup);
-            assert!(google.google_client_json.is_none());
             assert!(api_base.is_none());
             assert!(api_key.is_none());
             assert!(api_key_env.is_none());
@@ -286,10 +281,10 @@ fn trust_workspace_is_global_and_defaults_off() {
 
 #[test]
 fn login_accepts_provider_positional() {
-    let args = Args::try_parse_from(["horon-agent", "login", "google"]).unwrap();
+    let args = Args::try_parse_from(["horon-agent", "login", "openai"]).unwrap();
     match args.command {
         Some(Command::Login { provider, .. }) => {
-            assert_eq!(provider, Some(ProviderChoice::Google));
+            assert_eq!(provider, Some(ProviderChoice::Openai));
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -416,7 +411,6 @@ fn login_scriptable_flags_parse() {
             callback_url,
             auth_code,
             complete,
-            google,
             ..
         }) => {
             assert!(print_auth_url);
@@ -424,7 +418,6 @@ fn login_scriptable_flags_parse() {
             assert!(callback_url.is_none());
             assert!(auth_code.is_none());
             assert!(!complete);
-            assert!(google.google_access_tier.is_none());
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -450,37 +443,6 @@ fn login_scriptable_flags_parse() {
     match args.command {
         Some(Command::Login { auth_code, .. }) => {
             assert_eq!(auth_code.as_deref(), Some("abc123"));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args =
-        Args::try_parse_from(["horon-agent", "login", "--complete", "--google-access-tier", "readonly"]).unwrap();
-    match args.command {
-        Some(Command::Login { complete, google, .. }) => {
-            assert!(complete);
-            assert_eq!(google.google_access_tier, Some(GoogleAccessTierArg::Readonly));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "login",
-        "--provider",
-        "google",
-        "--google-services",
-        "gmail,calendar",
-        "--setup",
-        "--google-client-json",
-        "auto",
-    ])
-    .unwrap();
-    match args.command {
-        Some(Command::Login { google, .. }) => {
-            assert_eq!(google.google_services.as_deref(), Some("gmail,calendar"));
-            assert!(google.setup);
-            assert_eq!(google.google_client_json.as_deref(), Some("auto"));
         }
         other => panic!("unexpected command: {:?}", other),
     }

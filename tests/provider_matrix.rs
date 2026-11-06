@@ -154,9 +154,7 @@ fn non_compatible_login_providers(
         .filter(|provider| {
             !matches!(
                 provider.target,
-                LoginProviderTarget::OpenAiCompatible(_)
-                    | LoginProviderTarget::AutoImport
-                    | LoginProviderTarget::Google
+                LoginProviderTarget::OpenAiCompatible(_) | LoginProviderTarget::AutoImport
             )
         })
         .collect()

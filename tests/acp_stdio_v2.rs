@@ -690,13 +690,11 @@ impl Peer {
 /// product keeps directly under HORON_AGENT_HOME. The list is private there, so
 /// it is copied and `credential_lists_match_the_shipped_code` fails the moment
 /// the two drift apart.
-const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 7] = [
+const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 5] = [
     "auth.json",
     "openai-auth.json",
     "antigravity_oauth.json",
     "gemini_oauth.json",
-    "google_oauth.json",
-    "google_credentials.json",
     "config.toml",
 ];
 

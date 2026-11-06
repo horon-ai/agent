@@ -316,12 +316,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             flow_id,
             cancel,
             no_validate,
-            google,
             api_base,
             api_key,
             api_key_env,
         }) => {
-            let mut options = login::LoginOptions {
+            let options = login::LoginOptions {
                 no_browser,
                 print_auth_url,
                 callback_url,
@@ -335,9 +334,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 openai_compatible_api_key: api_key,
                 openai_compatible_api_key_env: api_key_env,
                 openai_compatible_default_model: args.model.clone(),
-                ..Default::default()
             };
-            google.apply(&mut options)?;
             login::run_login(&login_provider.unwrap_or(args.provider), account.as_deref(), options).await?;
         }
         Some(Command::Account { action }) => match action {

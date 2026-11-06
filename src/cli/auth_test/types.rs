@@ -14,7 +14,6 @@ pub(crate) enum ResolvedAuthTestTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthTestTarget {
     Openai,
-    Google,
 }
 
 
@@ -22,7 +21,6 @@ impl AuthTestTarget {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Openai => "openai",
-            Self::Google => "google",
         }
     }
 
@@ -33,14 +31,12 @@ impl AuthTestTarget {
     fn provider_choice(self) -> super::provider_init::ProviderChoice {
         match self {
             Self::Openai => super::provider_init::ProviderChoice::Openai,
-            Self::Google => super::provider_init::ProviderChoice::Google,
         }
     }
 
     fn from_provider_choice(choice: &super::provider_init::ProviderChoice) -> Option<Self> {
         match choice {
             super::provider_init::ProviderChoice::Openai => Some(Self::Openai),
-            super::provider_init::ProviderChoice::Google => Some(Self::Google),
             _ => None,
         }
     }
@@ -62,7 +58,6 @@ impl AuthTestTarget {
                     .display()
                     .to_string(),
             ]),
-            Self::Google => Ok(Vec::new()),
         }
     }
 }

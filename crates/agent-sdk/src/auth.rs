@@ -60,7 +60,7 @@ pub struct LoginProvider {
 fn supported(provider: LoginProviderDescriptor) -> Option<LoginProvider> {
     use LoginProviderTarget::*;
     let method = match provider.target {
-        Claude | OpenAi | Gemini | Antigravity | Google => LoginMethod::OAuth,
+        Claude | OpenAi | Gemini | Antigravity => LoginMethod::OAuth,
         Copilot => LoginMethod::DeviceCode,
         ClaudeApiKey | OpenAiApiKey | OpenRouter | Cursor | HoronAgent => LoginMethod::ApiKey,
         // The harness key API currently supports only these catalog profiles.

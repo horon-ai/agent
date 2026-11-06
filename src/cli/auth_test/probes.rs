@@ -1,4 +1,3 @@
-use crate::auth;
 fn generic_credential_paths_for_provider(
     provider: crate::provider_catalog::LoginProviderDescriptor,
 ) -> Vec<String> {
@@ -125,22 +124,6 @@ async fn probe_openai_auth(report: &mut AuthTestProviderReport) {
                 },
             );
         }
-    }
-}
-
-async fn probe_google_auth(report: &mut AuthTestProviderReport) {
-    match auth::google::load_credentials() {
-        Ok(creds) => {
-            report.push_step(
-                "credential_probe",
-                true,
-                format!(
-                    "Loaded Google credentials (client_id={}...).",
-                    &creds.client_id[..20.min(creds.client_id.len())]
-                ),
-            );
-        }
-        Err(err) => report.push_step("credential_probe", false, err.to_string()),
     }
 }
 

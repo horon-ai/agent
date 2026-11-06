@@ -523,7 +523,6 @@ async fn populate_auth_test_target_report(
 ) -> AuthTestProviderReport {
     match target {
         AuthTestTarget::Openai => probe_openai_auth(&mut report).await,
-        AuthTestTarget::Google => probe_google_auth(&mut report).await,
     }
 
     maybe_run_auth_test_smoke(

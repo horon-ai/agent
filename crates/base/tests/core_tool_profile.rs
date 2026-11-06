@@ -34,8 +34,6 @@ const DROP: &[&str] = &[
     "selfdev",
     "desktop_selfdev",
     "compile_remote",
-    "calendar",
-    "gmail",
     "schedule",
     "session_search",
     "conversation_search",

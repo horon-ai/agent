@@ -1143,20 +1143,7 @@ pub const YOLO_AUTO_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescr
     order: LoginProviderSurfaceOrder::new(Some(38), Some(38), Some(38), Some(38), Some(38)),
 };
 
-pub const GOOGLE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
-    id: "google",
-    display_name: "Google/Gmail",
-    auth_kind: LoginProviderAuthKind::OAuth,
-    auth_state_key: LoginProviderAuthStateKey::Google,
-    auth_status_method: "OAuth",
-    aliases: &["gmail"],
-    menu_detail: "read, draft, and send emails",
-    recommended: false,
-    target: LoginProviderTarget::Google,
-    order: LoginProviderSurfaceOrder::new(Some(13), None, None, None, None),
-};
-
-pub(crate) const LOGIN_PROVIDERS: [LoginProviderDescriptor; 46] = [
+pub(crate) const LOGIN_PROVIDERS: [LoginProviderDescriptor; 45] = [
     AUTO_IMPORT_LOGIN_PROVIDER,
     OPENAI_LOGIN_PROVIDER,
     OPENAI_API_LOGIN_PROVIDER,
@@ -1202,5 +1189,4 @@ pub(crate) const LOGIN_PROVIDERS: [LoginProviderDescriptor; 46] = [
     LMSTUDIO_LOGIN_PROVIDER,
     OLLAMA_LOGIN_PROVIDER,
     OPENAI_COMPAT_LOGIN_PROVIDER,
-    GOOGLE_LOGIN_PROVIDER,
 ];

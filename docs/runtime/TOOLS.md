@@ -22,7 +22,7 @@
 
 ```toml
 [tools.load_mode]
-gmail = "off"
+batch = "off"
 memory = "essential"
 ```
 

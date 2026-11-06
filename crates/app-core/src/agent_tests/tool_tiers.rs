@@ -277,7 +277,7 @@ async fn toolbox_result_converts_to_one_tool_reference_block() {
     let output = registry
         .execute(
             TOOLBOX_TOOL,
-            serde_json::json!({"action": "describe", "tool": "gmail"}),
+            serde_json::json!({"action": "describe", "tool": "swarm"}),
             ctx,
         )
         .await
@@ -293,7 +293,7 @@ async fn toolbox_result_converts_to_one_tool_reference_block() {
         .collect();
     assert_eq!(
         references,
-        vec![("call_toolbox", "gmail")],
+        vec![("call_toolbox", "swarm")],
         "one describe must load exactly one schema"
     );
 }
@@ -325,14 +325,14 @@ async fn an_explicit_essential_override_keeps_a_tool_eager() {
     let _guard = crate::storage::lock_test_env();
     let _env = ProfileEnv::new(
         "full",
-        Some("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\ngmail = \"essential\"\n"),
+        Some("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\nswarm = \"essential\"\n"),
     );
     let agent = agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions_for_debug().await;
-    let gmail = definition(&definitions, "gmail");
+    let swarm = definition(&definitions, "swarm");
     assert!(
-        !gmail.defer_loading,
+        !swarm.defer_loading,
         "an explicit essential entry beats the full default"
     );
     let memory = definition(&definitions, "memory");
@@ -359,7 +359,7 @@ async fn an_explicit_off_override_removes_the_tool() {
         "an off override removes the tool from the list"
     );
     assert!(
-        names.iter().any(|name| name == "gmail"),
+        names.iter().any(|name| name == "swarm"),
         "an unrelated tool is untouched, and an unknown override name is inert"
     );
 }
@@ -371,14 +371,14 @@ async fn the_deferred_set_is_frozen_for_the_session() {
     let agent = agent_with_mcp_management_tool().await;
 
     let first = serde_json::to_string(&agent.tool_definitions_for_debug().await).expect("serialize");
-    env.rewrite_config("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\ngmail = \"essential\"\n");
+    env.rewrite_config("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\nswarm = \"essential\"\n");
     let second = serde_json::to_string(&agent.tool_definitions_for_debug().await).expect("serialize");
 
     assert_eq!(first, second, "two consecutive builds of one session are identical");
     let definitions = agent.tool_definitions_for_debug().await;
-    let gmail = definition(&definitions, "gmail");
+    let swarm = definition(&definitions, "swarm");
     assert!(
-        gmail.defer_loading,
+        swarm.defer_loading,
         "the session keeps the tier it resolved at startup, not the reloaded config"
     );
 }

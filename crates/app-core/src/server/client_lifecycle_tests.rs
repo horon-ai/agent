@@ -2088,7 +2088,7 @@ async fn loading_deferred_setup_excluded_builtin_is_not_constructed() {
     let names: Vec<&str> = built.keys().map(String::as_str).collect();
     assert!(names.contains(&"read"), "an allowed tool must be present: {names:?}");
     assert!(names.contains(&"bash"), "an allowed tool must be present: {names:?}");
-    for excluded in ["calendar", "gmail", "selfdev", "desktop_selfdev"] {
+    for excluded in ["selfdev", "desktop_selfdev"] {
         assert!(
             !names.contains(&excluded),
             "{excluded} was constructed despite being excluded: {names:?}"

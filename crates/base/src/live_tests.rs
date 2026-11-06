@@ -1588,7 +1588,6 @@ fn known_live_model_provider_ids() -> Vec<String> {
         if !matches!(
             provider.target,
             crate::provider_catalog::LoginProviderTarget::AutoImport
-                | crate::provider_catalog::LoginProviderTarget::Google
         ) {
             ids.insert(provider.id.to_string());
         }
@@ -1703,13 +1702,11 @@ fn build_provider_roster(providers: &[LiveProviderCoverageSummary]) -> Vec<Provi
     }
     for provider in crate::provider_catalog::login_providers() {
         // Skip non-model login providers: `AutoImport` is a credential-import
-        // pseudo-provider, and `Google`/Gmail is an email-account OAuth
-        // integration with no LLM catalog, so neither belongs in the
-        // provider+model coverage roster.
+        // pseudo-provider, so it does not belong in the provider+model coverage
+        // roster.
         if matches!(
             provider.target,
             crate::provider_catalog::LoginProviderTarget::AutoImport
-                | crate::provider_catalog::LoginProviderTarget::Google
         ) {
             continue;
         }

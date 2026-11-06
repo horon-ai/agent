@@ -34,10 +34,6 @@ pub struct AuthStatus {
     /// longer count toward the native `openrouter` slot.
     #[serde(default)]
     pub openai_compatible_any: AuthState,
-    /// Google/Gmail OAuth configured
-    pub google: AuthState,
-    /// Google Gmail has send capability (Full tier)
-    pub google_can_send: bool,
 }
 
 /// Auth state for Anthropic which has multiple auth methods

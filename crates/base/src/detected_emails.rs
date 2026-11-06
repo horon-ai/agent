@@ -19,8 +19,7 @@ pub struct DetectedEmail {
 /// Emails from the coding-agent subscriptions on this machine, the same tools
 /// onboarding already offers to import logins from: Codex, Claude Code,
 /// Cursor (CLI and IDE), the Gemini CLI, and the Claude, ChatGPT, Gemini,
-/// Antigravity and Google logins HoronAgent itself stores. Deduplicated in that
-/// order. Missing or unreadable files are skipped silently.
+/// Antigravity logins HoronAgent itself stores. Deduplicated in that order. Missing or unreadable files are skipped silently.
 pub fn detected_emails() -> Vec<DetectedEmail> {
     let home = |relative: &str| {
         crate::storage::user_home_path(relative)
@@ -51,10 +50,6 @@ pub fn detected_emails() -> Vec<DetectedEmail> {
     for email in accounts(horon_agent("openai-auth.json"), "openai_accounts") {
         found.push(("ChatGPT", Some(email)));
     }
-    found.push((
-        "Google",
-        horon_agent("google_oauth.json").and_then(|v| top_level_email(&v)),
-    ));
     collect(found)
 }
 

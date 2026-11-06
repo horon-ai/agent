@@ -88,8 +88,7 @@ impl MultiProvider {
             LoginProviderTarget::AutoImport
             | LoginProviderTarget::HoronAgent
             | LoginProviderTarget::Azure
-            | LoginProviderTarget::GrokBuild
-            | LoginProviderTarget::Google => None,
+            | LoginProviderTarget::GrokBuild => None,
         }
     }
 

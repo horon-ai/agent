@@ -581,11 +581,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
-    "crates/app-core/src/tool/gmail.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 10
-    },
     "crates/app-core/src/tool/goal.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -791,16 +786,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
-    "crates/base/src/auth/google.rs": {
-      "dot_ok": 4,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/auth/google/setup.rs": {
-      "dot_ok": 6,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/auth/lifecycle.rs": {
       "dot_ok": 3,
       "let_underscore": 0,
@@ -956,20 +941,10 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/gmail.rs": {
-      "dot_ok": 9,
-      "let_underscore": 1,
-      "unwrap_or_default": 5
-    },
     "crates/base/src/goal.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 2
-    },
-    "crates/base/src/google_calendar.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/base/src/hooks.rs": {
       "dot_ok": 0,
@@ -1935,11 +1910,6 @@
       "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 1
-    },
-    "src/cli/login/google.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
     },
     "src/cli/login/scriptable.rs": {
       "dot_ok": 0,

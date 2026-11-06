@@ -1,4 +1,5 @@
 use super::{CORE_TOOL_PROFILE, CORE_TOOLS, ESSENTIAL_TOOLS, LoadMode, TOOLBOX_TOOL, ToolConfig};
+use crate::config::Config;
 use std::collections::BTreeMap;
 
 fn core_config() -> ToolConfig {
@@ -66,7 +67,7 @@ fn core_profile_lists_the_core_tools_it_does_not_send_eagerly() {
         };
         assert_eq!(tiers.tier(name), expected, "{name} resolves to its listed tier");
     }
-    for name in ["gmail", "memory", "swarm"] {
+    for name in ["batch", "memory", "swarm"] {
         assert_eq!(
             tiers.tier(name),
             LoadMode::Essential,
@@ -126,7 +127,7 @@ fn full_profile_defers_every_tool_outside_core() {
     for name in CORE_TOOLS {
         assert_eq!(tiers.tier(name), LoadMode::Essential, "{name} is a core tool");
     }
-    for name in ["memory", "swarm", "gmail", "hashline_edit"] {
+    for name in ["memory", "swarm", "batch", "hashline_edit"] {
         assert_eq!(
             tiers.tier(name),
             LoadMode::Discoverable,
@@ -197,7 +198,7 @@ fn an_unset_profile_keeps_every_tool_eager() {
         LoadMode::Essential,
         "only an explicit full profile opts into the discoverable tier"
     );
-    assert_eq!(tiers.tier("gmail"), LoadMode::Essential);
+    assert_eq!(tiers.tier("batch"), LoadMode::Essential);
 }
 
 #[test]
@@ -259,7 +260,7 @@ fn explicit_entries_override_the_profile_and_core() {
     assert_eq!(tiers.tier("memory"), LoadMode::Essential);
     assert_eq!(tiers.tier("bash"), LoadMode::Off, "an override beats the core set");
     assert_eq!(tiers.tier("swarm"), LoadMode::Off);
-    assert_eq!(tiers.tier("gmail"), LoadMode::Discoverable);
+    assert_eq!(tiers.tier("batch"), LoadMode::Discoverable);
 }
 
 #[test]
@@ -287,7 +288,7 @@ fn an_unknown_tool_name_is_inert() {
     let tiers = cfg.load_tiers(None, false);
 
     assert_eq!(tiers.tier("no_such_tool_xyz"), LoadMode::Off);
-    assert_eq!(tiers.tier("gmail"), LoadMode::Discoverable);
+    assert_eq!(tiers.tier("batch"), LoadMode::Discoverable);
     assert_eq!(tiers.tier("bash"), LoadMode::Essential);
 }
 
@@ -311,4 +312,24 @@ swarm = "discoverable"
     assert_eq!(LoadMode::parse("Off"), Some(LoadMode::Off));
     assert_eq!(LoadMode::parse("discoverable"), Some(LoadMode::Discoverable));
     assert_eq!(LoadMode::parse("always"), None);
+}
+
+#[test]
+fn removed_google_tool_names_stay_inert_in_old_configs() {
+    let cfg: Config = toml::from_str(
+        r#"
+[tools]
+disabled = ["gmail"]
+
+[tools.load_mode]
+gmail = "off"
+"#,
+    )
+    .expect("an old config naming a removed tool must still load");
+
+    // Both keys are free-form tool names, so the entries are kept verbatim but
+    // cannot select anything: the registry no longer has a gmail tool.
+    assert!(cfg.tools.disabled.iter().any(|name| name == "gmail"));
+    assert_eq!(cfg.tools.load_mode.get("gmail"), Some(&LoadMode::Off));
+    assert!(cfg.tools.selection().allowed_tools.is_none());
 }

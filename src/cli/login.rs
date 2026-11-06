@@ -13,11 +13,9 @@ use super::provider_init::{ProviderChoice, login_provider_for_choice};
 use crate::provider_catalog::save_named_api_key;
 
 mod existing_key_notice;
-mod google;
 mod horon_agent_device;
 mod next_step;
 mod scriptable;
-use google::*;
 use scriptable::*;
 
 #[derive(Debug, Clone, Default)]
@@ -31,12 +29,6 @@ pub struct LoginOptions {
     pub flow_id: Option<String>,
     pub cancel: bool,
     pub no_validate: bool,
-    pub google_access_tier: Option<auth::google::GmailAccessTier>,
-    pub google_services: Option<Vec<auth::google::GoogleService>>,
-    /// Run the guided Google Cloud OAuth client setup even when a client is saved.
-    pub google_setup: bool,
-    /// OAuth client JSON path (or `auto`) to import before Google login.
-    pub google_client_json: Option<String>,
     pub openai_compatible_api_base: Option<String>,
     pub openai_compatible_api_key: Option<String>,
     pub openai_compatible_api_key_env: Option<String>,
@@ -128,16 +120,6 @@ enum PendingScriptableLogin {
         state: String,
         redirect_uri: String,
     },
-    Google {
-        verifier: String,
-        state: String,
-        redirect_uri: String,
-        tier: auth::google::GmailAccessTier,
-        /// Missing in pending files written by older builds, which only
-        /// requested Gmail.
-        #[serde(default = "default_pending_google_services")]
-        services: Vec<auth::google::GoogleService>,
-    },
     Copilot {
         device_code: String,
         user_code: String,
@@ -159,7 +141,6 @@ impl PendingScriptableLogin {
             Self::Openai { .. } => "openai",
             Self::Gemini { .. } => "gemini",
             Self::Antigravity { .. } => "antigravity",
-            Self::Google { .. } => "google",
             Self::Copilot { .. } => "copilot",
         }
     }
@@ -243,20 +224,8 @@ pub async fn run_login_provider(
     if options.cancel {
         return cancel_scriptable_login(provider, &options);
     }
-    if provider.target == LoginProviderTarget::Google
-        && let Some(source) = options.google_client_json.as_deref()
-    {
-        import_google_client_json(source, options.json)?;
-    }
     let explicit_scriptable_flow = options.uses_scriptable_flow()?;
-    // Google setup is an interactive wizard. On a terminal it must run even
-    // with --no-browser (it prints each URL), otherwise a first-time user
-    // with no OAuth client is sent to a flow that can only fail.
-    let google_wizard = provider.target == LoginProviderTarget::Google
-        && !explicit_scriptable_flow
-        && io::stdin().is_terminal()
-        && (options.google_setup || auth::google::load_credentials().is_err());
-    let auto_scriptable_reason = if explicit_scriptable_flow || google_wizard {
+    let auto_scriptable_reason = if explicit_scriptable_flow {
         None
     } else {
         auto_scriptable_flow_reason(provider, &options, io::stdin().is_terminal())
@@ -290,11 +259,7 @@ pub async fn run_login_provider(
                 provider.display_name
             );
         }
-        if provider.target == LoginProviderTarget::Google && !auth::browser_suppressed(options.no_browser) {
-            run_automatic_google_login(provider.id, &options).await
-        } else {
-            start_scriptable_login(provider, account_label, &options).await
-        }
+        start_scriptable_login(provider, account_label, &options).await
     } else {
         match provider.target {
             LoginProviderTarget::AutoImport => {
@@ -320,14 +285,6 @@ pub async fn run_login_provider(
             LoginProviderTarget::OpenAiCompatible(profile) => {
                 login_openai_compatible_flow(&profile, &options).map(|_| LoginFlowOutcome::Completed)
             }
-            LoginProviderTarget::Google => login_google_flow(
-                options.no_browser,
-                options.google_access_tier,
-                options.google_services.clone(),
-                options.google_setup,
-            )
-            .await
-            .map(|_| LoginFlowOutcome::Completed),
             _ => anyhow::bail!("That provider is not available in this build"),
         }
     };

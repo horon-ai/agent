@@ -280,7 +280,7 @@ bash_minimizer = true
 ask_policy = "error"
 
 [tools.load_mode]
-gmail = "off"
+swarm = "off"
 # An obsolete tool name must stay inert instead of failing the load.
 browser = "essential"
 "#,
@@ -305,7 +305,7 @@ browser = "essential"
     assert!(!cfg.tools.bash_non_interactive_env);
     assert!(cfg.tools.bash_minimizer);
     assert_eq!(cfg.tools.ask_policy, AskPolicy::Error);
-    assert_eq!(cfg.tools.load_mode.get("gmail"), Some(&LoadMode::Off));
+    assert_eq!(cfg.tools.load_mode.get("swarm"), Some(&LoadMode::Off));
     assert_eq!(cfg.tools.load_mode.get("browser"), Some(&LoadMode::Essential));
 
     // An unrelated key must not disturb the new defaults.
@@ -755,14 +755,14 @@ fn tool_config_mcp_exposure_env_overrides() {
 #[test]
 fn tool_config_explicit_enabled_uses_allow_list() {
     let cfg = ToolConfig {
-        enabled: vec!["gmail".to_string()],
+        enabled: vec!["swarm".to_string()],
         ..ToolConfig::default()
     };
     let selection = cfg.selection();
     let allowed = selection.allowed_tools.expect("explicit enabled is an allow-list");
 
-    assert!(allowed.contains("gmail"));
-    assert!(!selection.disabled_tools.contains("gmail"));
+    assert!(allowed.contains("swarm"));
+    assert!(!selection.disabled_tools.contains("swarm"));
 }
 
 #[test]
@@ -774,20 +774,20 @@ fn tool_config_all_enabled_sentinel_keeps_unrestricted_toolset() {
     let selection = cfg.selection();
 
     assert!(selection.allowed_tools.is_none());
-    assert!(!selection.disabled_tools.contains("gmail"));
+    assert!(!selection.disabled_tools.contains("batch"));
 }
 
 #[test]
 fn tool_config_explicit_disabled_overrides_all_enabled_sentinel() {
     let cfg = ToolConfig {
         enabled: vec!["*".to_string()],
-        disabled: vec!["gmail".to_string()],
+        disabled: vec!["batch".to_string()],
         ..ToolConfig::default()
     };
     let selection = cfg.selection();
 
     assert!(selection.allowed_tools.is_none());
-    assert!(selection.disabled_tools.contains("gmail"));
+    assert!(selection.disabled_tools.contains("batch"));
 }
 
 #[test]
@@ -971,8 +971,6 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "selfdev",
         "desktop_selfdev",
         "compile_remote",
-        "calendar",
-        "gmail",
         "schedule",
         "session_search",
         "conversation_search",
@@ -1010,7 +1008,7 @@ fn tool_config_disabled_only_keeps_full_profile_with_deny_list() {
     assert!(selection.allowed_tools.is_none());
     assert!(selection.disabled_tools.contains("memory"));
     assert!(selection.disabled_tools.contains("swarm"));
-    assert!(!selection.disabled_tools.contains("gmail"));
+    assert!(!selection.disabled_tools.contains("batch"));
 }
 
 #[test]

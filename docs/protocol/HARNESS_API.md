@@ -54,16 +54,16 @@
 `auth_changed_notification`으로 광고된다. 그 응답은 비동기 모델 탐색의 완료가 아니라
 알림 접수를 확인한다.
 
-OAuth는 OpenAI와 Google을 지원한다. Google은 미리 설정한 OAuth 클라이언트 자격 증명을
-요구한다. HoronAgent 구독은 여기서 API 키 입력을 지원하며 대화형 기기 로그인은
-지원하지 않는다. 그 밖의 벤더는 이 빌드에서 삭제했으므로 데스크톱에서도 노출하지 않는다.
+OAuth는 OpenAI만 지원한다. HoronAgent 구독은 여기서 API 키 입력을 지원하며 대화형
+기기 로그인은 지원하지 않는다. 그 밖의 벤더는 이 빌드에서 삭제했으므로 데스크톱에서도
+노출하지 않는다.
 
 선택기는 `AuthClient::providers()`가 공유 카탈로그를 `supported()`로 거른 결과다
 (`crates/agent-sdk/src/auth.rs:60-78`). 그 함수에는 Claude, Gemini,
 Antigravity 대상을 OAuth로 매핑하는 갈래가 남아 있지만, 공유 카탈로그가 그
 프로바이더 행을 더는 담지 않으므로
-(`crates/provider-metadata/src/catalog.rs:1160-1206`) 선택기에도 나오지
-않는다. 그래서 OAuth 항목은 OpenAI와 Google 둘이고, 나머지는 OpenAI 호환
+(`crates/provider-metadata/src/catalog.rs:1146-1192`) 선택기에도 나오지
+않는다. 그래서 OAuth 항목은 OpenAI 하나이고, 나머지는 OpenAI 호환
 API 키 항목과 HoronAgent 구독이다.
 
 ### 검증

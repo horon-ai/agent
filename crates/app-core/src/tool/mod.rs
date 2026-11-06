@@ -13,7 +13,6 @@ mod bash;
 mod bash_interceptor;
 mod batch;
 mod bg;
-mod calendar;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
@@ -29,7 +28,6 @@ mod file_diff;
 pub(crate) mod file_lock;
 mod generated_guard;
 mod git_guard;
-mod gmail;
 mod goal;
 mod hashline_edit;
 mod horon_agent_docs;
@@ -1002,12 +1000,6 @@ impl Registry {
         );
         if build_allows("memory") {
             Self::insert_tool_timed(&mut m, &mut timings, "memory", memory::MemoryTool::new);
-        }
-        if build_allows("gmail") {
-            Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
-        }
-        if build_allows("calendar") {
-            Self::insert_tool_timed(&mut m, &mut timings, "calendar", calendar::CalendarTool::new);
         }
         if build_allows("schedule") {
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
