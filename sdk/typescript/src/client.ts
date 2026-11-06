@@ -1309,7 +1309,7 @@ export class HoronAgentClient extends EventEmitter {
     return cancelled.includes(clientId);
   }
 
-  /** Move the running tool call to the background (the TUI's Alt+B). */
+  /** Move the running tool call to the background. */
   async backgroundTool(sessionId: string): Promise<void> {
     await this.backgroundToolResult(sessionId);
   }
