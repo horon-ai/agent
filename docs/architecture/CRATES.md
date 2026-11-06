@@ -13,7 +13,7 @@
 - 루트 전용 동작, 저장소, 프로세스, TUI, 서버, 제공자 런타임 로직은 의존성 확산을 늘리지 않고 전체 의존 경계를 옮길 수 있을 때까지 루트 크레이트에 둔다.
 - 순환 의존과 `horon-agent-core`의 넓은 재내보내기를 통한 숨은 결합을 피한다.
 - 모든 호출 지점을 의도적으로 고치는 경우가 아니면 마이그레이션 중에도 serde 호환성과 루트 재내보내기를 유지한다.
-- 성공은 컴파일 영향으로 측정한다. 루트 수정이 줄고, 루트가 소유한 DTO가 줄고, 의존성 확산이 작아지고, 흔한 변경 뒤 `cargo check --profile selfdev`와 `selfdev build`가 빨라지는지를 본다.
+- 성공은 컴파일 영향으로 측정한다. 루트 수정이 줄고, 루트가 소유한 DTO가 줄고, 의존성 확산이 작아지고, 흔한 변경 뒤 `cargo check --profile selfdev`와 재빌드가 빨라지는지를 본다.
 
 ## 소유 규칙
 
@@ -26,7 +26,7 @@
 - 파일 시스템, 네트워크, 프로세스, TUI, 제공자 클라이언트, 전역 상태, 저장소 접근이 없어야 한다.
 - 의존성은 serde, chrono, 필요할 때 다른 타입 크레이트로 제한한다.
 
-예: `horon-agent-session-types`, `horon-agent-side-panel-types`, `horon-agent-selfdev-types`, `horon-agent-background-types`.
+예: `horon-agent-session-types`, `horon-agent-side-panel-types`, `horon-agent-background-types`.
 
 ### 도메인 동작 모듈은 루트 런타임 동작을 소유한다
 
@@ -64,7 +64,7 @@
 
 1. 타입을 대상 크레이트로 옮긴다.
 2. 호출 지점을 유지하려고 기존 루트 경로를 `pub use ...`로 남긴다.
-3. 좁은 테스트와 selfdev 빌드·재적재를 검증한다.
+3. 좁은 테스트와 재적재를 검증한다.
 4. 나중에 하위 크레이트가 도메인 크레이트에 직접 의존할 수 있게 된 뒤에만 불필요해진 루트 재내보내기를 지운다.
 
 ## 이동 점검 목록
@@ -91,7 +91,7 @@
    - [ ] `cargo check --profile selfdev -p <type-crate> -p horon-agent --bin horon-agent`가 통과했는가?
    - [ ] 관련된 좁은 루트 테스트가 통과했는가?
    - [ ] `cargo fmt`가 통과했는가?
-   - [ ] 깨끗하게 커밋된 HEAD에서 selfdev 빌드와 재적재가 통과했는가?
+   - [ ] 깨끗하게 커밋된 HEAD에서 재적재가 통과했는가?
 
 ## 의존 경계 가드
 

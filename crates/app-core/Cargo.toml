@@ -100,7 +100,6 @@ horon-agent-overnight-core = { path = "../overnight-core" }
 horon-agent-perf-counters = { path = "../perf-counters" }
 horon-agent-plan = { path = "../plan" }
 horon-agent-swarm-core = { path = "../swarm-core" }
-horon-agent-selfdev-types = { path = "../selfdev-types" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }
 horon-agent-setup-hints = { path = "../setup-hints" }

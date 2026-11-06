@@ -1,5 +1,5 @@
 {
-  "total": 140,
+  "total": 138,
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": 15,
     "crates/agent-sdk/src/auth/callback.rs": 2,
@@ -18,7 +18,6 @@
     "crates/app-core/src/tool/bash.rs": 2,
     "crates/app-core/src/tool/calendar.rs": 1,
     "crates/app-core/src/tool/communicate.rs": 1,
-    "crates/app-core/src/tool/compile_remote.rs": 2,
     "crates/app-core/src/tool/discover.rs": 1,
     "crates/app-core/src/tool/generated_guard.rs": 2,
     "crates/app-core/src/tool/lazy_activation.rs": 1,

@@ -1,9 +1,9 @@
 {
-  "total": 2495,
+  "total": 2441,
   "totals_by_pattern": {
-    "dot_ok": 907,
-    "let_underscore": 996,
-    "unwrap_or_default": 592
+    "dot_ok": 877,
+    "let_underscore": 975,
+    "unwrap_or_default": 589
   },
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": {
@@ -282,7 +282,7 @@
       "unwrap_or_default": 0
     },
     "crates/app-core/src/server/client_session.rs": {
-      "dot_ok": 8,
+      "dot_ok": 6,
       "let_underscore": 20,
       "unwrap_or_default": 0
     },
@@ -556,11 +556,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/app-core/src/tool/bridge_reload.rs": {
-      "dot_ok": 8,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
     "crates/app-core/src/tool/client_terminal.rs": {
       "dot_ok": 1,
       "let_underscore": 3,
@@ -674,31 +669,6 @@
     "crates/app-core/src/tool/read_selector.rs": {
       "dot_ok": 1,
       "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/build_queue.rs": {
-      "dot_ok": 1,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/mod.rs": {
-      "dot_ok": 8,
-      "let_underscore": 4,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/reload.rs": {
-      "dot_ok": 0,
-      "let_underscore": 6,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/setup.rs": {
-      "dot_ok": 7,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/selfdev/status.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/tool/session_mcp.rs": {
@@ -1183,7 +1153,7 @@
     },
     "crates/base/src/prompt.rs": {
       "dot_ok": 12,
-      "let_underscore": 1,
+      "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/base/src/provider/account_failover.rs": {
@@ -1448,8 +1418,8 @@
     },
     "crates/build-support/src/lib.rs": {
       "dot_ok": 2,
-      "let_underscore": 5,
-      "unwrap_or_default": 6
+      "let_underscore": 3,
+      "unwrap_or_default": 3
     },
     "crates/build-support/src/paths.rs": {
       "dot_ok": 17,
@@ -1770,11 +1740,6 @@
       "dot_ok": 2,
       "let_underscore": 2,
       "unwrap_or_default": 2
-    },
-    "crates/selfdev-types/src/desktop.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
     },
     "crates/session-store/examples/schema_roundtrip.rs": {
       "dot_ok": 0,
@@ -2119,11 +2084,6 @@
     "src/cli/provider_init.rs": {
       "dot_ok": 4,
       "let_underscore": 13,
-      "unwrap_or_default": 0
-    },
-    "src/cli/selfdev.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "src/cli/ssh.rs": {

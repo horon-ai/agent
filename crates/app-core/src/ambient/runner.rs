@@ -355,8 +355,6 @@ impl AmbientRunnerHandle {
                 child.improve_mode = parent.improve_mode;
                 child.autoreview_enabled = parent.autoreview_enabled;
                 child.autojudge_enabled = parent.autojudge_enabled;
-                child.is_canary = parent.is_canary;
-                child.testing_build = parent.testing_build.clone();
                 child.is_debug = parent.is_debug;
                 child.memory_injections = parent.memory_injections.clone();
                 child.replay_events = parent.replay_events.clone();
@@ -384,13 +382,9 @@ impl AmbientRunnerHandle {
         child.save()?;
 
         let child_session_id = child.id.clone();
-        let child_is_canary = child.is_canary;
         let child_is_debug = child.is_debug;
         let cycle_provider = provider.fork();
         let registry = tool::Registry::new(cycle_provider.clone()).await;
-        if child_is_canary {
-            registry.register_selfdev_tools().await;
-        }
 
         let mut agent = Agent::new_with_session(cycle_provider, registry, child, None);
         agent.set_debug(child_is_debug);

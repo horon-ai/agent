@@ -286,7 +286,7 @@ pub(crate) fn tool_kind(name: &str) -> &'static str {
     match name {
         "read" => "read",
         "write" | "edit" | "multiedit" | "patch" | "apply_patch" | "replace" => "edit",
-        "bash" | "bg" | "selfdev" => "execute",
+        "bash" | "bg" => "execute",
         "agentgrep" | "grep" | "glob" | "ls" | "session_search" | "conversation_search" => "search",
         "webfetch" | "websearch" | "codesearch" => "fetch",
         _ => "other",

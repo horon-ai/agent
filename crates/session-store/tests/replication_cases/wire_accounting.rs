@@ -4,9 +4,14 @@ use horon_agent_session_store::replication::{reset_wire_work, wire_work};
 /// Digests of the two pages `baseline_pages` exports, captured from the loop
 /// that re-serialized the whole page after every append (`dev 9d283c8`). The
 /// loop now carries its wire size forward, and these pin the bytes it emits.
-const BASELINE_FIRST_SHA256: &str = "135cf07df4bac5f824f929368e57d5d70fe0af040154a3254399b32ad6580251";
+///
+/// Re-captured once when the retired canary session flag left the default
+/// metadata payload: the first page carries the root record, so it shrank by
+/// exactly that field (240882 -> 240862); the last page has no metadata and is
+/// unchanged.
+const BASELINE_FIRST_SHA256: &str = "e6be497bfb5f781c7d06f9ca1b95389a634c1727f1ae148d83bc7d9e41ac69c4";
 const BASELINE_LAST_SHA256: &str = "4a4855d4ca11533655bb7417d94a47e334a09bc956bc27b638d7c07f124ac264";
-const BASELINE_FIRST_LEN: usize = 240882;
+const BASELINE_FIRST_LEN: usize = 240862;
 const BASELINE_LAST_LEN: usize = 26979;
 
 fn escaped(n: u128, parent: u128) -> SealedEvent {

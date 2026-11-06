@@ -103,7 +103,6 @@ horon-agent-protocol = { path = "../protocol" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }
 horon-agent-perf-counters = { path = "../perf-counters" }
-horon-agent-selfdev-types = { path = "../selfdev-types" }
 horon-agent-storage = { path = "../storage" }
 horon-agent-task-types = { path = "../task-types" }
 horon-agent-todo-policy = { path = "../todo-policy" }

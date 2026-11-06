@@ -230,7 +230,7 @@ fn spawn_background_update_check(args: &Args) {
                     logging::info(&format!("Updated to {}. Restarting...", version));
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     let args: Vec<String> = std::env::args().skip(1).collect();
-                    let exec_path = build::client_update_candidate(false).map(|(p, _)| p).unwrap_or(path);
+                    let exec_path = build::client_update_candidate().map(|(p, _)| p).unwrap_or(path);
                     let err = crate::platform::replace_process(
                         ProcessCommand::new(&exec_path).args(&args).arg("--no-update"),
                     );
@@ -551,9 +551,9 @@ mod tests {
 
     #[test]
     fn hidden_spawn_hotkey_argument_is_global_and_preserves_canonical_text() {
-        let args = parse_args(&["horon-agent", "--spawn-hotkey", "shift+cmd+'", "self-dev"]);
+        let args = parse_args(&["horon-agent", "--spawn-hotkey", "shift+cmd+'", "login"]);
         assert_eq!(args.spawn_hotkey.as_deref(), Some("shift+cmd+'"));
-        assert!(matches!(args.command, Some(Command::SelfDev { .. })));
+        assert!(matches!(args.command, Some(Command::Login { .. })));
     }
     #[test]
     fn no_external_provider_runtime_is_registered() {

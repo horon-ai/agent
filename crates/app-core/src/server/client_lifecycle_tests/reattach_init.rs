@@ -351,7 +351,6 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             supports_ask_requests: false,
             id: 1,
             working_dir: Some(working_dir),
-            selfdev: None,
             target_session_id: Some(target_session_id.to_string()),
             client_instance_id: Some("reattach-instance".to_string()),
             client_has_local_history: false,

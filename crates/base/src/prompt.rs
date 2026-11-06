@@ -222,9 +222,6 @@ pub fn append_swarm_effort_directive(split: &mut SplitSystemPrompt, effort: Opti
 /// `mission` module in the upper `horon-agent-app-core` layer; the asset lives here
 /// alongside the other prompt templates.
 pub const MISSION_CONTINUATION_TEMPLATE: &str = include_str!("prompt/mission_continuation.md");
-const SELFDEV_MODE_PROMPT: &str = include_str!("prompt/selfdev_mode.txt");
-const DESKTOP_SELFDEV_MODE_PROMPT: &str = include_str!("prompt/desktop_selfdev_mode.txt");
-const SELFDEV_FOCUS_TUI_PROMPT: &str = include_str!("prompt/selfdev_focus_tui.txt");
 /// Split system prompt for efficient caching
 /// Static content is cached, dynamic content is not
 #[derive(Debug, Clone, Default)]
@@ -520,8 +517,6 @@ pub struct ContextInfo {
     pub global_agents_md_chars: usize,
     /// Skills section size (chars)
     pub skills_chars: usize,
-    /// Self-dev section size (chars)
-    pub selfdev_chars: usize,
     /// Memory section size (chars)
     pub memory_chars: usize,
     /// Prompt overlay section size (chars)
@@ -567,7 +562,6 @@ impl ContextInfo {
             + self.foreign_rules_chars
             + self.global_agents_md_chars
             + self.skills_chars
-            + self.selfdev_chars
             + self.memory_chars
             + self.prompt_overlay_chars
             + self.preferred_tools_chars
@@ -600,9 +594,6 @@ impl ContextInfo {
         if self.skills_chars > 0 {
             parts.push(("skills", self.skills_chars, "🔧"));
         }
-        if self.selfdev_chars > 0 {
-            parts.push(("dev", self.selfdev_chars, "🛠"));
-        }
         if self.memory_chars > 0 {
             parts.push(("mem", self.memory_chars, "🧠"));
         }
@@ -618,16 +609,7 @@ impl ContextInfo {
 
 /// Build the full system prompt with static context.
 pub fn build_system_prompt(skill_prompt: Option<&str>, available_skills: &[SkillInfo]) -> String {
-    build_system_prompt_with_selfdev(skill_prompt, available_skills, false)
-}
-
-/// Build the full system prompt with optional self-dev tools
-pub fn build_system_prompt_with_selfdev(
-    skill_prompt: Option<&str>,
-    available_skills: &[SkillInfo],
-    is_selfdev: bool,
-) -> String {
-    let (prompt, _) = build_system_prompt_with_context(skill_prompt, available_skills, is_selfdev);
+    let (prompt, _) = build_system_prompt_with_context(skill_prompt, available_skills);
     prompt
 }
 
@@ -635,33 +617,29 @@ pub fn build_system_prompt_with_selfdev(
 pub fn build_system_prompt_with_context(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
 ) -> (String, ContextInfo) {
-    build_system_prompt_with_context_and_memory(skill_prompt, available_skills, is_selfdev, None)
+    build_system_prompt_with_context_and_memory(skill_prompt, available_skills, None)
 }
 
 /// Build the full system prompt with optional memory section and return context info
 pub fn build_system_prompt_with_context_and_memory(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
 ) -> (String, ContextInfo) {
-    build_system_prompt_full(skill_prompt, available_skills, is_selfdev, memory_prompt, None)
+    build_system_prompt_full(skill_prompt, available_skills, memory_prompt, None)
 }
 
 /// Build the full system prompt with working directory support for loading context files
 pub fn build_system_prompt_full(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
 ) -> (String, ContextInfo) {
     build_system_prompt_full_with_capabilities(
         skill_prompt,
         available_skills,
-        is_selfdev,
         memory_prompt,
         working_dir,
         PromptCapabilities::current(),
@@ -671,7 +649,6 @@ pub fn build_system_prompt_full(
 pub fn build_system_prompt_full_with_capabilities(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
@@ -681,16 +658,6 @@ pub fn build_system_prompt_full_with_capabilities(
         system_prompt_chars: parts.join("\n\n").len(),
         ..Default::default()
     };
-
-    // Desktop checkout identity takes precedence over the CLI self-dev flag.
-    if is_desktop_working_dir(working_dir) {
-        info.selfdev_chars = DESKTOP_SELFDEV_MODE_PROMPT.len();
-        parts.push(DESKTOP_SELFDEV_MODE_PROMPT.to_string());
-    } else if is_selfdev {
-        let selfdev_prompt = build_selfdev_prompt_for_working_dir(working_dir);
-        info.selfdev_chars = selfdev_prompt.len();
-        parts.push(selfdev_prompt);
-    }
 
     // Add AGENTS.md instructions with tracking (from working_dir or cwd)
     let (md_content, md_info) = load_agents_md_files_from_dir(working_dir);
@@ -750,14 +717,12 @@ pub fn build_system_prompt_full_with_capabilities(
 pub fn build_system_prompt_split(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
 ) -> (SplitSystemPrompt, ContextInfo) {
     build_system_prompt_split_with_capabilities(
         skill_prompt,
         available_skills,
-        is_selfdev,
         memory_prompt,
         working_dir,
         PromptCapabilities::current(),
@@ -767,7 +732,6 @@ pub fn build_system_prompt_split(
 pub fn build_system_prompt_split_with_capabilities(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
@@ -776,7 +740,6 @@ pub fn build_system_prompt_split_with_capabilities(
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
         available_skills,
-        is_selfdev,
         memory_prompt,
         working_dir,
         capabilities,
@@ -792,7 +755,6 @@ pub fn build_system_prompt_split_with_capabilities(
 pub fn build_system_prompt_split_with_agents_md(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     agents_md: (Option<String>, ContextInfo),
@@ -800,7 +762,6 @@ pub fn build_system_prompt_split_with_agents_md(
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
         available_skills,
-        is_selfdev,
         memory_prompt,
         working_dir,
         PromptCapabilities::current(),
@@ -811,7 +772,6 @@ pub fn build_system_prompt_split_with_agents_md(
 fn build_system_prompt_split_with_capabilities_and_agents_md(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
-    is_selfdev: bool,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
@@ -825,16 +785,6 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     };
 
     // === STATIC CONTENT (cacheable) ===
-
-    // Keep Desktop guidance cacheable and separate from CLI self-development.
-    if is_desktop_working_dir(working_dir) {
-        info.selfdev_chars = DESKTOP_SELFDEV_MODE_PROMPT.len();
-        static_parts.push(DESKTOP_SELFDEV_MODE_PROMPT.to_string());
-    } else if is_selfdev {
-        let selfdev_prompt = build_selfdev_prompt_static_for_working_dir(working_dir);
-        info.selfdev_chars = selfdev_prompt.len();
-        static_parts.push(selfdev_prompt);
-    }
 
     // Add AGENTS.md instructions (static per project)
     let (md_content, md_info) = agents_md;
@@ -898,59 +848,6 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     )
 }
 
-/// Detect Desktop independently of the CLI self-development flag.
-fn is_desktop_working_dir(working_dir: Option<&Path>) -> bool {
-    working_dir
-        .and_then(horon_agent_selfdev_types::desktop_repo_root)
-        .is_some()
-}
-
-/// Build self-dev tools prompt section (static version without dynamic socket path)
-#[cfg(test)]
-fn build_selfdev_prompt_static() -> String {
-    build_selfdev_prompt_static_for_context(SelfDevProductContext::Tui)
-}
-
-/// Build self-dev tools prompt section
-#[cfg(test)]
-fn build_selfdev_prompt() -> String {
-    build_selfdev_prompt_for_context(SelfDevProductContext::Tui)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelfDevProductContext {
-    Tui,
-}
-
-impl SelfDevProductContext {
-    fn from_working_dir(working_dir: Option<&Path>) -> Self {
-        let _ = working_dir;
-        Self::Tui
-    }
-
-    fn prompt_block(self) -> &'static str {
-        match self {
-            Self::Tui => SELFDEV_FOCUS_TUI_PROMPT,
-        }
-    }
-}
-
-fn build_selfdev_prompt_static_for_working_dir(working_dir: Option<&Path>) -> String {
-    build_selfdev_prompt_static_for_context(SelfDevProductContext::from_working_dir(working_dir))
-}
-
-fn build_selfdev_prompt_for_working_dir(working_dir: Option<&Path>) -> String {
-    build_selfdev_prompt_for_context(SelfDevProductContext::from_working_dir(working_dir))
-}
-
-fn build_selfdev_prompt_static_for_context(context: SelfDevProductContext) -> String {
-    build_selfdev_prompt_for_context(context).replace("__DEBUG_SOCKET_BLOCK__\n\n", "")
-}
-
-fn build_selfdev_prompt_for_context(context: SelfDevProductContext) -> String {
-    SELFDEV_MODE_PROMPT.replace("__SELFDEV_PRODUCT_FOCUS__", context.prompt_block())
-}
-
 /// The one line that tells the model which extra directories this session may
 /// work in.
 ///
@@ -968,10 +865,6 @@ pub fn additional_directories_line(directories: &[String]) -> String {
 /// Build immutable session context captured once per session.
 pub fn build_session_context(working_dir: Option<&Path>, additional_directories: &[String]) -> String {
     let mut lines = vec!["# Session Context".to_string()];
-
-    if is_desktop_working_dir(working_dir) {
-        lines.push("Self-development mode: desktop".to_string());
-    }
 
     lines.extend(session_datetime_lines());
     lines.push(format!("OS: {}", std::env::consts::OS));

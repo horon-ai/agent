@@ -61,13 +61,12 @@ impl Client {
 
     /// Subscribe to events
     pub async fn subscribe(&mut self) -> Result<u64> {
-        self.subscribe_with_info(None, None, None, false, false).await
+        self.subscribe_with_info(None, None, false, false).await
     }
 
     pub async fn subscribe_with_info(
         &mut self,
         working_dir: Option<String>,
-        selfdev: Option<bool>,
         target_session_id: Option<String>,
         client_has_local_history: bool,
         allow_session_takeover: bool,
@@ -86,7 +85,6 @@ impl Client {
             supports_ask_requests: false,
             id,
             working_dir: Some(working_dir),
-            selfdev,
             target_session_id,
             client_instance_id: None,
             client_has_local_history,

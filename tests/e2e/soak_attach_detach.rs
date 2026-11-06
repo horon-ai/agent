@@ -475,7 +475,7 @@ async fn attach_once(socket_path: &Path, target_session_id: &str) -> Result<()> 
     .map_err(|_| anyhow::anyhow!("attach connect exceeded 10s"))??;
     let subscribe_id = timeout(
         Duration::from_secs(10),
-        client.subscribe_with_info(None, None, Some(target_session_id.to_string()), false, false),
+        client.subscribe_with_info(None, Some(target_session_id.to_string()), false, false),
     )
     .await
     .map_err(|_| anyhow::anyhow!("subscribe exceeded 10s for {target_session_id}"))??;
@@ -540,7 +540,7 @@ async fn run_turn_cycle(
     let started = Instant::now();
     let mut client = server::Client::connect_with_path(socket_path.to_path_buf()).await?;
     let subscribe_id = client
-        .subscribe_with_info(None, None, Some(session_id.clone()), false, false)
+        .subscribe_with_info(None, Some(session_id.clone()), false, false)
         .await?;
     wait_for_done(&mut client, subscribe_id, "soak turn attach").await?;
     let message_id = client.send_message(&format!("soak turn {index}")).await?;
@@ -668,7 +668,7 @@ async fn slow_first_event_turn_still_completes() -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("connect exceeded 10s"))??;
         let subscribe_id = client
-            .subscribe_with_info(None, None, Some(session.id.clone()), false, false)
+            .subscribe_with_info(None, Some(session.id.clone()), false, false)
             .await?;
         wait_for_done(&mut client, subscribe_id, "slow first event attach").await?;
         let message_id = client.send_message("slow first event").await?;

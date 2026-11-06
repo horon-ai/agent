@@ -165,7 +165,6 @@ async fn cold_resume_with_agent(
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
-    let mut client_selfdev = false;
     let mut client_session_id = temporary_session_id.to_string();
 
     let agent = handle_resume_session(
@@ -175,7 +174,6 @@ async fn cold_resume_with_agent(
         None,
         true,
         true,
-        &mut client_selfdev,
         &mut client_session_id,
         connection_id,
         &mut Arc::clone(provisional_agent),
@@ -724,7 +722,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
             let event_history = Arc::new(RwLock::new(VecDeque::<SwarmEvent>::new()));
             let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
-            let mut client_selfdev = false;
             let mut connection_id = source_id.to_string();
             tokio::select! {
                 biased;
@@ -736,7 +733,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     None,
                     false,
                     false,
-                    &mut client_selfdev,
                     &mut connection_id,
                     "conn_cancel",
                     &mut agent,

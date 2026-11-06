@@ -946,8 +946,6 @@ fn create_transfer_child_session(
     child.improve_mode = parent.improve_mode;
     child.autoreview_enabled = parent.autoreview_enabled;
     child.autojudge_enabled = parent.autojudge_enabled;
-    child.is_canary = parent.is_canary;
-    child.testing_build = parent.testing_build.clone();
     child.provider_session_id = None;
     child.status = crate::session::SessionStatus::Closed;
     child.save()?;

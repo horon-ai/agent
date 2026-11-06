@@ -64,7 +64,7 @@ done, regardless of what else it fixes.
 |`[features] mermaid`|`false`|`true`; `HORON_AGENT_ENABLE_MERMAID` for one process|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
-Tools outside the core set (swarm, memory, selfdev, panels, calendar, gmail,
+Tools outside the core set (swarm, memory, panels, calendar, gmail,
 session search, todo, irc) stay in the tree but off.
 `irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
 it to every non-empty allow list, and with the switch off it refuses to run

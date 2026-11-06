@@ -14,19 +14,14 @@ mod bash;
 mod bash_interceptor;
 mod batch;
 mod bg;
-#[cfg(unix)]
-pub(crate) mod bridge_reload;
 mod calendar;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
 mod communicate;
-mod compile_remote;
 mod config_edit_notice;
 mod context_notes;
 mod conversation_search;
-mod debug_socket;
-mod desktop_selfdev;
 mod discover;
 mod discover_secrets;
 mod edit;
@@ -60,7 +55,6 @@ mod read_selector;
 pub(crate) mod read_state;
 mod replace;
 pub(crate) mod sdk;
-pub mod selfdev;
 pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
 mod session_search;
@@ -982,12 +976,6 @@ impl Registry {
         if build_allows("bash") {
             Self::insert_tool_timed(&mut m, &mut timings, "bash", bash::BashTool::new);
         }
-        Self::insert_tool_timed(
-            &mut m,
-            &mut timings,
-            "compile_remote",
-            compile_remote::CompileRemoteTool::new,
-        );
         if build_allows("webfetch") {
             Self::insert_tool_timed(&mut m, &mut timings, "webfetch", webfetch::WebFetchTool::new);
         }
@@ -1035,17 +1023,6 @@ impl Registry {
         }
         if build_allows("schedule") {
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
-        }
-        if build_allows("selfdev") {
-            Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
-        }
-        if build_allows("desktop_selfdev") {
-            Self::insert_tool_timed(
-                &mut m,
-                &mut timings,
-                "desktop_selfdev",
-                desktop_selfdev::DesktopSelfDevTool::new,
-            );
         }
         let nonzero: Vec<String> = timings
             .iter()
@@ -2083,34 +2060,6 @@ impl Registry {
                 resolved_name
             );
         }
-        // Enforce product separation here too: batch/subcalls dispatch through
-        // the registry without going through Agent::validate_tool_allowed.
-        if !is_custom
-            && matches!(
-                resolved_name,
-                "selfdev" | "debug_socket" | "desktop_selfdev" | "horon_agent_docs"
-            )
-        {
-            let desktop = ctx
-                .working_dir
-                .as_deref()
-                .and_then(horon_agent_selfdev_types::desktop_repo_root)
-                .is_some();
-            if desktop && resolved_name == "horon_agent_docs" {
-                anyhow::bail!(
-                    "Tool 'horon_agent_docs' is disabled in Desktop self-development mode. Read the working tree documentation instead."
-                );
-            }
-            if desktop && matches!(resolved_name, "selfdev" | "debug_socket") {
-                anyhow::bail!(
-                    "Tool '{}' targets HoronAgent CLI, not Desktop. Use 'desktop_selfdev'.",
-                    resolved_name
-                );
-            }
-            if !desktop && resolved_name == "desktop_selfdev" {
-                anyhow::bail!("Tool 'desktop_selfdev' requires a HoronAgent Desktop source checkout.");
-            }
-        }
         if !is_custom && let Some(policy) = session_tool_policy(&ctx.session_id) {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !self.tool_is_allowed(allowed, resolved_name)
@@ -3105,19 +3054,6 @@ impl Registry {
                 }
             });
         }
-    }
-
-    /// Register self-dev tools (only for canary/self-dev sessions)
-    pub async fn register_selfdev_tools(&self) {
-        // Self-dev management tool
-        let selfdev_tool = selfdev::SelfDevTool::new();
-        self.register("selfdev".to_string(), Arc::new(selfdev_tool) as Arc<dyn Tool>)
-            .await;
-
-        // Debug socket tool for direct debug socket access
-        let debug_socket_tool = debug_socket::DebugSocketTool::new();
-        self.register("debug_socket".to_string(), Arc::new(debug_socket_tool) as Arc<dyn Tool>)
-            .await;
     }
 
     /// Register `request_permission` for runs that are not ambient sessions.

@@ -103,7 +103,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
 
-    let mut client_selfdev = false;
     let mut client_session_id = temp_session_id.to_string();
     let writer_guard = writer.lock().await;
     let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
@@ -141,7 +140,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
                         None,
                         false,
                         false,
-                        &mut client_selfdev,
                         &mut client_session_id,
                         "conn_restore",
                         &mut agent,

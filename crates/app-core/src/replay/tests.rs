@@ -608,15 +608,15 @@ fn test_auto_edit_compresses_post_tool_idle_gap() {
         TimelineEvent {
             t: 1500,
             kind: TimelineEventKind::ToolStart {
-                name: "selfdev".into(),
-                input: serde_json::json!({"action": "reload"}),
+                name: "bash".into(),
+                input: serde_json::json!({"command": "cargo build"}),
             },
         },
         TimelineEvent {
             t: 2500,
             kind: TimelineEventKind::ToolDone {
-                name: "selfdev".into(),
-                output: "Reload initiated. Process restarting...".into(),
+                name: "bash".into(),
+                output: "Finished dev profile".into(),
                 is_error: false,
             },
         },
@@ -627,7 +627,7 @@ fn test_auto_edit_compresses_post_tool_idle_gap() {
         TimelineEvent {
             t: 49000,
             kind: TimelineEventKind::StreamText {
-                text: "Reloaded.".into(),
+                text: "Built.".into(),
                 speed: 80,
             },
         },

@@ -10,8 +10,7 @@ fn auxiliary_wire_and_borrowed_consumers_preserve_canonical_originals() {
             "reason":"capture","session_id":"aux-contract","working_dir":"/inert",
             "provider":"openai","model":"fixture","horon_agent_version":"fixture",
             "horon_agent_git_hash":null,"horon_agent_git_dirty":null,"os":"fixture",
-            "arch":"fixture","pid":u32::MAX,"is_selfdev":false,"is_debug":true,
-            "is_canary":false,"testing_build":null,"working_git":null
+            "arch":"fixture","pid":u32::MAX,"is_debug":true,"working_git":null
         }),
         json!({
             "aux_kind":"memory_injection","summary":"retained","content":"inert",
@@ -38,10 +37,14 @@ fn auxiliary_wire_and_borrowed_consumers_preserve_canonical_originals() {
     .seal()
     .unwrap();
     // Golden original hashes captured before changing the enum representation.
+    // The env_snapshot pair was re-captured after the retired canary and
+    // self-dev snapshot fields were removed; every other pair is unchanged. A
+    // payload schema change must re-capture its own pair from the
+    // `AUXILIARY_WIRE` output below, never relax the assertion.
     let expected_hashes = [
         (
-            "f458f3e79c7536b8ec381008d1656c55e987839a04c92ab2e3f78d49e3695d10",
-            "630454dad6a6259afda4a27a0314e6ab3616904b93b01ca9cdb60e6ffde0bcf9",
+            "cd0eec89f75e29fd613f55a5bd481249a526ece2974c614018c083ec45fd8e95",
+            "2e4423268fcedebc6e2fb47318a858b6e63dc6f731c9b24d95fb38341ff31ffa",
         ),
         (
             "0690a118ebd2730850d8bb38ba89c57dcde2d2da98797a2cdb447480aaf28d2c",

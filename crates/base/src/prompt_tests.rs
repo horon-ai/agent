@@ -21,7 +21,6 @@ fn mermaid_prompt_module_follows_capability() {
     let (enabled, _) = build_system_prompt_split_with_capabilities(
         None,
         &[],
-        false,
         None,
         None,
         PromptCapabilities {
@@ -34,7 +33,6 @@ fn mermaid_prompt_module_follows_capability() {
     let (disabled, _) = build_system_prompt_split_with_capabilities(
         None,
         &[],
-        false,
         None,
         None,
         PromptCapabilities {
@@ -59,7 +57,7 @@ fn mermaid_section_is_off_by_default_and_the_env_override_turns_it_on() {
     crate::config::invalidate_config_cache();
 
     assert!(!PromptCapabilities::default().mermaid, "the shipped default is off");
-    let (default_split, _) = build_system_prompt_split(None, &[], false, None, None);
+    let (default_split, _) = build_system_prompt_split(None, &[], None, None);
     assert!(
         !default_split.static_part.contains(MERMAID_PROMPT),
         "the default prompt split carries no Mermaid module"
@@ -67,7 +65,7 @@ fn mermaid_section_is_off_by_default_and_the_env_override_turns_it_on() {
 
     crate::env::set_var("HORON_AGENT_ENABLE_MERMAID", "1");
     crate::config::invalidate_config_cache();
-    let (enabled_split, _) = build_system_prompt_split(None, &[], false, None, None);
+    let (enabled_split, _) = build_system_prompt_split(None, &[], None, None);
     assert!(
         enabled_split.static_part.contains("# Mermaid"),
         "HORON_AGENT_ENABLE_MERMAID=1 still adds the Mermaid module"
@@ -144,8 +142,8 @@ fn full_and_split_prompt_builders_use_the_same_one_line_skill_descriptions() {
     }];
     let expected = build_available_skills_section(&skills).expect("skills section");
 
-    let (full, full_info) = build_system_prompt_full(None, &skills, false, None, None);
-    let (split, split_info) = build_system_prompt_split(None, &skills, false, None, None);
+    let (full, full_info) = build_system_prompt_full(None, &skills, None, None);
+    let (split, split_info) = build_system_prompt_split(None, &skills, None, None);
 
     assert!(full.contains(&expected));
     assert!(split.static_part.contains(&expected));
@@ -350,11 +348,11 @@ fn skill_snapshot_budget_bounded_section_reaches_both_prompt_builders() {
     let infos = padded_skill_infos(1_000, "skill");
     let section = build_available_skills_section(&infos).expect("skills section");
 
-    let (full, full_info) = build_system_prompt_full(None, &infos, false, None, None);
+    let (full, full_info) = build_system_prompt_full(None, &infos, None, None);
     assert!(full.contains(&section));
     assert_eq!(full_info.skills_chars, section.len());
 
-    let (split, split_info) = build_system_prompt_split(None, &infos, false, None, None);
+    let (split, split_info) = build_system_prompt_split(None, &infos, None, None);
     assert!(split.static_part.contains(&section));
     assert_eq!(split_info.skills_chars, section.len());
 }
@@ -439,10 +437,9 @@ fn captured_agents_md_keeps_split_prompt_stable_after_file_write() {
     let snapshot = load_agents_md_files_from_dirs(project_dir.path(), None);
 
     let (before, _) =
-        build_system_prompt_split_with_agents_md(None, &[], false, None, Some(project_dir.path()), snapshot.clone());
+        build_system_prompt_split_with_agents_md(None, &[], None, Some(project_dir.path()), snapshot.clone());
     std::fs::write(&agents_md, "instructions written during the session").unwrap();
-    let (after, _) =
-        build_system_prompt_split_with_agents_md(None, &[], false, None, Some(project_dir.path()), snapshot);
+    let (after, _) = build_system_prompt_split_with_agents_md(None, &[], None, Some(project_dir.path()), snapshot);
 
     assert_eq!(before.static_part, after.static_part);
     assert!(after.static_part.contains("original session instructions"));
@@ -452,7 +449,7 @@ fn captured_agents_md_keeps_split_prompt_stable_after_file_write() {
     // pinning the old instructions forever.
     let fresh_snapshot = load_agents_md_files_from_dirs(project_dir.path(), None);
     let (next_session, _) =
-        build_system_prompt_split_with_agents_md(None, &[], false, None, Some(project_dir.path()), fresh_snapshot);
+        build_system_prompt_split_with_agents_md(None, &[], None, Some(project_dir.path()), fresh_snapshot);
     assert!(
         next_session
             .static_part
@@ -538,7 +535,7 @@ fn session_datetime_formats_utc_fallback_deterministically() {
 
 #[test]
 fn test_split_prompt_does_not_inject_session_context_per_turn() {
-    let (split, _info) = build_system_prompt_split(None, &[], false, None, None);
+    let (split, _info) = build_system_prompt_split(None, &[], None, None);
     assert!(!split.dynamic_part.contains("# Session Context"));
     assert!(!split.dynamic_part.contains("Time: "));
     assert!(!split.dynamic_part.contains("Timezone: UTC"));
@@ -546,7 +543,7 @@ fn test_split_prompt_does_not_inject_session_context_per_turn() {
 
 #[test]
 fn sponsored_discovery_is_not_injected_into_the_system_prompt() {
-    let (split, _) = build_system_prompt_split(None, &[], false, None, None);
+    let (split, _) = build_system_prompt_split(None, &[], None, None);
     assert!(!split.static_part.contains("Discoverable Tools"));
     assert!(!split.static_part.contains("integration_tools"));
 }
@@ -585,7 +582,7 @@ fn test_prompt_overlay_files_are_loaded_from_project_and_global_horon_agent_dirs
         "expected global prompt overlay content"
     );
 
-    let (prompt, info) = build_system_prompt_full(None, &[], false, None, Some(project_dir.path()));
+    let (prompt, info) = build_system_prompt_full(None, &[], None, Some(project_dir.path()));
     assert!(prompt.contains("project prompt overlay instructions"));
     assert!(prompt.contains("global prompt overlay instructions"));
     assert!(info.prompt_overlay_chars > 0);
@@ -639,12 +636,12 @@ fn test_preferred_tools_files_are_loaded_from_project_and_global_horon_agent_dir
         "expected global preferred tools content"
     );
 
-    let (prompt, info) = build_system_prompt_full(None, &[], false, None, Some(project_dir.path()));
+    let (prompt, info) = build_system_prompt_full(None, &[], None, Some(project_dir.path()));
     assert!(prompt.contains("project preferred tools instructions"));
     assert!(prompt.contains("global preferred tools instructions"));
     assert!(info.preferred_tools_chars > 0);
 
-    let (split, split_info) = build_system_prompt_split(None, &[], false, None, Some(project_dir.path()));
+    let (split, split_info) = build_system_prompt_split(None, &[], None, Some(project_dir.path()));
     assert!(split.static_part.contains("project preferred tools instructions"));
     assert!(split.static_part.contains("global preferred tools instructions"));
     assert!(split_info.preferred_tools_chars > 0);
@@ -707,74 +704,8 @@ fn test_default_swarm_prompt_mentions_model_and_list_models() {
 }
 
 #[test]
-fn test_non_selfdev_prompt_leaves_selfdev_guidance_to_the_tool_schema() {
-    let prompt = build_system_prompt(None, &[]);
-    assert!(!prompt.contains("Self-Development Access"));
-    assert!(!prompt.contains("You have access to the `selfdev` tool in all sessions"));
-    assert!(!prompt.contains("You are working on the horon-agent codebase itself."));
-}
-
-#[test]
-fn test_selfdev_prompt_uses_full_selfdev_instructions() {
-    let prompt = build_system_prompt_with_selfdev(None, &[], true);
-    assert!(prompt.contains("You are working on the horon-agent codebase itself."));
-    assert!(prompt.contains("launched from the TUI/root horon-agent context"));
-    assert!(prompt.contains("selfdev build target=tui"));
-    assert!(!prompt.contains("Self-Development Access"));
-}
-
-#[test]
-fn test_split_selfdev_prompt_defaults_to_tui_focus_for_repo_root() {
-    let repo_dir = std::path::Path::new("/tmp/horon-agent");
-    let (split, _info) = build_system_prompt_split(None, &[], true, None, Some(repo_dir));
-    assert!(
-        split
-            .static_part
-            .contains("launched from the TUI/root horon-agent context")
-    );
-    assert!(split.static_part.contains("selfdev build target=tui"));
-}
-
-#[test]
-fn test_selfdev_prompt_prefers_publish_flow_for_active_builds() {
-    let prompt = build_system_prompt_with_selfdev(None, &[], true);
-    assert!(prompt.contains("selfdev build"));
-    assert!(prompt.contains("cancel-build"));
-    assert!(prompt.contains("selfdev reload"));
-    assert!(prompt.contains("fallback when `selfdev build` is not appropriate"));
-    assert!(prompt.contains("scripts/dev/cargo.sh build --profile selfdev -p horon-agent --bin horon-agent"));
-    assert!(prompt.contains("remote build host is configured"));
-    assert!(prompt.contains("Do not wait for user input"));
-}
-
-#[test]
-fn test_selfdev_prompt_welcomes_outside_contributions() {
-    let full = build_system_prompt_with_selfdev(None, &[], true);
-    let (split, _) = build_system_prompt_split(None, &[], true, None, None);
-
-    for prompt in [&full, &split.static_part] {
-        assert!(prompt.contains("Pull requests from everyone are welcome"));
-        assert!(prompt.contains("Good PRs can be merged directly after review and validation"));
-        assert!(prompt.contains("Do not require a maintainer-authored rewrite"));
-        assert!(prompt.contains("preserve unrelated changes"));
-        assert!(prompt.contains("merge a PR without user authorization"));
-    }
-}
-
-#[test]
-fn test_selfdev_prompt_template_placeholders_are_resolved() {
-    let static_prompt = build_selfdev_prompt_static();
-    let dynamic_prompt = build_selfdev_prompt();
-    assert!(!static_prompt.contains("__DEBUG_SOCKET_BLOCK__"));
-    assert!(!dynamic_prompt.contains("__DEBUG_SOCKET_BLOCK__"));
-    assert!(!static_prompt.contains("__SELFDEV_PRODUCT_FOCUS__"));
-    assert!(!dynamic_prompt.contains("__SELFDEV_PRODUCT_FOCUS__"));
-    assert_eq!(static_prompt, dynamic_prompt);
-}
-
-#[test]
 fn split_prompt_estimated_tokens_is_positive_when_populated() {
-    let (split, _info) = build_system_prompt_split(None, &[], false, None, None);
+    let (split, _info) = build_system_prompt_split(None, &[], None, None);
     assert!(split.chars() > 0);
     assert!(split.estimated_tokens() > 0);
 }
@@ -856,7 +787,7 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
 
     assert_eq!(load_base_system_prompt(Some(&dir)), "You are a custom agent.");
 
-    let (prompt, _info) = build_system_prompt_full(None, &[], false, None, Some(&dir));
+    let (prompt, _info) = build_system_prompt_full(None, &[], None, Some(&dir));
     assert!(prompt.contains("You are a custom agent."));
     assert!(!prompt.contains("HoronAgent is open source"));
 
@@ -865,140 +796,6 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
     assert_eq!(load_base_system_prompt(Some(&dir)), DEFAULT_SYSTEM_PROMPT);
 
     std::fs::remove_dir_all(&dir).ok();
-}
-
-fn desktop_prompt_checkout() -> tempfile::TempDir {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(root.path().join("crates/horon-agent-desktop-ui/src")).unwrap();
-    std::fs::write(
-        root.path().join("Cargo.toml"),
-        "[package]\nname = 'horon-agent-desktop'\nversion = '0.1.0'\n",
-    )
-    .unwrap();
-    root
-}
-
-#[test]
-fn desktop_prompt_auto_detects_and_overrides_cli_in_full_and_split_modes() {
-    let root = desktop_prompt_checkout();
-    for relative in ["", "crates/horon-agent-desktop-ui/src"] {
-        let cwd = root.path().join(relative);
-        for cli_selfdev in [false, true] {
-            let (full, full_info) = build_system_prompt_full(None, &[], cli_selfdev, None, Some(&cwd));
-            let (split, split_info) = build_system_prompt_split(None, &[], cli_selfdev, None, Some(&cwd));
-            for prompt in [&full, &split.static_part] {
-                assert!(prompt.contains("# HoronAgent Desktop Self-Development Mode"));
-                assert!(prompt.contains(DESKTOP_SELFDEV_MODE_PROMPT));
-                assert!(!prompt.contains("# Self-Development Mode"));
-                assert!(!prompt.contains("selfdev build target=tui"));
-                assert!(!prompt.contains("You are working on the horon-agent codebase itself."));
-            }
-            assert!(
-                !split
-                    .dynamic_part
-                    .contains("# HoronAgent Desktop Self-Development Mode")
-            );
-            assert_eq!(full_info.selfdev_chars, DESKTOP_SELFDEV_MODE_PROMPT.len());
-            assert_eq!(split_info.selfdev_chars, DESKTOP_SELFDEV_MODE_PROMPT.len());
-        }
-        assert!(build_session_context(Some(&cwd), &[]).contains("Self-development mode: desktop"));
-    }
-}
-
-#[test]
-fn prompt_lists_additional_directories() {
-    let cwd = tempfile::tempdir().unwrap();
-    let extra = vec!["/work/libs/a".to_string(), "/work/libs/b".to_string()];
-
-    let context = build_session_context(Some(cwd.path()), &extra);
-
-    let working = format!("Working directory: {}", cwd.path().display());
-    let directories = "Additional directories: /work/libs/a, /work/libs/b";
-    assert!(context.contains(&working), "{context}");
-    assert!(context.contains(directories), "{context}");
-    let working_line = context.find(&working).unwrap();
-    let directories_line = context.find(directories).unwrap();
-    assert!(
-        directories_line > working_line,
-        "the extra directories follow the working directory: {context}"
-    );
-    assert!(
-        !build_session_context(Some(cwd.path()), &[]).contains("Additional directories:"),
-        "a session with no extra directories says nothing about them"
-    );
-}
-
-#[test]
-fn accepted_directories_line_marks_an_empty_list() {
-    assert_eq!(
-        additional_directories_line(&[]),
-        "Additional directories: (none)",
-        "a reminder that clears the list has to say so"
-    );
-    assert_eq!(
-        additional_directories_line(&["/one".to_string()]),
-        "Additional directories: /one"
-    );
-}
-
-#[test]
-fn desktop_prompt_leaves_normal_and_cli_sessions_unchanged() {
-    assert!(!is_desktop_working_dir(None));
-    let unrelated = tempfile::tempdir().unwrap();
-    for cli_selfdev in [false, true] {
-        let (full, full_info) = build_system_prompt_full(None, &[], cli_selfdev, None, Some(unrelated.path()));
-        let (split, split_info) = build_system_prompt_split(None, &[], cli_selfdev, None, Some(unrelated.path()));
-        for prompt in [&full, &split.static_part] {
-            assert!(!prompt.contains("# HoronAgent Desktop Self-Development Mode"));
-            assert_eq!(prompt.contains("# Self-Development Mode"), cli_selfdev);
-        }
-        assert_eq!(full_info.selfdev_chars > 0, cli_selfdev);
-        assert_eq!(split_info.selfdev_chars > 0, cli_selfdev);
-    }
-    assert!(!build_session_context(Some(unrelated.path()), &[]).contains("Self-development mode: desktop"));
-}
-
-#[test]
-fn desktop_prompt_documents_safe_product_specific_workflow() {
-    for action in [
-        "status",
-        "build",
-        "reload",
-        "build-reload",
-        "reload-bridge",
-        "test",
-        "screenshot",
-        "inspect",
-    ] {
-        assert!(DESKTOP_SELFDEV_MODE_PROMPT.contains(&format!("`{action}`")));
-    }
-    for instruction in [
-        "desktop_selfdev",
-        "Ctrl+R",
-        "must not rebuild the CLI",
-        "preserving the current application state",
-        "require a safe restart, not UI hot reload",
-        "scripts/screenshot.py",
-        "Do not depend on niri",
-    ] {
-        assert!(
-            DESKTOP_SELFDEV_MODE_PROMPT.contains(instruction),
-            "missing {instruction}"
-        );
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn desktop_prompt_detects_symlinked_nested_working_directory() {
-    let root = desktop_prompt_checkout();
-    let links = tempfile::tempdir().unwrap();
-    let link = links.path().join("renamed-ui");
-    std::os::unix::fs::symlink(root.path().join("crates/horon-agent-desktop-ui/src"), &link).unwrap();
-    let (full, _) = build_system_prompt_full(None, &[], false, None, Some(&link));
-    let (split, _) = build_system_prompt_split(None, &[], false, None, Some(&link));
-    assert!(full.contains(DESKTOP_SELFDEV_MODE_PROMPT));
-    assert!(split.static_part.contains(DESKTOP_SELFDEV_MODE_PROMPT));
 }
 
 // Restore HORON_AGENT_HOME even when a regression assertion panics.
@@ -1029,8 +826,8 @@ fn prompt_guidance_same_project_and_global_paths_are_loaded_once() {
         std::fs::write(home.join(".horon-agent/prompt-overlay.md"), overlay).unwrap();
         std::fs::write(home.join(".horon-agent/preferred-tools.md"), tools).unwrap();
 
-        let (full, full_info) = build_system_prompt_full(None, &[], false, None, Some(home));
-        let (split, split_info) = build_system_prompt_split(None, &[], false, None, Some(home));
+        let (full, full_info) = build_system_prompt_full(None, &[], None, Some(home));
+        let (split, split_info) = build_system_prompt_split(None, &[], None, Some(home));
         for prompt in [&full, &split.static_part] {
             assert_eq!(prompt.matches(overlay.trim()).count(), 1);
             assert_eq!(prompt.matches(tools.trim()).count(), 1);
@@ -1128,7 +925,6 @@ fn foreign_rules_section_is_absent_unless_enabled() {
     let (off, _) = build_system_prompt_split_with_capabilities(
         None,
         &[],
-        false,
         None,
         Some(project.path()),
         PromptCapabilities {
@@ -1142,7 +938,6 @@ fn foreign_rules_section_is_absent_unless_enabled() {
     let (on, info) = build_system_prompt_split_with_capabilities(
         None,
         &[],
-        false,
         None,
         Some(project.path()),
         PromptCapabilities {
@@ -1246,7 +1041,6 @@ fn foreign_rules_section_follows_native_agents_md() {
     let (prompt, _) = build_system_prompt_full_with_capabilities(
         None,
         &[],
-        false,
         None,
         Some(project.path()),
         PromptCapabilities {

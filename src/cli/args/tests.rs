@@ -44,7 +44,6 @@ fn native_ssh_attach_arguments_parse_and_do_not_steal_local_socket() {
         "/run/native/horon-agent.sock",
         "--remote-working-dir",
         "/srv/project",
-        "self-dev",
     ])
     .unwrap();
     assert_eq!(args.ssh.as_deref(), Some("dev"));

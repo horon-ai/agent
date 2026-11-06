@@ -143,7 +143,7 @@ pub fn run_menubar_command(once: bool, json: bool) -> Result<()> {
 /// Failures are silently ignored so they never disrupt normal session startup.
 ///
 /// The macOS menu bar is a single per-login-session resource, so this guards
-/// hard against sandboxed horon-agent processes (tests, self-dev, onboarding) ever
+/// hard against sandboxed horon-agent processes (tests, onboarding) ever
 /// spawning a helper: each such process runs with a throwaway `$HORON_AGENT_HOME`,
 /// and without this guard every distinct sandbox home spawned its own helper
 /// and drew its own duplicate status item into the one real menu bar.
@@ -157,7 +157,7 @@ pub fn ensure_menubar_helper_running() {
         return;
     }
 
-    // Sandboxed horon-agent (tests / self-dev / onboarding, anything with a throwaway
+    // Sandboxed horon-agent (tests / onboarding, anything with a throwaway
     // `$HORON_AGENT_HOME`) must never manage the real user's global menu bar.
     if running_in_menubar_sandbox() {
         return;
@@ -266,7 +266,7 @@ fn menubar_helper_pids(ps_output: &str, self_pid: u32) -> Vec<u32> {
 ///
 /// The macOS menu bar is a single per-login-session resource shared by every
 /// horon-agent process for this user, so this state must live at a fixed location
-/// that does **not** depend on `$HORON_AGENT_HOME`. Sandboxes (tests, self-dev,
+/// that does **not** depend on `$HORON_AGENT_HOME`. Sandboxes (tests,
 /// onboarding) override `$HORON_AGENT_HOME` with throwaway temp dirs; anchoring to
 /// the real home (`$HOME/.horon-agent`) gives every process the same lock inode so
 /// the singleton actually holds across them. For a normal (non-sandboxed)
@@ -549,7 +549,7 @@ mod macos {
 
         // Enforce a single live menu bar helper. The pid-file fast path in
         // `ensure_menubar_helper_running` is best-effort and can race or be
-        // bypassed entirely (e.g. a self-dev `target/.../horon-agent` and the
+        // bypassed entirely (e.g. a source-built `target/.../horon-agent` and the
         // installed `~/.local/bin/horon-agent` both spawn helpers, or a reload
         // re-runs startup). Without a hard guard each extra helper creates its
         // own NSStatusItem, so the user ends up with a duplicate menu bar item

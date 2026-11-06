@@ -42,7 +42,6 @@ members = [
     "crates/swarm-core",
     "crates/irc-core",
     "crates/protocol",
-    "crates/selfdev-types",
     "crates/session-types",
     "crates/session-store",
     "crates/setup-hints",
@@ -134,7 +133,6 @@ horon-agent-build-meta = { path = "crates/build-meta" }
 horon-agent-app-core = { path = "crates/app-core", default-features = false }
 horon-agent-voice = { path = "crates/voice" }
 horon-agent-companion = { path = "crates/companion" }
-horon-agent-selfdev-types = { path = "crates/selfdev-types" }
 
 # Archive extraction (for auto-update)
 tempfile = "3"

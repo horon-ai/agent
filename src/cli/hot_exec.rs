@@ -158,7 +158,7 @@ pub fn run_auto_update() -> Result<()> {
     crate::logging::info(&format!("Updated to {}. Restarting...", version));
     std::thread::sleep(std::time::Duration::from_millis(250));
 
-    let exe = build::client_update_candidate(false)
+    let exe = build::client_update_candidate()
         .map(|(p, _)| p)
         .or_else(|| std::env::current_exe().ok())
         .ok_or_else(|| anyhow::anyhow!("No executable path found after update"))?;
@@ -170,7 +170,7 @@ pub fn run_auto_update() -> Result<()> {
 }
 
 /// Explicit updates follow the configured channel for release and dev builds alike.
-/// Source rebuilds belong to self-dev and /rebuild, not the stable update path.
+/// Source rebuilds belong to /rebuild, not the stable update path.
 pub fn run_update() -> Result<()> {
     super::output::print_centered("Checking GitHub for latest release...");
     match update::check_for_update_blocking() {
@@ -233,7 +233,7 @@ fn repair_stale_shared_server_after_update_check() -> bool {
 }
 
 fn reload_server_after_update(reason: &str) {
-    let exe = build::client_update_candidate(false)
+    let exe = build::client_update_candidate()
         .map(|(path, _)| path)
         .or_else(|| std::env::current_exe().ok());
     let Some(exe) = exe else {

@@ -616,9 +616,6 @@ pub(super) async fn handle_client(
     // Working directory of the last accepted Subscribe; editor servers fall
     // back to it when the session agent is busy at configure time.
     let mut subscribed_working_dir: Option<std::path::PathBuf> = None;
-    // Client selfdev status is determined by Subscribe request, not server's env
-    let mut client_selfdev = false;
-
     let client_start = std::time::Instant::now();
 
     let provider = provider_template.fork_for_new_session();
@@ -1596,7 +1593,6 @@ pub(super) async fn handle_client(
                     active_terminal_env.clone(),
                     handle_clear_session(
                         id,
-                        client_selfdev,
                         &mut client_session_id,
                         &client_connection_id,
                         &agent,
@@ -1792,7 +1788,6 @@ pub(super) async fn handle_client(
                 supports_user_response: requested_user_response,
                 supports_ask_requests: requested_ask_requests,
                 working_dir: subscribe_working_dir,
-                selfdev,
                 target_session_id,
                 client_instance_id,
                 client_has_local_history,
@@ -1874,7 +1869,6 @@ pub(super) async fn handle_client(
                                 client_instance_id.as_deref(),
                                 client_has_local_history,
                                 allow_session_takeover,
-                                &mut client_selfdev,
                                 &mut client_session_id,
                                 &client_connection_id,
                                 &mut agent,
@@ -1920,9 +1914,7 @@ pub(super) async fn handle_client(
                             handle_subscribe(
                                 id,
                                 subscribe_working_dir,
-                                selfdev,
                                 false,
-                                &mut client_selfdev,
                                 &client_session_id,
                                 &client_connection_id,
                                 &friendly_name,
@@ -1966,9 +1958,7 @@ pub(super) async fn handle_client(
                         handle_subscribe(
                             id,
                             subscribe_working_dir,
-                            selfdev,
                             true,
-                            &mut client_selfdev,
                             &client_session_id,
                             &client_connection_id,
                             &friendly_name,
@@ -1996,9 +1986,7 @@ pub(super) async fn handle_client(
                     handle_subscribe(
                         id,
                         subscribe_working_dir,
-                        selfdev,
                         true,
-                        &mut client_selfdev,
                         &client_session_id,
                         &client_connection_id,
                         &friendly_name,
@@ -2212,7 +2200,6 @@ pub(super) async fn handle_client(
                         client_instance_id.as_deref(),
                         client_has_local_history,
                         allow_session_takeover,
-                        &mut client_selfdev,
                         &mut client_session_id,
                         &client_connection_id,
                         &mut agent,

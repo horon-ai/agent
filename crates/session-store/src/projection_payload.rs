@@ -48,43 +48,10 @@ fn check_metadata(payload: &Value) -> Result<(), StoreError> {
         .get("metadata")
         .and_then(Value::as_object)
         .ok_or_else(|| StoreError::invalid_request(StoreErrorCode::InvalidRecord, "metadata must be an object"))?;
-    for key in metadata.keys() {
-        if !matches!(
-            key.as_str(),
-            "parent_id"
-                | "title"
-                | "custom_title"
-                | "created_at"
-                | "updated_at"
-                | "system_prompt"
-                | "model_usage_turn_id"
-                | "provider_session_id"
-                | "cache_root_id"
-                | "provider_key"
-                | "plugin_id"
-                | "model"
-                | "route_api_method"
-                | "reasoning_effort"
-                | "subagent_model"
-                | "agent_model_overrides"
-                | "improve_mode"
-                | "autoreview_enabled"
-                | "autojudge_enabled"
-                | "is_canary"
-                | "testing_build"
-                | "working_dir"
-                | "short_name"
-                | "saved"
-                | "save_label"
-                | "migration_epoch"
-                | "legacy_extensions"
-        ) {
-            return Err(StoreError::invalid_request(
-                StoreErrorCode::InvalidRecord,
-                format!("metadata field {key} must be preserved as inert legacy auxiliary/extension"),
-            ));
-        }
-    }
+    // Legacy builds wrote metadata this build no longer interprets (for
+    // example canary-only session flags). It deserializes into
+    // `legacy_extensions` and is preserved inert, so only keys that belong to
+    // another event kind are refused.
     let parsed: SessionMetadata = decode(&Value::Object(metadata.clone()))?;
     for key in parsed.legacy_extensions.keys() {
         if matches!(

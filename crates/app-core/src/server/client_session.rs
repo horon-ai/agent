@@ -44,10 +44,8 @@ pub(super) fn session_was_interrupted_by_reload(agent: &Agent) -> bool {
     last.content.iter().any(|block| match block {
         ContentBlock::Text { text, .. } => text.ends_with("[generation interrupted - server reloading]"),
         ContentBlock::ToolResult { content, is_error, .. } => {
-            content == "Reload initiated. Process restarting..."
-                || (is_error.unwrap_or(false)
-                    && (content.contains("interrupted by server reload")
-                        || content.contains("Skipped - server reloading")))
+            is_error.unwrap_or(false)
+                && (content.contains("interrupted by server reload") || content.contains("Skipped - server reloading"))
         }
         _ => false,
     })
@@ -130,7 +128,6 @@ async fn rename_shutdown_signal(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_clear_session(
     id: u64,
-    client_selfdev: bool,
     client_session_id: &mut String,
     client_connection_id: &str,
     agent: &Arc<Mutex<Agent>>,
@@ -160,7 +157,6 @@ pub(super) async fn handle_clear_session(
             ("request_id", id.to_string()),
             ("session_id", old_session_id.clone()),
             ("client_connection_id", client_connection_id.to_string()),
-            ("client_selfdev", client_selfdev.to_string()),
         ],
     );
     // Clear changes the branch, not the live Agent binding. Map -> try-Agent
@@ -459,28 +455,6 @@ fn apply_or_defer_subscribe_working_dir(agent: &Arc<Mutex<Agent>>, working_dir: 
     });
 }
 
-fn apply_or_defer_subscribe_selfdev(agent: &Arc<Mutex<Agent>>, session_id: &str) {
-    if let Ok(mut agent_guard) = agent.try_lock() {
-        if !agent_guard.is_canary() {
-            agent_guard.set_canary("self-dev");
-        }
-        return;
-    }
-
-    let agent = Arc::clone(agent);
-    let session_id = session_id.to_string();
-    tokio::spawn(async move {
-        let mut agent_guard = agent.lock().await;
-        if !agent_guard.is_canary() {
-            agent_guard.set_canary("self-dev");
-        }
-        crate::logging::info(&format!(
-            "Applied deferred self-dev subscribe metadata for session {}",
-            session_id
-        ));
-    });
-}
-
 /// Apply to the bound agent, not the connection's temporary registry. Like
 /// working-dir updates, a busy live target must not block client attachment.
 pub(super) async fn apply_or_defer_desktop_response_capability(
@@ -505,9 +479,7 @@ pub(super) async fn apply_or_defer_desktop_response_capability(
 pub(super) async fn handle_subscribe(
     id: u64,
     subscribe_working_dir: Option<String>,
-    selfdev: Option<bool>,
     register_mcp_tools: bool,
-    client_selfdev: &mut bool,
     client_session_id: &str,
     client_connection_id: &str,
     friendly_name: &Option<String>,
@@ -706,14 +678,6 @@ pub(super) async fn handle_subscribe(
         }
     }
 
-    let should_selfdev = *client_selfdev || matches!(selfdev, Some(true));
-
-    if should_selfdev {
-        *client_selfdev = true;
-        apply_or_defer_subscribe_selfdev(agent, client_session_id);
-        registry.register_selfdev_tools().await;
-    }
-
     let mcp_register_ms = if register_mcp_tools {
         let mcp_register_start = Instant::now();
         // Resolve project-local MCP config against the session working dir,
@@ -757,10 +721,9 @@ pub(super) async fn handle_subscribe(
     };
 
     crate::logging::info(&format!(
-        "[TIMING] handle_subscribe: session={}, working_dir_set={}, selfdev={}, mcp_register={}ms, total={}ms",
+        "[TIMING] handle_subscribe: session={}, working_dir_set={}, mcp_register={}ms, total={}ms",
         client_session_id,
         subscribe_working_dir.is_some(),
-        should_selfdev,
         mcp_register_ms,
         subscribe_start.elapsed().as_millis(),
     ));
@@ -1017,14 +980,14 @@ pub(super) async fn handle_reload(
     let request_id = crate::id::new_id("reload");
     mark_remote_reload_started(&request_id);
 
-    let (triggering_session, prefer_selfdev_binary) = match agent.try_lock() {
-        Ok(agent_guard) => (Some(agent_guard.session_id().to_string()), agent_guard.is_canary()),
+    let triggering_session = match agent.try_lock() {
+        Ok(agent_guard) => Some(agent_guard.session_id().to_string()),
         Err(_) => {
             crate::logging::warn(&format!(
-                "SERVER_RELOAD_AGENT_BUSY request_id={} client_session_id={} fallback_triggering_session={} prefer_selfdev_binary=false",
+                "SERVER_RELOAD_AGENT_BUSY request_id={} client_session_id={} fallback_triggering_session={}",
                 request_id, client_session_id, client_session_id
             ));
-            (Some(client_session_id.to_string()), false)
+            Some(client_session_id.to_string())
         }
     };
 
@@ -1052,14 +1015,13 @@ pub(super) async fn handle_reload(
     }
 
     let hash = horon_agent_build_meta::git_hash().to_string();
-    let signal_request_id = crate::server::send_reload_signal(hash, triggering_session.clone(), prefer_selfdev_binary);
+    let signal_request_id = crate::server::send_reload_signal(hash, triggering_session.clone());
 
     crate::logging::info(&format!(
-        "handle_reload: queued reload signal {} from remote client request {} (triggering_session={:?}, prefer_selfdev_binary={}, reload_notified_sessions={}, reload_notified_clients={})",
+        "handle_reload: queued reload signal {} from remote client request {} (triggering_session={:?}, reload_notified_sessions={}, reload_notified_clients={})",
         signal_request_id,
         request_id,
         triggering_session,
-        prefer_selfdev_binary,
         live_sessions.len(),
         delivered
     ));
@@ -1277,7 +1239,6 @@ pub(super) async fn handle_resume_session(
     client_instance_id: Option<&str>,
     client_has_local_history: bool,
     allow_session_takeover: bool,
-    client_selfdev: &mut bool,
     client_session_id: &mut String,
     client_connection_id: &str,
     agent: &mut Arc<Mutex<Agent>>,
@@ -1480,21 +1441,6 @@ pub(super) async fn handle_resume_session(
             client_event_tx.clone(),
         )
         .await;
-
-        let is_canary = live_target_agent
-            .try_lock()
-            .ok()
-            .map(|agent_guard| agent_guard.is_canary())
-            .or_else(|| {
-                crate::session::Session::load_startup_stub(&session_id)
-                    .ok()
-                    .map(|session| session.is_canary)
-            })
-            .unwrap_or(false);
-        if is_canary {
-            *client_selfdev = true;
-            registry.register_selfdev_tools().await;
-        }
 
         *client_session_id = session_id.clone();
 
@@ -1723,7 +1669,7 @@ pub(super) async fn handle_resume_session(
     }
 
     let prepare_start = Instant::now();
-    let (result, is_canary) = {
+    let result = {
         // Cold restore: the per-id claim is held, no global close is pending and
         // no live owner exists. The claim is released as soon as this connection
         // has republished the session below; later attaches then take the live path.
@@ -1731,12 +1677,7 @@ pub(super) async fn handle_resume_session(
         // Loading reads on this thread; hand the worker core to the blocking pool
         // so other sessions keep being served while it runs. The resumed state is
         // committed below, after the saved transcript has been delivered.
-        let result = blocking_session_io(|| agent_guard.prepare_restored_session(&session_id, working_dir_override));
-        if *client_selfdev {
-            agent_guard.set_canary("self-dev");
-        }
-        let is_canary = agent_guard.is_canary();
-        (result, is_canary)
+        blocking_session_io(|| agent_guard.prepare_restored_session(&session_id, working_dir_override))
     };
     let prepare_ms = prepare_start.elapsed().as_millis();
 
@@ -1747,11 +1688,6 @@ pub(super) async fn handle_resume_session(
         }
         Err(_) => false,
     };
-
-    if result.is_ok() && is_canary {
-        *client_selfdev = true;
-        registry.register_selfdev_tools().await;
-    }
 
     match result {
         Ok(_prev_status) => {

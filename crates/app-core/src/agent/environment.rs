@@ -111,10 +111,7 @@ impl Agent {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             pid: std::process::id(),
-            is_selfdev: self.session.is_self_dev(),
             is_debug: self.session.is_debug,
-            is_canary: self.session.is_canary,
-            testing_build: self.session.testing_build.clone(),
             working_git,
         }
     }

@@ -1677,41 +1677,6 @@ fn an_available_models_push_updates_the_model() {
     }
 }
 
-#[test]
-fn create_session_in_a_horon_agent_checkout_requests_selfdev() {
-    // Regression: external client opens its own crate, and without the `selfdev`
-    // flag the daemon hands back an agent with no self-dev tools or prompt.
-    let mut state = BridgeState::default();
-    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("workspace root")
-        .join("crates/horon-agent-tui");
-    let out = state.api_request_to_legacy(&json!({
-        "req": "create_session",
-        "id": 1,
-        "working_dir": repo.display().to_string(),
-    }));
-    let Outbound::Legacy(value) = &out[0] else {
-        panic!("expected legacy outbound");
-    };
-    assert_eq!(value["selfdev"], json!(true));
-}
-
-#[test]
-fn create_session_outside_a_checkout_leaves_selfdev_unset() {
-    let mut state = BridgeState::default();
-    let out = state.api_request_to_legacy(&json!({
-        "req": "create_session",
-        "id": 1,
-        "working_dir": "/",
-    }));
-    let Outbound::Legacy(value) = &out[0] else {
-        panic!("expected legacy outbound");
-    };
-    assert!(value.get("selfdev").is_none(), "got {value}");
-}
-
 /// A turn that fails ends with `error` instead of `done`. The bridge must let
 /// go of the pending message, or a later unrelated `done` reusing that legacy
 /// id would be reported to the client as this turn finally finishing, and a

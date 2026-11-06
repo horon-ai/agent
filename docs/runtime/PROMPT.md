@@ -12,13 +12,10 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 1. **기본 시스템 프롬프트** — 내장 `crates/base/src/prompt/system_prompt.md`이며
    파일로 재정의할 수 있다(아래 참고).
 2. 기능 모듈(예: Mermaid 안내).
-3. 제품별 self-dev 안내. HoronAgent Desktop 체크아웃을 뿌리로 한 세션은 CLI·TUI self-dev
-   플래그, `selfdev`, `debug_socket`과 별개로 Desktop 프롬프트와 `desktop_selfdev` 도구를
-   자동으로 받는다.
-4. `AGENTS.md` — 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.md`](TOOLS.md)).
-5. 프롬프트 오버레이 — `./.horon-agent/prompt-overlay.md`와 `~/.horon-agent/prompt-overlay.md`.
-6. 선호 도구 — `./.horon-agent/preferred-tools.md`와 `~/.horon-agent/preferred-tools.md`.
-7. 메모리와 활성 스킬 프롬프트(동적이며 캐시하지 않는다).
+3. `AGENTS.md` — 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.md`](TOOLS.md)).
+4. 프롬프트 오버레이 — `./.horon-agent/prompt-overlay.md`와 `~/.horon-agent/prompt-overlay.md`.
+5. 선호 도구 — `./.horon-agent/preferred-tools.md`와 `~/.horon-agent/preferred-tools.md`.
+6. 메모리와 활성 스킬 프롬프트(동적이며 캐시하지 않는다).
 
 ### 안내 추가 (가장 흔한 작업)
 
@@ -106,8 +103,8 @@ Copilot instructions, Windsurf rules, `GEMINI.md`를 읽는다. 기본 `foreign_
 
 - 이 파일들의 변경은 **새 세션**에 적용된다. 실행 중인 세션은 시작할 때 캡처한 프롬프트를
   유지한다.
-- 내장 `system_prompt.md`를 편집하려면 다시 빌드해야 한다(`selfdev build-reload`).
-  `include_str!`로 내장되기 때문이다.
+- 내장 `system_prompt.md`를 편집하려면 다시 빌드해야 한다. `include_str!`로 내장되기
+  때문이다.
 - Swarm 모델 라우팅 안내에는 비슷한 전용 파일이 있다. `.horon-agent/swarm-prompt.md`다.
   `/swarm-prompt`로 활성 프로젝트 파일이나 전역 파일을 편집한다. 새 에이전트는 최신 내용을
   즉시 읽고, 이미 실행 중인 에이전트는 세션 생성 시 캡처한 프롬프트를 유지해 도구 정의와

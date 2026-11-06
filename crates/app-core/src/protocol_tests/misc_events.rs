@@ -204,7 +204,6 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         supports_ask_requests: false,
         id: 89,
         working_dir: Some("/tmp/project".to_string()),
-        selfdev: Some(true),
         target_session_id: Some("sess_target".to_string()),
         client_instance_id: Some("client-123".to_string()),
         client_has_local_history: true,
@@ -224,7 +223,6 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         supports_ask_requests: _,
         id,
         working_dir,
-        selfdev,
         target_session_id,
         client_instance_id,
         client_has_local_history,
@@ -239,7 +237,6 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
     };
     assert_eq!(id, 89);
     assert_eq!(working_dir.as_deref(), Some("/tmp/project"));
-    assert_eq!(selfdev, Some(true));
     assert_eq!(target_session_id.as_deref(), Some("sess_target"));
     assert_eq!(client_instance_id.as_deref(), Some("client-123"));
     assert!(client_has_local_history);
@@ -264,7 +261,6 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         supports_ask_requests: _,
         id,
         working_dir,
-        selfdev,
         target_session_id,
         client_instance_id,
         client_has_local_history,
@@ -279,7 +275,6 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
     };
     assert_eq!(id, 91);
     assert_eq!(working_dir, None);
-    assert_eq!(selfdev, None);
     assert_eq!(target_session_id, None);
     assert_eq!(client_instance_id, None);
     assert!(!client_has_local_history);

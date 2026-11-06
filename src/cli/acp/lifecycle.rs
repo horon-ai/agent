@@ -324,7 +324,6 @@ pub(super) fn subscribe_request(
         continue_on_disconnect: false,
         id,
         working_dir: cwd.map(|cwd| cwd.display().to_string()),
-        selfdev: None,
         target_session_id,
         client_instance_id: Some("acp".to_string()),
         client_has_local_history: false,

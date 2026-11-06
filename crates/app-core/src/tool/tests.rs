@@ -375,7 +375,6 @@ async fn first_party_tool_definitions_require_intent_with_display_only_docs() {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
     registry.register_ambient_tools().await;
-    registry.register_selfdev_tools().await;
 
     let defs = registry.definitions(None).await;
     assert!(!defs.is_empty());
@@ -999,16 +998,8 @@ async fn tool_descriptions_stay_under_token_cap() {
     // user, so planning happens proactively rather than only when prompted.
     // applet carries the whole view-node vocabulary inline, since the model has
     // no other way to learn which node types and props the host renders.
-    // codemode documents its sandbox API; compile_remote a credit/consent notice; irc states delivery, addressing, and reply etiquette inline.
-    const EXEMPT: &[&str] = &[
-        "integration_tools",
-        "swarm",
-        "batch",
-        "todo",
-        "applet",
-        "codemode",
-        "compile_remote",
-    ];
+    // codemode documents its sandbox API; irc states delivery, addressing, and reply etiquette inline.
+    const EXEMPT: &[&str] = &["integration_tools", "swarm", "batch", "todo", "applet", "codemode"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -1069,12 +1060,10 @@ async fn tool_parameter_descriptions_stay_under_token_cap() {
     // (abb0baabc, d21916db5) and todo::tests pins each concept, so it is
     // deliberately longer than the cap.
     // applet placement lists every shorthand so the model can pick a surface
-    // without a round trip. desktop_selfdev action carries a safety warning:
-    // killing the harness bridge by hand strands the calling session.
+    // without a round trip.
     const EXEMPT: &[(&str, &str)] = &[
         ("todo", "$.properties.goals.items.properties.feedback_loop_relevance"),
         ("applet", "$.properties.placement"),
-        ("desktop_selfdev", "$.properties.action"),
     ];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);

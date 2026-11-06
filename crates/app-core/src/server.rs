@@ -998,9 +998,6 @@ impl Server {
             let previous_status = session.status.clone();
             let provider = self.provider.fork();
             let registry = crate::tool::Registry::new(provider.clone()).await;
-            if session.is_canary {
-                registry.register_selfdev_tools().await;
-            }
             registry
                 .register_mcp_tools_for_dir(
                     None,

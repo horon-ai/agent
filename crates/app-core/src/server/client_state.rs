@@ -294,7 +294,6 @@ pub(super) async fn handle_get_model_catalog(
         token_usage_totals: None,
         all_sessions: Vec::new(),
         client_count: None,
-        is_canary: None,
         server_version: None,
         server_name: None,
         server_icon: None,
@@ -570,7 +569,6 @@ async fn send_history_from_persisted_session(
     let subagent_model = session.subagent_model.clone();
     let autoreview_enabled = session.autoreview_enabled;
     let autojudge_enabled = session.autojudge_enabled;
-    let is_canary = session.is_canary;
     let agent_model_overrides = session.agent_model_overrides.clone();
     let reasoning_effort = session.reasoning_effort.clone().or_else(|| provider.reasoning_effort());
     drop(session);
@@ -608,7 +606,6 @@ async fn send_history_from_persisted_session(
         token_usage_totals: optional_token_usage_totals(token_usage_totals),
         all_sessions,
         client_count: Some(current_client_count),
-        is_canary: Some(is_canary),
         server_version: Some(horon_agent_build_meta::version().to_string()),
         server_name: Some(server_name.to_string()),
         server_icon: Some(server_icon.to_string()),
@@ -680,7 +677,6 @@ async fn send_history_with_guard(
     let (
         messages,
         images,
-        is_canary,
         provider_name,
         provider_model,
         subagent_model,
@@ -742,7 +738,6 @@ async fn send_history_with_guard(
         (
             messages,
             images,
-            agent_guard.is_canary(),
             agent_guard.provider_name(),
             agent_guard.provider_model(),
             agent_guard.subagent_model(),
@@ -856,7 +851,6 @@ async fn send_history_with_guard(
         token_usage_totals: optional_token_usage_totals(token_usage_totals),
         all_sessions,
         client_count: Some(current_client_count),
-        is_canary: Some(is_canary),
         server_version: Some(horon_agent_build_meta::version().to_string()),
         server_name: Some(server_name.to_string()),
         server_icon: Some(server_icon.to_string()),

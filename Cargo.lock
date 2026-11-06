@@ -1968,7 +1968,6 @@ dependencies = [
  "horon-agent-harness-api-server",
  "horon-agent-provider-core",
  "horon-agent-sdk",
- "horon-agent-selfdev-types",
  "horon-agent-voice",
  "jsonschema",
  "libc",
@@ -2047,7 +2046,6 @@ dependencies = [
  "horon-agent-productivity-core",
  "horon-agent-provider-core",
  "horon-agent-schema-dialect",
- "horon-agent-selfdev-types",
  "horon-agent-session-store",
  "horon-agent-session-types",
  "horon-agent-setup-hints",
@@ -2157,7 +2155,6 @@ dependencies = [
  "horon-agent-provider-env",
  "horon-agent-provider-metadata",
  "horon-agent-provider-openai",
- "horon-agent-selfdev-types",
  "horon-agent-session-store",
  "horon-agent-session-types",
  "horon-agent-side-panel-types",
@@ -2213,7 +2210,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "horon-agent-core",
- "horon-agent-selfdev-types",
  "horon-agent-storage",
  "serde",
  "serde_json",
@@ -2602,17 +2598,6 @@ dependencies = [
  "tempfile",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "horon-agent-selfdev-types"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "tempfile",
- "toml",
 ]
 
 [[package]]

@@ -66,24 +66,10 @@ async fn spawn_tester(opts: serde_json::Value) -> Result<String> {
 
     let binary_path = if let Some(b) = binary {
         PathBuf::from(b)
-    } else if let Ok(current) = crate::build::current_binary_path() {
-        if current.exists() {
-            current
-        } else if let Ok(canary) = crate::build::canary_binary_path() {
-            if canary.exists() {
-                canary
-            } else {
-                std::env::current_exe()?
-            }
-        } else {
-            std::env::current_exe()?
-        }
-    } else if let Ok(canary) = crate::build::canary_binary_path() {
-        if canary.exists() {
-            canary
-        } else {
-            std::env::current_exe()?
-        }
+    } else if let Ok(current) = crate::build::current_binary_path()
+        && current.exists()
+    {
+        current
     } else {
         std::env::current_exe()?
     };
@@ -107,7 +93,6 @@ async fn spawn_tester(opts: serde_json::Value) -> Result<String> {
 
     let mut cmd = tokio::process::Command::new(&binary_path);
     cmd.current_dir(cwd);
-    cmd.env(horon_agent_selfdev_types::CLIENT_SELFDEV_ENV, "1");
     cmd.env("HORON_AGENT_DEBUG_CMD_PATH", debug_cmd.to_string_lossy().to_string());
     cmd.env(
         "HORON_AGENT_DEBUG_RESPONSE_PATH",

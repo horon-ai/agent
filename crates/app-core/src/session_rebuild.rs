@@ -15,14 +15,13 @@ pub fn hot_rebuild(session_id: &str) -> Result<()> {
     run_release_tests(&repo_dir)?;
     install_local_release_with_warning(&repo_dir);
 
-    let is_selfdev = horon_agent_selfdev_types::client_selfdev_requested();
-    let exe = rebuild_reload_candidate(&repo_dir, is_selfdev);
+    let exe = rebuild_reload_candidate(&repo_dir);
     if !exe.exists() {
         anyhow::bail!("Binary not found at {:?}", exe);
     }
 
     eprintln!("Restarting with session {}...", session_id);
-    exec_rebuilt_session(&exe, session_id, &cwd, is_selfdev)
+    exec_rebuilt_session(&exe, session_id, &cwd)
 }
 
 pub fn spawn_background_session_rebuild(session_id: String) {
@@ -67,19 +66,16 @@ fn install_local_release_with_warning(repo_dir: &Path) {
     }
 }
 
-fn rebuild_reload_candidate(repo_dir: &Path, is_selfdev: bool) -> PathBuf {
-    build::client_update_candidate(is_selfdev)
+fn rebuild_reload_candidate(repo_dir: &Path) -> PathBuf {
+    build::client_update_candidate()
         .map(|(path, _)| path)
         .unwrap_or_else(|| build::release_binary_path(repo_dir))
 }
 
-fn exec_rebuilt_session(exe: &Path, session_id: &str, cwd: &Path, is_selfdev: bool) -> Result<()> {
+fn exec_rebuilt_session(exe: &Path, session_id: &str, cwd: &Path) -> Result<()> {
     crate::env::set_var("HORON_AGENT_RESUMING", "1");
 
     let mut cmd = ProcessCommand::new(exe);
-    if is_selfdev {
-        cmd.arg("self-dev");
-    }
     cmd.arg("--resume").arg(session_id).current_dir(cwd);
     let err = crate::platform::replace_process(&mut cmd);
 
@@ -201,8 +197,7 @@ fn background_install_local_release(publisher: &BackgroundRebuildPublisher, repo
 }
 
 fn publish_rebuild_ready_or_error(publisher: BackgroundRebuildPublisher, repo_dir: &Path) {
-    let is_selfdev = horon_agent_selfdev_types::client_selfdev_requested();
-    let exe = build::preferred_reload_candidate(is_selfdev)
+    let exe = build::preferred_reload_candidate()
         .map(|(path, _)| path)
         .unwrap_or_else(|| build::release_binary_path(repo_dir));
     if !exe.exists() {

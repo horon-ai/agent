@@ -69,7 +69,6 @@ async fn handle_resume_session_keeps_the_sink_when_the_id_is_unchanged() -> Resu
         "the sink must be registered before the resume, or this test proves nothing"
     );
 
-    let mut client_selfdev = false;
     let mut client_session_id = session_id.to_string();
 
     handle_resume_session(
@@ -79,7 +78,6 @@ async fn handle_resume_session_keeps_the_sink_when_the_id_is_unchanged() -> Resu
         None,
         true,
         false,
-        &mut client_selfdev,
         &mut client_session_id,
         "conn_same",
         &mut agent,

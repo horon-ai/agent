@@ -11,7 +11,7 @@ use super::args::{
 };
 use crate::{agent, auth, build, provider_catalog, server, session, setup_hints, startup_profile};
 
-use super::{account, acp, commands, debug, hot_exec, login, output, provider_init, selfdev, terminal};
+use super::{account, acp, commands, debug, hot_exec, login, output, provider_init, terminal};
 use provider_init::ProviderChoice;
 
 #[cfg(any(target_os = "linux", test))]
@@ -67,7 +67,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
     if args.ssh.is_some() {
         // A remote session ID and working directory belong to the remote host.
-        // Do not run local resume lookup, provider bootstrap, or self-dev setup.
+        // Do not run local resume lookup or provider bootstrap.
         return super::ssh::run(args).await;
     }
     // Import is a narrow stdin-only credential operation. Do not trigger config
@@ -370,9 +370,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             commands::run_usage_command(json).await?;
         }
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,
-        Some(Command::SelfDev { build }) => {
-            selfdev::run_self_dev(build, args.resume).await?;
-        }
         Some(Command::Debug {
             command,
             arg,
@@ -816,27 +813,13 @@ async fn run_default_command(args: Args) -> Result<()> {
     startup_profile::mark("crash_resume_hint");
 
     let cwd = std::env::current_dir()?;
-    let in_horon_agent_repo = build::is_horon_agent_repo(&cwd);
-    startup_profile::mark("is_horon_agent_repo");
-    let already_in_selfdev = crate::cli::selfdev::client_selfdev_requested();
 
     // Record where this interactive launch happened so the system-wide launch
-    // hotkeys can reopen horon-agent in the last project directory (Cmd+') and the
-    // last horon-agent repo for self-dev (Cmd+Shift+'). Best-effort; ignored unless a
-    // real TTY and not a fresh-spawn re-entry.
+    // hotkeys can reopen horon-agent in the last project directory (Cmd+').
+    // Best-effort; ignored unless a real TTY and not a fresh-spawn re-entry.
     if !args.fresh_spawn && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         let repo_dir = build::get_repo_dir();
         setup_hints::record_launch_dirs(&cwd, repo_dir.as_deref());
-    }
-
-    if in_horon_agent_repo && !already_in_selfdev && !args.no_selfdev {
-        output::stderr_info("📍 Detected horon-agent repository - enabling self-dev mode");
-        output::stderr_info("   Using shared server with self-dev session mode");
-        output::stderr_info("   (use --no-selfdev to disable auto-detection)");
-        output::stderr_blank_line();
-
-        crate::env::set_var(selfdev::CLIENT_SELFDEV_ENV, "1");
-        crate::cli::proctitle::set_initial_title(&args);
     }
 
     startup_profile::mark("client_mode_start");
@@ -1185,7 +1168,7 @@ async fn spawn_server_with_executable(
 ///
 /// The current executable is used deliberately instead of the shared-server
 /// update candidate: a run started from a locally built binary must be served
-/// by that same binary, or `--socket`-isolated self-dev checks would silently
+/// by that same binary, or `--socket`-isolated runtime checks would silently
 /// measure the installed build (see AGENTS.md, "Verifying a change at
 /// runtime").
 pub(crate) async fn spawn_owned_server(
@@ -1299,16 +1282,11 @@ async fn spawn_server_with_lifetime(
             socket_path.display()
         )),
     }
-    let client_requested_selfdev = selfdev::client_selfdev_requested();
     let exe = executable
-        .or_else(|| build::shared_server_update_candidate(client_requested_selfdev).map(|(path, _)| path))
+        .or_else(|| build::shared_server_update_candidate().map(|(path, _)| path))
         .or_else(|| std::env::current_exe().ok())
         .ok_or_else(|| anyhow::anyhow!("Could not determine executable path for server spawn"))?;
     let mut cmd = ProcessCommand::new(&exe);
-    cmd.env_remove(selfdev::CLIENT_SELFDEV_ENV);
-    if client_requested_selfdev {
-        cmd.env("HORON_AGENT_DEBUG_CONTROL", "1");
-    }
     cmd.arg("--provider").arg(provider_choice.as_arg_value());
     // The interactive TUI owns first-run onboarding/login. Let the spawned
     // server boot with a deferred (credential-less) provider when nothing is

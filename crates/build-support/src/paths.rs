@@ -1,12 +1,11 @@
 use super::{
-    SelfDevBuildCommand, SelfDevBuildTarget, canary_binary_path, current_binary_path, read_current_version,
-    read_shared_server_version, read_stable_version, shared_server_binary_path, stable_binary_path,
+    current_binary_path, read_current_version, read_shared_server_version, read_stable_version,
+    shared_server_binary_path, stable_binary_path,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use horon_agent_storage as storage;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::SystemTime;
 
 /// Get the horon-agent repository directory
@@ -68,8 +67,6 @@ pub fn binary_name() -> &'static str {
         binary_stem()
     }
 }
-
-pub const SELFDEV_CARGO_PROFILE: &str = "selfdev";
 
 /// Resolve a channel/launcher binary path to the file that actually runs.
 ///
@@ -134,10 +131,6 @@ pub fn release_binary_path(repo_dir: &Path) -> PathBuf {
     profile_binary_path(repo_dir, "release")
 }
 
-pub fn selfdev_binary_path(repo_dir: &Path) -> PathBuf {
-    profile_binary_path(repo_dir, SELFDEV_CARGO_PROFILE)
-}
-
 fn binary_mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).ok().and_then(|meta| meta.modified().ok())
 }
@@ -153,161 +146,6 @@ fn existing_binary(path: Result<PathBuf>, label: &'static str) -> Option<(PathBu
     path.ok().filter(|path| path.exists()).map(|path| (path, label))
 }
 
-pub fn selfdev_build_command(repo_dir: &Path) -> SelfDevBuildCommand {
-    selfdev_build_command_for_target(repo_dir, SelfDevBuildTarget::Auto)
-}
-
-pub fn selfdev_build_command_for_target(repo_dir: &Path, target: SelfDevBuildTarget) -> SelfDevBuildCommand {
-    selfdev_build_command_for_target_on_platform(repo_dir, target, cfg!(windows))
-}
-
-fn selfdev_build_command_for_target_on_platform(
-    repo_dir: &Path,
-    target: SelfDevBuildTarget,
-    is_windows: bool,
-) -> SelfDevBuildCommand {
-    let target = match target {
-        SelfDevBuildTarget::Auto => infer_selfdev_build_target(repo_dir),
-        explicit => explicit,
-    };
-    let specs = match target {
-        SelfDevBuildTarget::Tui => vec![("horon-agent", "horon-agent")],
-        SelfDevBuildTarget::All | SelfDevBuildTarget::Auto => vec![("horon-agent", "horon-agent")],
-    };
-    let wrapper = repo_dir.join("scripts").join("dev").join("cargo.sh");
-    // `bash` on Windows may resolve to WSL, which cannot use the native Rust
-    // toolchain or produce the Windows executable we publish. Avoid both that
-    // ambiguity and native-vs-POSIX path translation by invoking Cargo directly.
-    if wrapper.is_file() && !is_windows {
-        let script = wrapper.to_string_lossy();
-        let command = specs
-            .iter()
-            .map(|(package, binary)| {
-                format!(
-                    "{} build --profile {} -p {} --bin {}{}",
-                    shell_escape(&script),
-                    SELFDEV_CARGO_PROFILE,
-                    package,
-                    binary,
-                    ""
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" && ");
-        return SelfDevBuildCommand {
-            program: "bash".to_string(),
-            args: vec!["-lc".to_string(), command],
-            display: display_build_command("scripts/dev/cargo.sh", &specs),
-        };
-    }
-
-    let command = display_build_command("cargo", &specs);
-    if is_windows {
-        return SelfDevBuildCommand {
-            program: "cargo".to_string(),
-            args: cargo_build_args(&specs),
-            display: command,
-        };
-    }
-
-    SelfDevBuildCommand {
-        program: "bash".to_string(),
-        args: vec!["-lc".to_string(), command.clone()],
-        display: command,
-    }
-}
-
-fn cargo_build_args(specs: &[(&str, &str)]) -> Vec<String> {
-    let mut args = vec![
-        "build".to_string(),
-        "--profile".to_string(),
-        SELFDEV_CARGO_PROFILE.to_string(),
-    ];
-    for (package, binary) in specs {
-        args.extend([
-            "-p".to_string(),
-            (*package).to_string(),
-            "--bin".to_string(),
-            (*binary).to_string(),
-        ]);
-    }
-    args
-}
-
-fn display_build_command(program: &str, specs: &[(&str, &str)]) -> String {
-    specs
-        .iter()
-        .map(|(package, binary)| {
-            format!(
-                "{} build --profile {} -p {} --bin {}{}",
-                program, SELFDEV_CARGO_PROFILE, package, binary, ""
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" && ")
-}
-
-fn infer_selfdev_build_target(repo_dir: &Path) -> SelfDevBuildTarget {
-    let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "--untracked-files=all"])
-        .current_dir(repo_dir)
-        .output();
-    let Ok(output) = output else {
-        return SelfDevBuildTarget::Tui;
-    };
-    if !output.status.success() {
-        return SelfDevBuildTarget::Tui;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let paths: Vec<String> = text.lines().map(porcelain_path).collect();
-    build_target_for_paths(paths.iter().map(String::as_str))
-}
-
-/// The path a `git status --porcelain=v1` line refers to, following renames.
-fn porcelain_path(line: &str) -> String {
-    let raw = line.get(3..).unwrap_or(line).trim();
-    raw.rsplit_once(" -> ")
-        .map(|(_, new_path)| new_path)
-        .unwrap_or(raw)
-        .to_string()
-}
-
-/// Which binaries the given changed paths require rebuilding. Pure, so the
-/// routing is testable: getting this wrong means `selfdev build` silently
-/// builds the wrong binary and a reload appears to do nothing.
-fn build_target_for_paths<'a>(paths: impl Iterator<Item = &'a str>) -> SelfDevBuildTarget {
-    for path in paths {
-        let path = path.trim();
-        if path.is_empty() {
-            continue;
-        }
-        return SelfDevBuildTarget::Tui;
-    }
-    SelfDevBuildTarget::Tui
-}
-
-fn shell_escape(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-pub fn run_selfdev_build(repo_dir: &Path) -> Result<SelfDevBuildCommand> {
-    let source = super::current_source_state(repo_dir)?;
-    let build = selfdev_build_command(repo_dir);
-    let status = Command::new(&build.program)
-        .args(&build.args)
-        .current_dir(repo_dir)
-        .status()?;
-
-    if !status.success() {
-        anyhow::bail!("Build failed: {}", build.display);
-    }
-
-    let source_after_build = super::ensure_source_state_matches(repo_dir, &source)?;
-    super::write_current_dev_binary_source_metadata(repo_dir, &source_after_build)?;
-
-    Ok(build)
-}
-
 pub fn current_binary_built_at() -> Option<DateTime<Utc>> {
     let modified: SystemTime = std::env::current_exe()
         .ok()
@@ -318,16 +156,6 @@ pub fn current_binary_built_at() -> Option<DateTime<Utc>> {
 
 pub fn current_binary_build_time_string() -> Option<String> {
     current_binary_built_at().map(|dt| dt.format("%Y-%m-%d %H:%M:%S %z").to_string())
-}
-
-/// Find the best development binary in the repo.
-/// Prefers the newest local self-dev or release binary.
-pub fn find_dev_binary(repo_dir: &Path) -> Option<PathBuf> {
-    newest_existing_binary(vec![
-        (selfdev_binary_path(repo_dir), "repo-selfdev"),
-        (release_binary_path(repo_dir), "repo-release"),
-    ])
-    .map(|(path, _)| path)
 }
 
 fn home_dir() -> Result<PathBuf> {
@@ -413,26 +241,12 @@ pub fn update_launcher_symlink_to_stable() -> Result<PathBuf> {
 ///
 /// Order matters:
 /// - Prefer the published `current` channel first (active local build)
-/// - Self-dev sessions can fall back to an unpublished repo build from `target/selfdev` or `target/release`
-/// - Then the self-dev canary channel
 /// - Then launcher path
 /// - Then stable channel path
 /// - Finally currently running executable
-pub fn client_update_candidate(is_selfdev_session: bool) -> Option<(PathBuf, &'static str)> {
+pub fn client_update_candidate() -> Option<(PathBuf, &'static str)> {
     if let Some(current) = existing_binary(current_binary_path(), "current") {
         return Some(current);
-    }
-
-    if is_selfdev_session {
-        if let Some(repo_dir) = get_repo_dir()
-            && let Some(dev) = find_dev_binary(&repo_dir)
-            && dev.exists()
-        {
-            return Some((dev, "dev"));
-        }
-        if let Some(canary) = existing_binary(canary_binary_path(), "canary") {
-            return Some(canary);
-        }
     }
 
     if let Some(launcher) = existing_binary(launcher_binary_path(), "launcher") {
@@ -452,13 +266,8 @@ pub fn client_update_candidate(is_selfdev_session: bool) -> Option<(PathBuf, &'s
 /// shared server should only run binaries that were explicitly promoted onto the
 /// shared-server channel (or stable as fallback), so local dirty self-dev builds
 /// stop taking out every client by accident.
-pub fn shared_server_update_candidate(is_selfdev_session: bool) -> Option<(PathBuf, &'static str)> {
-    let shared_server = existing_binary(shared_server_binary_path(), "shared-server");
-    if is_selfdev_session {
-        if let Some(shared_server) = shared_server {
-            return Some(shared_server);
-        }
-    } else if let Some(shared_server) = shared_server
+pub fn shared_server_update_candidate() -> Option<(PathBuf, &'static str)> {
+    if let Some(shared_server) = existing_binary(shared_server_binary_path(), "shared-server")
         && shared_server_channel_is_current_enough()
     {
         return Some(shared_server);
@@ -533,19 +342,11 @@ pub fn version_matches_installed_channel(version: &str, git_hash: &str) -> bool 
 /// release binary exists and is newer than the selected channel binary, prefer
 /// that so local rebuilds can reload correctly even if publishing the build
 /// failed.
-pub fn preferred_reload_candidate(is_selfdev_session: bool) -> Option<(PathBuf, &'static str)> {
-    let candidate = client_update_candidate(is_selfdev_session);
+pub fn preferred_reload_candidate() -> Option<(PathBuf, &'static str)> {
+    let candidate = client_update_candidate();
 
-    let repo_binary = get_repo_dir().and_then(|repo_dir| {
-        if is_selfdev_session {
-            newest_existing_binary(vec![
-                (selfdev_binary_path(&repo_dir), "repo-selfdev"),
-                (release_binary_path(&repo_dir), "repo-release"),
-            ])
-        } else {
-            newest_existing_binary(vec![(release_binary_path(&repo_dir), "repo-release")])
-        }
-    });
+    let repo_binary = get_repo_dir()
+        .and_then(|repo_dir| newest_existing_binary(vec![(release_binary_path(&repo_dir), "repo-release")]));
 
     let repo_is_newer = |repo: &Path, current: &Path| {
         // `current` may be a channel symlink to a release wrapper script;
@@ -614,148 +415,6 @@ mod tests {
         std::fs::create_dir_all(&crate_dir).expect("crate dir");
 
         assert_eq!(find_repo_in_ancestors(&crate_dir).as_deref(), Some(repo.path()));
-    }
-
-    /// Every build target must map to the package it claims to build, or
-    /// `selfdev build target=X` silently builds something else.
-    #[test]
-    fn every_build_target_builds_its_own_package() {
-        let repo = repo_fixture(false);
-        let cases = [
-            (SelfDevBuildTarget::Tui, vec!["-p horon-agent "]),
-            (SelfDevBuildTarget::All, vec!["-p horon-agent "]),
-        ];
-        for (target, expected) in cases {
-            let command = selfdev_build_command_for_target(repo.path(), target);
-            let text = format!("{} ", command.display);
-            for needle in &expected {
-                assert!(
-                    text.contains(needle),
-                    "{target:?} did not build `{needle}`: {}",
-                    command.display
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn windows_selfdev_build_invokes_native_cargo_without_a_shell() {
-        let repo = repo_fixture(false);
-        let scripts = repo.path().join("scripts").join("dev");
-        std::fs::create_dir_all(&scripts).expect("scripts dir");
-        std::fs::write(scripts.join("cargo.sh"), "#!/usr/bin/env bash\n").expect("wrapper");
-
-        let command = selfdev_build_command_for_target_on_platform(repo.path(), SelfDevBuildTarget::Tui, true);
-
-        assert_eq!(command.program, "cargo");
-        assert_eq!(
-            command.args,
-            [
-                "build",
-                "--profile",
-                "selfdev",
-                "-p",
-                "horon-agent",
-                "--bin",
-                "horon-agent"
-            ]
-        );
-        assert!(
-            !command.args.iter().any(|arg| arg.contains("cargo.sh")),
-            "Windows must not pass a native script path through bash"
-        );
-    }
-
-    #[test]
-    fn unix_selfdev_build_keeps_using_the_wrapper() {
-        let repo = repo_fixture(false);
-        let scripts = repo.path().join("scripts").join("dev");
-        std::fs::create_dir_all(&scripts).expect("scripts dir");
-        std::fs::write(scripts.join("cargo.sh"), "#!/usr/bin/env bash\n").expect("wrapper");
-
-        let command = selfdev_build_command_for_target_on_platform(repo.path(), SelfDevBuildTarget::Tui, false);
-
-        assert_eq!(command.program, "bash");
-        assert_eq!(command.args.first().map(String::as_str), Some("-lc"));
-        assert!(
-            command
-                .args
-                .last()
-                .is_some_and(|arg| arg.contains("scripts/dev/cargo.sh"))
-        );
-    }
-
-    #[test]
-    fn windows_cargo_args_build_the_tui_for_all() {
-        let repo = repo_fixture(false);
-        let command = selfdev_build_command_for_target_on_platform(repo.path(), SelfDevBuildTarget::All, true);
-
-        assert_eq!(
-            command.args,
-            [
-                "build",
-                "--profile",
-                "selfdev",
-                "-p",
-                "horon-agent",
-                "--bin",
-                "horon-agent",
-            ]
-        );
-    }
-
-    /// `auto` routes every repository change to the remaining TUI binary.
-    #[test]
-    fn auto_routes_changed_paths_to_the_right_binary() {
-        let cases: Vec<(Vec<&str>, SelfDevBuildTarget)> = vec![
-            (vec![], SelfDevBuildTarget::Tui),
-            (vec!["src/main.rs"], SelfDevBuildTarget::Tui),
-            (vec!["crates/horon-agent-tui/src/lib.rs"], SelfDevBuildTarget::Tui),
-            (vec!["Cargo.toml"], SelfDevBuildTarget::Tui),
-            (vec!["Cargo.lock"], SelfDevBuildTarget::Tui),
-        ];
-        for (paths, expected) in cases {
-            assert_eq!(
-                build_target_for_paths(paths.iter().copied()),
-                expected,
-                "paths {paths:?} routed to the wrong target"
-            );
-        }
-    }
-
-    #[test]
-    fn porcelain_lines_are_parsed_including_renames() {
-        assert_eq!(porcelain_path(" M src/main.rs"), "src/main.rs");
-        assert_eq!(
-            porcelain_path("?? crates/horon-agent-tui/src/new.rs"),
-            "crates/horon-agent-tui/src/new.rs"
-        );
-        assert_eq!(
-            porcelain_path("R  old/path.rs -> crates/horon-agent-tui/src/moved.rs"),
-            "crates/horon-agent-tui/src/moved.rs"
-        );
-    }
-
-    #[test]
-    fn build_targets_parse_from_their_names() {
-        for (name, expected) in [
-            ("tui", SelfDevBuildTarget::Tui),
-            ("all", SelfDevBuildTarget::All),
-            ("auto", SelfDevBuildTarget::Auto),
-        ] {
-            assert_eq!(
-                SelfDevBuildTarget::parse(Some(name)).expect("parse"),
-                expected,
-                "target name `{name}` parsed wrong"
-            );
-        }
-        for removed in ["desktop", "desktop2", "horon-agent-desktop2"] {
-            assert!(
-                SelfDevBuildTarget::parse(Some(removed)).is_err(),
-                "removed target `{removed}` must not remain available"
-            );
-        }
-        assert!(SelfDevBuildTarget::parse(Some("nonsense")).is_err());
     }
 
     #[test]

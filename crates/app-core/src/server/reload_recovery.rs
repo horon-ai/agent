@@ -59,6 +59,7 @@ impl ReloadContext {
         Ok(crate::storage::horon_agent_dir()?.join("reload-context.json"))
     }
 
+    #[cfg(test)]
     pub fn save(&self) -> Result<()> {
         let path = Self::path_for_session(&self.session_id)?;
         crate::storage::write_json(&path, self)?;

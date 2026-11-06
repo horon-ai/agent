@@ -128,7 +128,6 @@ pub(crate) fn replay(source: &LegacySource, bundle: &Bundle) -> Result<Replay, S
                     "improve_mode",
                     "autoreview_enabled",
                     "autojudge_enabled",
-                    "testing_build",
                     "working_dir",
                     "short_name",
                     "last_pid",
@@ -137,7 +136,7 @@ pub(crate) fn replay(source: &LegacySource, bundle: &Bundle) -> Result<Replay, S
                 ] {
                     state.meta.insert(key.into(), Value::Null);
                 }
-                for key in ["is_canary", "is_debug", "saved"] {
+                for key in ["is_debug", "saved"] {
                     state.meta.insert(key.into(), json!(false));
                 }
                 state.meta.insert("agent_model_overrides".into(), json!({}));

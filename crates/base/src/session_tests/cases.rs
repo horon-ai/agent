@@ -413,8 +413,6 @@ fn additional_dirs_pass_an_older_build_s_metadata_allow_list() -> Result<()> {
         "improve_mode",
         "autoreview_enabled",
         "autojudge_enabled",
-        "is_canary",
-        "testing_build",
         "working_dir",
         "short_name",
         "saved",
@@ -623,7 +621,6 @@ fn load_startup_stub_preserves_metadata_but_skips_heavy_vectors() -> Result<()> 
     session.reasoning_effort = Some("high".to_string());
     session.provider_key = Some("openai".to_string());
     session.route_api_method = Some("openai-api".to_string());
-    session.set_canary("self-dev");
     session.append_stored_message(StoredMessage {
         turn_start: false,
         id: "msg_1".to_string(),
@@ -650,10 +647,7 @@ fn load_startup_stub_preserves_metadata_but_skips_heavy_vectors() -> Result<()> 
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
         pid: 123,
-        is_selfdev: true,
         is_debug: false,
-        is_canary: true,
-        testing_build: Some("self-dev".to_string()),
         working_git: None,
     });
     session.record_memory_injection("summary".to_string(), "content".to_string(), 1, 5, Vec::new());
@@ -668,7 +662,6 @@ fn load_startup_stub_preserves_metadata_but_skips_heavy_vectors() -> Result<()> 
     assert_eq!(stub.reasoning_effort.as_deref(), Some("high"));
     assert_eq!(stub.provider_key.as_deref(), Some("openai"));
     assert_eq!(stub.route_api_method.as_deref(), Some("openai-api"));
-    assert!(stub.is_canary);
     assert!(stub.active_context().is_empty());
     assert!(stub.env_snapshots.is_empty());
     assert!(stub.memory_injections.is_empty());
@@ -719,10 +712,7 @@ fn load_for_remote_startup_preserves_messages_and_replay_but_skips_heavy_vectors
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
         pid: 123,
-        is_selfdev: false,
         is_debug: false,
-        is_canary: false,
-        testing_build: None,
         working_git: None,
     });
     session.record_memory_injection("summary".to_string(), "content".to_string(), 1, 5, Vec::new());

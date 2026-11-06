@@ -3,7 +3,6 @@
 use super::debug_jobs::{DebugJob, maybe_start_async_debug_job};
 use super::{ServerIdentity, SessionControlHandle, SessionInterruptQueues};
 use crate::agent::Agent;
-use crate::build;
 use crate::mcp::McpConfig;
 use anyhow::Result;
 use horon_agent_agent_runtime::{InterruptSignal, SoftInterruptSource};
@@ -546,7 +545,6 @@ pub(super) async fn execute_debug_command(
         let mut payload = serde_json::json!({
             "session_id": agent.session_id(),
             "messages": agent.message_count(),
-            "is_canary": agent.is_canary(),
             "provider": agent.provider_name(),
             "model": agent.provider_model(),
             "upstream_provider": agent.last_upstream_provider(),
@@ -567,7 +565,7 @@ pub(super) async fn execute_debug_command(
 
     if trimmed == "help" {
         return Ok(
-            "debug commands: state, usage, history, tools, tools:full, mcp:servers, mcp:tools, mcp:connect:<server> <json>, mcp:disconnect:<server>, mcp:reload, mcp:call:<server>:<tool> <json>, last_response, message:<text>, message_async:<text>, swarm_message:<text>, swarm_message_async:<text>, tool:<name> <json>, queue_interrupt:<content>, queue_interrupt_urgent:<content>, agent:info, agent:context, agent:context:prepare, agent:memory, allocator, allocator:profile:on, allocator:profile:off, allocator:profile:prefix:<prefix>, allocator:profile:dump [path], jobs, job_status:<id>, job_wait:<id>, sessions, create_session, create_session:<path>, create_session:selfdev:<path>, set_model:<model>, set_provider:<name>, trigger_extraction, available_models, reload, help".to_string()
+            "debug commands: state, usage, history, tools, tools:full, mcp:servers, mcp:tools, mcp:connect:<server> <json>, mcp:disconnect:<server>, mcp:reload, mcp:call:<server>:<tool> <json>, last_response, message:<text>, message_async:<text>, swarm_message:<text>, swarm_message_async:<text>, tool:<name> <json>, queue_interrupt:<content>, queue_interrupt_urgent:<content>, agent:info, agent:context, agent:context:prepare, agent:memory, allocator, allocator:profile:on, allocator:profile:off, allocator:profile:prefix:<prefix>, allocator:profile:dump [path], jobs, job_status:<id>, job_wait:<id>, sessions, create_session, create_session:<path>, set_model:<model>, set_provider:<name>, trigger_extraction, available_models, reload, help".to_string()
         );
     }
 
@@ -642,35 +640,8 @@ pub(super) async fn execute_debug_command(
     }
 
     if trimmed == "reload" {
-        let repo_dir = crate::build::get_repo_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not find horon-agent repository directory"))?;
-
-        let target_binary =
-            crate::build::find_dev_binary(&repo_dir).unwrap_or_else(|| build::release_binary_path(&repo_dir));
-        if !target_binary.exists() {
-            return Err(anyhow::anyhow!(format!(
-                "No binary found at {}. Run 'horon-agent self-dev --build' first, or build with 'scripts/dev/cargo.sh build --profile selfdev -p horon-agent --bin horon-agent' and publish current.",
-                target_binary.display()
-            )));
-        }
-
-        let source = crate::build::current_source_state(&repo_dir)?;
-        let hash = source.version_label.clone();
-        let published = crate::build::publish_local_current_build_for_source(&repo_dir, &source)?;
-        crate::build::smoke_test_server_binary(&published.versioned_path)?;
-        crate::build::update_shared_server_symlink(&hash)?;
-        crate::build::update_canary_symlink(&hash)?;
-
-        let mut manifest = crate::build::BuildManifest::load()?;
-        manifest.canary = Some(hash.clone());
-        manifest.canary_status = Some(crate::build::CanaryStatus::Testing);
-        manifest.save()?;
-
-        let horon_agent_dir = crate::storage::horon_agent_dir()?;
-        let info_path = horon_agent_dir.join("reload-info");
-        std::fs::write(&info_path, format!("reload:{}", hash))?;
-
-        let _request_id = super::send_reload_signal(hash.clone(), None, false);
+        let hash = horon_agent_build_meta::git_hash().to_string();
+        let _request_id = super::send_reload_signal(hash.clone(), None);
 
         return Ok(format!("Reload signal sent for build {}. Server will restart.", hash));
     }
@@ -771,7 +742,6 @@ mod tests {
                 .await
                 .unwrap();
             let context: serde_json::Value = serde_json::from_str(&output).unwrap();
-            assert_eq!(context["mode"], "regular");
             assert_eq!(context["system_prompt"]["static"], "debug context sentinel");
             assert_eq!(context["system_prompt"]["dynamic"], "");
             assert_eq!(context["tools_locked"], false);
@@ -788,29 +758,10 @@ mod tests {
         let inspected = agent.lock().await.debug_context().await;
         assert_eq!(inspected["effective_tools"], prepared["prepared_tools"]);
         assert_eq!(inspected["locked_tool_names"], prepared["locked_tool_names"]);
-        agent.lock().await.set_canary("self-dev");
-        assert_eq!(agent.lock().await.debug_context().await["mode"], "cli");
-
-        let desktop = home.path().join("desktop-checkout");
-        std::fs::create_dir_all(desktop.join("crates/horon-agent-desktop-ui/src")).unwrap();
-        std::fs::write(
-            desktop.join("Cargo.toml"),
-            "[package]\nname = \"horon-agent-desktop\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            desktop.join("crates/horon-agent-desktop-ui/Cargo.toml"),
-            "[package]\nname = \"horon-agent-desktop-ui\"\n",
-        )
-        .unwrap();
-        agent.lock().await.set_working_dir(desktop.to_str().unwrap());
-        let context = agent.lock().await.debug_context().await;
-        assert_eq!(context["mode"], "desktop", "Desktop takes priority over canary");
-        assert_eq!(context["tools_locked"], false);
     }
 
     #[tokio::test]
-    async fn debug_tool_selfdev_reload_returns_promptly_for_direct_execution() {
+    async fn debug_reload_returns_promptly_and_emits_a_signal() {
         let _env_lock = lock_env();
         let _test_session = EnvGuard::set("HORON_AGENT_TEST_SESSION", "1");
         let _debug_control = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
@@ -819,10 +770,7 @@ mod tests {
 
         let provider: Arc<dyn Provider> = Arc::new(TestProvider);
         let registry = Registry::new(provider.clone()).await;
-        registry.register_selfdev_tools().await;
-
-        let mut agent = Agent::new(provider, registry);
-        agent.set_canary("self-dev");
+        let agent = Agent::new(provider, registry);
         let agent = Arc::new(AsyncMutex::new(agent));
 
         let debug_jobs = Arc::new(RwLock::new(HashMap::new()));
@@ -841,26 +789,19 @@ mod tests {
         });
         let output = tokio::time::timeout(
             Duration::from_secs(2),
-            execute_debug_command(agent, r#"tool:selfdev {"action":"reload"}"#, debug_jobs, None, None),
+            execute_debug_command(agent, "reload", debug_jobs, None, None),
         )
         .await
-        .expect("debug selfdev reload should not hang")
-        .expect("debug selfdev reload should succeed");
-        // Bound the ack wait: the reload must have emitted a signal for the
-        // acker to observe. If a regression makes `do_reload` short-circuit
-        // before `send_reload_signal` (e.g. the old "No binary found" path),
-        // this would otherwise hang forever instead of failing the test.
+        .expect("debug reload should not hang")
+        .expect("debug reload should succeed");
         tokio::time::timeout(Duration::from_secs(2), ack_task)
             .await
             .expect("reload signal was never emitted (ack task hung)")
             .expect("reload ack task should complete");
 
+        assert!(started.elapsed() < Duration::from_secs(2), "debug reload took too long");
         assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "debug selfdev reload took too long"
-        );
-        assert!(
-            output.contains("Reload acknowledged") || output.contains("Server is restarting now"),
+            output.contains("Reload signal sent"),
             "expected reload acknowledgement output, got: {}",
             output
         );

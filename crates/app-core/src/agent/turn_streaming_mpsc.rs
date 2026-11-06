@@ -86,10 +86,6 @@ fn send_tool_exit(session_id: &str, call_id: &str, tool_name: &str, output: &cra
 }
 
 fn reload_interrupted_tool_result(tc: &ToolCall, elapsed_secs: f64) -> (String, bool) {
-    if tc.name == "selfdev" {
-        return ("Reload initiated. Process restarting...".to_string(), false);
-    }
-
     let action = tc
         .input
         .get("action")

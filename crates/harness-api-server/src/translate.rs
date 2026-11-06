@@ -661,11 +661,6 @@ impl BridgeState {
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
                 }
-                // Sessions rooted inside a horon-agent checkout are self-dev
-                // sessions: the daemon only enables the self-dev tools and
-                // prompt when the subscribe says so, and a client that opens
-                // the repo without saying so gets an agent that cannot build
-                // the very app it is running in.
                 if req == "create_session" {
                     if let Some(prompt) = request["system_prompt"].as_str() {
                         subscribe["system_prompt"] = json!(prompt);
@@ -676,12 +671,6 @@ impl BridgeState {
                         .or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()));
                     subscribe["working_dir"] = json!(working_dir);
                     self.pending_create_dir = working_dir.clone();
-                    if working_dir
-                        .as_deref()
-                        .is_some_and(Self::path_is_inside_horon_agent_repo)
-                    {
-                        subscribe["selfdev"] = json!(true);
-                    }
                 } else if let Some(target) = request["session_id"].as_str() {
                     // The daemon owns both live and persisted session roots.
                     // Empty panels have no file yet, and a cached disk cwd may
@@ -3029,21 +3018,6 @@ impl BridgeState {
                 .or_else(|| self.current_effort.clone()),
             auth_method: self.current_credential.clone(),
         }
-    }
-
-    /// True when `path`, or any ancestor, looks like a horon-agent source checkout.
-    ///
-    /// Matched by content (a workspace manifest next to the crates directory)
-    /// rather than by name, so a clone in any directory is recognised.
-    fn path_is_inside_horon_agent_repo(path: &str) -> bool {
-        let mut current = Some(std::path::Path::new(path));
-        while let Some(dir) = current {
-            if dir.join("Cargo.toml").is_file() && dir.join("crates/base").is_dir() {
-                return true;
-            }
-            current = dir.parent();
-        }
-        false
     }
 
     /// Path of a session's persisted record, or `None` if the id is not a

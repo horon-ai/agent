@@ -18,12 +18,6 @@ mod context_notes;
 #[path = "agent_tests/concurrency_construction.rs"]
 mod concurrency_construction;
 
-#[path = "agent_tests/desktop_selfdev.rs"]
-mod desktop_selfdev;
-
-#[path = "agent_tests/compile_remote.rs"]
-mod compile_remote;
-
 #[path = "agent_tests/mcp_remote_cache.rs"]
 mod mcp_remote_cache;
 
@@ -1593,7 +1587,7 @@ async fn new_agent_registers_active_pid_and_clear_keeps_it() {
 }
 
 #[tokio::test]
-async fn gmail_is_exposed_by_default_and_can_be_explicitly_disabled() {
+async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled() {
     let _guard = crate::storage::lock_test_env();
     let prev_home = std::env::var_os("HORON_AGENT_HOME");
     let prev_tools = std::env::var_os("HORON_AGENT_TOOLS");
@@ -1614,78 +1608,19 @@ async fn gmail_is_exposed_by_default_and_can_be_explicitly_disabled() {
     let mut agent = Agent::new(provider, registry);
     let definitions = agent.tool_definitions().await;
     let tool_names = agent.tool_names().await;
-    let tool_name = "gmail";
-
-    assert!(
-        tool_names.iter().any(|name| name == "horon_agent_docs"),
-        "horon_agent_docs must be model-visible in regular sessions"
-    );
-    assert!(
-        !tool_names.iter().any(|name| name == "selfdev"),
-        "selfdev must not be model-visible in regular sessions"
-    );
+    let tool_name = "horon_agent_docs";
 
     assert!(
         definitions.iter().any(|definition| definition.name == tool_name),
-        "{tool_name} must be sent in model-visible tool definitions by default"
+        "{tool_name} must be sent in model-visible tool definitions in every session"
     );
     assert!(
         tool_names.iter().any(|name| name == tool_name),
-        "{tool_name} must be listed as model-visible by default"
+        "{tool_name} must be listed as model-visible in every session"
     );
     agent
         .validate_tool_allowed(tool_name)
-        .expect("gmail must be executable by default");
-
-    agent
-        .validate_tool_allowed("horon_agent_docs")
-        .expect("horon_agent_docs must be executable in regular sessions");
-    agent.set_canary("docs-tool-regression");
-    let definitions = agent.tool_definitions().await;
-    assert!(definitions.iter().any(|tool| tool.name == "selfdev"));
-    assert!(
-        !definitions.iter().any(|tool| tool.name == "horon_agent_docs"),
-        "horon_agent_docs must not be model-visible in self-dev sessions"
-    );
-    assert!(
-        !agent
-            .tool_definitions()
-            .await
-            .iter()
-            .any(|tool| tool.name == "horon_agent_docs"),
-        "cached provider definitions must also exclude bundled docs"
-    );
-    assert!(
-        !agent.tool_names().await.iter().any(|name| name == "horon_agent_docs"),
-        "debug tool introspection must agree with provider definitions"
-    );
-    assert!(
-        agent
-            .execute_tool("horon_agent_docs", serde_json::json!({"action": "list"}))
-            .await
-            .is_err(),
-        "direct execution must reject bundled docs in self-dev mode"
-    );
-    assert!(
-        agent
-            .validate_tool_allowed("horon_agent_docs")
-            .expect_err("horon_agent_docs must not be executable in self-dev sessions")
-            .to_string()
-            .contains("disabled in self-development mode")
-    );
-    agent.session.is_canary = false;
-    agent.unlock_tools();
-    assert!(
-        agent
-            .tool_definitions()
-            .await
-            .iter()
-            .any(|tool| tool.name == "horon_agent_docs"),
-        "horon_agent_docs must remain available after leaving self-dev mode"
-    );
-    agent
-        .validate_tool_allowed("horon_agent_docs")
-        .expect("horon_agent_docs must be executable again outside self-dev mode");
+        .expect("horon_agent_docs must be executable in every session");
 
     crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", tool_name);
     crate::config::Config::invalidate_cache();
@@ -1706,7 +1641,7 @@ async fn gmail_is_exposed_by_default_and_can_be_explicitly_disabled() {
     );
     let err = agent
         .validate_tool_allowed(tool_name)
-        .expect_err("explicitly disabled gmail must not be executable");
+        .expect_err("explicitly disabled horon_agent_docs must not be executable");
     assert!(err.to_string().contains("disabled"));
 
     if let Some(previous) = prev_home {
@@ -2971,7 +2906,7 @@ async fn fable_guardrail_reconsideration_recovers_the_streaming_turn() {
 }
 
 #[tokio::test]
-async fn sdk_custom_compile_remote_schema_survives_locked_refresh() {
+async fn sdk_custom_tool_schema_survives_locked_refresh() {
     let _lock = crate::storage::lock_test_env();
     let provider: Arc<dyn Provider> = Arc::new(SignatureSessionProvider::default());
     let registry = Registry::new(provider.clone()).await;
@@ -2984,7 +2919,7 @@ async fn sdk_custom_compile_remote_schema_survives_locked_refresh() {
             enabled: Some(vec![]),
             disabled: vec![],
             custom: vec![crate::protocol::SessionToolDefinition {
-                name: "compile_remote".into(),
+                name: "sdk_custom".into(),
                 description: "SDK override".into(),
                 parameters: serde_json::json!({"type":"object", "additionalProperties":false}),
             }],

@@ -83,8 +83,9 @@ pub(crate) struct Args {
     #[arg(long, global = true, hide = true, value_name = "CHORD")]
     pub(crate) spawn_hotkey: Option<String>,
 
-    /// Disable auto-detection of horon-agent repository and self-dev mode
-    #[arg(long, global = true)]
+    /// Deprecated: accepted so older clients keep working, and ignored.
+    #[arg(long, global = true, hide = true)]
+    #[allow(dead_code)]
     pub(crate) no_selfdev: bool,
 
     /// Rehearse first-run onboarding on launch: the real flow, as if horon-agent
@@ -324,14 +325,6 @@ pub(crate) enum Command {
 
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
-
-    /// Self-development mode: run as a canary session on the shared server
-    #[command(alias = "selfdev")]
-    SelfDev {
-        /// Build and test a new canary version before launching
-        #[arg(long)]
-        build: bool,
-    },
 
     /// Debug socket CLI - interact with running horon-agent server
     Debug {

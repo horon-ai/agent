@@ -181,7 +181,7 @@ fn menubar_sandbox_detection() {
     assert!(is_menubar_sandbox(true, false, None, home, Some(real)));
     assert!(is_menubar_sandbox(false, true, None, home, Some(real)));
 
-    // A throwaway sandbox home (e2e / self-dev / onboarding) is a sandbox.
+    // A throwaway sandbox home (e2e / onboarding) is a sandbox.
     assert!(is_menubar_sandbox(
         false,
         false,

@@ -94,7 +94,6 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
 
-    let mut client_selfdev = false;
     let mut client_session_id = temp_session_id.to_string();
 
     handle_resume_session(
@@ -104,7 +103,6 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
         Some(shared_instance_id),
         false,
         true,
-        &mut client_selfdev,
         &mut client_session_id,
         "conn_new",
         &mut new_agent,

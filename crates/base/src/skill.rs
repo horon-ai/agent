@@ -1928,7 +1928,7 @@ mod tests {
                 description: skill.description.clone(),
             })
             .collect();
-        let (split, info) = crate::prompt::build_system_prompt_split(None, &infos, false, None, None);
+        let (split, info) = crate::prompt::build_system_prompt_split(None, &infos, None, None);
         let section = crate::prompt::build_available_skills_section(&infos).expect("skills section");
         let section_bytes = info.skills_chars;
         let omitted = crate::prompt::omitted_skill_count(&infos);

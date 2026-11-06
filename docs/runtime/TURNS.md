@@ -292,8 +292,7 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 새 SDK나 브리지는 실행 중인 데몬을 업그레이드하지 않는다. 런타임과
 브리지를 빌드하고 새 런타임 후보를 설치한 뒤 기존의 우아한 서버
 업그레이드 워크플로를 쓴다. 세션 상태를 보존하고 라이브 데몬이나
-Desktop 하네스 브리지를 죽이지 않는다. Desktop 브리지 업그레이드는 `reload-bridge` 워크플로를 쓴다.
-양쪽이 새 코드를 실행할 때까지 그 기능은 쓸 수 없다.
+Desktop 하네스 브리지를 죽이지 않는다. 양쪽이 새 코드를 실행할 때까지 그 기능은 쓸 수 없다.
 
 ## `--resume` 동작
 

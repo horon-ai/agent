@@ -123,7 +123,6 @@ def session_created_payload(seed: int, session_id: str) -> dict:
             "model": "gpt-5.1-codex",
             "provider_key": "openai",
             "working_dir": "/tmp/horon-perf-fixture",
-            "is_canary": False,
             "saved": True,
             "migration_epoch": 0,
         },

@@ -17,7 +17,6 @@ pub mod proctitle;
 pub mod provider_doctor;
 pub mod provider_init;
 pub mod runtime_state;
-pub mod selfdev;
 pub mod sessions;
 pub mod ssh;
 #[cfg(unix)]

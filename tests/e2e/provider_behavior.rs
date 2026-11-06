@@ -237,7 +237,6 @@ async fn test_resume_restores_model_and_tool_history() -> Result<()> {
     Ok(())
 }
 
-/// Test that subscribe selfdev hint marks the session as canary
 #[tokio::test]
 async fn test_resume_session_with_local_history_uses_metadata_only_history() -> Result<()> {
     let _env = setup_test_env()?;
@@ -548,54 +547,9 @@ async fn test_resume_session_reports_reload_interruption_for_peer_sessions() -> 
     Ok(())
 }
 
-/// Test that subscribe selfdev hint marks the session as canary
+/// Test that a subscribe carrying only a working_dir attaches normally.
 #[tokio::test]
-async fn test_subscribe_selfdev_hint_marks_canary() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = MockProvider::new();
-    let provider: Arc<dyn horon_agent::provider::Provider> = Arc::new(provider);
-    let server_instance = server::Server::new_with_paths(provider, socket_path.clone(), debug_socket_path.clone());
-
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    let mut client = wait_for_server_client(&socket_path).await?;
-    let subscribe_id = client.subscribe_with_info(None, Some(true), None, false, false).await?;
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await??;
-        if matches!(event, ServerEvent::Done { id } if id == subscribe_id) {
-            break;
-        }
-    }
-
-    let history_event = client.get_history_event().await?;
-    match history_event {
-        ServerEvent::History { is_canary, .. } => {
-            assert_eq!(is_canary, Some(true));
-        }
-        _ => anyhow::bail!("Expected history event after subscribe"),
-    }
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    Ok(())
-}
-
-/// Test that working_dir alone no longer upgrades a session to self-dev.
-#[tokio::test]
-async fn test_subscribe_working_dir_without_selfdev_hint_stays_normal() -> Result<()> {
+async fn test_subscribe_with_working_dir_attaches_a_normal_session() -> Result<()> {
     let _env = setup_test_env()?;
     let runtime_dir = short_runtime_dir(format!(
         "horon-agent-test-{}",
@@ -625,7 +579,7 @@ async fn test_subscribe_working_dir_without_selfdev_hint_stays_normal() -> Resul
 
     let mut client = wait_for_server_client(&socket_path).await?;
     let subscribe_id = client
-        .subscribe_with_info(Some(nested_dir.display().to_string()), None, None, false, false)
+        .subscribe_with_info(Some(nested_dir.display().to_string()), None, false, false)
         .await?;
 
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -638,8 +592,8 @@ async fn test_subscribe_working_dir_without_selfdev_hint_stays_normal() -> Resul
 
     let history_event = client.get_history_event().await?;
     match history_event {
-        ServerEvent::History { is_canary, .. } => {
-            assert_eq!(is_canary, Some(false));
+        ServerEvent::History { session_id, .. } => {
+            assert!(session_id.starts_with("session_"), "unexpected session id {session_id}");
         }
         _ => anyhow::bail!("Expected history event after subscribe"),
     }

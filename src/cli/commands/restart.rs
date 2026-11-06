@@ -29,8 +29,7 @@ pub async fn run_restart_save_command(auto_restore: bool) -> Result<()> {
         path.display()
     );
     for session in &snapshot.sessions {
-        let suffix = if session.is_selfdev { " [self-dev]" } else { "" };
-        println!("- {} ({}){}", session.display_name, session.session_id, suffix);
+        println!("- {} ({})", session.display_name, session.session_id);
     }
     if auto_restore {
         println!("\nAutomatic restore is armed for the next plain `horon-agent` launch.");
@@ -62,8 +61,7 @@ pub fn run_restart_status_command() -> Result<()> {
         }
     );
     for session in &snapshot.sessions {
-        let suffix = if session.is_selfdev { " [self-dev]" } else { "" };
-        println!("- {} ({}){}", session.display_name, session.session_id, suffix);
+        println!("- {} ({})", session.display_name, session.session_id);
     }
 
     Ok(())
@@ -150,7 +148,7 @@ pub fn run_restart_restore_command() -> Result<()> {
 }
 
 fn current_restart_restore_exe() -> Result<PathBuf> {
-    crate::build::client_update_candidate(false)
+    crate::build::client_update_candidate()
         .map(|(path, _)| path)
         .or_else(|| std::env::current_exe().ok())
         .ok_or_else(|| anyhow::anyhow!("Could not determine horon-agent executable for restore"))
@@ -214,7 +212,6 @@ async fn capture_connected_restart_snapshot() -> Result<Option<crate::restart_sn
             session_id: session.id.clone(),
             display_name: session.display_name().to_string(),
             working_dir: session.working_dir.clone().or(row.working_dir),
-            is_selfdev: session.is_canary,
         });
     }
 
