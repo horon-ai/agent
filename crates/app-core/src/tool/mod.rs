@@ -3190,12 +3190,6 @@ impl Registry {
             Arc::new(ambient::RequestPermissionTool::new()) as Arc<dyn Tool>,
         )
         .await;
-
-        self.register(
-            "send_message".to_string(),
-            Arc::new(ambient::SendChannelMessageTool::new()) as Arc<dyn Tool>,
-        )
-        .await;
     }
 
     /// Unregister a tool

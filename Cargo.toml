@@ -50,7 +50,6 @@ members = [
     "crates/side-panel-types",
     "crates/applet-types",
     "crates/azure-auth",
-    "crates/notify-email",
     "crates/provider-metadata",
     "crates/provider-env",
     "crates/provider-core",

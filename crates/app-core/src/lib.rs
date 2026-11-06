@@ -33,7 +33,6 @@ pub mod ambient_scheduler;
 pub mod approval;
 pub mod build;
 pub mod catchup;
-pub mod channel;
 pub mod durable_input_runtime;
 pub use horon_agent_base::external_auth;
 pub mod mission;

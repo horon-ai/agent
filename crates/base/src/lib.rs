@@ -108,7 +108,6 @@ pub mod storage;
 pub mod subscription_api;
 pub mod subscription_catalog;
 pub mod subscription_notice;
-pub mod telegram;
 pub mod terminal_launch;
 pub mod todo;
 pub mod transcript_sample;

@@ -31,7 +31,6 @@ FORBIDDEN_INTERNAL_DEPS = {
     "horon-agent-azure-auth",
     "horon-agent-core",
     "horon-agent-embedding",
-    "horon-agent-notify-email",
     "horon-agent-pdf",
     "horon-agent-plan",
     "horon-agent-provider-core",

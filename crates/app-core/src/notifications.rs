@@ -3,7 +3,6 @@
 //! Sends notifications via:
 //! - ntfy.sh (push notifications to phone)
 //! - Desktop notifications (notify-send)
-//! - Email (SMTP via lettre)
 //!
 //! All sends are fire-and-forget: errors are logged, never block.
 
@@ -12,11 +11,6 @@ use crate::logging;
 use crate::safety::AmbientTranscript;
 
 use std::sync::{Arc, OnceLock};
-
-use horon_agent_notify_email::{
-    ReplyAction, SendEmailRequest, build_permission_email_html, poll_imap_once, send_email,
-};
-pub use horon_agent_notify_email::{extract_permission_id, parse_permission_reply};
 
 /// Stable schema version for files handed to the bundled macOS notification
 /// broker. The broker ignores payloads with a newer schema instead of guessing
@@ -87,12 +81,11 @@ impl Priority {
     }
 }
 
-/// Dispatcher that sends notifications through all configured channels.
+/// Dispatcher that sends notifications through the configured local channels.
 #[derive(Clone)]
 pub struct NotificationDispatcher {
     client: reqwest::Client,
     config: SafetyConfig,
-    channels: crate::channel::ChannelRegistry,
 }
 
 impl Default for NotificationDispatcher {
@@ -106,7 +99,6 @@ impl NotificationDispatcher {
         let cfg = config().safety.clone();
         Self {
             client: crate::provider::shared_http_client(),
-            channels: crate::channel::ChannelRegistry::from_config(&cfg),
             config: cfg,
         }
     }
@@ -115,7 +107,6 @@ impl NotificationDispatcher {
     pub fn from_config(config: SafetyConfig) -> Self {
         Self {
             client: crate::provider::shared_http_client(),
-            channels: crate::channel::ChannelRegistry::from_config(&config),
             config,
         }
     }
@@ -135,13 +126,7 @@ impl NotificationDispatcher {
             Priority::Default
         };
 
-        self.send_all(
-            &title,
-            &safe_body,
-            &detailed_body,
-            priority,
-            Some(&transcript.session_id),
-        );
+        self.send_all(&title, &safe_body, &detailed_body, priority);
     }
 
     /// Send a permission request notification (high priority).
@@ -153,18 +138,7 @@ impl NotificationDispatcher {
             action, description, request_id
         );
 
-        // Build rich HTML email with approve/deny buttons
-        let reply_to = self.config.email_from.as_deref().unwrap_or("horon-agent@localhost");
-        let email_html = build_permission_email_html(action, description, request_id, reply_to);
-
-        self.send_all_with_email_override(
-            &title,
-            &safe_body,
-            &detailed_body,
-            Priority::High,
-            Some(request_id),
-            Some(&email_html),
-        );
+        self.send_all(&title, &safe_body, &detailed_body, Priority::High);
     }
 
     /// Send the outcome of a permission request through the configured channels.
@@ -174,7 +148,7 @@ impl NotificationDispatcher {
     /// one is phrased so it never reads like a person said no.
     pub fn dispatch_permission_decision(&self, request_id: &str, approved: bool, via: &str, message: Option<&str>) {
         let (title, safe_body, detailed_body) = format_permission_decision(request_id, approved, via, message);
-        self.send_all(&title, &safe_body, &detailed_body, Priority::High, Some(request_id));
+        self.send_all(&title, &safe_body, &detailed_body, Priority::High);
     }
 
     /// Tell the person that an unattended resume gave up and needs them.
@@ -188,30 +162,14 @@ impl NotificationDispatcher {
             "Request: {}\nSession: {}\nAttempts: {}\nReason: {}\n\nResolve it with:\n  horon-agent approvals resolve --request-id {} --tool-call-id <id> --verdict retry|skip --note <text>",
             request_id, session_id, attempts, reason, request_id
         );
-        self.send_all(&title, &safe_body, &detailed_body, Priority::Urgent, Some(request_id));
+        self.send_all(&title, &safe_body, &detailed_body, Priority::Urgent);
     }
 
-    /// Send through all configured channels (fire-and-forget).
+    /// Send through the configured local notification paths (fire-and-forget).
     ///
     /// `safe_body` is sanitized (no secrets) — used for ntfy (potentially public).
-    /// `detailed_body` includes full info — used for email and desktop (private channels).
-    /// `cycle_id` is embedded as Message-ID in emails for reply tracking.
-    fn send_all(&self, title: &str, safe_body: &str, detailed_body: &str, priority: Priority, cycle_id: Option<&str>) {
-        self.send_all_with_email_override(title, safe_body, detailed_body, priority, cycle_id, None);
-    }
-
-    /// Like `send_all`, but with an optional pre-built HTML body for the email channel.
-    /// When `email_html_override` is Some, it's used directly as the email body instead
-    /// of converting `detailed_body` through `markdown_to_html_email`.
-    fn send_all_with_email_override(
-        &self,
-        title: &str,
-        safe_body: &str,
-        detailed_body: &str,
-        priority: Priority,
-        cycle_id: Option<&str>,
-        email_html_override: Option<&str>,
-    ) {
+    /// `detailed_body` includes full info — used for desktop (local machine).
+    fn send_all(&self, title: &str, safe_body: &str, detailed_body: &str, priority: Priority) {
         // Guard: only dispatch if inside a tokio runtime
         if tokio::runtime::Handle::try_current().is_err() {
             logging::info("Notification skipped: no tokio runtime");
@@ -243,49 +201,6 @@ impl NotificationDispatcher {
                 send_desktop(&title, &body, urgency);
             });
         }
-
-        // Email — uses DETAILED body (sent to your own address, private)
-        // If email_html_override is provided, send it directly as HTML.
-        if self.config.email_enabled
-            && let (Some(to), Some(host), Some(from)) = (
-                &self.config.email_to,
-                &self.config.email_smtp_host,
-                &self.config.email_from,
-            )
-        {
-            let to = to.clone();
-            let host = host.clone();
-            let from = from.clone();
-            let port = self.config.email_smtp_port;
-            let password = self.config.email_password.clone();
-            let title = title.to_string();
-            let body = detailed_body.to_string();
-            let cycle_id = cycle_id.map(|s| s.to_string());
-            let html_override = email_html_override.map(|s| s.to_string());
-            tokio::spawn(async move {
-                if let Err(e) = send_email(SendEmailRequest {
-                    smtp_host: &host,
-                    smtp_port: port,
-                    from: &from,
-                    to: &to,
-                    password: password.as_deref(),
-                    subject: &title,
-                    body: &body,
-                    cycle_id: cycle_id.as_deref(),
-                    html_override: html_override.as_deref(),
-                })
-                .await
-                {
-                    logging::error(&format!("Email notification failed: {}", e));
-                } else {
-                    logging::info(&format!("Email notification sent to {}: {}", to, title));
-                }
-            });
-        }
-
-        // Message channels (Telegram, Discord, etc.) — uses DETAILED body
-        let channel_text = format!("*{}*\n\n{}", title, detailed_body);
-        self.channels.send_all(&channel_text);
     }
 }
 
@@ -945,101 +860,6 @@ fn send_desktop(title: &str, body: &str, urgency: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// IMAP reply polling
-// ---------------------------------------------------------------------------
-
-/// Run an IMAP polling loop checking for replies to ambient emails.
-/// Should be spawned as a tokio task alongside the ambient runner.
-pub async fn imap_reply_loop(config: SafetyConfig) {
-    let host = match config.email_imap_host.as_ref() {
-        Some(h) => h.clone(),
-        None => {
-            logging::error("IMAP reply loop: no imap_host configured");
-            return;
-        }
-    };
-    let port = config.email_imap_port;
-    let user = match config.email_from.as_ref() {
-        Some(u) => u.clone(),
-        None => {
-            logging::error("IMAP reply loop: no email_from configured");
-            return;
-        }
-    };
-    let pass = match config.email_password.as_ref() {
-        Some(p) => p.clone(),
-        None => {
-            logging::error("IMAP reply loop: no email password configured");
-            return;
-        }
-    };
-
-    logging::info(&format!(
-        "IMAP reply loop: starting ({}:{}, user: {})",
-        host, port, user
-    ));
-
-    loop {
-        // Run synchronous IMAP in a blocking task
-        let h = host.clone();
-        let u = user.clone();
-        let p = pass.clone();
-        let pt = port;
-        let result = tokio::task::spawn_blocking(move || poll_imap_once(&h, pt, &u, &p)).await;
-
-        match result {
-            Ok(Ok(actions)) => {
-                for action in &actions {
-                    match action {
-                        ReplyAction::PermissionDecision {
-                            request_id,
-                            approved,
-                            message,
-                        } => {
-                            if let Err(e) = crate::safety::record_permission_via_file(
-                                request_id,
-                                *approved,
-                                "email_reply",
-                                message.clone(),
-                            ) {
-                                logging::error(&format!(
-                                    "Failed to record permission decision for {}: {}",
-                                    request_id, e
-                                ));
-                            } else {
-                                logging::info(&format!(
-                                    "Permission {} via email: {}",
-                                    if *approved { "approved" } else { "denied" },
-                                    request_id
-                                ));
-                            }
-                        }
-                        ReplyAction::DirectiveReply { cycle_id, text } => {
-                            if let Err(e) = crate::ambient::add_directive(text.clone(), cycle_id.clone()) {
-                                logging::error(&format!("Failed to save directive: {}", e));
-                            }
-                        }
-                    }
-                }
-
-                if !actions.is_empty() {
-                    logging::info(&format!("IMAP: processed {} email replies", actions.len()));
-                }
-            }
-            Ok(Err(e)) => {
-                logging::error(&format!("IMAP poll error: {}", e));
-            }
-            Err(e) => {
-                logging::error(&format!("IMAP poll task panicked: {}", e));
-            }
-        }
-
-        // Poll every 60 seconds
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
@@ -1063,9 +883,8 @@ fn format_cycle_body_safe(transcript: &AmbientTranscript) -> String {
     lines.join("\n")
 }
 
-/// Full detailed body for private channels (email, desktop).
+/// Full detailed body for the desktop notification path.
 /// Includes the model-generated summary and provider info.
-/// Output is markdown — rendered to HTML for email, plain text for desktop.
 fn format_cycle_body_detailed(transcript: &AmbientTranscript) -> String {
     let mut lines = Vec::new();
 

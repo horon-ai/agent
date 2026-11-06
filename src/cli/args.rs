@@ -376,7 +376,7 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Ambient(AmbientCommand),
 
-    /// Optional HoronAgent Cloud/Jade integration commands
+    /// SSH session migration commands
     #[command(subcommand)]
     Cloud(CloudCommand),
 
@@ -800,12 +800,6 @@ pub(crate) enum ApprovalVerdictArg {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum CloudCommand {
-    /// Upload, list, verify, and view cloud-synced sessions
-    Sessions {
-        #[command(subcommand)]
-        action: CloudSessionsCommand,
-    },
-
     /// Move a live session (transcript, repo state, env notes) to a cloud host
     /// and keep working there. Your local files stay editable. Git reconciles
     /// both sides when the session comes back with `horon-agent cloud return`.
@@ -900,9 +894,6 @@ pub(crate) struct CloudMoveTarget {
     #[arg(long, hide = true)]
     pub(crate) transport: Option<String>,
 }
-
-mod cloud_sessions;
-pub(crate) use cloud_sessions::*;
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum RestartCommand {

@@ -976,42 +976,6 @@ enabled = true
 # Desktop notifications via notify-send (default: true)
 desktop_notifications = true
 
-# Email notifications via SMTP
-# email_enabled = false
-# email_to = "you@example.com"
-# email_from = "horon-agent@example.com"
-# email_smtp_host = "smtp.gmail.com"
-# email_smtp_port = 587
-# Password via env: HORON_AGENT_SMTP_PASSWORD (preferred) or config below
-# email_password = ""
-
-# IMAP for email replies (reply to ambient emails to send directives)
-# email_reply_enabled = false
-# email_imap_host = "imap.gmail.com"
-# email_imap_port = 993
-
-# Telegram notifications via Bot API (free, https://telegram.org)
-# telegram_enabled = false
-# telegram_bot_token = ""  # From @BotFather (prefer HORON_AGENT_TELEGRAM_BOT_TOKEN env var)
-# telegram_chat_id = ""    # Your user/chat ID
-# telegram_reply_enabled = false  # Reply to bot messages to send directives
-
-# Discord notifications via Bot API (https://discord.com/developers)
-# discord_enabled = false
-# discord_bot_token = ""     # From Discord Developer Portal (prefer HORON_AGENT_DISCORD_BOT_TOKEN env var)
-# discord_channel_id = ""    # Channel ID to post in
-# discord_bot_user_id = ""   # Bot's user ID (for filtering own messages)
-# discord_reply_enabled = false  # Messages in channel become agent directives
-
-# Jade cloud relay (outbound-only long polling, disabled by default).
-# Prefer environment variables for secrets:
-# HORON_AGENT_JADE_RELAY_API_BASE, HORON_AGENT_JADE_RELAY_TOKEN, HORON_AGENT_JADE_RELAY_TOKEN_ID,
-# HORON_AGENT_JADE_RELAY_USER_ID, HORON_AGENT_JADE_RELAY_SESSION_ID.
-# jade_relay_enabled = false
-# jade_relay_reply_enabled = false   # Deliver cloud prompts to one configured live session.
-# jade_relay_launch_enabled = false  # Allow cloud device commands to open headed local sessions.
-# jade_relay_launch_working_dir = "" # Optional default cwd for launched sessions.
-
 # [sponsors] # Legacy config section name retained for compatibility.
 # Integration discovery (enabled by default; set enabled = false to opt out).
 # When enabled, the agent gains a `discover_tools` tool listing third-party

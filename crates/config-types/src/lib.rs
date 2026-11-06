@@ -2040,60 +2040,6 @@ pub struct SafetyConfig {
     pub ntfy_server: String,
     /// Enable desktop notifications via notify-send (default: true)
     pub desktop_notifications: bool,
-    /// Enable email notifications (default: false)
-    pub email_enabled: bool,
-    /// Email recipient
-    pub email_to: Option<String>,
-    /// SMTP host (e.g. smtp.gmail.com)
-    pub email_smtp_host: Option<String>,
-    /// SMTP port (default: 587)
-    pub email_smtp_port: u16,
-    /// Email sender address
-    pub email_from: Option<String>,
-    /// SMTP password (prefer HORON_AGENT_SMTP_PASSWORD env var)
-    pub email_password: Option<String>,
-    /// IMAP host for receiving email replies (e.g. imap.gmail.com)
-    pub email_imap_host: Option<String>,
-    /// IMAP port (default: 993)
-    pub email_imap_port: u16,
-    /// Enable email reply → agent directive feature (default: false)
-    pub email_reply_enabled: bool,
-    /// Enable Telegram notifications (default: false)
-    pub telegram_enabled: bool,
-    /// Telegram bot token (from @BotFather)
-    pub telegram_bot_token: Option<String>,
-    /// Telegram chat ID to send messages to
-    pub telegram_chat_id: Option<String>,
-    /// Enable Telegram reply → agent directive feature (default: false)
-    pub telegram_reply_enabled: bool,
-    /// Enable Discord notifications (default: false)
-    pub discord_enabled: bool,
-    /// Discord bot token
-    pub discord_bot_token: Option<String>,
-    /// Discord channel ID to send messages to
-    pub discord_channel_id: Option<String>,
-    /// Discord bot user ID (for filtering own messages in polling)
-    pub discord_bot_user_id: Option<String>,
-    /// Enable Discord reply → agent directive feature (default: false)
-    pub discord_reply_enabled: bool,
-    /// Enable the Jade cloud relay channel (remote control via cloud mailbox, default: false)
-    pub jade_relay_enabled: bool,
-    /// Jade relay API base URL (e.g. https://...lambda-url.us-east-1.on.aws/)
-    pub jade_relay_api_base: Option<String>,
-    /// Jade relay bearer token (prefer HORON_AGENT_JADE_RELAY_TOKEN env var)
-    pub jade_relay_token: Option<String>,
-    /// Jade relay token id header (x-jade-token-id), used for fast token lookup
-    pub jade_relay_token_id: Option<String>,
-    /// Jade relay user id (channel scope; defaults to the token's user when omitted)
-    pub jade_relay_user_id: Option<String>,
-    /// Jade relay session id to bind this laptop's listener to (the channel = user_id/session_id)
-    pub jade_relay_session_id: Option<String>,
-    /// Enable Jade relay prompt → agent directive feature (default: false)
-    pub jade_relay_reply_enabled: bool,
-    /// Enable Jade relay device launch commands that open headed local sessions (default: false)
-    pub jade_relay_launch_enabled: bool,
-    /// Default working directory for remotely launched headed sessions
-    pub jade_relay_launch_working_dir: Option<String>,
 }
 
 impl Default for SafetyConfig {
@@ -2102,33 +2048,6 @@ impl Default for SafetyConfig {
             ntfy_topic: None,
             ntfy_server: "https://ntfy.sh".to_string(),
             desktop_notifications: true,
-            email_enabled: false,
-            email_to: None,
-            email_smtp_host: None,
-            email_smtp_port: 587,
-            email_from: None,
-            email_password: None,
-            email_imap_host: None,
-            email_imap_port: 993,
-            email_reply_enabled: false,
-            telegram_enabled: false,
-            telegram_bot_token: None,
-            telegram_chat_id: None,
-            telegram_reply_enabled: false,
-            discord_enabled: false,
-            discord_bot_token: None,
-            discord_channel_id: None,
-            discord_bot_user_id: None,
-            discord_reply_enabled: false,
-            jade_relay_enabled: false,
-            jade_relay_api_base: None,
-            jade_relay_token: None,
-            jade_relay_token_id: None,
-            jade_relay_user_id: None,
-            jade_relay_session_id: None,
-            jade_relay_reply_enabled: false,
-            jade_relay_launch_enabled: false,
-            jade_relay_launch_working_dir: None,
         }
     }
 }

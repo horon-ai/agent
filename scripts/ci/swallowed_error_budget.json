@@ -1,9 +1,9 @@
 {
-  "total": 2531,
+  "total": 2495,
   "totals_by_pattern": {
-    "dot_ok": 913,
-    "let_underscore": 1009,
-    "unwrap_or_default": 609
+    "dot_ok": 907,
+    "let_underscore": 996,
+    "unwrap_or_default": 592
   },
   "tracked_files": {
     "crates/agent-sdk/src/auth.rs": {
@@ -174,11 +174,6 @@
     "crates/app-core/src/catchup.rs": {
       "dot_ok": 2,
       "let_underscore": 0,
-      "unwrap_or_default": 5
-    },
-    "crates/app-core/src/channel.rs": {
-      "dot_ok": 0,
-      "let_underscore": 5,
       "unwrap_or_default": 5
     },
     "crates/app-core/src/durable_input_runtime.rs": {
@@ -385,11 +380,6 @@
       "dot_ok": 0,
       "let_underscore": 1,
       "unwrap_or_default": 0
-    },
-    "crates/app-core/src/server/jade_relay.rs": {
-      "dot_ok": 2,
-      "let_underscore": 8,
-      "unwrap_or_default": 3
     },
     "crates/app-core/src/server/lifecycle.rs": {
       "dot_ok": 8,
@@ -1386,11 +1376,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
-    "crates/base/src/telegram.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
-    },
     "crates/base/src/terminal_launch.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
@@ -1635,11 +1620,6 @@
       "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 2
-    },
-    "crates/notify-email/src/lib.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/overnight-core/src/lib.rs": {
       "dot_ok": 1,
@@ -2077,9 +2057,9 @@
       "unwrap_or_default": 6
     },
     "src/cli/commands.rs": {
-      "dot_ok": 13,
+      "dot_ok": 9,
       "let_underscore": 2,
-      "unwrap_or_default": 9
+      "unwrap_or_default": 4
     },
     "src/cli/commands/menubar.rs": {
       "dot_ok": 3,

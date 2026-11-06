@@ -52,7 +52,6 @@ mod durable_state;
 pub mod foreground_state;
 mod headless;
 mod irc;
-mod jade_relay;
 mod lifecycle;
 mod live_turn;
 mod provider_control;
@@ -1521,17 +1520,6 @@ impl Server {
                 ambient_handle.run_loop(ambient_provider).await;
             });
         }
-
-        // Spawn the Jade cloud relay listener independently of ambient mode. The
-        // worker is strictly opt-in and requires an explicit API base, token,
-        // session id, and reply-enabled flag before it makes any outbound calls.
-        jade_relay::spawn_if_configured(
-            &crate::config::config().safety,
-            Arc::clone(&self.sessions),
-            Arc::clone(&self.soft_interrupt_queues),
-            Arc::clone(&self.shutdown_signals),
-            Arc::clone(&self.swarm_state.members),
-        );
 
         // Spawn embedding idle monitor so the model can be unloaded when this
         // server has been quiet for a while.

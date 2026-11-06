@@ -44,15 +44,11 @@ graph TB
 
     subgraph "Notification Channels"
         NT[ntfy.sh push]
-        EM[Email]
-        TG[Telegram]
-        DC[Discord]
-        JR[Jade relay]
         DN[Desktop Notification]
     end
 
     subgraph "User Review"
-        PH[Phone / Email / chat reply]
+        PH[Phone notification]
         API[record_decision API]
     end
 
@@ -64,10 +60,6 @@ graph TB
     PERM --> RQ
     RQ --> NF
     NF --> NT
-    NF --> EM
-    NF --> TG
-    NF --> DC
-    NF --> JR
     NF --> DN
 
     PH -->|approve/deny| RQ
@@ -141,25 +133,13 @@ graph TB
 
 #### 사용자 지정 규칙
 
-이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1669-1730`), 승인 대기 정책은 `[ambient]`에 있다(`:1557-1595`).
+이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:2030-2041`), 승인 대기 정책은 `[ambient]`에 있다(`:1557-1595`).
 
 ```toml
 [safety]
 desktop_notifications = true
 # ntfy_topic = "horon-agent-ambient-your-secret-topic"
 # ntfy_server = "https://ntfy.sh"
-# email_enabled = false
-# email_to = "you@example.com"
-# email_smtp_host = "smtp.gmail.com"
-# email_smtp_port = 587
-# email_reply_enabled = false
-# telegram_enabled = false
-# telegram_bot_token = ""
-# telegram_chat_id = ""
-# discord_enabled = false
-# discord_bot_token = ""
-# discord_channel_id = ""
-# jade_relay_enabled = false
 
 [ambient]
 # approval_timeout_secs = 1800
@@ -189,7 +169,7 @@ sequenceDiagram
     RQ->>RQ: Store pending request in queue.json
     RQ->>NF: Dispatch notification
 
-    NF->>US: ntfy / email / Telegram / Discord / Jade relay
+    NF->>US: ntfy / desktop notification
 
     Note over AG: Agent decides: wait or move on?
     alt Wait for approval
@@ -198,7 +178,7 @@ sequenceDiagram
         AG->>AG: Skip this action, continue with next task
     end
 
-    US->>RQ: Approve (email reply / chat reply / record_decision)
+    US->>RQ: Approve (record_decision)
     RQ->>AG: Permission granted
 
     alt Agent waited
@@ -272,30 +252,18 @@ graph LR
 
     subgraph "Channels"
         NT[ntfy.sh<br/>push]
-        EM[Email<br/>SMTP + IMAP reply]
-        TG[Telegram<br/>Bot API]
-        DC[Discord<br/>Bot API]
-        JR[Jade relay<br/>cloud mailbox]
         DN[Desktop<br/>notify-send / macOS broker]
     end
 
     ND --> NT
-    ND --> EM
-    ND --> TG
-    ND --> DC
-    ND --> JR
     ND --> DN
 
     style ND fill:#e3f2fd
     style NT fill:#fff3e0
-    style EM fill:#fff3e0
-    style TG fill:#fff3e0
-    style DC fill:#fff3e0
-    style JR fill:#fff3e0
     style DN fill:#e8f5e9
 ```
 
-발송은 실패해도 흐름을 막지 않는다. 오류는 로그에 남기고 계속 진행한다(`crates/app-core/src/notifications.rs:1-9`). Telegram, Discord, Jade relay는 채널 레지스트리에 설정이 켜진 것만 등록되고, 답장을 에이전트 지시로 되돌리는 경로도 채널마다 따로 켠다(`crates/app-core/src/channel.rs:22-60`).
+발송은 실패해도 흐름을 막지 않는다. 오류는 로그에 남기고 계속 진행한다(`crates/app-core/src/notifications.rs:1-7`).
 
 **알림 내용:**
 - 에이전트가 하려는 일(동작과 설명)
@@ -307,45 +275,17 @@ graph LR
 
 ```toml
 [safety]
-# 켜고 끄는 채널
+# 데스크톱 알림 켜기(기본값: true)
 desktop_notifications = true
-email_enabled = false
-telegram_enabled = false
-discord_enabled = false
-jade_relay_enabled = false
 
 # ntfy.sh 푸시
 # ntfy_topic = "horon-agent-ambient-your-secret-topic"
 # ntfy_server = "https://ntfy.sh"
-
-# 이메일(SMTP 발송, IMAP 회신 수신)
-# email_to = "you@example.com"
-# email_from = "horon-agent@example.com"
-# email_smtp_host = "smtp.gmail.com"
-# email_smtp_port = 587
-# email_reply_enabled = false
-# email_imap_host = "imap.gmail.com"
-# email_imap_port = 993
-
-# Telegram
-# telegram_bot_token = ""
-# telegram_chat_id = ""
-# telegram_reply_enabled = false
-
-# Discord
-# discord_bot_token = ""
-# discord_channel_id = ""
-# discord_bot_user_id = ""
-# discord_reply_enabled = false
-
-# Jade relay(클라우드 메일박스를 통한 원격 제어)
-# jade_relay_reply_enabled = false
-# jade_relay_launch_enabled = false
 ```
 
-자격 증명은 환경 변수를 먼저 쓴다. `HORON_AGENT_SMTP_PASSWORD`, `HORON_AGENT_TELEGRAM_BOT_TOKEN`, `HORON_AGENT_DISCORD_BOT_TOKEN`, `HORON_AGENT_JADE_RELAY_TOKEN` 같은 이름이 설정 템플릿에 적혀 있다(`crates/base/src/config/default_file.rs:817-862`).
+이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:2030-2041`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
 
-묶음 간격, 조용한 시간, 최소 긴급도 같은 선호 항목은 이 빌드에 없다. 그런 키는 `SafetyConfig`에 존재하지 않는다(`crates/config-types/src/lib.rs:1669-1730`).
+묶음 간격, 조용한 시간, 최소 긴급도 같은 선호 항목도 이 빌드에 없다.
 
 ---
 
@@ -407,8 +347,8 @@ Next cycle: ~35 minutes
 #### 전달
 
 - **항상:** 대기열과 이력 파일을 남긴다.
-- **이메일을 켠 경우:** 요약을 보내고, 회신은 `parse_permission_reply`가 승인·거부로 해석한다(`crates/notify-email/src/lib.rs:139-149`).
-- **채널 회신을 켠 경우:** Telegram, Discord, Jade relay의 회신 루프가 에이전트 지시로 전달한다(`crates/app-core/src/channel.rs:11-19`).
+- **알림 켠 경우:** ntfy.sh와 데스크톱 알림으로 요약과 승인 요청을 보낸다. 발송 실패는 로그에만 남기고 주기를 막지 않는다.
+- **회신:** 이 빌드에는 알림 회신으로 결정을 남기는 경로가 없다. 결정은 `record_decision`이나 `record_permission_via_file`로 기록한다.
 
 ---
 
@@ -426,15 +366,11 @@ Next cycle: ~35 minutes
 
 #### 검토 인터페이스
 
-**1. 알림 회신**
-
-이메일 회신은 `extract_permission_id`로 요청 id를 찾고 `parse_permission_reply`로 결정을 읽는다(`crates/notify-email/src/lib.rs:139-149`). 채팅 채널은 각자의 회신 루프가 같은 결정 기록 경로를 쓴다.
-
-**2. 파일 기반 결정 기록**
+**1. 파일 기반 결정 기록**
 
 외부 도구가 결정을 남길 때는 `record_permission_via_file`을 쓴다(`crates/base/src/safety.rs:907`). 만료 정리는 `expire_stale_permissions_via_file`이 맡는다(`:929`).
 
-**3. 라이브러리 호출**
+**2. 라이브러리 호출**
 
 `SafetySystem::record_decision`은 프로세스 안에서 결정을 기록하고 대기 중인 호출자를 깨운다(`crates/base/src/safety.rs:597`).
 
@@ -450,7 +386,7 @@ Next cycle: ~35 minutes
     "action": "create_pull_request",
     "decision": "approved",
     "decided_at": "2026-02-08T14:42:00Z",
-    "decided_via": "email",
+    "decided_via": "cli",
     "response_time_seconds": 420
 }
 ```
@@ -586,9 +522,8 @@ pub enum Urgency {
 - [x] 기록 로거와 세션 요약(`crates/base/src/safety.rs:627-690`)
 
 #### 2단계: 알림 채널
-- [x] 데스크톱 알림(`crates/app-core/src/notifications.rs:1-9`)
-- [x] 이메일 알림과 회신(`crates/notify-email/src/lib.rs:139-149`)
-- [x] Telegram, Discord, Jade relay 채널(`crates/app-core/src/channel.rs:22-60`)
+- [x] 데스크톱 알림(`crates/app-core/src/notifications.rs:1-7`)
+- [x] ntfy.sh 푸시
 - [ ] 웹훅 지원
 - [ ] 알림 묶음과 조용한 시간
 - [ ] SMS(Twilio 등)
@@ -596,7 +531,6 @@ pub enum Urgency {
 #### 3단계: 검토 인터페이스
 - [ ] 데스크톱 검토 패널
 - [ ] CLI 명령(`horon-agent safety review/list/approve/deny/log`)
-- [x] 이메일 승인·거부 회신 해석(`crates/notify-email/src/lib.rs:139-149`)
 
 #### 4단계: 설정
 - [x] `[safety]` 설정 구역(`crates/base/src/config/default_file.rs:817`)

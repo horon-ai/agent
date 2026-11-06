@@ -22,7 +22,7 @@ use crate::session::Session;
 use crate::tool;
 use crate::tool::ambient as ambient_tools;
 use chrono::Utc;
-use horon_agent_agent_runtime::{SoftInterruptMessage, SoftInterruptQueue, SoftInterruptSource};
+use horon_agent_agent_runtime::SoftInterruptQueue;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
@@ -98,42 +98,6 @@ impl AmbientRunnerHandle {
     /// Get a reference to the safety system (for debug socket permission commands).
     pub fn safety(&self) -> &Arc<SafetySystem> {
         &self.inner.safety
-    }
-
-    /// Inject a message from an external channel (Telegram, Discord, etc.)
-    /// into the active ambient cycle as a user message.
-    /// If a cycle is running, the message goes in via soft interrupt (immediate).
-    /// If no cycle is running, the message is saved as a directive and a cycle is triggered.
-    /// Returns true if injected into active cycle, false if queued as directive.
-    pub async fn inject_message(&self, text: &str, source: &str) -> bool {
-        let queue = self.inner.active_cycle_queue.read().await;
-        if let Some(ref q) = *queue
-            && let Ok(mut q) = q.lock()
-        {
-            q.push(SoftInterruptMessage {
-                content: format!("[{} message from user]\n{}", source, text),
-                images: Vec::new(),
-                urgent: false,
-                source: SoftInterruptSource::User,
-                client_id: None,
-                input_id: None,
-            });
-            logging::info(&format!(
-                "{} message injected into active ambient cycle: {}",
-                source,
-                crate::util::truncate_str(text, 60)
-            ));
-            return true;
-        }
-        drop(queue);
-
-        // No active cycle — save as directive and trigger a wake
-        let source_id = format!("{}_{}", source, chrono::Utc::now().timestamp());
-        if let Err(e) = ambient::add_directive(text.to_string(), source_id) {
-            logging::error(&format!("Failed to save {} directive: {}", source, e));
-        }
-        self.trigger().await;
-        false
     }
 
     /// Manually trigger an ambient cycle (returns immediately, cycle runs async).
@@ -499,28 +463,6 @@ impl AmbientRunnerHandle {
             *running = true;
         }
         logging::info("Ambient runner: starting background loop");
-
-        // Spawn reply pollers only when ambient mode is enabled at startup; scheduled
-        // session-targeted scheduled tasks should still work without the ambient-only reply
-        // infrastructure.
-        if config().ambient.enabled {
-            let safety_config = config().safety.clone();
-            if safety_config.email_reply_enabled
-                && safety_config.email_imap_host.is_some()
-                && safety_config.email_enabled
-            {
-                let imap_config = safety_config.clone();
-                tokio::spawn(async move {
-                    crate::notifications::imap_reply_loop(imap_config).await;
-                });
-                logging::info("Ambient runner: IMAP reply poller spawned");
-            }
-
-            // Spawn reply pollers for all configured message channels
-            // (Telegram, Discord, etc.)
-            let channel_registry = crate::channel::ChannelRegistry::from_config(&safety_config);
-            channel_registry.spawn_reply_loops(&self);
-        }
 
         let amb_config = &config().ambient;
         let scheduler_config = AmbientSchedulerConfig {

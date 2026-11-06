@@ -69,7 +69,6 @@ rand = "0.9.3"
 url = "2"
 horon-agent-agent-runtime = { path = "../agent-runtime" }
 horon-agent-ambient-types = { path = "../ambient-types" }
-horon-agent-notify-email = { path = "../notify-email" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-schema-dialect = { path = "../schema-dialect" }
 horon-agent-lsp = { path = "../lsp" }
