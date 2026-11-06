@@ -61,6 +61,11 @@ members = [
     "crates/update-core",
     "crates/terminal-launch",
     "crates/perf-counters",
+    "crates/platform",
+    "crates/platform-api",
+    "crates/platform-linux",
+    "crates/platform-macos",
+    "crates/platform-windows",
 ]
 
 [lib]
