@@ -11,7 +11,7 @@
 //! both), so queries re-read the file with a short TTL instead of trusting a
 //! process-local cache.
 //!
-//! ChatGPT OAuth token counts and API-equivalent estimates use a separate
+//! Subscription OAuth token counts and API-equivalent estimates use a separate
 //! `openai_oauth_usage.json` ledger, written only by provider completion hooks.
 //! See [`openai_oauth_usage_summary`]. These estimates never enter API-key spend.
 //!
@@ -253,7 +253,7 @@ pub fn display_name_for_source_key(source_key: &str) -> String {
         return format!("Anthropic (Claude) [{}]", label);
     }
     if let Some(label) = source_key.strip_prefix("openai:oauth:") {
-        return format!("OpenAI (ChatGPT) [{}]", label);
+        return format!("OpenAI (subscription) [{}]", label);
     }
     match source_key {
         "claude:api-key" => "Anthropic API key".to_string(),

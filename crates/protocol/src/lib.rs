@@ -658,7 +658,6 @@ impl Request {
             Request::Compact { id } => *id,
             Request::TriggerMemoryExtraction { id } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,
-            Request::SwitchOpenAiAccount { id, .. } => *id,
             Request::InvalidateOpenAiUsage { id, .. } => *id,
             Request::StdinResponse { id, .. } => *id,
             Request::ApprovalAck { id, .. } | Request::FailoverAck { id, .. } => *id,

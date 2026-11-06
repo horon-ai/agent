@@ -1,17 +1,16 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 use anyhow::{Context, Result};
-use std::io::IsTerminal;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 
 use super::args::{
-    AmbientCommand, ApprovalVerdictArg, ApprovalsCommand, Args, AuthCommand, Command, MemoryCommand, ModelCommand,
-    ProviderCommand, ServerCommand,
+    AmbientCommand, ApprovalVerdictArg, ApprovalsCommand, Args, Command, MemoryCommand, ModelCommand, ProviderCommand,
+    ServerCommand,
 };
 use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 
-use super::{account, acp, commands, debug, hot_exec, login, output, provider_init, terminal};
+use super::{account, acp, commands, debug, hot_exec, output, provider_init, terminal};
 use provider_init::ProviderChoice;
 
 #[cfg(any(target_os = "linux", test))]
@@ -69,11 +68,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         // A remote session ID and working directory belong to the remote host.
         // Do not run local resume lookup or provider bootstrap.
         return super::ssh::run(args).await;
-    }
-    // Import is a narrow stdin-only credential operation. Do not trigger config
-    // migrations, provider discovery, or unrelated credential imports first.
-    if let Some(Command::Auth(AuthCommand::Import { json, .. })) = &args.command {
-        return super::auth_import::run(&args.provider, *json);
     }
     // Explicit MCP management is independent of provider profiles, sessions,
     // and the daemon. In particular, list must remain offline and scriptable.
@@ -293,7 +287,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             }
         },
         Some(Command::Run { message, json, ndjson }) => {
-            register_on_demand_server_spawner_for_run(args.provider, args.model.clone(), args.provider_profile.clone());
+            register_on_demand_server_spawner_for_run(
+                args.provider.clone(),
+                args.model.clone(),
+                args.provider_profile.clone(),
+            );
             commands::run_single_message_command(
                 &args.provider,
                 args.model.as_deref(),
@@ -304,41 +302,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             )
             .await?;
         }
-        Some(Command::Login {
-            provider: login_provider,
-            account,
-            no_browser,
-            print_auth_url,
-            callback_url,
-            auth_code,
-            json,
-            complete,
-            flow_id,
-            cancel,
-            no_validate,
-            api_base,
-            api_key,
-            api_key_env,
-        }) => {
-            let options = login::LoginOptions {
-                no_browser,
-                print_auth_url,
-                callback_url,
-                auth_code,
-                json,
-                complete,
-                flow_id,
-                cancel,
-                no_validate,
-                openai_compatible_api_base: api_base,
-                openai_compatible_api_key: api_key,
-                openai_compatible_api_key_env: api_key_env,
-                openai_compatible_default_model: args.model.clone(),
-            };
-            login::run_login(&login_provider.unwrap_or(args.provider), account.as_deref(), options).await?;
-        }
         Some(Command::Account { action }) => match action {
-            super::args::AccountCommand::Login { no_browser } => account::run_login(no_browser).await?,
             super::args::AccountCommand::Status { json } => account::run_status(json).await?,
             super::args::AccountCommand::Manage => account::run_manage()?,
             super::args::AccountCommand::Logout => account::run_logout().await?,
@@ -370,18 +334,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         }) => {
             debug::run_debug_command(&command, &arg, session, socket, wait).await?;
         }
-        Some(Command::Auth(subcmd)) => match subcmd {
-            AuthCommand::Import { .. } => unreachable!("auth import handled before bootstrap"),
-            AuthCommand::Status { json } => commands::run_auth_status_command(json)?,
-            AuthCommand::Doctor {
-                provider,
-                validate,
-                json,
-            } => {
-                let provider_arg = auth_doctor_provider_arg(provider.as_deref(), &args.provider);
-                commands::run_auth_doctor_command(provider_arg, validate, json).await?
-            }
-        },
         Some(Command::Provider(subcmd)) => match subcmd {
             ProviderCommand::List { json } => {
                 commands::run_provider_list_command(json)?;
@@ -459,75 +411,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 commands::run_model_command(&args.provider, args.model.as_deref(), json, verbose).await?;
             }
         },
-        Some(Command::ProviderTestCoverage {
-            provider_query,
-            model_query,
-            coverage_file,
-            coverage_limit,
-        }) => {
-            let coverage_path = coverage_file.as_deref().map(std::path::Path::new);
-            let colorize = std::io::stdout().is_terminal()
-                && std::env::var_os("NO_COLOR").is_none()
-                && std::env::var_os("HORON_AGENT_NO_COLOR").is_none();
-            if let Some(provider) = provider_query {
-                let model = model_query
-                    .or_else(|| args.model.clone())
-                    .unwrap_or_else(|| "*".to_string());
-                let report = crate::live_tests::format_provider_test_coverage_report(&provider, &model, coverage_path);
-                print_provider_test_coverage_report(&report, colorize);
-            } else {
-                let (coverage, path) = crate::live_tests::load_coverage(coverage_path)?;
-                let summary = crate::live_tests::strict_live_provider_model_coverage_summary(
-                    &coverage,
-                    path.display().to_string(),
-                );
-                let report =
-                    crate::live_tests::format_strict_live_provider_model_coverage_summary(&summary, coverage_limit);
-                print_provider_test_coverage_report(&report, colorize);
-            }
-        }
-        Some(Command::ProviderDoctor { provider, tier, json }) => {
-            crate::cli::provider_doctor::run_provider_doctor_command(&provider, args.model.as_deref(), &tier, json)
-                .await?;
-        }
-        Some(Command::AuthTest {
-            login,
-            all_configured,
-            no_smoke,
-            no_tool_smoke,
-            prompt,
-            json,
-            output,
-            coverage,
-            context_audit,
-            coverage_file,
-            coverage_limit,
-        }) => {
-            if coverage {
-                commands::run_auth_test_coverage_command(
-                    json,
-                    output.as_deref(),
-                    coverage_file.as_deref(),
-                    coverage_limit,
-                )?;
-            } else if context_audit {
-                commands::run_auth_test_context_audit_command(&args.provider, all_configured, json, output.as_deref())
-                    .await?;
-            } else {
-                commands::run_auth_test_command(
-                    &args.provider,
-                    args.model.as_deref(),
-                    login,
-                    all_configured,
-                    no_smoke,
-                    no_tool_smoke,
-                    prompt.as_deref(),
-                    json,
-                    output.as_deref(),
-                )
-                .await?;
-            }
-        }
         None => run_default_command(args).await?,
     }
 
@@ -583,19 +466,6 @@ fn provider_choice_for_named_profile_in(profile_name: &str, config: &crate::conf
         }
         _ => ProviderChoice::OpenaiCompatible,
     }
-}
-
-fn auth_doctor_provider_arg<'a>(
-    positional_provider: Option<&'a str>,
-    global_provider: &'a ProviderChoice,
-) -> Option<&'a str> {
-    positional_provider.or_else(|| {
-        if *global_provider == ProviderChoice::Auto {
-            None
-        } else {
-            Some(global_provider.as_arg_value())
-        }
-    })
 }
 
 fn resolve_resume_arg(args: &mut Args) -> Result<()> {
@@ -744,14 +614,6 @@ async fn run_default_command(args: Args) -> Result<()> {
     anyhow::bail!(
         "the interactive client is unavailable in this headless build; use `horon-agent serve` or `horon-agent run`"
     );
-}
-
-fn print_provider_test_coverage_report(report: &str, colorize: bool) {
-    if colorize {
-        print!("{}", crate::live_tests::colorize_provider_test_coverage_output(report));
-    } else {
-        print!("{}", report);
-    }
 }
 
 pub(crate) async fn server_is_running() -> bool {
@@ -946,19 +808,17 @@ pub(crate) async fn maybe_prompt_server_bootstrap_login(provider_choice: &Provid
     }
 
     if auth::AuthStatus::has_any_untrusted_external_auth() {
-        let _ = provider_init::maybe_run_external_auth_auto_import_flow().await?;
+        provider_init::maybe_run_external_auth_auto_import_flow().await?;
         if detect_bootstrap_credentials().await.has_any {
             return Ok(());
         }
     }
 
-    let provider = provider_init::prompt_login_provider_selection(
-        &provider_catalog::server_bootstrap_login_providers(),
-        "No credentials found. Let's log in!\n\nChoose a provider:",
-    )?;
-    login::run_login_provider(provider, None, login::LoginOptions::default()).await?;
-    provider_init::apply_login_provider_profile_env(provider);
-    output::stderr_blank_line();
+    // No interactive login exists in this build. Point the operator at the
+    // config path instead of blocking a headless launch on a prompt.
+    output::stderr_info(
+        "No model provider is configured. Add a [providers.<name>] profile with type = \"openai-compatible\" to config.toml, then run again.",
+    );
 
     Ok(())
 }
@@ -972,16 +832,14 @@ struct BootstrapCredentialState {
 }
 
 async fn detect_bootstrap_credentials() -> BootstrapCredentialState {
-    let has_openai = tokio::task::spawn_blocking(|| auth::codex::load_credentials().is_ok())
+    let status = tokio::task::spawn_blocking(crate::auth::AuthStatus::check_fast)
         .await
-        .unwrap_or(false);
-    let has_compatible = crate::provider_catalog::openai_compatible_profiles()
-        .iter()
-        .copied()
-        .any(crate::provider_catalog::openai_compatible_profile_is_configured);
-
+        .unwrap_or_else(|error| {
+            crate::logging::warn(&format!("Auth status probe failed: {error}"));
+            crate::auth::AuthStatus::default()
+        });
     BootstrapCredentialState {
-        has_any: has_openai || has_compatible,
+        has_any: status.openai_compatible_any == crate::auth::AuthState::Available,
     }
 }
 
@@ -1076,6 +934,7 @@ fn register_on_demand_server_spawner_for_run(
     crate::server_spawn::register_on_demand_server_spawner(Box::new(move || {
         let model = model.clone();
         let provider_profile = provider_profile.clone();
+        let provider_choice = provider_choice.clone();
         Box::pin(async move {
             let model = model.as_deref();
             let provider_profile = provider_profile.as_deref();

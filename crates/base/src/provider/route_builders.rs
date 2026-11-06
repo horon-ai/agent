@@ -115,24 +115,8 @@ pub fn listable_model_names_from_routes(routes: &[ModelRoute]) -> Vec<String> {
     models
 }
 
-pub fn build_openai_oauth_route(model: &str, available: bool, detail: impl Into<String>) -> ModelRoute {
-    build_openai_route(model, "openai-oauth", available, detail)
-}
-
 pub fn build_openai_api_key_route(model: &str, available: bool, detail: impl Into<String>) -> ModelRoute {
     build_openai_route(model, "openai-api-key", available, detail)
-}
-
-pub fn build_chatgpt_web_route() -> ModelRoute {
-    ModelRoute {
-        model: super::CHATGPT_WEB_MODEL.to_string(),
-        provider: "OpenAI".to_string(),
-        api_method: "chatgpt-web".to_string(),
-        available: true,
-        detail: "logged-in Firefox ChatGPT session".to_string(),
-        usage: None,
-        cheapness: None,
-    }
 }
 
 fn build_openai_route(model: &str, api_method: &str, available: bool, detail: impl Into<String>) -> ModelRoute {

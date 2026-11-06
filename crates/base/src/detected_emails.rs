@@ -18,8 +18,8 @@ pub struct DetectedEmail {
 
 /// Emails from the coding-agent subscriptions on this machine, the same tools
 /// onboarding already offers to import logins from: Codex, Claude Code,
-/// Cursor (CLI and IDE), the Gemini CLI, and the Claude, ChatGPT, Gemini,
-/// Antigravity logins HoronAgent itself stores. Deduplicated in that order. Missing or unreadable files are skipped silently.
+/// Cursor (CLI and IDE), the Gemini CLI, and the assistant logins HoronAgent
+/// itself stores. Deduplicated in that order. Missing or unreadable files are skipped silently.
 pub fn detected_emails() -> Vec<DetectedEmail> {
     let home = |relative: &str| {
         crate::storage::user_home_path(relative)
@@ -32,7 +32,6 @@ pub fn detected_emails() -> Vec<DetectedEmail> {
             .and_then(|dir| read_json(&dir.join(name)))
     };
     let mut found = vec![
-        ("Codex", home(".codex/auth.json").and_then(|v| codex_email(&v))),
         ("Claude Code", home(".claude.json").and_then(|v| claude_code_email(&v))),
         (
             "Cursor",
@@ -47,19 +46,11 @@ pub fn detected_emails() -> Vec<DetectedEmail> {
     for email in accounts(horon_agent("auth.json"), "anthropic_accounts") {
         found.push(("Claude", Some(email)));
     }
-    for email in accounts(horon_agent("openai-auth.json"), "openai_accounts") {
-        found.push(("ChatGPT", Some(email)));
-    }
     collect(found)
 }
 
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
-}
-
-fn codex_email(auth: &Value) -> Option<String> {
-    let token = auth.pointer("/tokens/id_token")?.as_str()?;
-    crate::auth::codex::extract_email(token)
 }
 
 fn claude_code_email(config: &Value) -> Option<String> {
@@ -118,23 +109,14 @@ fn plausible(email: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
     use serde_json::json;
-
-    fn jwt(payload: Value) -> String {
-        let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
-        format!("e30.{body}.sig")
-    }
 
     #[test]
     fn reads_each_tools_layout() {
-        let codex = json!({"tokens": {"id_token": jwt(json!({"email": "a@x.com"}))}});
-        assert_eq!(codex_email(&codex).as_deref(), Some("a@x.com"));
         let claude = json!({"oauthAccount": {"emailAddress": "b@y.org"}});
         assert_eq!(claude_code_email(&claude).as_deref(), Some("b@y.org"));
         let gemini = json!({"active": "c@z.dev", "old": []});
         assert_eq!(gemini_email(&gemini).as_deref(), Some("c@z.dev"));
-        assert_eq!(codex_email(&json!({"tokens": {}})), None);
         assert_eq!(claude_code_email(&json!({})), None);
         assert_eq!(gemini_email(&json!({"active": null})), None);
         let cursor = json!({"authInfo": {"email": "d@cur.sor", "userId": 1}});

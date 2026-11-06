@@ -34,41 +34,9 @@ use crate::test_support::*;
 //     to a Failed verdict instead of an indefinite hang.
 // ----------------------------------------------------------------------------
 
-/// Test that the horon-agent binary can run independent with Claude provider
+/// Test that the horon-agent binary can run with an OpenAI-compatible provider
 #[tokio::test]
-#[ignore] // Requires Claude credentials
-async fn binary_integration_independent_claude() -> Result<()> {
-    use std::process::Command;
-    let _env = setup_test_env()?;
-
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--bin",
-            "horon-agent",
-            "--",
-            "run",
-            "Say 'test-ok' and nothing else",
-        ])
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success() || stdout.contains("test") || stderr.contains("Claude"),
-        "Binary should run successfully. stdout: {}, stderr: {}",
-        stdout,
-        stderr
-    );
-
-    Ok(())
-}
-
-/// Test that the horon-agent binary can run with OpenAI provider
-#[tokio::test]
-#[ignore] // Requires OpenAI/Codex credentials
+#[ignore] // Requires OpenAI-compatible credentials
 async fn binary_integration_openai_provider() -> Result<()> {
     use std::process::Command;
     let _env = setup_test_env()?;
@@ -81,7 +49,7 @@ async fn binary_integration_openai_provider() -> Result<()> {
             "horon-agent",
             "--",
             "--provider",
-            "openai",
+            "openai-compatible",
             "run",
             "Say 'openai-ok' and nothing else",
         ])
@@ -90,13 +58,14 @@ async fn binary_integration_openai_provider() -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Check either success or identifiable OpenAI response
-    let has_response =
-        stdout.to_lowercase().contains("openai") || stdout.to_lowercase().contains("ok") || stderr.contains("OpenAI");
+    // Check either success or identifiable OpenAI-compatible response
+    let has_response = stdout.to_lowercase().contains("openai")
+        || stdout.to_lowercase().contains("ok")
+        || stderr.contains("OpenAI-compatible");
 
     assert!(
         output.status.success() || has_response,
-        "OpenAI provider should work. stdout: {}, stderr: {}",
+        "OpenAI-compatible provider should work. stdout: {}, stderr: {}",
         stdout,
         stderr
     );

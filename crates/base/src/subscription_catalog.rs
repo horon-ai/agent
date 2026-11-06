@@ -318,7 +318,7 @@ pub fn default_model() -> &'static CuratedModel {
     static DEFAULT: std::sync::OnceLock<&'static CuratedModel> = std::sync::OnceLock::new();
     DEFAULT.get_or_init(|| {
         let ids: Vec<&str> = CURATED_MODELS.iter().map(|model| model.id).collect();
-        crate::auth::lifecycle::ranked_flagship_for_provider("claude", &ids)
+        crate::provider::model_rank::ranked_flagship_for_provider("claude", &ids)
             .and_then(|best| CURATED_MODELS.iter().find(|model| model.id == best))
             .or_else(|| CURATED_MODELS.iter().find(|model| model.default_enabled))
             .unwrap_or(&CURATED_MODELS[0])
@@ -583,7 +583,7 @@ mod tests {
         // The curated catalog holds Opus 4.8 and Opus 5; the default must be the
         // newest flagship, not the legacy `default_enabled` entry (Opus 4.8).
         let ids: Vec<&str> = CURATED_MODELS.iter().map(|model| model.id).collect();
-        let expected = crate::auth::lifecycle::ranked_flagship_for_provider("claude", &ids)
+        let expected = crate::provider::model_rank::ranked_flagship_for_provider("claude", &ids)
             .expect("curated catalog has a ranked Claude flagship");
         assert_eq!(default_model().id, expected);
         assert_ne!(default_model().id, "claude-opus-4-8");

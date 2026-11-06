@@ -12,15 +12,6 @@ mod report_info;
 
 pub(crate) use super::sessions::run_session_command;
 
-pub(crate) use super::auth_test::run_post_login_validation;
-#[cfg(test)]
-pub(crate) use super::auth_test::{
-    AuthTestChoicePlan, AuthTestTarget, ResolvedAuthTestTarget, auth_test_choice_plan, auth_test_error_is_retryable,
-    resolve_auth_test_targets,
-};
-pub use super::auth_test::{
-    run_auth_test_command, run_auth_test_context_audit_command, run_auth_test_coverage_command,
-};
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
 
 pub enum AmbientSubcommand {
@@ -473,14 +464,6 @@ struct NdjsonRunState {
     connection_phase: Option<String>,
     status_detail: Option<String>,
     usage: crate::agent::TokenUsage,
-}
-
-pub fn run_auth_status_command(emit_json: bool) -> Result<()> {
-    report_info::run_auth_status_command(emit_json)
-}
-
-pub async fn run_auth_doctor_command(provider_arg: Option<&str>, validate: bool, emit_json: bool) -> Result<()> {
-    report_info::run_auth_doctor_command(provider_arg, validate, emit_json).await
 }
 
 pub fn run_provider_list_command(emit_json: bool) -> Result<()> {
@@ -1802,9 +1785,7 @@ pub async fn run_model_command(
     }
 
     if emit_json {
-        let provider_label = super::provider_init::login_provider_for_choice(choice)
-            .map(|provider| provider.display_name.to_string())
-            .unwrap_or_else(|| crate::provider_catalog::runtime_provider_display_name(provider.name()));
+        let provider_label = crate::provider_catalog::runtime_provider_display_name(provider.name());
         let report = ModelListReport {
             provider: provider_label,
             selected_model: provider.model(),

@@ -45,7 +45,6 @@ members = [
     "crates/session-types",
     "crates/session-store",
     "crates/storage",
-    "crates/azure-auth",
     "crates/provider-metadata",
     "crates/provider-env",
     "crates/provider-core",

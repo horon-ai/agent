@@ -91,9 +91,9 @@ pub fn anthropic_oauth_pricing(model: &str, subscription: Option<&str>) -> Route
             usd_to_micros(100.0),
             None,
             Some(if is_opus {
-                "Claude Max plan; Opus access included; 1M context".to_string()
+                "Claude subscription plan; Opus access included; 1M context".to_string()
             } else {
-                "Claude Max plan; 1M context".to_string()
+                "Claude subscription plan; 1M context".to_string()
             }),
         ),
         Some("pro") => RouteCheapnessEstimate::subscription(
@@ -120,7 +120,7 @@ pub fn anthropic_oauth_pricing(model: &str, subscription: Option<&str>) -> Route
             usd_to_micros(if is_opus { 100.0 } else { 20.0 }),
             None,
             Some(if is_opus {
-                "Opus access implies Claude Max-like subscription pricing".to_string()
+                "Opus access implies top-tier subscription pricing".to_string()
             } else {
                 "Claude OAuth subscription pricing (plan not detected)".to_string()
             }),
@@ -220,9 +220,9 @@ pub fn openai_oauth_pricing(model: &str) -> RouteCheapnessEstimate {
         usd_to_micros(if likely_pro { 200.0 } else { 20.0 }),
         None,
         Some(if likely_pro {
-            "ChatGPT subscription estimate; advanced GPT-5 access treated as Pro-like".to_string()
+            "Subscription estimate; advanced GPT-5 access treated as Pro-like".to_string()
         } else {
-            "ChatGPT subscription estimate".to_string()
+            "Subscription estimate".to_string()
         }),
     )
 }

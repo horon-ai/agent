@@ -38,8 +38,7 @@ use super::comm_sync::{
 use super::provider_control::{
     handle_cycle_model, handle_invalidate_openai_usage, handle_notify_auth_changed, handle_refresh_models,
     handle_set_compaction_mode, handle_set_model, handle_set_premium_mode, handle_set_reasoning_effort,
-    handle_set_route, handle_set_service_tier, handle_set_transport, handle_switch_openai_account,
-    try_available_models_catalog,
+    handle_set_route, handle_set_service_tier, handle_set_transport, try_available_models_catalog,
 };
 use super::{
     AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, SessionControlHandle, SessionInterruptQueues,
@@ -2438,10 +2437,6 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                 )
                 .await;
-            }
-
-            Request::SwitchOpenAiAccount { id, label } => {
-                handle_switch_openai_account(id, label, &agent, &client_event_tx).await;
             }
 
             Request::InvalidateOpenAiUsage { id, account_label } => {

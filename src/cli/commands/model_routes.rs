@@ -51,7 +51,6 @@ pub(super) fn collect_cli_model_names(
     deduped
 }
 
-#[allow(deprecated)]
 pub(super) fn filter_cli_model_routes_for_choice(
     choice: &crate::cli::provider_init::ProviderChoice,
     routes: &[crate::provider::ModelRoute],
@@ -59,17 +58,11 @@ pub(super) fn filter_cli_model_routes_for_choice(
     use crate::cli::provider_init::ProviderChoice;
 
     let keep = |route: &&crate::provider::ModelRoute| match choice {
-        ProviderChoice::Openai => {
-            let method = route.api_method_kind();
-            matches!(method, crate::provider::ModelRouteApiMethod::OpenAIOAuth)
-                || matches!(method, crate::provider::ModelRouteApiMethod::Other(ref value) if value == "chatgpt-web")
+        ProviderChoice::Auto => true,
+        ProviderChoice::OpenaiCompatible => route.api_method == "openai-compatible",
+        ProviderChoice::Profile(name) => {
+            route.api_method == *name || route.api_method == format!("openai-compatible:{name}")
         }
-        ProviderChoice::OpenaiApi => matches!(
-            route.api_method_kind(),
-            crate::provider::ModelRouteApiMethod::OpenAIApiKey
-        ),
-        ProviderChoice::Azure => route.api_method_kind().is_openrouter(),
-        _ => true,
     };
 
     let filtered: Vec<_> = routes.iter().filter(keep).cloned().collect();

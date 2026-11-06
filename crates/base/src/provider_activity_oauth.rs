@@ -1,4 +1,4 @@
-//! Recorded ChatGPT usage, deliberately separate from the API-key spend ledger.
+//! Recorded subscription usage, deliberately separate from the API-key spend ledger.
 //! A stable sidecar lock serializes read/modify/atomic-replace across processes.
 use chrono::{DateTime, Local, Utc};
 use horon_agent_core::util::format_number_u64;
@@ -193,7 +193,7 @@ pub fn record_openai_oauth_usage(
     let totals = priced_usage(model, tier, input, output, cached);
     let result = path().and_then(|path| update(&path, label, &totals, Local::now()));
     if let Err(error) = result {
-        crate::logging::warn(&format!("Could not persist recorded ChatGPT usage: {error}"));
+        crate::logging::warn(&format!("Could not persist recorded subscription usage: {error}"));
     }
 }
 

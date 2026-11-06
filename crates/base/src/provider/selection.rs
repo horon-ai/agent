@@ -1,5 +1,4 @@
 use super::*;
-use crate::provider_catalog::{LoginProviderDescriptor, LoginProviderTarget};
 pub(super) use horon_agent_provider_core::{ActiveProvider, ProviderAvailability};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,24 +71,6 @@ impl MultiProvider {
     pub(super) fn set_active_provider(&self, provider: ActiveProvider) {
         *self.active.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = provider;
         self.invalidate_routes_memo();
-    }
-
-    pub fn config_default_provider_for_login_provider(provider: LoginProviderDescriptor) -> Option<&'static str> {
-        match provider.target {
-            LoginProviderTarget::Claude | LoginProviderTarget::ClaudeApiKey => Some("claude"),
-            LoginProviderTarget::OpenAi | LoginProviderTarget::OpenAiApiKey => Some("openai"),
-            LoginProviderTarget::OpenRouter => Some("openrouter"),
-            LoginProviderTarget::Bedrock => Some("bedrock"),
-            LoginProviderTarget::OpenAiCompatible(profile) => Some(profile.id),
-            LoginProviderTarget::Cursor => Some("cursor"),
-            LoginProviderTarget::Copilot => Some("copilot"),
-            LoginProviderTarget::Gemini => Some("gemini"),
-            LoginProviderTarget::Antigravity => Some("antigravity"),
-            LoginProviderTarget::AutoImport
-            | LoginProviderTarget::HoronAgent
-            | LoginProviderTarget::Azure
-            | LoginProviderTarget::GrokBuild => None,
-        }
     }
 
     pub fn openai_compatible_profile_id_from_route<'a>(api_method: &'a str, provider_display: &str) -> Option<&'a str> {
@@ -172,11 +153,6 @@ impl MultiProvider {
             _ => profile_id.clone(),
         };
 
-        let model_spec = if horon_agent_provider_core::oauth_account_label(api_method).is_some() {
-            format!("{api_method}:{bare_name}")
-        } else {
-            model_spec
-        };
         DefaultModelSelection {
             model_spec,
             provider_key,
@@ -216,9 +192,6 @@ impl MultiProvider {
         if let Some((prefix, rest)) = model_request.split_once(':') {
             let prefix = prefix.trim();
             if !prefix.is_empty() && !rest.trim().is_empty() {
-                if horon_agent_provider_core::oauth_account_label(prefix).is_some() {
-                    return Some(prefix.to_string());
-                }
                 // Dual-auth (Anthropic/OpenAI) prefixes fold onto their canonical
                 // session key via the single shared parser.
                 if let Some(route) = horon_agent_provider_core::AuthRoute::parse(prefix) {
@@ -295,14 +268,6 @@ impl MultiProvider {
     }
 
     fn session_provider_key_matches_provider_name(provider_key: &str, provider_name: &str) -> bool {
-        let provider_key = if horon_agent_provider_core::oauth_account_label(provider_key).is_some() {
-            provider_key
-                .split_once('@')
-                .map(|(method, _)| method)
-                .unwrap_or(provider_key)
-        } else {
-            provider_key
-        };
         let provider_key = Self::canonical_session_provider_key(provider_key.trim());
         let Some(derived) = Self::session_provider_key_from_provider_name(provider_name)
             .or_else(|| crate::session::derive_session_provider_key(provider_name))
@@ -330,13 +295,6 @@ impl MultiProvider {
         if crate::provider::explicit_model_provider_prefix(model).is_some() {
             return model.to_string();
         }
-        if model
-            .split_once(':')
-            .is_some_and(|(method, _)| horon_agent_provider_core::oauth_account_label(method).is_some())
-        {
-            return model.to_string();
-        }
-
         // An `@provider` suffix is an explicit OpenRouter upstream pin. It is
         // stronger route identity than older/stale `provider_key` metadata.
         // In particular, sessions created through the public CLI could retain
@@ -366,9 +324,6 @@ impl MultiProvider {
         else {
             return model.to_string();
         };
-        if horon_agent_provider_core::oauth_account_label(provider_key).is_some() {
-            return format!("{provider_key}:{model}");
-        }
         // Dual-auth keys map to a model prefix via the single shared parser,
         // keeping the emitted prefix in lockstep with the parsers.
         //
@@ -425,9 +380,6 @@ impl MultiProvider {
         // A worker model override can carry its own transport while the child
         // still has its parent's saved route. Honor the explicit model first.
         if crate::provider::explicit_model_provider_prefix(model).is_some()
-            || model
-                .split_once(':')
-                .is_some_and(|(method, _)| horon_agent_provider_core::oauth_account_label(method).is_some())
             || model.split_once(':').is_some_and(|(prefix, rest)| {
                 !prefix.trim().is_empty()
                     && !rest.trim().is_empty()
@@ -444,9 +396,6 @@ impl MultiProvider {
             .map(str::trim)
             .filter(|api_method| !api_method.is_empty())
         {
-            if horon_agent_provider_core::oauth_account_label(api_method).is_some() {
-                return format!("{api_method}:{model}");
-            }
             match ModelRouteApiMethod::parse(api_method) {
                 ModelRouteApiMethod::HoronAgentSubscription => return model.to_string(),
                 ModelRouteApiMethod::GrokBuild => {
@@ -503,32 +452,5 @@ impl MultiProvider {
         Self::parse_provider_hint(trimmed)
             .or_else(|| horon_agent_provider_core::AuthRoute::parse(trimmed).map(|route| route.active_provider()))
             .map(ConfigProviderSelection::BuiltIn)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn login_provider_defaults_are_canonical_config_keys() {
-        assert_eq!(
-            MultiProvider::config_default_provider_for_login_provider(crate::provider_catalog::OPENAI_LOGIN_PROVIDER,),
-            Some("openai")
-        );
-        assert_eq!(
-            MultiProvider::config_default_provider_for_login_provider(
-                crate::provider_catalog::OPENAI_API_LOGIN_PROVIDER,
-            ),
-            Some("openai")
-        );
-        assert_eq!(
-            MultiProvider::config_default_provider_for_login_provider(crate::provider_catalog::OPENCODE_LOGIN_PROVIDER,),
-            Some("opencode")
-        );
-        assert_eq!(
-            MultiProvider::config_default_provider_for_login_provider(crate::provider_catalog::AZURE_LOGIN_PROVIDER,),
-            None
-        );
     }
 }

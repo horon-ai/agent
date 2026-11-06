@@ -20,7 +20,6 @@ pub enum RuntimeCommand {
     Overnight,
     Productivity,
     Initiatives,
-    ProviderTestCoverage,
     RefreshModelList,
     Continue,
     ResumeAll,

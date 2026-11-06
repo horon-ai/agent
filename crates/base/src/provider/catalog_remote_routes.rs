@@ -1,5 +1,5 @@
 use super::*;
-use crate::provider::{ALL_OPENAI_MODELS, model_availability_for_account};
+use crate::provider::provider_for_model;
 
 pub fn remote_model_routes_fallback(
     remote_provider_name: Option<&str>,
@@ -23,7 +23,6 @@ pub fn remote_model_routes_fallback(
             .collect();
     }
 
-    let auth = AuthStatus::check_fast();
     let mut routes = Vec::new();
     for model in remote_available_entries {
         if !is_listable_model_name(model) {
@@ -38,29 +37,6 @@ pub fn remote_model_routes_fallback(
         }
 
         let mut added_any = false;
-
-        if horon_agent_provider_core::model_id::matches_known_model(model, ALL_OPENAI_MODELS) {
-            let availability = model_availability_for_account(model);
-            let (available, detail) = if auth.openai == AuthState::NotConfigured {
-                (false, "no credentials".to_string())
-            } else {
-                match availability.state {
-                    AccountModelAvailabilityState::Available => (true, String::new()),
-                    AccountModelAvailabilityState::Unavailable => (
-                        false,
-                        format_account_model_availability_detail(&availability)
-                            .unwrap_or_else(|| "not available".to_string()),
-                    ),
-                    AccountModelAvailabilityState::Unknown => (
-                        true,
-                        format_account_model_availability_detail(&availability)
-                            .unwrap_or_else(|| "availability unknown".to_string()),
-                    ),
-                }
-            };
-            routes.push(build_openai_oauth_route(model, available, detail));
-            added_any = true;
-        }
 
         if let Some(route) = remote_openai_compatible_route_for_model(model) {
             routes.push(route);

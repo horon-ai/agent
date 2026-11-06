@@ -22,9 +22,10 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertIn('--locked', line)
                 checked += 1
         # Lowered from 15 because the browser liveness cohort, which held two of
-        # these cargo test steps, no longer exists; the cohorts added since
-        # keep the real count above this floor.
-        self.assertGreaterEqual(checked, 14)
+        # these cargo test steps, no longer exists, and again from 14 when the
+        # provider matrix stage went with the vendor provider logins; the
+        # cohorts added since keep the real count above this floor.
+        self.assertGreaterEqual(checked, 13)
         self.assertIn('git diff --exit-code -- Cargo.lock', workflow)
 
     def test_arm64_release_graph_is_a_mandatory_native_windows_check(self):

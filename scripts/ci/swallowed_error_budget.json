@@ -1,21 +1,11 @@
 {
-  "total": 2254,
+  "total": 2112,
   "totals_by_pattern": {
-    "dot_ok": 820,
-    "let_underscore": 894,
-    "unwrap_or_default": 540
+    "dot_ok": 767,
+    "let_underscore": 843,
+    "unwrap_or_default": 502
   },
   "tracked_files": {
-    "crates/agent-sdk/src/auth.rs": {
-      "dot_ok": 1,
-      "let_underscore": 13,
-      "unwrap_or_default": 1
-    },
-    "crates/agent-sdk/src/auth/callback.rs": {
-      "dot_ok": 10,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/agent-sdk/src/client.rs": {
       "dot_ok": 8,
       "let_underscore": 7,
@@ -378,8 +368,8 @@
     },
     "crates/app-core/src/server/provider_control.rs": {
       "dot_ok": 1,
-      "let_underscore": 25,
-      "unwrap_or_default": 1
+      "let_underscore": 23,
+      "unwrap_or_default": 0
     },
     "crates/app-core/src/server/reload.rs": {
       "dot_ok": 1,
@@ -761,21 +751,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/auth/account_pool.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/auth/account_store.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/codex.rs": {
-      "dot_ok": 6,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/auth/env_facts.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
@@ -784,42 +759,17 @@
     "crates/base/src/auth/external.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/auth/lifecycle.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
+      "unwrap_or_default": 1
     },
     "crates/base/src/auth/mod.rs": {
-      "dot_ok": 4,
+      "dot_ok": 3,
       "let_underscore": 2,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/auth/oauth.rs": {
-      "dot_ok": 2,
-      "let_underscore": 12,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/auth/refresh_state.rs": {
-      "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/base/src/auth/test_sandbox.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/transfer.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/auth/validation.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/base/src/background.rs": {
       "dot_ok": 20,
@@ -904,7 +854,7 @@
     "crates/base/src/external_auth.rs": {
       "dot_ok": 0,
       "let_underscore": 1,
-      "unwrap_or_default": 1
+      "unwrap_or_default": 0
     },
     "crates/base/src/foreign_rules.rs": {
       "dot_ok": 1,
@@ -1091,20 +1041,10 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/base/src/provider/account_failover.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/base/src/provider/catalog_cache.rs": {
       "dot_ok": 4,
       "let_underscore": 0,
       "unwrap_or_default": 0
-    },
-    "crates/base/src/provider/catalog_routes.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/base/src/provider/external.rs": {
       "dot_ok": 0,
@@ -1134,7 +1074,7 @@
     "crates/base/src/provider/models.rs": {
       "dot_ok": 3,
       "let_underscore": 0,
-      "unwrap_or_default": 5
+      "unwrap_or_default": 3
     },
     "crates/base/src/provider/openai.rs": {
       "dot_ok": 1,
@@ -1291,45 +1231,15 @@
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
-    "crates/base/src/usage.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 2
-    },
-    "crates/base/src/usage/accessors.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/usage/api_keys.rs": {
       "dot_ok": 6,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/usage/cache.rs": {
-      "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/base/src/usage/model.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/usage/openai_helpers.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
       "unwrap_or_default": 0
-    },
-    "crates/base/src/usage/openai_reset.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/usage/provider_fetch.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 3
     },
     "crates/base/src/workspace_trust.rs": {
       "dot_ok": 3,
@@ -1871,11 +1781,6 @@
       "let_underscore": 10,
       "unwrap_or_default": 6
     },
-    "src/cli/auth_import.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "src/cli/cloud_move.rs": {
       "dot_ok": 19,
       "let_underscore": 7,
@@ -1898,22 +1803,12 @@
     },
     "src/cli/dispatch.rs": {
       "dot_ok": 3,
-      "let_underscore": 3,
+      "let_underscore": 2,
       "unwrap_or_default": 3
     },
     "src/cli/hot_exec.rs": {
       "dot_ok": 3,
       "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "src/cli/login.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 1
-    },
-    "src/cli/login/scriptable.rs": {
-      "dot_ok": 0,
-      "let_underscore": 2,
       "unwrap_or_default": 0
     },
     "src/cli/output.rs": {
@@ -1923,7 +1818,7 @@
     },
     "src/cli/provider_init.rs": {
       "dot_ok": 4,
-      "let_underscore": 13,
+      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "src/cli/ssh.rs": {

@@ -44,7 +44,6 @@ libc = "0.2"             # Unix system calls (flock)
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
-urlencoding = "2"        # URL encoding for web search
 uuid = { version = "1", features = ["v4", "v5"] }
 proctitle = "0.1"
 
@@ -64,7 +63,6 @@ hex = "0.4"
 url = "2"
 open = "5"               # Open URLs in browser
 horon-agent-auth-types = { path = "../auth-types" }
-horon-agent-azure-auth = { path = "../azure-auth" }
 horon-agent-agent-runtime = { path = "../agent-runtime" }
 horon-agent-provider-metadata = { path = "../provider-metadata" }
 horon-agent-provider-env = { path = "../provider-env" }

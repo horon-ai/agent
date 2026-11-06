@@ -1299,7 +1299,7 @@ pub(super) mod connection_core {
         let (input_writer, input_reader) = tokio::io::duplex(1 << 20);
         let mut runtime = AcpRuntime::new(
             AcpProfile::Standard,
-            ProviderChoice::HoronAgent,
+            ProviderChoice::Auto,
             None,
             None,
             Box::new(output_writer),
@@ -2872,7 +2872,7 @@ pub(super) mod connection_core {
     fn verify_start_client(profile: AcpProfile) -> Client {
         let (output_writer, output_reader) = tokio::io::duplex(1 << 20);
         let (input_writer, input_reader) = tokio::io::duplex(1 << 20);
-        let runtime = AcpRuntime::new(profile, ProviderChoice::HoronAgent, None, None, Box::new(output_writer));
+        let runtime = AcpRuntime::new(profile, ProviderChoice::Auto, None, None, Box::new(output_writer));
         let serve = tokio::spawn(runtime.clone().serve(input_reader));
         Client {
             runtime,

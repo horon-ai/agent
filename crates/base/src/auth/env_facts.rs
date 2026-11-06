@@ -269,7 +269,7 @@ fn probe_proxy() -> Tri {
     Tri::from_bool(configured)
 }
 
-fn binary_on_path(name: &str) -> bool {
+pub fn binary_on_path(name: &str) -> bool {
     let Ok(path) = std::env::var("PATH") else {
         return false;
     };

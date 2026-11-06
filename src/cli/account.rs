@@ -2,10 +2,6 @@ use anyhow::{Context, Result};
 
 use crate::subscription_api::{self, AccountApiError};
 
-pub(crate) async fn run_login(no_browser: bool) -> Result<()> {
-    super::login::run_horon_agent_account_login(no_browser).await
-}
-
 pub(crate) async fn run_status(json: bool) -> Result<()> {
     let Some(api_key) = crate::subscription_catalog::configured_api_key() else {
         anyhow::bail!("No HoronAgent account credential is configured. Run `horon-agent account login` to sign in.");

@@ -16,7 +16,6 @@ pub(crate) fn initial_title(args: &Args) -> String {
         #[cfg(unix)]
         Some(Command::ApiBridge { .. }) => "horon-agent api-bridge".to_string(),
         Some(Command::Run { .. }) => "horon-agent run".to_string(),
-        Some(Command::Login { .. }) => "horon-agent login".to_string(),
         Some(Command::Account { .. }) => "horon-agent account".to_string(),
         Some(Command::Mcp { .. }) => "horon-agent mcp".to_string(),
         Some(Command::Repl) => "horon-agent repl".to_string(),
@@ -26,7 +25,6 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Usage { .. }) => "horon-agent usage".to_string(),
         Some(Command::RuntimeState(_)) => "horon-agent runtime-state".to_string(),
         Some(Command::Debug { .. }) => "horon-agent debug".to_string(),
-        Some(Command::Auth(_)) => "horon-agent auth".to_string(),
         Some(Command::Provider(_)) => "horon-agent provider".to_string(),
         Some(Command::Memory(_)) => "horon-agent memory".to_string(),
         Some(Command::Session(_)) => "horon-agent session".to_string(),
@@ -36,9 +34,6 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Permissions) => "horon-agent permissions".to_string(),
         Some(Command::Approvals { .. }) => "horon-agent approvals".to_string(),
         Some(Command::Model(_)) => "horon-agent model".to_string(),
-        Some(Command::ProviderTestCoverage { .. }) => "horon-agent provider-test-coverage".to_string(),
-        Some(Command::ProviderDoctor { .. }) => "horon-agent provider-doctor".to_string(),
-        Some(Command::AuthTest { .. }) => "horon-agent auth-test".to_string(),
         None => {
             if let Some(resume) = args.resume.as_deref().filter(|resume| !resume.is_empty()) {
                 // The `horon:` colon labels share Linux's 15-char comm budget with

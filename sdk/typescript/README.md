@@ -206,8 +206,8 @@ that already have an `execute` callback.
 ### Web search
 
 The built-in `websearch` tool uses the model provider's own server-side search
-when the provider supports it (Anthropic first-party API, OpenAI API or ChatGPT
-login on non-codex models). Otherwise it scrapes locally with the configured
+when the provider supports it (Anthropic first-party API, or an OpenAI API key
+on non-codex models). Otherwise it scrapes locally with the configured
 engines. It needs no SDK code:
 
 - Provider searches stream as ordinary tool rows named `web_search`:

@@ -1,8 +1,6 @@
 {
-  "total": 125,
+  "total": 107,
   "tracked_files": {
-    "crates/agent-sdk/src/auth.rs": 15,
-    "crates/agent-sdk/src/auth/callback.rs": 2,
     "crates/agent-sdk/src/ssh.rs": 8,
     "crates/agent-sdk/src/structured.rs": 1,
     "crates/app-core/build.rs": 4,

@@ -46,7 +46,6 @@ export type RuntimeCommand =
   | "productivity"
   | "initiatives"
   | "premium"
-  | "provider_test_coverage"
   | "refresh_model_list"
   | "continue"
   | "resume_all"

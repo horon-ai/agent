@@ -11,6 +11,7 @@
 
 use super::*;
 use crate::provider_activity;
+use anyhow::{Context, Result};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 

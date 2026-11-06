@@ -1,306 +1,77 @@
 use anyhow::Result;
-use std::io::{self, Write};
 use std::sync::{Arc, OnceLock};
 
-use crate::auth;
 use crate::message::{Message, ToolDefinition};
 use crate::provider;
 use crate::provider::EventStream;
-use crate::provider::Provider;
 use crate::provider_catalog::{
-    LoginProviderDescriptor, LoginProviderTarget, OpenAiCompatibleProfile, force_apply_openai_compatible_profile_env,
-    resolve_login_selection, resolve_openai_compatible_profile,
+    OpenAiCompatibleProfile, force_apply_openai_compatible_profile_env, resolve_openai_compatible_profile,
 };
 use crate::tool;
 
-use super::login::run_login_provider;
 use super::output;
 
 pub(crate) use crate::external_auth::maybe_run_external_auth_auto_import_flow;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+/// Provider selected on the command line.
+///
+/// Model requests go directly to an OpenAI-compatible `/chat/completions`
+/// endpoint, so the only choices are discovery (`auto`, a configured
+/// `[provider] default_provider`) and a named OpenAI-compatible profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderChoice {
-    HoronAgent,
-    Openai,
-    #[value(alias = "openai-key", alias = "openai-apikey", alias = "openai-platform")]
-    OpenaiApi,
-    #[value(alias = "azure-openai", alias = "aoai")]
-    Azure,
-    #[value(alias = "opencode-zen", alias = "zen")]
-    Opencode,
-    #[value(alias = "opencodego")]
-    OpencodeGo,
-    #[value(alias = "z.ai", alias = "z-ai", alias = "zai-coding")]
-    Zai,
-    #[value(
-        alias = "kimi-code",
-        alias = "kimi-coding",
-        alias = "kimi-coding-plan",
-        alias = "kimi-for-coding",
-        alias = "moonshot-coding"
-    )]
-    Kimi,
-    #[value(alias = "302.ai")]
-    Ai302,
-    Baseten,
-    #[value(alias = "conifer-api")]
-    Conifer,
-    Cortecs,
-    #[value(alias = "cgc", alias = "comtegra-gpu-cloud")]
-    Comtegra,
-    Deepseek,
-    #[value(alias = "fpt-ai", alias = "fptcloud", alias = "fpt-cloud")]
-    Fpt,
-    Firmware,
-    #[value(alias = "hugging-face", alias = "hf")]
-    HuggingFace,
-    #[value(alias = "moonshot")]
-    MoonshotAi,
-    Nebius,
-    Scaleway,
-    Stackit,
-    Groq,
-    #[value(alias = "mistralai")]
-    Mistral,
-    #[value(alias = "pplx")]
-    Perplexity,
-    #[value(alias = "together", alias = "together-ai")]
-    TogetherAi,
-    #[value(alias = "deep-infra")]
-    Deepinfra,
-    #[value(alias = "fireworks-ai", alias = "fireworks.ai")]
-    Fireworks,
-    #[value(alias = "novita-ai", alias = "novita.ai")]
-    Novita,
-    #[value(alias = "minimax-ai", alias = "minimaxi")]
-    Minimax,
-    #[value(alias = "x.ai", alias = "x-ai", alias = "grok")]
-    Xai,
-    /// Grok Build subscription via the authenticated Grok CLI ACP transport.
-    #[value(name = "grok-build")]
-    GrokBuild,
-    #[value(alias = "nvidia", alias = "nim")]
-    NvidiaNim,
-    #[value(alias = "xiaomi", alias = "mimo", alias = "xiaomi-mimo-api")]
-    XiaomiMimo,
-    #[value(
-        alias = "meta",
-        alias = "muse",
-        alias = "muse-spark",
-        alias = "meta-model-api",
-        alias = "meta-ai"
-    )]
-    MetaMuse,
-    #[value(alias = "celeris-ai", alias = "celeris1", alias = "celeris-1")]
-    Celeris,
-    YoloAuto,
-    #[value(alias = "lm-studio")]
-    Lmstudio,
-    Ollama,
-    Chutes,
-    #[value(alias = "cerebrascode", alias = "cerberascode")]
-    Cerebras,
-    #[value(alias = "belvedir.ai", alias = "belvedir-ai")]
-    Belvedir,
-    #[value(alias = "orca-router")]
-    Orcarouter,
-    #[value(
-        alias = "bailian",
-        alias = "aliyun-bailian",
-        alias = "coding-plan",
-        alias = "alibaba-coding"
-    )]
-    AlibabaCodingPlan,
-    #[value(alias = "compat", alias = "custom")]
-    OpenaiCompatible,
     Auto,
+    OpenaiCompatible,
+    Profile(String),
 }
 
 impl ProviderChoice {
-    #[allow(deprecated)]
-    pub fn as_arg_value(&self) -> &'static str {
+    pub fn as_arg_value(&self) -> String {
         match self {
-            Self::HoronAgent => "horon-agent",
-            Self::Openai => "openai",
-            Self::OpenaiApi => "openai-api",
-            Self::Azure => "azure",
-            Self::Opencode => "opencode",
-            Self::OpencodeGo => "opencode-go",
-            Self::Zai => "zai",
-            Self::Kimi => "kimi",
-            Self::Ai302 => "302ai",
-            Self::Baseten => "baseten",
-            Self::Conifer => "conifer",
-            Self::Cortecs => "cortecs",
-            Self::Comtegra => "comtegra",
-            Self::Deepseek => "deepseek",
-            Self::Fpt => "fpt",
-            Self::Firmware => "firmware",
-            Self::HuggingFace => "huggingface",
-            Self::MoonshotAi => "moonshotai",
-            Self::Nebius => "nebius",
-            Self::Scaleway => "scaleway",
-            Self::Stackit => "stackit",
-            Self::Groq => "groq",
-            Self::Mistral => "mistral",
-            Self::Perplexity => "perplexity",
-            Self::TogetherAi => "togetherai",
-            Self::Deepinfra => "deepinfra",
-            Self::Fireworks => "fireworks",
-            Self::Novita => "novita",
-            Self::Minimax => "minimax",
-            Self::Xai => "xai",
-            Self::GrokBuild => "grok-build",
-            Self::NvidiaNim => "nvidia-nim",
-            Self::XiaomiMimo => "xiaomi-mimo",
-            Self::MetaMuse => "meta-muse",
-            Self::Celeris => "celeris",
-            Self::YoloAuto => "yolo-auto",
-            Self::Lmstudio => "lmstudio",
-            Self::Ollama => "ollama",
-            Self::Chutes => "chutes",
-            Self::Cerebras => "cerebras",
-            Self::Belvedir => "belvedir",
-            Self::Orcarouter => "orcarouter",
-            Self::AlibabaCodingPlan => "alibaba-coding-plan",
-            Self::OpenaiCompatible => "openai-compatible",
-            Self::Auto => "auto",
+            Self::Auto => "auto".to_string(),
+            Self::OpenaiCompatible => "openai-compatible".to_string(),
+            Self::Profile(name) => name.clone(),
+        }
+    }
+
+    /// OpenAI-compatible profile this choice names, if any.
+    pub fn profile_id(&self) -> Option<&str> {
+        match self {
+            Self::Auto => None,
+            Self::OpenaiCompatible => Some("openai-compatible"),
+            Self::Profile(name) => Some(name),
         }
     }
 }
 
-#[allow(deprecated)]
-const PROVIDER_CHOICE_LOGIN_PROVIDERS: &[(ProviderChoice, LoginProviderDescriptor)] = &[
-    (
-        ProviderChoice::HoronAgent,
-        crate::provider_catalog::HORON_AGENT_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Openai, crate::provider_catalog::OPENAI_LOGIN_PROVIDER),
-    (
-        ProviderChoice::OpenaiApi,
-        crate::provider_catalog::OPENAI_API_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Azure, crate::provider_catalog::AZURE_LOGIN_PROVIDER),
-    (
-        ProviderChoice::Opencode,
-        crate::provider_catalog::OPENCODE_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::OpencodeGo,
-        crate::provider_catalog::OPENCODE_GO_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Zai, crate::provider_catalog::ZAI_LOGIN_PROVIDER),
-    (ProviderChoice::Kimi, crate::provider_catalog::KIMI_LOGIN_PROVIDER),
-    (ProviderChoice::Ai302, crate::provider_catalog::AI302_LOGIN_PROVIDER),
-    (ProviderChoice::Baseten, crate::provider_catalog::BASETEN_LOGIN_PROVIDER),
-    (ProviderChoice::Conifer, crate::provider_catalog::CONIFER_LOGIN_PROVIDER),
-    (ProviderChoice::Cortecs, crate::provider_catalog::CORTECS_LOGIN_PROVIDER),
-    (
-        ProviderChoice::Comtegra,
-        crate::provider_catalog::COMTEGRA_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::Deepseek,
-        crate::provider_catalog::DEEPSEEK_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Fpt, crate::provider_catalog::FPT_LOGIN_PROVIDER),
-    (
-        ProviderChoice::Firmware,
-        crate::provider_catalog::FIRMWARE_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::HuggingFace,
-        crate::provider_catalog::HUGGING_FACE_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::MoonshotAi,
-        crate::provider_catalog::MOONSHOT_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Nebius, crate::provider_catalog::NEBIUS_LOGIN_PROVIDER),
-    (
-        ProviderChoice::Scaleway,
-        crate::provider_catalog::SCALEWAY_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Stackit, crate::provider_catalog::STACKIT_LOGIN_PROVIDER),
-    (ProviderChoice::Groq, crate::provider_catalog::GROQ_LOGIN_PROVIDER),
-    (ProviderChoice::Mistral, crate::provider_catalog::MISTRAL_LOGIN_PROVIDER),
-    (
-        ProviderChoice::Perplexity,
-        crate::provider_catalog::PERPLEXITY_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::TogetherAi,
-        crate::provider_catalog::TOGETHER_AI_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::Deepinfra,
-        crate::provider_catalog::DEEPINFRA_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::Fireworks,
-        crate::provider_catalog::FIREWORKS_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Novita, crate::provider_catalog::NOVITA_LOGIN_PROVIDER),
-    (ProviderChoice::Minimax, crate::provider_catalog::MINIMAX_LOGIN_PROVIDER),
-    (ProviderChoice::Xai, crate::provider_catalog::XAI_LOGIN_PROVIDER),
-    (
-        ProviderChoice::GrokBuild,
-        crate::provider_catalog::GROK_BUILD_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::NvidiaNim,
-        crate::provider_catalog::NVIDIA_NIM_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::XiaomiMimo,
-        crate::provider_catalog::XIAOMI_MIMO_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::MetaMuse,
-        crate::provider_catalog::META_MUSE_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Celeris, crate::provider_catalog::CELERIS_LOGIN_PROVIDER),
-    (
-        ProviderChoice::YoloAuto,
-        crate::provider_catalog::YOLO_AUTO_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::Lmstudio,
-        crate::provider_catalog::LMSTUDIO_LOGIN_PROVIDER,
-    ),
-    (ProviderChoice::Ollama, crate::provider_catalog::OLLAMA_LOGIN_PROVIDER),
-    (ProviderChoice::Chutes, crate::provider_catalog::CHUTES_LOGIN_PROVIDER),
-    (
-        ProviderChoice::Cerebras,
-        crate::provider_catalog::CEREBRAS_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::Belvedir,
-        crate::provider_catalog::BELVEDIR_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::Orcarouter,
-        crate::provider_catalog::ORCAROUTER_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::AlibabaCodingPlan,
-        crate::provider_catalog::ALIBABA_CODING_PLAN_LOGIN_PROVIDER,
-    ),
-    (
-        ProviderChoice::OpenaiCompatible,
-        crate::provider_catalog::OPENAI_COMPAT_LOGIN_PROVIDER,
-    ),
-];
-
-pub fn login_provider_choice_mappings() -> &'static [(ProviderChoice, LoginProviderDescriptor)] {
-    PROVIDER_CHOICE_LOGIN_PROVIDERS
+/// Parse and validate one `--provider` value.
+///
+/// Accepts `auto`, `openai-compatible` (plus its `compat`/`custom` aliases),
+/// a built-in OpenAI-compatible profile id, or a `[providers.<name>]` profile
+/// from `config.toml`. Unknown names fail here so `--provider claude` is a
+/// usage error instead of a runtime surprise.
+pub fn parse_provider_choice(value: &str) -> std::result::Result<ProviderChoice, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" => Err("provider name cannot be empty".to_string()),
+        "auto" => Ok(ProviderChoice::Auto),
+        "openai-compatible" | "compat" | "custom" => Ok(ProviderChoice::OpenaiCompatible),
+        _ if crate::provider_catalog::openai_compatible_profile_by_id(&normalized).is_some() => {
+            Ok(ProviderChoice::Profile(normalized))
+        }
+        _ if crate::config::config().providers.contains_key(&normalized) => Ok(ProviderChoice::Profile(normalized)),
+        _ => Err(format!(
+            "unknown provider '{}': expected 'auto', 'openai-compatible', or an OpenAI-compatible profile id from config.toml",
+            value.trim()
+        )),
+    }
 }
 
 /// `HORON_AGENT_OPENROUTER_MODEL` as set by the user when the process started.
 ///
 /// Provider init clears and rewrites the `HORON_AGENT_OPENROUTER_*` env slots for
-/// whichever runtime it activates, so by the time the OpenRouter runtime reads
-/// the variable a user-supplied value is already gone. Snapshot it first.
+/// whichever runtime it activates, so by the time the runtime reads the variable
+/// a user-supplied value is already gone. Snapshot it first.
 static USER_OPENROUTER_MODEL: OnceLock<Option<String>> = OnceLock::new();
 
 /// Called once from `startup::run` before any provider init. Entry points
@@ -318,266 +89,17 @@ fn user_openrouter_model_env() -> Option<&'static str> {
     USER_OPENROUTER_MODEL.get()?.as_deref()
 }
 
-/// Model to use when the caller passed no `--model`: the user's
-/// `HORON_AGENT_OPENROUTER_MODEL`, but only for runtimes that variable targets
-/// (OpenRouter and OpenAI-compatible profiles).
-fn env_model_for_choice(choice: &ProviderChoice) -> Option<&'static str> {
-    env_model_for_choice_from(choice, user_openrouter_model_env())
-}
-
-fn env_model_for_choice_from<'a>(choice: &ProviderChoice, env_model: Option<&'a str>) -> Option<&'a str> {
-    if profile_for_choice(choice).is_some() {
-        env_model
-    } else {
-        None
-    }
-}
-
-pub fn profile_for_choice(choice: &ProviderChoice) -> Option<OpenAiCompatibleProfile> {
-    match login_provider_for_choice(choice)?.target {
-        LoginProviderTarget::OpenAiCompatible(profile) => Some(profile),
-        _ => None,
-    }
-}
-
-#[allow(deprecated)]
-pub fn login_provider_for_choice(choice: &ProviderChoice) -> Option<LoginProviderDescriptor> {
-    PROVIDER_CHOICE_LOGIN_PROVIDERS
-        .iter()
-        .find(|(candidate, _)| candidate == choice)
-        .map(|(_, provider)| *provider)
-}
-
-#[allow(deprecated)]
-pub fn choice_for_login_provider(provider: LoginProviderDescriptor) -> Option<ProviderChoice> {
-    PROVIDER_CHOICE_LOGIN_PROVIDERS
-        .iter()
-        .find(|(_, candidate)| candidate.id == provider.id)
-        .map(|(choice, _)| *choice)
-}
-
-pub fn prompt_login_provider_selection(
-    providers: &[LoginProviderDescriptor],
-    heading: &str,
-) -> Result<LoginProviderDescriptor> {
-    prompt_login_provider_selection_optional(providers, heading)?
-        .ok_or_else(|| anyhow::anyhow!("Login skipped. Run `horon-agent login` when you're ready to authenticate."))
-}
-
-pub fn prompt_login_provider_selection_optional(
-    providers: &[LoginProviderDescriptor],
-    heading: &str,
-) -> Result<Option<LoginProviderDescriptor>> {
-    let status = auth::AuthStatus::check_fast();
-    eprint!("{}", render_login_provider_selection_menu(heading, providers, &status));
-    eprint!("\nEnter 1-{}, provider name, or Enter=skip: ", providers.len());
-    io::stderr().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    parse_login_provider_selection_input(&input, providers)
-}
-
-pub fn parse_login_provider_selection_input(
-    input: &str,
-    providers: &[LoginProviderDescriptor],
-) -> Result<Option<LoginProviderDescriptor>> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    let normalized = trimmed.to_ascii_lowercase();
-    if matches!(normalized.as_str(), "s" | "skip" | "q" | "quit" | "cancel" | "none") {
-        return Ok(None);
-    }
-
-    resolve_login_selection(trimmed, providers).map(Some).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Invalid choice '{}'. Enter 1-{}, a provider name, or 'skip'.",
-            trimmed,
-            providers.len()
-        )
-    })
-}
-
-pub fn render_login_provider_selection_menu(
-    heading: &str,
-    providers: &[LoginProviderDescriptor],
-    status: &auth::AuthStatus,
-) -> String {
-    use std::fmt::Write as _;
-
-    let mut out = String::new();
-    let _ = writeln!(out, "{heading}");
-    let _ = writeln!(out);
-
-    let detected = providers
-        .iter()
-        .copied()
-        .filter_map(|provider| {
-            let assessment = status.assessment_for_provider(provider);
-            (assessment.state != auth::AuthState::NotConfigured).then(|| {
-                format!(
-                    "  - {}: {}",
-                    provider.display_name,
-                    login_provider_detection_detail(provider, &assessment)
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-
-    if detected.is_empty() {
-        let _ = writeln!(out, "Autodetected auth: none found yet.");
-    } else {
-        let _ = writeln!(out, "Autodetected auth:");
-        for line in detected {
-            let _ = writeln!(out, "{line}");
-        }
-    }
-
-    let _ = writeln!(out);
-    for (index, provider) in providers.iter().copied().enumerate() {
-        let assessment = status.assessment_for_provider(provider);
-        let _ = writeln!(
-            out,
-            "  {}. {:<22} [{:<15}] - {}",
-            index + 1,
-            provider.display_name,
-            login_provider_state_badge(provider, assessment.state),
-            provider.menu_detail
-        );
-    }
-
-    let recommended = providers
-        .iter()
-        .filter(|provider| provider.recommended)
-        .map(|provider| provider.display_name)
-        .collect::<Vec<_>>();
-    if !recommended.is_empty() {
-        let _ = writeln!(out);
-        let _ = writeln!(
-            out,
-            "  Recommended if you have a subscription: {}.",
-            recommended.join(", ")
-        );
-    }
-
-    let _ = writeln!(out);
-    let _ = writeln!(out, "  Skip: press Enter, or type `skip`.");
-    out
-}
-
-fn login_provider_state_badge(provider: LoginProviderDescriptor, state: auth::AuthState) -> &'static str {
-    match state {
-        auth::AuthState::Available => {
-            if matches!(provider.target, LoginProviderTarget::AutoImport) {
-                "detected"
-            } else {
-                "configured"
-            }
-        }
-        auth::AuthState::Expired => "needs attention",
-        auth::AuthState::NotConfigured => "not configured",
-    }
-}
-
-fn login_provider_detection_detail(
-    provider: LoginProviderDescriptor,
-    assessment: &auth::ProviderAuthAssessment,
-) -> String {
-    match assessment.state {
-        auth::AuthState::Available => {
-            let prefix = if matches!(provider.target, LoginProviderTarget::AutoImport) {
-                "detected"
-            } else {
-                "configured"
-            };
-            format!("{}: {}", prefix, assessment.method_detail)
-        }
-        auth::AuthState::Expired => format!("needs attention: {}", assessment.method_detail),
-        auth::AuthState::NotConfigured => "not configured".to_string(),
-    }
-}
-
-fn disable_subscription_runtime_mode() {
-    crate::subscription_catalog::clear_runtime_env();
-}
-
-pub fn apply_login_provider_profile_env(provider: LoginProviderDescriptor) {
-    // #712: the arms below clear an explicitly selected named profile, which
-    // made auth-test probe (and false-negative) the generic compatible slot.
-    if std::env::var_os("HORON_AGENT_NAMED_PROVIDER_PROFILE").is_some() {
-        return;
-    }
-    match provider.target {
-        LoginProviderTarget::OpenAiCompatible(profile) => {
-            force_apply_openai_compatible_profile_env(Some(profile));
-            // Bootstrap login still spawns the daemon with `--provider auto`. Mark the
-            // just-selected compatible provider as active so the child process does
-            // not clear these inherited runtime vars before credential detection.
-            crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
-        }
-        LoginProviderTarget::AutoImport => {}
-        _ => {
-            // A later non-compatible login selection must not inherit a stale
-            // compatible-provider profile from an earlier bootstrap/login path.
-            force_apply_openai_compatible_profile_env(None);
-        }
-    }
-}
-
 fn resolved_profile_default_model(profile: OpenAiCompatibleProfile) -> Option<String> {
     resolve_openai_compatible_profile(profile).default_model
-}
-
-pub async fn login_and_bootstrap_provider(
-    provider: LoginProviderDescriptor,
-    account_label: Option<&str>,
-) -> Result<Arc<dyn provider::Provider>> {
-    run_login_provider(provider, account_label, crate::cli::login::LoginOptions::default()).await?;
-    eprintln!();
-
-    let runtime: Arc<dyn provider::Provider> = match provider.target {
-        LoginProviderTarget::AutoImport => {
-            disable_subscription_runtime_mode();
-            Arc::new(provider::MultiProvider::new())
-        }
-        LoginProviderTarget::HoronAgent => Arc::new(provider::horon_agent::HoronAgentProvider::new()),
-        LoginProviderTarget::OpenAi => {
-            disable_subscription_runtime_mode();
-            Arc::new(provider::MultiProvider::new())
-        }
-        LoginProviderTarget::OpenAiApiKey => {
-            disable_subscription_runtime_mode();
-            Arc::new(provider::MultiProvider::new())
-        }
-        LoginProviderTarget::Azure => {
-            disable_subscription_runtime_mode();
-            Arc::new(provider::MultiProvider::new())
-        }
-        LoginProviderTarget::OpenAiCompatible(profile) => {
-            disable_subscription_runtime_mode();
-            force_apply_openai_compatible_profile_env(Some(profile));
-            let multi = provider::MultiProvider::from_openai_compatible_profile(profile)?;
-            let resolved = resolve_openai_compatible_profile(profile);
-            if let Some(model) = resolved.default_model.as_deref() {
-                let _ = multi.set_model(model);
-            }
-            Arc::new(multi)
-        }
-        _ => anyhow::bail!("That provider is not available in this build"),
-    };
-
-    Ok(runtime)
 }
 
 pub async fn init_provider(choice: &ProviderChoice, model: Option<&str>) -> Result<Arc<dyn provider::Provider>> {
     init_provider_with_options(choice, model, true, true).await
 }
 
-/// Provider init for one-shot `horon-agent run`. A requested model that cannot be applied is an
-/// error: silently answering with a different model is worse than failing for a scripted run.
+/// Provider init for one-shot `horon-agent run`. A requested model that cannot
+/// be applied is an error: silently answering with a different model is worse
+/// than failing for a scripted run.
 pub async fn init_provider_for_run(
     choice: &ProviderChoice,
     model: Option<&str>,
@@ -599,9 +121,9 @@ pub async fn init_provider_for_diagnostics(
     init_provider_for_control_plane(choice, model, false).await
 }
 
-/// A server/control-plane launch stays up without a model provider so ACP
-/// clients can still authenticate and be told that no model is usable. Model
-/// calls fail with the setup instructions instead of pretending to work.
+/// A server/control-plane launch stays up without a usable model provider so
+/// ACP clients can still authenticate and be told that no model is usable.
+/// Model calls fail with the setup instructions instead of pretending to work.
 struct UnconfiguredProvider {
     reason: String,
 }
@@ -688,11 +210,7 @@ pub async fn init_provider_for_validation(
     init_provider_with_options(choice, model, false, false).await
 }
 
-/// The refusal a built-in `--provider` gets when it has no direct
-/// OpenAI-compatible profile.
-///
-/// Only direct `/chat/completions` profiles are supported: a provider name that
-/// names no such profile cannot be turned into a model path.
+/// The refusal a `--provider` value gets when it names no usable profile.
 fn builtin_provider_refusal(choice: &ProviderChoice) -> anyhow::Error {
     anyhow::anyhow!(
         "'--provider {}' is not available: model requests go directly to an OpenAI-compatible /chat/completions endpoint. \
@@ -718,10 +236,7 @@ fn builtin_profile_by_id(id: &str) -> Option<OpenAiCompatibleProfile> {
     if id.is_empty() {
         return None;
     }
-    crate::provider_catalog::openai_compatible_profiles()
-        .iter()
-        .copied()
-        .find(|profile| profile.id.eq_ignore_ascii_case(id))
+    crate::provider_catalog::openai_compatible_profile_by_id(id)
 }
 
 fn named_profile_from_env() -> Option<String> {
@@ -813,8 +328,8 @@ async fn init_provider_with_options(
         }
     };
 
-    // An explicit `--provider-profile` (projected as PROFILE_NAME by dispatch) or
-    // a login/bootstrap selection always names the profile to use.
+    // An explicit `--provider-profile` (projected as PROFILE_NAME by dispatch)
+    // always names the profile to use.
     if let Some(profile_name) = named_profile_from_env() {
         crate::provider_catalog::apply_named_provider_profile_env(&profile_name)?;
         crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
@@ -841,17 +356,9 @@ async fn init_provider_with_options(
             }
             Err(unconfigured_provider_error())
         }
-        ProviderChoice::OpenaiCompatible => {
-            let profile = profile_for_choice(choice).ok_or_else(|| builtin_provider_refusal(choice))?;
-            init_notice(&format!(
-                "Using {} via the OpenAI-compatible API",
-                resolve_openai_compatible_profile(profile).display_name
-            ));
-            let model = model.or_else(|| env_model_for_choice(choice));
-            provider_for_builtin_profile(profile, model, strict_model)
-        }
-        _ => match profile_for_choice(choice) {
-            Some(profile) => {
+        ProviderChoice::OpenaiCompatible | ProviderChoice::Profile(_) => {
+            let name = choice.profile_id().ok_or_else(|| builtin_provider_refusal(choice))?;
+            if let Some(profile) = builtin_profile_by_id(name) {
                 if std::env::var_os("HORON_AGENT_NAMED_PROVIDER_PROFILE").is_none() {
                     force_apply_openai_compatible_profile_env(Some(profile));
                 }
@@ -859,11 +366,18 @@ async fn init_provider_with_options(
                     "Using {} via the OpenAI-compatible API",
                     resolve_openai_compatible_profile(profile).display_name
                 ));
-                let model = model.or_else(|| env_model_for_choice(choice));
+                let model = match model {
+                    Some(model) => Some(model),
+                    None => user_openrouter_model_env(),
+                };
                 provider_for_builtin_profile(profile, model, strict_model)
+            } else {
+                crate::provider_catalog::apply_named_provider_profile_env(name)?;
+                crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
+                init_notice(&format!("Using provider profile '{}'", name));
+                provider_for_named_profile(name, model, strict_model)
             }
-            None => Err(builtin_provider_refusal(choice)),
-        },
+        }
     }
 }
 

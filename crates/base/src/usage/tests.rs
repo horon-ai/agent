@@ -1,3 +1,4 @@
+use super::subscription::horon_agent_usage_report;
 use super::*;
 
 #[test]
@@ -17,22 +18,6 @@ fn test_usage_percent_format() {
     };
     assert_eq!(data.five_hour_percent(), "42%");
     assert_eq!(data.seven_day_percent(), "16%");
-}
-
-#[test]
-fn test_humanize_key() {
-    assert_eq!(humanize_key("five_hour"), "Five Hour");
-    assert_eq!(humanize_key("seven_day_opus"), "Seven Day Opus");
-    assert_eq!(humanize_key("plan"), "Plan");
-}
-
-#[test]
-fn test_get_openai_usage_sync_without_runtime_does_not_panic() {
-    let result = std::panic::catch_unwind(get_openai_usage_sync);
-    assert!(
-        result.is_ok(),
-        "get_openai_usage_sync should not require a Tokio runtime"
-    );
 }
 
 #[test]
@@ -127,12 +112,6 @@ fn test_provider_usage_cache_is_not_fresh_after_reset_boundary() {
 }
 
 #[test]
-fn test_mask_email_censors_local_part() {
-    assert_eq!(mask_email("aliceh1@example.com"), "a***1@example.com");
-    assert_eq!(mask_email("ab@example.com"), "a*@example.com");
-}
-
-#[test]
 fn test_format_usage_bar() {
     let bar = format_usage_bar(50.0, 10);
     assert!(bar.contains("█████░░░░░"));
@@ -162,276 +141,6 @@ fn test_format_reset_time_under_one_minute_rounds_up() {
 fn test_format_reset_time_uses_days_for_long_windows() {
     let timestamp = (chrono::Utc::now() + chrono::TimeDelta::hours(109) + chrono::TimeDelta::minutes(5)).to_rfc3339();
     assert_eq!(format_reset_time(&timestamp), "4d 13h");
-}
-
-#[test]
-fn test_classify_openai_limits_recognizes_five_weekly_and_spark() {
-    let limits = vec![
-        UsageLimit {
-            name: "Codex 5h".to_string(),
-            usage_percent: 25.0,
-            resets_at: Some("2026-01-01T00:00:00Z".to_string()),
-        },
-        UsageLimit {
-            name: "Codex 1w".to_string(),
-            usage_percent: 50.0,
-            resets_at: Some("2026-01-07T00:00:00Z".to_string()),
-        },
-        UsageLimit {
-            name: "Codex Spark".to_string(),
-            usage_percent: 75.0,
-            resets_at: Some("2026-01-02T00:00:00Z".to_string()),
-        },
-    ];
-
-    let classified = openai_helpers::classify_openai_limits(&limits);
-
-    assert_eq!(classified.five_hour.as_ref().map(|w| w.usage_ratio), Some(0.25));
-    assert_eq!(classified.seven_day.as_ref().map(|w| w.usage_ratio), Some(0.5));
-    assert_eq!(classified.spark.as_ref().map(|w| w.usage_ratio), Some(0.75));
-}
-
-#[test]
-fn test_classify_openai_limits_does_not_duplicate_weekly_window() {
-    let limits = vec![
-        UsageLimit {
-            name: "Codex weekly".to_string(),
-            usage_percent: 25.0,
-            resets_at: Some("2026-01-07T00:00:00Z".to_string()),
-        },
-        UsageLimit {
-            name: "Codex 7-day window".to_string(),
-            usage_percent: 50.0,
-            resets_at: Some("2026-01-14T00:00:00Z".to_string()),
-        },
-    ];
-
-    let classified = openai_helpers::classify_openai_limits(&limits);
-
-    assert_eq!(
-        classified.seven_day.as_ref().map(|window| window.name.as_str()),
-        Some("Codex weekly")
-    );
-    assert_eq!(
-        classified.five_hour.as_ref().map(|window| window.name.as_str()),
-        Some("Codex 7-day window")
-    );
-}
-
-#[test]
-fn test_parse_usage_percent_supports_used_limit_shape() {
-    let mut obj = serde_json::Map::new();
-    obj.insert("used".to_string(), serde_json::json!(20));
-    obj.insert("limit".to_string(), serde_json::json!(80));
-
-    let percent = openai_helpers::parse_usage_percent_from_obj(&obj);
-    assert_eq!(percent, Some(25.0));
-}
-
-#[test]
-fn test_parse_usage_percent_supports_remaining_limit_shape() {
-    let mut obj = serde_json::Map::new();
-    obj.insert("remaining".to_string(), serde_json::json!(60));
-    obj.insert("limit".to_string(), serde_json::json!(80));
-
-    let percent = openai_helpers::parse_usage_percent_from_obj(&obj);
-    assert_eq!(percent, Some(25.0));
-}
-
-#[test]
-fn test_parse_usage_percent_preserves_low_percent_values() {
-    let mut obj = serde_json::Map::new();
-    obj.insert("used_percent".to_string(), serde_json::json!(0.06));
-
-    let percent = openai_helpers::parse_usage_percent_from_obj(&obj);
-    assert_eq!(percent, Some(0.06));
-}
-
-#[test]
-fn test_parse_openai_wham_windows_preserve_low_percent_values() {
-    let json = serde_json::json!({
-        "rate_limit": {
-            "allowed": true,
-            "primary_window": {
-                "used_percent": 0.06,
-                "reset_at": 1_766_000_000
-            },
-            "secondary_window": {
-                "used_percent": 0.25,
-                "reset_at": 1_766_086_400
-            }
-        }
-    });
-
-    let parsed = openai_helpers::parse_openai_usage_payload(&json);
-
-    assert_eq!(parsed.limits[0].usage_percent, 0.06);
-    assert_eq!(parsed.limits[1].usage_percent, 0.25);
-}
-
-#[test]
-fn test_classify_openai_limits_treats_usage_limit_values_as_percent() {
-    let limits = vec![UsageLimit {
-        name: "5-hour window".to_string(),
-        usage_percent: 0.06,
-        resets_at: None,
-    }];
-
-    let classified = openai_helpers::classify_openai_limits(&limits);
-
-    let ratio = classified
-        .five_hour
-        .as_ref()
-        .map(|window| window.usage_ratio)
-        .expect("expected 5-hour window");
-    assert!((ratio - 0.0006).abs() < f32::EPSILON);
-}
-
-#[test]
-fn test_active_anthropic_usage_report_prefers_marked_account() {
-    let results = vec![
-        ProviderUsage {
-            provider_name: "Anthropic - work".to_string(),
-            ..Default::default()
-        },
-        ProviderUsage {
-            provider_name: "Anthropic - personal ✦".to_string(),
-            ..Default::default()
-        },
-    ];
-
-    let active = active_anthropic_usage_report(&results).expect("expected active anthropic report to be selected");
-    assert_eq!(active.provider_name, "Anthropic - personal ✦");
-}
-
-#[test]
-fn test_openai_snapshot_treats_hard_limit_flag_as_exhausted() {
-    let usage = OpenAIUsageData {
-        hard_limit_reached: true,
-        five_hour: Some(OpenAIUsageWindow {
-            name: "5-hour window".to_string(),
-            usage_ratio: 1.0,
-            resets_at: Some("2026-01-01T00:00:00Z".to_string()),
-        }),
-        ..Default::default()
-    };
-
-    let snapshot = openai_snapshot_from_usage("work".to_string(), Some("work@example.com".to_string()), &usage);
-
-    assert!(snapshot.exhausted);
-    assert_eq!(snapshot.five_hour_ratio, Some(1.0));
-    assert_eq!(snapshot.seven_day_ratio, None);
-}
-
-#[test]
-fn test_parse_openai_hard_limit_reached_detects_rate_limit_denials() {
-    let json = serde_json::json!({
-        "plan_type": "free",
-        "rate_limit": {
-            "allowed": false,
-            "primary_window": {
-                "used_percent": 100.0,
-                "reset_at": 1_766_000_000
-            }
-        },
-        "limit_reached": true
-    });
-
-    assert!(openai_helpers::parse_openai_hard_limit_reached(&json));
-}
-
-#[test]
-fn test_parse_openai_hard_limit_reached_ignores_unrelated_allowed_flags() {
-    let json = serde_json::json!({
-        "plan_type": "free",
-        "features": {
-            "voice_mode": {
-                "allowed": false
-            }
-        },
-        "rate_limit": {
-            "allowed": true
-        }
-    });
-
-    assert!(!openai_helpers::parse_openai_hard_limit_reached(&json));
-}
-
-#[test]
-fn test_parse_openai_usage_payload_prefers_wham_windows_and_additional_limits() {
-    let json = serde_json::json!({
-        "plan_type": "pro",
-        "rate_limit": {
-            "allowed": true,
-            "primary_window": {
-                "used_percent": 25.0,
-                "reset_at": 1_766_000_000
-            },
-            "secondary_window": {
-                "used_percent": 50.0,
-                "reset_at": 1_766_086_400
-            }
-        },
-        "additional_rate_limits": [{
-            "limit_name": "Codex Spark",
-            "rate_limit": {
-                "primary_window": {
-                    "used_percent": 75.0,
-                    "reset_at": 1_766_000_000
-                }
-            }
-        }]
-    });
-
-    let parsed = openai_helpers::parse_openai_usage_payload(&json);
-
-    assert_eq!(
-        parsed.extra_info.first(),
-        Some(&("Plan".to_string(), "pro".to_string()))
-    );
-    assert!(!parsed.hard_limit_reached);
-    assert_eq!(parsed.limits.len(), 3);
-    assert_eq!(parsed.limits[0].name, "5-hour window");
-    assert_eq!(parsed.limits[0].usage_percent, 25.0);
-    assert_eq!(parsed.limits[1].name, "7-day window");
-    assert_eq!(parsed.limits[1].usage_percent, 50.0);
-    assert_eq!(parsed.limits[2].name, "Codex Spark (5h)");
-    assert_eq!(parsed.limits[2].usage_percent, 75.0);
-}
-
-#[test]
-fn test_parse_openai_usage_payload_falls_back_to_nested_rate_limits() {
-    let json = serde_json::json!({
-        "plan": "team",
-        "codex": {
-            "rate_limits": [
-                {
-                    "name": "Codex 5h",
-                    "used": 20,
-                    "limit": 80,
-                    "resets_at": "2026-01-01T00:00:00Z"
-                },
-                {
-                    "name": "Codex 1w",
-                    "remaining": 60,
-                    "limit": 80,
-                    "resets_at": "2026-01-07T00:00:00Z"
-                }
-            ]
-        }
-    });
-
-    let parsed = openai_helpers::parse_openai_usage_payload(&json);
-
-    assert_eq!(
-        parsed.extra_info.first(),
-        Some(&("Plan".to_string(), "team".to_string()))
-    );
-    assert_eq!(parsed.limits.len(), 2);
-    assert_eq!(parsed.limits[0].name, "Codex 5h");
-    assert_eq!(parsed.limits[0].usage_percent, 25.0);
-    assert_eq!(parsed.limits[1].name, "Codex 1w");
-    assert_eq!(parsed.limits[1].usage_percent, 25.0);
 }
 
 #[test]
@@ -508,18 +217,16 @@ fn test_reports_sort_most_recently_used_first() {
 
 #[test]
 fn test_activity_sweeper_skips_sources_with_dedicated_reports() {
-    // Dual-auth surfaces are always reported by their own fetchers.
-    assert!(activity_source_has_dedicated_report("claude:oauth:claude-1"));
-    assert!(activity_source_has_dedicated_report("claude:api-key"));
-    assert!(activity_source_has_dedicated_report("openai:oauth:openai-1"));
-    assert!(activity_source_has_dedicated_report("openai:api-key"));
-    // Unknown/uncovered sources fall through to the sweeper.
-    assert!(!activity_source_has_dedicated_report("bedrock"));
-    // The HoronAgent subscription has its own report once signed in.
+    // The subscription is reported by its own fetcher once a key is configured.
     assert_eq!(
         activity_source_has_dedicated_report("horon-agent"),
         crate::subscription_catalog::configured_api_key().is_some()
     );
+    // Direct OpenAI-compatible profiles are reported by the API-key module;
+    // every other source falls through to the sweeper.
+    assert!(!activity_source_has_dedicated_report("claude:oauth:claude-1"));
+    assert!(!activity_source_has_dedicated_report("openai:oauth:openai-1"));
+    assert!(!activity_source_has_dedicated_report("bedrock"));
     assert!(!activity_source_has_dedicated_report("some-custom-endpoint"));
 }
 
@@ -546,35 +253,6 @@ fn anthropic_model_scoped_exhaustion_matches_display_name_to_catalog_id() {
         ..Default::default()
     };
     assert!(!below_limit.model_scoped_exhausted("claude-fable-5"));
-}
-
-#[test]
-fn attach_activity_refreshes_openai_oauth_totals_even_on_error() {
-    let label = "test-usage-summary-no-account";
-    let mut report = ProviderUsage {
-        provider_name: "OpenAI".into(),
-        error: Some("quota request unavailable".into()),
-        extra_info: vec![("Plan".into(), "Plus".into())],
-        ..Default::default()
-    };
-    let expected = crate::provider_activity::openai_oauth_usage_summary(label);
-    assert!(!expected.is_empty());
-    for (key, _) in &expected {
-        report.extra_info.push((key.clone(), "stale cached value".into()));
-    }
-    for _ in 0..2 {
-        attach_activity(&mut report, &format!("openai:oauth:{label}"));
-        for row in &expected {
-            assert!(report.extra_info.contains(row));
-            assert_eq!(report.extra_info.iter().filter(|(key, _)| key == &row.0).count(), 1);
-        }
-        assert!(report.extra_info.contains(&("Account label".into(), label.into())));
-        assert!(report.extra_info.contains(&("Plan".into(), "Plus".into())));
-        assert!(report.error.is_some());
-    }
-    let mut api_report = ProviderUsage::default();
-    attach_activity(&mut api_report, "openai:api:test-key");
-    assert!(!api_report.extra_info.iter().any(|(key, _)| key == "Account label"));
 }
 
 fn horon_agent_me(memory_used: u64, upgrade: bool) -> crate::subscription_api::SubscriptionMe {

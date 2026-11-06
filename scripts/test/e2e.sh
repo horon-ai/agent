@@ -36,13 +36,6 @@ if [[ "${HORON_AGENT_REAL_PROVIDER:-0}" == "1" ]]; then
     echo "✓ Real provider smoke passed"
 fi
 
-if [[ "${HORON_AGENT_REAL_AUTH_TEST:-0}" == "1" ]]; then
-    echo ""
-    echo "Test 4: Auth E2E validation (HORON_AGENT_REAL_AUTH_TEST=1)..."
-    "$repo_root/scripts/test/auth_e2e.sh"
-    echo "✓ Auth E2E validation passed"
-fi
-
 echo ""
 echo "=== All tests passed! ==="
 echo ""

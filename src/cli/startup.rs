@@ -18,24 +18,11 @@ pub async fn run() -> Result<()> {
     // must not harden credential files or create configuration state.
     let args = Args::parse();
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
-    // Interactive login prompts are a client concern. The shared auth flows
-    // reach them through this presenter, which prints the login URL as plain
-    // text and reads secrets from stdin.
-    super::login::install_login_presenter();
     // Snapshot user-supplied provider env before provider init rewrites it.
     super::provider_init::capture_user_openrouter_model_env();
     // Credential import and explicit MCP management do not need normal agent
     // startup hardening, migrations, or provider discovery.
-    if args.ssh.is_none()
-        && matches!(
-            args.command,
-            Some(
-                Command::Auth(super::args::AuthCommand::Import { .. })
-                    | Command::Mcp { .. }
-                    | Command::Approvals { .. }
-            )
-        )
-    {
+    if args.ssh.is_none() && matches!(args.command, Some(Command::Mcp { .. } | Command::Approvals { .. })) {
         if let Some(cwd) = &args.cwd {
             std::env::set_current_dir(cwd)?;
         }
@@ -496,19 +483,19 @@ mod tests {
 
     #[test]
     fn auto_install_allowed_without_live_terminal() {
-        let args = parse_args(&["horon-agent", "login"]);
+        let args = parse_args(&["horon-agent", "run", "hi"]);
         assert!(should_auto_install_update(&args));
     }
 
     #[test]
     fn auto_install_allowed_with_live_terminal_attached() {
-        let args = parse_args(&["horon-agent", "login"]);
+        let args = parse_args(&["horon-agent", "run", "hi"]);
         assert!(should_auto_install_update(&args));
     }
 
     #[test]
     fn auto_install_respects_explicit_disable_even_without_terminal() {
-        let mut args = parse_args(&["horon-agent", "login"]);
+        let mut args = parse_args(&["horon-agent", "run", "hi"]);
         args.auto_update = false;
         assert!(!should_auto_install_update(&args));
     }
@@ -537,7 +524,7 @@ mod tests {
 
     #[test]
     fn config_can_permanently_disable_background_update_checks() {
-        let args = parse_args(&["horon-agent", "login"]);
+        let args = parse_args(&["horon-agent", "run", "hi"]);
         assert!(should_spawn_background_update_check_with_config(&args, true));
         assert!(!should_spawn_background_update_check_with_config(&args, false));
     }

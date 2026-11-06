@@ -85,24 +85,6 @@ pub(super) async fn execute(
                 output.output,
             ));
         }
-        RuntimeCommand::ProviderTestCoverage => {
-            let report = if args.is_empty() {
-                let (coverage, path) = crate::live_tests::load_coverage(None)?;
-                let summary = crate::live_tests::strict_live_provider_model_coverage_summary(
-                    &coverage,
-                    path.display().to_string(),
-                );
-                crate::live_tests::format_strict_live_provider_model_coverage_summary(&summary, 0)
-            } else {
-                let model = if args.len() > 1 {
-                    args[1..].join(" ")
-                } else {
-                    agent.provider_model()
-                };
-                crate::live_tests::format_provider_test_coverage_report(&args[0], &model, None)
-            };
-            return Ok((json!({"report": report, "source": "persisted_verification"}), report));
-        }
         RuntimeCommand::RefreshModelList
         | RuntimeCommand::Continue
         | RuntimeCommand::ResumeAll

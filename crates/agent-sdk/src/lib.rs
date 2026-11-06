@@ -128,7 +128,7 @@
 //! # Web search
 //!
 //! The built-in `websearch` tool uses the provider's server-side search where
-//! supported (Anthropic first-party API, OpenAI API or ChatGPT login on
+//! supported (Anthropic first-party API, or an OpenAI API key on
 //! non-codex models) and local scraping otherwise. Provider searches arrive as
 //! ordinary `ToolStart`/`ToolInputDelta`/`ToolExec`/`ToolDone` events named
 //! `web_search`, with no `ToolCall` to answer, and appear in history. The
@@ -137,7 +137,6 @@
 //! provider search. Set `HORON_AGENT_WEBSEARCH_PREFER_NATIVE=0` to always search
 //! locally.
 
-mod auth;
 mod client;
 pub mod collections;
 mod diagnostics;
@@ -153,7 +152,6 @@ pub mod worktrees;
 #[path = "sdk_tests/parity.rs"]
 mod parity_tests;
 
-pub use auth::{AuthClient, AuthFlow, AuthInputKind, AuthOptions, AuthPrompt, AuthResult, LoginMethod, LoginProvider};
 pub use client::{
     AssistantTextMessage, ConnectOptions, CreateSessionOptions, EventStream, FileContent, FileStatus,
     GlobalEventStream, GlobalEventsOptions, HoronAgentClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall,
