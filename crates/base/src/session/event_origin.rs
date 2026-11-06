@@ -15,8 +15,8 @@ pub(super) fn origin(paths: &store::SessionPaths) -> Result<store::OriginId> {
         Ok(mut file) => {
             let id = store::OriginId::new_v4();
             file.write_all(id.as_str().as_bytes())?;
-            horon_agent_platform::sync_file(&file, horon_agent_platform::SyncMode::Full)?;
-            horon_agent_platform::sync_dir(paths.root(), horon_agent_platform::SyncMode::Full)?;
+            horon_agent_platform::sync_file(&file, paths.sync_mode())?;
+            horon_agent_platform::sync_dir(paths.root(), paths.sync_mode())?;
             Ok(id)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {

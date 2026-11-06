@@ -7,6 +7,38 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
+/// Test-only record of the durability level each observed boundary used.
+///
+/// A writer runs on the test's own thread, so a thread-local log needs no
+/// locks, cannot be polluted by a concurrent test, and keeps the production
+/// `Disk` free of instrumentation.
+#[cfg(test)]
+pub(crate) mod observation {
+    use super::{IoPoint, SyncMode};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static OBSERVED: RefCell<Vec<(IoPoint, SyncMode)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Record the level this boundary is about to confirm with.
+    pub(crate) fn note(point: IoPoint, mode: SyncMode) {
+        OBSERVED.with(|log| log.borrow_mut().push((point, mode)));
+    }
+
+    /// Take the boundaries observed on this thread since the last call.
+    pub(crate) fn take() -> Vec<(IoPoint, SyncMode)> {
+        OBSERVED.with(|log| std::mem::take(&mut *log.borrow_mut()))
+    }
+}
+
+#[cfg(not(test))]
+mod observation {
+    use super::{IoPoint, SyncMode};
+
+    pub(crate) fn note(_point: IoPoint, _mode: SyncMode) {}
+}
+
 /// The durability policy every original this store publishes is confirmed with.
 ///
 /// Derived files are never flushed, so the mode reaches only original writes and
@@ -17,14 +49,12 @@ pub(crate) struct Disk {
 }
 
 impl Disk {
-    pub fn new(hook: IoHook) -> Self {
-        Self {
-            hook,
-            mode: SyncMode::Full,
-        }
+    pub fn new(hook: IoHook, mode: SyncMode) -> Self {
+        Self { hook, mode }
     }
 
     pub fn hit(&mut self, point: IoPoint) -> Result<(), StoreError> {
+        observation::note(point, self.mode);
         (self.hook)(point).map_err(io_error)
     }
 

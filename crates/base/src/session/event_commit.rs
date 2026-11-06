@@ -52,6 +52,7 @@ impl Session {
                     event_store::publish_local_durable(
                         &commit_paths.session_dir(&commit_id)?.join("local-explicit-source.json"),
                         &source,
+                        commit_paths.sync_mode(),
                     )?;
                 }
                 // Selection and the runtime binding are local, durable, and never

@@ -48,6 +48,7 @@ mod legacy_parse;
 mod legacy_publish;
 mod legacy_replay;
 mod legacy_runtime;
+mod paths;
 pub mod projection;
 mod projection_boundary;
 mod projection_operations;
@@ -77,6 +78,7 @@ pub use history_page::HistoryPages;
 ///
 /// Derived files are never flushed, so this reaches only original writes.
 pub use horon_agent_platform::SyncMode;
+pub use paths::SessionPaths;
 pub use projection::{ProjectedMessage, Projection};
 pub use projection_operations::{EventStamp, ForkRequest, LocalHead, RewindPoint};
 pub use recovery::{ScanReport, full_scan, recover_to};

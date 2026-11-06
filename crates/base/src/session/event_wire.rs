@@ -49,7 +49,7 @@ impl LocalRuntime {
         if !self.owed(&path) {
             return Ok(false);
         }
-        super::event_store::publish_local_file(&path, self)
+        super::event_store::publish_local_file(&path, self, paths.sync_mode())
     }
 
     /// Whether the durable binding on disk has to change.

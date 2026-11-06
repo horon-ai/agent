@@ -6,7 +6,15 @@ mod gateway;
 mod irc;
 mod power;
 mod serde_lenient;
-pub use {display::DisplayConfig, feature::FeatureConfig, gateway::GatewayConfig, irc::IrcConfig, power::PowerConfig};
+mod storage;
+pub use {
+    display::DisplayConfig,
+    feature::FeatureConfig,
+    gateway::GatewayConfig,
+    irc::IrcConfig,
+    power::PowerConfig,
+    storage::{StorageConfig, StorageSyncMode},
+};
 
 /// Compaction mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

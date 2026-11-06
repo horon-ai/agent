@@ -127,7 +127,7 @@ pub(crate) fn quarantine(disk: &mut Disk, log: &std::path::Path, report: &ScanRe
     let original = checked_file(log, true)?;
     original.set_len(report.complete_offset)?;
     disk.hit(IoPoint::TailTruncated)?;
-    crate::blobs::sync_file(&original, SyncMode::Full)?;
+    crate::blobs::sync_file(&original, disk.mode)?;
     disk.sync_dir(parent, IoPoint::DirectorySync)
 }
 

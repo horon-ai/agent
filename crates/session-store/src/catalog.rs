@@ -246,7 +246,7 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
         return Err(StoreError::busy("catalog changed during listing; retry"));
     }
     if repair_catalog {
-        let mut disk = Disk::new(Box::new(|_| Ok(())));
+        let mut disk = Disk::new(Box::new(|_| Ok(())), paths.sync_mode());
         publish_derived(
             &mut disk,
             &paths.root().join(".catalog.index.jsonl"),

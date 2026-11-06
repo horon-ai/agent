@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use horon_agent_session_types::{EnvSnapshot, StoredMemoryInjection, StoredMessage};
@@ -1127,57 +1127,6 @@ pub fn pick_legacy_timestamp(
     event_time.or(session_created_at).unwrap_or_else(legacy_epoch_timestamp)
 }
 
-/// Paths for one store root (HOME/sessions). Every accessor re-validates the
-/// session id and refuses a symlinked, non-directory or non-private component under the root,
-/// so a valid id can never address a path outside the store.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SessionPaths {
-    root: PathBuf,
-}
-
-impl SessionPaths {
-    /// Wrap a store root.
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    /// The configured root.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// The session directory {root}/{session_id}.
-    pub fn session_dir(&self, session_id: &SessionId) -> Result<PathBuf, StoreError> {
-        validate_session_id_text(session_id.as_str())?;
-        let candidate = self.root.join(session_id.as_str());
-        ensure_safe_component(self.root.as_path(), &candidate)?;
-        Ok(candidate)
-    }
-
-    /// The canonical event log {root}/{session_id}/events.jsonl.
-    pub fn events_log(&self, session_id: &SessionId) -> Result<PathBuf, StoreError> {
-        Ok(self.session_dir(session_id)?.join("events.jsonl"))
-    }
-
-    /// The blob directory {root}/{session_id}/blobs.
-    pub fn blobs_dir(&self, session_id: &SessionId) -> Result<PathBuf, StoreError> {
-        let dir = self.session_dir(session_id)?.join("blobs");
-        ensure_safe_component(self.root.as_path(), &dir)?;
-        Ok(dir)
-    }
-
-    /// The blob path for a verified lowercase sha256.
-    pub fn blob_file(&self, session_id: &SessionId, sha256: &str) -> Result<PathBuf, StoreError> {
-        if !is_lower_hex_64(sha256) {
-            return Err(StoreError::invalid_request(
-                StoreErrorCode::InvalidPayloadRef,
-                "blob name must be a lowercase hex sha256",
-            ));
-        }
-        Ok(self.blobs_dir(session_id)?.join(format!("{sha256}.json")))
-    }
-}
-
 fn build_envelope(
     draft: &EventDraft,
     payload: Option<Value>,
@@ -1322,7 +1271,7 @@ fn is_reserved_metadata_key(key: &str) -> bool {
     )
 }
 
-fn validate_session_id_text(raw: &str) -> Result<(), StoreError> {
+pub(crate) fn validate_session_id_text(raw: &str) -> Result<(), StoreError> {
     let unsafe_id = |message: &str| StoreError::invalid_request(StoreErrorCode::UnsafeSessionId, message.to_string());
     let mut chars = raw.chars();
     let Some(first) = chars.next() else {
@@ -1366,7 +1315,7 @@ fn normalize_uuid_str(raw: &str) -> Result<String, StoreError> {
         .map_err(|_| StoreError::invalid_request(StoreErrorCode::InvalidRecord, "identity field is not a uuid"))
 }
 
-fn is_lower_hex_64(value: &str) -> bool {
+pub(crate) fn is_lower_hex_64(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
@@ -1380,7 +1329,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn ensure_safe_component(root: &Path, candidate: &Path) -> Result<(), StoreError> {
+pub(crate) fn ensure_safe_component(root: &Path, candidate: &Path) -> Result<(), StoreError> {
     let unsafe_path = |message: &str| StoreError::invalid_request(StoreErrorCode::UnsafePath, message.to_string());
     // The root may itself be reached through a symlink (macOS /tmp, a linked HOME).
     // Resolving the root once is what makes the boundary the root itself, while

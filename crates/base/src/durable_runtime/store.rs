@@ -514,7 +514,7 @@ impl DurableRuntimeStore {
         self.hit(JournalIoPoint::RecoveryTailWrite)?;
         file.write_all(bytes)?;
         self.hit(JournalIoPoint::RecoveryTailFileSync)?;
-        horon_agent_platform::sync_file(&file, horon_agent_platform::SyncMode::Full)?;
+        horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode())?;
         self.hit(JournalIoPoint::RecoveryTailDirectorySync)?;
         let dir = self.dir.clone();
         sync_directory_entry(&dir)
@@ -545,7 +545,7 @@ impl DurableRuntimeStore {
         self.hit(JournalIoPoint::RewriteTempWrite)?;
         file.write_all(bytes)?;
         self.hit(JournalIoPoint::RewriteFileSync)?;
-        horon_agent_platform::sync_file(&file, horon_agent_platform::SyncMode::Full)?;
+        horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode())?;
         drop(file);
         self.hit(JournalIoPoint::RewriteRename)?;
         let journal = self.journal_path.clone();
@@ -769,7 +769,7 @@ impl DurableRuntimeStore {
         self.hit(JournalIoPoint::RecordWrite)?;
         file.write_all(bytes)?;
         self.hit(JournalIoPoint::RecordFileSync)?;
-        horon_agent_platform::sync_file(&file, horon_agent_platform::SyncMode::Full)?;
+        horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode())?;
         if previous_len == 0 {
             self.hit(JournalIoPoint::RecordDirectorySync)?;
             let dir = self.dir.clone();
@@ -783,7 +783,7 @@ impl DurableRuntimeStore {
         let rolled_back = match OpenOptions::new().write(true).open(&path) {
             Ok(file) => match file.set_len(previous_len) {
                 Ok(()) => match self.hit(JournalIoPoint::RecordRollbackFileSync) {
-                    Ok(()) => horon_agent_platform::sync_file(&file, horon_agent_platform::SyncMode::Full),
+                    Ok(()) => horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode()),
                     Err(injected) => Err(injected),
                 },
                 Err(truncate_error) => Err(truncate_error),
@@ -895,6 +895,6 @@ fn ensure_private_dir(path: &Path) -> JournalResult<()> {
 
 /// Flush one directory entry so a journal file created or replaced in it survives.
 fn sync_directory_entry(path: &Path) -> JournalResult<()> {
-    horon_agent_platform::sync_dir(path, horon_agent_platform::SyncMode::Full)
+    horon_agent_platform::sync_dir(path, crate::config::config().storage_sync_mode())
         .map_err(|error| JournalError::io_context("sync the journal directory", path, error))
 }

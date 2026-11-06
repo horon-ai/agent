@@ -75,9 +75,13 @@ impl BlockingWriter {
         observation: (IoHook, ReadProbe),
     ) -> Result<Self, StoreError> {
         let (hook, probe) = observation;
-        let mut disk = Disk::new(hook);
+        let mode = paths.sync_mode();
+        let mut disk = Disk::new(hook, mode);
         disk.directory(paths.root())?;
-        let paths = SessionPaths::new(paths.root().canonicalize()?);
+        // Canonicalizing rewrites the root, so the durability level is carried
+        // over explicitly; the writer and every cache opened from these paths
+        // then flush originals the same way.
+        let paths = SessionPaths::new(paths.root().canonicalize()?).with_sync_mode(mode);
         let directory = paths.session_dir(&id)?;
         // The session directory's entry is what has to survive a crash; it is
         // flushed when this call creates it.
@@ -310,3 +314,7 @@ impl WriterHandle {
         Ok(response)
     }
 }
+
+#[cfg(test)]
+#[path = "writer_sync_mode_tests.rs"]
+mod sync_mode_tests;

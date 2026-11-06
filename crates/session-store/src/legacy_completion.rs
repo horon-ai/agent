@@ -232,7 +232,7 @@ fn publish_complete(
     {
         return Ok(value);
     }
-    let mut disk = Disk::new(Box::new(|_| Ok(())));
+    let mut disk = Disk::new(Box::new(|_| Ok(())), paths.sync_mode());
     publish(
         &mut disk,
         &paths
@@ -244,7 +244,7 @@ fn publish_complete(
     hook(MigrationPoint::IndexInventoryPublished)?;
     hook(MigrationPoint::IndexHeaderPublish)?;
     publish(&mut disk, &paths.root().join(HEADER), &raw, &ReadProbe::default())?;
-    crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
+    crate::blobs::sync_directory(paths.root(), paths.sync_mode())?;
     Ok(value)
 }
 
@@ -272,7 +272,7 @@ pub fn complete_index_migration_with_hook(
     if !bundle.has_index() {
         return Err(StoreError::unknown_session("legacy index absent"));
     }
-    let mut disk = Disk::new(Box::new(|_| Ok(())));
+    let mut disk = Disk::new(Box::new(|_| Ok(())), destination.sync_mode());
     disk.directory(destination.root())?;
     let stage = destination
         .root()

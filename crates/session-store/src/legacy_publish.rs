@@ -23,7 +23,7 @@ pub(crate) fn migrate(
     hit(&mut hook, MigrationPoint::SourceCaptured)?;
     bundle.verify(source)?;
     safe_path(destination.root())?;
-    let mut disk = Disk::new(Box::new(|_| Ok(())));
+    let mut disk = Disk::new(Box::new(|_| Ok(())), destination.sync_mode());
     disk.directory(destination.root())?;
     let lock_path = destination.root().join(format!(".legacy-{}.lock", source.id.as_str()));
     let lock = match new_file(&lock_path) {
@@ -65,7 +65,7 @@ pub(crate) fn migrate(
         .root()
         .join(format!(".legacy-stage-{}", uuid::Uuid::new_v4()));
     disk.directory(&stage_root)?;
-    let staged = SessionPaths::new(stage_root.join("sessions"));
+    let staged = SessionPaths::new(stage_root.join("sessions")).with_sync_mode(destination.sync_mode());
     disk.directory(staged.root())?;
     let stage = staged.session_dir(&source.id)?;
     disk.directory(&stage)?;
@@ -135,16 +135,16 @@ pub(crate) fn migrate(
     let mut file = new_file(&stage.join(MANIFEST))?;
     file.write_all(bytes.as_bytes())?;
     hit(&mut hook, MigrationPoint::ManifestSync)?;
-    crate::blobs::sync_file(&file, SyncMode::Full)?;
+    crate::blobs::sync_file(&file, staged.sync_mode())?;
     if source.runtime {
         crate::legacy_runtime::mark_first_file(&staged, &source.id)?;
     }
     validate(&staged, &manifest)?;
     hit(&mut hook, MigrationPoint::OriginalsSync)?;
-    sync_tree(&stage)?;
+    sync_tree(&stage, staged.sync_mode())?;
     hit(&mut hook, MigrationPoint::StageDirectorySync)?;
-    crate::blobs::sync_directory(&stage, SyncMode::Full)?;
-    crate::blobs::sync_directory(staged.root(), SyncMode::Full)?;
+    crate::blobs::sync_directory(&stage, staged.sync_mode())?;
+    crate::blobs::sync_directory(staged.root(), staged.sync_mode())?;
     bundle.verify(source)?;
     if manifest.index_stamps != crate::legacy_runtime::index_stamps(&source.home)? {
         return Err(conflict());
@@ -272,7 +272,7 @@ fn validate(paths: &SessionPaths, manifest: &MigrationReceipt) -> Result<(), Sto
 fn finish(paths: &SessionPaths, manifest: &MigrationReceipt, hook: &mut MigrationHook) -> Result<(), StoreError> {
     let target = paths.session_dir(&manifest.session_id)?;
     hit(hook, MigrationPoint::ParentSync)?;
-    crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
+    crate::blobs::sync_directory(paths.root(), paths.sync_mode())?;
     hit(hook, MigrationPoint::ParentSynced)?;
     let digest = sha256_hex(&read_file(&target.join(MANIFEST))?);
     crate::legacy_runtime::publish_runtime_sources(paths, manifest, &digest)?;
@@ -286,19 +286,19 @@ fn finish(paths: &SessionPaths, manifest: &MigrationReceipt, hook: &mut Migratio
     if current.as_deref() != Some(digest.as_bytes()) {
         hit(hook, MigrationPoint::ReceiptSync)?;
         crate::cache_io::publish(
-            &mut Disk::new(Box::new(|_| Ok(()))),
+            &mut Disk::new(Box::new(|_| Ok(())), paths.sync_mode()),
             &path,
             digest.as_bytes(),
             &ReadProbe::default(),
         )?;
     }
     hit(hook, MigrationPoint::ReceiptDirectorySync)?;
-    crate::blobs::sync_directory(&target, SyncMode::Full)?;
+    crate::blobs::sync_directory(&target, paths.sync_mode())?;
     let pending = target.join(".legacy-first-file.json");
     if pending.try_exists()? {
         checked_file(&pending, false)?;
         fs::remove_file(pending)?;
-        crate::blobs::sync_directory(&target, SyncMode::Full)?;
+        crate::blobs::sync_directory(&target, paths.sync_mode())?;
     }
     Ok(())
 }
@@ -317,8 +317,8 @@ pub(crate) fn receipt(paths: &SessionPaths, id: &SessionId) -> Result<MigrationR
     }
     validate(paths, &manifest)?;
     // A surviving marker is re-synced before it can authorize runtime activation.
-    crate::blobs::sync_directory(paths.root(), SyncMode::Full)?;
-    crate::blobs::sync_file(&checked_file(&path, false)?, SyncMode::Full)?;
-    crate::blobs::sync_directory(&paths.session_dir(id)?, SyncMode::Full)?;
+    crate::blobs::sync_directory(paths.root(), paths.sync_mode())?;
+    crate::blobs::sync_file(&checked_file(&path, false)?, paths.sync_mode())?;
+    crate::blobs::sync_directory(&paths.session_dir(id)?, paths.sync_mode())?;
     Ok(manifest)
 }
