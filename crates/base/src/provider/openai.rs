@@ -82,7 +82,10 @@ pub fn prompt_cache_retention_from_env() -> Option<String> {
     normalize_prompt_cache_retention(&raw).map(str::to_owned)
 }
 
-/// Retention actually sent on API-key requests. OAuth does not use this policy.
+/// Retention the direct Chat Completions provider puts in the request body for
+/// `model_id`: the configured override when it is supported, otherwise the
+/// model's documented extended retention. The cache-TTL estimate consumes the
+/// same answer, so reporting and sending cannot disagree.
 pub fn effective_prompt_cache_retention<'a>(model_id: &str, configured: Option<&'a str>) -> Option<&'a str> {
     if uses_prompt_cache_options(model_id) {
         // Omit the obsolete field and rely on the documented 30m default.
