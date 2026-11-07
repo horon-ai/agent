@@ -201,8 +201,10 @@ impl BlockingWriter {
     /// `batched` skips the per-append flush, so one commit pays one flush instead
     /// of one per event. Whoever publishes a head must call this after the last
     /// append and before that head, so a confirmed head never names an event whose
-    /// bytes were not flushed. Outside a batch nothing is pending and this is a
-    /// no-op, so it is safe on every commit path.
+    /// bytes were not flushed. Outside a batch a successful append has already
+    /// flushed and cleared the debt, so the call is a no-op there; the one case it
+    /// still acts on is a non-batched append that failed at its own flush, whose
+    /// pending debt stays recorded for the retry.
     /// # Errors
     /// Returns the path or I/O error of the flush. The pending debt stays recorded,
     /// so a retry flushes the same bytes instead of acknowledging them.

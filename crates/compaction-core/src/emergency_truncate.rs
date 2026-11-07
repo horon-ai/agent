@@ -119,10 +119,6 @@ pub fn emergency_truncated_tool_result(content: &str, max_bytes: usize, is_error
         head_len = body_budget * 2 / 3;
         tail_len = body_budget / 3;
     }
-    if head_len + tail_len > content.len() {
-        tail_len = 0;
-        head_len = max_bytes / 2;
-    }
 
     let head = truncate_str_boundary(content, head_len);
     let tail = tail_str_boundary(content, tail_len);
