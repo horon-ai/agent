@@ -1072,12 +1072,10 @@ fn ping_request_is_lightweight_control_request() {
 fn subscribe_request(working_dir: Option<&str>) -> Request {
     Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: false,
         supports_user_response: false,
         supports_ask_requests: false,
         id: 1,
         working_dir: working_dir.map(str::to_string),
-        selfdev: None,
         target_session_id: None,
         client_instance_id: None,
         client_has_local_history: false,
@@ -1405,7 +1403,7 @@ fn accepted_reload_recovery_continuation_marks_intent_delivered() -> anyhow::Res
         "reload-accepted-continuation",
         session_id,
         super::super::reload_recovery::ReloadRecoveryRole::InterruptedPeer,
-        crate::tool::selfdev::ReloadRecoveryDirective {
+        crate::protocol::ReloadRecoveryDirective {
             reconnect_notice: Some("stored notice".to_string()),
             continuation_message: continuation.to_string(),
         },
@@ -1615,8 +1613,6 @@ async fn lightweight_comm_request_skips_full_session_initialization() {
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
-    let (_debug_response_tx, _) = broadcast::channel(8);
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _) = broadcast::channel(8);
@@ -1643,8 +1639,6 @@ async fn lightweight_comm_request_skips_full_session_initialization() {
         file_touch,
         channel_subscriptions,
         channel_subscriptions_by_session,
-        client_debug_state,
-        _debug_response_tx,
         event_history,
         event_counter,
         swarm_event_tx,
@@ -1799,8 +1793,6 @@ async fn sdk_socket_workflow(response_only: bool) {
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
-    let (_debug_response_tx, _) = broadcast::channel(8);
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _) = broadcast::channel(8);
@@ -1829,8 +1821,6 @@ async fn sdk_socket_workflow(response_only: bool) {
             file_touch.clone(),
             channel_subscriptions.clone(),
             channel_subscriptions_by_session.clone(),
-            client_debug_state.clone(),
-            _debug_response_tx.clone(),
             event_history.clone(),
             event_counter.clone(),
             swarm_event_tx.clone(),
@@ -1888,7 +1878,6 @@ async fn sdk_socket_workflow(response_only: bool) {
                     "type": "subscribe",
                     "id": id,
                     "working_dir": home._home.path(),
-                    "supports_pdf_panels": true,
                     "supports_user_response": capability,
                 }),
             )
@@ -2099,7 +2088,7 @@ async fn loading_deferred_setup_excluded_builtin_is_not_constructed() {
     let names: Vec<&str> = built.keys().map(String::as_str).collect();
     assert!(names.contains(&"read"), "an allowed tool must be present: {names:?}");
     assert!(names.contains(&"bash"), "an allowed tool must be present: {names:?}");
-    for excluded in ["browser", "calendar", "gmail", "selfdev", "desktop_selfdev"] {
+    for excluded in ["selfdev", "desktop_selfdev"] {
         assert!(
             !names.contains(&excluded),
             "{excluded} was constructed despite being excluded: {names:?}"
@@ -2268,8 +2257,6 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
-    let (_debug_response_tx, _) = broadcast::channel(8);
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _) = broadcast::channel(8);
@@ -2298,8 +2285,6 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
             file_touch.clone(),
             channel_subscriptions.clone(),
             channel_subscriptions_by_session.clone(),
-            client_debug_state.clone(),
-            _debug_response_tx.clone(),
             event_history.clone(),
             event_counter.clone(),
             swarm_event_tx.clone(),

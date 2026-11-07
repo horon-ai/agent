@@ -117,6 +117,7 @@ function New-IsolatedWindowsProfile([string]$Name) {
         InstallDir = Join-Path $local 'horon-agent\bin'
         LauncherPath = Join-Path $local 'horon-agent\bin\horon-agent.exe'
         BuildsDir = Join-Path $local 'horon-agent\builds'
+        # Uninstaller targets left behind by earlier installers (launch hotkeys).
         SetupHintsPath = Join-Path $horonAgentHome 'setup_hints.json'
         HotkeyDir = Join-Path $horonAgentHome 'hotkey'
         StartupShortcutPath = Join-Path $appData 'Microsoft\Windows\Start Menu\Programs\Startup\horon-agent-hotkey.lnk'
@@ -125,8 +126,6 @@ function New-IsolatedWindowsProfile([string]$Name) {
 
 function Set-InstallScriptProfileGlobals($Profile) {
     $script:HoronAgentHome = $Profile.HoronAgentHome
-    $script:HotkeyDir = $Profile.HotkeyDir
-    $script:SetupHintsPath = $Profile.SetupHintsPath
 }
 
 function Get-CimInstance { @() }
@@ -135,18 +134,14 @@ $passedCases = 0
 $coveredScenarios = [ordered]@{
     path_persistence_deduplication = $false
     wm_settingchange = $false
-    copilot_key_mapping = $false
-    opt_out = $false
     uninstall_cleanup = $false
-    spaces_non_ascii_paths = $false
-    missing_windows_terminal = $false
     rollback_failure = $false
 }
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 
 try {
     $env:HORON_AGENT_INSTALL_PS1_IMPORT_ONLY = '1'
-    . $installScript -SkipAlacrittySetup -SkipHotkeySetup
+    . $installScript -SkipAlacrittySetup
 
     Invoke-Case 'release_lookup_uses_only_the_canonical_github_release' {
         Assert-Equal 'v1.2.3' (Resolve-HoronAgentReleaseTagFromUri 'https://github.com/horon-ai/agent/releases/tag/v1.2.3') 'release redirect parser should extract the stable tag'
@@ -221,66 +216,6 @@ try {
         Assert-Equal $false (Send-HoronAgentEnvironmentChangedBroadcast) 'broadcast helper should honor the deterministic no-mutate opt-out'
         $env:HORON_AGENT_DISABLE_ENV_BROADCAST = $null
         $script:coveredScenarios.wm_settingchange = $true
-    }
-
-    Invoke-Case 'optional_setup_opt_out_is_recorded' {
-        $profile = New-IsolatedWindowsProfile 'opt-out'
-        Set-InstallScriptProfileGlobals $profile
-
-        # A plain install requests neither optional step, so the persisted state
-        # must record the opt-out and no hotkey artifact may appear.
-        Set-SetupHintsState -AlacrittyConfigured:$false -HotkeyConfigured:$false
-        Assert-PathExists $profile.SetupHintsPath 'install should write setup hints into isolated HORON_AGENT_HOME'
-        $state = Get-Content -LiteralPath $profile.SetupHintsPath -Raw | ConvertFrom-Json
-        Assert-Equal $false $state.hotkey_configured 'an install without the hotkey option should record hotkey opt-out'
-        Assert-Equal $false $state.alacritty_configured 'an install without the terminal option should record terminal opt-out'
-        Assert-PathMissing $profile.HotkeyDir 'hotkey opt-out should not create hotkey files'
-        $script:coveredScenarios.opt_out = $true
-    }
-
-    Invoke-Case 'copilot_key_mapping_and_spaces_non_ascii_paths' {
-        $profile = New-IsolatedWindowsProfile 'hotkey-spaces-nonascii'
-        Set-InstallScriptProfileGlobals $profile
-        $env:HORON_AGENT_WINDOWS_SETUP_SKIP_EXTERNALS = '1'
-        $horonAgentExe = Join-Path $profile.Root '路径 With Spaces\horon-agent.exe'
-        New-Item -ItemType Directory -Path (Split-Path -Parent $horonAgentExe) -Force | Out-Null
-        Set-Content -Path $horonAgentExe -Value 'fake exe' -NoNewline
-        New-Item -ItemType Directory -Path $profile.HotkeyDir -Force | Out-Null
-        Set-Content -Path (Join-Path $profile.HotkeyDir 'horon-agent-hotkey.ps1') -Value 'legacy listener' -Force
-
-        $ok = Install-HoronAgentHotkey -HoronAgentExePath $horonAgentExe
-        Assert-Equal $true $ok 'hotkey install should succeed using the deterministic external-command skip hook'
-        $vbsPath = Join-Path $profile.HotkeyDir 'horon-agent-hotkey-launcher.vbs'
-        Assert-PathMissing $vbsPath 'hotkey install should remove the legacy hidden VBScript trampoline'
-        $shortcutScriptPath = Join-Path $profile.HotkeyDir 'horon-agent-hotkey-shortcut.ps1'
-        Assert-PathExists $shortcutScriptPath 'hotkey install should render the deterministic Startup shortcut script under the isolated HORON_AGENT_HOME'
-        $shortcutScript = Get-Content -LiteralPath $shortcutScriptPath -Raw
-        Assert-Contains $shortcutScript 'powershell.exe' 'Startup shortcut should target PowerShell directly'
-        Assert-Contains $shortcutScript 'ExecutionPolicy RemoteSigned' 'Startup shortcut should use RemoteSigned execution policy'
-        Assert-NotContains $shortcutScript 'ExecutionPolicy Bypass' 'Startup shortcut should not bypass execution policy'
-        Assert-Contains $shortcutScript 'setup-hotkey --listen-windows-hotkey' 'Startup shortcut should start the native Windows hotkey listener'
-        Assert-Contains $shortcutScript $horonAgentExe 'Startup shortcut should preserve spaces and non-ASCII characters in the horon-agent path'
-        Assert-PathMissing (Join-Path $profile.HotkeyDir 'horon-agent-hotkey.ps1') 'hotkey upgrade should remove the legacy PowerShell listener'
-        $scriptText = Get-Content -LiteralPath $installScript -Raw
-        Assert-Contains $scriptText 'Configured Alt+; and the Copilot key' 'installer should document both Windows launch-key mappings'
-        $script:coveredScenarios.copilot_key_mapping = $true
-        $script:coveredScenarios.spaces_non_ascii_paths = $true
-    }
-
-    Invoke-Case 'missing_windows_terminal_is_not_required' {
-        $profile = New-IsolatedWindowsProfile 'missing-windows-terminal'
-        Set-InstallScriptProfileGlobals $profile
-        $env:HORON_AGENT_WINDOWS_SETUP_SKIP_EXTERNALS = '1'
-        $env:WT_SESSION = $null
-        $env:WindowsTerminal = $null
-        $horonAgentExe = Join-Path $profile.Root 'No Windows Terminal\horon-agent.exe'
-        New-Item -ItemType Directory -Path (Split-Path -Parent $horonAgentExe) -Force | Out-Null
-        Set-Content -Path $horonAgentExe -Value 'fake exe' -NoNewline
-
-        Assert-Equal $true (Install-HoronAgentHotkey -HoronAgentExePath $horonAgentExe) 'hotkey setup should not require Windows Terminal to be installed or active'
-        $scriptText = Get-Content -LiteralPath $installScript -Raw
-        Assert-NotContains $scriptText 'wt.exe' 'installer should not shell out to Windows Terminal for hotkey setup'
-        $script:coveredScenarios.missing_windows_terminal = $true
     }
 
     Invoke-Case 'launcher_rollback_failure_preserves_existing_install' {

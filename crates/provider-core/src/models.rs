@@ -33,16 +33,15 @@ pub const ALL_CLAUDE_MODELS: &[&str] = &[
 pub const CHATGPT_WEB_MODEL: &str = "gpt-5.6-pro[web]";
 
 /// GPT Pro reasoning models. These are exposed only on the OpenAI platform
-/// API (`api.openai.com` with an `OPENAI_API_KEY`); the ChatGPT/Codex OAuth
-/// backend rejects them ("not supported when using Codex with a ChatGPT
-/// account"). Keep them in their own list so the OAuth-scoped Codex catalog
+/// API (`api.openai.com` with an `OPENAI_API_KEY`); a subscription OAuth
+/// backend rejects them. Keep them in their own list so the OAuth-scoped catalog
 /// can never hide them from the picker and so route building can mark them
 /// API-key-only.
 pub const OPENAI_API_ONLY_PRO_MODELS: &[&str] =
     &["gpt-5.6-pro", "gpt-5.5-pro", "gpt-5.4-pro", "gpt-5.2-pro", "gpt-5-pro"];
 
 /// True when `model` is a GPT Pro model that only works with an OpenAI
-/// platform API key (never ChatGPT/Codex OAuth).
+/// platform API key (never subscription OAuth).
 pub fn is_openai_api_only_pro_model(model: &str) -> bool {
     let trimmed = model.trim();
     OPENAI_API_ONLY_PRO_MODELS
@@ -61,7 +60,7 @@ pub const ALL_OPENAI_MODELS: &[&str] = &[
     DEFAULT_OPENAI_MODEL,
     "gpt-5.6-sol",
     "gpt-5.6-pro",
-    // ChatGPT web-only route. The `[web]` suffix is intentionally part of the
+    // Web-only route. The `[web]` suffix is intentionally part of the
     // horon-agent model id so it can never be mistaken for an API/Codex model with
     // the same upstream slug.
     CHATGPT_WEB_MODEL,

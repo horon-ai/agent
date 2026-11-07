@@ -1,23 +1,16 @@
-pub mod account;
 pub mod acp;
 pub mod args;
-pub mod auth_import;
-pub mod auth_test;
 pub mod cloud_move;
 pub mod commands;
 pub mod debug;
 pub mod dispatch;
 pub mod hot_exec;
 pub mod install_release;
-pub mod login;
-pub mod macos_notification_broker;
 pub mod mcp;
 pub mod output;
 pub mod proctitle;
-pub mod provider_doctor;
 pub mod provider_init;
 pub mod runtime_state;
-pub mod selfdev;
 pub mod sessions;
 pub mod ssh;
 #[cfg(unix)]

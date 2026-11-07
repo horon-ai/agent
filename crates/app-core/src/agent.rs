@@ -100,7 +100,7 @@ pub use horon_agent_agent_runtime::{
 };
 use interrupts::{InFlightGuard, NoToolCallOutcome, PostToolInterruptOutcome};
 
-const HORON_AGENT_NATIVE_TOOLS: &[&str] = &["selfdev", "desktop_selfdev", "communicate"];
+const HORON_AGENT_NATIVE_TOOLS: &[&str] = &["communicate"];
 static RECOVERED_TEXT_WRAPPED_TOOL_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> = LazyLock::new(|| {
     crate::build::get_repo_dir()
@@ -275,8 +275,7 @@ impl Agent {
         }
         match self.provider.active_explicit_credential() {
             Some(horon_agent_provider_core::ResolvedCredential::ApiKey) => "openai-api".into(),
-            Some(horon_agent_provider_core::ResolvedCredential::Oauth) => "openai-oauth".into(),
-            None => name,
+            Some(horon_agent_provider_core::ResolvedCredential::Oauth) | None => name,
         }
     }
 
@@ -1628,17 +1627,6 @@ impl Agent {
             parent_session_id: self.session.parent_id.clone(),
             cache_root_id: self.session.cache_root_id.clone(),
         }
-    }
-
-    /// Desktop self-development is selected by the session checkout, including
-    /// restored sessions. It must not set the CLI canary/reload flags.
-    pub fn is_desktop_selfdev(&self) -> bool {
-        self.session
-            .working_dir
-            .as_deref()
-            .map(std::path::Path::new)
-            .and_then(horon_agent_selfdev_types::desktop_repo_root)
-            .is_some()
     }
 
     pub(crate) fn set_working_dir_for_pending_context(&mut self, working_dir: Option<String>) {

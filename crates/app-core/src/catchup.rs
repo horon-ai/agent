@@ -137,31 +137,6 @@ pub fn render_markdown(
     }
     out.push_str(&format!("- Session: `{}`\n\n", session.id));
 
-    if crate::config::config().features.mermaid && !brief.activity_steps.is_empty() {
-        out.push_str("```mermaid\nflowchart TD\n");
-        out.push_str(&format!(
-            "    A[\"Why<br/>{}\"]:::status --> B[\"Your last prompt\"]:::user\n",
-            mermaid_escape(&brief.reason)
-        ));
-        let mut prev = 'B';
-        for (idx, step) in brief.activity_steps.iter().take(4).enumerate() {
-            let node = ((b'C' + idx as u8) as char).to_string();
-            out.push_str(&format!("    {}[\"{}\"]:::step\n", node, mermaid_escape(step)));
-            out.push_str(&format!("    {} --> {}\n", prev, node));
-            prev = node.chars().next().unwrap_or('B');
-        }
-        out.push_str(&format!(
-            "    {} --> Z[\"Need from you<br/>{}\"]:::decision\n",
-            prev,
-            mermaid_escape(&brief.needs_from_user)
-        ));
-        out.push_str("    classDef status fill:#18331f,stroke:#4caf50,color:#d6ffd9;\n");
-        out.push_str("    classDef user fill:#1f3659,stroke:#7fb3ff,color:#e8f1ff;\n");
-        out.push_str("    classDef step fill:#2b2b33,stroke:#9090a0,color:#f0f0f5;\n");
-        out.push_str("    classDef decision fill:#43284f,stroke:#d38cff,color:#fdefff;\n");
-        out.push_str("```\n\n");
-    }
-
     out.push_str("## Why this needs attention\n\n");
     out.push_str(&format!("> {}\n\n", brief.reason));
     if !brief.tags.is_empty() {
@@ -444,7 +419,7 @@ fn tool_use_step(block: &ContentBlock) -> Option<String> {
         "communicate" => Some("Coordinated with other agents".to_string()),
         "subagent" => Some("Spawned a subagent".to_string()),
         "memory" => Some("Queried memory context".to_string()),
-        "side_panel" | "panel" | "applet" | "todo" | "todoread" | "todowrite" | "initiative" | "goal" => None,
+        "todo" | "todoread" | "todowrite" | "initiative" | "goal" => None,
         other => Some(format!("Used `{}`", other)),
     }
 }
@@ -556,10 +531,6 @@ fn markdown_quote(text: &str) -> String {
     truncate(text.replace('\n', " ").trim(), 600)
 }
 
-fn mermaid_escape(text: &str) -> String {
-    text.replace('"', "'").replace('\n', "<br/>").replace(':', " -")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{build_brief, needs_catchup_with_seen, render_markdown};
@@ -617,29 +588,21 @@ mod tests {
     }
 
     /// The renderer reads the process-wide config, so these tests must not see a
-    /// developer's real `~/.horon-agent/config.toml`: a machine with
-    /// `[features] mermaid = true` would otherwise fail the default-off assertion.
+    /// developer's real `~/.horon-agent/config.toml`.
     struct IsolatedConfig {
         _dir: tempfile::TempDir,
         previous_home: Option<std::ffi::OsString>,
-        previous_mermaid: Option<std::ffi::OsString>,
     }
 
     impl IsolatedConfig {
-        fn new(mermaid: Option<&str>) -> Self {
+        fn new() -> Self {
             let dir = tempfile::tempdir().expect("temp home");
             let previous_home = std::env::var_os("HORON_AGENT_HOME");
-            let previous_mermaid = std::env::var_os("HORON_AGENT_ENABLE_MERMAID");
             crate::env::set_var("HORON_AGENT_HOME", dir.path());
-            match mermaid {
-                Some(value) => crate::env::set_var("HORON_AGENT_ENABLE_MERMAID", value),
-                None => crate::env::remove_var("HORON_AGENT_ENABLE_MERMAID"),
-            }
             crate::config::invalidate_config_cache();
             Self {
                 _dir: dir,
                 previous_home,
-                previous_mermaid,
             }
         }
     }
@@ -650,10 +613,6 @@ mod tests {
                 Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
                 None => crate::env::remove_var("HORON_AGENT_HOME"),
             }
-            match self.previous_mermaid.take() {
-                Some(value) => crate::env::set_var("HORON_AGENT_ENABLE_MERMAID", value),
-                None => crate::env::remove_var("HORON_AGENT_ENABLE_MERMAID"),
-            }
             crate::config::invalidate_config_cache();
         }
     }
@@ -661,7 +620,7 @@ mod tests {
     #[test]
     fn render_markdown_includes_key_sections() {
         let _guard = crate::storage::lock_test_env();
-        let _config = IsolatedConfig::new(None);
+        let _config = IsolatedConfig::new();
         let markdown = sample_markdown();
 
         assert!(markdown.contains("# Catch Up"));
@@ -671,20 +630,7 @@ mod tests {
         assert!(markdown.contains("## Needs from you"));
         assert!(
             !markdown.contains("```mermaid"),
-            "the diagram is off by default and no horon client renders it"
-        );
-    }
-
-    /// The operator can still turn the diagram on; the renderer then emits it.
-    #[test]
-    fn render_markdown_draws_the_diagram_when_mermaid_is_enabled() {
-        let _guard = crate::storage::lock_test_env();
-        let _config = IsolatedConfig::new(Some("1"));
-        let markdown = sample_markdown();
-
-        assert!(
-            markdown.contains("```mermaid"),
-            "the diagram renders when the feature is on"
+            "mermaid diagrams are never rendered by the headless build"
         );
     }
 }

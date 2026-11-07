@@ -6,7 +6,6 @@ horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent
 
 ```bash
 horon-agent acp            # 표준 입출력으로 ACP v1을 처리한다
-horon-agent acp --login    # 모델 제공자 로그인만 하고 종료한다
 ```
 
 `acp`는 stdout에 ACP 메시지(줄 단위 UTF-8 JSON)만 쓴다. 로그는 stderr로 나가고, stdin이 닫히면 바로 종료한다. 처리 중이던 요청은 응답을 받지 못한다.
@@ -54,12 +53,11 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 
 | id | 제공 조건 | 하는 일 |
 |---|---|---|
-| `horon-agent-credentials` | 항상 | 저장된 제공자 로그인이 있는지 확인한다 |
-| `horon-agent-terminal-login` | 클라이언트가 `auth.terminal`을 알린 경우만 | 에디터가 터미널에서 `horon-agent acp --login`을 실행하게 한다 |
+| `horon-agent-credentials` | 항상 | `[providers.<name>]` 프로파일의 자격 증명으로 모델을 쓸 수 있는지 확인한다 |
 
-`authenticate`는 데몬이 쓸 수 있는 모델을 보고하면 `{}`로 성공한다. 모델이 없으면 `-32000`을 돌려준다. `session/new`도 쓸 수 있는 모델이 없으면 `-32000`이다. 터미널 방식의 id를 `authenticate`로 보내면 `-32602`다. 그 방식은 터미널에서 실행하는 것이기 때문이다.
+프로파일은 `horon-agent provider add`로 등록한다. 클라이언트가 `auth.terminal`을 알려도 방식은 하나뿐이다. 이 빌드에는 에디터가 터미널에서 실행할 로그인 명령이 없다.
 
-`acp --login`은 제공자를 고르고 로그인을 마치면 0으로 종료한다. 안내 문구는 stderr로 나간다.
+`authenticate`는 데몬이 쓸 수 있는 모델을 보고하면 `{}`로 성공한다. 모델이 없으면 `-32000`을 돌려준다. `session/new`도 쓸 수 있는 모델이 없으면 `-32000`이다. 모르는 `methodId`는 `-32602`다.
 
 `logout`은 광고하지 않는다. 자격 증명을 지우는 기능이 없기 때문이다.
 
@@ -284,7 +282,7 @@ v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `ses
 
 ### 연결 단위 `auth/logout`
 
-`authMethods`의 각 항목은 `methodId`와 `type`을 가진다. `type: "agent"` 방식은 항상 있고, `type: "terminal"` 방식(`args: ["--login"]`, `env: []`)은 클라이언트가 `capabilities.auth.terminal`을 객체로 알린 경우에만 있다. `auth/login {methodId}`는 v1의 `authenticate`와 같다. 쓸 수 있는 모델이 없으면 `-32000`이고, 터미널 방식 id는 `-32602`다.
+`authMethods`에는 `type: "agent"`인 `horon-agent-credentials` 하나만 있다. 클라이언트가 `capabilities.auth.terminal`을 알려도 터미널 방식은 붙지 않는다. `auth/login {methodId}`는 v1의 `authenticate`와 같다. 쓸 수 있는 모델이 없으면 `-32000`이고, 모르는 `methodId`는 `-32602`다.
 
 `auth/logout {}`은 그 연결의 인증 상태만 끝낸다. 저장된 자격 증명은 지우지 않으며, 테스트가 격리된 홈의 자격 증명 파일이 바이트 단위로 같음을 확인한다. 같은 연결에서 `auth/login`이 다시 성공하기 전까지 `session/new`, `session/resume`, `session/prompt`는 `-32000`으로 답한다.
 

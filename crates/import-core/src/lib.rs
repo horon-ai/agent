@@ -7,8 +7,6 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-pub mod repo_ranking;
-
 pub type ImportCoreResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Truncate a string at a valid UTF-8 character boundary.

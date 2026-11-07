@@ -25,12 +25,8 @@
     Source builds require Git, Rust, and the Visual Studio C++ Build Tools.
 .PARAMETER ConfigureAlacritty
     Install Alacritty through winget when it is not already available.
-.PARAMETER ConfigureHotkey
-    Configure the optional global launch hotkey.
 .PARAMETER SkipAlacrittySetup
     Deprecated compatibility switch. Alacritty setup is opt-in by default.
-.PARAMETER SkipHotkeySetup
-    Deprecated compatibility switch. Hotkey setup is opt-in by default.
 #>
 param(
     [string]$InstallDir,
@@ -40,9 +36,7 @@ param(
     [string]$ReleaseAssetsDir,
     [switch]$BuildFromSource,
     [switch]$ConfigureAlacritty,
-    [switch]$ConfigureHotkey,
-    [switch]$SkipAlacrittySetup,
-    [switch]$SkipHotkeySetup
+    [switch]$SkipAlacrittySetup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,9 +61,6 @@ $HoronAgentHome = if ($env:HORON_AGENT_HOME) {
 } else {
     Join-Path ([Environment]::GetFolderPath("UserProfile")) ".horon-agent"
 }
-
-$HotkeyDir = Join-Path $HoronAgentHome "hotkey"
-$SetupHintsPath = Join-Path $HoronAgentHome "setup_hints.json"
 
 function Write-Info($msg) { Write-Host $msg -ForegroundColor Blue }
 function Write-Err($msg) { throw "error: $msg" }
@@ -623,21 +614,6 @@ function Install-Alacritty {
     return $true
 }
 
-function Stop-HoronAgentHotkeyListeners {
-    try {
-        Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -like '*horon-agent-hotkey*' } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    } catch {}
-
-    try {
-        $currentPid = $PID
-        Get-CimInstance Win32_Process -Filter "Name = 'horon-agent.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.ProcessId -ne $currentPid -and $_.CommandLine -like '*--listen-windows-hotkey*' } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    } catch {}
-}
-
 function ConvertFrom-HoronAgentVersionOutput([string]$Output) {
     if (-not $Output) {
         return $null
@@ -744,107 +720,6 @@ function Assert-HoronAgentSourceBuildPrerequisites {
     }
 }
 
-function Set-SetupHintsState([bool]$AlacrittyConfigured, [bool]$HotkeyConfigured) {
-    New-Item -ItemType Directory -Path $HoronAgentHome -Force | Out-Null
-
-    $state = @{
-        launch_count = 0
-        hotkey_configured = $HotkeyConfigured
-        hotkey_dismissed = $HotkeyConfigured
-        alacritty_configured = $AlacrittyConfigured
-        alacritty_dismissed = $AlacrittyConfigured
-        desktop_shortcut_created = $false
-        mac_ghostty_guided = $false
-        mac_ghostty_dismissed = $false
-    }
-
-    if (Test-Path $SetupHintsPath) {
-        try {
-            $existing = Get-Content $SetupHintsPath -Raw | ConvertFrom-Json -ErrorAction Stop
-            foreach ($property in $existing.PSObject.Properties) {
-                $state[$property.Name] = $property.Value
-            }
-        } catch {
-            Write-Warn "Could not read existing setup hints state; overwriting it"
-        }
-    }
-
-    if ($AlacrittyConfigured) {
-        $state.alacritty_configured = $true
-        $state.alacritty_dismissed = $true
-    }
-
-    if ($HotkeyConfigured) {
-        $state.hotkey_configured = $true
-        $state.hotkey_dismissed = $true
-    }
-
-    $state | ConvertTo-Json | Set-Content -Path $SetupHintsPath -Encoding UTF8
-}
-
-function Get-HoronAgentHotkeyShortcutScript([string]$StartupShortcutPath, [string]$HoronAgentExePath) {
-    $escapedShortcutPath = $StartupShortcutPath.Replace("'", "''")
-    $escapedExePath = $HoronAgentExePath.Replace("'", "''")
-    $listenerArguments = "-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -Command `"& '$escapedExePath' setup-hotkey --listen-windows-hotkey`""
-    $escapedListenerArguments = $listenerArguments.Replace("'", "''")
-    $shortcutLines = @(
-        '$ErrorActionPreference = ''Stop''',
-        '$shell = New-Object -ComObject WScript.Shell',
-        "`$shortcut = `$shell.CreateShortcut('$escapedShortcutPath')",
-        "`$shortcut.TargetPath = 'powershell.exe'",
-        "`$shortcut.Arguments = '$escapedListenerArguments'",
-        "`$shortcut.Description = 'horon-agent global launch hotkey listener'",
-        '$shortcut.WindowStyle = 7',
-        '$shortcut.Save()',
-        "Write-Output 'OK'"
-    )
-    return ($shortcutLines -join "`r`n")
-}
-
-function Install-HoronAgentHotkey([string]$HoronAgentExePath) {
-    New-Item -ItemType Directory -Path $HotkeyDir -Force | Out-Null
-    $skipProcessLifecycle = (
-        $env:HORON_AGENT_WINDOWS_SETUP_SKIP_EXTERNALS -eq "1" -or
-        $env:HORON_AGENT_WINDOWS_SETUP_SKIP_PROCESS_LIFECYCLE -eq "1"
-    )
-    if (-not $skipProcessLifecycle) {
-        Stop-HoronAgentHotkeyListeners
-    }
-
-    # Upgrade cleanup: v0.47 and earlier wrote a generated PowerShell listener.
-    # The first-party listener now lives in horon-agent.exe itself and is launched via
-    # `horon-agent setup-hotkey --listen-windows-hotkey` from a login shortcut.
-    Remove-Item -Path (Join-Path $HotkeyDir "horon-agent-hotkey.ps1") -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path (Join-Path $HotkeyDir "horon-agent-hotkey-launcher.vbs") -Force -ErrorAction SilentlyContinue
-    $startupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
-    New-Item -ItemType Directory -Path $startupDir -Force | Out-Null
-    $startupShortcutPath = Join-Path $startupDir "horon-agent-hotkey.lnk"
-    $shortcutScript = Get-HoronAgentHotkeyShortcutScript -StartupShortcutPath $startupShortcutPath -HoronAgentExePath $HoronAgentExePath
-
-    if ($env:HORON_AGENT_WINDOWS_SETUP_SKIP_EXTERNALS -eq "1") {
-        Set-Content -Path (Join-Path $HotkeyDir "horon-agent-hotkey-shortcut.ps1") -Value $shortcutScript -Encoding UTF8
-        Write-Info "Configured Alt+; and the Copilot key to launch horon-agent"
-        return $true
-    }
-
-    $shortcutOutput = & powershell -NoProfile -Command $shortcutScript
-    if ($LASTEXITCODE -ne 0 -or -not ($shortcutOutput -match 'OK')) {
-        Write-Warn "Created hotkey files, but could not create the Startup shortcut"
-        return $false
-    }
-
-    $escapedExePath = $HoronAgentExePath.Replace("'", "''")
-    $launchHotkeyCommand = "Start-Process -FilePath '$escapedExePath' -ArgumentList @('setup-hotkey', '--listen-windows-hotkey') -WindowStyle Hidden"
-    if (-not $skipProcessLifecycle) {
-        & powershell -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -Command $launchHotkeyCommand | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Hotkey will start on next login, but could not be launched immediately"
-        }
-    }
-
-    Write-Info "Configured Alt+; and the Copilot key to launch horon-agent"
-    return $true
-}
 function Resolve-HoronAgentWindowsArtifact([string[]]$ArchitectureCandidates) {
     $sawX64 = $false
 
@@ -1115,15 +990,10 @@ if ($userPathUpdate.Changed) {
 
 Set-HoronAgentProcessPath -InstallDir $InstallDir | Out-Null
 
-$configuredHotkey = $false
 $shouldSetupAlacritty = [bool]($ConfigureAlacritty -and -not $SkipAlacrittySetup)
-$shouldSetupHotkey = [bool]($ConfigureHotkey -and -not $SkipHotkeySetup)
 
 if ($ConfigureAlacritty -and $SkipAlacrittySetup) {
     Write-Warn "Both -ConfigureAlacritty and -SkipAlacrittySetup were provided; skipping Alacritty setup"
-}
-if ($ConfigureHotkey -and $SkipHotkeySetup) {
-    Write-Warn "Both -ConfigureHotkey and -SkipHotkeySetup were provided; skipping hotkey setup"
 }
 
 if ($shouldSetupAlacritty) {
@@ -1132,16 +1002,7 @@ if ($shouldSetupAlacritty) {
     Write-Info "Optional Alacritty setup not requested"
 }
 
-if ($shouldSetupHotkey) {
-    $configuredHotkey = Install-HoronAgentHotkey -HoronAgentExePath $LauncherPath
-} else {
-    Write-Info "Optional global hotkey setup not requested"
-}
-
-# Resolve Alacritty once: this decides both the persisted opt-out state and the
-# final "ready" line, so the two never disagree.
 $alacrittyPath = Find-AlacrittyPath
-Set-SetupHintsState -AlacrittyConfigured:([bool]$alacrittyPath) -HotkeyConfigured:$configuredHotkey
 
 Write-Host ""
 Write-Info "horon-agent $Version installed successfully!"
@@ -1149,14 +1010,6 @@ Write-Host ""
 
 if ($alacrittyPath) {
     Write-Info "Alacritty ready: $alacrittyPath"
-}
-
-if ($configuredHotkey) {
-    Write-Info "Global launch keys ready: Alt+; and the Copilot key open horon-agent"
-    Write-Host ""
-} elseif (-not $ConfigureHotkey) {
-    Write-Info "Optional: run 'horon-agent setup-hotkey' to configure global launch hotkeys and terminal preferences."
-    Write-Host ""
 }
 
 if (Get-Command horon-agent -ErrorAction SilentlyContinue) {

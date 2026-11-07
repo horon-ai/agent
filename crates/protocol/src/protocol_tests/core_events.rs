@@ -167,26 +167,6 @@ fn test_soft_interrupt_ids_wire_shape_and_legacy_defaults() -> Result<()> {
 }
 
 #[test]
-fn test_compacted_history_request_roundtrip() -> Result<()> {
-    let req = Request::GetCompactedHistory {
-        id: 7,
-        visible_messages: 64,
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"get_compacted_history\""));
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 7);
-    let Request::GetCompactedHistory {
-        visible_messages, ..
-    } = decoded
-    else {
-        return Err(anyhow!("wrong request type"));
-    };
-    assert_eq!(visible_messages, 64);
-    Ok(())
-}
-
-#[test]
 fn test_notify_auth_changed_provider_hint_is_optional() -> Result<()> {
     let legacy = r#"{"type":"notify_auth_changed","id":9}"#;
     let decoded = parse_request_json(legacy)?;
@@ -558,7 +538,6 @@ fn test_history_event_decodes_without_compaction_mode_for_older_servers() -> Res
         available_models,
         connection_type,
         compaction_mode,
-        side_panel,
         agent_model_overrides,
         ..
     } = decoded
@@ -573,13 +552,12 @@ fn test_history_event_decodes_without_compaction_mode_for_older_servers() -> Res
         compaction_mode,
         horon_agent_config_types::CompactionMode::Reactive
     );
-    assert!(!side_panel.has_pages());
     assert!(agent_model_overrides.is_empty());
     Ok(())
 }
 
 #[test]
-fn test_history_event_roundtrip_preserves_side_panel_snapshot() -> Result<()> {
+fn test_history_event_roundtrip_preserves_messages() -> Result<()> {
     let event = ServerEvent::History {
         id: 101,
         session_id: "ses_test_456".to_string(),
@@ -611,7 +589,6 @@ fn test_history_event_roundtrip_preserves_side_panel_snapshot() -> Result<()> {
         }),
         all_sessions: Vec::new(),
         client_count: None,
-        is_canary: None,
         reload_recovery: None,
         server_version: None,
         server_name: None,
@@ -630,28 +607,12 @@ fn test_history_event_roundtrip_preserves_side_panel_snapshot() -> Result<()> {
         autojudge_enabled: None,
         compaction_mode: horon_agent_config_types::CompactionMode::Reactive,
         activity: None,
-        applets: Default::default(),
-        side_panel: horon_agent_side_panel_types::SidePanelSnapshot {
-            focus_revision: 0,
-            focused_page_id: Some("page-1".to_string()),
-            pages: vec![horon_agent_side_panel_types::SidePanelPage {
-                id: "page-1".to_string(),
-                title: "Notes".to_string(),
-                file_path: "/tmp/notes.md".to_string(),
-                format: horon_agent_side_panel_types::SidePanelPageFormat::Markdown,
-                pdf_data: None,
-                source: horon_agent_side_panel_types::SidePanelPageSource::Managed,
-                content: "# Notes".to_string(),
-                updated_at_ms: 42,
-            }],
-        },
         acp_protocol_version: None,
     };
     let json = encode_event(&event);
     let decoded = parse_event_json(json.trim())?;
     let ServerEvent::History {
         id,
-        side_panel,
         messages,
         provider_name,
         provider_model,
@@ -671,86 +632,6 @@ fn test_history_event_roundtrip_preserves_side_panel_snapshot() -> Result<()> {
         Some(80)
     );
     assert_eq!(messages.len(), 1);
-    assert_eq!(side_panel.focused_page_id.as_deref(), Some("page-1"));
-    assert_eq!(side_panel.pages.len(), 1);
-    assert_eq!(side_panel.pages[0].title, "Notes");
-    assert_eq!(side_panel.pages[0].content, "# Notes");
-    Ok(())
-}
-
-#[test]
-fn test_compacted_history_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::CompactedHistory {
-        id: 77,
-        session_id: "ses_compact_123".to_string(),
-        messages: vec![HistoryMessage {
-            turn_start: false,
-            response_stats: None,
-            message_id: None,
-            role: "assistant".to_string(),
-            content: "older response".to_string(),
-            tool_calls: None,
-            tool_data: None,
-        }],
-        images: Vec::new(),
-        compacted_total: 128,
-        compacted_visible: 64,
-        compacted_remaining: 64,
-        compacted_hidden_prompts: 3,
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"compacted_history\""));
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::CompactedHistory {
-        id,
-        session_id,
-        messages,
-        compacted_total,
-        compacted_visible,
-        compacted_remaining,
-        ..
-    } = decoded
-    else {
-        return Err(anyhow!("expected CompactedHistory event"));
-    };
-    assert_eq!(id, 77);
-    assert_eq!(session_id, "ses_compact_123");
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].content, "older response");
-    assert_eq!(compacted_total, 128);
-    assert_eq!(compacted_visible, 64);
-    assert_eq!(compacted_remaining, 64);
-    Ok(())
-}
-
-#[test]
-fn test_side_panel_state_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::SidePanelState {
-        snapshot: horon_agent_side_panel_types::SidePanelSnapshot {
-            focus_revision: 0,
-            focused_page_id: Some("page-1".to_string()),
-            pages: vec![horon_agent_side_panel_types::SidePanelPage {
-                id: "page-1".to_string(),
-                title: "Notes".to_string(),
-                file_path: "/tmp/notes.md".to_string(),
-                format: horon_agent_side_panel_types::SidePanelPageFormat::Markdown,
-                pdf_data: None,
-                source: horon_agent_side_panel_types::SidePanelPageSource::Managed,
-                content: "updated".to_string(),
-                updated_at_ms: 99,
-            }],
-        },
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"side_panel_state\""));
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::SidePanelState { snapshot } = decoded else {
-        return Err(anyhow!("expected SidePanelState event"));
-    };
-    assert_eq!(snapshot.focused_page_id.as_deref(), Some("page-1"));
-    assert_eq!(snapshot.pages.len(), 1);
-    assert_eq!(snapshot.pages[0].title, "Notes");
-    assert_eq!(snapshot.pages[0].content, "updated");
     Ok(())
 }
 
@@ -792,52 +673,5 @@ fn test_error_event_retry_after_back_compat_default() -> Result<()> {
     assert_eq!(id, 7);
     assert_eq!(message, "oops");
     assert_eq!(retry_after_secs, None);
-    Ok(())
-}
-
-#[test]
-fn test_agent_models_session_setter_and_response_roundtrip() -> Result<()> {
-    let clear = parse_request_json(r#"{"type":"set_agent_model","id":31,"target":"swarm"}"#)?;
-    assert!(matches!(clear, Request::SetAgentModel { model: None, .. }));
-    assert!(matches!(
-        clear,
-        Request::SetAgentModel { global: false, .. }
-    ));
-    let request = Request::SetAgentModel {
-        id: 32,
-        target: "review".into(),
-        model: Some("inherit".into()),
-        global: false,
-    };
-    let encoded = serde_json::to_string(&request)?;
-    assert!(
-        !encoded.contains("global"),
-        "session updates keep the old wire shape"
-    );
-    let decoded = parse_request_json(&encoded)?;
-    assert!(
-        matches!(decoded, Request::SetAgentModel { model: Some(model), .. } if model == "inherit")
-    );
-    let global = Request::SetAgentModel {
-        id: 33,
-        target: "swarm".into(),
-        model: Some("server-default".into()),
-        global: true,
-    };
-    let decoded = parse_request_json(&serde_json::to_string(&global)?)?;
-    assert!(matches!(
-        decoded,
-        Request::SetAgentModel { global: true, .. }
-    ));
-    let event = ServerEvent::AgentModelsChanged {
-        id: 32,
-        session_id: "session-a".into(),
-        overrides: std::collections::BTreeMap::from([("review".into(), "inherit".into())]),
-    };
-    let decoded = parse_event_json(encode_event(&event).trim())?;
-    assert!(
-        matches!(decoded, ServerEvent::AgentModelsChanged { session_id, overrides, .. }
-        if session_id == "session-a" && overrides.get("review").map(String::as_str) == Some("inherit"))
-    );
     Ok(())
 }

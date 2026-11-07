@@ -109,7 +109,8 @@ class PublicReleaseTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('<--locked>', result.stdout)
                     self.assertIn('<--profile> <release> <--target> <x86_64-unknown-linux-gnu>', result.stdout)
-                    self.assertIn('<linux-compat-vendored-openssl>', result.stdout)
+                    self.assertNotIn('linux-compat-vendored-openssl', result.stdout)
+                    self.assertNotIn('<--features>', result.stdout)
                     if ci == '1':
                         self.assertIn('bash <scripts/ci/install_justrust.sh>', result.stdout)
                         self.assertIn('justrust <build> <--local>', result.stdout)

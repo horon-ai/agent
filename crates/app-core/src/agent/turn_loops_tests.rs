@@ -121,22 +121,6 @@ fn pending_nudge_is_injected_only_when_batch_is_available() {
     assert!(Agent::BATCH_NUDGE.contains("result is required"));
 }
 
-#[test]
-fn plan_limit_reminder_relays_upgrade_link_without_purchasing() {
-    let reminder = Agent::plan_limit_reminder(&crate::subscription_notice::QuotaExceeded {
-        feature: "memory".into(),
-        tier: Some("plus".into()),
-        upgrade_tier: Some("pro".into()),
-        upgrade_url: Some("https://horon-agent.sh/pricing".into()),
-        resets_at: None,
-    });
-    assert!(reminder.starts_with("<system-reminder>"));
-    assert!(reminder.contains("Daily memory recall limit reached on your Plus plan"));
-    assert!(reminder.contains("Upgrade to Pro"));
-    assert!(reminder.contains("https://horon-agent.sh/pricing"));
-    assert!(reminder.contains("Do not open checkout"));
-}
-
 /// Provider that answers every request with plain text, so a turn completes
 /// without a tool round and the turn-boundary cleanup can be observed.
 struct TextOnlyProvider;
@@ -401,18 +385,12 @@ async fn a_guard_warning_keeps_an_earlier_reminder_and_the_turn_boundary_clears_
     );
 
     // A reminder this turn already carried before the guard ran. The slot is
-    // shared by every reminder a turn sets (the plan-limit text here, the
-    // turn-level reminder a reload or a soft interrupt supplies), so the guard
-    // must add to it rather than replace it. The merge is bounded, but one
-    // guard warning plus this notice is well inside the bound, so both survive.
-    let plan_limit = Agent::plan_limit_reminder(&crate::subscription_notice::QuotaExceeded {
-        feature: "memory".into(),
-        tier: Some("plus".into()),
-        upgrade_tier: Some("pro".into()),
-        upgrade_url: Some("https://horon-agent.sh/pricing".into()),
-        resets_at: None,
-    });
-    agent.current_turn_system_reminder = Some(plan_limit.clone());
+    // shared by every reminder a turn sets (the turn-level reminder a reload
+    // or a soft interrupt supplies), so the guard must add to it rather than
+    // replace it. The merge is bounded, but one guard warning plus this notice
+    // is well inside the bound, so both survive.
+    let earlier = "<system-reminder>Earlier reminder: continue the task.</system-reminder>".to_string();
+    agent.current_turn_system_reminder = Some(earlier.clone());
 
     // Three identical calls reach the guard's warning tier. The warning is a
     // different subsystem's reminder and must be added, not swapped in.
@@ -435,11 +413,11 @@ async fn a_guard_warning_keeps_an_earlier_reminder_and_the_turn_boundary_clears_
     );
     // The two reminders are framed apart by a line that names each one, so the
     // reader never infers a boundary from a blank line inside a reminder.
-    let plan_limit_at = merged.find(&plan_limit).expect("the plan-limit reminder is present");
+    let earlier_at = merged.find(&earlier).expect("the earlier reminder is present");
     let guard_at = merged.find("Loop guard:").expect("the guard warning is present");
     assert!(
-        plan_limit_at < guard_at,
-        "the plan-limit reminder survives in front: {merged}"
+        earlier_at < guard_at,
+        "the earlier reminder survives in front: {merged}"
     );
     assert!(
         merged.contains("[system reminder 1 of 2, ") && merged.contains("[system reminder 2 of 2, "),
@@ -451,7 +429,7 @@ async fn a_guard_warning_keeps_an_earlier_reminder_and_the_turn_boundary_clears_
     let prompt = agent.build_system_prompt_split(None);
     std::println!("QA system prompt tail:\n---\n{}\n---", prompt.dynamic_part);
     assert!(
-        prompt.dynamic_part.contains(&plan_limit),
+        prompt.dynamic_part.contains(&earlier),
         "the earlier reminder must reach the request: {}",
         prompt.dynamic_part
     );
@@ -509,7 +487,7 @@ async fn a_single_multi_paragraph_reminder_reaches_the_request_whole() {
     let provider: Arc<dyn Provider> = Arc::new(TextOnlyProvider);
     let mut agent = Agent::new(provider, Registry::empty());
 
-    let mission = include_str!("../../../base/src/prompt/mission_continuation.md");
+    let mission = include_str!("testdata/mission_reminder.md");
     assert!(
         mission.matches("\n\n").count() >= 10,
         "the fixture is multi-paragraph: {} blank-line breaks",
@@ -730,7 +708,7 @@ fn a_korean_reminder_is_bounded_by_characters_not_bytes() {
 /// reminder had been dropped, with no hint that the instruction was the one.
 #[test]
 fn an_oversized_instruction_survives_a_short_warning_merge() {
-    let mission = include_str!("../../../base/src/prompt/mission_continuation.md");
+    let mission = include_str!("testdata/mission_reminder.md");
     let warning = "<system-reminder>You have repeated the same tool call three times in a row. Vary the call or stop repeating it.</system-reminder>";
     assert!(
         mission.chars().count() > Agent::MAX_REMINDER_SLOT_CHARS,
@@ -788,7 +766,7 @@ async fn the_slot_drops_the_shortest_reminder_first_in_every_shape() {
     let provider: Arc<dyn Provider> = Arc::new(TextOnlyProvider);
     let mut agent = Agent::new(provider, Registry::empty());
 
-    let mission = include_str!("../../../base/src/prompt/mission_continuation.md");
+    let mission = include_str!("testdata/mission_reminder.md");
     let warning = "<system-reminder>You have repeated the same tool call three times in a row. Vary the call or stop repeating it.</system-reminder>";
     let long = |tag: &str| format!("<system-reminder>{}</system-reminder>", tag.repeat(1_500));
     let short = |tag: &str| format!("<system-reminder>{}</system-reminder>", tag.repeat(700));

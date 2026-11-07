@@ -360,21 +360,6 @@ pub enum ApiRequest {
         label: Option<String>,
     },
 
-    /// The user pressed something in an agent applet instance. The server
-    /// stores `state` into the instance, then delivers the action to the agent.
-    AppletAction {
-        session_id: String,
-        instance: String,
-        action: horon_agent_applet_types::Action,
-        #[serde(default)]
-        state: serde_json::Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        source_key: Option<String>,
-    },
-
-    /// The user closed an agent applet instance. The agent is not woken.
-    CloseApplet { session_id: String, instance: String },
-
     /// Restore the history that the last `Rewind` removed.
     ///
     /// `Rewind` is destructive, so without an undo a client cannot offer it
@@ -502,21 +487,6 @@ pub enum ApiRequest {
     GetSessionRecordBlobStatus {
         session_id: String,
         reference: crate::replication::CanonicalRecordRef,
-    },
-
-    /// Watch and drive the agent's own browser through a mirror panel.
-    /// Requires `browser_mirror`.
-    ///
-    /// `action` is one of `state`, `frame`, `navigate`, `back`, `forward`,
-    /// `reload`, `new_tab`, `select_tab`, `close_tab`, `input`, `takeover`,
-    /// `resume`. `args` is action specific and omitted when the action needs
-    /// none. The browser is the one the agent's `browser` tool drives for this
-    /// session, not a second browser the client starts.
-    BrowserMirror {
-        session_id: String,
-        action: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        args: Option<serde_json::Value>,
     },
 
     /// Liveness check.

@@ -14,6 +14,7 @@ mod binary_integration;
 mod burst_spawn;
 mod disconnect;
 mod durable_runtime_e2e;
+mod irc;
 #[cfg(unix)]
 mod loading_e2e;
 mod provider_behavior;

@@ -33,165 +33,13 @@ impl Config {
 #       MCP config (.horon-agent/mcp.json, .mcp.json, .claude/mcp.json) is skipped
 #       unless its current digest was trusted; --trust-workspace records that decision.
 
-[keybindings]
-# Scroll keys (vim-style by default)
-# Supports: ctrl, alt, shift modifiers + any key
-# Examples: "ctrl+k", "alt+j", "ctrl+shift+up", "pageup"
-scroll_up = "ctrl+k"
-scroll_down = "ctrl+j"
-scroll_page_up = "alt+u"
-scroll_page_down = "alt+d"
-
-# Model switching
-model_switch_next = "ctrl+tab"
-model_switch_prev = "ctrl+shift+tab"
-
-# Reasoning effort switching (OpenAI models)
-# Defaults: cmd+right / cmd+left on macOS, alt+right / alt+left elsewhere.
-# Alt/Option+Left/Right move by word in the input box.
-effort_increase = "@EFFORT_INCREASE@"
-effort_decrease = "@EFFORT_DECREASE@"
-
-# Speed tier switching: Standard -> Fast -> Ultrafast (OpenAI), Fast on/off elsewhere.
-# Ctrl/Cmd+Up/Down still recall prompt history.
-speed_increase = "alt+up"
-speed_decrease = "alt+down"
-
-# Centered mode toggle key
-centered_toggle = "alt+c"
-
-# Jump between user prompts
-# Ctrl+1..4 resizes the pinned side panel to 25/50/75/100%.
-# Ctrl+5..9 jumps by recency rank (5 = 5th most recent).
-scroll_prompt_up = "ctrl+["
-scroll_prompt_down = "ctrl+]"
-
-# Scroll bookmark toggle (stash position, jump to bottom, press again to return)
-scroll_bookmark = "ctrl+g"
-
-# Auto-poke toggle. Set "" to disable.
-auto_poke_toggle = "ctrl+p"
-
-# Optional fallback scroll bindings (useful on macOS terminals that forward Command)
-# Leave unset by default; on macOS Cmd+K / Cmd+J move up / down by prompt instead.
-scroll_up_fallback = ""
-scroll_down_fallback = ""
-
-# Workspace navigation (Niri-style)
-# Comma-separate multiple bindings to add aliases.
-workspace_left = "alt+h"
-workspace_down = "alt+j"
-workspace_up = "alt+k"
-workspace_right = "alt+l"
-
-# Pane / mode toggles
-side_panel_toggle = "alt+m"
-copy_selection_toggle = "alt+y"
-diagram_pane_toggle = "alt+t"
-diagram_pane_visibility_toggle = "alt+shift+m"
-typing_scroll_lock_toggle = "alt+s"
-# Cycle the diff display mode (unbound by default; /diff does the same).
-diff_mode_cycle = ""
-# Show the git commit log of the project you are in.
-commit_log = "alt+g"
-info_widget_toggle = "alt+i"
-# Focus the inline swarm panel (list of agents this session manages). Press
-# again to cycle agents. While focused: alt+↑/↓ select, alt+o pops the agent
-# out to a new terminal, esc exits. Plain typing still goes to the chat input.
-# Active only with agents.swarm_spawn_mode = "inline".
-swarm_panel_focus = "alt+n"
-
-# Spawn a fresh horon-agent session in a new terminal window, reusing the current
-# session's working directory. Companion to the system-wide launch hotkeys.
-# `horon-agent setup-hotkey` installs these three global launch hotkeys on macOS,
-# Linux niri/Hyprland/sway/i3, and Windows. The Cmd modifier maps to Super on
-# Linux and Alt on Windows. Windows also adds the physical Copilot key:
-#   Cmd+;        new horon-agent in your home directory
-#   Cmd+'        new horon-agent in your last project directory
-#   Cmd+Shift+'  new horon-agent self-dev session (last horon-agent repo)
-# Default: Cmd+Shift+; on macOS, Alt+Shift+; elsewhere. Set "" to disable.
-# Note: some macOS terminals intercept Cmd combos; if so, pick another binding.
-# new_terminal = "cmd+shift+;"
-
-# Open the /resume session picker.
-# Default: Cmd+B on macOS, Alt+R on Windows/Linux. Set "" to disable.
-# open_resume = "cmd+b"
-
-# Built-in voice input: press to record, press again to send the transcript.
-# Esc cancels. Needs a Nari API key (NARI_API_KEY or ~/.config/horon-agent/nari.env).
-# Default: Ctrl+Space. Set "" to disable.
-# voice_input = "ctrl+space"
-
-# /resume picker Enter behavior. Options: "current-terminal" or "new-terminal".
-# By default Enter resumes in this terminal; Ctrl+Enter performs the alternate action.
-session_picker_enter = "current-terminal"
-
-[dictation]
-# External speech-to-text command.
-# The command should record/transcribe speech and print the final transcript to stdout.
-# You can include any tool-specific flags here too, for example a grammar target.
-# Examples:
-# command = "~/.local/bin/my-whisper-script"
-# command = "~/.local/bin/my-whisper-script --grammar-target code"
-command = ""
-
-# How to apply the transcript inside horon-agent: insert|append|replace|send
-mode = "send"
-
-# Optional in-app hotkey to trigger dictation. Set to "off" to disable.
-# Example: "alt+;"
-key = "off"
-
-# Max seconds to wait for the dictation command to finish (0 = no timeout)
-timeout_secs = 90
-
-# Extra names or terms to help built-in voice transcription recognize them.
-# HoronAgent's own product names are always included.
-# vocabulary = ["Kubernetes", "Alice Zhang"]
-
-# Microphone recorder for built-in voice input (keybindings.voice_input).
-# Empty auto-detects pw-record, parecord, arecord, rec (SoX), or ffmpeg.
-# A custom command must print raw mono 16 kHz signed 16-bit little-endian PCM.
-# recorder = "arecord -q -t raw -f S16_LE -r 16000 -c 1 -"
-
-# Copilot-key push-to-talk in `horon-agent companion` (Linux). List keyboard evdev
-# nodes to watch, e.g. ["/dev/input/by-id/usb-Foo-event-kbd"]. Holding the key
-# while a HoronAgent terminal is focused sends the transcript to that session, even
-# without HoronAgent Desktop. Empty disables it.
-# global_devices = []
-
 [display]
-# Diff display mode: "off", "inline" (default), "full-inline", or "file"
-diff_mode = "inline"
-
-# Center all content by default (default: false)
-centered = false
-
-# Pin read images to a side pane (default: true)
-pin_images = true
-
-# Pin the full session todo list to the top of the chat transcript while it
-# scrolls, like the sticky previous-prompt preview (default: false)
-# pin_todos = true
-
-# Queue mode: wait until assistant is done before sending next message
-queue_mode = false
-
-# Automatically reload the remote server when a newer server binary is detected (default: true)
-auto_server_reload = true
-
-# Capture mouse events (enables scroll wheel; disables terminal text selection)
-mouse_capture = true
-
 # Enable debug socket for external control/testing (default: false)
 debug_socket = false
 
-# Render emoji in terminal-facing TUI and CLI output (default: true).
+# Render emoji in server output (default: true).
 # Set false here or set HORON_AGENT_NO_EMOJI=1 for ASCII fallbacks.
 emoji = true
-
-# Usage percentage wording: "left" (default) or "used".
-usage_display = "left"
 
 # Show thinking/reasoning content (default: true)
 show_thinking = true
@@ -203,104 +51,8 @@ show_thinking = true
 #             an assistant message or runs a tool, then show the next one
 # When unset, falls back to show_thinking (true => full, false => off).
 reasoning_display = "full"
-
-# Markdown spacing style: "compact" (chat/TUI) or "document" (docs-like)
-# markdown_spacing = "compact"
-
-# LaTeX rendering: "none" (show source), "unicode" (terminal text), or "image" (typeset PNG, default).
-# Image mode uses `latex` + `dvipng`, or `pdflatex` + `pdftocairo` as a fallback.
-# When neither toolchain is available, formulas fall back to Unicode.
-latex_rendering = "image"
-
-# Show idle animation before first prompt (default: false)
-idle_animation = false
-
-# Briefly animate a user prompt line when it enters the viewport (default: true)
-prompt_entry_animation = true
-
-# Render swarm/file-activity notifications in a compact single-line form
-# instead of the full multi-line card with diff preview (default: false)
-# compact_notifications = false
-
-# Show the full agentgrep tool output inline in the transcript instead of just
-# the one-line summary (default: false). Useful when you want to read search
-# results directly in the chat.
-# show_agentgrep_output = false
-
-# Show up to the last three non-empty lines of bash output beneath the tool
-# summary (default: false).
-# show_bash_output = false
-
-# Show the dimmed technical detail (command, file path, args) next to the
-# model-provided intent on tool rows (default: false). When false, tool rows
-# with an intent show just the intent; rows without an intent still show the
-# technical detail.
-# tool_call_details = false
-
-# Occasionally surface a "learn this keybinding" nudge (in a distinct color)
-# when you keep doing something the slow way (e.g. /resume) instead of using
-# its configured shortcut. Set false to disable all such hints (default: true).
-# keybinding_hints = true
-
-# Active sessions manager: pressing Left arrow on an empty input opens a
-# picker scoped to live (open) sessions, showing which are still working on a
-# response and which are ready for input (default: false). The /active
-# command is always available regardless of this setting.
-# active_sessions_manager = false
-
-# Include transcripts from other agent CLIs (Claude Code, Codex, Pi, OpenCode,
-# Cursor) in the session picker so they can be resumed or imported
-# (default: true). Set false to list only horon-agent's own sessions.
-# external_sessions = true
-
-# Open /resume filtered to sessions from the current project (same directory,
-# subdirectories, and sibling git worktrees) when that project has sessions
-# (default: false). Resume is global by default. Press `s` to cycle filters.
-# resume_project_scope = false
-
-# Disable specific animation variants by name.
-# Examples: ["donut"] or ["donut", "orbit_rings"]
-# Legacy aliases such as "three_rings" and "gyroscope" are still accepted.
-# disabled_animations = []
-
-# Performance tier: auto/full/reduced/minimal (default: auto)
-# auto = detect system load, memory, terminal type, SSH, and apply extra caps for WSL/Windows Terminal
-# full = all animations enabled
-# reduced = skip idle animations, keep spinners
-# minimal = disable all animations, slower redraw rate
-# performance = "auto"
-
-# Animation FPS (idle animation): 1-120 (default: 60)
-# Runtime policy may cap this lower on slower environments such as WSL/Windows Terminal.
-# animation_fps = 60
-
-# Active redraw FPS (processing, streaming, spinners): 1-120 (default: 60)
-# Runtime policy may cap this lower on slower environments such as WSL/Windows Terminal.
-# redraw_fps = 60
-
-# Label shown for the Alt/Option modifier in copy badges.
-# Empty = auto ("⌥" on macOS, "Alt" elsewhere). Examples: "Option", "Alt", "⌥".
-# copy_badge_alt_label = ""
-
-# Color theme: "auto" (query the terminal background), "dark", or "light".
-# theme = "auto"
-
-# Per-role color overrides. Every color the TUI renders is configurable: the
-# named roles below are substituted directly, and the ad hoc shades individual
-# widgets use follow whichever role they belong to.
-#
-# Easiest path: run `/colors generate #8ab4f8` to derive a whole harmonious
-# palette from one color you like, then `/colors harmony` to score it and see
-# exactly what to fix. `/colors` lists every role, and `/colors export` prints
-# this section for you.
-#
-# [display.colors]
-# user = "#8ab4f8"
-# ai = "#81c784"
-# accent = "#ba8bff"
-# success = "#64c864"
-# warning = "#ffc864"
-# error = "#ff6464"
+# Display and hidden option summaries are intentionally minimal: the headless
+# build has no terminal UI to configure.
 
 [features]
 # Check for and install updates during startup. Set to false for the persistent
@@ -310,9 +62,6 @@ check_updates = true
 memory = true
 # Swarm: multi-session coordination features
 swarm = true
-# Mermaid: render Mermaid code blocks and tell the model that diagrams are supported.
-# Off by default: no horon client renders Mermaid, so the guidance is dead weight.
-mermaid = false
 # Auto-poke: automatically nudge the model to continue when it stops with
 # incomplete todos. /poke on and /poke off still override this per session.
 auto_poke = true
@@ -362,15 +111,9 @@ stream_rules = false
 # repeat_gap = 20
 
 [websearch]
-# Use the model provider's own server-side search (Anthropic web_search on the
-# first-party API, OpenAI Responses web_search) whenever the active
-# provider/model supports it. Searches then run on the provider's side, so they
-# work on servers where DuckDuckGo/Bing scraping is blocked and need no extra
-# key. Providers without native search use the local engines below.
-# Anthropic API keys are billed about $10 per 1,000 searches.
-prefer_native = true
-# Local websearch engine: "duckduckgo", "bing", "searxng", "custom", or "native"
-# ("native" forces prefer_native on and otherwise runs fallback_engines).
+# Local websearch engine: "duckduckgo", "bing", "searxng", or "custom".
+# Search runs in this process against the provider you pick here; the model
+# provider is never asked to search on its behalf.
 engine = "duckduckgo"
 # Keyless HTML engines to try if the preferred engine fails. Default falls back to Bing HTML.
 fallback_engines = ["bing"]
@@ -387,18 +130,8 @@ bing_market = "en-US"
 # this. Configure here or via the HORON_AGENT_SEARXNG_URL environment variable, then
 # set engine = "searxng" or add it to fallback_engines.
 # searxng_url = "https://searx.example.org"
-# Native search options (prefer_native):
-# Max provider searches per request (Anthropic only). Caps spend. 0 = no cap.
-# native_max_uses = 5
-# Restrict results to these domains (Anthropic and OpenAI), or block domains
-# (Anthropic only). Set one list, not both.
-# native_allowed_domains = ["docs.rs", "developer.mozilla.org"]
-# native_blocked_domains = ["example.com"]
-# Anthropic tool version. "web_search_20260209" and newer are sent with
-# allowed_callers = ["direct"].
-# native_anthropic_tool_version = "web_search_20250305"
 
-# Custom HTTP JSON search: set engine = "custom" and prefer_native = false above.
+# Custom HTTP JSON search: set engine = "custom" above.
 # Set fallback_engines = [] above if private queries must not reach Bing on failure.
 # See docs/provider/INTEGRATIONS.md for GET/POST, authentication and JSON pointers.
 # [websearch.custom]
@@ -423,18 +156,19 @@ bing_market = "en-US"
 # Controls which built-in tools are sent to the model.
 # Profiles: "core" (headless default), "full", "acp", "minimal"/"lite", or "none".
 # core is the headless default: bash, read, write, edit, replace, apply_patch,
-# agentgrep, ls, webfetch, websearch, skill, mcp, undo, and ask. Set "full" to
-# expose every built-in tool.
-# acp keeps core coding tools plus batch for generic ACP clients.
-# minimal keeps core coding tools only: bash, read, write, edit, multiedit,
-# apply_patch, patch, agentgrep, glob, grep, and ls.
+# agentgrep, ls, webfetch, websearch, skill_manage, mcp, monitor, undo, and ask.
+# Set "full" to expose every built-in tool.
+# acp keeps the core coding tools plus batch, mcp, todo, and ask for generic
+# ACP clients.
+# minimal keeps core coding tools only: bash, read, write, edit, replace,
+# apply_patch, agentgrep, and ls.
 profile = "core"
 # Explicit allow-list. When non-empty, only these tools are exposed.
 # enabled = ["bash", "read", "write", "apply_patch", "agentgrep", "ls"]
-# All built-in tools, including gmail, are exposed by the full profile.
+# All built-in tools are exposed by the full profile.
 # Use enabled = ["*"] to explicitly select the unrestricted full toolset.
 # Hide selected tools after applying the profile/allow-list.
-# disabled = ["browser", "gmail", "swarm"]
+# disabled = ["mcp", "swarm"]
 # Disable all built-in tools unless enabled is set.
 disable_base_tools = false
 # MCP tool exposure. "auto" never changes the cached tool list when MCP
@@ -523,6 +257,10 @@ bash_pty = "auto"
 # until a plan is approved. Off by default, so nothing changes for an existing
 # config.
 plan_mode = false
+# IRC bus: expose the `irc` tool so agents of the same daemon can send, wait
+# for, and read each other's messages. Off by default because it opens a
+# message path between sessions. Env override: HORON_AGENT_IRC.
+irc = false
 # Let `bash` start the next call in the directory the previous command ended in.
 # On by default: an agent that must prefix every command with `cd` misreads its
 # own working directory. Set false to pin every call to the session directory.
@@ -579,8 +317,8 @@ dual_confirm_classes = []
 # forces one back into the cached prefix, "off" removes it, and a name this build
 # does not have is ignored. Default: empty, so every tool keeps its profile tier.
 # [tools.load_mode]
-# gmail = "off"
-# browser = "essential"
+# mcp = "off"
+# memory = "essential"
 
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.
@@ -595,34 +333,42 @@ tool_profile = "acp"
 # protocol_v2 = true
 
 [provider]
-# Default model (optional, uses provider default if not set)
-# Set via /model picker with Ctrl+B to save as default
-# default_model = "claude-opus-5-5"
-# Default provider (optional: claude|anthropic-api|openai|openai-api|copilot|openrouter|...)
-# When set, this provider is preferred on startup if available.
-#   claude        = Claude via OAuth/subscription (token in ~/.horon-agent/auth.json)
-#   anthropic-api = Claude via direct Anthropic API key (ANTHROPIC_API_KEY env
-#                   or ~/.config/horon-agent/anthropic.env). API-key mode does NOT fall
-#                   back to OAuth; configure the key first.
-# `claude` and `anthropic-api` are distinct providers with distinct credentials.
-# default_provider = "copilot"
+# Default model (optional; the selected profile's default applies when unset).
+#   default_model = "gpt-5.6-luna"
+# Default provider profile (optional). The value is either a built-in profile id
+# (openrouter, deepseek, anthropic-api, openai-api, ...) or the name of a
+# [providers.<name>] table below. `--provider-profile <name>` overrides this for
+# one launch.
+#   default_provider = "openrouter"
+# A profile is one OpenAI-compatible endpoint:
+#   [providers.myprofile]
+#   type = "openai-compatible"
+#   base_url = "https://api.example.com/v1"   # the /v1 prefix is part of it
+#   api_key_env = "MYPROFILE_API_KEY"         # or api_key, or env_file
+#   auth = "bearer"                           # bearer, header, or none
+#   default_model = "my-model"
+#   [[providers.myprofile.models]]
+#   id = "my-model"
+# Every model request posts to <base_url>/chat/completions with that profile's
+# credential. Nothing else serves models in this build: no second provider
+# runtime, no router process, no plugin host.
 # OpenAI reasoning effort (none|minimal|low|medium|high|xhigh|max)
 openai_reasoning_effort = "low"
-# Anthropic reasoning effort for Claude reasoning models (none|low|medium|high|xhigh|max)
+# Reasoning effort for models that accept it (none|low|medium|high|xhigh|max).
 # xhigh needs Opus 4.7/4.8 or Fable 5; max needs an output_config effort model (Opus/Sonnet 4.6+).
 # Defaults to xhigh for Claude Opus 4.7/4.8 (high on older Opus) when unset; other models keep their own default.
 # anthropic_reasoning_effort = "medium"
 # OpenAI transport mode (auto|websocket|https)
 # openai_transport = "auto"
 # OpenAI service tier override (priority|flex|off)
-# Defaults to `priority` to match Codex /fast behavior for OpenAI OAuth
-# (higher speed, higher usage). Set to "off" (or "standard") to disable.
+# Defaults to `priority` for the OpenAI route (higher speed, higher usage).
+# Set to "off" (or "standard") to disable.
 openai_service_tier = "priority"
 # Preserve provider-native reasoning/thinking for future-turn context when supported.
-# Applies to OpenRouter, Anthropic, and OpenAI native reasoning replay. Display is separate.
+# Applies to reasoning replay on the OpenRouter and OpenAI-compatible routes. Display is separate.
 preserve_reasoning_context = true
 # Cross-provider failover when the same prompt would be resent elsewhere.
-# countdown = 3-second countdown before retrying on another provider; press Esc to cancel (default)
+# countdown = 3-second countdown before retrying on another provider (default)
 # manual = show a notice and let you switch yourself
 # cross_provider_failover = "manual"
 # Try another account on the same provider before switching providers (default: true)
@@ -633,21 +379,11 @@ cross_provider_failover = "countdown"
 # autonomous_failover = false
 # Route switches allowed per execution chain; 0 disables switching (default: 3)
 # autonomous_failover_max_attempts = 3
-# Copilot premium mode: "normal" (default), "one" (first msg only), "zero" (all free)
-# Set to "zero" if you have premium Copilot and want free requests
-# copilot_premium = "zero"
-# Only list these providers in the /model picker (issue #460). Entries match
-# provider labels ("openai", "anthropic", "copilot", "openrouter", ...), route
-# api methods ("claude-oauth", "openai-compatible:myprofile"), or bare
-# openai-compatible profile ids ("myprofile"). The active model's routes always
-# stay visible. Unset or empty = show everything.
-# model_picker_providers = ["myprofile", "openrouter"]
 # Max seconds to wait for streaming data before timing out a request with no
 # data received. Raise this for slow reasoning models (e.g. DeepSeek) that think
 # silently for minutes before emitting tokens. Default: 180.
-# Applies to every streaming provider path (OpenAI native, Anthropic, Copilot,
-# OpenRouter/OpenAI-compatible). The TUI's client-side stall guard also extends
-# to match this value. Also overridable per-launch via HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS.
+# Applies to every streaming request. Also overridable per-launch via
+# HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS.
 # This is the base budget: high reasoning efforts scale it up automatically
 # (high 2x, xhigh 3x, max/swarm 4x) since they think silently for much longer.
 # stream_idle_timeout_secs = 600
@@ -691,12 +427,13 @@ wake_mode = "internal"
 swarm_root_effort = "max"
 swarm_deep_root_effort = "max"
 #
-# How swarm-created agents are spawned:
-#   "inline"   - in-process (no window), shown as a live gallery viewport in the coordinator (default)
-#   "visible"  - open a headed terminal window (alias: "headed")
-#   "headless" - create the worker in-process with no terminal window
-#   "auto"     - try visible first, fall back to headless if no window can open
-# The swarm tool's per-call `spawn_mode` overrides this when set.
+# How swarm-created agents are spawned. Every mode runs the worker in this
+# process; horon-agent never opens a terminal window.
+#   "inline"   - in-process, reported as a live gallery viewport (default)
+#   "headless" - in-process with no gallery viewport
+#   "auto"     - historical "try a window first" mode; resolves to the
+#                configured mode, so an old config keeps working
+# `visible`/`headed` from older configs still parse and mean "inline".
 # Env override: HORON_AGENT_SWARM_SPAWN_MODE
 swarm_spawn_mode = "inline"
 #
@@ -716,29 +453,15 @@ swarm_max_concurrent_agents = 32
 swarm_stall_after_secs = 600
 # swarm_stall_nudge = false
 #
-# Max percentage (1-90) of the chat height the inline swarm gallery band may use.
-# Unset = built-in default (40%). Lower values keep more transcript visible; set
-# near the minimum to collapse the gallery to a thin strip.
-# swarm_gallery_max_pct = 40
-#
-# Layout of the inline swarm strip above the status line:
-#   "vertical"   - one agent per row (session icon + status + task), capped to
-#                  a few rows with a "+N more" overflow marker (default)
-#   "horizontal" - all agents packed as chips on a single row
-# Env override: HORON_AGENT_SWARM_STRIP_LAYOUT
-# swarm_strip_layout = "vertical"
-#
 # Recall uses Jev typed Decisions directly, without embeddings or a sidecar LLM.
-# Provider values: auto, horon-agent, openrouter, typesafe, aimlapi.
-# auto prefers HoronAgent, then OpenRouter, TypeSafe, AI/ML API credentials.
+# Provider values: auto, openrouter, typesafe, aimlapi.
+# auto prefers TypeSafe, then OpenRouter, then AI/ML API credentials.
 # Env override: HORON_AGENT_MEMORY_JEV_PROVIDER
 # memory_jev_provider = "auto"
 # Minimum relevance probability (0.8..=1.0). Invalid values fail closed.
 # memory_jev_threshold = 0.8
 # BYOK: OPENROUTER_API_KEY, TYPESAFE_API_KEY, or AIMLAPI_API_KEY.
-# HoronAgent requires an eligible subscription and gateway memory_jev capability.
-# With a HoronAgent login and an older gateway, explicitly select a BYOK provider.
-# No fallback after entitlement, auth, billing, or network failure; no silent BYOK spend.
+# No fallback after auth, billing, or network failure; no silent BYOK spend.
 # Memories remain local; the query and candidate memories go to the selected provider.
 # No keys? Local memory list/search/remember/forget still work.
 #
@@ -763,69 +486,6 @@ swarm_stall_after_secs = 600
 max_notes_per_update = 4
 # User turns after a blocker interrupt when nothing interrupts again.
 immune_turns = 3
-
-[terminal]
-# Without a hook, clients inside tmux automatically use a right-side pane.
-# Set HORON_AGENT_TERMINAL to force a supported terminal emulator instead.
-# External command that takes over headed session spawns (swarm agents,
-# resume-in-new-terminal, self-dev windows, restart restores).
-#
-# When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
-# opening a terminal emulator itself. The hook receives HORON_AGENT_SPAWN_* env vars
-# describing the spawn so multiplexers/wrappers can decide where it appears:
-#   HORON_AGENT_SPAWN_KIND        - "swarm-agent", "resume", "selfdev", "restart", ...
-#   HORON_AGENT_SPAWN_SESSION_ID  - session the window will run
-#   HORON_AGENT_SPAWN_TITLE       - suggested window/tab title
-#   HORON_AGENT_SPAWN_CWD         - session working directory (also the hook's cwd)
-#   HORON_AGENT_SPAWN_PROGRAM     - horon-agent binary path
-#   HORON_AGENT_SPAWN_COMMAND     - full shell-escaped command line
-#   HORON_AGENT_SPAWN_SWARM_ID / HORON_AGENT_SPAWN_COORDINATOR_SESSION_ID (swarm spawns)
-# If the hook fails to start, horon-agent falls back to built-in terminal detection.
-# Env override: HORON_AGENT_SPAWN_HOOK (set empty to disable a config hook).
-#
-# Examples:
-#   spawn_hook = "tmux new-window"                # tmux window per agent
-#   spawn_hook = "kitty @ launch --type=tab --"   # kitty tab per agent
-#   spawn_hook = "~/bin/horon-agent-spawn-router"       # custom placement script
-# spawn_hook = ""
-#
-# External command used to focus/raise an existing session window, replacing
-# the built-in wmctrl/xdotool title search. Receives HORON_AGENT_FOCUS_SESSION_ID
-# and HORON_AGENT_FOCUS_TITLE env vars. Pair with spawn_hook so the program that
-# placed the window also brings it to the front.
-# Env override: HORON_AGENT_FOCUS_HOOK (set empty to disable a config hook).
-#
-# Example:
-#   focus_hook = "~/bin/horon-agent-focus-router"
-# focus_hook = ""
-#
-# macOS only: terminal that the Cmd+; launch hotkey and in-app session spawns
-# open horon-agent into. One of: ghostty, iterm2, wezterm, warp, alacritty, vscode,
-# terminal (Apple Terminal). Preferred over the legacy
-# ~/.horon-agent/preferred_terminal.json file. After changing this, re-run
-# `horon-agent setup-hotkey` so the generated launcher script (Cmd+;) picks it up.
-# preferred = "ghostty"
-
-[notifications]
-# Desktop notifications for interactive sessions (macOS Notification Center /
-# Linux notify-send). Separate from [safety], which covers ambient-mode
-# ntfy/email/channel notifications.
-#
-# Notify when an agent turn finishes. Fires only for long turns and, by
-# default, only while the terminal window is unfocused. The notification is a
-# compact summary: session name, duration, todo progress, and a snippet of the
-# final assistant message.
-# turn_complete = true
-# Minimum turn duration (seconds) before notifying (default: 120)
-# turn_complete_min_secs = 120
-# Lower threshold (seconds) when the session has todos, since todos indicate
-# task-style work worth reporting sooner (default: 30)
-# turn_complete_todo_min_secs = 30
-# Only notify while the terminal window is unfocused (default: true)
-# turn_complete_only_when_unfocused = true
-# macOS Notification Center sound played on completion (e.g. "Glass", "Ping",
-# "Hero"). Empty string disables the sound. Ignored on non-macOS. (default: "Glass")
-# turn_complete_sound = "Glass"
 
 [hooks]
 # Synchronous tool-input transformers. Each receives the tool input JSON on
@@ -911,8 +571,6 @@ pause_on_active_session = true
 proactive_work = true
 # Branch prefix for proactive work
 work_branch_prefix = "ambient/"
-# Show ambient cycle in a terminal window (default: true)
-# visible = true
 # Seconds an unattended run waits for a permission decision before it applies
 # approval_timeout_secs (default: 1800)
 # approval_timeout_secs = 1800
@@ -924,8 +582,18 @@ work_branch_prefix = "ambient/"
 # (default: false)
 # approval_for_clientless_runs = false
 
+[irc]
+# Messages kept per agent mailbox before the oldest is dropped.
+mailbox_cap = 100
+# Largest accepted message body, in bytes.
+max_body_bytes = 65536
+# Longest a single `wait` call may block, in seconds.
+wait_max_secs = 300
+# Broadcast legs delivered concurrently.
+broadcast_concurrency = 16
+
 [gateway]
-# Enable WebSocket gateway for iOS/web clients
+# Enable the WebSocket gateway for remote daemon clients
 enabled = false
 # TCP port for gateway listener
 port = 7643
@@ -934,23 +602,11 @@ bind_addr = "0.0.0.0"
 
 [power]
 # Prevent automatic system sleep while any horon-agent session is actively working.
-# Linux also blocks lid-switch suspend. On Windows and macOS see block_lid_close.
+# Linux also blocks lid-switch suspend.
 # The display may sleep.
 # The guard is held only for as long as work is in flight. (default: true)
 # Set HORON_AGENT_DISABLE_POWER_INHIBIT=1 to force-disable regardless of this setting.
 prevent_sleep_while_streaming = true
-# Also keep working when the lid closes on macOS and Windows while a session is
-# working. Windows temporarily sets the power plan's lid close action to "Do
-# nothing". macOS runs `sudo -n pmset -a disablesleep 1` and needs a passwordless
-# sudoers rule for /usr/bin/pmset (skipped otherwise). Original settings are
-# saved to ~/.horon-agent/lid_override.json and restored afterwards, even after a crash.
-block_lid_close = true
-
-[menubar]
-# macOS only: show the horon-agent session count in the menu bar. Set to false to
-# stop the menu bar helper (a running helper exits within a second).
-# HORON_AGENT_NO_MENUBAR=1 also disables it.
-enabled = true
 
 [safety]
 # Notification settings for ambient mode events
@@ -962,45 +618,9 @@ enabled = true
 # Desktop notifications via notify-send (default: true)
 desktop_notifications = true
 
-# Email notifications via SMTP
-# email_enabled = false
-# email_to = "you@example.com"
-# email_from = "horon-agent@example.com"
-# email_smtp_host = "smtp.gmail.com"
-# email_smtp_port = 587
-# Password via env: HORON_AGENT_SMTP_PASSWORD (preferred) or config below
-# email_password = ""
-
-# IMAP for email replies (reply to ambient emails to send directives)
-# email_reply_enabled = false
-# email_imap_host = "imap.gmail.com"
-# email_imap_port = 993
-
-# Telegram notifications via Bot API (free, https://telegram.org)
-# telegram_enabled = false
-# telegram_bot_token = ""  # From @BotFather (prefer HORON_AGENT_TELEGRAM_BOT_TOKEN env var)
-# telegram_chat_id = ""    # Your user/chat ID
-# telegram_reply_enabled = false  # Reply to bot messages to send directives
-
-# Discord notifications via Bot API (https://discord.com/developers)
-# discord_enabled = false
-# discord_bot_token = ""     # From Discord Developer Portal (prefer HORON_AGENT_DISCORD_BOT_TOKEN env var)
-# discord_channel_id = ""    # Channel ID to post in
-# discord_bot_user_id = ""   # Bot's user ID (for filtering own messages)
-# discord_reply_enabled = false  # Messages in channel become agent directives
-
-# Jade cloud relay (outbound-only long polling, disabled by default).
-# Prefer environment variables for secrets:
-# HORON_AGENT_JADE_RELAY_API_BASE, HORON_AGENT_JADE_RELAY_TOKEN, HORON_AGENT_JADE_RELAY_TOKEN_ID,
-# HORON_AGENT_JADE_RELAY_USER_ID, HORON_AGENT_JADE_RELAY_SESSION_ID.
-# jade_relay_enabled = false
-# jade_relay_reply_enabled = false   # Deliver cloud prompts to one configured live session.
-# jade_relay_launch_enabled = false  # Allow cloud device commands to open headed local sessions.
-# jade_relay_launch_working_dir = "" # Optional default cwd for launched sessions.
-
-# [sponsors] # Legacy config section name retained for compatibility.
+# [sponsors]
 # Integration discovery (enabled by default; set enabled = false to opt out).
-# When enabled, the agent gains a `discover_tools` tool listing third-party
+# When enabled, the agent gains an `integration_tools` tool listing third-party
 # developer tools from HoronAgent's hosted integration directory. These providers
 # have integrated with the agent to make setup and use seamless. Some providers
 # may share revenue with HoronAgent when a referred user becomes a customer, but
@@ -1009,14 +629,7 @@ desktop_notifications = true
 # enabled = true
 # endpoint = "https://api.horon-agent.sh/v1/discovery"
 	"##;
-
-        // Substitute platform-specific defaults from the keybinding registry.
-        let p = horon_agent_config_types::KeybindingPlatform::current();
-        let effort_increase = horon_agent_config_types::default_binding("effort_increase", p).unwrap_or("alt+right");
-        let effort_decrease = horon_agent_config_types::default_binding("effort_decrease", p).unwrap_or("alt+left");
-        default_content
-            .replace("@EFFORT_INCREASE@", effort_increase)
-            .replace("@EFFORT_DECREASE@", effort_decrease)
+        default_content.to_string()
     }
 }
 
@@ -1067,49 +680,5 @@ mod tests {
         assert_eq!(reread.tools.bash_interceptor, parsed.tools.bash_interceptor);
         assert_eq!(reread.tools.bash_patterns, parsed.tools.bash_patterns);
         assert_eq!(reread.tools.git_guard, parsed.tools.git_guard);
-    }
-
-    /// Colors are only discoverable if the template mentions them, since most
-    /// users read the generated config rather than the docs.
-    #[test]
-    fn default_config_template_documents_colors() {
-        let template = Config::default_config_file_contents();
-        assert!(
-            template.contains("[display.colors]"),
-            "the template should show how to configure colors"
-        );
-        assert!(
-            template.contains("/colors"),
-            "the template should point at the /colors command"
-        );
-    }
-
-    /// Uncommenting the documented color example must actually work, which is
-    /// the thing a user will literally do.
-    #[test]
-    fn documented_color_example_is_valid_when_uncommented() {
-        let template = Config::default_config_file_contents();
-        let start = template
-            .find("# [display.colors]")
-            .expect("template documents a colors section");
-        let example: String = template[start..]
-            .lines()
-            .take_while(|line| line.starts_with("# ") || line == &"#")
-            .map(|line| format!("{}\n", line.trim_start_matches("# ").trim_start_matches('#')))
-            .collect();
-
-        let parsed: Config = toml::from_str(&example).expect("uncommented example must parse");
-        assert!(
-            !parsed.display.colors.is_empty(),
-            "the example should set some colors, got {:?}",
-            parsed.display.colors
-        );
-        for (role, value) in &parsed.display.colors {
-            assert!(
-                horon_agent_config_types::DisplayConfig::default().colors.is_empty(),
-                "colors should default to empty"
-            );
-            assert_eq!(value.len(), 7, "{role} example should be #rrggbb: {value}");
-        }
     }
 }

@@ -524,32 +524,25 @@ async fn elicitation_unknown_action_is_cancel() {
 
 #[tokio::test]
 async fn auth_methods_v2_shape() {
-    let (client, result) = v2_client_with(json!({"auth":{"terminal":{}}})).await;
-    assert_matches("InitializeResponse", &result);
-    let methods = result["authMethods"].as_array().expect("authMethods");
-    assert_eq!(methods.len(), 2, "{result}");
-    for method in methods {
-        assert_matches("AuthMethod", method);
-        assert!(method.get("id").is_none(), "no v1 `id`: {method}");
-    }
-    assert_eq!(methods[0]["methodId"], AUTH_METHOD_CREDENTIALS);
-    assert_eq!(methods[0]["type"], "agent");
-    assert_eq!(methods[1]["methodId"], AUTH_METHOD_TERMINAL);
-    assert_eq!(methods[1]["type"], "terminal");
-    assert_eq!(methods[1]["args"], json!(["--login"]));
-    assert_eq!(methods[1]["env"], json!([]));
-    client.close_stdin().await;
-
-    // The terminal method needs the v2 object marker in `capabilities`.
-    for capabilities in [json!({"auth":{"terminal":true}}), json!({"auth":{}}), json!({})] {
+    // A client that advertises terminal auth gets the one credentials method:
+    // this build has no terminal login to launch.
+    for capabilities in [
+        json!({"auth":{"terminal":{}}}),
+        json!({"auth":{"terminal":true}}),
+        json!({"auth":{}}),
+        json!({}),
+    ] {
         let (client, result) = v2_client_with(capabilities.clone()).await;
-        let ids: Vec<&str> = result["authMethods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|method| method["methodId"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, [AUTH_METHOD_CREDENTIALS], "{capabilities}");
+        assert_matches("InitializeResponse", &result);
+        let methods = result["authMethods"].as_array().expect("authMethods");
+        assert_eq!(methods.len(), 1, "{capabilities}: {result}");
+        for method in methods {
+            assert_matches("AuthMethod", method);
+            assert!(method.get("id").is_none(), "no v1 `id`: {method}");
+            assert!(method.get("args").is_none(), "no terminal method: {method}");
+        }
+        assert_eq!(methods[0]["methodId"], AUTH_METHOD_CREDENTIALS);
+        assert_eq!(methods[0]["type"], "agent");
         client.close_stdin().await;
     }
 }
@@ -577,9 +570,10 @@ async fn auth_login_and_logout_flow() {
         assert_eq!(response["error"]["code"], ACP_AUTH_REQUIRED, "{response}");
     }
 
-    // The terminal method and malformed logins leave the connection logged out.
+    // The removed terminal method and malformed logins leave the connection
+    // logged out.
     for (id, params) in [
-        (5, json!({"methodId": AUTH_METHOD_TERMINAL})),
+        (5, json!({"methodId": "horon-agent-terminal-login"})),
         (6, json!({"methodId": "nope"})),
         (7, json!({})),
     ] {

@@ -303,6 +303,17 @@ jobs:
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --locked --release --target ${{ matrix.target }}
 
+      - name: Bare Linux runtime smoke (Linux)
+        # A hosted ubuntu image ships libssl, a CA bundle, a TTY, and
+        # XDG_RUNTIME_DIR, so a release binary that linked OpenSSL dynamically
+        # (and could not load on a bare Debian server at all) passed every test
+        # here. This runs the real binary in a Debian container with OpenSSL and
+        # the CA store removed. Linux only: with CI_SELF_HOSTED the matrix keeps
+        # just the macOS entry, and this guard is about the Linux artifact.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/ci/check_linux_bare_runtime.sh target/${{ matrix.target }}/release/horon-agent
+
       - name: Compile library and binary tests
         shell: bash
         run: |
@@ -338,11 +349,38 @@ jobs:
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
             -p horon-agent-base --lib secret_input -- --nocapture
 
-      - name: Run browser session liveness and reuse regressions
+      - name: Run IRC cohorts
         shell: bash
+        # Nothing else in this workflow runs `horon-agent-irc-core` tests: the
+        # build step has no `--workspace`, and the `horon-agent-base` /
+        # `horon-agent-app-core` IRC tests sit behind a filter no other step
+        # uses. A filter that matches nothing makes libtest report "0 passed"
+        # and exit 0, the looks-green-but-never-ran shape the warning budget and
+        # the stdin detector both had, so each cohort must report at least one
+        # pass.
         run: |
-          cargo test --locked --target ${{ matrix.target }} -p horon-agent-base --lib browser_session -- --nocapture
-          cargo test --locked --target ${{ matrix.target }} -p horon-agent-app-core --lib browser_session -- --nocapture
+          set -euo pipefail
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-irc-core --lib -- --nocapture | tee /tmp/irc-1.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-1.log || {
+            echo "::error::IRC cohort 1 ran no tests"
+            exit 1
+          }
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-base --lib irc -- --nocapture | tee /tmp/irc-2.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-2.log || {
+            echo "::error::IRC cohort 2 ran no tests"
+            exit 1
+          }
+          python3 .github/scripts/run_with_timeout.py 600 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            -p horon-agent-app-core --lib irc -- --nocapture | tee /tmp/irc-3.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-3.log || {
+            echo "::error::IRC cohort 3 ran no tests"
+            exit 1
+          }
 
       - name: Run embedding numeric-stability cohort (Linux only)
         if: runner.os == 'Linux'
@@ -413,13 +451,7 @@ jobs:
         run: |
           python3 .github/scripts/run_with_timeout.py 900 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            --test provider_matrix --test e2e --no-run
-
-      - name: Run provider matrix tests
-        shell: bash
-        run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test provider_matrix
+            --test e2e --no-run
 
       - name: Run e2e tests
         shell: bash
@@ -520,9 +552,6 @@ jobs:
           # test list before the run and a missing name fails the step.
           $groups = [ordered]@{
             'horon-agent-base' = @(
-              'command_candidates_adds_extension_on_windows',
-              'command_exists_for_known_binary',
-              'command_exists_absolute_path',
               'is_process_running_reports_exited_children_as_stopped',
               'spawn_replacement_process_returns_without_waiting_for_child_exit'
             )
@@ -530,6 +559,11 @@ jobs:
               'sibling_socket_path_roundtrip',
               'cleanup_socket_pair_removes_main_and_debug_files',
               'build_shell_command_uses_cmd_and_executes_command'
+            )
+            'horon-agent-irc-core' = @(
+              'send_orders_same_millisecond_messages_by_seq',
+              'mailbox_drops_oldest_beyond_cap',
+              'mutual_wait_returns_unanswerable'
             )
             'horon-agent-transport' = @(
               'pipe_name_is_stable_and_normalizes_case_and_separators',
@@ -559,14 +593,9 @@ jobs:
               -CargoArgs (@('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', $package, '--lib', '--') + $names + @('--nocapture'))
           }
 
-      - name: Run Windows hotkey and power tests
+      - name: Run Windows power tests
         shell: pwsh
         run: |
-          & ./scripts/ci/cargo_with_timeout.ps1 `
-            -Name 'Windows setup-hints tests' `
-            -TimeoutSeconds 300 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-setup-hints', '--lib', '--', '--nocapture')
-
           & ./scripts/ci/cargo_with_timeout.ps1 `
             -Name 'Windows power-inhibit tests' `
             -TimeoutSeconds 900 `

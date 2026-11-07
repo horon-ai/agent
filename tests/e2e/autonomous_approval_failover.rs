@@ -37,14 +37,6 @@ fn write_config(body: &str) {
     Config::invalidate_cache();
 }
 
-fn enroll_api_key_pool() {
-    let pool = horon_agent::auth::account_pool::AccountPool {
-        members: vec!["openai-api".to_string()],
-        excluded: Vec::new(),
-    };
-    pool.save().expect("save the account pool");
-}
-
 fn api_key_route(model: &str) -> ModelRoute {
     ModelRoute {
         model: model.to_string(),
@@ -425,11 +417,6 @@ async fn scenario_b_autonomous_failover_switches_route_once() -> Result<()> {
     write_config(
         "[tools]\nprofile = \"core\"\n\n[provider]\nautonomous_failover = true\nautonomous_failover_max_attempts = 3\n",
     );
-    enroll_api_key_pool();
-    assert!(
-        horon_agent::provider::MultiProvider::is_failover_route_pool_approved(TARGET_ROUTE),
-        "precondition: the account pool approves the target route"
-    );
 
     let provider = Arc::new(MockProvider::with_routes(vec![api_key_route("gpt-5.4")]));
     provider.queue_error(failover_error());
@@ -473,7 +460,6 @@ async fn scenario_c_exhaustion_names_the_cap_and_persists_the_budget() -> Result
     write_config(
         "[tools]\nprofile = \"core\"\n\n[provider]\nautonomous_failover = true\nautonomous_failover_max_attempts = 3\n",
     );
-    enroll_api_key_pool();
 
     let provider = Arc::new(MockProvider::with_routes(vec![api_key_route("gpt-5.4")]));
     for _ in 0..4 {
@@ -647,7 +633,6 @@ async fn scenario_d_streaming_rollback_keeps_the_answer_once() -> Result<()> {
     write_config(
         "[tools]\nprofile = \"core\"\n\n[provider]\nautonomous_failover = true\nautonomous_failover_max_attempts = 3\n",
     );
-    enroll_api_key_pool();
 
     let provider = Arc::new(MockProvider::with_routes(vec![api_key_route("gpt-5.4")]));
     provider.queue_stream(vec![

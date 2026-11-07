@@ -748,10 +748,6 @@ pub struct SessionMetadata {
     pub autoreview_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autojudge_enabled: Option<bool>,
-    #[serde(default)]
-    pub is_canary: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub testing_build: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

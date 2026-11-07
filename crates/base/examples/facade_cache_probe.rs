@@ -138,10 +138,7 @@ fn set_pad(session: &mut Session, pad: usize) {
         os: "macos".to_string(),
         arch: "arm64".to_string(),
         pid: std::process::id(),
-        is_selfdev: false,
         is_debug: false,
-        is_canary: false,
-        testing_build: None,
         working_git: None,
     });
 }

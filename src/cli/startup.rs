@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::process::Command as ProcessCommand;
 
-use crate::{build, logging, perf, server, setup_hints, startup_profile, storage, update};
+use crate::{build, logging, server, startup_profile, storage, update};
 
 use super::{
     args::{Args, Command},
@@ -18,24 +18,11 @@ pub async fn run() -> Result<()> {
     // must not harden credential files or create configuration state.
     let args = Args::parse();
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
-    // Interactive login prompts are a client concern. The shared auth flows
-    // reach them through this presenter, which prints the login URL as plain
-    // text and reads secrets from stdin.
-    super::login::install_login_presenter();
     // Snapshot user-supplied provider env before provider init rewrites it.
     super::provider_init::capture_user_openrouter_model_env();
     // Credential import and explicit MCP management do not need normal agent
     // startup hardening, migrations, or provider discovery.
-    if args.ssh.is_none()
-        && matches!(
-            args.command,
-            Some(
-                Command::Auth(super::args::AuthCommand::Import { .. })
-                    | Command::Mcp { .. }
-                    | Command::Approvals { .. }
-            )
-        )
-    {
+    if args.ssh.is_none() && matches!(args.command, Some(Command::Mcp { .. } | Command::Approvals { .. })) {
         if let Some(cwd) = &args.cwd {
             std::env::set_current_dir(cwd)?;
         }
@@ -134,9 +121,6 @@ pub async fn run() -> Result<()> {
     storage::harden_user_config_permissions();
     startup_profile::mark("perm_harden");
 
-    perf::init_background();
-    startup_profile::mark("perf_init");
-
     let args = parse_and_prepare_args(args)?;
     spawn_background_update_check(&args);
 
@@ -150,10 +134,6 @@ pub async fn run() -> Result<()> {
 
 fn parse_and_prepare_args(args: Args) -> Result<Args> {
     startup_profile::mark("args_parse");
-
-    if let Some(chord) = args.spawn_hotkey.as_deref() {
-        setup_hints::record_launch_hotkey_use(chord);
-    }
 
     output::set_quiet_enabled(args.quiet);
 
@@ -230,7 +210,7 @@ fn spawn_background_update_check(args: &Args) {
                     logging::info(&format!("Updated to {}. Restarting...", version));
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     let args: Vec<String> = std::env::args().skip(1).collect();
-                    let exec_path = build::client_update_candidate(false).map(|(p, _)| p).unwrap_or(path);
+                    let exec_path = build::client_update_candidate().map(|(p, _)| p).unwrap_or(path);
                     let err = crate::platform::replace_process(
                         ProcessCommand::new(&exec_path).args(&args).arg("--no-update"),
                     );
@@ -325,7 +305,7 @@ fn should_spawn_background_update_check_with_config(args: &Args, check_updates: 
             Some(Command::Update)
                 | Some(Command::Serve { .. })
                 | Some(Command::Server { .. })
-                | Some(Command::Acp { .. })
+                | Some(Command::Acp)
                 | Some(Command::Approvals { .. })
         )
         && args.resume.is_none()
@@ -503,19 +483,19 @@ mod tests {
 
     #[test]
     fn auto_install_allowed_without_live_terminal() {
-        let args = parse_args(&["horon-agent", "login"]);
+        let args = parse_args(&["horon-agent", "run", "hi"]);
         assert!(should_auto_install_update(&args));
     }
 
     #[test]
     fn auto_install_allowed_with_live_terminal_attached() {
-        let args = parse_args(&["horon-agent", "login"]);
+        let args = parse_args(&["horon-agent", "run", "hi"]);
         assert!(should_auto_install_update(&args));
     }
 
     #[test]
     fn auto_install_respects_explicit_disable_even_without_terminal() {
-        let mut args = parse_args(&["horon-agent", "login"]);
+        let mut args = parse_args(&["horon-agent", "run", "hi"]);
         args.auto_update = false;
         assert!(!should_auto_install_update(&args));
     }
@@ -544,49 +524,8 @@ mod tests {
 
     #[test]
     fn config_can_permanently_disable_background_update_checks() {
-        let args = parse_args(&["horon-agent", "login"]);
+        let args = parse_args(&["horon-agent", "run", "hi"]);
         assert!(should_spawn_background_update_check_with_config(&args, true));
         assert!(!should_spawn_background_update_check_with_config(&args, false));
-    }
-
-    #[test]
-    fn hidden_spawn_hotkey_argument_is_global_and_preserves_canonical_text() {
-        let args = parse_args(&["horon-agent", "--spawn-hotkey", "shift+cmd+'", "self-dev"]);
-        assert_eq!(args.spawn_hotkey.as_deref(), Some("shift+cmd+'"));
-        assert!(matches!(args.command, Some(Command::SelfDev { .. })));
-    }
-    #[test]
-    fn no_external_provider_runtime_is_registered() {
-        // Every external provider runtime was removed. Model requests run on the
-        // direct OpenAI-compatible provider, so no factory may be registered for
-        // any runtime key.
-        assert!(
-            !crate::provider::external::external_provider_registered(crate::provider::external::OPENAI_RUNTIME),
-            "the OpenAI runtime must not be registered"
-        );
-        assert!(
-            crate::provider::external::instantiate_external_provider(crate::provider::external::OPENAI_RUNTIME)
-                .is_none(),
-            "the OpenAI runtime must not instantiate"
-        );
-
-        // Every removed provider runtime must stay unregistered and fail to
-        // instantiate in this build.
-        for key in [
-            crate::provider::external::GEMINI_RUNTIME,
-            crate::provider::external::CURSOR_RUNTIME,
-            crate::provider::external::ANTIGRAVITY_RUNTIME,
-            crate::provider::external::COPILOT_RUNTIME,
-            crate::provider::external::ANTHROPIC_RUNTIME,
-        ] {
-            assert!(
-                !crate::provider::external::external_provider_registered(key),
-                "{key} runtime must not be registered in this build"
-            );
-            assert!(
-                crate::provider::external::instantiate_external_provider(key).is_none(),
-                "{key} runtime must not instantiate in this build"
-            );
-        }
     }
 }

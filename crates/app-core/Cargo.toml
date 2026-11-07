@@ -7,7 +7,7 @@ publish = false
 # Application core for horon-agent: all non-presentation modules (server, agent,
 # provider, auth, session, tool, config, etc.) extracted out of the monolithic
 # root `horon-agent` crate so they compile as a separate rustc unit. The root `horon-agent`
-# crate (cli + tui + bin) re-exports this crate's modules via `pub use
+# crate (cli + bin) re-exports this crate's modules via `pub use
 # horon_agent_app_core::*`, preserving every existing `crate::<module>` path.
 
 [lib]
@@ -52,7 +52,6 @@ regex = "1"
 fancy-regex = "0.20"
 urlencoding = "2"        # URL encoding for web search
 uuid = { version = "1", features = ["v4", "v5"] }
-horon-agent-applet-types = { path = "../applet-types" }
 horon-agent-ast = { path = "../ast" }
 
 # Embeddings (local inference) live in horon-agent-base; this crate forwards the
@@ -60,30 +59,25 @@ horon-agent-ast = { path = "../ast" }
 horon-agent-harness-api = { path = "../harness-api" }
 horon-agent-productivity-core = { path = "../productivity-core" }
 horon-agent-import-core = { path = "../import-core" }
+horon-agent-irc-core = { path = "../irc-core" }
 
 # OAuth
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.9.3"
 url = "2"
-# Local fallback for the open tool when no `horon-agent companion` is running.
-horon-agent-desktop-open = { path = "../desktop-open" }
 horon-agent-agent-runtime = { path = "../agent-runtime" }
 horon-agent-ambient-types = { path = "../ambient-types" }
-horon-agent-notify-email = { path = "../notify-email" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-schema-dialect = { path = "../schema-dialect" }
 horon-agent-lsp = { path = "../lsp" }
-# NOTE: horon-agent-app-core does NOT depend on any horon-agent-tui-* crate. They were
-# unused dead dependency edges here (the TUI declares them itself). Removing
-# them stops a horon-agent-tui-* edit from cascading a recompile through app-core.
 horon-agent-update-core = { path = "../update-core" }
 
 # Streaming
 tokio-stream = "0.1"
 
 # NOTE: no ratatui/crossterm here. Terminal rendering and prompts belong to the
-# CLI and horon-agent-tui, so the shared runtime never touches a terminal.
+# CLI, so the shared runtime never touches a terminal.
 
 # PDF parsing (behind feature flag)
 horon-agent-pdf = { path = "../pdf", optional = true }
@@ -102,10 +96,8 @@ horon-agent-overnight-core = { path = "../overnight-core" }
 horon-agent-perf-counters = { path = "../perf-counters" }
 horon-agent-plan = { path = "../plan" }
 horon-agent-swarm-core = { path = "../swarm-core" }
-horon-agent-selfdev-types = { path = "../selfdev-types" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }
-horon-agent-setup-hints = { path = "../setup-hints" }
 horon-agent-task-types = { path = "../task-types" }
 horon-agent-tool-core = { path = "../tool-core" }
 horon-agent-codemode = { path = "../codemode" }
@@ -124,8 +116,6 @@ jemalloc = ["horon-agent-base/jemalloc"]
 jemalloc-prof = ["horon-agent-base/jemalloc-prof"]
 # local embeddings live in horon-agent-base (embedding); forward there.
 embeddings = ["horon-agent-base/embeddings"]
-# Used only by the CentOS 7 portable Linux release build.
-linux-compat-vendored-openssl = ["horon-agent-notify-email/linux-compat-vendored-openssl"]
 # PDF text extraction lives in this crate (tool/read.rs).
 pdf = ["dep:horon-agent-pdf"]
 # Offline import of display metadata that exists only in the legacy SQLite
@@ -139,7 +129,7 @@ legacy-session-index-import = ["horon-agent-session-store/legacy-session-index-i
 test-support = ["horon-agent-base/test-support"]
 
 [dev-dependencies]
-# Paused-time browser tests must compile when this package is tested alone,
+# Paused-time streaming tests must compile when this package is tested alone,
 # without inheriting test-util from another workspace package's dev-dependencies.
 tokio = { version = "1", features = ["test-util"] }
 # Used by async streaming tests (ambient/runner_tests, server/client_actions_tests).
@@ -155,10 +145,3 @@ horon-agent-token-estimate = { path = "../token-estimate" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-global-hotkey = "0.7"
-# Native desktop control for the `macos_computer_use` tool (synthetic mouse/keyboard
-# events, cursor positioning, display bounds). `highsierra` enables the
-# CGEventCreateScrollWheelEvent2 binding used for scroll.
-core-graphics = { version = "0.23", features = ["highsierra"] }

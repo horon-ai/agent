@@ -28,10 +28,8 @@ ALLOWED_INTERNAL_TYPE_DEPS = {
 FORBIDDEN_INTERNAL_DEPS = {
     "horon-agent",
     "horon-agent-agent-runtime",
-    "horon-agent-azure-auth",
     "horon-agent-core",
     "horon-agent-embedding",
-    "horon-agent-notify-email",
     "horon-agent-pdf",
     "horon-agent-plan",
     "horon-agent-provider-core",

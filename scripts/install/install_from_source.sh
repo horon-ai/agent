@@ -137,25 +137,6 @@ install_dir="${install_dir:-$HOME/.local/bin}"
 
 echo "Installed horon-agent $agent_version"
 
-# Configure supported desktop launch hotkeys as part of installation. This is
-# idempotent and best-effort because headless installs may not expose a desktop
-# session; the first interactive launch retries automatically.
-case "$host_os" in
-  Darwin)
-    if "$install_dir/horon-agent" setup-launcher </dev/null >/dev/null 2>&1; then
-      echo "Installed macOS launcher and turn-notification broker."
-    fi
-    if "$install_dir/horon-agent" setup-hotkey </dev/null >/dev/null 2>&1; then
-      echo "Configured system-wide horon-agent launch hotkeys (when supported)."
-    fi
-    ;;
-  Linux)
-    if "$install_dir/horon-agent" setup-hotkey </dev/null >/dev/null 2>&1; then
-      echo "Configured system-wide horon-agent launch hotkeys (when supported)."
-    fi
-    ;;
-esac
-
 # Gracefully reload any running background server onto the binary we just
 # installed (issue #291). `server reload` only reloads when the running daemon
 # is genuinely older, hands live headless/swarm sessions to the new process, and

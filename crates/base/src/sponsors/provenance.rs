@@ -1,7 +1,7 @@
 //! Sponsored-discovery provenance and coarse usage metering.
 //!
 //! When the agent connects an MCP server whose command matches a recent
-//! `discover_tools` listing, that server is tagged with discovery
+//! `integration_tools` listing, that server is tagged with discovery
 //! provenance. Calls routed to provenance-tagged servers are metered
 //! coarsely: per-sponsor per-day counts of connects, calls, and errors.
 //! Nothing else. Never arguments, never results, never session content,
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// A discovered MCP setup remembered from a `discover_tools` listing.
+/// A discovered MCP setup remembered from a `integration_tools` listing.
 /// Matching is on (command, args) so an agent connecting `npx -y
 /// agentcard-mcp` after discovering it gets tagged, while a user's
 /// long-standing config entry for some unrelated server never is.

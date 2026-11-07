@@ -7,7 +7,6 @@ use crate::message::{ContentBlock, Role};
 use crate::session::{Session, SessionStatus, StoredMessage};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-pub use horon_agent_import_core::repo_ranking;
 use horon_agent_import_core::{
     ClaudeCodeContent, ClaudeCodeContentBlock, ClaudeCodeEntry, ClaudeCodeSessionInfo, SessionIndexEntry,
     SessionsIndex, claude_code_session_info_from_index, claude_text_from_content, claude_title_candidate,

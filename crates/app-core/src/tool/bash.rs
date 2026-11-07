@@ -1836,23 +1836,6 @@ impl Tool for BashTool {
             return Ok(output);
         }
 
-        // Auto-detect browser bridge commands and rewrite them to the installed
-        // binary when available, but do not run setup automatically. Browser
-        // setup should stay an explicit status/setup flow rather than a default
-        // side effect of trying to use the browser.
-        if crate::browser::is_browser_command(&params.command) {
-            params.command = crate::browser::rewrite_command_with_full_path(&params.command);
-
-            // Give each agent its own browser session without blocking async workers.
-            if !cfg!(windows)
-                && std::env::var("BROWSER_SESSION").is_err()
-                && let Some(session_name) =
-                    crate::browser::ensure_browser_session_for_async(&ctx.session_id, None).await
-            {
-                params.command = format!("BROWSER_SESSION={} {}", session_name, params.command);
-            }
-        }
-
         // Foreground execution with stdin detection
         let hint = file_edit_hint(&params.command);
         let mut output = self.execute_foreground(&params, &ctx).await?;
@@ -1965,15 +1948,9 @@ impl BashTool {
         };
 
         // An ACP turn runs this command in the client's terminal when the client
-        // advertises one. Background calls were dispatched before this point and a
-        // PTY call must stay local because the terminal descriptor would live in
-        // this process, so only a plain foreground call reaches here. The stdin
-        // channel is deliberately ignored: every daemon connection installs one, so
-        // treating it as "interactive" would disable delegation for every ACP turn,
-        // and the client's terminal owns its own input.
-        //
-        // A client terminal is always given a deadline, so a call that asked for
-        // none (`timeout: 0`) runs locally where that is expressible.
+        // advertises one. A PTY call must stay local because the terminal
+        // descriptor would live in this process, so only a plain foreground call
+        // reaches here, and a client terminal is always given a deadline.
         if let Some(timeout_duration) = timeout.duration
             && !wants_terminal
             && let Some(bridge) = super::client_bridge::for_session(&ctx.session_id)
@@ -2007,6 +1984,7 @@ impl BashTool {
                 )),
             }
         }
+
         // The plan decides whether a terminal is allocated; build the command
         // with that answer so it can pick a matching TERM/NO_COLOR set.
         let plan = bash_pty::plan(pty_mode, &params.command)?;
@@ -2262,10 +2240,15 @@ impl BashTool {
         }
     }
 
+    /// A turn a client is waiting on reports into that client's tool result, so
+    /// it runs in this process; the detached path is for unattended turns, whose
+    /// command outlives the reload that ends them. ACP sessions are checked
+    /// separately because a v2 connection registers no session event sender.
     #[cfg(unix)]
     fn supports_reload_persistence(&self, ctx: &ToolContext) -> bool {
         matches!(ctx.execution_mode, crate::tool::ToolExecutionMode::AgentTurn)
-            && ctx.stdin_request_tx.is_none()
+            && !crate::server::session_has_attached_client(&ctx.session_id)
+            && !crate::tool::acp_session::is_acp(&ctx.session_id)
             && ctx.graceful_shutdown_signal.is_some()
     }
 

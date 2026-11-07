@@ -67,7 +67,7 @@ fn a_provider_without_deferred_support_drops_deferred_definitions() {
 
             let tools = vec![
                 definition("bash", false),
-                definition("browser", true),
+                definition("memory", true),
                 definition("gmail", true),
             ];
             let _stream = provider
@@ -93,7 +93,7 @@ fn a_provider_with_deferred_support_receives_the_flag_untouched() {
             let (provider, seen) = recording_openai(true);
             assert!(Provider::supports_deferred_tools(&provider));
 
-            let tools = vec![definition("bash", false), definition("browser", true)];
+            let tools = vec![definition("bash", false), definition("memory", true)];
             let _stream = provider
                 .complete(&[], &tools, "system", None)
                 .await
@@ -101,8 +101,8 @@ fn a_provider_with_deferred_support_receives_the_flag_untouched() {
 
             let seen = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
             assert_eq!(seen.len(), 2, "a native provider keeps the whole catalog");
-            let browser = seen.iter().find(|tool| tool.name == "browser").expect("browser");
-            assert!(browser.defer_loading);
+            let memory = seen.iter().find(|tool| tool.name == "memory").expect("memory");
+            assert!(memory.defer_loading);
         });
     });
 }

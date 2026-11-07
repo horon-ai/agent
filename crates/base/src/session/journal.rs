@@ -33,8 +33,6 @@ pub(super) struct SessionJournalMeta {
     pub(super) improve_mode: Option<SessionImproveMode>,
     pub(super) autoreview_enabled: Option<bool>,
     pub(super) autojudge_enabled: Option<bool>,
-    pub(super) is_canary: bool,
-    pub(super) testing_build: Option<String>,
     pub(super) working_dir: Option<String>,
     pub(super) short_name: Option<String>,
     pub(super) status: SessionStatus,

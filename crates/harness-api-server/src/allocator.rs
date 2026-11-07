@@ -89,7 +89,7 @@ mod tests {
         for kind in ["text_delta", "reasoning_delta", "tool_start", "tool_exec", "done"] {
             assert!(!legacy_event_may_block(&json!({"type": kind})), "{kind}");
         }
-        for kind in ["state", "history", "split_response", "side_panel_state"] {
+        for kind in ["state", "history", "split_response"] {
             assert!(legacy_event_may_block(&json!({"type": kind})), "{kind}");
         }
     }

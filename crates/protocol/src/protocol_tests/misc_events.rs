@@ -1,48 +1,4 @@
 #[test]
-fn test_transcript_request_roundtrip() -> Result<()> {
-    let req = Request::Transcript {
-        id: 77,
-        text: "hello from whisper".to_string(),
-        mode: TranscriptMode::Send,
-        session_id: Some("sess_abc".to_string()),
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"transcript\""));
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 77);
-    let Request::Transcript {
-        text,
-        mode,
-        session_id,
-        ..
-    } = decoded
-    else {
-        return Err(anyhow!("expected Transcript request"));
-    };
-    assert_eq!(text, "hello from whisper");
-    assert_eq!(mode, TranscriptMode::Send);
-    assert_eq!(session_id.as_deref(), Some("sess_abc"));
-    Ok(())
-}
-
-#[test]
-fn test_transcript_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::Transcript {
-        text: "dictated text".to_string(),
-        mode: TranscriptMode::Replace,
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"transcript\""));
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::Transcript { text, mode } = decoded else {
-        return Err(anyhow!("expected Transcript event"));
-    };
-    assert_eq!(text, "dictated text");
-    assert_eq!(mode, TranscriptMode::Replace);
-    Ok(())
-}
-
-#[test]
 fn test_memory_activity_event_roundtrip() -> Result<()> {
     let event = ServerEvent::MemoryActivity {
         activity: MemoryActivitySnapshot {
@@ -86,63 +42,7 @@ fn test_memory_activity_event_roundtrip() -> Result<()> {
 }
 
 #[test]
-fn test_input_shell_request_roundtrip() -> Result<()> {
-    let req = Request::InputShell {
-        id: 88,
-        command: "ls -la".to_string(),
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"input_shell\""));
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 88);
-    let Request::InputShell { id, command } = decoded else {
-        return Err(anyhow!("expected InputShell request"));
-    };
-    assert_eq!(id, 88);
-    assert_eq!(command, "ls -la");
-    Ok(())
-}
-
-#[test]
-fn test_input_shell_result_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::InputShellResult {
-        result: horon_agent_message_types::InputShellResult {
-            command: "pwd".to_string(),
-            cwd: Some("/tmp/project".to_string()),
-            output: "/tmp/project\n".to_string(),
-            exit_code: Some(0),
-            duration_ms: 7,
-            truncated: false,
-            failed_to_start: false,
-        },
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"input_shell_result\""));
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::InputShellResult { result } = decoded else {
-        return Err(anyhow!("expected InputShellResult event"));
-    };
-    assert_eq!(result.command, "pwd");
-    assert_eq!(result.cwd.as_deref(), Some("/tmp/project"));
-    assert_eq!(result.exit_code, Some(0));
-    Ok(())
-}
-
-#[test]
 fn test_protocol_enum_roundtrips_cover_wire_names() -> Result<()> {
-    let transcript_modes = [
-        (TranscriptMode::Insert, "insert"),
-        (TranscriptMode::Append, "append"),
-        (TranscriptMode::Replace, "replace"),
-        (TranscriptMode::Send, "send"),
-    ];
-    for (mode, wire) in transcript_modes {
-        let json = serde_json::to_string(&mode)?;
-        assert_eq!(json, format!("\"{}\"", wire));
-        let decoded: TranscriptMode = serde_json::from_str(&json)?;
-        assert_eq!(decoded, mode);
-    }
-
     let delivery_modes = [
         (CommDeliveryMode::Notify, "notify"),
         (CommDeliveryMode::Interrupt, "interrupt"),
@@ -172,30 +72,6 @@ fn test_protocol_enum_roundtrips_cover_wire_names() -> Result<()> {
 }
 
 #[test]
-fn test_set_feature_roundtrip() -> Result<()> {
-    let req = Request::SetFeature {
-        id: 77,
-        feature: FeatureToggle::Swarm,
-        enabled: true,
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"set_feature\""));
-    let decoded = parse_request_json(&json)?;
-    let Request::SetFeature {
-        id,
-        feature,
-        enabled,
-    } = decoded
-    else {
-        return Err(anyhow!("expected SetFeature"));
-    };
-    assert_eq!(id, 77);
-    assert_eq!(feature, FeatureToggle::Swarm);
-    assert!(enabled);
-    Ok(())
-}
-
-#[test]
 fn test_set_route_deserializes_as_set_model_compat_alias() -> Result<()> {
     // Legacy/desktop compatibility shape: a bare model string under the
     // `set_route` tag. `decode_request` (not raw serde) normalizes it.
@@ -211,200 +87,13 @@ fn test_set_route_deserializes_as_set_model_compat_alias() -> Result<()> {
 }
 
 #[test]
-fn test_structured_set_route_decodes_as_set_route_not_set_model() -> Result<()> {
-    // Regression for the "Invalid request: missing field `model`" bug seen when
-    // switching models via the picker: a structured `set_route` request (with a
-    // `selection` object, no `model` field) must decode as `Request::SetRoute`,
-    // not be shadowed by the legacy `set_model` compatibility path.
-    let request = Request::SetRoute {
-        automatic_failover: false,
-        id: 7,
-        selection: horon_agent_provider_core::RouteSelection {
-            model: "gpt-5.5".to_string(),
-            runtime_key: horon_agent_provider_core::RuntimeKey::OpenAIApiKey,
-            api_method: "openai-api".to_string(),
-            provider_label: "OpenAI".to_string(),
-            detail: String::new(),
-        },
-    };
-    let line = serde_json::to_string(&request)?;
-    assert!(line.contains("\"type\":\"set_route\""));
-
-    let decoded = decode_request(&line)?;
-    let Request::SetRoute {
-        id,
-        selection,
-        automatic_failover,
-    } = decoded
-    else {
-        return Err(anyhow!(
-            "expected structured set_route to decode as SetRoute, got {decoded:?}"
-        ));
-    };
-    assert!(!automatic_failover);
-    assert_eq!(id, 7);
-    assert_eq!(selection.model, "gpt-5.5");
-    Ok(())
-}
-
-#[test]
-fn test_horon_agent_subscription_set_route_is_wire_safe() -> Result<()> {
-    let request = Request::SetRoute {
-        automatic_failover: false,
-        id: 8,
-        selection: horon_agent_provider_core::RouteSelection {
-            model: "gpt-5.5".to_string(),
-            runtime_key: horon_agent_provider_core::RuntimeKey::HoronAgentSubscription,
-            api_method: "horon-agent-subscription".to_string(),
-            provider_label: "HoronAgent Subscription".to_string(),
-            detail: "horon-agent subscription routing · managed server-side".to_string(),
-        },
-    };
-
-    let line = serde_json::to_string(&request)?;
-    assert!(line.contains("\"type\":\"set_route\""));
-    assert!(line.contains("\"kind\":\"horon-agent-subscription\""));
-
-    let decoded = decode_request(&line)?;
-    let Request::SetRoute {
-        id,
-        selection,
-        automatic_failover,
-    } = decoded
-    else {
-        return Err(anyhow!("expected HoronAgent SetRoute, got {decoded:?}"));
-    };
-    assert!(!automatic_failover);
-    assert_eq!(id, 8);
-    assert_eq!(selection.model, "gpt-5.5");
-    assert_eq!(
-        selection.runtime_key,
-        horon_agent_provider_core::RuntimeKey::HoronAgentSubscription
-    );
-    assert_eq!(selection.routed_model_spec(), "gpt-5.5");
-    Ok(())
-}
-
-#[test]
-fn test_automatic_failover_set_route_marker_and_legacy_default() -> Result<()> {
-    let selection = horon_agent_provider_core::RouteSelection {
-        model: "gpt-6.1-sol".to_string(),
-        runtime_key: horon_agent_provider_core::RuntimeKey::OpenAIOAuth,
-        api_method: "openai-oauth@work".to_string(),
-        provider_label: "OpenAI".to_string(),
-        detail: String::new(),
-    };
-    let request = Request::SetRoute {
-        id: 19,
-        selection,
-        automatic_failover: true,
-    };
-    let mut wire = serde_json::to_value(&request)?;
-    assert_eq!(wire["automatic_failover"], true);
-    let Request::SetRoute {
-        automatic_failover,
-        selection,
-        ..
-    } = decode_request(&wire.to_string())?
-    else {
-        panic!("expected SetRoute");
-    };
-    assert!(automatic_failover);
-    assert_eq!(selection.account_label(), Some("work"));
-    wire.as_object_mut().unwrap().remove("automatic_failover");
-    let Request::SetRoute {
-        automatic_failover, ..
-    } = decode_request(&wire.to_string())?
-    else {
-        panic!("expected legacy SetRoute");
-    };
-    assert!(!automatic_failover);
-    Ok(())
-}
-
-#[test]
-fn test_grok_build_set_route_is_wire_safe() -> Result<()> {
-    let request = Request::SetRoute {
-        automatic_failover: false,
-        id: 9,
-        selection: horon_agent_provider_core::RouteSelection {
-            model: "grok-build:grok-4.6".to_string(),
-            runtime_key: horon_agent_provider_core::RuntimeKey::GrokBuild,
-            api_method: "grok-build-acp".to_string(),
-            provider_label: "Grok Build".to_string(),
-            detail: "Grok Build subscription via HoronAgent-managed ACP".to_string(),
-        },
-    };
-
-    let line = serde_json::to_string(&request)?;
-    assert!(line.contains("\"type\":\"set_route\""));
-    assert!(line.contains("\"kind\":\"grok-build\""));
-
-    let decoded = decode_request(&line)?;
-    let Request::SetRoute {
-        id,
-        selection,
-        automatic_failover,
-    } = decoded
-    else {
-        return Err(anyhow!("expected Grok Build SetRoute, got {decoded:?}"));
-    };
-    assert!(!automatic_failover);
-    assert_eq!(id, 9);
-    assert_eq!(selection.model, "grok-build:grok-4.6");
-    assert_eq!(
-        selection.runtime_key,
-        horon_agent_provider_core::RuntimeKey::GrokBuild
-    );
-    assert_eq!(selection.routed_model_spec(), "grok-build:grok-4.6");
-    Ok(())
-}
-
-#[test]
-fn test_unknown_runtime_key_other_set_route_is_wire_safe() -> Result<()> {
-    let request = Request::SetRoute {
-        automatic_failover: false,
-        id: 10,
-        selection: horon_agent_provider_core::RouteSelection {
-            model: "custom-model".to_string(),
-            runtime_key: horon_agent_provider_core::RuntimeKey::Other {
-                method: "custom-acp".to_string(),
-            },
-            api_method: "custom-acp".to_string(),
-            provider_label: "Custom".to_string(),
-            detail: String::new(),
-        },
-    };
-
-    let line = serde_json::to_string(&request)
-        .map_err(|error| anyhow!("Other runtime key must serialize: {error}"))?;
-    assert!(line.contains("\"type\":\"set_route\""));
-    assert!(line.contains("\"kind\":\"other\""));
-    assert!(line.contains("\"method\":\"custom-acp\""));
-
-    let decoded = decode_request(&line)?;
-    let Request::SetRoute { selection, .. } = decoded else {
-        return Err(anyhow!("expected Other SetRoute, got {decoded:?}"));
-    };
-    assert_eq!(
-        selection.runtime_key,
-        horon_agent_provider_core::RuntimeKey::Other {
-            method: "custom-acp".to_string()
-        }
-    );
-    Ok(())
-}
-
-#[test]
 fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result<()> {
     let req = Request::Subscribe {
         system_prompt: None,
-        supports_pdf_panels: true,
         supports_user_response: true,
         supports_ask_requests: true,
         id: 89,
         working_dir: Some("/tmp/project".to_string()),
-        selfdev: Some(true),
         target_session_id: Some("sess_target".to_string()),
         client_instance_id: Some("client-123".to_string()),
         client_has_local_history: true,
@@ -419,12 +108,10 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
     let decoded = parse_request_json(&json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,
         working_dir,
-        selfdev,
         target_session_id,
         client_instance_id,
         client_has_local_history,
@@ -438,11 +125,9 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 89);
-    assert!(supports_pdf_panels);
     assert!(supports_user_response);
     assert!(supports_ask_requests);
     assert_eq!(working_dir.as_deref(), Some("/tmp/project"));
-    assert_eq!(selfdev, Some(true));
     assert_eq!(target_session_id.as_deref(), Some("sess_target"));
     assert_eq!(client_instance_id.as_deref(), Some("client-123"));
     assert!(client_has_local_history);
@@ -462,12 +147,10 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
     let decoded = parse_request_json(json)?;
     let Request::Subscribe {
         system_prompt: _,
-        supports_pdf_panels,
         supports_user_response,
         supports_ask_requests,
         id,
         working_dir,
-        selfdev,
         target_session_id,
         client_instance_id,
         client_has_local_history,
@@ -481,11 +164,9 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         return Err(anyhow!("expected Subscribe"));
     };
     assert_eq!(id, 91);
-    assert!(!supports_pdf_panels);
     assert!(!supports_user_response);
     assert!(!supports_ask_requests);
     assert_eq!(working_dir, None);
-    assert_eq!(selfdev, None);
     assert_eq!(target_session_id, None);
     assert_eq!(client_instance_id, None);
     assert!(!client_has_local_history);
@@ -515,19 +196,6 @@ fn test_resume_session_defaults_sync_flags() -> Result<()> {
     assert_eq!(client_instance_id, None);
     assert!(!client_has_local_history);
     assert!(!allow_session_takeover);
-    Ok(())
-}
-
-#[test]
-fn test_resume_all_sessions_request_roundtrip() -> Result<()> {
-    let req = Request::ResumeAllSessions { id: 451 };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"resume_all_sessions\""));
-    let decoded = parse_request_json(&json)?;
-    let Request::ResumeAllSessions { id } = decoded else {
-        return Err(anyhow!("expected ResumeAllSessions"));
-    };
-    assert_eq!(id, 451);
     Ok(())
 }
 

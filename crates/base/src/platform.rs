@@ -453,9 +453,8 @@ pub fn atomic_symlink_swap(src: &Path, dst: &Path, temp: &Path) -> std::io::Resu
 
 /// Spawn a process detached from the current client session.
 ///
-/// This is used for launching new terminal windows (for `/resume`, `/split`,
-/// crash restore, etc.) so the new client survives if the invoking horon-agent
-/// process exits or its terminal closes.
+/// Tool calls and hooks use this so a child survives the invoking horon-agent
+/// process or the terminal it was started from.
 pub fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<std::process::Child> {
     #[cfg(unix)]
     {

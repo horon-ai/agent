@@ -427,17 +427,14 @@ fn auth_profile_env_application_flushes_stale_openrouter_catalog_state() {
 }
 
 #[test]
-fn matrix_login_provider_ids_and_aliases_are_unique() {
+fn matrix_openai_compatible_profile_ids_are_unique() {
     let mut seen = std::collections::HashSet::new();
-    for provider in login_providers() {
+    for profile in crate::provider_catalog::openai_compatible_profiles() {
         assert!(
-            seen.insert(provider.id),
-            "duplicate login provider identifier: {}",
-            provider.id
+            seen.insert(profile.id),
+            "duplicate OpenAI-compatible profile id: {}",
+            profile.id
         );
-        for alias in provider.aliases {
-            assert!(seen.insert(*alias), "duplicate login provider alias: {}", alias);
-        }
     }
 }
 

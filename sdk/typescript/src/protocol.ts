@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 14;
+export const API_VERSION_MINOR = 15;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -32,7 +32,6 @@ export type RuntimeCommand =
   | "skills"
   | "context"
   | "info"
-  | "cache"
   | "memory"
   | "swarm"
   | "agents"
@@ -41,12 +40,9 @@ export type RuntimeCommand =
   | "autojudge"
   | "transport"
   | "fast"
-  | "subscription"
   | "overnight"
   | "productivity"
   | "initiatives"
-  | "premium"
-  | "provider_test_coverage"
   | "refresh_model_list"
   | "continue"
   | "resume_all"
@@ -56,7 +52,8 @@ export type RuntimeCommand =
   | "judge"
   | "subagent"
   | "auth"
-  | "logout";
+  | "logout"
+  | "plan";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 
@@ -90,7 +87,6 @@ export type ErrorCode =
   | "unknown_session"
   | "invalid_request"
   | "internal"
-  | "browser_unavailable"
   | "unsupported";
 
 /** Cumulative built-in file-tool changes, not net worktree diff. */
@@ -614,15 +610,6 @@ export type ApiRequest =
   | { req: "compact"; session_id: string }
   | { req: "rename_session"; session_id: string; title?: string }
   | { req: "set_session_saved"; session_id: string; saved: boolean; label?: string }
-  | {
-      req: "applet_action";
-      session_id: string;
-      instance: string;
-      action: AppletAction;
-      state?: Record<string, unknown>;
-      source_key?: string;
-    }
-  | { req: "close_applet"; session_id: string; instance: string }
   | { req: "rewind_undo"; session_id: string }
   /** Without `client_ids`, clears the queue (replies `ok`). With them, replies `soft_interrupts_cancelled`. */
   | { req: "cancel_soft_interrupts"; session_id: string; client_ids?: string[] }
@@ -678,7 +665,6 @@ export type ApiRequest =
       chunk: SessionBlobChunk;
     }
   | { req: "get_session_record_blob_status"; session_id: string; reference: CanonicalRecordRef }
-  | { req: "browser_mirror"; session_id: string; action: string; args?: unknown }
   /** Requires `durable_runtime_v1`. Replies `runtime_state`. */
   | { req: "get_runtime_state"; session_id: string }
   /**
@@ -700,92 +686,6 @@ export type ApiRequest =
    */
   | { req: "get_snapshot"; session_id: string; tail?: number; max_bytes?: number }
   | { req: "ping" };
-
-/** Markdown/PDF panel state, shared with the native runtime. */
-export type SidePanelPageFormat = "markdown" | "pdf";
-export type SidePanelPageSource = "managed" | "linked_file" | "ephemeral";
-export interface SidePanelPage {
-  id: string;
-  title: string;
-  file_path: string;
-  format: SidePanelPageFormat;
-  source: SidePanelPageSource;
-  content: string;
-  /** Base64 PDF bytes, separate from the human-readable Markdown fallback. */
-  pdf_data?: string;
-  updated_at_ms: number;
-}
-/** A user intent from an applet node (`horon-agent.applet/1`). */
-export interface AppletAction {
-  action: string;
-  args?: unknown;
-}
-
-/** One mounted applet instance. `document` follows the `horon-agent.applet/1` schema. */
-export interface AppletInstance {
-  id: string;
-  applet: string;
-  placement: { kind: string; [key: string]: unknown };
-  scope?: { kind: string; [key: string]: unknown };
-  lifetime?: "ephemeral" | "session" | "persistent";
-  document: {
-    revision: number;
-    title: string;
-    view: { type: string; [key: string]: unknown };
-    state?: Record<string, unknown>;
-    assets?: unknown[];
-  };
-}
-
-/** All agent-mounted applet instances for one session, in mount order. */
-export interface AgentApplets {
-  instances: AppletInstance[];
-}
-
-export interface SidePanelSnapshot {
-  /** Monotonic explicit-focus intent. Absent on older servers. */
-  focus_revision?: number;
-  focused_page_id: string | null;
-  /** Omitted by the runtime when empty. */
-  pages?: SidePanelPage[];
-}
-
-/** One tab the mirrored browser has open. */
-export interface BrowserTabState {
-  id: number;
-  url: string;
-  title: string;
-  /** The agent's bound tab when the session has one, otherwise the browser's focused tab. */
-  active: boolean;
-}
-
-/** Snapshot of the browser a session's agent drives. */
-export interface BrowserState {
-  /** The agent has a browser window bound to this session and it answered. */
-  connected: boolean;
-  tabs: BrowserTabState[];
-  active_tab_id?: number;
-  url: string;
-  title: string;
-  /** Who is driving: `agent` normally, `user` after `takeover`. */
-  mode: "agent" | "user" | string;
-}
-
-/** One frame of the active tab, encoded as JPEG. */
-export interface BrowserFrame {
-  /** Always `image/jpeg`. */
-  media_type: string;
-  /** Base64 of the JPEG bytes; at most 512 KiB, never truncated. */
-  data: string;
-  /** Size of the decoded JPEG, in bytes. */
-  bytes: number;
-}
-
-/** A mirror call that was well formed and refused; `code` is stable. */
-export interface BrowserMirrorError {
-  code: string;
-  message: string;
-}
 
 export type ApiEvent =
   | { ev: "hello_ok"; version: number; server: string; capabilities?: string[] }
@@ -815,8 +715,6 @@ export type ApiEvent =
       output: string;
       error?: string;
     }
-  | { ev: "side_panel_state"; session_id: string; snapshot: SidePanelSnapshot }
-  | { ev: "applet_state"; session_id: string; snapshot: AgentApplets }
   | { ev: "side_pane_images"; session_id: string; images: RenderedImage[] }
   | {
       ev: "token_usage";
@@ -1045,14 +943,6 @@ export type ApiEvent =
       total_size: number;
       complete: boolean;
     }
-  | {
-      ev: "browser_mirror_result";
-      session_id: string;
-      action: string;
-      state?: BrowserState;
-      frame?: BrowserFrame;
-      error?: BrowserMirrorError;
-    }
   /** Reply to `get_runtime_state`. Requires `durable_runtime_v1`. */
   | { ev: "runtime_state"; session_id: string; state: RuntimeStateSummary }
   /** Reply to `apply_control` and `get_control_receipt`. */
@@ -1106,8 +996,6 @@ export const KNOWN_EVENT_KINDS = [
   "session_forked",
   "history",
   "side_pane_images",
-  "side_panel_state",
-  "applet_state",
   "pong",
   "text_delta",
   "text_done",
@@ -1162,7 +1050,6 @@ export const KNOWN_EVENT_KINDS = [
   "session_blob_chunk",
   "session_blob_status",
   "session_record_blob_status",
-  "browser_mirror_result",
   "runtime_state",
   "control_receipt",
   "snapshot_marker",
@@ -1216,8 +1103,6 @@ export const KNOWN_REQUEST_KINDS = [
   "compact",
   "rename_session",
   "set_session_saved",
-  "applet_action",
-  "close_applet",
   "rewind_undo",
   "cancel_soft_interrupts",
   "background_tool",
@@ -1232,7 +1117,6 @@ export const KNOWN_REQUEST_KINDS = [
   "export_session_record_blob",
   "import_session_record_blob",
   "get_session_record_blob_status",
-  "browser_mirror",
   "get_runtime_state",
   "apply_control",
   "get_control_receipt",

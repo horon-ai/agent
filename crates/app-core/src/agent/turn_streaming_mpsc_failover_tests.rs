@@ -20,14 +20,6 @@ fn write_provider_settings(sandbox: &AuthTestSandbox, autonomous_failover: bool,
     crate::config::Config::invalidate_cache();
 }
 
-fn save_account_pool(members: &[&str]) {
-    let pool = crate::auth::account_pool::AccountPool {
-        members: members.iter().map(|member| (*member).to_string()).collect(),
-        excluded: Vec::new(),
-    };
-    pool.save().expect("save account pool");
-}
-
 fn api_key_route(model: &str) -> ModelRoute {
     ModelRoute {
         model: model.to_string(),
@@ -155,7 +147,6 @@ fn setup(
 ) {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
     write_provider_settings(&sandbox, autonomous_failover, 3);
-    save_account_pool(&["openai-api"]);
     let provider = Arc::new(StreamingFailoverProvider::new(behavior));
     let provider_dyn: Arc<dyn Provider> = provider.clone();
     let mut agent = Agent::new(provider_dyn, Registry::empty());

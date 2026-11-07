@@ -3,7 +3,6 @@ name: Release
 env:
   HORON_AGENT_CI: "1"
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-  RELEASE_REPAIR: ${{ inputs.recovery || 'none' }}
   RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
   # CI builds without the local parallel-frontend rustc wrapper from
   # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
@@ -31,11 +30,6 @@ on:
         description: Existing release tag (vMAJOR.MINOR.PATCH)
         required: true
         type: string
-      recovery:
-        description: Reviewed source repair (only v0.96.0 or v0.97.0)
-        type: choice
-        default: none
-        options: [none, windows-listener]
   push:
     tags:
       - 'v*'
@@ -89,22 +83,21 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag" >&2; exit 1; }
           if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$WORKFLOW_REF" != refs/heads/dev ]; then
-            echo "Recovery must use the reviewed workflow on dev" >&2; exit 1
+            echo "A re-run must use the reviewed workflow on dev" >&2; exit 1
           fi
           tag_sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
           if [ "$EVENT_NAME" = push ] && [ "$tag_sha" != "$WORKFLOW_SHA" ]; then
             echo "Release tag no longer matches the triggering commit" >&2; exit 1
           fi
           echo "tag_sha=$tag_sha" >> "$GITHUB_OUTPUT"
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
           git checkout --detach "$tag_sha"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            python3 "$RUNNER_TEMP/recovery.py" --check-public-state "$RELEASE_TAG"
+            python3 "$RUNNER_TEMP/prepare-source.py" --check-public-state "$RELEASE_TAG"
           fi
 
-      - name: Require successful exact-commit CI for unpatched source
-        if: env.RELEASE_REPAIR == 'none'
+      - name: Require successful exact-commit CI
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,10 +126,6 @@ jobs:
         shell: bash
         run: |
           scripts/release/release_notes.sh "$RELEASE_TAG" > release_notes.md
-          if [ "$RELEASE_REPAIR" != none ]; then
-            # shellcheck disable=SC2016 # Markdown backticks are literal prose.
-            printf '\n## Release source recovery\n\nBuilt from existing tag `%s` with reviewed `%s` repair from workflow commit `%s`. The tag and version are unchanged. This is patched tag source, not the exact tagged tree. Release-only installer tooling is pinned to the same workflow commit. See `release-provenance.json` for source hashes and build run.\n' "$RELEASE_TAG" "$RELEASE_REPAIR" "$GITHUB_SHA" >> release_notes.md
-          fi
 
       # Stage platform assets on a draft. The final job publishes every
       # successfully completed asset and records unavailable platforms.
@@ -159,66 +148,13 @@ jobs:
           fi
           gh release edit "${RELEASE_TAG}" --notes-file release_notes.md
 
-  recovery-preflight:
-    name: Recovery companion preflight (${{ matrix.target }})
-    needs: create-release
-    if: github.event_name == 'workflow_dispatch' && inputs.recovery == 'windows-listener'
-    runs-on: ${{ matrix.os }}
-    # Cold hosted Windows runners compile the companion crate for two targets.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: amd64
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            arch: amd64_arm64
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.create-release.outputs.tag_sha }}
-          fetch-depth: 0
-      - name: Apply reviewed release source recovery
-        shell: bash
-        env:
-          WORKFLOW_SHA: ${{ github.sha }}
-          RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
-        run: |
-          set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.arch }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: recovery-companion-${{ matrix.target }}
-      # Use cargo directly. justrust has no native aarch64-pc-windows-msvc
-      # client, and with measurement disabled it only forwards to cargo anyway.
-      - name: Check and test exact repaired companion source
-        shell: pwsh
-        run: |
-          & cargo check --locked -p horon-agent-companion --target ${{ matrix.target }}
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & cargo test --locked -p horon-agent-companion --lib --target ${{ matrix.target }}
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify preflight preserved Cargo.lock
-        shell: bash
-        run: git diff --exit-code -- Cargo.lock
-
   build-linux-macos:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
-    needs: [create-release, recovery-preflight]
-    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    needs: create-release
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     # Each matrix architecture still runs to completion (fail-fast: false), so a
     # failing target never hides the assets the others produced. The failure is
     # reported as a failure and the final job keeps the release as a draft until
@@ -270,15 +206,15 @@ jobs:
           fi
           df -h /
 
-      - name: Apply reviewed release source recovery
+      - name: Prepare release source
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -400,8 +336,8 @@ jobs:
   build-windows:
     name: Build (x86_64-pc-windows-msvc)
     runs-on: windows-latest
-    needs: [create-release, recovery-preflight]
-    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    needs: create-release
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     env:
       # Pinned alpha.17 measurement crashed on Windows x64 requesting 30 GiB.
       # Disable measurement only: the CLI still executes local Cargo and returns
@@ -417,15 +353,15 @@ jobs:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
 
-      - name: Apply reviewed release source recovery
+      - name: Prepare release source
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - name: Configure MSVC build environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
@@ -516,8 +452,8 @@ jobs:
   build-windows-arm64:
     name: Build (aarch64-pc-windows-msvc)
     runs-on: windows-11-arm
-    needs: [create-release, recovery-preflight]
-    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    needs: create-release
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     # justrust publishes no aarch64-pc-windows-msvc client, so this job builds
     # with cargo directly on the native ARM64 runner. It is a separate job so a
     # failure here cannot suppress signing and publication of the x64 assets.
@@ -528,15 +464,15 @@ jobs:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
 
-      - name: Apply reviewed release source recovery
+      - name: Prepare release source
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - name: Configure MSVC build environment (ARM64)
         uses: ilammy/msvc-dev-cmd@v1
@@ -602,11 +538,10 @@ jobs:
     name: Sign and publish Windows assets
     runs-on: windows-latest
     needs: [create-release, build-windows, build-windows-arm64]
-    # The optional recovery-preflight ancestor is skipped for normal releases,
-    # so an explicit status function replaces implicit success(). Only the x64
-    # build gates this job: a failed ARM64 build must not suppress signing and
-    # publication of the x64 assets, and the final job still refuses to publish
-    # a release whose ARM64 asset is missing.
+    # An explicit status function replaces implicit success() so cancelled runs
+    # never start signing. Only the x64 build gates this job: a failed ARM64
+    # build must not suppress signing and publication of the x64 assets, and the
+    # final job still refuses to publish a release whose ARM64 asset is missing.
     if: ${{ !cancelled() && needs.create-release.result == 'success' && needs.build-windows.result == 'success' }}
     timeout-minutes: 30
     outputs:
@@ -628,15 +563,15 @@ jobs:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
 
-      - name: Apply reviewed release source recovery
+      - name: Prepare release source
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - name: Download unsigned Windows binaries
         uses: actions/download-artifact@v8
@@ -783,8 +718,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    needs: [create-release, recovery-preflight]
-    if: ${{ !cancelled() && needs.create-release.result == 'success' && (needs.recovery-preflight.result == 'success' || needs.recovery-preflight.result == 'skipped') }}
+    needs: create-release
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     # GitHub has no native FreeBSD runners, so build inside a FreeBSD VM
     # (QEMU via vmactions), same approach as freebsd-smoke.yml (issues #416,
     # #433). FreeBSD is a required platform: the final job refuses to publish a
@@ -807,15 +742,15 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
-      - name: Apply reviewed release source recovery
+      - name: Prepare release source
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - name: Build release binary in FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -913,15 +848,15 @@ jobs:
           ref: ${{ needs.create-release.outputs.tag_sha }}
           fetch-depth: 0
 
-      - name: Apply reviewed release source recovery
+      - name: Prepare release source
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
-          git show "$WORKFLOW_SHA:scripts/release/apply_recovery.py" > "$RUNNER_TEMP/recovery.py"
-          python3 "$RUNNER_TEMP/recovery.py" "$RELEASE_TAG" "$RELEASE_REPAIR" "$WORKFLOW_SHA"
+          git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
+          python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - uses: actions/download-artifact@v8
         continue-on-error: true
@@ -1095,7 +1030,6 @@ jobs:
           gh release edit "${RELEASE_TAG}" --notes-file release_notes.md
 
       - name: Verify staged assets before publication
-        if: env.RELEASE_REPAIR == 'none'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1113,7 +1047,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
-            python3 "$RUNNER_TEMP/recovery.py" --check-public-state "$RELEASE_TAG"
+            python3 "$RUNNER_TEMP/prepare-source.py" --check-public-state "$RELEASE_TAG"
           fi
           if [ "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" = "true" ]; then
             gh release edit "${RELEASE_TAG}" --draft=false --latest
@@ -1122,7 +1056,6 @@ jobs:
           fi
 
       - name: Verify public assets and exact source provenance
-        if: env.RELEASE_REPAIR == 'none'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1134,7 +1067,6 @@ jobs:
           python3 "$RUNNER_TEMP/verify-public-release.py" "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --sha "$TAG_SHA"
 
       - name: Smoke test public Linux installer in an isolated home
-        if: env.RELEASE_REPAIR == 'none'
         shell: bash
         run: |
           set -euo pipefail

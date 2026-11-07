@@ -1,29 +1,10 @@
 use super::*;
-use crate::provider::{ALL_OPENAI_MODELS, model_availability_for_account};
+use crate::provider::provider_for_model;
 
 pub fn remote_model_routes_fallback(
     remote_provider_name: Option<&str>,
     remote_available_entries: &[String],
 ) -> Vec<ModelRoute> {
-    if remote_provider_name
-        .is_some_and(|name| name.eq_ignore_ascii_case(crate::subscription_catalog::HORON_AGENT_PROVIDER_DISPLAY_NAME))
-    {
-        return remote_available_entries
-            .iter()
-            .filter(|model| is_listable_model_name(model))
-            .map(|model| ModelRoute {
-                model: model.clone(),
-                provider: crate::subscription_catalog::HORON_AGENT_PROVIDER_DISPLAY_NAME.to_string(),
-                api_method: crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD.to_string(),
-                available: true,
-                detail: "horon-agent subscription routing · managed server-side".to_string(),
-                usage: None,
-                cheapness: None,
-            })
-            .collect();
-    }
-
-    let auth = AuthStatus::check_fast();
     let mut routes = Vec::new();
     for model in remote_available_entries {
         if !is_listable_model_name(model) {
@@ -38,29 +19,6 @@ pub fn remote_model_routes_fallback(
         }
 
         let mut added_any = false;
-
-        if horon_agent_provider_core::model_id::matches_known_model(model, ALL_OPENAI_MODELS) {
-            let availability = model_availability_for_account(model);
-            let (available, detail) = if auth.openai == AuthState::NotConfigured {
-                (false, "no credentials".to_string())
-            } else {
-                match availability.state {
-                    AccountModelAvailabilityState::Available => (true, String::new()),
-                    AccountModelAvailabilityState::Unavailable => (
-                        false,
-                        format_account_model_availability_detail(&availability)
-                            .unwrap_or_else(|| "not available".to_string()),
-                    ),
-                    AccountModelAvailabilityState::Unknown => (
-                        true,
-                        format_account_model_availability_detail(&availability)
-                            .unwrap_or_else(|| "availability unknown".to_string()),
-                    ),
-                }
-            };
-            routes.push(build_openai_oauth_route(model, available, detail));
-            added_any = true;
-        }
 
         if let Some(route) = remote_openai_compatible_route_for_model(model) {
             routes.push(route);
@@ -93,8 +51,6 @@ pub fn remote_model_routes_lightweight_fallback(
     remote_available_entries: &[String],
     current_model: &str,
 ) -> Vec<ModelRoute> {
-    let is_horon_agent_subscription = remote_provider_name
-        .is_some_and(|name| name.eq_ignore_ascii_case(crate::subscription_catalog::HORON_AGENT_PROVIDER_DISPLAY_NAME));
     let provider = remote_provider_name
         .map(str::to_string)
         .unwrap_or_else(|| "remote".to_string());
@@ -106,17 +62,9 @@ pub fn remote_model_routes_lightweight_fallback(
         routes.push(ModelRoute {
             model: model.clone(),
             provider: provider.clone(),
-            api_method: if is_horon_agent_subscription {
-                crate::subscription_catalog::HORON_AGENT_ROUTE_API_METHOD.to_string()
-            } else {
-                "remote-catalog".to_string()
-            },
+            api_method: "remote-catalog".to_string(),
             available: true,
-            detail: if is_horon_agent_subscription {
-                "horon-agent subscription routing · managed server-side".to_string()
-            } else {
-                "refreshing route details…".to_string()
-            },
+            detail: "refreshing route details…".to_string(),
             usage: None,
             cheapness: None,
         });

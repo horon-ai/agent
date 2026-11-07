@@ -83,24 +83,6 @@ pub(super) fn provider_usage_cache_is_fresh(now: Instant, fetched_at: Instant, r
         && !usage_reset_passed(report.limits.iter().map(|limit| limit.resets_at.as_deref()))
 }
 
-pub(super) fn humanize_key(key: &str) -> String {
-    key.replace('_', " ")
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(c) => {
-                    let mut s = c.to_uppercase().to_string();
-                    s.push_str(&chars.as_str().to_lowercase());
-                    s
-                }
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn parse_reset_timestamp(timestamp: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     if let Ok(reset) = chrono::DateTime::parse_from_rfc3339(timestamp) {
         Some(reset.with_timezone(&chrono::Utc))

@@ -159,7 +159,6 @@ pub fn resolve_tool_name(name: &str) -> &str {
     match name {
         "communicate" => "swarm",
         "task" | "task_runner" => "subagent",
-        "launch" => "open",
         "shell" => "bash",
         "shell_exec" => "bash",
         "read_file" => "read",

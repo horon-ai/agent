@@ -10,31 +10,6 @@ use std::sync::RwLock as StdRwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard};
 
-#[tokio::test]
-async fn invalidate_openai_usage_acknowledges_after_clearing_pinned_daemon_cooldown() {
-    let _guard = crate::storage::lock_test_env();
-    let target = "daemon-reset-target";
-    let other = "daemon-reset-other";
-    crate::auth::codex::set_active_account_override(Some(target.to_string()));
-    crate::provider::record_provider_unavailable_for_account("openai", "target quota exhausted");
-    crate::auth::codex::set_active_account_override(Some(other.to_string()));
-    crate::provider::record_provider_unavailable_for_account("openai", "other quota exhausted");
-
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    for id in [51, 52] {
-        handle_invalidate_openai_usage(id, Some(target.to_string()), &tx).await;
-        assert!(matches!(rx.try_recv(), Ok(ServerEvent::Done { id: ack }) if ack == id));
-        assert!(rx.try_recv().is_err());
-        assert_eq!(crate::auth::codex::active_account_label().as_deref(), Some(other));
-        assert!(crate::provider::provider_unavailability_detail_for_account("openai").is_some());
-        crate::auth::codex::set_active_account_override(Some(target.to_string()));
-        assert!(crate::provider::provider_unavailability_detail_for_account("openai").is_none());
-        crate::auth::codex::set_active_account_override(Some(other.to_string()));
-    }
-    crate::provider::clear_openai_provider_unavailability_for_account_label(Some(other));
-    crate::auth::codex::set_active_account_override(None);
-}
-
 async fn recv_final_catalog_notification(rx: &mut mpsc::UnboundedReceiver<ServerEvent>) -> String {
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
@@ -52,50 +27,6 @@ async fn recv_final_catalog_notification(rx: &mut mpsc::UnboundedReceiver<Server
     })
     .await
     .expect("expected final auth catalog notification")
-}
-
-#[tokio::test]
-async fn account_switch_clears_only_selected_login_failure_even_when_agent_is_busy() {
-    let _guard = EnvGuard::save(&[]);
-    let previous_openai = crate::auth::codex::get_active_account_override();
-    let target = "switch-failure-target";
-    let other = "switch-failure-other";
-    for (kind, provider_id) in [("openai", "openai")] {
-        crate::auth::codex::set_active_account_override(Some(target.to_string()));
-        for id in ["openai", "google"] {
-            crate::provider::record_provider_unavailable_for_account(id, "old credential rejected");
-        }
-        crate::auth::codex::set_active_account_override(Some(other.to_string()));
-        crate::provider::record_provider_unavailable_for_account(provider_id, "other login rejected");
-
-        let provider: Arc<dyn Provider> = Arc::new(AuthChangeMockProvider::new());
-        let agent = Arc::new(Mutex::new(Agent::new(provider, Registry::empty())));
-        let busy = agent.lock().await;
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        spawn_account_switch_refresh(71, kind, target.to_string(), Arc::clone(&agent), tx);
-        assert!(crate::provider::provider_unavailability_detail_for_account(provider_id).is_some());
-        crate::auth::codex::set_active_account_override(Some(target.to_string()));
-        assert!(crate::provider::provider_unavailability_detail_for_account(provider_id).is_none());
-        let unrelated = "google";
-        assert!(crate::provider::provider_unavailability_detail_for_account(unrelated).is_some());
-        drop(busy);
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while let Some(event) = rx.recv().await {
-                if matches!(event, ServerEvent::Done { id: 71 }) {
-                    return;
-                }
-            }
-            panic!("account switch must acknowledge completion");
-        })
-        .await
-        .expect("account switch must finish after the agent becomes idle");
-        for id in ["openai", "google"] {
-            crate::provider::clear_provider_unavailable_for_account(id);
-        }
-        crate::auth::codex::set_active_account_override(Some(other.to_string()));
-        crate::provider::clear_provider_unavailable_for_account(provider_id);
-    }
-    crate::auth::codex::set_active_account_override(previous_openai);
 }
 
 #[tokio::test]
@@ -126,6 +57,67 @@ async fn notify_auth_changed_clears_renewed_login_failure() {
     .await;
     recv_final_catalog_notification(&mut rx).await;
     assert!(crate::provider::provider_unavailability_detail_for_account("openai").is_none());
+}
+
+/// A live daemon inherits its environment at launch. When `SetApiKey` saves a
+/// new key to the profile's env file, the stale inherited env var must not keep
+/// winning at resolution time (issue #453).
+#[tokio::test]
+async fn notify_auth_changed_replaces_stale_process_api_key_with_saved_credential() {
+    let _guard = EnvGuard::save(&[
+        "OPENAI_API_KEY",
+        "HORON_AGENT_OPENROUTER_API_BASE",
+        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
+        "HORON_AGENT_OPENROUTER_ENV_FILE",
+        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
+        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
+        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
+        "HORON_AGENT_OPENROUTER_ALLOW_NO_AUTH",
+        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
+        "HORON_AGENT_OPENROUTER_MODEL",
+        "HORON_AGENT_OPENROUTER_STATIC_MODELS",
+        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
+        "HORON_AGENT_OPENROUTER_AUTH_HEADER_NAME",
+        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
+        "HORON_AGENT_OPENROUTER_PROVIDER",
+        "HORON_AGENT_OPENROUTER_NO_FALLBACK",
+        "HORON_AGENT_NAMED_PROVIDER_PROFILE",
+        "HORON_AGENT_PROVIDER_PROFILE_ACTIVE",
+        "HORON_AGENT_PROVIDER_PROFILE_NAME",
+    ]);
+    crate::env::set_var("OPENAI_API_KEY", "stale-inherited-key");
+    let config_dir = crate::storage::app_config_dir().expect("resolve app config dir");
+    std::fs::create_dir_all(&config_dir).expect("create app config dir");
+    std::fs::write(config_dir.join("openai.env"), "OPENAI_API_KEY=fresh-saved-key\n").expect("write saved credential");
+
+    let provider: Arc<dyn Provider> = Arc::new(AuthChangeMockProvider::new());
+    let agent = Arc::new(Mutex::new(Agent::new(provider.clone(), Registry::empty())));
+    let session_id = agent.lock().await.session_id().to_string();
+    let sessions = Arc::new(RwLock::new(HashMap::new()));
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut auth = crate::protocol::AuthChanged::new("openai-api");
+    auth.credential_source = Some(crate::protocol::AuthCredentialSource::ApiKeyFile);
+    auth.auth_method = Some(crate::protocol::AuthMethod::RemoteTuiPasteApiKey);
+
+    handle_notify_auth_changed(
+        73,
+        None,
+        Some(auth),
+        false,
+        &provider,
+        &provider,
+        &sessions,
+        &session_id,
+        &agent,
+        &tx,
+    )
+    .await;
+
+    assert_eq!(
+        crate::provider_catalog::load_api_key_from_env_or_config("OPENAI_API_KEY", "openai.env").as_deref(),
+        Some("fresh-saved-key"),
+        "the saved credential must win over the stale inherited env var"
+    );
 }
 
 #[test]
@@ -601,303 +593,6 @@ async fn notify_auth_changed_defers_busy_session_refresh_until_idle() {
 }
 
 #[tokio::test]
-async fn notify_auth_changed_with_azure_hint_applies_runtime_model_without_completion() {
-    let _guard = EnvGuard::save(&[
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_MODEL",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_USE_ENTRA",
-        "HORON_AGENT_OPENROUTER_API_BASE",
-        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
-        "HORON_AGENT_OPENROUTER_ENV_FILE",
-        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
-        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
-        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
-        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
-        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
-        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
-        "HORON_AGENT_OPENROUTER_MODEL",
-        "HORON_AGENT_RUNTIME_PROVIDER",
-        "HORON_AGENT_ACTIVE_PROVIDER",
-        "HORON_AGENT_INITIAL_PROVIDER_EXPLICIT",
-    ]);
-    crate::env::set_var("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com");
-    crate::env::set_var("AZURE_OPENAI_MODEL", "azure-deployment");
-    crate::env::set_var("AZURE_OPENAI_API_KEY", "test-key");
-    crate::env::set_var("AZURE_OPENAI_USE_ENTRA", "0");
-
-    crate::bus::reset_models_updated_publish_state_for_tests();
-    let provider = Arc::new(AuthChangeMockProvider::new());
-    let state = Arc::clone(&provider.state);
-    let provider: Arc<dyn Provider> = provider;
-    let registry = Registry::empty();
-    let agent = Arc::new(Mutex::new(Agent::new(provider.clone(), registry)));
-    let session_id = { agent.lock().await.session_id().to_string() };
-    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::from([(
-        "test-session".to_string(),
-        Arc::clone(&agent),
-    )])));
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    handle_notify_auth_changed(
-        44,
-        Some("Azure OpenAI".to_string()),
-        None,
-        false,
-        &provider,
-        &provider,
-        &sessions,
-        session_id.as_str(),
-        &agent,
-        &client_event_tx,
-    )
-    .await;
-
-    let mut saw_done = false;
-    let mut saw_models = None;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-    while tokio::time::Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let event = tokio::time::timeout(remaining, client_event_rx.recv())
-            .await
-            .expect("receive server event before timeout");
-        match event.expect("channel open") {
-            ServerEvent::Done { id } => {
-                assert_eq!(id, 44);
-                saw_done = true;
-            }
-            ServerEvent::AvailableModelsUpdated {
-                provider_model,
-                available_models,
-                ..
-            } => {
-                saw_models = Some((provider_model, available_models));
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    assert!(saw_done, "expected immediate Done ack");
-    let (provider_model, available_models) = saw_models.expect("expected model refresh event");
-    assert_eq!(provider_model.as_deref(), Some("azure-deployment"));
-    assert!(available_models.iter().any(|model| model == "azure-deployment"));
-    assert_eq!(
-        std::env::var("HORON_AGENT_RUNTIME_PROVIDER").as_deref(),
-        Ok("azure-openai")
-    );
-    assert_eq!(std::env::var("HORON_AGENT_ACTIVE_PROVIDER").as_deref(), Ok("openai"));
-    assert_eq!(
-        state.complete_calls.load(Ordering::SeqCst),
-        0,
-        "auth refresh must not issue a completion with the old prompt/model"
-    );
-}
-
-#[test]
-fn cerebras_auth_hint_applies_openai_compatible_runtime_profile() {
-    let _guard = EnvGuard::save(&[
-        "HORON_AGENT_OPENROUTER_API_BASE",
-        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
-        "HORON_AGENT_OPENROUTER_ENV_FILE",
-        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
-        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
-        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
-        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
-        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
-        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
-        "HORON_AGENT_OPENROUTER_MODEL",
-        "HORON_AGENT_RUNTIME_PROVIDER",
-        "HORON_AGENT_ACTIVE_PROVIDER",
-        "HORON_AGENT_INITIAL_PROVIDER_EXPLICIT",
-    ]);
-
-    let request = crate::auth::lifecycle::AuthActivationRequest::new(Some("Cerebras".to_string()), None);
-    assert_eq!(request.provider_id().as_deref(), Some("cerebras"));
-
-    let activation = crate::auth::lifecycle::activate_auth_change(&request);
-    let default_model = activation.activated_model.as_deref();
-    assert_eq!(default_model, Some("gpt-oss-120b"));
-    assert_eq!(
-        std::env::var("HORON_AGENT_RUNTIME_PROVIDER").as_deref(),
-        Ok("openai-compatible")
-    );
-    assert_eq!(std::env::var("HORON_AGENT_ACTIVE_PROVIDER").as_deref(), Ok("openai"));
-    assert_eq!(
-        std::env::var("HORON_AGENT_OPENROUTER_API_BASE").as_deref(),
-        Ok("https://api.cerebras.ai/v1")
-    );
-    assert_eq!(
-        std::env::var("HORON_AGENT_OPENROUTER_API_KEY_NAME").as_deref(),
-        Ok("CEREBRAS_API_KEY")
-    );
-    assert_eq!(
-        std::env::var("HORON_AGENT_OPENROUTER_ENV_FILE").as_deref(),
-        Ok("cerebras.env")
-    );
-    assert_eq!(
-        std::env::var("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE").as_deref(),
-        Ok("cerebras")
-    );
-    assert_eq!(
-        activation.model_switch_request("mock-auth", "llama3.1-8b"),
-        "cerebras:llama3.1-8b"
-    );
-}
-
-#[tokio::test]
-async fn notify_auth_changed_typed_cerebras_event_controls_user_visible_catalog_identity() {
-    let _guard = EnvGuard::save(&[
-        "HORON_AGENT_OPENROUTER_API_BASE",
-        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
-        "HORON_AGENT_OPENROUTER_ENV_FILE",
-        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
-        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
-        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
-        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
-        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
-        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
-        "HORON_AGENT_OPENROUTER_MODEL",
-        "HORON_AGENT_RUNTIME_PROVIDER",
-        "HORON_AGENT_ACTIVE_PROVIDER",
-        "HORON_AGENT_INITIAL_PROVIDER_EXPLICIT",
-    ]);
-
-    crate::bus::reset_models_updated_publish_state_for_tests();
-    let provider = Arc::new(AuthChangeMockProvider::new());
-    let provider: Arc<dyn Provider> = provider;
-    let registry = Registry::empty();
-    let agent = Arc::new(Mutex::new(Agent::new(provider.clone(), registry)));
-    let session_id = { agent.lock().await.session_id().to_string() };
-    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::from([(
-        "test-session".to_string(),
-        Arc::clone(&agent),
-    )])));
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    let mut auth = crate::protocol::AuthChanged::new("cerebras");
-    auth.credential_source = Some(crate::protocol::AuthCredentialSource::ApiKeyFile);
-    auth.auth_method = Some(crate::protocol::AuthMethod::RemoteTuiPasteApiKey);
-    auth.expected_runtime = Some(crate::protocol::RuntimeProviderKey::new("openai-compatible"));
-    auth.expected_catalog_namespace = Some(crate::protocol::CatalogNamespace::new("cerebras"));
-
-    handle_notify_auth_changed(
-        45,
-        Some("openai".to_string()),
-        Some(auth),
-        false,
-        &provider,
-        &provider,
-        &sessions,
-        session_id.as_str(),
-        &agent,
-        &client_event_tx,
-    )
-    .await;
-
-    assert!(matches!(
-        client_event_rx.recv().await,
-        Some(ServerEvent::Done { id: 45 })
-    ));
-
-    let final_message = recv_final_catalog_notification(&mut client_event_rx).await;
-
-    assert!(
-        final_message.contains("Cerebras catalog changed"),
-        "typed auth event should control user-visible provider label, got: {}",
-        final_message
-    );
-    assert!(
-        !final_message.contains("OpenAI catalog changed"),
-        "stale legacy provider identity leaked into user-visible auth message: {}",
-        final_message
-    );
-    assert!(
-        final_message.contains("some routes missing"),
-        "typed auth event should warn when matching provider routes are missing: {}",
-        final_message
-    );
-    assert_eq!(final_message.lines().count(), 2);
-    assert_eq!(
-        std::env::var("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE").as_deref(),
-        Ok("cerebras")
-    );
-}
-
-#[tokio::test]
-async fn notify_auth_changed_switches_from_stale_model_to_matching_provider_route() {
-    let _guard = EnvGuard::save(&[
-        "HORON_AGENT_OPENROUTER_API_BASE",
-        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
-        "HORON_AGENT_OPENROUTER_ENV_FILE",
-        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
-        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
-        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
-        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
-        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
-        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
-        "HORON_AGENT_OPENROUTER_MODEL",
-        "HORON_AGENT_RUNTIME_PROVIDER",
-        "HORON_AGENT_ACTIVE_PROVIDER",
-        "HORON_AGENT_INITIAL_PROVIDER_EXPLICIT",
-    ]);
-
-    crate::bus::reset_models_updated_publish_state_for_tests();
-    let provider = Arc::new(AuthChangeMockProvider::new());
-    *provider.state.selected_model.write().unwrap() = Some("gpt-5.5".to_string());
-    *provider.state.route_provider.write().unwrap() = "Cerebras".to_string();
-    *provider.state.route_api_method.write().unwrap() = "openai-compatible:cerebras".to_string();
-    let provider: Arc<dyn Provider> = provider;
-    let registry = Registry::empty();
-    let agent = Arc::new(Mutex::new(Agent::new(provider.clone(), registry)));
-    let session_id = { agent.lock().await.session_id().to_string() };
-    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::from([(
-        "test-session".to_string(),
-        Arc::clone(&agent),
-    )])));
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    let mut auth = crate::protocol::AuthChanged::new("cerebras");
-    auth.credential_source = Some(crate::protocol::AuthCredentialSource::ApiKeyFile);
-    auth.auth_method = Some(crate::protocol::AuthMethod::RemoteTuiPasteApiKey);
-    auth.expected_runtime = Some(crate::protocol::RuntimeProviderKey::new("openai-compatible"));
-    auth.expected_catalog_namespace = Some(crate::protocol::CatalogNamespace::new("cerebras"));
-
-    handle_notify_auth_changed(
-        46,
-        Some("openai".to_string()),
-        Some(auth),
-        false,
-        &provider,
-        &provider,
-        &sessions,
-        session_id.as_str(),
-        &agent,
-        &client_event_tx,
-    )
-    .await;
-
-    let final_message = recv_final_catalog_notification(&mut client_event_rx).await;
-
-    assert!(final_message.contains("Cerebras catalog changed"), "{}", final_message);
-    assert!(
-        final_message.contains("**Model ready:** `gpt-oss-120b`"),
-        "final auth catalog update should switch away from stale OpenAI model: {}",
-        final_message
-    );
-    assert!(
-        !final_message.contains("**Model ready:** `gpt-5.5`"),
-        "stale selected model leaked into final auth update: {}",
-        final_message
-    );
-    assert!(
-        !final_message.contains("some routes missing"),
-        "successful recovery should not warn: {}",
-        final_message
-    );
-}
-
-#[tokio::test]
 async fn onboarding_auth_refresh_prefers_global_gpt_5_6_route_over_fable() {
     let _guard = EnvGuard::save(&[
         "HORON_AGENT_RUNTIME_PROVIDER",
@@ -1057,157 +752,3 @@ async fn notify_auth_changed_does_not_override_manual_model_selected_during_refr
 
 #[path = "provider_control_tests/auth_selection.rs"]
 mod auth_selection;
-
-#[tokio::test]
-async fn notify_auth_changed_switches_only_current_session_model() {
-    let _guard = EnvGuard::save(&[
-        "HORON_AGENT_OPENROUTER_API_BASE",
-        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
-        "HORON_AGENT_OPENROUTER_ENV_FILE",
-        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
-        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
-        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
-        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
-        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
-        "HORON_AGENT_OPENROUTER_DYNAMIC_BEARER_PROVIDER",
-        "HORON_AGENT_OPENROUTER_MODEL",
-        "HORON_AGENT_RUNTIME_PROVIDER",
-        "HORON_AGENT_ACTIVE_PROVIDER",
-        "HORON_AGENT_INITIAL_PROVIDER_EXPLICIT",
-    ]);
-
-    crate::bus::reset_models_updated_publish_state_for_tests();
-    let current_provider = Arc::new(AuthChangeMockProvider::new());
-    let current_state = Arc::clone(&current_provider.state);
-    *current_state.selected_model.write().unwrap() = Some("gpt-5.5".to_string());
-    *current_state.route_provider.write().unwrap() = "Groq".to_string();
-    *current_state.route_api_method.write().unwrap() = "openai-compatible:groq".to_string();
-    let peer_provider = Arc::new(AuthChangeMockProvider::new());
-    let peer_state = Arc::clone(&peer_provider.state);
-    *peer_state.selected_model.write().unwrap() = Some("gpt-5.5".to_string());
-    *peer_state.route_provider.write().unwrap() = "Groq".to_string();
-    *peer_state.route_api_method.write().unwrap() = "openai-compatible:groq".to_string();
-
-    let current_provider: Arc<dyn Provider> = current_provider;
-    let peer_provider: Arc<dyn Provider> = peer_provider;
-    let registry = Registry::empty();
-    let current_agent = Arc::new(Mutex::new(Agent::new(Arc::clone(&current_provider), registry.clone())));
-    let current_session_id = { current_agent.lock().await.session_id().to_string() };
-    let peer_agent = Arc::new(Mutex::new(Agent::new(peer_provider, registry)));
-    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::from([
-        ("current-session".to_string(), Arc::clone(&current_agent)),
-        ("peer-session".to_string(), Arc::clone(&peer_agent)),
-    ])));
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    let mut auth = crate::protocol::AuthChanged::new("groq");
-    auth.credential_source = Some(crate::protocol::AuthCredentialSource::ApiKeyFile);
-    auth.auth_method = Some(crate::protocol::AuthMethod::RemoteTuiPasteApiKey);
-    auth.expected_runtime = Some(crate::protocol::RuntimeProviderKey::new("openai-compatible"));
-    auth.expected_catalog_namespace = Some(crate::protocol::CatalogNamespace::new("groq"));
-
-    handle_notify_auth_changed(
-        47,
-        Some("openai".to_string()),
-        Some(auth),
-        false,
-        &current_provider,
-        &current_provider,
-        &sessions,
-        current_session_id.as_str(),
-        &current_agent,
-        &client_event_tx,
-    )
-    .await;
-
-    assert!(matches!(
-        client_event_rx.recv().await,
-        Some(ServerEvent::Done { id: 47 })
-    ));
-
-    let expected = "llama-3.1-8b-instant";
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-    while tokio::time::Instant::now() < deadline {
-        let current = current_state.selected_model.read().unwrap().clone();
-        let peer = peer_state.selected_model.read().unwrap().clone();
-        let peer_refreshed = *peer_state.logged_in.read().unwrap();
-        if current.as_deref() == Some(expected) && peer.as_deref() == Some("gpt-5.5") && peer_refreshed {
-            let peer_snapshot = available_models_updated_event(&peer_agent).await;
-            let ServerEvent::AvailableModelsUpdated {
-                provider_name,
-                provider_model,
-                available_model_routes,
-                ..
-            } = peer_snapshot
-            else {
-                panic!("expected available models snapshot for peer session");
-            };
-            assert_eq!(provider_name.as_deref(), Some("mock-auth"));
-            assert_eq!(provider_model.as_deref(), Some("gpt-5.5"));
-            assert!(available_model_routes.iter().any(|route| {
-                route.model == "gpt-5.5" && route.provider == "Groq" && route.api_method == "openai-compatible:groq"
-            }));
-            assert!(
-                available_model_routes.iter().all(|route| route.model != expected),
-                "auth-triggered Groq model leaked into peer session routes: {:?}",
-                available_model_routes
-            );
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-
-    panic!(
-        "auth change did not keep model switch session-local: current={:?}, peer={:?}, peer_refreshed={}",
-        current_state.selected_model.read().unwrap().clone(),
-        peer_state.selected_model.read().unwrap().clone(),
-        *peer_state.logged_in.read().unwrap()
-    );
-}
-
-#[tokio::test]
-async fn refresh_models_emits_available_models_updated_after_prefetch() {
-    crate::bus::reset_models_updated_publish_state_for_tests();
-    let provider: Arc<dyn Provider> = Arc::new(AuthChangeMockProvider::new());
-    let registry = Registry::empty();
-    let agent = Arc::new(Mutex::new(Agent::new(provider.clone(), registry)));
-    let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
-
-    handle_refresh_models(7, &provider, &agent, &client_event_tx).await;
-
-    let mut saw_done = false;
-    let mut saw_models = None;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-    while tokio::time::Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let event = tokio::time::timeout(remaining, client_event_rx.recv())
-            .await
-            .expect("receive server event before timeout");
-        match event.expect("channel open") {
-            ServerEvent::Done { id } => {
-                assert_eq!(id, 7);
-                saw_done = true;
-            }
-            ServerEvent::AvailableModelsUpdated {
-                provider_name,
-                provider_model,
-                available_models,
-                available_model_routes,
-            } => {
-                saw_models = Some((provider_name, provider_model, available_models, available_model_routes));
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    assert!(saw_done, "expected immediate Done ack");
-    let (provider_name, provider_model, available_models, available_model_routes) =
-        saw_models.expect("expected AvailableModelsUpdated event");
-    assert_eq!(provider_name.as_deref(), Some("mock-auth"));
-    assert_eq!(provider_model.as_deref(), Some("logged-out-model"));
-    assert_eq!(available_models, vec!["logged-out-model".to_string()]);
-    assert!(available_model_routes.iter().any(|route| {
-        route.model == "logged-out-model" && route.provider == "MockAuth" && route.api_method == "mock-auth"
-    }));
-}

@@ -89,8 +89,6 @@ async fn spawn_lifecycle_socket(provider_template: Arc<dyn Provider>, sessions: 
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
-    let (debug_response_tx, _) = broadcast::channel(8);
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _) = broadcast::channel(8);
@@ -117,8 +115,6 @@ async fn spawn_lifecycle_socket(provider_template: Arc<dyn Provider>, sessions: 
         file_touch,
         channel_subscriptions,
         channel_subscriptions_by_session,
-        client_debug_state,
-        debug_response_tx,
         event_history,
         event_counter,
         swarm_event_tx,
@@ -346,12 +342,10 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
         &mut socket,
         &Request::Subscribe {
             system_prompt: None,
-            supports_pdf_panels: false,
             supports_user_response: false,
             supports_ask_requests: false,
             id: 1,
             working_dir: Some(working_dir),
-            selfdev: None,
             target_session_id: Some(target_session_id.to_string()),
             client_instance_id: Some("reattach-instance".to_string()),
             client_has_local_history: false,
@@ -688,5 +682,38 @@ async fn fresh_subscribe_and_first_message_confirm_the_context_once() {
         1,
         "the stored transcript keeps exactly one session context"
     );
+    close_lifecycle_socket(socket).await;
+}
+
+/// A request tag this build does not know is refused without taking the
+/// connection down.
+///
+/// Removed surfaces (the mirror-mode push among them) reach the daemon as an
+/// unknown tag after an old client upgrades. They must fail to decode: the
+/// daemon answers an uncorrelated error and keeps reading the socket.
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_request_tag_is_refused_and_the_socket_survives() {
+    let provider: Arc<dyn Provider> = Arc::new(ContextRecordingProvider::default());
+    let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::new()));
+    let mut socket = spawn_lifecycle_socket(provider, Arc::clone(&sessions)).await;
+
+    socket
+        .writer
+        .write_all(b"{\"type\":\"no_such_control_tag\",\"id\":71,\"session_id\":\"s\"}\n")
+        .await
+        .expect("write unknown request");
+    match next_client_event(&mut socket, "unknown request").await {
+        ServerEvent::Error { id, message, .. } => {
+            assert_eq!(id, 0, "an undecodable line has no request id to answer");
+            assert!(message.contains("Invalid request"), "{message}");
+        }
+        other => panic!("expected an invalid-request error, got {other:?}"),
+    }
+
+    send_client_request(&mut socket, &Request::Ping { id: 72 }).await;
+    match next_client_event(&mut socket, "ping after refusal").await {
+        ServerEvent::Pong { id, .. } => assert_eq!(id, 72, "the connection must still answer"),
+        other => panic!("expected a pong, got {other:?}"),
+    }
     close_lifecycle_socket(socket).await;
 }

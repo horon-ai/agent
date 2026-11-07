@@ -112,21 +112,10 @@ try {
 
     Write-Host 'test_optional_setup_and_source_build_are_opt_in'
     Assert-Equal $false ([bool]$ConfigureAlacritty) 'core install should not install an optional terminal by default'
-    Assert-Equal $false ([bool]$ConfigureHotkey) 'core install should not add login persistence by default'
     Assert-Equal $false ([bool]$BuildFromSource) 'installer should not start a source build by default'
     Assert-True ($installText.Contains('will not start a long source build automatically')) 'missing release assets should produce an explicit source-build opt-in message'
     Assert-True ($installText.Contains('"--locked", "-p", "horon-agent", "--bin", "horon-agent"')) 'source-build fallback should compile only the locked horon-agent binary target'
-
-    Write-Host 'test_hotkey_shortcut_script_is_valid_powershell'
-    $shortcutScript = Get-HoronAgentHotkeyShortcutScript -StartupShortcutPath "C:\Users\Test User\AppData\Roaming\horon-agent's hotkey.lnk" -HoronAgentExePath "C:\Program Files\horon-agent's bin\horon-agent.exe"
-    Assert-True ($shortcutScript -match "(?m)^\`$shortcut\.TargetPath = 'powershell\.exe'\r?$") 'shortcut script should target PowerShell directly'
-    Assert-True ($shortcutScript -match '(?m)^\$shortcut\.Arguments = .*ExecutionPolicy RemoteSigned.*--listen-windows-hotkey.*\r?$') 'shortcut script should launch the native listener with RemoteSigned'
-    Assert-True (-not $shortcutScript.Contains('ExecutionPolicy Bypass')) 'shortcut script should not bypass PowerShell execution policy'
-    Assert-True ($shortcutScript -match '(?m)^\$shortcut\.WindowStyle = 7\r?$') 'shortcut script should assign WindowStyle without escaping the variable name'
-    Assert-True ($shortcutScript -match '(?m)^\$shortcut\.Save\(\)\r?$') 'shortcut script should call Save without escaping the variable name'
-    Assert-True (-not $shortcutScript.Contains('`$shortcut')) 'shortcut script should not contain literal backticks before shortcut variables'
-    [void][scriptblock]::Create($shortcutScript)
-    Assert-True ($installText.Contains('HORON_AGENT_WINDOWS_SETUP_SKIP_PROCESS_LIFECYCLE')) 'isolated verification should be able to create shortcut files without stopping or spawning real user listeners'
+    Assert-True (-not $installText.Contains('Install-HoronAgentHotkey')) 'installer should not configure desktop launch hotkeys'
 
     Write-Host 'test_upgrade_replaces_launcher_no_extra_path'
     $sourceDir = Join-Path $testRoot 'sources'

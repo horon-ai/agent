@@ -103,6 +103,40 @@ pub(super) async fn spawn_tracked_live_turn(
     status_detail: Option<String>,
     swarm: LiveTurnSwarmContext,
 ) {
+    spawn_tracked_live_turn_with_completion(
+        session_id,
+        agent,
+        message,
+        system_reminder,
+        display_role,
+        status_detail,
+        swarm,
+        None,
+    )
+    .await;
+}
+
+/// Same as [`spawn_tracked_live_turn`], and reports the turn outcome to
+/// `completion` when the caller passed one.
+///
+/// The channel receives the turn's latest assistant text after a successful
+/// turn (`None` when the turn produced no visible answer) and `None` after a
+/// failed turn, once the member status is published and before the agent
+/// reservation is released.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "live turn spawn carries the swarm context and an optional completion channel"
+)]
+pub(super) async fn spawn_tracked_live_turn_with_completion(
+    session_id: &str,
+    agent: OwnedMutexGuard<Agent>,
+    message: String,
+    system_reminder: Option<String>,
+    display_role: Option<crate::session::StoredDisplayRole>,
+    status_detail: Option<String>,
+    swarm: LiveTurnSwarmContext,
+    completion: Option<tokio::sync::oneshot::Sender<Option<String>>>,
+) {
     update_member_status(
         session_id,
         "running",
@@ -171,7 +205,7 @@ pub(super) async fn spawn_tracked_live_turn(
                     &session_id,
                     "ready",
                     None,
-                    completion_report,
+                    completion_report.clone(),
                     &swarm.members,
                     &swarm.swarms_by_id,
                     Some(&swarm.event_history),
@@ -179,6 +213,9 @@ pub(super) async fn spawn_tracked_live_turn(
                     Some(&swarm.event_tx),
                 )
                 .await;
+                if let Some(tx) = completion {
+                    drop(tx.send(completion_report));
+                }
                 let _ = event_tx.send(ServerEvent::Done { id: 0 });
             }
             Err(error) => {
@@ -197,6 +234,9 @@ pub(super) async fn spawn_tracked_live_turn(
                     Some(&swarm.event_tx),
                 )
                 .await;
+                if let Some(tx) = completion {
+                    drop(tx.send(None));
+                }
                 let _ = event_tx.send(ServerEvent::TurnStopped {
                     reason: stop_reason,
                     message: crate::util::format_error_chain(&error),
@@ -238,6 +278,32 @@ pub(super) async fn run_live_turn_if_idle(
     )
     .await;
     true
+}
+
+/// Same as [`run_live_turn_if_idle`], and hands back the turn's completion
+/// channel when the turn was started.
+pub(super) async fn run_live_turn_if_idle_with_completion(
+    session_id: &str,
+    message: &str,
+    system_reminder: Option<String>,
+    sessions: &SessionAgents,
+    swarm: LiveTurnSwarmContext,
+) -> Option<tokio::sync::oneshot::Receiver<Option<String>>> {
+    let agent = idle_live_agent(session_id, sessions, &swarm.members).await?;
+    let detail = Some(truncate_detail(message, 120)).filter(|detail| !detail.is_empty());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    spawn_tracked_live_turn_with_completion(
+        session_id,
+        agent,
+        message.to_string(),
+        system_reminder,
+        None,
+        detail,
+        swarm,
+        Some(tx),
+    )
+    .await;
+    Some(rx)
 }
 
 pub(super) async fn run_live_system_turn_if_idle(
@@ -284,6 +350,10 @@ where
         }
     }
 }
+
+#[cfg(test)]
+#[path = "live_turn_tests.rs"]
+mod completion_tests;
 
 #[cfg(test)]
 mod stop_reason_tests {

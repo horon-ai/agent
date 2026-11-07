@@ -70,7 +70,7 @@ cargo test -p horon-agent-base soft_interrupt_store
 
 ### 개요
 
-소프트 인터럽트는 이 빌드에 구현되어 있다. 진행 중인 턴에 메시지를 넣어도 현재 생성은 취소되지 않는다. 흐름을 끊고 다시 시작하는 대신 메시지를 대기열에 넣고, 에이전트 루프가 도구 실행을 마친 안전 지점에서 대화 이력에 붙인다. 구현은 세 조각으로 나뉜다. 프로토콜 요청 두 개(`crates/protocol/src/wire.rs:99-124`), 세션별 대기열(`crates/agent-runtime/src/lib.rs:18-175`), 그리고 턴 루프의 주입 지점(`crates/app-core/src/agent/interrupts.rs:536-669`)이다.
+소프트 인터럽트는 이 빌드에 구현되어 있다. 진행 중인 턴에 메시지를 넣어도 현재 생성은 취소되지 않는다. 흐름을 끊고 다시 시작하는 대신 메시지를 대기열에 넣고, 에이전트 루프가 도구 실행을 마친 안전 지점에서 대화 이력에 붙인다. 구현은 세 조각으로 나뉜다. 프로토콜 요청 두 개(`crates/protocol/src/wire.rs:175-197`), 세션별 대기열(`crates/agent-runtime/src/lib.rs:18-175`), 그리고 턴 루프의 주입 지점(`crates/app-core/src/agent/interrupts.rs:536-669`)이다.
 
 ### 하드 인터럽트와의 차이
 
@@ -137,7 +137,7 @@ CancelSoftInterrupts {
 }
 ```
 
-`client_id`는 주입 이벤트에 그대로 되돌아오고, 필터가 붙은 취소 요청에서 대상 지정에 쓰인다(`crates/protocol/src/wire.rs:105-124`).
+`client_id`는 주입 이벤트에 그대로 되돌아오고, 필터가 붙은 취소 요청에서 대상 지정에 쓰인다(`crates/protocol/src/wire.rs:175-197`).
 
 서버는 세 가지 이벤트를 낸다.
 
@@ -178,7 +178,7 @@ CancelSoftInterrupts {
 들어가고, 출처가 바뀌면 그 지점에서 묶음이 끊긴다(`crates/app-core/src/agent/interrupts.rs:596-640`).
 
 긴급 모드(`urgent = true`)는 지점 C에서 남은 도구를 건너뛸 수 있다는 뜻이다
-(`crates/protocol/src/wire.rs:103-104`). 건너뛴 호출에는 `is_error` 결과가 먼저
+(`crates/protocol/src/wire.rs:183`). 건너뛴 호출에는 `is_error` 결과가 먼저
 채워지고, 이벤트의 `tools_skipped`에 개수가 실린다. 이 처리는
 `crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`에 있다.
 
@@ -240,20 +240,20 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   세션 재정의를 읽거나 요청한 정책 범위를 유지한다.
 - `subagent_model`: 생성된 워커 정책을 보기/설정/상속.
 - `autoreview`, `autojudge`: 상태를 보여주고 명시적 on/off/toggle을 유지한다.
+- `plan`: 계획 모드 상태를 읽고 바꾼다. 인자가 없거나 `status`면 현재 상태를,
+  `on`/`off`는 계획 모드를 켜고 끄며, `approve`/`reject`는 세션에 대기 중인 계획을
+  승인하거나 거절한다. 설정에서 계획 모드가 꺼져 있으면 `on`과 `approve`는 오류로 답한다
+  (`crates/app-core/src/plan_mode.rs`).
 - `transport`: 이름만 남아 있고 바꿀 것이 없다. `Provider` 트레이트에서 `transport`는 `None`,
   `set_transport`는 "This provider does not support transport switching" 오류, `available_transports`는
-  빈 배열이 기본값이다. 이 트리의 구현은 그 기본값을 그대로 쓰거나 다른 프로바이더로 넘기는 위임뿐이다
-  (`crates/provider-core/src/lib.rs:463-473`, `crates/base/src/provider/mod.rs:1651-1675`,
-  `crates/base/src/provider/horon_agent.rs:205-215`). 그래서 인자 없이 부르면
+  빈 배열이 기본값이다(`crates/provider-core/src/lib.rs:437-447`). 이 트리의 구현은 그 기본값을
+  그대로 쓴다(`crates/base/src/provider/mod.rs:1128-1147`). 그래서 인자 없이 부르면
   `{"transport": null, "provider": ...}`가 오고, `auto`·`https`·`websocket`을 넘기면 위 오류가 난다
-  (`crates/app-core/src/server/runtime_commands.rs:218-229`).
-  설정 파일과 환경변수의 `openai_transport`도 값을 읽어 표시만 하고 동작을 바꾸지 않는다
-  (`crates/base/src/config/env_overrides.rs:859-864`, `crates/base/src/config/display_summary.rs:261`).
+  (`crates/app-core/src/server/runtime_commands.rs:200-210`).
+  설정 파일과 환경변수의 `openai_transport`는 값을 받아 두기만 하고 어떤 프로바이더도 읽지 않는다
+  (`crates/config-types/src/lib.rs:1341`, `crates/base/src/config/env_overrides.rs:476`).
 - `fast`: 인자 없는 명령은 우선순위/off를 토글하고, 명시적 on/off/flex/status를 지원한다.
   적용할 수 없는 프로바이더는 실제 오류를 돌려준다.
-- `subscription`: 로그인 상태의 실제 라이브 호스팅 계정 사용량. 자격 증명은
-  돌려주지 않는다. 네트워크/인증 실패는 오류이며 지어낸 상태가 아니다.
-- `provider_test_coverage`: 유지된 커버리지 보고서. 유료 라이브 프로브는 아니다.
 - `refresh_model_list`: 실제 프로바이더 카탈로그 새로고침.
 - `continue`, `resume_all`: 중단된 라이브 세션의 네이티브 이어가기.
   바쁜/완료/새 세션은 건드리지 않는다.
@@ -272,10 +272,10 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   프로바이더 자격 증명 제거. 지원되는 공유 인증 저장소가 대상이다.
 
 위 이름들은 런타임 명령 열거형이 정한다
-(`crates/harness-api/src/runtime_commands.rs:5-33`).
-`premium`은 런타임 명령이 아니라 클라이언트 요청 `SetPremiumMode`이며 그 요청은 `crates/harness-api/src/harness_api_tests/capability_coverage.rs:68`에 나온다.
+(`crates/harness-api/src/runtime_commands.rs:7-33`).
+열거형에 없는 이름을 보내면 오류로 답한다.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, `cache 5m`은 이 열거형에 없다.
-프리미엄 모드처럼 클라이언트 요청으로만 닿는 상태를 런타임 명령으로 보내면 오류가 난다.
+캐시 TTL을 늘리는 런타임 명령도, 프리미엄 모드를 바꾸는 클라이언트 요청도 이 빌드에 없다.
 
 `transfer_session`은 별도 수명주기 작업이며
 `transferSession` / `transfer_session`으로 노출된다. 실제 런타임 압축 하위를 만들고
@@ -291,14 +291,13 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 
 새 SDK나 브리지는 실행 중인 데몬을 업그레이드하지 않는다. 런타임과
 브리지를 빌드하고 새 런타임 후보를 설치한 뒤 기존의 우아한 서버
-업그레이드 워크플로를 쓴다. 세션 상태를 보존하고 라이브 데몬이나
-Desktop 하네스 브리지를 죽이지 않는다. Desktop 브리지 업그레이드는 `reload-bridge` 워크플로를 쓴다.
-양쪽이 새 코드를 실행할 때까지 그 기능은 쓸 수 없다.
+업그레이드 워크플로를 쓴다. 세션 상태를 보존하고 라이브 데몬이나 하네스
+브리지를 죽이지 않는다. 양쪽이 새 코드를 실행할 때까지 그 기능은 쓸 수 없다.
 
 ## `--resume` 동작
 
 이 빌드에는 대화형 세션 선택기가 없다. 세션 재개는 전역 `--resume` 플래그 하나로 한다
-(`src/cli/args.rs:76-78`). 값을 주지 않고 `--resume`만 넘기면 데몬은 시작하지 않고 오류로
+(`src/cli/args.rs:63-68`). 값을 주지 않고 `--resume`만 넘기면 데몬은 시작하지 않고 오류로
 끝난다. 문구는 "the interactive session picker is unavailable in this headless build; pass an
 explicit session id to --resume"다(`src/cli/dispatch.rs:97-101`).
 
@@ -308,22 +307,17 @@ explicit session id to --resume"다(`src/cli/dispatch.rs:97-101`).
   먼저 해석한다(`src/cli/dispatch.rs:696-736`).
 - 해석에 실패하면 원문 id를 그대로 서버로 넘겨 서버가 다시 해석하게 한다
   (`src/cli/dispatch.rs:721`).
-- 재개 여부는 다른 전역 플래그와 함께 쓸 수 있다. `--fresh-spawn`은 새 창으로 띄운 경우
-  무거운 로컬 재개 준비를 건너뛴다(`src/cli/args.rs:80-82`).
+- `--resume`은 다른 전역 플래그와 함께 쓸 수 있다. 세션은 이 프로세스에서 그대로
+  재개되고, 그것을 어떤 화면에 보여 줄지는 연결한 클라이언트가 정한다.
 
-`session_picker_enter` 키는 설정 스키마에 남아 있다(`crates/config-types/src/lib.rs:1193`,
-`crates/base/src/config/default_file.rs:127`).
-기본값은 `"current-terminal"`이고 다른 값은 `"new-terminal"`이다. 이 빌드에서 그 값을 읽는
-선택기 UI는 없다.
+### 재개한 세션의 표시
 
-### 재개한 세션을 어디에 열지
-
-세션을 새 터미널이나 멀티플렉서 페인에서 여는 경로는 터미널 실행기가 맡는다.
-`[terminal] spawn_hook`이 설정돼 있으면 그것이 먼저 쓰인다
-(`crates/base/src/terminal_launch.rs:13-30`). 설정이 없으면 실행기는 클라이언트의
-터미널 환경 변수를 보고 대상을 고른다(`crates/terminal-launch/src/lib.rs:92-115`).
-Herdr 안에서 실행 중이면 호출한 페인을 나누고 새 페인에서 재개 명령을 실행한다
-(`crates/terminal-launch/src/lib.rs:630-648`).
+이 빌드는 데몬이나 `run` 프로세스 안에서 세션을 재개하고 터미널 창을 열지 않는다.
+어떤 창이나 페인으로 보여 줄지는 클라이언트 몫이다. 예전 TUI가 쓰던 세션 선택기와
+새 터미널·멀티플렉서 페인에서 여는 실행기는 이 트리에 없다. 그래서 옛 config 파일에
+`session_picker_enter`나 `[terminal]` 키가 남아 있어도 읽지 않고, 예전 `--fresh-spawn`처럼
+창을 고르는 플래그도 없다. `crates/terminal-launch`에는 클라이언트 터미널 환경 스냅숏과
+훅 명령 파싱만 남아 있다.
 
 ### 저장한 세션
 

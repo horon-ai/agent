@@ -55,8 +55,6 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
-    let (_debug_response_tx, _) = broadcast::channel(8);
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _) = broadcast::channel(8);
@@ -85,8 +83,6 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             file_touch.clone(),
             channel_subscriptions.clone(),
             channel_subscriptions_by_session.clone(),
-            client_debug_state.clone(),
-            _debug_response_tx.clone(),
             event_history.clone(),
             event_counter.clone(),
             swarm_event_tx.clone(),

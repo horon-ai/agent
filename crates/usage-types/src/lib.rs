@@ -1,4 +1,4 @@
-/// Read-only banked reset metadata from the ChatGPT usage response, pinned to
+/// Read-only banked reset metadata from the subscription usage response, pinned to
 /// the login whose usage was fetched. `None` label denotes the default scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiResetCredits {

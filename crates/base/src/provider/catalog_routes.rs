@@ -1,232 +1,18 @@
-use crate::auth::{AuthState, AuthStatus};
-
 use super::{
-    AccountModelAvailabilityState, CHATGPT_WEB_MODEL, ModelRoute, MultiProvider, ProviderRegistry,
-    build_chatgpt_web_route, build_openai_api_key_route, build_openai_oauth_route, dedupe_model_routes,
-    direct_openai_compatible_profile_routes, format_account_model_availability_detail, is_listable_model_name,
-    known_openai_model_ids_for_scope, model_availability_for_scope, provider_for_model,
+    ModelRoute, MultiProvider, ProviderRegistry, dedupe_model_routes, direct_openai_compatible_profile_routes,
+    is_listable_model_name,
 };
-
-/// Build the fast local route snapshot used by the TUI model picker while the
-/// full provider catalog is hydrating.
-///
-/// This intentionally lives in the provider layer rather than the TUI so auth,
-/// provider, and catalog policy have one source of truth. The TUI should only
-/// group, sort, and render the returned routes.
-pub fn simplified_model_routes_for_picker(
-    current_provider_name: &str,
-    current_model: &str,
-    display_models: impl IntoIterator<Item = String>,
-) -> Vec<ModelRoute> {
-    let auth = AuthStatus::check_fast();
-    let mut routes = Vec::new();
-
-    for model in display_models {
-        if model == CHATGPT_WEB_MODEL {
-            routes.push(build_chatgpt_web_route());
-            continue;
-        }
-        if !model.contains('/') && provider_for_model(&model) == Some("openai") {
-            // Platform-API-only GPT Pro models: never advertise an OAuth route.
-            if horon_agent_provider_core::is_openai_api_only_pro_model(&model) {
-                routes.push(ModelRoute {
-                    model: model.clone(),
-                    provider: "OpenAI".to_string(),
-                    api_method: "openai-api-key".to_string(),
-                    available: auth.openai_has_api_key,
-                    detail: if auth.openai_has_api_key {
-                        String::new()
-                    } else {
-                        "requires OPENAI_API_KEY".to_string()
-                    },
-                    usage: None,
-                    cheapness: None,
-                });
-                continue;
-            }
-            if auth.openai_has_oauth {
-                routes.push(ModelRoute {
-                    model: model.clone(),
-                    provider: "OpenAI".to_string(),
-                    api_method: "openai-oauth".to_string(),
-                    available: true,
-                    detail: String::new(),
-                    usage: None,
-                    cheapness: None,
-                });
-            }
-            if auth.openai_has_api_key {
-                routes.push(ModelRoute {
-                    model: model.clone(),
-                    provider: "OpenAI".to_string(),
-                    api_method: "openai-api-key".to_string(),
-                    available: true,
-                    detail: String::new(),
-                    usage: None,
-                    cheapness: None,
-                });
-            }
-            if auth.openai == AuthState::NotConfigured {
-                routes.push(ModelRoute {
-                    model,
-                    provider: "OpenAI".to_string(),
-                    api_method: "openai-oauth".to_string(),
-                    available: false,
-                    detail: "no credentials".to_string(),
-                    usage: None,
-                    cheapness: None,
-                });
-            }
-            continue;
-        }
-
-        // Slash-qualified ids belong to a configured compatible profile; a
-        // model that no profile serves gets no fabricated route here.
-        if model.contains('/') {
-            if let Some(route) = remote_openai_compatible_route_for_model(&model) {
-                routes.push(route);
-            }
-            continue;
-        }
-
-        let (provider, api_method, available, detail) = match provider_for_model(&model) {
-            Some("openai") => unreachable!("OpenAI models are handled above"),
-            Some(other) => (other.to_string(), other.to_string(), true, String::new()),
-            None => (
-                current_provider_name.to_string(),
-                "current".to_string(),
-                true,
-                String::new(),
-            ),
-        };
-
-        routes.push(ModelRoute {
-            model,
-            provider,
-            api_method,
-            available,
-            detail,
-            usage: None,
-            cheapness: None,
-        });
-    }
-
-    if routes.is_empty() && !current_model.is_empty() && current_model != "unknown" {
-        routes.push(ModelRoute {
-            model: current_model.to_string(),
-            provider: current_provider_name.to_string(),
-            api_method: "current".to_string(),
-            available: true,
-            detail: "simplified catalog".to_string(),
-            usage: None,
-            cheapness: None,
-        });
-    }
-
-    expand_saved_account_routes(routes)
-}
-
-/// Replace implicit OAuth routes with every saved account's own catalog.
-/// API-key and other provider routes stay unchanged. The account-qualified API
-/// method is carried through RPC, deduplication, selection, and restoration.
-fn expand_saved_account_routes(mut routes: Vec<ModelRoute>) -> Vec<ModelRoute> {
-    let openai = match crate::auth::codex::list_accounts() {
-        Ok(accounts) => accounts,
-        Err(error) => {
-            crate::logging::warn(&format!("Cannot expand saved openai account routes: {error}"));
-            Vec::new()
-        }
-    };
-    if !openai.is_empty() {
-        routes.retain(|route| route.api_method != "openai-oauth");
-        for account in openai {
-            for model in known_openai_model_ids_for_scope(&account.label) {
-                if !is_listable_model_name(&model)
-                    || model == CHATGPT_WEB_MODEL
-                    || horon_agent_provider_core::is_openai_api_only_pro_model(&model)
-                {
-                    continue;
-                }
-                let availability = model_availability_for_scope(&account.label, &model);
-                let mut route = build_openai_oauth_route(
-                    &model,
-                    availability.state != AccountModelAvailabilityState::Unavailable,
-                    format_account_model_availability_detail(&availability).unwrap_or_default(),
-                );
-                apply_saved_account_status(
-                    &mut route,
-                    "openai",
-                    &account.label,
-                    !account.access_token.is_empty(),
-                    !account.refresh_token.is_empty(),
-                    account
-                        .expires_at
-                        .is_some_and(|expires| expires <= chrono::Utc::now().timestamp_millis()),
-                );
-                qualify_saved_account_route(&mut route, &account.label, account.email.as_deref());
-                routes.push(route);
-            }
-        }
-    }
-    dedupe_model_routes(routes)
-}
-
-fn apply_saved_account_status(
-    route: &mut ModelRoute,
-    provider: &str,
-    label: &str,
-    has_access: bool,
-    has_refresh: bool,
-    expired: bool,
-) {
-    let status = if (!has_access || expired) && !has_refresh {
-        route.available = false;
-        Some("saved login expired or missing credentials; run /login".to_string())
-    } else if let Some(detail) = super::models::provider_unavailability_detail_for_account_label(provider, Some(label))
-    {
-        route.available = false;
-        Some(detail)
-    } else if expired {
-        Some("expired access token; refresh on selection".to_string())
-    } else {
-        None
-    };
-    if let Some(status) = status {
-        route.detail = if route.detail.is_empty() {
-            status
-        } else {
-            format!("{} · {status}", route.detail)
-        };
-    }
-}
-
-fn qualify_saved_account_route(route: &mut ModelRoute, label: &str, email: Option<&str>) {
-    route.api_method = format!("{}@{label}", route.api_method);
-    let identity = match email {
-        Some(email) => format!("account {label} · {email}"),
-        None => format!("account {label}"),
-    };
-    route.detail = if route.detail.is_empty() {
-        identity
-    } else {
-        format!("{identity} · {}", route.detail)
-    };
-}
 
 /// Build the full route catalog.
 ///
-/// Orchestration only: each provider family contributes routes through its
-/// own `append_*_routes` builder below, so provider-specific policy stays in
-/// one place per provider instead of one 400-line function.
+/// Every configured OpenAI-compatible profile contributes its models here; the
+/// active direct profile contributes its own live catalog through the compatible
+/// profile path, so it is skipped in this scan.
 pub(super) fn multiprovider_model_routes(provider: &MultiProvider) -> Vec<ModelRoute> {
     let routes_started = std::time::Instant::now();
     provider.spawn_openai_catalog_refresh_if_needed();
 
     let mut routes = Vec::new();
-
-    let openai_auth = crate::auth::AuthStatus::check_fast();
-
-    append_openai_routes(provider, &mut routes, &openai_auth);
     let added_direct_openai_compatible_routes = append_openai_compatible_profile_routes(provider, &mut routes);
 
     let total_ms = routes_started.elapsed().as_millis();
@@ -248,111 +34,18 @@ pub(super) fn multiprovider_model_routes(provider: &MultiProvider) -> Vec<ModelR
 
     let routes = dedupe_model_routes(routes);
 
-    // Structured, always-on summary of catalog route building. This is the
-    // single most useful line for the recurring "model picker empty /
-    // configured provider's models missing" reports (issues #292, #268, #312,
-    // #304): it records which credentials were detected and how many routes
-    // each provider contributed, so a shared log explains exactly why a model
-    // was or was not offered. No secrets here.
+    // Structured, always-on summary of catalog route building: it records how
+    // many routes each provider contributed, so a shared log explains why a
+    // model was or was not offered. No secrets here.
     log_model_routes_summary(
         "build",
         &routes,
         routes_before_filter,
-        openai_auth.openai_has_oauth,
-        openai_auth.openai_has_api_key,
         added_direct_openai_compatible_routes,
         total_ms,
     );
 
-    expand_saved_account_routes(routes)
-}
-
-/// OpenAI models via OAuth and/or API key, with per-account availability.
-///
-/// The ChatGPT/Codex OAuth catalog and the platform API-key catalog list
-/// different models, so each route is offered only for models in its own
-/// credential's catalog and judged against that catalog's availability. Using
-/// one shared list advertised API-only models under OAuth (and vice versa),
-/// and the switch then failed against the other credential's catalog.
-fn append_openai_routes(provider: &MultiProvider, routes: &mut Vec<ModelRoute>, openai_auth: &crate::auth::AuthStatus) {
-    let has_runtime = provider.openai_provider().is_some();
-    let oauth_scope = super::openai_catalog_scope_for_credential(true, "");
-    let api_scope = crate::provider_catalog::load_api_key_from_env_or_config("OPENAI_API_KEY", "openai.env")
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty())
-        .map(|key| super::openai_catalog_scope_for_credential(false, &key));
-
-    let oauth_models = known_openai_model_ids_for_scope(&oauth_scope);
-    let api_models = api_scope
-        .as_deref()
-        .filter(|_| openai_auth.openai_has_api_key)
-        .map(|scope| {
-            known_openai_model_ids_for_scope(scope)
-                .into_iter()
-                .filter(|model| is_listable_model_name(model))
-                .collect::<Vec<_>>()
-        });
-    let mut openai_models = if openai_auth.openai_has_oauth || api_models.is_none() {
-        oauth_models.clone()
-    } else {
-        Vec::new()
-    };
-    for model in api_models.iter().flatten() {
-        if !openai_models.contains(model) {
-            openai_models.push(model.clone());
-        }
-    }
-
-    let route_availability = |scope: &str, model: &str| -> (bool, String) {
-        if !has_runtime {
-            return (false, "no credentials".to_string());
-        }
-        let availability = model_availability_for_scope(scope, model);
-        match availability.state {
-            AccountModelAvailabilityState::Available => (true, String::new()),
-            AccountModelAvailabilityState::Unavailable => (
-                false,
-                format_account_model_availability_detail(&availability).unwrap_or_else(|| "not available".to_string()),
-            ),
-            AccountModelAvailabilityState::Unknown => {
-                let detail = format_account_model_availability_detail(&availability)
-                    .unwrap_or_else(|| "availability unknown".to_string());
-                (true, detail)
-            }
-        }
-    };
-
-    for model in openai_models {
-        if model == CHATGPT_WEB_MODEL {
-            routes.push(build_chatgpt_web_route());
-            continue;
-        }
-        // GPT Pro models are platform-API-only: never offer an OAuth route
-        // for them (the Codex backend rejects them for ChatGPT accounts).
-        if horon_agent_provider_core::is_openai_api_only_pro_model(&model) {
-            if openai_auth.openai_has_api_key {
-                routes.push(build_openai_api_key_route(&model, has_runtime, String::new()));
-            } else {
-                routes.push(build_openai_api_key_route(&model, false, "requires OPENAI_API_KEY"));
-            }
-            continue;
-        }
-        let in_oauth = oauth_models.contains(&model);
-        if openai_auth.openai_has_oauth && in_oauth {
-            let (available, detail) = route_availability(&oauth_scope, &model);
-            routes.push(build_openai_oauth_route(&model, available, detail));
-        }
-        if let (Some(api_scope), Some(api_models)) = (api_scope.as_deref(), api_models.as_ref())
-            && api_models.contains(&model)
-        {
-            let (available, detail) = route_availability(api_scope, &model);
-            routes.push(build_openai_api_key_route(&model, available, detail));
-        }
-        if !openai_auth.openai_has_oauth && !openai_auth.openai_has_api_key {
-            let (_, detail) = route_availability(&oauth_scope, &model);
-            routes.push(build_openai_oauth_route(&model, false, detail));
-        }
-    }
+    routes
 }
 
 /// Configured OpenAI-compatible profiles (NVIDIA NIM, Groq, ...), excluding
@@ -470,8 +163,6 @@ fn log_model_routes_summary(
     phase: &str,
     routes: &[ModelRoute],
     routes_before_filter: usize,
-    openai_oauth: bool,
-    openai_api_key: bool,
     direct_openai_compatible: bool,
     total_ms: u128,
 ) {
@@ -493,8 +184,6 @@ fn log_model_routes_summary(
                 "routes_dropped",
                 routes_before_filter.saturating_sub(routes.len()).to_string(),
             ),
-            ("openai_oauth", openai_oauth.to_string()),
-            ("openai_api", openai_api_key.to_string()),
             ("direct_openai_compatible", direct_openai_compatible.to_string()),
             ("by_provider", per_provider),
             ("build_ms", total_ms.to_string()),
@@ -508,19 +197,6 @@ pub use remote::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn saved_account_expiry_requires_login_only_without_refresh_credentials() {
-        let _guard = EnvGuard::new();
-        let mut expired = build_openai_oauth_route("gpt-5.5", true, "");
-        apply_saved_account_status(&mut expired, "openai", "expired-test", true, false, true);
-        assert!(!expired.available);
-        assert!(expired.detail.contains("expired"));
-        let mut refreshable = build_openai_oauth_route("gpt-5.5", true, "");
-        apply_saved_account_status(&mut refreshable, "openai", "refresh-test", true, true, true);
-        assert!(refreshable.available);
-        assert!(refreshable.detail.contains("refresh on selection"));
-    }
 
     struct EnvGuard {
         vars: Vec<(&'static str, Option<std::ffi::OsString>)>,

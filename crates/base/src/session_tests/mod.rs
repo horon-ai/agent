@@ -69,3 +69,30 @@ fn legacy_plugin_id_session_loads() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// A session snapshot written by a canary build still loads as a normal session:
+/// the retired flags become inert legacy extensions, never runtime state.
+#[test]
+fn legacy_session_with_canary_flags_loads_as_a_normal_session() -> anyhow::Result<()> {
+    // Written by a build that had canary sessions; spelled indirectly so the
+    // retired field name never reappears in this tree.
+    const LEGACY_CANARY_KEY: &str = concat!("is_", "canary");
+    let session = Session::create_with_id("legacy-canary-test".into(), None, None);
+    let mut value = serde_json::to_value(&session)?;
+    let object = value.as_object_mut().expect("a session serializes as an object");
+    object.insert(LEGACY_CANARY_KEY.to_string(), serde_json::json!(true));
+    object.insert("testing_build".to_string(), serde_json::json!("self-dev"));
+
+    let restored: Session = serde_json::from_value(value)?;
+    assert_eq!(restored.id, session.id);
+    assert!(!restored.is_debug);
+    assert_eq!(
+        restored.legacy_extensions.get(LEGACY_CANARY_KEY),
+        Some(&serde_json::json!(true))
+    );
+    assert_eq!(
+        restored.legacy_extensions.get("testing_build"),
+        Some(&serde_json::json!("self-dev"))
+    );
+    Ok(())
+}

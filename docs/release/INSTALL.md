@@ -30,3 +30,49 @@ horon-agent install-release --assets <디렉터리> --agent-version <버전>
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 릴리스 자산과 `SHA256SUMS`를 임시 디렉터리에 받은 뒤 이 명령을 호출한다. `scripts/install/install_from_source.sh`는 같은 명령에 `--source-binary`를 붙여 로컬 빌드를 설치한다. 그래서 셸과 PowerShell이 서로 다른 설치 레이아웃을 만들지 않고, 실패하면 스크립트도 이전 설치를 건드리지 않는다.
 
 Windows 설치 경로와 서명 절차는 [`WINDOWS.md`](WINDOWS.md)에 있다.
+
+## Linux 서버에서 실행
+
+릴리스 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다. OpenSSL과 다른 패키지는 필요 없다. TLS는 전부 rustls로 처리하고 OpenSSL은 의존성 그래프에 없다 (`cargo tree -p horon-agent -i openssl-sys --target all`이 아무것도 찾지 않는다).
+
+### 인증서
+
+모델 HTTPS 호출은 reqwest가 내장한 webpki 루트를 쓴다. 그래서 `ca-certificates` 없이도 `serve`, `run`, `api-bridge`가 동작한다.
+
+### 준비
+
+TTY, 화면, `XDG_RUNTIME_DIR`이 필요 없다. `XDG_RUNTIME_DIR`이 없으면 `HORON_AGENT_RUNTIME_DIR`을 먼저 보고, 그것도 없으면 임시 디렉터리 아래 `horon-agent-<사용자 구분자>`를 쓴다 (`crates/harness-api/src/sockets.rs:16-31`). 사용자 구분자는 `UID`, `USER` 순으로 읽어 영숫자와 `-`, `_`만 남기고 64자로 자른다. 남는 글자가 없으면 `user`다.
+
+provider 프로파일을 `config.toml`에 둔다. 위치는 `HORON_AGENT_HOME`이 있으면 `$HORON_AGENT_HOME/config.toml`, 없으면 `~/.horon-agent/config.toml`이다. 키와 파일 위치는 [`../provider/MODEL.md`](../provider/MODEL.md)에 있다.
+
+```toml
+[provider]
+default_provider = "my-gw"
+
+[providers.my-gw]
+type = "openai-compatible"
+base_url = "https://llm.example.com/v1"
+api_key_env = "MY_GW_API_KEY"
+default_model = "my-model"
+```
+
+| 하려는 일 | 명령 |
+| --- | --- |
+| 한 번 묻고 끝내기 | `horon-agent --no-update run "..."` |
+| 데몬으로 상주 | `horon-agent serve` |
+| SDK 소켓 열기 | `horon-agent api-bridge` |
+
+TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직접 띄운다. 미리 `serve`를 실행해 둘 필요가 없다 (`sdk/typescript/README.md`).
+
+### 릴리스 자산
+
+| 자산 | 빌드 |
+| --- | --- |
+| `horon-agent-linux-x86_64` | CentOS 7 / manylinux2014 컨테이너에서 glibc 2.17 기준으로 빌드한다 (`scripts/release/build_linux_compat.sh`). |
+| `horon-agent-linux-aarch64` | `ubuntu-24.04-arm`에서 빌드한다 (`.github/workflows/release.yml`). |
+
+아카이브에는 래퍼와 `<artifact>.bin`만 들어 있고 OpenSSL 라이브러리는 더 이상 들어가지 않는다. `scripts/install/install.sh`는 예전 아카이브도 설치하도록 `libssl.so*` 멤버를 계속 받는다.
+
+### CI 가드
+
+`scripts/ci/check_linux_bare_runtime.sh <binary>`가 바이너리를 `debian:trixie-slim`에서 돌린다. 컨테이너에서 OpenSSL 라이브러리와 CA 저장소를 지우고, `ldd` 결과가 glibc 계열과 libgcc 허용 목록 안에 있는지 확인한다. 이어서 `--version`과 모의 프로바이더를 상대로 `run` 한 턴을 실행한다. CI `build` 작업의 Linux 항목이 release 프로필 빌드 뒤에 이 스크립트를 돌린다. 이 단계는 GitHub 호스팅 러너에서만 돈다 (`CI_SELF_HOSTED`를 켜면 macOS 항목만 남는다). Docker가 있으면 개발자 기계에서도 같은 명령을 돌릴 수 있다.

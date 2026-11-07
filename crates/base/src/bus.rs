@@ -1,6 +1,5 @@
 pub use crate::background::BackgroundCleanupResult;
 use crate::message::ToolCall;
-use crate::side_panel::SidePanelSnapshot;
 use crate::todo::TodoItem;
 pub use horon_agent_background_types::{
     BackgroundTaskCompleted, BackgroundTaskProgress, BackgroundTaskProgressEvent, BackgroundTaskProgressKind,
@@ -133,59 +132,6 @@ pub struct LoginCompleted {
     pub message: String,
 }
 
-/// Result of the first-run onboarding default-model validation ping. Published
-/// after the new-session screen runs a lightweight live check of the
-/// auto-selected default model so the UI can show a single "ready"/"failed"
-/// validation line instead of the usual login/import chatter.
-#[derive(Clone, Debug)]
-pub struct OnboardingModelValidated {
-    /// Session the validation was started for; the UI ignores stale results.
-    pub session_id: String,
-    /// Friendly model label shown to the user (e.g. "GPT-5.5 (low)").
-    pub model_label: String,
-    /// Provider key backing the default model (e.g. "anthropic", "openai") so
-    /// the readiness summary can avoid listing the default provider twice.
-    pub provider_key: Option<String>,
-    /// Whether the live validation ping succeeded.
-    pub ok: bool,
-    /// Optional short detail (failure reason) shown after a failed check.
-    pub detail: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct InputShellCompleted {
-    pub session_id: String,
-    pub result: crate::message::InputShellResult,
-}
-
-#[derive(Clone, Debug)]
-pub enum ClipboardPasteKind {
-    Smart,
-    ImageOnly,
-    ImageUrl { fallback_text: Option<String> },
-}
-
-#[derive(Clone, Debug)]
-pub enum ClipboardPasteContent {
-    Text(String),
-    Image { media_type: String, base64_data: String },
-    Empty,
-    Error(String),
-}
-
-#[derive(Clone, Debug)]
-pub struct ClipboardPasteCompleted {
-    pub session_id: String,
-    pub kind: ClipboardPasteKind,
-    pub content: ClipboardPasteContent,
-}
-
-#[derive(Clone, Debug)]
-pub struct ModelRefreshCompleted {
-    pub session_id: String,
-    pub result: std::result::Result<horon_agent_provider_core::ModelCatalogRefreshSummary, String>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiActivityKind {
     Auth,
@@ -258,12 +204,6 @@ impl UiActivity {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct GitStatusCompleted {
-    pub session_id: String,
-    pub result: std::result::Result<String, String>,
-}
-
 /// A backgrounded `swarm await_members` watcher reached a terminal result
 /// (members satisfied the target status, or the wait timed out).
 ///
@@ -305,18 +245,6 @@ pub struct ProductivityReportPayload {
     pub png: Vec<u8>,
     /// Filesystem path the PNG was saved to.
     pub png_path: std::path::PathBuf,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SidePanelUpdated {
-    pub session_id: String,
-    pub snapshot: SidePanelSnapshot,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AppletsUpdated {
-    pub session_id: String,
-    pub snapshot: horon_agent_applet_types::AgentApplets,
 }
 
 #[derive(Clone, Debug)]
@@ -421,38 +349,12 @@ pub enum BusEvent {
     UsageReportProgress(horon_agent_usage_types::ProviderUsageProgress),
     /// OAuth/login flow completed in the background
     LoginCompleted(LoginCompleted),
-    /// First-run onboarding finished validating the auto-selected default model.
-    OnboardingModelValidated(OnboardingModelValidated),
-    /// Local `!cmd` shell command completed from the input line
-    InputShellCompleted(InputShellCompleted),
-    /// Clipboard paste/image URL work completed off the UI thread
-    ClipboardPasteCompleted(ClipboardPasteCompleted),
-    /// Local model catalog refresh completed off the UI thread
-    ModelRefreshCompleted(ModelRefreshCompleted),
     /// UI-visible runtime activity from auth/catalog/background operations.
     UiActivity(UiActivity),
-    /// Local git status command completed off the UI thread
-    GitStatusCompleted(GitStatusCompleted),
     /// Update check status from background thread
     UpdateStatus(UpdateStatus),
     /// Interactive client update status for a specific session
     SessionUpdateStatus(SessionUpdateStatus),
-    /// External dictation command completed with transcript text
-    DictationCompleted {
-        dictation_id: String,
-        session_id: Option<String>,
-        text: String,
-        mode: crate::protocol::TranscriptMode,
-    },
-    /// External dictation command failed
-    DictationFailed {
-        dictation_id: String,
-        session_id: Option<String>,
-        message: String,
-    },
-    /// Built-in voice input has new state (meter level, partial transcript,
-    /// or a final result). The owning client polls its recording on receipt.
-    VoiceInputWake,
     /// Background compaction task finished (check_and_apply should be called)
     CompactionFinished,
     /// Provider's available models list may have changed
@@ -471,9 +373,6 @@ pub enum BusEvent {
         message: String,
         open_picker: bool,
     },
-    /// Side panel pages were updated for a session
-    SidePanelUpdated(SidePanelUpdated),
-    AppletsUpdated(AppletsUpdated),
     /// Deferred Mermaid rendering completed and cached content may now be visible
     MermaidRenderCompleted,
     /// The TUI's background git-status probe produced a value that differs

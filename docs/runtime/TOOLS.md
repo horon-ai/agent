@@ -22,8 +22,8 @@
 
 ```toml
 [tools.load_mode]
-gmail = "off"
-browser = "essential"
+batch = "off"
+memory = "essential"
 ```
 
 ### 기본 배치
@@ -36,6 +36,8 @@ browser = "essential"
 - `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:889` `ToolLoadTiers::tier`).
 - 지연 기본값은 명시적 `full` 프로필에 허용 목록이 없을 때만 켜집니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, 프로필 미설정은 통과한 도구를 즉시 보냅니다 (`config.rs:1210` `ToolConfig::load_tiers`).
 - 세션은 시작할 때 단계를 한 번 확정합니다. 설정을 다시 읽어도 세션 중간에 도구가 즉시 집합과 지연 집합 사이를 옮기지 않습니다.
+
+`irc`는 코어 밖 도구입니다. `[tools] irc = true`일 때 `core`, `acp`, `minimal`, 명시 `enabled` 목록처럼 비어 있지 않은 허용 목록에 들어가고, 허용 목록이 없는 `full` 세션에는 원래부터 보입니다. 스위치가 꺼져 있으면 등록은 유지되지만 실행이 거부되므로 `full` 세션에서도 실제로 쓸 수 없습니다. 빈 허용 목록(`none`)은 켜져 있어도 그대로 비어 있습니다. 메일박스 동작과 설정은 [`IRC.md`](IRC.md)에 있습니다.
 
 #### 즉시 보내도록 되돌리기
 
@@ -130,6 +132,8 @@ browser = "essential"
 
 읽기 전용이고 상태를 바꾸지 않는 도구만 `Concurrent`를 선언합니다.
 
+`irc`는 파일을 쓰지 않지만 `effects()`를 재정의하지 않아 같은 기본 쓰기 배리어를 선언합니다. 그래서 한 라운드의 여러 `irc` 호출은 하나씩 순서대로 실행되고, 같은 발신자의 메시지 순서가 유지됩니다. 동시 실행 등급도 `Concurrent`가 아닙니다.
+
 ### 입력에 따라 달라지는 효과
 
 도구의 영향 범위가 인자에 따라 갈리면 `effects_for_input`을 덮어씁니다 (`crates/tool-core/src/lib.rs:260`). 기본 구현은 `effects()`를 그대로 돌려줍니다.
@@ -194,6 +198,8 @@ browser = "essential"
 `dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:940`, `crates/base/src/config/default_file.rs:476`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
 
 게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:1561`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
+
+`irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없어서 `write` 모드에서 파일 변이와 같은 자동 승인을 받고, `all` 모드에서도 묻지 않습니다. 승인 창이 뜨는 도구가 아닙니다.
 
 ### 감사 기록
 

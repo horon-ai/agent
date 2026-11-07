@@ -1,8 +1,6 @@
 use super::client_actions::{
-    AgentTaskContext, NotifySessionContext, handle_agent_task, handle_archive_session, handle_compact,
-    handle_input_shell, handle_notify_session, handle_rename_session, handle_run_subagent, handle_set_feature,
-    handle_set_session_saved, handle_set_subagent_model, handle_split, handle_stdin_response, handle_transfer,
-    handle_trigger_memory_extraction,
+    NotifySessionContext, handle_archive_session, handle_compact, handle_notify_session, handle_rename_session,
+    handle_set_feature, handle_set_session_saved, handle_split, handle_transfer,
 };
 use super::client_ask::{
     handle_ask_response, handle_ask_response_with_receipt, handle_permission_decision, spawn_ask_forwarder,
@@ -21,14 +19,11 @@ use super::client_lightweight_control::{
     LightweightControlContext, handle_lightweight_control_request, parse_swarm_spawn_mode,
 };
 use super::client_session::{handle_clear_session, handle_reload, handle_resume_session, handle_subscribe};
-use super::client_state::{
-    handle_get_compacted_history, handle_get_history, handle_get_model_catalog, handle_get_state,
-};
+use super::client_state::{handle_get_history, handle_get_model_catalog, handle_get_state};
 use super::client_writer::write_direct_event;
 use super::comm_await::{CommAwaitMembersContext, handle_comm_await_members};
 use super::comm_control::{
-    handle_client_debug_command, handle_client_debug_response, handle_comm_assign_next, handle_comm_assign_role,
-    handle_comm_assign_task, handle_comm_task_control,
+    handle_comm_assign_next, handle_comm_assign_role, handle_comm_assign_task, handle_comm_task_control,
 };
 use super::comm_plan::{handle_comm_approve_plan, handle_comm_propose_plan, handle_comm_reject_plan};
 use super::comm_session::{handle_comm_spawn, handle_comm_stop};
@@ -37,16 +32,14 @@ use super::comm_sync::{
     handle_comm_status, handle_comm_summary,
 };
 use super::provider_control::{
-    handle_cycle_model, handle_invalidate_openai_usage, handle_notify_auth_changed, handle_refresh_models,
-    handle_set_compaction_mode, handle_set_model, handle_set_premium_mode, handle_set_reasoning_effort,
-    handle_set_route, handle_set_service_tier, handle_set_transport, handle_switch_openai_account,
+    handle_invalidate_openai_usage, handle_notify_auth_changed, handle_set_model, handle_set_reasoning_effort,
     try_available_models_catalog,
 };
 use super::{
-    AwaitMembersRuntime, ClientConnectionInfo, ClientDebugState, FileTouchService, SessionControlHandle,
-    SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan,
-    format_structured_completion_report, register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail,
-    update_member_status, update_member_status_with_report, update_member_status_with_report_tldr,
+    AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, SessionControlHandle, SessionInterruptQueues,
+    SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan, format_structured_completion_report,
+    register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail, update_member_status,
+    update_member_status_with_report, update_member_status_with_report_tldr,
 };
 use crate::agent::Agent;
 use crate::bus::{Bus, BusEvent};
@@ -473,8 +466,6 @@ pub(super) async fn handle_client(
     file_touch: FileTouchService,
     channel_subscriptions: ChannelSubscriptions,
     channel_subscriptions_by_session: ChannelSubscriptions,
-    client_debug_state: Arc<RwLock<ClientDebugState>>,
-    client_debug_response_tx: broadcast::Sender<(u64, String)>,
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: broadcast::Sender<SwarmEvent>,
@@ -595,7 +586,6 @@ pub(super) async fn handle_client(
     let mut current_client_instance_id: Option<String> = None;
     let mut continue_on_disconnect = false;
     let mut model_usage_updates_enabled = false;
-    let mut supports_pdf_panels = false;
     let mut supports_user_response = false;
     let mut supports_ask_requests = false;
     let mut ask_installation: Option<(String, u64)> = None;
@@ -616,9 +606,6 @@ pub(super) async fn handle_client(
     // Working directory of the last accepted Subscribe; editor servers fall
     // back to it when the session agent is busy at configure time.
     let mut subscribed_working_dir: Option<std::path::PathBuf> = None;
-    // Client selfdev status is determined by Subscribe request, not server's env
-    let mut client_selfdev = false;
-
     let client_start = std::time::Instant::now();
 
     let provider = provider_template.fork_for_new_session();
@@ -669,7 +656,6 @@ pub(super) async fn handle_client(
                 client_id: client_connection_id.clone(),
                 session_id: client_session_id.clone(),
                 client_instance_id: None,
-                debug_client_id: None,
                 connected_at,
                 last_seen: connected_at,
                 is_processing: false,
@@ -822,51 +808,9 @@ pub(super) async fn handle_client(
     // Sending it via the channel causes race conditions where it can arrive after
     // other events (like History) that are written directly to the socket.
 
-    // Set up client debug command channel
-    // This client becomes the "active" debug client that receives client: commands
-    let (debug_cmd_tx, mut debug_cmd_rx) = mpsc::unbounded_channel::<(u64, String)>();
-    let client_debug_id = id::new_id("client");
-    {
-        let mut debug_state = client_debug_state.write().await;
-        debug_state.register(client_debug_id.clone(), debug_cmd_tx);
-    }
-    {
-        let mut connections = client_connections.write().await;
-        if let Some(info) = connections.get_mut(&client_connection_id) {
-            info.debug_client_id = Some(client_debug_id.clone());
-        }
-    }
-
-    let stdin_responses: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-
     // Subscribe to bus events so we can forward ModelsUpdated to this client
     // (e.g. when Copilot finishes async init after the initial History was sent)
     let mut bus_rx = Bus::global().subscribe();
-
-    // Set up stdin request forwarding: tools send StdinInputRequest, we forward to TUI
-    let (stdin_req_tx, mut stdin_req_rx) = tokio::sync::mpsc::unbounded_channel::<crate::tool::StdinInputRequest>();
-    {
-        let mut agent_guard = agent.lock().await;
-        agent_guard.set_stdin_request_tx(stdin_req_tx.clone());
-    }
-    let stdin_forwarder = {
-        let client_event_tx = client_event_tx.clone();
-        let stdin_responses = stdin_responses.clone();
-        let tool_call_id = String::new();
-        tokio::spawn(async move {
-            while let Some(req) = stdin_req_rx.recv().await {
-                let request_id = req.request_id.clone();
-                stdin_responses.lock().await.insert(request_id.clone(), req.response_tx);
-                let _ = client_event_tx.send(ServerEvent::StdinRequest {
-                    request_id,
-                    prompt: req.prompt,
-                    is_password: req.is_password,
-                    tool_call_id: tool_call_id.clone(),
-                });
-            }
-        })
-    };
 
     let (pending_asks, ask_req_tx, ask_forwarder) = spawn_ask_forwarder(client_event_tx.clone());
 
@@ -990,23 +934,6 @@ pub(super) async fn handle_client(
                             let _ = client_event_tx.send(ServerEvent::BatchProgress { progress });
                         }
                     }
-                    Ok(BusEvent::SidePanelUpdated(update)) => {
-                        if update.session_id == client_session_id {
-                            let _ = client_event_tx.send(ServerEvent::SidePanelState {
-                                snapshot: super::client_writer::side_panel_for_client(
-                                    update.snapshot, supports_pdf_panels,
-                                ),
-                            });
-                        }
-                    }
-                    Ok(BusEvent::AppletsUpdated(update)) => {
-                        if update.session_id == client_session_id {
-                            let _ = client_event_tx.send(ServerEvent::AppletState {
-                                session_id: update.session_id,
-                                snapshot: update.snapshot,
-                            });
-                        }
-                    }
                     Ok(BusEvent::CompactionFinished) => {
                         let agent = Arc::clone(&agent);
                         let tx = client_event_tx.clone();
@@ -1017,23 +944,6 @@ pub(super) async fn handle_client(
                         });
                     }
                     _ => {}
-                }
-                continue;
-            }
-            // Handle client debug commands from debug socket
-            debug_cmd = debug_cmd_rx.recv() => {
-                if let Some((request_id, command)) = debug_cmd
-                    && client_event_tx
-                        .send(ServerEvent::ClientDebugRequest {
-                            id: request_id,
-                            command,
-                        })
-                        .is_err()
-                {
-                    let _ = client_debug_response_tx.send((
-                        request_id,
-                        "No TUI client connected".to_string(),
-                    ));
                 }
                 continue;
             }
@@ -1313,12 +1223,7 @@ pub(super) async fn handle_client(
         // Legacy/direct clients can send a prompt without Subscribe. Their
         // first session action commits ownership, but inspection/attach does not.
         if provisional_session
-            && matches!(
-                &request,
-                Request::Message { .. }
-                    | Request::SoftInterrupt { .. }
-                    | Request::RunSubagent { .. }
-            )
+            && matches!(&request, Request::Message { .. } | Request::SoftInterrupt { .. })
         {
             agent.lock().await.materialize_provisional_session();
             provisional_session = false;
@@ -1336,7 +1241,6 @@ pub(super) async fn handle_client(
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
             Request::ClientResponse { .. } => unreachable!("client responses dispatched before acknowledgment"),
-            Request::SetBrowserMode { .. } => unreachable!("browser mode pushes are lightweight control requests"),
             Request::Message {
                 id,
                 content,
@@ -1359,12 +1263,6 @@ pub(super) async fn handle_client(
                     continue;
                 }
                 if !client_is_processing {
-                    // A live resume cannot replace stdin routing while the old
-                    // turn owns the agent. Restore it when this client starts a
-                    // later turn, without reviving any disconnected prompt.
-                    if continue_on_disconnect && let Ok(mut agent) = agent.try_lock() {
-                        agent.set_stdin_request_tx(stdin_req_tx.clone());
-                    }
                     let mut connections = client_connections.write().await;
                     if let Some(info) = connections.get_mut(&client_connection_id) {
                         info.is_processing = true;
@@ -1597,7 +1495,6 @@ pub(super) async fn handle_client(
                     active_terminal_env.clone(),
                     handle_clear_session(
                         id,
-                        client_selfdev,
                         &mut client_session_id,
                         &client_connection_id,
                         &agent,
@@ -1663,7 +1560,6 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            supports_pdf_panels,
                             acp_v2.load(Ordering::Acquire),
                         )
                         .await
@@ -1725,7 +1621,6 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            supports_pdf_panels,
                             acp_v2.load(Ordering::Acquire),
                         )
                         .await
@@ -1789,11 +1684,9 @@ pub(super) async fn handle_client(
             Request::Subscribe {
                 id,
                 system_prompt,
-                supports_pdf_panels: requested_pdf_panels,
                 supports_user_response: requested_user_response,
                 supports_ask_requests: requested_ask_requests,
                 working_dir: subscribe_working_dir,
-                selfdev,
                 target_session_id,
                 client_instance_id,
                 client_has_local_history,
@@ -1835,7 +1728,6 @@ pub(super) async fn handle_client(
                 // snapshot must clear terminal vars inherited by the daemon
                 // rather than retaining a prior pane's values.
                 continue_on_disconnect = requested_continuation;
-                supports_pdf_panels = requested_pdf_panels;
                 supports_user_response = requested_user_response;
                 supports_ask_requests = requested_ask_requests;
                 // Read before the attach below writes History, which carries
@@ -1875,7 +1767,6 @@ pub(super) async fn handle_client(
                                 client_instance_id.as_deref(),
                                 client_has_local_history,
                                 allow_session_takeover,
-                                &mut client_selfdev,
                                 &mut client_session_id,
                                 &client_connection_id,
                                 &mut agent,
@@ -1885,7 +1776,6 @@ pub(super) async fn handle_client(
                                 &shutdown_signals,
                                 &soft_interrupt_queues,
                                 &client_connections,
-                                &client_debug_state,
                                 &swarm_members,
                                 &swarms_by_id,
                                 &file_touch,
@@ -1902,7 +1792,6 @@ pub(super) async fn handle_client(
                                 &event_history,
                                 &event_counter,
                                 &swarm_event_tx,
-                                supports_pdf_panels,
                                 acp_v2.load(Ordering::Acquire),
                             ),
                         )
@@ -1921,9 +1810,7 @@ pub(super) async fn handle_client(
                             handle_subscribe(
                                 id,
                                 subscribe_working_dir,
-                                selfdev,
                                 false,
-                                &mut client_selfdev,
                                 &client_session_id,
                                 &client_connection_id,
                                 &friendly_name,
@@ -1967,9 +1854,7 @@ pub(super) async fn handle_client(
                         handle_subscribe(
                             id,
                             subscribe_working_dir,
-                            selfdev,
                             true,
-                            &mut client_selfdev,
                             &client_session_id,
                             &client_connection_id,
                             &friendly_name,
@@ -1997,9 +1882,7 @@ pub(super) async fn handle_client(
                     handle_subscribe(
                         id,
                         subscribe_working_dir,
-                        selfdev,
                         true,
-                        &mut client_selfdev,
                         &client_session_id,
                         &client_connection_id,
                         &friendly_name,
@@ -2112,7 +1995,6 @@ pub(super) async fn handle_client(
                     &server_name,
                     &server_icon,
                     None,
-                    supports_pdf_panels,
                     acp_v2.load(Ordering::Acquire),
                 )
                 .await
@@ -2141,25 +2023,6 @@ pub(super) async fn handle_client(
                 }
                 if let Some(snapshot) = try_available_models_snapshot(&agent) {
                     last_available_models_snapshot = Some(snapshot);
-                }
-            }
-
-            Request::GetCompactedHistory {
-                id,
-                visible_messages,
-            } => {
-                if handle_get_compacted_history(
-                    id,
-                    &client_session_id,
-                    &agent,
-                    &writer,
-                    visible_messages,
-                    acp_v2.load(Ordering::Acquire),
-                )
-                .await
-                .is_err()
-                {
-                    break;
                 }
             }
 
@@ -2213,7 +2076,6 @@ pub(super) async fn handle_client(
                         client_instance_id.as_deref(),
                         client_has_local_history,
                         allow_session_takeover,
-                        &mut client_selfdev,
                         &mut client_session_id,
                         &client_connection_id,
                         &mut agent,
@@ -2223,7 +2085,6 @@ pub(super) async fn handle_client(
                         &shutdown_signals,
                         &soft_interrupt_queues,
                         &client_connections,
-                        &client_debug_state,
                         &swarm_members,
                         &swarms_by_id,
                         &file_touch,
@@ -2240,7 +2101,6 @@ pub(super) async fn handle_client(
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
-                        supports_pdf_panels,
                         acp_v2.load(Ordering::Acquire),
                     ),
                 )
@@ -2271,49 +2131,11 @@ pub(super) async fn handle_client(
                 }
             }
 
-            Request::ResumeAllSessions { id } => {
-                super::client_actions::handle_resume_all_sessions(
-                    id,
-                    &sessions,
-                    &swarm_members,
-                    &swarms_by_id,
-                    &event_history,
-                    &event_counter,
-                    &swarm_event_tx,
-                    &client_event_tx,
-                )
-                .await;
-            }
-
-            Request::CycleModel { id, direction } => {
-                if let Some(handle) = prewarm_task.take() {
-                    handle.abort();
-                }
-                handle_cycle_model(id, direction, &agent, &client_event_tx).await;
-                prewarm_task = Some(spawn_deferred_prewarm(&agent));
-            }
-
-            Request::RefreshModels { id } => {
-                handle_refresh_models(id, &provider, &agent, &client_event_tx).await;
-            }
-
-            Request::SetPremiumMode { id, mode } => {
-                handle_set_premium_mode(id, mode, &agent, &client_event_tx).await;
-            }
-
             Request::SetModel { id, model } => {
                 if let Some(handle) = prewarm_task.take() {
                     handle.abort();
                 }
                 handle_set_model(id, model, &agent, &client_event_tx).await;
-                prewarm_task = Some(spawn_deferred_prewarm(&agent));
-            }
-
-            Request::SetRoute { id, selection, automatic_failover } => {
-                if let Some(handle) = prewarm_task.take() {
-                    handle.abort();
-                }
-                handle_set_route(id, selection, automatic_failover, &agent, &client_event_tx).await;
                 prewarm_task = Some(spawn_deferred_prewarm(&agent));
             }
 
@@ -2342,55 +2164,6 @@ pub(super) async fn handle_client(
                 );
             }
 
-            Request::SetAgentModel { id, target, model, global } => {
-                let result = if global {
-                    super::client_actions::set_global_agent_model(
-                        &agent, &client_session_id, &target, model,
-                    ).await
-                } else {
-                    super::client_actions::set_session_agent_model(
-                        &agent, &client_session_id, &target, model,
-                    ).await
-                };
-                let event = match result {
-                    Ok(overrides) => ServerEvent::AgentModelsChanged { id, session_id: client_session_id.clone(), overrides },
-                    Err(error) => ServerEvent::Error { id, message: error.to_string(), retry_after_secs: None },
-                };
-                let _ = client_event_tx.send(event);
-            }
-
-            Request::SetSubagentModel { id, model } => {
-                if reject_if_agent_busy_for_request(
-                    id,
-                    "set_subagent_model",
-                    &client_session_id,
-                    client_is_processing,
-                    &agent,
-                    &client_event_tx,
-                ).await {
-                    continue;
-                }
-                handle_set_subagent_model(id, model, &agent, &client_event_tx).await;
-            }
-
-            Request::RunSubagent {
-                id,
-                prompt,
-                subagent_type,
-                model,
-                session_id,
-            } => {
-                handle_run_subagent(
-                    id,
-                    prompt,
-                    subagent_type,
-                    model,
-                    session_id,
-                    &agent,
-                    &client_event_tx,
-                );
-            }
-
             Request::SetReasoningEffort {
                 id,
                 effort,
@@ -2411,18 +2184,6 @@ pub(super) async fn handle_client(
                 } else {
                     handle_set_reasoning_effort(id, effort, &agent, &client_event_tx).await;
                 }
-            }
-
-            Request::SetServiceTier { id, service_tier } => {
-                handle_set_service_tier(id, service_tier, &agent, &client_event_tx).await;
-            }
-
-            Request::SetTransport { id, transport } => {
-                handle_set_transport(id, transport, &agent, &client_event_tx).await;
-            }
-
-            Request::SetCompactionMode { id, mode } => {
-                handle_set_compaction_mode(id, mode, &agent, &client_event_tx).await;
             }
 
             Request::SetSessionSaved { id, saved, label } => {
@@ -2517,46 +2278,8 @@ pub(super) async fn handle_client(
                 .await;
             }
 
-            Request::SwitchOpenAiAccount { id, label } => {
-                handle_switch_openai_account(id, label, &agent, &client_event_tx).await;
-            }
-
             Request::InvalidateOpenAiUsage { id, account_label } => {
                 handle_invalidate_openai_usage(id, account_label, &client_event_tx).await;
-            }
-
-            Request::SetFeature {
-                id,
-                feature,
-                enabled,
-            } => {
-                if reject_if_agent_busy_for_request(
-                    id,
-                    "set_feature",
-                    &client_session_id,
-                    client_is_processing,
-                    &agent,
-                    &client_event_tx,
-                ).await {
-                    continue;
-                }
-                handle_set_feature(
-                    id,
-                    feature,
-                    enabled,
-                    &agent,
-                    &client_session_id,
-                    &friendly_name,
-                    &mut swarm_enabled,
-                    &swarm_members,
-                    &swarms_by_id,
-                    &swarm_coordinators,
-                    &channel_subscriptions,
-                    &channel_subscriptions_by_session,
-                    &swarm_plans,
-                    &client_event_tx,
-                )
-                .await;
             }
 
             Request::Split { id } => {
@@ -2579,34 +2302,6 @@ pub(super) async fn handle_client(
 
             Request::Compact { id } => {
                 handle_compact(id, &agent, &client_event_tx);
-            }
-
-            Request::TriggerMemoryExtraction { id } => {
-                if reject_if_agent_busy_for_request(
-                    id,
-                    "trigger_memory_extraction",
-                    &client_session_id,
-                    client_is_processing,
-                    &agent,
-                    &client_event_tx,
-                ).await {
-                    continue;
-                }
-                handle_trigger_memory_extraction(id, &agent, &client_event_tx).await;
-            }
-
-            // Agent-to-agent communication
-            Request::AgentRegister { id, .. } => {
-                let _ = client_event_tx.send(ServerEvent::Done { id });
-            }
-
-            Request::StdinResponse {
-                id,
-                request_id,
-                input,
-            } => {
-                handle_stdin_response(id, request_id, input, &stdin_responses, &client_event_tx)
-                    .await;
             }
 
             Request::AskResponse {
@@ -2723,28 +2418,6 @@ pub(super) async fn handle_client(
                 handle_permission_decision(id, request_id, decision, &client_event_tx, bridge.as_deref());
             }
 
-            Request::AgentTask { id, task, .. } => {
-                handle_agent_task(
-                    id,
-                    task,
-                    &client_session_id,
-                    &agent,
-                    &AgentTaskContext {
-                        client_event_tx: &client_event_tx,
-                        swarm_members: &swarm_members,
-                        swarms_by_id: &swarms_by_id,
-                        event_history: &event_history,
-                        event_counter: &event_counter,
-                        swarm_event_tx: &swarm_event_tx,
-                    },
-                )
-                .await;
-            }
-
-            Request::AgentCapabilities { id } => {
-                let _ = client_event_tx.send(ServerEvent::Done { id });
-            }
-
             Request::RuntimeCommand { id, command, args } => {
                 let result: anyhow::Result<(serde_json::Value, String)> = async {
                     let parsed: horon_agent_harness_api::RuntimeCommand = serde_json::from_value(serde_json::json!(command))?;
@@ -2795,13 +2468,6 @@ pub(super) async fn handle_client(
                             "swarm_id": member.and_then(|m| m.swarm_id.as_deref()), "role": member.map(|m| &m.role)});
                         return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
                     }
-                    if parsed == horon_agent_harness_api::RuntimeCommand::Subscription {
-                        if !args.is_empty() && args != ["status".to_string()] { anyhow::bail!("Usage: subscription [status]"); }
-                        let data = if crate::subscription_catalog::has_credentials() {
-                            serde_json::to_value(crate::subscription_api::fetch_subscription_me().await?)?
-                        } else { serde_json::json!({"signed_in": false, "status": "not_signed_in"}) };
-                        return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
-                    }
                     let mut guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry this runtime command after the current turn."))?;
                     super::runtime_commands::execute(&mut guard, parsed, &args, swarm_enabled, serde_json::Value::Null).await
                 }.await;
@@ -2811,10 +2477,6 @@ pub(super) async fn handle_client(
                     Err(error) => { let _ = client_event_tx.send(ServerEvent::Error { id, message: error.to_string(), retry_after_secs: None }); },
                 }
             }
-            Request::AgentContext { id } => {
-                let _ = client_event_tx.send(ServerEvent::Done { id });
-            }
-
             Request::NotifySession {
                 id,
                 session_id,
@@ -2837,83 +2499,6 @@ pub(super) async fn handle_client(
                     },
                 )
                 .await;
-            }
-
-            Request::AppletAction {
-                id,
-                session_id,
-                instance,
-                action,
-                state,
-                source_key,
-            } => {
-                super::client_actions::handle_applet_action(
-                    id,
-                    session_id,
-                    instance,
-                    action,
-                    state,
-                    source_key,
-                    NotifySessionContext {
-                        sessions: &sessions,
-                        soft_interrupt_queues: &soft_interrupt_queues,
-                        client_connections: &client_connections,
-                        swarm_members: &swarm_members,
-                        swarms_by_id: &swarms_by_id,
-                        event_history: &event_history,
-                        event_counter: &event_counter,
-                        swarm_event_tx: &swarm_event_tx,
-                        client_event_tx: &client_event_tx,
-                    },
-                )
-                .await;
-            }
-
-            Request::CloseApplet {
-                id,
-                session_id,
-                instance,
-            } => {
-                super::client_actions::handle_close_applet(
-                    id,
-                    session_id,
-                    instance,
-                    &client_event_tx,
-                );
-            }
-
-            Request::Transcript {
-                id,
-                text,
-                mode,
-                session_id,
-            } => {
-                match super::debug::inject_transcript(
-                    id,
-                    text,
-                    mode,
-                    session_id,
-                    &client_connections,
-                    &client_debug_state,
-                    &swarm_members,
-                )
-                .await
-                {
-                    Ok(event) => {
-                        let _ = client_event_tx.send(event);
-                    }
-                    Err(error) => {
-                        let _ = client_event_tx.send(ServerEvent::Error {
-                            id,
-                            message: error.to_string(),
-                            retry_after_secs: None,
-                        });
-                    }
-                }
-            }
-
-            Request::InputShell { id, command } => {
-                handle_input_shell(id, command, &agent, &client_event_tx);
             }
 
             // === Agent communication ===
@@ -3288,7 +2873,6 @@ pub(super) async fn handle_client(
                     &mcp_pool,
                     &soft_interrupt_queues,
                     &swarm_mutation_runtime,
-                    &client_connections,
                 )
                 .await;
             }
@@ -3705,17 +3289,6 @@ pub(super) async fn handle_client(
             Request::SetSessionApprovalMode { .. } => unreachable!("approval mode replies only after validation"),
 
             // These are handled via channels, not direct requests from TUI
-            Request::ClientDebugCommand { id, .. } => {
-                handle_client_debug_command(id, &client_event_tx).await;
-            }
-            Request::ClientDebugResponse { id, output } => {
-                handle_client_debug_response(id, output, &client_debug_response_tx);
-            }
-
-            // A v2 prompt can be taken back while its turn still waits for the
-            // agent. Only this connection's queued task is dropped: no
-            // TurnStopped, no session cancel, so a turn another surface is
-            // running keeps running.
             Request::WithdrawMessage { id, message_request_id } => {
                 let queued = last_v2_message
                     .as_ref()
@@ -3842,8 +3415,6 @@ pub(super) async fn handle_client(
                 &file_touch,
                 &channel_subscriptions,
                 &channel_subscriptions_by_session,
-                &client_debug_state,
-                &client_debug_id,
                 &client_connections,
                 &client_connection_id,
                 &shutdown_signals,
@@ -3872,20 +3443,13 @@ pub(super) async fn handle_client(
         detach_client_attachment(
             &client_session_id,
             &client_connection_id,
-            &client_debug_id,
             &client_connections,
-            &client_debug_state,
             &swarm_members,
         )
         .await;
         event_handle.abort();
         drop(reader);
         drop(writer);
-        // Input prompts belong to this transport and cannot safely be replayed
-        // to a new client. Close response channels instead of waiting forever.
-        stdin_forwarder.abort();
-        let _ = stdin_forwarder.await;
-        stdin_responses.lock().await.clear();
         // Dropping the pending answer channels ends a tool's wait instead of
         // leaving the turn parked on a client that is gone. The forwarder is
         // aborted without being awaited: it only relays prompts from a
@@ -3944,8 +3508,6 @@ pub(super) async fn handle_client(
             &file_touch,
             &channel_subscriptions,
             &channel_subscriptions_by_session,
-            &client_debug_state,
-            &client_debug_id,
             &client_connections,
             &client_connection_id,
             &shutdown_signals,

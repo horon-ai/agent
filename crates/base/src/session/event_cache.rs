@@ -332,10 +332,7 @@ mod tests {
             os: "macos".to_string(),
             arch: "arm64".to_string(),
             pid: 1,
-            is_selfdev: false,
             is_debug: false,
-            is_canary: false,
-            testing_build: None,
             working_git: None,
         }
     }

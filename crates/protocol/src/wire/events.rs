@@ -69,15 +69,6 @@ pub enum ServerEvent {
     #[serde(rename = "ack")]
     Ack { id: u64 },
 
-    /// Authoritative worker routing after a successful session preference update.
-    #[serde(rename = "agent_models_changed")]
-    AgentModelsChanged {
-        id: u64,
-        session_id: String,
-        #[serde(default)]
-        overrides: std::collections::BTreeMap<String, String>,
-    },
-
     /// Streaming text delta
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
@@ -570,10 +561,6 @@ pub enum ServerEvent {
         servers: Vec<String>,
     },
 
-    /// Client debug command forwarded from debug socket to TUI
-    #[serde(rename = "client_debug_request")]
-    ClientDebugRequest { id: u64, command: String },
-
     /// Session ID assigned
     #[serde(rename = "session")]
     SessionId { session_id: String },
@@ -629,9 +616,6 @@ pub enum ServerEvent {
         /// Number of connected clients
         #[serde(skip_serializing_if = "Option::is_none")]
         client_count: Option<usize>,
-        /// Whether this session is in canary/self-dev mode
-        #[serde(skip_serializing_if = "Option::is_none")]
-        is_canary: Option<bool>,
         /// Server binary version string (e.g. "v0.1.123 (abc1234)")
         #[serde(skip_serializing_if = "Option::is_none")]
         server_version: Option<String>,
@@ -688,44 +672,12 @@ pub enum ServerEvent {
         /// Current live processing state for this session, if known.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         activity: Option<SessionActivitySnapshot>,
-        /// Session-scoped side panel pages and active focus state
-        #[serde(default, skip_serializing_if = "snapshot_is_empty")]
-        side_panel: SidePanelSnapshot,
-        /// Session-scoped agent applet instances.
-        #[serde(default, skip_serializing_if = "applets_is_empty")]
-        applets: horon_agent_applet_types::AgentApplets,
         /// ACP protocol version this connection subscribed with, echoed only
         /// to that connection. `Some(2)` tells a v2 adapter the daemon serves
         /// its protocol; absent means an older daemon that ignores the
         /// subscribe's `protocol_version` and may never send v2-only events.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         acp_protocol_version: Option<u32>,
-    },
-
-    /// Expanded compacted-history window (response to GetCompactedHistory).
-    #[serde(rename = "compacted_history")]
-    CompactedHistory {
-        id: u64,
-        session_id: String,
-        messages: Vec<HistoryMessage>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        images: Vec<horon_agent_session_types::RenderedImage>,
-        compacted_total: usize,
-        compacted_visible: usize,
-        compacted_remaining: usize,
-        #[serde(default)]
-        compacted_hidden_prompts: usize,
-    },
-
-    /// Side panel state changed for the active session
-    #[serde(rename = "side_panel_state")]
-    SidePanelState { snapshot: SidePanelSnapshot },
-
-    /// Agent applet instances changed for the active session (full snapshot).
-    #[serde(rename = "applet_state")]
-    AppletState {
-        session_id: String,
-        snapshot: horon_agent_applet_types::AgentApplets,
     },
 
     /// Server is reloading (clients should reconnect)
@@ -794,35 +746,6 @@ pub enum ServerEvent {
         error: Option<String>,
     },
 
-    /// Service tier changed (response to set_service_tier)
-    #[serde(rename = "service_tier_changed")]
-    ServiceTierChanged {
-        id: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        service_tier: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
-    /// Transport changed (response to set_transport)
-    #[serde(rename = "transport_changed")]
-    TransportChanged {
-        id: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        transport: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
-    /// Compaction mode changed (response to set_compaction_mode)
-    #[serde(rename = "compaction_mode_changed")]
-    CompactionModeChanged {
-        id: u64,
-        mode: horon_agent_config_types::CompactionMode,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-
     /// Usage delta for a route, independent of catalog availability or Agent locks.
     #[serde(rename = "model_usage_updated")]
     ModelUsageUpdated {
@@ -854,14 +777,6 @@ pub enum ServerEvent {
         /// Human-readable message describing what happened
         message: String,
     },
-
-    /// External transcript text targeted at the active TUI input.
-    #[serde(rename = "transcript")]
-    Transcript { text: String, mode: TranscriptMode },
-
-    /// Completed `!cmd` shell execution for a connected remote client.
-    #[serde(rename = "input_shell_result")]
-    InputShellResult { result: InputShellResult },
 
     /// Response to comm_read request
     #[serde(rename = "comm_context")]
@@ -1004,20 +919,6 @@ pub enum ServerEvent {
         resumed_sessions: Vec<String>,
         /// Human-readable summary suitable for direct display.
         message: String,
-    },
-
-    /// A running command is waiting for stdin input from the user
-    #[serde(rename = "stdin_request")]
-    StdinRequest {
-        /// Unique request ID for matching the response
-        request_id: String,
-        /// The last line(s) of output (the prompt, e.g. "Password: ")
-        prompt: String,
-        /// Whether the input should be masked (password field)
-        #[serde(default)]
-        is_password: bool,
-        /// Tool call ID this is associated with
-        tool_call_id: String,
     },
 
     /// The `ask` tool needs a human answer, and at least one attached client

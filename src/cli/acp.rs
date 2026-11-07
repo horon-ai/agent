@@ -36,7 +36,6 @@ mod util;
 mod v2;
 
 use auth::*;
-pub(crate) use auth::{AcpEntry, acp_entry, run_acp_login};
 use client_router::*;
 use connection::*;
 use elicitation::*;

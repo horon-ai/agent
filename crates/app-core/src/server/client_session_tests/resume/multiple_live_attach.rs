@@ -37,7 +37,6 @@ async fn handle_resume_session_allows_multiple_live_tui_attach() -> Result<()> {
                 client_id: "conn_existing".to_string(),
                 session_id: target_session_id.to_string(),
                 client_instance_id: None,
-                debug_client_id: Some("debug_existing".to_string()),
                 connected_at: now,
                 last_seen: now,
                 is_processing: false,
@@ -52,7 +51,6 @@ async fn handle_resume_session_allows_multiple_live_tui_attach() -> Result<()> {
                 client_id: "conn_new".to_string(),
                 session_id: temp_session_id.to_string(),
                 client_instance_id: None,
-                debug_client_id: Some("debug_new".to_string()),
                 connected_at: now,
                 last_seen: now,
                 is_processing: false,
@@ -83,7 +81,6 @@ async fn handle_resume_session_allows_multiple_live_tui_attach() -> Result<()> {
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
 
-    let mut client_selfdev = false;
     let mut client_session_id = temp_session_id.to_string();
 
     handle_resume_session(
@@ -93,7 +90,6 @@ async fn handle_resume_session_allows_multiple_live_tui_attach() -> Result<()> {
         None,
         false,
         false,
-        &mut client_selfdev,
         &mut client_session_id,
         "conn_new",
         &mut new_agent,
@@ -103,7 +99,6 @@ async fn handle_resume_session_allows_multiple_live_tui_attach() -> Result<()> {
         &shutdown_signals,
         &soft_interrupt_queues,
         &client_connections,
-        &Arc::new(RwLock::new(ClientDebugState::default())),
         &swarm_members,
         &swarms_by_id,
         &file_touch,
@@ -120,8 +115,7 @@ async fn handle_resume_session_allows_multiple_live_tui_attach() -> Result<()> {
         &event_history,
         &event_counter,
         &swarm_event_tx,
-        false,
-        false,
+                false,
     )
     .await?;
 

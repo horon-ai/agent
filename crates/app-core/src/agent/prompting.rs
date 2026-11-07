@@ -62,9 +62,6 @@ impl Agent {
         serde_json::json!({
             "session_id": self.session.id,
             "working_dir": self.session.working_dir,
-            "mode": if self.is_desktop_selfdev() { "desktop" }
-                else if self.session.is_canary { "cli" } else { "regular" },
-            "is_canary": self.session.is_canary,
             "system_prompt": {
                 "static": prompt.static_part,
                 "dynamic": prompt.dynamic_part,
@@ -198,7 +195,6 @@ impl Agent {
         let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_agents_md(
             skill_prompt.as_deref(),
             available_skills,
-            self.session.is_canary,
             memory_prompt,
             working_dir.as_deref(),
             self.agents_md_snapshot.clone(),

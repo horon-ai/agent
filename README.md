@@ -10,9 +10,11 @@ These hold for every change; `AGENTS.md` carries the full contract.
 
 - **No TUI.** The binary never opens a terminal; `ratatui`, `crossterm`, and
   `horon-agent-tui*` stay out of the dependency graph.
-- **ACP v1 and v2.** `horon-agent acp` must serve both protocol versions.
-  Today only v1 is implemented; v2 is an open gap. The adapter and the stdio
-  contract are in [docs/protocol/ACP.md](docs/protocol/ACP.md).
+- **ACP v1 and v2.** `horon-agent acp` must serve both protocol versions,
+  answering `initialize` with the highest version both sides support. Both are
+  implemented: v2 negotiates in `src/cli/acp/v2`, v1 pins to protocol version 1.
+  The adapter and the stdio contract are in
+  [docs/protocol/ACP.md](docs/protocol/ACP.md).
 - **No measured performance regression** against the recorded baseline on the
   same machine and workload. Measurement method:
   [`docs/performance/BENCHMARK.md`](docs/performance/BENCHMARK.md); recorded
@@ -49,7 +51,7 @@ through the same path. Details:
 ./target/debug/horon-agent serve                      # agent daemon
 ./target/debug/horon-agent run "summarize this repo"  # one message, then exit
 ./target/debug/horon-agent api-bridge --api-socket /run/user/1000/horon-agent-api.sock
-./target/debug/horon-agent acp                        # ACP v1 over stdio for editors, see docs/protocol/ACP.md
+./target/debug/horon-agent acp                        # ACP v1/v2 over stdio for editors, see docs/protocol/ACP.md
 ```
 
 `HORON_AGENT_SOCKET` moves the daemon socket and `HORON_AGENT_API_SOCKET` the
@@ -99,10 +101,15 @@ Format and wire contract: `docs/protocol/SESSION_STORE.md`.
 ## Tools
 
 The default profile is `core`: file read/write/edit, shell, search, web fetch
-and search, skills, MCP, `undo`, and `ask`. Swarm, memory, browser, and the
-other optional tools stay in the tree but off; enable them with
+and search, skills, MCP, `undo`, and `ask`. Swarm, memory, and the other
+optional tools stay in the tree but off; enable them with
 `--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, or `[tools] profile` in
 `~/.horon-agent/config.toml`.
+
+Agents in the same daemon and swarm can message each other with the `irc` tool
+(`send`, `wait`, `inbox`, `list`). It is off by default; set `irc = true` under
+`[tools]` to turn it on. Behavior, limits and the `[irc]` settings are in
+`docs/runtime/IRC.md`.
 
 ## Verify
 

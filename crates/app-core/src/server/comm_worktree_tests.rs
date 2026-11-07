@@ -331,7 +331,6 @@ async fn swarm_default_isolation_unchanged() {
         &broadcast::channel(16).0,
         &mcp,
         &Arc::new(RwLock::new(HashMap::new())),
-        &Arc::new(RwLock::new(HashMap::new())),
     )
     .await
     .expect("default spawn succeeds");

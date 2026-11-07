@@ -2005,8 +2005,8 @@ impl Tool for CommunicateTool {
                 },
                 "spawn_mode": {
                     "type": "string",
-                    "enum": ["visible", "headless", "inline", "auto"],
-                    "description": "Omit to use the user's configured mode. Set only when the user asks for one."
+                    "enum": ["headless", "inline", "auto"],
+                    "description": "Omit to use the configured mode. Every mode runs in-process; no terminal window opens."
                 },
                 "isolation": {
                     "type": "string",

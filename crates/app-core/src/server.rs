@@ -31,9 +31,11 @@ mod comm_sync;
 mod comm_worktree;
 mod configured_name;
 mod session_connections;
+mod session_forget;
 mod session_observation;
 pub mod session_replication;
 use configured_name::normalize_configured_server_name;
+use session_forget::forget_removed_session;
 mod control_receipts;
 mod debug;
 mod debug_ambient;
@@ -45,16 +47,15 @@ mod debug_server_state;
 mod debug_session_admin;
 mod debug_swarm_read;
 mod debug_swarm_write;
-mod debug_testers;
 mod durable_state;
 pub mod foreground_state;
 mod headless;
-mod jade_relay;
+mod irc;
 mod lifecycle;
 mod live_turn;
 mod provider_control;
 mod reload;
-mod reload_recovery;
+pub(crate) mod reload_recovery;
 mod reload_state;
 mod reload_trace;
 mod runtime;
@@ -76,10 +77,11 @@ use self::background_tasks::{
     dispatch_swarm_await_completion, dispatch_swarm_batch_progress, dispatch_swarm_output_tail,
     dispatch_swarm_runtime_status, dispatch_swarm_todo_progress, dispatch_swarm_tool_activity, dispatch_ui_activity,
 };
-use self::debug::{ClientConnectionInfo, ClientDebugState};
+use self::debug::ClientConnectionInfo;
 use self::debug_jobs::DebugJob;
 use self::headless::create_headless_session;
 use self::reload::await_reload_signal;
+use self::reload_recovery::ReloadContext;
 use self::runtime::ServerRuntime;
 use self::swarm::{
     MAX_SWARM_MEMBERS, broadcast_swarm_plan, broadcast_swarm_plan_with_previous, broadcast_swarm_status,
@@ -107,7 +109,6 @@ use crate::runtime_memory_log::{
     ServerRuntimeMemoryClients, ServerRuntimeMemoryEmbeddings, ServerRuntimeMemorySample, ServerRuntimeMemoryServer,
     ServerRuntimeMemorySessions, ServerRuntimeMemoryTopSession,
 };
-use crate::tool::selfdev::ReloadContext;
 use crate::transport::Listener;
 use anyhow::Result;
 use horon_agent_agent_runtime::{InterruptSignal, SoftInterruptSource};
@@ -190,32 +191,6 @@ pub(super) async fn remove_session_entry<T>(sessions: &Arc<RwLock<HashMap<String
         forget_removed_session(session_id, retired_sink.as_ref());
     }
     removed
-}
-
-/// Forget the per-session registries a removed session owned: its event sink,
-/// its metrics, and its recorded reasoning effort.
-///
-/// Split out from [`remove_session_entry`] for callers that already hold the
-/// `sessions` write guard: re-entering `remove_session_entry` there would take
-/// the same lock twice. `retired_sink` is the channel the event-sink registry
-/// held before the removal; `None` means no sink was registered.
-///
-/// The presence marker is deliberately not part of this: `remove_session_entry`
-/// owns it, and the two resume paths that call this directly never cleared it.
-pub(super) fn forget_removed_session(session_id: &str, retired_sink: Option<&mpsc::UnboundedSender<ServerEvent>>) {
-    if let Some(retired) = retired_sink {
-        unregister_session_event_sink(session_id, retired);
-    }
-    crate::session_metrics::forget(session_id);
-    crate::session_effort::forget_session_effort(session_id);
-    // Per-session caches that would otherwise outlive the session: the monitor
-    // runtime (and its sampler thread), the observation record, and the durable
-    // input store. Without this a daemon that opens and closes sessions forever
-    // keeps every one of them, and their threads, alive.
-    crate::tool::forget_session_caches(session_id);
-    crate::server::session_observation::forget_session(session_id);
-    crate::durable_input_runtime::forget_session(session_id);
-    crate::server::control_receipts::forget_session(session_id);
 }
 
 const SERVER_NAME_ENV: &str = "HORON_AGENT_SERVER_NAME";
@@ -779,10 +754,6 @@ pub struct Server {
     swarm_state: SwarmState,
     /// Shared context by swarm (swarm_id -> key -> SharedContext)
     shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
-    /// Active and available TUI debug channels (request_id, command)
-    client_debug_state: Arc<RwLock<ClientDebugState>>,
-    /// Channel to receive client debug responses from TUI (request_id, response)
-    client_debug_response_tx: broadcast::Sender<(u64, String)>,
     /// Background debug jobs (async debug commands)
     debug_jobs: Arc<RwLock<HashMap<String, DebugJob>>>,
     /// Channel subscriptions (swarm_id -> channel -> session_ids)
@@ -827,7 +798,6 @@ impl Server {
         crate::provider::set_active_provider(Arc::clone(&provider));
 
         let (event_tx, _) = broadcast::channel(1024);
-        let (client_debug_response_tx, _) = broadcast::channel(64);
 
         // Generate a memorable server name unless the operator configured a
         // stable one for long-lived remote runtimes.
@@ -882,8 +852,6 @@ impl Server {
                 restored_swarm_coordinators,
             ),
             shared_context: Arc::new(RwLock::new(HashMap::new())),
-            client_debug_state: Arc::new(RwLock::new(ClientDebugState::default())),
-            client_debug_response_tx,
             debug_jobs: Arc::new(RwLock::new(HashMap::new())),
             channel_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             channel_subscriptions_by_session: Arc::new(RwLock::new(HashMap::new())),
@@ -1022,9 +990,6 @@ impl Server {
             let previous_status = session.status.clone();
             let provider = self.provider.fork();
             let registry = crate::tool::Registry::new(provider.clone()).await;
-            if session.is_canary {
-                registry.register_selfdev_tools().await;
-            }
             registry
                 .register_mcp_tools_for_dir(
                     None,
@@ -1545,17 +1510,6 @@ impl Server {
             });
         }
 
-        // Spawn the Jade cloud relay listener independently of ambient mode. The
-        // worker is strictly opt-in and requires an explicit API base, token,
-        // session id, and reply-enabled flag before it makes any outbound calls.
-        jade_relay::spawn_if_configured(
-            &crate::config::config().safety,
-            Arc::clone(&self.sessions),
-            Arc::clone(&self.soft_interrupt_queues),
-            Arc::clone(&self.shutdown_signals),
-            Arc::clone(&self.swarm_state.members),
-        );
-
         // Spawn embedding idle monitor so the model can be unloaded when this
         // server has been quiet for a while.
         let embedding_idle_secs = embedding_idle_unload_secs();
@@ -2008,12 +1962,6 @@ impl Server {
             let mut interval = tokio::time::interval(RECONCILE_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut last_active: Option<bool> = None;
-            // macOS/Windows have no process-scoped lid lock, so lid-close
-            // blocking changes a persistent OS setting. That belongs to the
-            // user's desktop session, not the agent runtime: tell `horon-agent
-            // companion`, which journals and restores it. No companion (a
-            // headless or remote server) means no lid override.
-            let mut lid_reported: Option<bool> = None;
             loop {
                 interval.tick().await;
 
@@ -2021,7 +1969,6 @@ impl Server {
                 // takes effect without restarting the daemon.
                 let power = &crate::config::config().power;
                 let enabled = power.prevent_sleep_while_streaming;
-                let block_lid = enabled && power.block_lid_close;
 
                 let active = enabled && Self::any_session_streaming(&swarm_members).await;
                 if last_active != Some(active) {
@@ -2033,18 +1980,6 @@ impl Server {
                     last_active = Some(active);
                 }
                 inhibitor.set_active(active);
-                let want_lid = active && block_lid;
-                // Re-send while active so a companion started mid-turn engages
-                // too. Idle state is sent once.
-                if want_lid || lid_reported != Some(false) {
-                    let reported = crate::companion_client::request_async(
-                        crate::companion_client::CompanionRequest::PowerActivity { active: want_lid },
-                        Duration::from_secs(2),
-                    )
-                    .await
-                    .is_ok();
-                    lid_reported = reported.then_some(want_lid);
-                }
             }
         });
     }
@@ -2406,6 +2341,7 @@ impl Server {
 
         let main_listener = Listener::bind(&self.socket_path)?;
         let debug_listener = Listener::bind(&self.debug_socket_path)?;
+        irc::install(self);
 
         #[cfg(unix)]
         {
@@ -2528,6 +2464,7 @@ impl Server {
                 let _ = main_handle.await;
             }
         }
+        horon_agent_irc_core::global::clear();
         Ok(())
     }
 

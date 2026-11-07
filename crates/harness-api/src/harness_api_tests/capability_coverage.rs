@@ -6,15 +6,16 @@
 //! API crate, and the gap only shows up when someone tries to build a real
 //! client and finds they cannot switch models.
 //!
-//! So the reference clients are the specification. The TUI is
-//! complete, shipping clients of the same daemon; every request they send is
-//! by definition something a client needs. This test diffs that set against
-//! the API surface and fails when an unreviewed gap appears.
+//! So the clients in this repository are the specification. Every daemon
+//! request the ACP adapter (`src/`) and the harness API bridge
+//! (`crates/harness-api-server`) put on the wire is by definition something a
+//! client needs, and the ledger below is the reviewed answer for each one. The
+//! scan fails loudly when a source directory is missing or yields no requests,
+//! so a deleted or renamed client can never make this gate vacuous.
 //!
-//! The ledger below is the reviewed answer for each one. Adding a request to
-//! the TUI without deciding what it means for the API fails this test, which
-//! is the point: the decision gets made deliberately, once, and is recorded
-//! where the next person will find it.
+//! Adding a request to either client without deciding what it means for the
+//! API fails this test, which is the point: the decision gets made
+//! deliberately, once, and is recorded where the next person will find it.
 
 use std::collections::BTreeSet;
 
@@ -39,129 +40,200 @@ enum Disposition {
 
 use Disposition::{ClientInternal, Covered, Gap};
 
-/// Reviewed disposition of every internal request the reference clients send.
+/// Reviewed disposition of every daemon request a client in this repo sends.
 ///
 /// Sorted by name so additions produce clean diffs.
 const LEDGER: &[(&str, Disposition)] = &[
+    ("ApplyControl", Covered),
+    ("ApprovalAck", Covered),
+    ("ArchiveSession", Covered),
+    ("AskResponse", Covered),
     ("BackgroundTool", Covered),
     ("Cancel", Covered),
     ("CancelSoftInterrupts", Covered),
     ("Clear", Covered),
-    ("ClientDebugResponse", ClientInternal),
+    // The ACP adapter's own reply channel for questions it renders itself.
+    ("ClientResponse", ClientInternal),
     ("Compact", Covered),
-    ("CycleModel", ClientInternal),
-    ("GetCompactedHistory", ClientInternal),
+    // ACP session/new and session/set_mode semantics.
+    ("ConfigureSessionMcp", ClientInternal),
+    // Debug socket only.
+    ("DebugCommand", ClientInternal),
+    ("FailoverAck", Covered),
+    ("GetControlReceipt", Covered),
     ("GetHistory", Covered),
     ("GetModelCatalog", Covered),
+    ("GetRuntimeState", Covered),
+    ("GetSnapshot", Covered),
     // Create/attach session bootstrap requests state through the API bridge.
     ("GetState", Covered),
-    ("InputShell", ClientInternal),
     ("Message", Covered),
     ("NotifyAuthChanged", Covered),
-    ("RefreshModels", ClientInternal),
-    ("Reload", ClientInternal),
+    ("PermissionDecision", Covered),
+    ("Ping", Covered),
+    // ACP's graceful disconnect handshake; API clients use detach_session.
+    ("PrepareDisconnect", ClientInternal),
     ("RenameSession", Covered),
-    ("ResumeAllSessions", ClientInternal),
-    ("ResumeSession", ClientInternal),
     ("Rewind", Covered),
     ("RewindUndo", Covered),
-    ("RunSubagent", ClientInternal),
-    ("SetCompactionMode", ClientInternal),
-    ("SetAgentModel", Covered),
-    ("SetFeature", ClientInternal),
+    ("RuntimeCommand", Covered),
     ("SetModel", Covered),
-    ("SetPremiumMode", ClientInternal),
     ("SetReasoningEffort", Covered),
-    ("SetRoute", ClientInternal),
-    ("SetServiceTier", ClientInternal),
+    // ACP's session/set_mode; API clients answer prompts, not sessions.
+    ("SetSessionApprovalMode", ClientInternal),
     ("SetSessionSaved", Covered),
-    ("SetSubagentModel", ClientInternal),
-    ("SetTransport", ClientInternal),
     ("SoftInterrupt", Covered),
-    ("Split", ClientInternal),
-    ("StdinResponse", ClientInternal),
+    ("Split", Covered),
     ("Subscribe", Covered),
-    ("SwitchOpenAiAccount", ClientInternal),
-    ("InvalidateOpenAiUsage", Covered),
-    ("Transcript", ClientInternal),
-    ("Transfer", ClientInternal),
-    ("TriggerMemoryExtraction", ClientInternal),
+    ("Transfer", Covered),
+    // ACP retracts a queued prompt before the model sees it; the API exposes
+    // cancel and soft_interrupt instead.
+    ("WithdrawMessage", ClientInternal),
 ];
 
-/// Requests the reference clients (TUI) send to the daemon.
-fn reference_client_requests() -> BTreeSet<String> {
-    let mut found = BTreeSet::new();
-    {
-        let dir = "../horon-agent-tui/src";
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
-        collect_requests(&root, &mut found);
+/// Source trees that put daemon requests on the wire, relative to the repo root.
+///
+/// `src/` is the ACP adapter, a first-party client of this same daemon. The
+/// bridge crate builds daemon frames as JSON with the wire tag, so it is
+/// scraped through [`request_tags`] rather than through `Request::` paths.
+const CLIENT_SOURCES: &[&str] = &["src", "crates/harness-api-server/src"];
+
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Wire tag (`"message"`) to variant name (`"Message"`) for the daemon's
+/// `Request` enum, read from the serde renames so the two cannot drift.
+fn request_tags() -> std::collections::BTreeMap<String, String> {
+    let path = repo_root().join("crates/protocol/src/wire.rs");
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+    let start = source
+        .find("pub enum Request {")
+        .unwrap_or_else(|| panic!("{} has no `pub enum Request`", path.display()));
+    let body = &source[start..];
+    let end = body.find("\n}").unwrap_or(body.len());
+
+    let mut tags = std::collections::BTreeMap::new();
+    let mut pending: Option<String> = None;
+    for line in body[..end].lines().map(str::trim) {
+        if let Some(rest) = line.strip_prefix("#[serde(rename = \"") {
+            pending = Some(rest.split('"').next().unwrap_or_default().to_string());
+            continue;
+        }
+        let Some(tag) = pending.take() else {
+            continue;
+        };
+        let name: String = line.chars().take_while(|ch| ch.is_ascii_alphanumeric()).collect();
+        if name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
+            tags.insert(tag, name);
+        }
     }
-    // covered by construction and would otherwise pollute the diff.
-    for api_only in [
-        "CreateSession",
-        "AttachSession",
-        "ListSessions",
-        "PeekSession",
-        "SendMessage",
-    ] {
-        found.remove(api_only);
+    assert!(!tags.is_empty(), "{} declares no request tags", path.display());
+    tags
+}
+
+/// Requests those clients send, scraped from their sources.
+///
+/// Panics rather than returning an empty set: a directory that moved or was
+/// deleted must fail this gate, not make it silently pass.
+fn client_requests() -> BTreeSet<String> {
+    let tags = request_tags();
+    let variants: BTreeSet<&str> = tags.values().map(String::as_str).collect();
+    let mut found = BTreeSet::new();
+    for relative in CLIENT_SOURCES {
+        let dir = repo_root().join(relative);
+        assert!(
+            dir.is_dir(),
+            "client source {relative} (resolved to {}) is missing; the capability \
+             coverage gate would otherwise scrape nothing and pass",
+            dir.display()
+        );
+        let before = found.len();
+        collect_requests(&dir, &tags, &variants, &mut found);
+        assert!(
+            found.len() > before,
+            "scanning {relative} found no daemon requests; the scraper or that client changed \
+             shape, and this gate is no longer checking anything"
+        );
     }
     found
 }
 
-fn collect_requests(dir: &std::path::Path, found: &mut BTreeSet<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
+fn collect_requests(
+    dir: &std::path::Path,
+    tags: &std::collections::BTreeMap<String, String>,
+    variants: &BTreeSet<&str>,
+    found: &mut BTreeSet<String>,
+) {
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|error| panic!("cannot read directory {}: {error}", dir.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|error| panic!("cannot read an entry of {}: {error}", dir.display()))
+            .path();
         if path.is_dir() {
-            collect_requests(&path, found);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            let Ok(source) = std::fs::read_to_string(&path) else {
+            collect_requests(&path, tags, variants, found);
+            continue;
+        }
+        if path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        let source =
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+
+        // Rust clients name the variant. `Request::` also matches unrelated
+        // local enums whose names merely end in "Request", so only names the
+        // daemon enum actually declares are counted.
+        for (index, _) in source.match_indices("Request::") {
+            let preceding = source[..index].chars().next_back();
+            if preceding.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+                continue;
+            }
+            let name: String = source[index + "Request::".len()..]
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric())
+                .collect();
+            if variants.contains(name.as_str()) {
+                found.insert(name);
+            }
+        }
+
+        // The bridge names the wire tag: `json!({"type": "message", ...})`.
+        for (index, _) in source.match_indices("\"type\"") {
+            let rest = source[index + "\"type\"".len()..].trim_start();
+            let Some(rest) = rest.strip_prefix(':') else {
                 continue;
             };
-            for (index, _) in source.match_indices("Request::") {
-                // `Request::` also matches unrelated local enums whose names
-                // merely end in "Request" (the TUI's own
-                // `InlinePickerPreviewRequest::Login`, say). Those are UI
-                // state, not daemon capabilities, and counting them put three
-                // phantom entries in the ledger that no client could ever
-                // reach. Require the bare `Request::` path, so a qualified or
-                // suffixed enum is skipped.
-                let preceding = source[..index].chars().next_back();
-                if preceding.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-                    continue;
-                }
-                let name: String = source[index + "Request::".len()..]
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphanumeric())
-                    .collect();
-                if name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
-                    found.insert(name);
-                }
+            let rest = rest.trim_start();
+            let Some(rest) = rest.strip_prefix('"') else {
+                continue;
+            };
+            let tag: String = rest.chars().take_while(|ch| *ch != '"').collect();
+            if let Some(variant) = tags.get(&tag) {
+                found.insert(variant.clone());
             }
         }
     }
 }
 
-/// Every capability the reference clients use must have a reviewed entry.
+/// Every capability the repo's clients use must have a reviewed entry.
 ///
 /// This is the gate: it does not demand that the API cover everything, only
 /// that nothing is missing *by accident*.
 #[test]
 fn every_reference_client_capability_is_triaged() {
-    let used = reference_client_requests();
-    if used.is_empty() {
-        // Vendored/packaged builds without the sibling crates: nothing to do.
-        return;
-    }
+    let used = client_requests();
+    assert!(
+        !used.is_empty(),
+        "the client scan found no daemon requests at all; this gate cannot pass vacuously"
+    );
     let ledger: BTreeSet<&str> = LEDGER.iter().map(|(name, _)| *name).collect();
 
     let untriaged: Vec<&String> = used.iter().filter(|name| !ledger.contains(name.as_str())).collect();
     assert!(
         untriaged.is_empty(),
-        "these daemon requests are used by the TUI/desktop but have no reviewed \
+        "these daemon requests are sent by a client in this repo but have no reviewed \
          disposition in the harness API capability ledger: {untriaged:?}\n\
          Add each to LEDGER in capability_coverage.rs as Covered, ClientInternal, \
          or Gap(\"what a client cannot build without it\")."
@@ -170,7 +242,7 @@ fn every_reference_client_capability_is_triaged() {
     let stale: Vec<&str> = ledger.iter().filter(|name| !used.contains(**name)).copied().collect();
     assert!(
         stale.is_empty(),
-        "the capability ledger lists requests the reference clients no longer send: \
+        "the capability ledger lists requests no client in this repo sends: \
          {stale:?}. Remove them so the ledger keeps describing reality."
     );
 }

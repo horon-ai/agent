@@ -131,9 +131,9 @@ pub(crate) async fn run(action: McpCommand) -> Result<()> {
                 );
             }
             let mode = if no_browser {
-                oauth::BrowserMode::Print
+                oauth::BrowserPreference::Print
             } else {
-                oauth::BrowserMode::Open
+                oauth::BrowserPreference::Open
             };
             eprintln!("Discovering OAuth configuration for MCP server '{name}'...");
             oauth::login(url, mode, |url| {

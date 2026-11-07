@@ -484,13 +484,13 @@ fn pi_turns(path: &Path) -> Option<Parsed> {
     Some(parsed)
 }
 
-/// HoronAgent's own saved sessions. Debug, canary and child (subagent) sessions
+/// HoronAgent's own saved sessions. Debug and child (subagent) sessions
 /// are skipped, as are system-display messages such as session context.
 fn horon_agent_turns(path: &Path) -> Option<Parsed> {
     let file = std::fs::File::open(path).ok()?;
     let session: serde_json::Value = serde_json::from_reader(BufReader::new(file)).ok()?;
     let flag = |key: &str| session.get(key).and_then(|value| value.as_bool()).unwrap_or(false);
-    if flag("is_debug") || flag("is_canary") || session.get("parent_id").is_some_and(|id| !id.is_null()) {
+    if flag("is_debug") || session.get("parent_id").is_some_and(|id| !id.is_null()) {
         return None;
     }
     let mut parsed = Parsed::new();

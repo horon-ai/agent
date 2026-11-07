@@ -1974,30 +1974,6 @@ class HoronAgentClient:
             request["label"] = label
         await self._request_ok(request)
 
-    async def applet_action(
-        self,
-        session_id: str,
-        instance: str,
-        action: dict[str, Any],
-        state: dict[str, Any] | None = None,
-        source_key: str | None = None,
-    ) -> None:
-        """Report a user action in an agent applet instance."""
-        request: dict[str, Any] = {
-            "req": "applet_action",
-            "session_id": session_id,
-            "instance": instance,
-            "action": action,
-            "state": {} if state is None else state,
-        }
-        if source_key is not None:
-            request["source_key"] = source_key
-        await self._request_ok(request)
-
-    async def close_applet(self, session_id: str, instance: str) -> None:
-        """Close an agent applet instance. The agent is not woken."""
-        await self._request_ok({"req": "close_applet", "session_id": session_id, "instance": instance})
-
     # --- soft interrupt cancellation ---------------------------------------
 
     async def cancel_soft_interrupts(self, session_id: str) -> None:
@@ -2036,7 +2012,7 @@ class HoronAgentClient:
         return client_id in result["cancelled"]
 
     async def background_tool(self, session_id: str) -> None:
-        """Move the running tool call to the background (the TUI's Alt+B)."""
+        """Move the running tool call to the background."""
         await self.background_tool_result(session_id)
 
     async def background_tool_result(self, session_id: str) -> dict[str, Any]:

@@ -2,19 +2,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use super::provider_init::ProviderChoice;
 
-mod google;
 mod mcp;
 #[allow(unused_imports)]
-pub(crate) use google::{GoogleAccessTierArg, GoogleLoginArgs};
 pub(crate) use mcp::McpCommand;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum TranscriptModeArg {
-    Insert,
-    Append,
-    Replace,
-    Send,
-}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
@@ -29,10 +19,10 @@ pub(crate) enum ProviderAuthArg {
 #[derive(Parser, Debug)]
 #[command(name = "horon-agent")]
 #[command(version = horon_agent_build_meta::version())]
-#[command(about = "horon-agent: A coding agent using Claude Max or ChatGPT Pro subscriptions")]
+#[command(about = "horon-agent: A headless coding agent for OpenAI-compatible model endpoints")]
 pub(crate) struct Args {
-    /// Initial provider to use (horon-agent, claude, openai, openai-api, openrouter, azure, opencode, opencode-go, zai, 302ai, baseten, conifer, cortecs, comtegra, deepseek, fpt, firmware, huggingface, moonshotai, nebius, scaleway, stackit, groq, mistral, perplexity, togetherai, deepinfra, xai, grok-build, nvidia-nim, lmstudio, ollama, chutes, cerebras, alibaba-coding-plan, openai-compatible, cursor, copilot, gemini, antigravity, google, or auto-detect). Interactive sessions can switch providers with /model.
-    #[arg(short, long, default_value = "auto", global = true)]
+    /// Provider profile to use: `auto` (follow [provider] default_provider or --provider-profile), `openai-compatible`, or a [providers.<name>] profile id from config.toml.
+    #[arg(short, long, default_value = "auto", global = true, value_parser = super::provider_init::parse_provider_choice)]
     pub(crate) provider: ProviderChoice,
 
     /// Working directory for the local client process
@@ -43,7 +33,7 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) remote_working_dir: Option<String>,
 
-    /// Run the UI locally and attach to the persistent HoronAgent server on this SSH host
+    /// Remote SSH attach; unavailable in this headless build, so it fails with an explanation
     #[arg(long, global = true, conflicts_with = "socket", value_name = "HOST")]
     pub(crate) ssh: Option<String>,
 
@@ -75,27 +65,10 @@ pub(crate) struct Args {
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "")]
     pub(crate) resume: Option<String>,
 
-    /// Internal: launched as a freshly spawned window, so skip heavy local resume bootstrap.
+    /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
-    pub(crate) fresh_spawn: bool,
-
-    /// Internal: canonical global hotkey that launched this process.
-    #[arg(long, global = true, hide = true, value_name = "CHORD")]
-    pub(crate) spawn_hotkey: Option<String>,
-
-    /// Disable auto-detection of horon-agent repository and self-dev mode
-    #[arg(long, global = true)]
+    #[allow(dead_code)]
     pub(crate) no_selfdev: bool,
-
-    /// Rehearse first-run onboarding on launch: the real flow, as if horon-agent
-    /// were new on this machine (same as `/onboarding-sim`).
-    #[arg(long = "onboarding-sim")]
-    pub(crate) onboarding_sim: bool,
-
-    /// Launch the normal TUI, skip onboarding, then autoplay a safe simulation
-    /// of receiving, downloading, installing, and restarting after an update.
-    #[arg(long = "update-sim")]
-    pub(crate) update_sim: bool,
 
     /// Custom socket path for server/client communication.
     ///
@@ -106,10 +79,6 @@ pub(crate) struct Args {
     /// behind on a one-off socket.
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
-
-    /// Enable debug socket (broadcasts all TUI state changes)
-    #[arg(long, global = true)]
-    pub(crate) debug_socket: bool,
 
     /// Model to use (e.g., claude-opus-4-6, gpt-5.5)
     #[arg(short, long, global = true)]
@@ -185,20 +154,13 @@ pub(crate) enum Command {
     },
 
     /// Run as an Agent Client Protocol (ACP) adapter backed by the HoronAgent daemon
-    Acp {
-        /// Run the interactive provider login, then exit without starting the adapter
-        #[arg(long)]
-        login: bool,
-    },
+    Acp,
 
     /// Manage the background server daemon (e.g. `horon-agent server stop`).
     Server {
         #[command(subcommand)]
         action: ServerCommand,
     },
-
-    /// Connect to a running server
-    Connect,
 
     /// Run a single message and exit
     Run {
@@ -213,80 +175,6 @@ pub(crate) enum Command {
         /// The message to send
         message: String,
     },
-
-    /// Login to a provider via OAuth, API key, or local credentials
-    Login {
-        /// Provider to log in to. Equivalent to --provider for this command, e.g. `horon-agent login google`.
-        // Distinct clap id: the global `--provider` flag also has id "provider";
-        // sharing the id makes clap drop the flag inside `login` (so
-        // `horon-agent login --provider x` errors) and propagate the global default
-        // into this positional.
-        #[arg(value_enum, id = "login_provider", value_name = "PROVIDER")]
-        provider: Option<ProviderChoice>,
-
-        /// Account label for multi-account support (stored labels are auto-numbered)
-        #[arg(long, short = 'a')]
-        account: Option<String>,
-
-        /// Do not open a local browser. Show a login QR for another device (useful over SSH).
-        #[arg(long, alias = "headless")]
-        no_browser: bool,
-
-        /// Print a script-friendly auth URL and persist temporary login state for later completion.
-        #[arg(long, conflicts_with_all = ["callback_url", "auth_code"])]
-        print_auth_url: bool,
-
-        /// Complete a previously printed auth flow using a full callback URL or query string.
-        #[arg(long, conflicts_with = "auth_code")]
-        callback_url: Option<String>,
-
-        /// Complete a previously printed auth flow using a provider-issued authorization code.
-        #[arg(long, conflicts_with = "callback_url")]
-        auth_code: Option<String>,
-
-        /// Emit machine-readable JSON for script-friendly login flows.
-        #[arg(long)]
-        json: bool,
-
-        /// Resume a pending scriptable login flow that does not require callback/code input.
-        #[arg(long, conflicts_with_all = ["print_auth_url", "callback_url", "auth_code"])]
-        complete: bool,
-
-        /// Isolate temporary login state using 1-64 ASCII letters, digits, underscores or hyphens.
-        #[arg(long, value_parser = super::login::parse_login_flow_id)]
-        flow_id: Option<String>,
-
-        /// Cancel only this provider's pending flow. Does not remove saved credentials.
-        #[arg(long, requires = "flow_id", conflicts_with_all = ["print_auth_url", "callback_url", "auth_code", "complete", "account", "api_base", "api_key", "api_key_env"])]
-        cancel: bool,
-
-        /// Save credentials without running the post-login live provider validation.
-        /// Useful for offline setup, CI, or when entering credentials before network access is available.
-        #[arg(long)]
-        no_validate: bool,
-
-        #[command(flatten)]
-        google: GoogleLoginArgs,
-
-        /// OpenAI-compatible API base URL. Used with --provider openai-compatible/custom profiles.
-        #[arg(long)]
-        api_base: Option<String>,
-
-        /// OpenAI-compatible API key. If omitted, horon-agent prompts securely when needed.
-        #[arg(long)]
-        api_key: Option<String>,
-
-        /// Environment variable name to store/use for an OpenAI-compatible API key.
-        #[arg(long)]
-        api_key_env: Option<String>,
-    },
-
-    /// Log in to and manage your HoronAgent account
-    Account {
-        #[command(subcommand)]
-        action: AccountCommand,
-    },
-
     /// Run in simple REPL mode (no TUI)
     Repl,
 
@@ -329,14 +217,6 @@ pub(crate) enum Command {
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
-    /// Self-development mode: run as a canary session on the shared server
-    #[command(alias = "selfdev")]
-    SelfDev {
-        /// Build and test a new canary version before launching
-        #[arg(long)]
-        build: bool,
-    },
-
     /// Debug socket CLI - interact with running horon-agent server
     Debug {
         /// Debug command to run (list, start, sessions, create_session, message, tool, state, history, etc.)
@@ -360,10 +240,6 @@ pub(crate) enum Command {
         wait: bool,
     },
 
-    /// Authentication status and validation helpers
-    #[command(subcommand)]
-    Auth(AuthCommand),
-
     /// Provider discovery and selection helpers
     #[command(subcommand)]
     Provider(ProviderCommand),
@@ -380,7 +256,7 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Ambient(AmbientCommand),
 
-    /// Optional HoronAgent Cloud/Jade integration commands
+    /// SSH session migration commands
     #[command(subcommand)]
     Cloud(CloudCommand),
 
@@ -404,229 +280,9 @@ pub(crate) enum Command {
         action: ApprovalsCommand,
     },
 
-    /// Inject externally transcribed text into the active HoronAgent TUI
-    Transcript {
-        /// Transcript text. If omitted, reads from stdin.
-        text: Option<String>,
-
-        /// How to apply the transcript inside HoronAgent
-        #[arg(long, value_enum, default_value = "send")]
-        mode: TranscriptModeArg,
-
-        /// Target a specific live session instead of the active TUI
-        #[arg(short = 'S', long)]
-        session: Option<String>,
-    },
-
-    /// Run the desktop companion: opens URLs and terminals, global voice and
-    /// the lid override for the shared server, in this login session
-    Companion {
-        /// Report whether a companion is running and exit
-        #[arg(long)]
-        status: bool,
-
-        /// Do not run the global push-to-talk listener
-        #[arg(long)]
-        no_voice: bool,
-    },
-
-    /// Run configured dictation: send to last-focused horon-agent client or type raw text
-    Dictate {
-        /// Type the transcript into the focused app instead of sending to horon-agent
-        #[arg(long)]
-        r#type: bool,
-    },
-
-    /// Set up the platform global hotkey to launch horon-agent
-    SetupHotkey {
-        /// Internal: run as the macOS hotkey listener process.
-        #[arg(long, hide = true)]
-        listen_macos_hotkey: bool,
-
-        /// Internal: show a rate-limited shortcut reminder from a CLI SessionStart hook.
-        #[arg(long, hide = true, value_name = "CLI")]
-        notify_cli_launch: Option<String>,
-
-        /// Internal: run as the Windows hotkey listener process.
-        #[arg(long, hide = true)]
-        listen_windows_hotkey: bool,
-
-        /// Remove the installed platform global hotkey listener.
-        #[arg(long)]
-        uninstall: bool,
-    },
-
-    /// Install platform launcher integration (Windows shortcut; macOS notification helper)
-    SetupLauncher,
-
-    /// Browser automation setup and status
-    Browser {
-        /// Action (setup, status, detect)
-        #[arg(default_value = "setup")]
-        action: String,
-
-        /// Browser to target: auto (default: detect your browser), firefox,
-        /// chrome, chromium, edge, brave, or safari
-        browser: Option<String>,
-    },
-
-    /// Replay a saved session in the TUI
-    Replay {
-        /// Session ID, name, or path to session JSON file
-        session: String,
-
-        /// Replay related swarm sessions together in a synchronized multi-pane view
-        #[arg(long)]
-        swarm: bool,
-
-        /// Export timeline as JSON instead of playing
-        #[arg(long)]
-        export: bool,
-
-        /// Playback speed multiplier (default: 1.0)
-        #[arg(long, default_value = "1.0")]
-        speed: f64,
-
-        /// Path to an edited timeline JSON file (overrides session timing)
-        #[arg(long)]
-        timeline: Option<String>,
-
-        /// Auto-edit timeline: compress tool call wait times and gaps between prompts
-        #[arg(long)]
-        auto_edit: bool,
-
-        /// Export as video file (auto-generates name if no path given)
-        #[arg(long, default_missing_value = "auto", num_args = 0..=1)]
-        video: Option<String>,
-
-        /// Video width in columns (default: 120)
-        #[arg(long, default_value = "120")]
-        cols: u16,
-
-        /// Video height in rows (default: 40)
-        #[arg(long, default_value = "40")]
-        rows: u16,
-
-        /// Video frames per second (default: 60)
-        #[arg(long, default_value = "60")]
-        fps: u32,
-
-        /// Force centered layout (overrides config)
-        #[arg(long, conflicts_with = "no_centered")]
-        centered: bool,
-
-        /// Force left-aligned (non-centered) layout (overrides config)
-        #[arg(long, conflicts_with = "centered")]
-        no_centered: bool,
-    },
-
     /// Model management commands
     #[command(subcommand)]
     Model(ModelCommand),
-
-    /// Show live verification coverage. With no provider/model, prints the full coverage summary.
-    #[command(name = "provider-test-coverage", alias = "model-status")]
-    ProviderTestCoverage {
-        /// Provider to look up. Omit provider and model to print the full coverage summary.
-        #[arg(value_name = "PROVIDER")]
-        provider_query: Option<String>,
-
-        /// Model to look up. Defaults to the global --model value only when PROVIDER is supplied.
-        #[arg(value_name = "MODEL")]
-        model_query: Option<String>,
-
-        /// Read coverage from this JSON file instead of the default live-test coverage ledger
-        #[arg(long)]
-        coverage_file: Option<String>,
-
-        /// Maximum provider/model pairs to list in the full summary (0 = show all)
-        #[arg(long, default_value_t = 0)]
-        coverage_limit: usize,
-    },
-
-    /// Diagnose why a provider/model or the model picker is broken by walking the
-    /// strict end-to-end checkpoints (catalog, picker, model-switch, chat, streaming, tools).
-    #[command(name = "provider-doctor", alias = "provider-strict-e2e")]
-    ProviderDoctor {
-        /// OpenAI-compatible provider id to diagnose (e.g. cerebras, fpt, nvidia-nim)
-        #[arg(id = "doctor_provider", value_name = "PROVIDER")]
-        provider: String,
-
-        /// How much to exercise: offline (no key/no spend), catalog (key, ~no spend),
-        /// or full (key, spends balance: chat + streaming + tools).
-        #[arg(long, value_name = "TIER", default_value = "catalog")]
-        tier: String,
-
-        /// Emit the report as JSON for scripting
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Test authentication end-to-end: login (optional), credential probe, refresh, and provider smoke
-    AuthTest {
-        /// Run the provider login flow before validation (interactive/browser-based)
-        #[arg(long)]
-        login: bool,
-
-        /// Test all currently configured supported auth providers instead of just --provider
-        #[arg(long)]
-        all_configured: bool,
-
-        /// Skip the provider runtime smoke prompt
-        #[arg(long)]
-        no_smoke: bool,
-
-        /// Skip the tool-enabled runtime smoke prompt (the same request path used during normal chat)
-        #[arg(long)]
-        no_tool_smoke: bool,
-
-        /// Custom smoke prompt (default asks for AUTH_TEST_OK)
-        #[arg(long)]
-        prompt: Option<String>,
-
-        /// Emit JSON report instead of human-readable output
-        #[arg(long)]
-        json: bool,
-
-        /// Write the full auth-test report JSON to a file
-        #[arg(long)]
-        output: Option<String>,
-
-        /// Show strict live provider/model E2E coverage instead of running auth tests
-        #[arg(long, conflicts_with_all = ["login", "all_configured", "no_smoke", "no_tool_smoke", "prompt"])]
-        coverage: bool,
-
-        /// Fetch live model catalogs and verify context-window resolution for each model with metadata
-        #[arg(long, conflicts_with_all = ["login", "no_smoke", "no_tool_smoke", "prompt", "coverage"])]
-        context_audit: bool,
-
-        /// Read coverage from this JSON file instead of the default live-test coverage ledger
-        #[arg(long, requires = "coverage")]
-        coverage_file: Option<String>,
-
-        /// Maximum uncovered provider/model gaps to show in the text coverage report
-        #[arg(long, requires = "coverage", default_value_t = 50)]
-        coverage_limit: usize,
-    },
-
-    /// Save or restore the current set of open horon-agent windows across a system reboot
-    Restart {
-        #[command(subcommand)]
-        action: RestartCommand,
-    },
-
-    /// Show a live macOS menu bar indicator with running/streaming session counts
-    #[command(alias = "menu-bar", alias = "statusbar")]
-    Menubar {
-        /// Print the current counts once as text and exit (no menu bar item)
-        #[arg(long)]
-        once: bool,
-
-        /// Emit the current counts as JSON and exit
-        #[arg(long, conflicts_with = "once")]
-        json: bool,
-    },
-
     /// Serve the stable harness API on a Unix socket, for SDK clients.
     ///
     /// This is the endpoint the TypeScript SDK (`@horon-ai/agent-sdk`) connects to. It
@@ -696,26 +352,6 @@ pub(crate) enum RuntimeStateAction {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum AccountCommand {
-    /// Open browser-based device authorization and wait for plan activation
-    Login {
-        /// Do not open a browser automatically; print the public approval URL instead
-        #[arg(long, alias = "headless")]
-        no_browser: bool,
-    },
-    /// Show canonical account, plan, and usage status from /v1/me
-    Status {
-        /// Emit JSON instead of human-readable output
-        #[arg(long)]
-        json: bool,
-    },
-    /// Open the public HoronAgent account management page
-    Manage,
-    /// Revoke the current key when reachable, then securely clear local state
-    Logout,
 }
 
 #[derive(Subcommand, Debug)]
@@ -815,12 +451,6 @@ pub(crate) enum ApprovalVerdictArg {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum CloudCommand {
-    /// Upload, list, verify, and view cloud-synced sessions
-    Sessions {
-        #[command(subcommand)]
-        action: CloudSessionsCommand,
-    },
-
     /// Move a live session (transcript, repo state, env notes) to a cloud host
     /// and keep working there. Your local files stay editable. Git reconciles
     /// both sides when the session comes back with `horon-agent cloud return`.
@@ -914,25 +544,6 @@ pub(crate) struct CloudMoveTarget {
     /// Also read from $HORON_AGENT_CLOUD_TRANSPORT.
     #[arg(long, hide = true)]
     pub(crate) transport: Option<String>,
-}
-
-mod cloud_sessions;
-pub(crate) use cloud_sessions::*;
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum RestartCommand {
-    /// Save a reboot snapshot of currently active horon-agent windows
-    Save {
-        /// Restore this reboot snapshot automatically the next time plain `horon-agent` starts
-        #[arg(long)]
-        auto_restore: bool,
-    },
-    /// Restore the most recently saved reboot snapshot
-    Restore,
-    /// Show the currently saved reboot snapshot
-    Status,
-    /// Remove the currently saved reboot snapshot
-    Clear,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1166,40 +777,6 @@ pub(crate) enum ProviderCommand {
 }
 
 #[derive(Subcommand, Debug)]
-pub(crate) enum AuthCommand {
-    /// Import one selected OAuth login from a trusted client (never overwrites a store)
-    Import {
-        /// Read the private credential envelope from stdin, never from command arguments
-        #[arg(long, required = true)]
-        stdin: bool,
-
-        /// Emit a secret-free JSON acknowledgement
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show configured authentication status for model/tool providers
-    Status {
-        /// Emit JSON instead of plain text
-        #[arg(long)]
-        json: bool,
-    },
-    /// Diagnose provider auth issues and suggest next steps
-    Doctor {
-        /// Optional provider id or alias to focus diagnosis on one provider
-        #[arg(id = "auth_provider", value_name = "PROVIDER")]
-        provider: Option<String>,
-
-        /// Run live post-login validation for configured providers during diagnosis
-        #[arg(long)]
-        validate: bool,
-
-        /// Emit JSON instead of plain text
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 pub(crate) enum AmbientCommand {
     /// Show ambient mode status
     Status,
@@ -1209,9 +786,6 @@ pub(crate) enum AmbientCommand {
     Trigger,
     /// Stop ambient mode
     Stop,
-    /// Run an ambient cycle in a visible TUI (internal, spawned by the ambient runner)
-    #[command(hide = true)]
-    RunVisible,
 }
 
 #[derive(Subcommand, Debug)]

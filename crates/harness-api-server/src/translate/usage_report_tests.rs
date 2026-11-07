@@ -225,8 +225,8 @@ fn usage_report_rejects_an_unknown_session() {
 }
 
 #[test]
-fn a_deferred_report_answers_after_the_subscription_probe() {
-    let home = ScopedHome::new("probe");
+fn a_report_answers_locally_with_no_limits() {
+    let home = ScopedHome::new("limits");
     seed_session(&home.path, "session_a", "model-x", &[(10, 2, None, None)]);
     let mut state = BridgeState {
         session_id: Some("s1".into()),
@@ -234,73 +234,20 @@ fn a_deferred_report_answers_after_the_subscription_probe() {
         ..Default::default()
     };
 
-    let outbound = state.api_request_to_legacy(&json!({"req": "usage_report", "id": 12}));
-    let probe = match &outbound[0] {
-        Outbound::Legacy(value) => value.clone(),
-        other => panic!("expected a subscription probe, got {other:?}"),
-    };
-    assert_eq!(probe["type"], "runtime_command");
-    assert_eq!(probe["command"], "subscription");
-
-    let frames = state.legacy_event_to_api(&json!({
-        "type": "runtime_command_result",
-        "id": probe["id"],
-        "command": "subscription",
-        "message": "",
-        "data": {"configured": true, "account": {"usage": {"used_usd": 12.5, "budget_usd": 200.0, "resets_at": "2026-11-01T00:00:00Z"}}},
-    }));
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].reply_to, Some(12));
-    let ApiEvent::UsageReport { sessions, limits, .. } = &frames[0].event else {
-        panic!("expected the deferred report, got {:?}", frames[0].event);
+    let event = report(&mut state, json!({"req": "usage_report", "id": 12}));
+    let ApiEvent::UsageReport { sessions, limits, .. } = &event else {
+        panic!("expected a usage report, got {event:?}");
     };
     let row = sessions
         .iter()
         .find(|row| row.session_id == "session_a")
         .expect("the seeded session is reported");
     assert_eq!(row.input, Some(10));
-    assert_eq!(limits.len(), 1);
-    assert_eq!(limits[0].name, "subscription_spend");
-    assert_eq!(limits[0].used, Some(12.5));
-    assert_eq!(limits[0].limit, Some(200.0));
-    assert_eq!(limits[0].resets_at.as_deref(), Some("2026-11-01T00:00:00Z"));
-
-    let second = usage(&mut state, json!({"req": "usage_report", "id": 13}));
-    assert_eq!(second.0, None);
-}
-
-#[test]
-fn a_rejected_probe_still_answers_the_report_without_limits() {
-    let home = ScopedHome::new("probe-error");
-    seed_session(&home.path, "session_a", "model-x", &[(7, 3, None, None)]);
-    let mut state = BridgeState {
-        session_id: Some("s1".into()),
-        runtime_commands_supported: true,
-        ..Default::default()
-    };
-
-    let Outbound::Legacy(probe) = state
-        .api_request_to_legacy(&json!({"req": "usage_report", "id": 14}))
-        .remove(0)
-    else {
-        panic!("expected a subscription probe");
-    };
-    let frames = state.legacy_event_to_api(&json!({
-        "type": "error",
-        "id": probe["id"],
-        "message": "runtime commands are unavailable",
-    }));
-    assert_eq!(frames.len(), 1);
-    assert_eq!(frames[0].reply_to, Some(14));
-    let ApiEvent::UsageReport { sessions, limits, .. } = &frames[0].event else {
-        panic!("expected a usage report, got {:?}", frames[0].event);
-    };
-    let row = sessions
-        .iter()
-        .find(|row| row.session_id == "session_a")
-        .expect("the seeded session is reported");
-    assert_eq!(row.output, Some(3));
-    assert!(limits.is_empty());
+    assert!(limits.is_empty(), "this build has no subscription limits: {limits:?}");
+    assert!(
+        state.pending_simple.is_empty(),
+        "the report must not leave a request pending on the daemon"
+    );
 }
 
 #[test]

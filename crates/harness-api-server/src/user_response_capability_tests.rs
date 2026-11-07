@@ -18,7 +18,6 @@ fn user_response_capability_is_explicit_and_independent_of_pdf_support() {
                     _ => None,
                 })
                 .expect("attachment sends Subscribe");
-            assert_eq!(subscribe["supports_pdf_panels"], true);
             assert_eq!(subscribe["supports_user_response"], enabled);
         }
     }

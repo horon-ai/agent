@@ -152,7 +152,7 @@ fn newest_released_model_for_resolved_openai_compatible_profile(
         .map(|model| model.id.trim())
         .filter(|id| !id.is_empty() && crate::provider::is_listable_model_name(id))
         .collect();
-    if let Some(flagship) = crate::auth::lifecycle::ranked_flagship_for_provider(profile_id, &chat_ids) {
+    if let Some(flagship) = crate::provider::model_rank::ranked_flagship_for_provider(profile_id, &chat_ids) {
         return Some(flagship);
     }
 
@@ -264,11 +264,7 @@ fn apply_profile_key_based_endpoint_overrides(
 }
 
 pub fn resolve_openai_compatible_profile_selection(input: &str) -> Option<OpenAiCompatibleProfile> {
-    let provider = resolve_login_provider(input)?;
-    match provider.target {
-        LoginProviderTarget::OpenAiCompatible(profile) => Some(profile),
-        _ => None,
-    }
+    openai_compatible_profile_by_id(input)
 }
 
 pub fn active_openai_compatible_display_name() -> Option<String> {
@@ -630,13 +626,13 @@ pub fn openai_compatible_profile_static_models(profile: OpenAiCompatibleProfile)
             push("mimo-v2-omni");
         }
         // Meta's catalog is authenticated, so expose the documented Muse Spark
-        // models immediately after login while the live refresh completes.
+        // models immediately after a key is saved while the live refresh completes.
         "meta-muse" => {
             push("muse-spark-1.2");
             push("muse-spark-1.1");
         }
-        // MiniMax's `/models` endpoint is authenticated and live, but post-login
-        // model activation should not depend on the catalog refresh completing
+        // MiniMax's `/models` endpoint is authenticated and live, but model
+        // activation should not depend on the catalog refresh completing
         // before the picker/routes are rebuilt. Keep the documented text models
         // selectable immediately after saving a key.
         "minimax" => {
