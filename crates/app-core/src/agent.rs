@@ -15,6 +15,7 @@ mod goal_continuation;
 #[cfg(test)]
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
+mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
 mod loop_guard;
@@ -239,8 +240,7 @@ fn join_request_messages(prefix: &[Message], suffix: &[Message]) -> Vec<Message>
     joined
 }
 
-/// Full-transcript copies the request preparation made beyond the turn's one
-/// owned snapshot. Test-only accounting for `request_snapshot_reuse`.
+/// Full-transcript copies made beyond the turn's one owned snapshot; test-only.
 #[cfg(test)]
 static REQUEST_EXTRA_CLONES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(test)]

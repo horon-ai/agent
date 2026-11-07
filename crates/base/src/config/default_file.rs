@@ -403,6 +403,13 @@ cross_provider_failover = "countdown"
 # never starts a turn or injects into a running turn.
 # Env override: HORON_AGENT_WAKE_MODE
 wake_mode = "internal"
+# Release the derived caches of a session that has been idle this many seconds.
+# Only the provider projection and the tool-output index are dropped; the saved
+# transcript, the frozen prompt and tool surface, and rewind undo stay, so the
+# next turn rebuilds those two caches with no disk read.
+# 0 disables the sweep. Checked every ten seconds.
+# Env override: HORON_AGENT_IDLE_HIBERNATION_SECS
+idle_hibernation_secs = 1800
 
 [agents]
 # Swarm root settings and defaults for helper agents (workers, subagents, sidecars).
@@ -682,5 +689,39 @@ mod tests {
         assert_eq!(reread.tools.bash_interceptor, parsed.tools.bash_interceptor);
         assert_eq!(reread.tools.bash_patterns, parsed.tools.bash_patterns);
         assert_eq!(reread.tools.git_guard, parsed.tools.git_guard);
+        assert_eq!(
+            reread.server.idle_hibernation_secs, parsed.server.idle_hibernation_secs,
+            "the idle hibernation window must survive a write and reread"
+        );
+    }
+
+    /// The shipped template names the hibernation window, and the built-in
+    /// default is the documented thirty minutes.
+    #[test]
+    fn idle_hibernation_defaults_to_thirty_minutes_and_keeps_zero() {
+        let template = Config::default_config_file_contents();
+        assert!(
+            template.contains("idle_hibernation_secs = 1800"),
+            "the template must show the documented default"
+        );
+        let config = toml::from_str::<Config>(&template).expect("the shipped config template must parse");
+        assert_eq!(config.server.idle_hibernation_secs, 1800);
+        assert_eq!(
+            super::super::DEFAULT_IDLE_HIBERNATION_SECS,
+            1800,
+            "the constant and the template must agree"
+        );
+
+        // A config file that predates the key gets the default, not a disable.
+        let legacy: Config = toml::from_str("[server]\nwake_mode = \"external\"\n").expect("legacy server table");
+        assert_eq!(legacy.server.idle_hibernation_secs, 1800);
+        assert_eq!(legacy.server.wake_mode, WakeMode::External);
+
+        // Zero is a real value: it turns the sweep off, so it must round-trip.
+        let disabled: Config = toml::from_str("[server]\nidle_hibernation_secs = 0\n").expect("zero parses");
+        assert_eq!(disabled.server.idle_hibernation_secs, 0);
+        let written = toml::to_string_pretty(&disabled).expect("a zero window must serialize");
+        let reread: Config = toml::from_str(&written).expect("a zero window must parse back");
+        assert_eq!(reread.server.idle_hibernation_secs, 0);
     }
 }

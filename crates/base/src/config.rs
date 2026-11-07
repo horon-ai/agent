@@ -89,6 +89,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "GOOGLE_CLOUD_PROJECT",
     "GOOGLE_CLOUD_PROJECT_ID",
     "HORON_AGENT_WAKE_MODE",
+    "HORON_AGENT_IDLE_HIBERNATION_SECS",
     "HORON_AGENT_CROSS_PROVIDER_FAILOVER",
     "HORON_AGENT_DEBUG_SOCKET",
     "HORON_AGENT_DEFAULT_REASONING_DISPLAY",
@@ -500,13 +501,6 @@ impl WakeMode {
             _ => None,
         }
     }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ServerConfig {
-    /// Ownership model for autonomous wake requests.
-    pub wake_mode: WakeMode,
 }
 
 /// Agent Client Protocol adapter configuration.
@@ -1182,7 +1176,10 @@ pub mod change_report;
 mod config_file;
 mod default_file;
 mod env_overrides;
+mod server;
 mod tool_selection;
+
+pub use self::server::{DEFAULT_IDLE_HIBERNATION_SECS, ServerConfig};
 
 #[cfg(test)]
 #[path = "config_tests.rs"]

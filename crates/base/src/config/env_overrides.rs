@@ -13,6 +13,13 @@ impl Config {
         {
             self.server.wake_mode = parsed;
         }
+        // Zero is meaningful here: it disables the sweep, so unlike the stream
+        // idle timeout it must not be filtered out as "no value".
+        if let Ok(v) = std::env::var("HORON_AGENT_IDLE_HIBERNATION_SECS")
+            && let Ok(parsed) = v.trim().parse::<u64>()
+        {
+            self.server.idle_hibernation_secs = parsed;
+        }
 
         // Tools
         if let Ok(v) = std::env::var("HORON_AGENT_TOOL_PROFILE") {
@@ -613,5 +620,77 @@ impl Config {
         }
         cache.fingerprint = super::ConfigCacheFingerprint::current();
         cache.last_checked = std::time::Instant::now();
+    }
+}
+
+#[cfg(test)]
+mod idle_hibernation_env_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    /// Isolated home plus a restored environment, so a real `HORON_AGENT_HOME`
+    /// or a leftover override cannot leak into the parse.
+    struct EnvCase {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        _dir: tempfile::TempDir,
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl EnvCase {
+        fn new() -> Self {
+            let lock = crate::storage::lock_test_env();
+            let dir = tempfile::tempdir().expect("temp home");
+            let keys = ["HORON_AGENT_HOME", "HORON_AGENT_IDLE_HIBERNATION_SECS"];
+            let previous = keys
+                .into_iter()
+                .map(|key| {
+                    let value = std::env::var_os(key);
+                    (key, value)
+                })
+                .collect();
+            crate::env::set_var("HORON_AGENT_HOME", dir.path());
+            crate::env::remove_var("HORON_AGENT_IDLE_HIBERNATION_SECS");
+            Self {
+                _lock: lock,
+                _dir: dir,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvCase {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..) {
+                match value {
+                    Some(value) => crate::env::set_var(key, value),
+                    None => crate::env::remove_var(key),
+                }
+            }
+            Config::invalidate_cache();
+        }
+    }
+
+    fn load_with(value: Option<&str>) -> u64 {
+        let _case = EnvCase::new();
+        if let Some(value) = value {
+            crate::env::set_var("HORON_AGENT_IDLE_HIBERNATION_SECS", value);
+        }
+        Config::load_strict()
+            .expect("an isolated load must succeed")
+            .server
+            .idle_hibernation_secs
+    }
+
+    #[test]
+    fn idle_hibernation_env_overrides_and_keeps_zero() {
+        assert_eq!(load_with(None), 1800, "absent env keeps the default");
+        assert_eq!(load_with(Some("1800")), 1800);
+        // Zero disables the sweep, so the usual `parsed > 0` filter must not
+        // swallow it the way the stream idle timeout does.
+        assert_eq!(load_with(Some(" 0 ")), 0, "zero is a real value and trims");
+        // A negative value cannot be a `u64` window; it must not fall back to
+        // zero, which would silently disable a feature the operator wanted.
+        assert_eq!(load_with(Some("-1")), 1800, "a negative value is ignored");
+        assert_eq!(load_with(Some("invalid")), 1800, "junk is ignored");
     }
 }
