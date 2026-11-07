@@ -849,15 +849,6 @@ fn parse_proc_status_value_bytes(status: &str, key: &str) -> Option<u64> {
     parse_proc_value_bytes(status, key)
 }
 
-/// Parse a unit-less `/proc` counter such as `Threads:\t10`.
-#[cfg(target_os = "linux")]
-fn parse_proc_status_count(status: &str, key: &str) -> Option<u64> {
-    status.lines().find_map(|line| {
-        let rest = line.trim_start().strip_prefix(key)?;
-        rest.split_whitespace().next()?.parse::<u64>().ok()
-    })
-}
-
 #[cfg(target_os = "linux")]
 fn parse_proc_value_bytes(status: &str, key: &str) -> Option<u64> {
     status.lines().find_map(|line| {
@@ -1062,14 +1053,6 @@ mod tests {
         assert_eq!(parse_proc_value_bytes(text, "Pss:"), Some(123 * 1024));
         assert_eq!(parse_proc_value_bytes(text, "Mapped:"), Some(2 * 1024 * 1024));
         assert_eq!(parse_proc_value_bytes(text, "Retained:"), Some(1024 * 1024 * 1024));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn parse_proc_status_count_reads_unitless_counters() {
-        let text = "Name:\thoron-agent\nThreads:\t10\nVmStk:\t     132 kB\n";
-        assert_eq!(parse_proc_status_count(text, "Threads:"), Some(10));
-        assert_eq!(parse_proc_status_count(text, "Missing:"), None);
     }
 
     #[cfg(target_os = "linux")]

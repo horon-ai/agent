@@ -606,10 +606,7 @@ pub(crate) fn process_working_dirs() -> Vec<std::path::PathBuf> {
                 .to_str()
                 .is_some_and(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
         })
-        .filter_map(|entry| match std::fs::read_link(entry.path().join("cwd")) {
-            Ok(cwd) => Some(cwd),
-            Err(_) => None,
-        })
+        .filter_map(|entry| std::fs::read_link(entry.path().join("cwd")).ok())
         .collect()
 }
 
@@ -672,10 +669,7 @@ fn proc_status_bytes(status: &str, key: &str) -> Option<u64> {
 fn proc_status_count(status: &str, key: &str) -> Option<u64> {
     status.lines().find_map(|line| {
         let rest = line.trim_start().strip_prefix(key)?;
-        match rest.split_whitespace().next()?.parse::<u64>() {
-            Ok(count) => Some(count),
-            Err(_) => None,
-        }
+        rest.split_whitespace().next()?.parse::<u64>().ok()
     })
 }
 
@@ -692,7 +686,7 @@ pub(crate) fn set_process_name(name: &str) {
     // SAFETY: `comm` is a NUL-terminated 16-byte buffer, which is exactly what
     // `PR_SET_NAME` reads. A refused name change only costs a cosmetic `ps`
     // label, so the result is deliberately ignored.
-    drop(unsafe { libc::prctl(libc::PR_SET_NAME, comm.as_ptr(), 0, 0, 0) });
+    let _ = unsafe { libc::prctl(libc::PR_SET_NAME, comm.as_ptr(), 0, 0, 0) };
 }
 
 /// Set the short process name this process reports.

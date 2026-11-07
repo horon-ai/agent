@@ -17,15 +17,25 @@ const MAX_URL_CHARS: usize = 300;
 const DEFAULT_TIMEOUT: u64 = 30;
 const MAX_TIMEOUT: u64 = 120;
 
-pub struct WebFetchTool {
-    client: reqwest::Client,
-}
+/// Fetches a URL and returns its text.
+///
+/// The HTTP client is not a field: constructing it parses the entire TLS trust
+/// store (449 anchors in this build), and the registry is built at `serve`
+/// startup, so holding a client here charges every daemon start for work only a
+/// real fetch needs. `provider::shared_http_client()` is already a process-wide
+/// `OnceLock`, so asking for it at the call site builds it on first request and
+/// shares it with every other tool.
+pub struct WebFetchTool;
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        Self {
-            client: crate::provider::shared_http_client(),
-        }
+        Self
+    }
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -86,8 +96,7 @@ impl Tool for WebFetchTool {
         let timeout = params.timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
         let format = params.format.as_deref().unwrap_or("markdown");
 
-        let response = self
-            .client
+        let response = crate::provider::shared_http_client()
             .get(&params.url)
             .header(reqwest::header::USER_AGENT, "Mozilla/5.0 (compatible; HoronAgent/1.0)")
             .timeout(Duration::from_secs(timeout))

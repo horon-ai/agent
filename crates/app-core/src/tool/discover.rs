@@ -99,15 +99,21 @@ impl std::error::Error for DiscoveryFetchError {}
 /// The request carries the category, a short search query, and a reason string.
 /// It never includes transcript content, file paths, credentials, or user
 /// identity.
-pub struct DiscoverToolsTool {
-    client: reqwest::Client,
-}
+///
+/// No HTTP client is held: building one parses the whole TLS trust store, and
+/// the registry is constructed at `serve` startup. `provider::shared_http_client()`
+/// is process-wide, so the request context borrows it at the point of use.
+pub struct DiscoverToolsTool;
 
 impl DiscoverToolsTool {
     pub fn new() -> Self {
-        Self {
-            client: crate::provider::shared_http_client(),
-        }
+        Self
+    }
+}
+
+impl Default for DiscoverToolsTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -414,7 +420,7 @@ impl Tool for DiscoverToolsTool {
         let tool_selection = normalize_selection_name(params.tool.as_deref())?;
         let action = DiscoveryAction::parse(params.action.as_deref(), tool_selection.is_some())?;
         let discovery_request = DiscoveryRequestContext {
-            client: &self.client,
+            client: &crate::provider::shared_http_client(),
             endpoint: &endpoint,
             request_id: &request_id,
             category: &category,
