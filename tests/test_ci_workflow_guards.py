@@ -22,11 +22,19 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertIn('--locked', line)
                 checked += 1
         # Lowered from 15 because the browser liveness cohort, which held two of
-        # these cargo test steps, no longer exists, and again from 14 when the
-        # provider matrix stage went with the vendor provider logins; the
-        # cohorts added since keep the real count above this floor.
-        self.assertGreaterEqual(checked, 13)
+        # these cargo test steps, no longer exists, again from 14 when the
+        # provider matrix stage went with the vendor provider logins, and again
+        # to 8 when the Build & Test cohort and e2e-compile `cargo test` steps
+        # became one compile call plus `scripts/ci/run_lib_tests.py` (#19).
+        # `run_lib_tests.py` executes the already built test executables and
+        # never invokes cargo, so no unlocked build can hide behind the lower
+        # floor; the assertion below pins that.
+        self.assertGreaterEqual(checked, 8)
         self.assertIn('git diff --exit-code -- Cargo.lock', workflow)
+        helper = (ROOT / 'scripts/ci/run_lib_tests.py').read_text()
+        for invocation in ('cargo build', 'cargo test', 'cargo check', 'cargo clippy'):
+            with self.subTest(invocation=invocation):
+                self.assertNotIn(invocation, helper)
 
     def test_arm64_release_graph_is_a_mandatory_native_windows_check(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()

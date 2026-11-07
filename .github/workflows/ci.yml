@@ -329,19 +329,40 @@ jobs:
 
       - name: Compile library and binary tests
         shell: bash
+        # One call compiles the lib and bin tests of every package the cohorts
+        # below use. Selecting a different `-p` set per cohort unifies features
+        # differently, so each of those calls recompiled dozens of workspace
+        # crates (#19). `--message-format=json-render-diagnostics` keeps rendered
+        # diagnostics on stderr and writes only JSON messages to stdout, which
+        # records each test executable for the cohort steps. The cohort steps
+        # run those executables instead of invoking cargo again (#19): a
+        # per-cohort `cargo test -p <crate>` unifies features over only that
+        # crate, so every workspace crate recompiles with a different
+        # fingerprint. The artifacts file lives in `$RUNNER_TEMP`; the JSON is
+        # build output, not a test result.
         run: |
-          python3 .github/scripts/run_with_timeout.py 900 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --lib --bins --no-run
+          set -euo pipefail
+          TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
+          echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            packages+=(-p horon-agent-embedding)
+          fi
+          python3 .github/scripts/run_with_timeout.py 1800 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            "${packages[@]}" --lib --bins --test e2e --no-run \
+            --message-format=json-render-diagnostics \
+            > "$TEST_ARTIFACTS"
 
       - name: Run deterministic retention-readiness cohort
         shell: bash
+        # The helper runs the already compiled lib test executable, so this
+        # cohort cannot recompile anything; its budget only covers execution.
         run: |
-          # A cold horon-agent-app-core test harness compiles heavy optional provider
-          # dependencies and can exceed three minutes on hosted runners. The
-          # cohort itself runs in under a second once the lib test is built.
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-app-core --lib retention_readiness -- --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 \
+            -- retention_readiness --nocapture
 
       - name: Run secret-input pty cohort (all platforms with a pty)
         if: runner.os != 'Windows'
@@ -353,14 +374,11 @@ jobs:
         # looks-green-but-never-ran shape as the warning budget and the stdin
         # detector (#651). These tests fork a pty, so they cannot run on the
         # Windows runner; everywhere else they take about a second.
-        #
-        # 600s, not 300s: the budget is dominated by cold-compiling the
-        # horon-agent-base lib test harness, which exceeded 300s on a hosted macOS
-        # runner (run 30591536707) while the cohort itself runs in a second.
         run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-base --lib secret_input -- --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 \
+            -- secret_input --nocapture
 
       - name: Run IRC cohorts
         shell: bash
@@ -370,30 +388,20 @@ jobs:
         # uses. A filter that matches nothing makes libtest report "0 passed"
         # and exit 0, the looks-green-but-never-ran shape the warning budget and
         # the stdin detector both had, so each cohort must report at least one
-        # pass.
+        # pass (`--min-passed 1`).
         run: |
-          set -euo pipefail
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-irc-core --lib -- --nocapture | tee /tmp/irc-1.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-1.log || {
-            echo "::error::IRC cohort 1 ran no tests"
-            exit 1
-          }
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-base --lib irc -- --nocapture | tee /tmp/irc-2.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-2.log || {
-            echo "::error::IRC cohort 2 ran no tests"
-            exit 1
-          }
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-app-core --lib irc -- --nocapture | tee /tmp/irc-3.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-3.log || {
-            echo "::error::IRC cohort 3 ran no tests"
-            exit 1
-          }
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-irc-core \
+            --timeout 600 --min-passed 1 \
+            -- --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- irc --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- irc --nocapture
 
       - name: Run embedding numeric-stability cohort (Linux only)
         if: runner.os == 'Linux'
@@ -419,10 +427,10 @@ jobs:
           # degrade back into a silent skip.
           test -s "$model_dir/model.onnx"
           test -s "$model_dir/tokenizer.json"
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-embedding --lib -- --nocapture \
-            | tee /tmp/embedding-cohort.log
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-embedding \
+            --timeout 600 --log /tmp/embedding-cohort.log \
+            -- --nocapture
           # The test is present and the harness ran it (rather than the binary
           # failing to build).
           grep -q "minilm_embedding_is_numerically_stable_across_inference_engines ... ok" \
@@ -451,29 +459,27 @@ jobs:
         # because these tests drive `head -n1`, which stock Windows does not
         # provide; the Windows detector still has no test coverage.
         run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-app-core --lib tool::bash::tests::test_stdin_forwarding -- --nocapture
-
-      - name: Compile integration test binaries
-        shell: bash
-        # Build the integration-test binaries up front (not counted against the
-        # run steps' execution budgets). The e2e suite in particular is heavy
-        # (burst-spawn concurrency), and folding compilation into its 900s run
-        # budget was pushing slower hosted ubuntu/macos runners over the limit.
-        run: |
-          python3 .github/scripts/run_with_timeout.py 900 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            --test e2e --no-run
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 \
+            -- tool::bash::tests::test_stdin_forwarding --nocapture
 
       - name: Run e2e tests
         shell: bash
+        # Same `-p` set and target as the compile step so cargo reuses the
+        # already built e2e binary instead of rebuilding the selection set.
         run: |
           # e2e is fast (~1-2 min of execution); the generous budget only guards
           # against an occasional slow hosted runner. Compilation is already done
           # in the dedicated compile step above.
+          set -euo pipefail
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            packages+=(-p horon-agent-embedding)
+          fi
           python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test e2e
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            "${packages[@]}" --test e2e
 
       # macOS only: the quality job already runs the same gate on Linux, and a
       # second whole-workspace `cargo check` on the ubuntu matrix entry is a
