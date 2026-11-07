@@ -181,11 +181,13 @@ impl SkillTool {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| ".".to_string());
 
+        let prompt = skill
+            .get_prompt()
+            .map_err(|error| anyhow::anyhow!("Failed to read skill '{}': {error}", skill.name))?;
+
         Ok(ToolOutput::new(format!(
             "## Skill: {}\n\n**Base directory**: {}\n\n{}",
-            skill.name,
-            base_dir,
-            skill.get_prompt()
+            skill.name, base_dir, prompt
         ))
         .with_title(format!("skill: {}", skill.name)))
     }
@@ -386,7 +388,10 @@ impl SkillTool {
                 output.push_str(&format!("**Allowed tools:** {}\n", tools.join(", ")));
             }
             output.push_str("\n---\n\n");
-            output.push_str(&skill.content);
+            let body = skill
+                .body()
+                .map_err(|error| anyhow::anyhow!("Failed to read skill '{}': {error}", skill.name))?;
+            output.push_str(&body);
 
             Ok(ToolOutput::new(output).with_title(format!("Skills: {}", name)))
         } else {
@@ -572,6 +577,36 @@ mod tests {
         let result = tool.execute(input, ctx).await.unwrap();
         assert!(result.output.contains("## Skill: optimization"));
         assert_eq!(result.title.as_deref(), Some("skill: optimization"));
+    }
+
+    /// A skill whose body is not valid UTF-8 still lists, and the read that
+    /// needs the bytes reports the encoding failure as a tool error instead of
+    /// panicking or returning truncated text.
+    #[tokio::test]
+    async fn test_load_reports_an_unreadable_body_as_a_tool_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let skill_dir = temp_dir.path().join(".horon-agent").join("skills").join("bad-utf8");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let mut bytes = b"---\nname: bad-utf8\ndescription: Bad UTF-8 body\n---\n\n".to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+        std::fs::write(skill_dir.join("SKILL.md"), bytes).unwrap();
+
+        let registry = SkillRegistry::load_for_working_dir(Some(temp_dir.path())).unwrap();
+        let tool = SkillTool::new(Arc::new(RwLock::new(registry)));
+
+        let error = tool
+            .execute(json!({"action": "load", "name": "bad-utf8"}), create_test_context())
+            .await
+            .expect_err("an unreadable body must surface as a tool error");
+        let message = error.to_string();
+        assert!(
+            message.contains("Failed to read skill 'bad-utf8'"),
+            "expected the tool error to name the skill, got: {message}"
+        );
+        assert!(
+            message.contains("UTF-8") || message.contains("utf-8"),
+            "expected the tool error to carry the encoding failure, got: {message}"
+        );
     }
 
     #[tokio::test]

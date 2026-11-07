@@ -45,25 +45,12 @@ impl SkillRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skill::{Skill, build_skill_search_text};
-    use std::path::PathBuf;
-    use std::sync::Arc;
+    use crate::skill::test_support::test_skill;
 
     fn registry(names: &[&str]) -> SkillRegistry {
         let mut registry = SkillRegistry::default();
         for name in names {
-            registry.insert_skill(Skill {
-                name: (*name).to_string(),
-                description: "Test skill".to_string(),
-                allowed_tools: None,
-                content: Arc::from("content"),
-                path: PathBuf::from(format!("/tmp/{name}/SKILL.md")),
-                search_text: Arc::new(std::sync::OnceLock::from(build_skill_search_text(
-                    name,
-                    "Test skill",
-                    "content",
-                ))),
-            });
+            registry.insert_skill(test_skill(name, "Test skill", "content"));
         }
         registry
     }

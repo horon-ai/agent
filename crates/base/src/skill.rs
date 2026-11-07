@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::Utc;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,8 +7,17 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::sync::RwLock;
 
+mod body;
+mod frontmatter;
+#[cfg(test)]
+#[path = "skill/frontmatter_tests.rs"]
+mod frontmatter_tests;
 mod invocation;
+#[cfg(test)]
+mod test_support;
 pub use invocation::SkillInvocation;
+
+use frontmatter::{AllowedTools, SkillFrontmatter};
 
 tokio::task_local! {
     /// Project-local overlay already scanned for the request currently
@@ -24,36 +32,18 @@ tokio::task_local! {
 }
 
 /// A skill definition from SKILL.md
+///
+/// Discovery reads only the frontmatter; the markdown body loads on first use
+/// through [`Skill::body`]. The cache is shared behind an `Arc<Mutex<..>>`, so a
+/// registry clone (a request snapshot or an overlay merge) shares both the
+/// loaded text and the file identity that says when to read it again.
 #[derive(Debug, Clone)]
 pub struct Skill {
     pub name: String,
     pub description: String,
     pub allowed_tools: Option<Vec<String>>,
-    /// Markdown body, shared behind an `Arc`. Cloning a registry for a request
-    /// snapshot, or merging a project overlay over the globals, therefore
-    /// shares the text instead of copying every skill body.
-    pub content: Arc<str>,
     pub path: PathBuf,
-    /// Normalized search text, built on first use. Normalizing every skill
-    /// body eagerly dominated `load_global` (the TUI loads it before its first
-    /// frame), yet only memory-entry conversion ever reads it. Shared for the
-    /// same reason as `content`: once built, a clone reuses it.
-    search_text: Arc<std::sync::OnceLock<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SkillFrontmatter {
-    name: String,
-    description: String,
-    #[serde(rename = "allowed-tools")]
-    allowed_tools: Option<AllowedTools>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum AllowedTools {
-    CommaDelimited(String),
-    Sequence(Vec<String>),
+    body: body::BodyCache,
 }
 
 /// Registry of available skills
@@ -571,11 +561,20 @@ impl SkillRegistry {
 
     /// Load skills from a directory
     fn load_from_dir(&mut self, dir: &Path) -> Result<()> {
+        self.load_from_dir_with_stats(dir).map(|_stats| ())
+    }
+
+    /// Load skills from a directory, reporting what the frontmatter reads cost.
+    fn load_from_dir_with_stats(&mut self, dir: &Path) -> Result<frontmatter::ReadStats> {
+        let mut stats = frontmatter::ReadStats::default();
         if !dir.is_dir() {
-            return Ok(());
+            return Ok(stats);
         }
 
         horon_agent_perf_counters::record_skill_dir_read();
+        #[cfg(test)]
+        test_support::record_dir_scan();
+        stats.dirs += 1;
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -583,14 +582,15 @@ impl SkillRegistry {
             if path.is_dir() {
                 let skill_file = path.join("SKILL.md");
                 if skill_file.exists()
-                    && let Ok(skill) = Self::parse_skill(&skill_file)
+                    && let Ok((skill, read)) = Self::parse_skill_with_stats(&skill_file)
                 {
+                    stats.add(read);
                     self.insert_skill(skill);
                 }
             }
         }
 
-        Ok(())
+        Ok(stats)
     }
 
     /// Load the model-managed skill directory and return how many were added.
@@ -642,57 +642,43 @@ impl SkillRegistry {
 
     /// Parse a SKILL.md file
     fn parse_skill(path: &Path) -> Result<Skill> {
-        Self::parse_skill_inner(path).map_err(|error| {
+        Self::parse_skill_with_stats(path).map(|(skill, _stats)| skill)
+    }
+
+    fn parse_skill_with_stats(path: &Path) -> Result<(Skill, frontmatter::ReadStats)> {
+        Self::parse_skill_inner_with_stats(path).map_err(|error| {
             crate::logging::warn(&format!("Failed to parse skill file '{}': {}", path.display(), error));
             error
         })
     }
 
+    #[cfg(test)]
     fn parse_skill_inner(path: &Path) -> Result<Skill> {
-        let content = std::fs::read_to_string(path)?;
-        horon_agent_perf_counters::record_skill_file_read(content.len() as u64);
-        // Parse YAML frontmatter
-        let (frontmatter, body) = Self::parse_frontmatter(&content)?;
+        Self::parse_skill_inner_with_stats(path).map(|(skill, _stats)| skill)
+    }
 
+    /// Parse a SKILL.md, returning what the frontmatter read actually cost.
+    ///
+    /// Discovery needs the metadata only: this reads the frontmatter and leaves
+    /// the body on disk until [`Skill::body`] asks for it. The returned
+    /// [`frontmatter::ReadStats`] is the caller's own measurement, which stays
+    /// correct while other tests run in parallel.
+    fn parse_skill_inner_with_stats(path: &Path) -> Result<(Skill, frontmatter::ReadStats)> {
+        let (frontmatter, stats) = frontmatter::read_frontmatter(path)?;
         let SkillFrontmatter {
             name,
             description,
             allowed_tools,
         } = frontmatter;
 
-        let allowed_tools = allowed_tools.map(|tools| match tools {
-            AllowedTools::CommaDelimited(tools) => tools.split(',').map(|tool| tool.trim().to_string()).collect(),
-            AllowedTools::Sequence(tools) => tools,
-        });
-        Ok(Skill {
+        let skill = Skill {
             name,
             description,
-            allowed_tools,
-            content: Arc::from(body),
+            allowed_tools: allowed_tools.map(AllowedTools::into_tools),
             path: path.to_path_buf(),
-            search_text: Arc::new(std::sync::OnceLock::new()),
-        })
-    }
-
-    /// Parse YAML frontmatter from markdown
-    fn parse_frontmatter(content: &str) -> Result<(SkillFrontmatter, String)> {
-        let content = content.trim();
-
-        if !content.starts_with("---") {
-            anyhow::bail!("Missing YAML frontmatter");
-        }
-
-        let rest = &content[3..];
-        let end = rest
-            .find("---")
-            .ok_or_else(|| anyhow::anyhow!("Unclosed frontmatter"))?;
-
-        let yaml = &rest[..end];
-        let body = rest[end + 3..].trim().to_string();
-
-        let frontmatter: SkillFrontmatter = serde_yaml::from_str(yaml)?;
-
-        Ok((frontmatter, body))
+            body: body::new_cache(),
+        };
+        Ok((skill, stats))
     }
 
     /// Get a skill by name
@@ -793,28 +779,7 @@ impl SkillRegistry {
 
     /// Load skills from a directory and return count
     fn load_from_dir_count(&mut self, dir: &Path) -> Result<usize> {
-        if !dir.is_dir() {
-            return Ok(0);
-        }
-
-        let mut count = 0;
-        horon_agent_perf_counters::record_skill_dir_read();
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                let skill_file = path.join("SKILL.md");
-                if skill_file.exists()
-                    && let Ok(skill) = Self::parse_skill(&skill_file)
-                {
-                    self.insert_skill(skill);
-                    count += 1;
-                }
-            }
-        }
-
-        Ok(count)
+        Ok(self.load_from_dir_with_stats(dir)?.files as usize)
     }
 
     /// Parse `/skill-name` and `/skill-name prompt...` invocations.
@@ -1046,35 +1011,45 @@ pub fn endorsed_skills() -> &'static [EndorsedSkill] {
 }
 
 impl Skill {
+    /// The markdown body, read from disk the first time it is asked for.
+    ///
+    /// Repeated calls stat the file once and reuse the cached text while the
+    /// file identity is unchanged, so a warm lookup never reads the bytes again.
+    /// A changed file (including a same-size edit with the mtime restored) or a
+    /// deleted one is re-read or reported instead of silently serving old text.
+    pub fn body(&self) -> Result<Arc<str>> {
+        body::load(&self.path, &self.body)
+    }
+
     /// Get the full prompt content for this skill
-    pub fn get_prompt(&self) -> String {
-        format!("# Skill: {}\n\n{}\n\n{}", self.name, self.description, self.content)
+    pub fn get_prompt(&self) -> Result<String> {
+        let body = self.body()?;
+        Ok(Self::render_prompt(&self.name, &self.description, &body))
     }
 
-    /// Load additional files from the skill directory
-    pub fn load_file(&self, filename: &str) -> Result<String> {
-        let skill_dir = self.path.parent().ok_or_else(|| anyhow::anyhow!("No parent dir"))?;
-        let file_path = skill_dir.join(filename);
-        Ok(std::fs::read_to_string(file_path)?)
-    }
-
-    pub fn as_memory_entry(&self) -> crate::memory::MemoryEntry {
+    pub fn as_memory_entry(&self) -> Result<crate::memory::MemoryEntry> {
+        let prompt = self.get_prompt()?;
         let now = Utc::now() - chrono::Duration::days(365);
         let mut entry = crate::memory::MemoryEntry::new(
             crate::memory::MemoryCategory::Custom("Skills".to_string()),
-            format!("Use skill `/{} ` when relevant.\n\n{}", self.name, self.get_prompt()),
+            format!("Use skill `/{} ` when relevant.\n\n{}", self.name, prompt),
         )
         .with_id(format!("skill:{}", self.name))
         .with_tags(vec!["skill".to_string(), self.name.clone()])
         .with_source("skill_registry")
         .with_trust(crate::memory::TrustLevel::Medium)
         .with_timestamps(now, now);
-        // Use the precomputed skill search text rather than the tag-derived one.
-        entry.search_text = self
-            .search_text
-            .get_or_init(|| build_skill_search_text(&self.name, &self.description, &self.content))
-            .clone();
-        entry
+        // Use the search text built with the body, rather than the tag-derived one.
+        entry.search_text = body::with_cached(&self.path, &self.body, |cached, _read| {
+            cached
+                .search_text(|| build_skill_search_text(&self.name, &self.description, cached.body()))
+                .to_string()
+        })?;
+        Ok(entry)
+    }
+
+    fn render_prompt(name: &str, description: &str, body: &str) -> String {
+        format!("# Skill: {name}\n\n{description}\n\n{body}")
     }
 }
 
@@ -1103,22 +1078,8 @@ fn normalize_skill_search_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::test_skill;
     use super::*;
-
-    fn test_skill(name: &str, description: &str, content: &str) -> Skill {
-        Skill {
-            name: name.to_string(),
-            description: description.to_string(),
-            allowed_tools: None,
-            content: Arc::from(content),
-            path: PathBuf::from(format!("/tmp/{name}/SKILL.md")),
-            search_text: Arc::new(std::sync::OnceLock::from(build_skill_search_text(
-                name,
-                description,
-                content,
-            ))),
-        }
-    }
 
     fn write_test_skill(root: &Path, scope: &str, name: &str) {
         let dir = root.join(scope).join("skills").join(name);
@@ -1305,7 +1266,7 @@ mod tests {
             "Use this skill when you need to open websites, click buttons, or interact with browser pages.",
         );
 
-        let entry = skill.as_memory_entry();
+        let entry = skill.as_memory_entry().expect("memory entry");
 
         assert_eq!(entry.id, "skill:firefox-browser");
         assert!(matches!(
@@ -1712,8 +1673,12 @@ mod tests {
         let original = registry.get("big").expect("original skill");
         let cloned = snapshot.get("big").expect("cloned skill");
         let overlay = composed.get("big").expect("composed skill");
-        assert!(Arc::ptr_eq(&original.content, &cloned.content));
-        assert!(Arc::ptr_eq(&original.content, &overlay.content));
+        assert!(Arc::ptr_eq(&original.body, &cloned.body));
+        assert!(Arc::ptr_eq(&original.body, &overlay.body));
+        assert!(Arc::ptr_eq(
+            &original.body().expect("original body"),
+            &cloned.body().expect("cloned body")
+        ));
     }
 
     #[test]
@@ -1724,39 +1689,41 @@ mod tests {
             write_request_skill(temp.path(), ".horon-agent", &format!("request-skill-{index}"), "Body.");
         }
 
+        // Counted per test thread: the process-wide skill_dir_reads counter is
+        // shared with the tests running in parallel, so its delta is not a
+        // measurement this test can own.
         let base = SkillRegistry::default();
         let (inside, second, outside) = current_thread_runtime().block_on(async {
-            let before = horon_agent_perf_counters::snapshot().skill_dir_reads;
+            let before = test_support::dir_scans();
             let inside = SkillRegistry::with_request_overlay(Some(temp.path()), async {
                 for _ in 0..3 {
                     let effective = SkillRegistry::effective_for_working_dir(&base, Some(temp.path()));
                     assert!(effective.get("request-skill-0").is_some());
                 }
-                horon_agent_perf_counters::snapshot().skill_dir_reads - before
+                test_support::dir_scans() - before
             })
             .await;
 
-            let before_second = horon_agent_perf_counters::snapshot().skill_dir_reads;
+            let before_second = test_support::dir_scans();
             let second = SkillRegistry::with_request_overlay(Some(temp.path()), async {
                 SkillRegistry::effective_for_working_dir(&base, Some(temp.path()));
                 SkillRegistry::effective_for_working_dir(&base, Some(temp.path()));
-                horon_agent_perf_counters::snapshot().skill_dir_reads - before_second
+                test_support::dir_scans() - before_second
             })
             .await;
 
-            let before_outside = horon_agent_perf_counters::snapshot().skill_dir_reads;
+            let before_outside = test_support::dir_scans();
             SkillRegistry::effective_for_working_dir(&base, Some(temp.path()));
-            let outside = horon_agent_perf_counters::snapshot().skill_dir_reads - before_outside;
+            let outside = test_support::dir_scans() - before_outside;
             (inside, second, outside)
         });
 
-        assert!(inside >= 1, "the request must scan the overlay: {inside}");
-        assert!(
-            inside <= 3,
-            "one request must not scan once per lookup: {inside} scans for 3 lookups"
+        assert_eq!(
+            inside, 1,
+            "one request scans `.horon-agent/skills` once for 3 lookups, scanned {inside}"
         );
-        assert!(second >= 1, "the next request must scan again, not reuse the scope");
-        assert!(outside >= 1, "a lookup outside any scope must read the disk");
+        assert_eq!(second, 1, "the next request scans again, not reusing the scope");
+        assert_eq!(outside, 1, "a lookup outside any scope must read the disk");
     }
 
     #[test]
@@ -1772,7 +1739,10 @@ mod tests {
                 SkillRegistry::effective_for_working_dir(&base, Some(temp.path()))
             })
             .await;
-            assert_eq!(first.get("live-skill").expect("skill").content.as_ref(), "first body");
+            assert_eq!(
+                first.get("live-skill").expect("skill").body().expect("body").as_ref(),
+                "first body"
+            );
 
             let modified = std::fs::metadata(&skill_md)
                 .expect("metadata")
@@ -1794,7 +1764,7 @@ mod tests {
             })
             .await;
             assert_eq!(
-                second.get("live-skill").expect("skill").content.as_ref(),
+                second.get("live-skill").expect("skill").body().expect("body").as_ref(),
                 "other body",
                 "the second request must see a same-size same-mtime body replacement"
             );
@@ -1933,7 +1903,7 @@ mod tests {
         let section_bytes = info.skills_chars;
         let omitted = crate::prompt::omitted_skill_count(&infos);
         let target = "home-skill-0500-padded-skill-name-for-budget-tests";
-        let first_body = registry.get(target).expect("skill").content.to_string();
+        let first_body = registry.get(target).expect("skill").body().expect("body").to_string();
 
         std::fs::write(
             skills_dir.join(target).join("SKILL.md"),
@@ -1943,7 +1913,12 @@ mod tests {
         )
         .expect("edit skill");
         let second_registry = SkillRegistry::load_global().expect("reload global skills");
-        let second_body = second_registry.get(target).expect("skill").content.to_string();
+        let second_body = second_registry
+            .get(target)
+            .expect("skill")
+            .body()
+            .expect("body")
+            .to_string();
 
         if let Some(prev_home) = prev_home {
             crate::env::set_var("HORON_AGENT_HOME", prev_home);
