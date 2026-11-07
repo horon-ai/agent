@@ -50,6 +50,7 @@ class PipeName(unittest.TestCase):
         main = r"D:\a\_temp\hb-x\run\bench.sock"
         self.assertNotEqual(bc.pipe_name(main), bc.pipe_name(main.replace(".sock", "-debug.sock")))
 
+
 class PipeBusy(unittest.TestCase):
     """A pipe between instances must be retried; a real failure must not be."""
 
