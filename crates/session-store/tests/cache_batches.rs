@@ -231,10 +231,10 @@ fn failed_nested_batch_does_not_mute_the_next_append() {
     let probe = ReadProbe::default();
     writer.enable_cache(probe.clone());
     let first = appended(&root, "committed before the error");
-    let result: Result<(), ()> = writer.batched(|outer| {
+    let result: Result<(), StoreError> = writer.batched(|outer| {
         outer.batched(|inner| {
-            inner.append(&first).unwrap();
-            Err(())
+            inner.append(&first)?;
+            Err(StoreError::busy("injected batch failure"))
         })
     });
     assert!(result.is_err());
@@ -260,7 +260,7 @@ fn caught_batch_panic_does_not_mute_a_reserved_event_retry() {
     writer.enable_cache(probe.clone());
     let next = appended(&root, "committed before the panic");
     let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        writer.batched::<(), ()>(|writer| {
+        writer.batched::<(), StoreError>(|writer| {
             writer.append(&next).unwrap();
             panic!("injected batch panic")
         })
