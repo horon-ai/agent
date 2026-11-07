@@ -3,9 +3,11 @@
 
 /// The identity and timestamps a cache stamp is built from.
 ///
-/// Unix fills every field from the inode; Windows has no device, inode or
-/// change time on the stable standard library surface and reports its own
-/// replacements for the last two fields (see [`PlatformAdapter::file_stamp`]).
+/// Unix fills every field from the inode. Windows has no device or inode on the
+/// stable standard library surface, so those stay zero; its timestamps are the
+/// same `(seconds, nanoseconds)` since the Unix epoch, taken from the standard
+/// library's converted file times rather than from raw FILETIME ticks (see
+/// [`PlatformAdapter::file_stamp`]).
 ///
 /// [`PlatformAdapter::file_stamp`]: crate::PlatformAdapter::file_stamp
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

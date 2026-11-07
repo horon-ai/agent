@@ -163,14 +163,30 @@ pub(crate) fn verify_private_file(path: &Path, file: &File) -> io::Result<()> {
 pub(crate) fn file_stamp(metadata: &Metadata) -> FileStamp {
     use std::os::windows::fs::MetadataExt;
 
-    // No device, inode or change time is exposed; the fields keep their wire
-    // shape and lean on what the platform does expose.
+    // No device, inode or change time is exposed, so those keep their zero
+    // meaning and the timestamps keep the `(seconds, nanoseconds)` contract the
+    // Unix adapters fill from the inode: `last_write_time` is FILETIME ticks
+    // since 1601, which no caller can compare with a Unix clock, so the standard
+    // library's own conversion is used instead.
     FileStamp {
         device: 0,
         inode: 0,
         len: metadata.file_size(),
-        modified: (metadata.last_write_time() as i64, 0),
-        changed: (metadata.creation_time() as i64, 0),
+        modified: unix_time(metadata.modified()),
+        changed: unix_time(metadata.created()),
+    }
+}
+
+/// `time` as `(seconds, nanoseconds)` since the Unix epoch, or zeros when the
+/// platform cannot express it (a time before 1970 has no place in a stamp that
+/// only has to change when the file does).
+fn unix_time(time: std::io::Result<std::time::SystemTime>) -> (i64, i64) {
+    let Ok(elapsed) = time.map(|time| time.duration_since(std::time::UNIX_EPOCH)) else {
+        return (0, 0);
+    };
+    match elapsed {
+        Ok(elapsed) => (elapsed.as_secs() as i64, i64::from(elapsed.subsec_nanos())),
+        Err(_) => (0, 0),
     }
 }
 
@@ -179,13 +195,8 @@ pub(crate) fn file_ids(_metadata: &Metadata) -> FileIds {
 }
 
 pub(crate) fn mtime_ns(metadata: &Metadata) -> i128 {
-    let Ok(modified) = metadata.modified() else {
-        return 0;
-    };
-    match modified.duration_since(std::time::UNIX_EPOCH) {
-        Ok(elapsed) => elapsed.as_nanos() as i128,
-        Err(_) => 0,
-    }
+    let (seconds, nanos) = unix_time(metadata.modified());
+    i128::from(seconds) * 1_000_000_000 + i128::from(nanos)
 }
 
 pub(crate) fn rotate_backup(primary: &Path, backup: &Path) -> io::Result<()> {
