@@ -815,41 +815,87 @@ fn parent_is_orphan_adopter(parent_pid: libc::pid_t) -> bool {
     std::fs::read_to_string(format!("/proc/{parent_pid}/comm")).is_ok_and(|name| is_orphan_adopter_name(&name))
 }
 
+/// Create a pipe whose ends never leak into any other child this process
+/// spawns.
+///
+/// `pipe2(O_CLOEXEC)` sets close-on-exec on both ends in the same operation
+/// that creates them, so there is no window in which a sibling thread's
+/// `fork` can capture a descriptor this call is still setting up. Where the
+/// kernel has no `pipe2`, the two `fcntl` calls that follow are the best
+/// available: they shrink the window but cannot close it, so the leak is only
+/// repaired where the platform allows it to be prevented.
+fn cloexec_pipe() -> io::Result<[libc::c_int; 2]> {
+    let mut fds = [0; 2];
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd"
+    ))]
+    {
+        // Safety: `fds` is a valid two-element array for the kernel to fill.
+        let created = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+        if created == 0 {
+            return Ok(fds);
+        }
+        let error = io::Error::last_os_error();
+        // `ENOSYS` means the kernel predates `pipe2`; every other error is real.
+        if error.raw_os_error() != Some(libc::ENOSYS) {
+            return Err(error);
+        }
+    }
+    // Safety: `fds` is a valid two-element array for the kernel to fill.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Safety: both descriptors were just created by this process and are not
+    // used anywhere else yet.
+    for fd in fds {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+            let error = io::Error::last_os_error();
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            return Err(error);
+        }
+    }
+    Ok(fds)
+}
+
 /// Spawn `cmd` with a readiness pipe the child inherits.
 ///
 /// The write end survives `exec` so the child can report that it is ready; the
 /// parent keeps only the read end and sees end-of-file when the child dies
 /// first. The child also becomes its own session leader, as a detached daemon
 /// must.
+///
+/// The child is told the number the write end already has rather than a number
+/// chosen here. Writing to a descriptor the child inherits works with any
+/// number, but a shell redirecting in the child (`>&N`) can only name a
+/// single-digit one, so a program that reports readiness through a shell must
+/// read `HORON_AGENT_*_FD` and address it as `/dev/fd/$FD`.
 pub(crate) fn spawn_with_ready_pipe(cmd: &mut Command, ready_env_var: &str) -> io::Result<ReadyChild> {
     use std::os::fd::FromRawFd;
     use std::os::unix::process::CommandExt;
 
-    let mut fds = [0i32; 2];
-    // Safety: `fds` is a valid two-element array for the kernel to fill.
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let fds = cloexec_pipe()?;
     let read_fd = fds[0];
     let write_fd = fds[1];
 
-    // The read end belongs to this process only, so it must not leak into the
-    // child.
-    // Safety: both descriptors belong to this process and are not used yet.
-    unsafe {
-        let flags = libc::fcntl(read_fd, libc::F_GETFD);
-        if flags >= 0 {
-            libc::fcntl(read_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-        }
-    }
-
     // Safety: the closure runs in the child between fork and exec, where only
     // async-signal-safe calls are permitted, and both calls are.
+    //
+    // Clearing close-on-exec here, rather than when the pipe was created, is
+    // what limits the flag's absence to the child: in this process the write
+    // end keeps it, so no sibling thread's `fork` can leave it open in a child
+    // that never clears it.
     unsafe {
         cmd.pre_exec(move || {
             let flags = libc::fcntl(write_fd, libc::F_GETFD);
-            if flags >= 0 {
-                libc::fcntl(write_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            if flags < 0 || libc::fcntl(write_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                return Err(io::Error::last_os_error());
             }
             libc::setsid();
             Ok(())
@@ -1007,17 +1053,104 @@ mod tests {
     }
 
     #[test]
+    fn cloexec_pipe_marks_both_ends_close_on_exec() {
+        let fds = cloexec_pipe().expect("create a close-on-exec pipe");
+        for fd in fds {
+            // Safety: the descriptor is open and owned by this call.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert!(flags >= 0, "descriptor {fd} should be open");
+            assert_eq!(
+                flags & libc::FD_CLOEXEC,
+                libc::FD_CLOEXEC,
+                "descriptor {fd} must be close-on-exec so a concurrent sibling spawn cannot inherit it"
+            );
+        }
+        // Safety: both descriptors belong to this test and are not used again.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
+
+    #[test]
     fn ready_pipe_delivers_the_child_signal() {
         use std::io::Read as _;
 
+        // The child addresses the descriptor through `/dev/fd` rather than
+        // through `>&$FD`: `sh` here is `dash` on Debian and Ubuntu, whose
+        // `>&N` redirection is a syntax error for any number at or above ten,
+        // and the number `pipe` returns depends on how many descriptors this
+        // process happens to hold. Production's own consumer parses the number
+        // and wraps it, so the number is not part of the contract; sending the
+        // byte is.
         let mut cmd = std::process::Command::new("sh");
-        cmd.arg("-c").arg("printf x >&$HORON_AGENT_TEST_READY_FD; exit 0");
+        cmd.arg("-c")
+            .arg("printf %s \"$HORON_AGENT_TEST_READY_FD\"; printf x > /dev/fd/$HORON_AGENT_TEST_READY_FD");
+        cmd.stdout(std::process::Stdio::piped());
         let mut spawned = spawn_with_ready_pipe(&mut cmd, "HORON_AGENT_TEST_READY_FD").expect("spawn with pipe");
 
         let mut ready = spawned.ready.take().expect("read end");
         let mut byte = [0u8; 1];
         assert_eq!(ready.read(&mut byte).expect("read readiness"), 1);
         assert_eq!(&byte, b"x");
-        let _ = spawned.child.wait();
+
+        let output = spawned.child.wait_with_output().expect("read the child's report");
+        let reported = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let fd: libc::c_int = reported.parse().expect("the child should receive a descriptor number");
+        assert!(
+            fd > 2,
+            "the readiness descriptor must not be a standard stream, got {fd}"
+        );
+    }
+
+    /// The pipe must not survive into any child this process did not spawn for
+    /// it. A leak turns "the daemon died without signalling" into "the pipe
+    /// stays silent", so the parent waits out its whole timeout and then falls
+    /// back to slow polling.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ready_pipe_ends_do_not_reach_an_unrelated_child() {
+        use std::io::Read as _;
+
+        let fds = cloexec_pipe().expect("create a close-on-exec pipe");
+        let inode = |fd: libc::c_int| -> String {
+            std::fs::read_link(format!("/proc/self/fd/{fd}"))
+                .expect("the descriptor should be open")
+                .to_string_lossy()
+                .into_owned()
+        };
+        let read_target = inode(fds[0]);
+        let write_target = inode(fds[1]);
+
+        // A child that never touches the pipe: its descriptor table is the
+        // only evidence needed, and it is what a concurrently spawned sibling
+        // would have held.
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg("ls -l /proc/self/fd");
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+        let mut child = cmd.spawn().expect("spawn an unrelated child");
+        let mut listing = String::new();
+        child
+            .stdout
+            .take()
+            .expect("piped stdout")
+            .read_to_string(&mut listing)
+            .expect("read the child's descriptor table");
+        let _ = child.wait();
+
+        assert!(
+            !listing.contains(&read_target),
+            "the read end ({read_target}) leaked into a child:\n{listing}"
+        );
+        assert!(
+            !listing.contains(&write_target),
+            "the write end ({write_target}) leaked into a child:\n{listing}"
+        );
+        // Safety: both descriptors belong to this test and are not used again.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
     }
 }
