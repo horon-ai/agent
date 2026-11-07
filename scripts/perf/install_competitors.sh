@@ -13,6 +13,10 @@
 # Tools that fail to install are omitted from that line and the reason goes to
 # stderr, so a missing competitor degrades the report instead of failing CI.
 #
+# On Windows (Git Bash) jcode comes as a release `.exe`, npm tools are recorded
+# by their `.cmd` shim, and every path is written in `C:/...` form so the Python
+# benchmark can open it.
+#
 # Versions are pinned so a workflow rerun measures the same tools:
 #   JCODE_VERSION, CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION
 # Override any of them through the environment.
@@ -38,6 +42,10 @@ PI_VERSION="${PI_VERSION:-0.73.1}"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
+case "$OS" in
+  MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;;
+  *) WINDOWS=0 ;;
+esac
 
 note_fail() {
   echo "install_competitors: $1: $2" >&2
@@ -59,6 +67,9 @@ npm_install_into() {
 record_bin() {
   local name="$1" path="$2"
   if [ -x "$path" ]; then
+    if [ "$WINDOWS" = 1 ] && have cygpath; then
+      path="$(cygpath -m "$path")"
+    fi
     echo "--bin $name=$path" >>"$BINS_ARGS"
     echo "install_competitors: $name -> $path" >&2
     return 0
@@ -67,7 +78,32 @@ record_bin() {
   return 1
 }
 
+install_jcode_windows() {
+  local asset
+  case "$ARCH" in
+    x86_64) asset="jcode-windows-x86_64.exe" ;;
+    aarch64 | arm64) asset="jcode-windows-aarch64.exe" ;;
+    *)
+      note_fail jcode "unsupported platform $OS/$ARCH"
+      return 1
+      ;;
+  esac
+  local dist="$DEST/jcode-dist"
+  rm -rf "$dist"
+  mkdir -p "$dist"
+  local url="https://github.com/1jehuang/jcode/releases/download/${JCODE_VERSION}/${asset}"
+  if ! curl -fsSL -o "$dist/jcode.exe" "$url"; then
+    note_fail jcode "download failed: $url"
+    return 1
+  fi
+  record_bin jcode "$dist/jcode.exe"
+}
+
 install_jcode() {
+  if [ "$WINDOWS" = 1 ]; then
+    install_jcode_windows
+    return
+  fi
   local asset
   case "$ARCH" in
     arm64 | aarch64) asset="jcode-macos-aarch64.tar.gz" ;;
@@ -120,6 +156,10 @@ install_node_tool() {
     return 1
   fi
   local bin="$prefix/node_modules/.bin/$rel"
+  if [ "$WINDOWS" = 1 ] && [ -e "$bin.cmd" ]; then
+    # The extensionless file in .bin is a sh script; CreateProcess runs the shim.
+    bin="$bin.cmd"
+  fi
   if [ ! -e "$bin" ]; then
     bin="$prefix/node_modules/$rel"
   fi
