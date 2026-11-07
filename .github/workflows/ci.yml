@@ -56,21 +56,22 @@ jobs:
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     steps:
-      - name: Free disk space
-        # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
-        # all-targets/all-features build does not fit. The pre-installed
-        # toolchains below are unused here. Skipped on the self-hosted machine,
-        # whose toolchains belong to its owner.
-        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
+      # Run after checkout because the cleanup lives in the repository now: the
+      # shared script is not on disk until the workspace exists. It renames the
+      # unused toolchains and returns before the deletion, which continues in
+      # the background while the toolchain installs (#21).
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Free disk space
+        # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
+        # all-targets/all-features build does not fit. The pre-installed
+        # toolchains are unused here. Skipped on the self-hosted machine, whose
+        # toolchains belong to its owner.
+        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -294,17 +295,21 @@ jobs:
         include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]') }}
 
     steps:
+      # The Linux cleanup runs after checkout because it is the shared script in
+      # the repository; it renames the unused toolchains and deletes them in the
+      # background (#21).
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
       - name: Free disk space (Linux)
         # Hosted ubuntu starts with about 14 GB on `/`. One job holds the release
         # build, both test harnesses, and the e2e binaries in a single target
-        # dir, so the pre-installed toolchains this job never uses are removed
-        # first. A self-hosted runner is macOS, so this never touches it.
+        # dir, so the pre-installed toolchains this job never uses are removed.
+        # A self-hosted runner is macOS, so this never touches it.
         if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
+        run: bash scripts/ci/free_disk_space.sh
 
       - name: Free disk space (macOS)
         # The macOS hosted image has the least free space of the three. Skip on
@@ -315,10 +320,6 @@ jobs:
           sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet \
             "$HOME/Library/Caches/Homebrew"
           df -h /
-
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -999,20 +1000,19 @@ jobs:
       # Swatinem/rust-cache does not store it as part of the build cache.
       XWIN_CACHE_DIR: ${{ github.workspace }}/../.cache/cargo-xwin
     steps:
-      - name: Free disk space
-        # cargo-xwin unpacks the Windows SDK and CRT into the target dir on top
-        # of a workspace build; the hosted image's 14 GB is not enough with the
-        # pre-installed toolchains still there.
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Free disk space
+        # cargo-xwin unpacks the Windows SDK and CRT into the target dir on top
+        # of a workspace build; the hosted image's 14 GB is not enough with the
+        # pre-installed toolchains still there. The shared script sits in the
+        # repository, so it runs after checkout and deletes in the background
+        # (#21).
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
