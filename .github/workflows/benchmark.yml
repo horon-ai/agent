@@ -2,21 +2,27 @@ name: Benchmark
 
 # Two entry points, never push, pull_request, or a schedule directly: it installs
 # third-party agent CLIs, builds a release binary, and spends tens of minutes of
-# runner time.
+# runner time on each OS.
 #
-#   gh workflow run benchmark.yml --ref <branch> -f suites=all
+#   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=all
+#   gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=tools
 #
-# and `workflow_call` from benchmark-docs.yml, which runs every suite on a `main`
-# commit after its CI passed and writes the result into docs/performance/RESULTS.md.
+# and `workflow_call` from benchmark-docs.yml, which runs every suite on every OS
+# for a `main` commit after its CI passed and writes the result into
+# docs/performance/RESULTS.md.
+#
+# Each OS is its own job on its own GitHub-hosted runner (Linux ubuntu-24.04,
+# macOS macos-latest, Windows windows-latest), uploads its own artifact
+# `benchmark-<os>-<run_id>`, and fails or succeeds alone.
 #
 # No secrets and no real model calls. Every suite that needs a model talks to
 # scripts/perf/mock_llm_server.py on localhost, so a run costs no API credit and
 # every tool sees the same deterministic replies.
 #
 # Results are reports, not gates. Wall-clock and RSS on a shared runner move with
-# the machine, so nothing here fails on a threshold (docs/performance/BENCHMARK.md,
-# "하지 않는 것"). A suite fails only when its script itself errors; a missing
-# competitor is listed as skipped.
+# the machine, so nothing here fails on a threshold (docs/performance/BENCHMARK.md).
+# A suite fails only when its script itself errors; a missing competitor is
+# listed as skipped.
 
 on:
   workflow_call:
@@ -26,6 +32,10 @@ on:
         type: string
         required: false
         default: ""
+      os:
+        type: string
+        required: false
+        default: all
       suites:
         type: string
         required: false
@@ -42,12 +52,12 @@ on:
         type: string
         required: false
         default: "3"
-      runner:
-        type: string
-        required: false
-        default: ubuntu-24.04
   workflow_dispatch:
     inputs:
+      os:
+        description: "Comma-separated OSes, each measured in its own job: linux, macos, windows, or all"
+        required: false
+        default: all
       suites:
         description: "Comma-separated suites: compare, startup, loading, tools, reload, compile, or all"
         required: false
@@ -64,36 +74,55 @@ on:
         description: "Turns per session for the memory comparison"
         required: false
         default: "3"
-      runner:
-        description: "ubuntu-24.04, or macos-persistent for the repository's persistent macOS runner (quieter numbers)"
-        type: choice
-        required: false
-        default: ubuntu-24.04
-        options:
-          - ubuntu-24.04
-          - macos-persistent
 
 permissions:
   contents: read
-
-concurrency:
-  group: benchmark-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
   HORON_AGENT_CI: "1"
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
-  RESULTS: ${{ github.workspace }}/bench-results
+  # Relative to the workspace, so the same path works in Git Bash on Windows.
+  RESULTS: bench-results
+  # Windows consoles default to a legacy code page; the reports carry "—" and "×".
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
 
 jobs:
+  plan:
+    name: Select OSes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.os.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: scripts/perf
+
+      - name: Turn the os input into a job matrix
+        id: os
+        shell: bash
+        env:
+          OS_INPUT: ${{ inputs.os }}
+        run: python3 scripts/perf/bench_select.py --platforms "$OS_INPUT" | tee -a "$GITHUB_OUTPUT"
+
   benchmark:
-    name: Benchmark (${{ inputs.suites }})
-    # Every suite runs in one job on one machine, so the comparison rows share the
-    # same CPU, disk, and load. Only users with write access can dispatch, and the
-    # first-party guard below keeps the persistent macOS runner off fork code.
-    runs-on: ${{ inputs.runner == 'macos-persistent' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    name: Benchmark (${{ matrix.os }})
+    needs: plan
+    # Every suite of one OS runs in one job on one machine, so the comparison
+    # rows share the same CPU, disk, and load. The OSes never share a number.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
+    # One run at a time per branch and OS: a rerun of one OS no longer waits
+    # for the other OSes of an earlier run to finish.
+    concurrency:
+      group: benchmark-${{ github.ref }}-${{ matrix.os }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       RUSTUP_TOOLCHAIN: stable
       SUITES: ${{ inputs.suites }}
@@ -114,21 +143,45 @@ jobs:
           # Empty for a dispatch, so the dispatched ref's commit is measured.
           ref: ${{ inputs.ref }}
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: ./.github/actions/msvc-dev-cmd
+        if: ${{ runner.os == 'Windows' }}
+        with:
+          arch: amd64
+
+      - name: Use the MSVC linker from bash
+        # Every later step runs in Git Bash, whose /usr/bin/link.exe (coreutils)
+        # comes before MSVC's in PATH, so cargo would call the wrong `link.exe`.
+        # Naming the MSVC linker by its full path makes the PATH order irrelevant.
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $link = (Get-Command link.exe -All | Where-Object { $_.Source -like '*\MSVC\*' } | Select-Object -First 1).Source
+          if (-not $link) { throw 'MSVC link.exe not found on PATH after msvc-dev-cmd' }
+          Write-Output "MSVC linker: $link"
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: benchmark-${{ runner.os }}
+          # Save the dependency build even when a suite fails, so a rerun after
+          # a measurement-script fix does not rebuild every crate from scratch.
+          cache-on-failure: "true"
 
       - name: Select suites
         id: sel
         shell: bash
-        run: python3 scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
+        run: python scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
 
       - name: Install strace
         # The compare suite counts fsync/fdatasync calls with --syscalls. On a
-        # runner without strace (macOS) the script records that as skipped and
-        # still exits 0, so this step is Linux-only.
+        # runner without strace (macOS, Windows) the script records that as
+        # skipped and still exits 0, so this step is Linux-only.
         if: ${{ steps.sel.outputs.compare == 'true' && runner.os == 'Linux' }}
         shell: bash
         run: |
@@ -146,9 +199,21 @@ jobs:
           if [[ "${{ steps.sel.outputs.loading }}" == "true" ]]; then
             cargo build --release --locked -p horon-agent-base --example loading_probe
           fi
+          # Absolute paths in C:/... form on Windows, so Python can open them
+          # from any working directory.
+          root="$PWD"
+          exe=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            root="$(cygpath -m "$PWD")"
+            exe=".exe"
+          fi
+          echo "HORON_BIN=$root/target/release/horon-agent$exe" >> "$GITHUB_ENV"
+          echo "PROBE_BIN=$root/target/release/examples/loading_probe$exe" >> "$GITHUB_ENV"
           mkdir -p "$RESULTS"
+          echo "${{ matrix.os }}" > "$RESULTS/platform.txt"
+          echo "${{ matrix.runner }}" > "$RESULTS/runner.txt"
           git rev-parse HEAD > "$RESULTS/commit.txt"
-          ./target/release/horon-agent --version | tee "$RESULTS/horon-version.txt"
+          "./target/release/horon-agent$exe" --version | tee "$RESULTS/horon-version.txt"
 
       - uses: actions/setup-node@v7
         if: ${{ steps.sel.outputs.compare == 'true' }}
@@ -167,23 +232,23 @@ jobs:
           bins_args=""
           [[ -f "$RUNNER_TEMP/bench-tools/bins.args" ]] && bins_args=$(cat "$RUNNER_TEMP/bench-tools/bins.args")
           # shellcheck disable=SC2086
-          python3 scripts/perf/bench_compare.py \
-            --bin horon=./target/release/horon-agent $bins_args \
+          python scripts/perf/bench_compare.py \
+            --bin "horon=$HORON_BIN" $bins_args \
             --sessions $SESSIONS --turns "$TURNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
       - name: "Suite: startup"
         if: ${{ !cancelled() && steps.sel.outputs.startup == 'true' }}
         shell: bash
-        run: python3 scripts/perf/bench_startup.py ./target/release/horon-agent --runs 10 | tee "$RESULTS/startup.txt"
+        run: python scripts/perf/bench_startup.py "$HORON_BIN" --runs 10 | tee "$RESULTS/startup.txt"
 
       - name: "Suite: loading (cold and warm)"
         if: ${{ !cancelled() && steps.sel.outputs.loading == 'true' }}
         shell: bash
         run: |
           for mode in cold warm; do
-            python3 scripts/perf/bench_loading.py \
-              --binary ./target/release/examples/loading_probe \
+            python scripts/perf/bench_loading.py \
+              --binary "$PROBE_BIN" \
               --mode "$mode" --events 0,1000,10000 --skills 0,200 --iterations 10 \
               --emit "$RESULTS/loading-$mode.json" | tee "$RESULTS/loading-$mode.txt"
           done
@@ -192,14 +257,14 @@ jobs:
         if: ${{ !cancelled() && steps.sel.outputs.tools == 'true' }}
         shell: bash
         run: |
-          python3 scripts/perf/bench_tools.py --binary ./target/release/horon-agent \
+          python scripts/perf/bench_tools.py --binary "$HORON_BIN" \
             --json-out "$RESULTS/tools.json" --markdown-out "$RESULTS/tools.md"
 
       - name: "Suite: reload storm"
         if: ${{ !cancelled() && steps.sel.outputs.reload == 'true' }}
         shell: bash
         run: |
-          python3 scripts/perf/bench_reload_storm.py --binary ./target/release/horon-agent \
+          python scripts/perf/bench_reload_storm.py --binary "$HORON_BIN" \
             --json-out "$RESULTS/reload.json" --markdown-out "$RESULTS/reload.md"
 
       - name: "Suite: compile"
@@ -208,7 +273,7 @@ jobs:
         if: ${{ !cancelled() && steps.sel.outputs.compile == 'true' }}
         shell: bash
         run: |
-          python3 scripts/perf/bench_compile.py \
+          python scripts/perf/bench_compile.py \
             --json-out "$RESULTS/compile.json" --markdown-out "$RESULTS/compile.md"
 
       - name: Write job summary
@@ -216,9 +281,9 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## Benchmark"
+            echo "## Benchmark (${{ matrix.os }})"
             echo
-            echo "- commit: \`$(cat "$RESULTS/commit.txt")\`, runner: \`${{ runner.os }}/${{ runner.arch }}\` (${{ runner.environment }})"
+            echo "- commit: \`$(cat "$RESULTS/commit.txt" 2>/dev/null)\`, runner: \`${{ matrix.runner }}\` (${{ runner.os }}/${{ runner.arch }})"
             echo "- suites: \`$SUITES\`"
             echo
             for f in compare tools reload compile; do
@@ -231,9 +296,20 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Record job outcome
+        # Read by scripts/perf/bench_docs.py, which marks an OS whose job did not
+        # finish cleanly instead of presenting its partial results as complete.
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          mkdir -p "$RESULTS"
+          echo "${{ matrix.os }}" > "$RESULTS/platform.txt"
+          echo "${{ matrix.runner }}" > "$RESULTS/runner.txt"
+          echo "${{ job.status }}" > "$RESULTS/status.txt"
+
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
-          name: benchmark-${{ github.run_id }}
+          name: benchmark-${{ matrix.os }}-${{ github.run_id }}
           path: bench-results/
           retention-days: 30

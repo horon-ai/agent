@@ -28,6 +28,7 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
 import bench_compile  # noqa: E402
+import bench_select  # noqa: E402
 import bench_reload_storm  # noqa: E402
 import bench_tools  # noqa: E402
 
@@ -130,6 +131,25 @@ class CompileTouchCycle(unittest.TestCase):
         text = bench_compile.markdown(results, [])
         self.assertIn("Dry run: touches were exercised, cargo was not invoked.", text)
         self.assertIn("| warm_noop | — | 700.0 ms |", text)
+
+
+class PlatformSelection(unittest.TestCase):
+    """The workflow's OS matrix comes from bench_select.platforms."""
+
+    def test_all_or_empty_selects_every_os_in_fixed_order(self) -> None:
+        for raw in ("all", "", "Windows,linux,macos"):
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    [entry["os"] for entry in bench_select.platforms(raw)], ["linux", "macos", "windows"]
+                )
+
+    def test_one_os_runs_alone_on_its_hosted_runner(self) -> None:
+        self.assertEqual(bench_select.platforms("windows"), [{"os": "windows", "runner": "windows-latest"}])
+
+    def test_unknown_os_fails_instead_of_measuring_nothing(self) -> None:
+        with self.assertRaises(SystemExit):
+            bench_select.platforms("linux,freebsd")
+
 
 
 if __name__ == "__main__":

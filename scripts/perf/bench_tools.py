@@ -2,7 +2,7 @@
 """Per-tool latency benchmark over the horon-agent debug socket.
 
 Port of jcode's `scripts/benchmark_tools.sh`. That script piped JSON at the debug
-socket through `socat` and timed each shell round-trip; this one speaks the Unix
+socket through `socat` and timed each shell round-trip; this one speaks the daemon
 socket directly (no socat, no jq, no shell startup in the measurement) so the
 number is the server's tool dispatch cost plus one request/response frame.
 
@@ -51,6 +51,10 @@ GREP_TREE_FILES = 40
 GREP_TREE_LINES = 120
 WRITE_SMALL = "hello world\n"
 WRITE_LARGE = "x" * 10_000
+# The bash tool runs `cmd.exe` on Windows, which has neither `true` nor `ls`.
+# The cases keep their labels so one row means the same work on every OS.
+SHELL_TRUE = "exit 0" if common.IS_WINDOWS else "true"
+SHELL_LS_TREE = "dir /b tree" if common.IS_WINDOWS else "ls tree"
 
 
 # ---------------------------------------------------------------------------
@@ -121,10 +125,9 @@ class DebugSocket:
     def call(self, command: str) -> tuple[float, int, dict]:
         """Send one debug command; return (latency_ms, response_bytes, payload)."""
         started = time.perf_counter()
-        stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        stream.settimeout(self.timeout)
+        stream = None
         try:
-            stream.connect(self.path)
+            stream = common.ipc_connect(self.path, timeout=self.timeout)
             request = json.dumps(
                 {"type": "debug_command", "id": 1, "command": command, "session_id": self.session_id}
             )
@@ -136,7 +139,8 @@ class DebugSocket:
                     break
                 buffer.extend(chunk)
         finally:
-            stream.close()
+            if stream is not None:
+                stream.close()
         latency_ms = (time.perf_counter() - started) * 1000.0
         line = bytes(buffer).split(b"\n", 1)[0]
         try:
@@ -147,19 +151,8 @@ class DebugSocket:
 
 
 def connect_with_retry(path: str, timeout_s: float) -> None:
-    deadline = time.perf_counter() + timeout_s
-    last: OSError | None = None
-    while time.perf_counter() < deadline:
-        stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            stream.connect(path)
-            return
-        except OSError as error:
-            last = error
-            time.sleep(0.05)
-        finally:
-            stream.close()
-    raise RuntimeError("debug socket never accepted a connection: %s" % last)
+    if not common.wait_for_socket(path, timeout_s):
+        raise RuntimeError("debug socket never accepted a connection: %s" % path)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +225,7 @@ def build_cases(root: Path) -> list[dict]:
         {
             "label": "bash (true)",
             "tool": "bash",
-            "payload": lambda: {"command": "true"},
+            "payload": lambda: {"command": SHELL_TRUE},
         },
         {
             "label": "bash (echo hello)",
@@ -242,7 +235,7 @@ def build_cases(root: Path) -> list[dict]:
         {
             "label": "bash (ls fixture tree)",
             "tool": "bash",
-            "payload": lambda: {"command": "ls tree"},
+            "payload": lambda: {"command": SHELL_LS_TREE},
         },
         {
             "label": "invalid tool (dispatch only)",
@@ -308,7 +301,7 @@ def start_daemon(binary: str, root: Path, repo: Path, log_path: Path) -> tuple[s
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
+        **common.new_group_kwargs(),
     )
     log.close()
     return process, env
@@ -332,7 +325,7 @@ def run(args: argparse.Namespace) -> int:
     skipped: list[dict] = []
 
     binary = os.path.abspath(args.binary)
-    if not os.path.exists(binary):
+    if not os.path.isfile(binary):
         skipped.append({"name": SUITE, "reason": "horon-agent binary not found at %s" % binary})
         return finish(args, results, skipped, started_at)
 

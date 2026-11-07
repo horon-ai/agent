@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Shared helpers for the horon comparison benchmarks.
 
-Only the Python standard library is used so the same file runs on macOS arm64
-and Linux x64 under the CI workflow. Nothing here reads or writes a user's real
+Only the Python standard library is used so the same file runs on Linux, macOS
+and Windows under the CI workflow. Nothing here reads or writes a user's real
 agent configuration: callers pass an isolated HOME/XDG environment.
 
 Exports:
@@ -10,9 +10,12 @@ Exports:
 - ``host_info``: os/arch/cpu/python snapshot embedded in every report.
 - ``stats``: median/p95/min/max/sample-count for a list of measurements.
 - ``process_tree_rss_bytes`` / ``process_tree_pss_bytes``: summed RSS (and PSS on
-  Linux) of a process and all descendants.
-- ``wait_for_socket`` / ``wait_for_port``: readiness polling.
-- ``terminate_pgroup``: reliable kill of a whole process group.
+  Linux) of a process and all descendants. Windows reports the working set.
+- ``ipc_connect`` / ``wait_for_socket`` / ``wait_for_port``: the daemon's local
+  socket (a Unix socket, or on Windows the named pipe the daemon derives from
+  the same path) and readiness polling.
+- ``new_group_kwargs`` / ``pgid_of`` / ``terminate_pgroup``: start a process in
+  its own group and reliably kill the whole tree.
 - ``short_temp_dir``: temp dir under /tmp so unix socket paths stay < 104 bytes.
 - ``linear_slope``: least-squares slope used for "each additional session".
 - ``build_report`` / ``write_json`` / ``write_markdown``: report plumbing.
@@ -21,7 +24,10 @@ Exports:
 from __future__ import annotations
 
 import datetime
+import errno
+import hashlib
 import json
+import ntpath
 import os
 import platform
 import shutil
@@ -34,6 +40,7 @@ import time
 from typing import Iterable
 
 SCHEMA = 1
+IS_WINDOWS = os.name == "nt"
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +83,6 @@ def isolated_home_env(root: str, prefix: str) -> dict[str, str]:
         os.makedirs(path, exist_ok=True)
     env[prefix + "_HOME"] = home
     env[prefix + "_RUNTIME_DIR"] = run
-    env.setdefault("HOME", home)
     env["HOME"] = home
     env["XDG_CACHE_HOME"] = cache
     env["XDG_CONFIG_HOME"] = config
@@ -84,6 +90,12 @@ def isolated_home_env(root: str, prefix: str) -> dict[str, str]:
     env["XDG_STATE_HOME"] = state
     env["TMPDIR"] = os.path.join(root, "tmp")
     os.makedirs(env["TMPDIR"], exist_ok=True)
+    if IS_WINDOWS:
+        # Windows tools resolve their home from these, not from HOME or XDG.
+        env["USERPROFILE"] = home
+        env["APPDATA"] = config
+        env["LOCALAPPDATA"] = data
+        env["TEMP"] = env["TMP"] = env["TMPDIR"]
     return env
 
 
@@ -182,6 +194,11 @@ def children_of(pid: int) -> list[int]:
 
 
 def process_tree_pids(pid: int) -> list[int]:
+    if IS_WINDOWS:
+        children = _windows_children_map()
+        lookup = lambda cur: children.get(cur, [])  # noqa: E731
+    else:
+        lookup = children_of
     seen: set[int] = set()
     stack = [pid]
     while stack:
@@ -189,7 +206,7 @@ def process_tree_pids(pid: int) -> list[int]:
         if cur in seen:
             continue
         seen.add(cur)
-        stack.extend(children_of(cur))
+        stack.extend(lookup(cur))
     return sorted(seen)
 
 
@@ -230,18 +247,135 @@ def _macos_rss(pid: int) -> int | None:
     return int(out) * 1024
 
 
+if IS_WINDOWS:
+    import ctypes as _ctypes
+    from ctypes import wintypes as _wintypes
+
+    _kernel32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class _ProcessEntry32W(_ctypes.Structure):
+        _fields_ = [
+            ("dwSize", _wintypes.DWORD),
+            ("cntUsage", _wintypes.DWORD),
+            ("th32ProcessID", _wintypes.DWORD),
+            ("th32DefaultHeapID", _ctypes.c_size_t),
+            ("th32ModuleID", _wintypes.DWORD),
+            ("cntThreads", _wintypes.DWORD),
+            ("th32ParentProcessID", _wintypes.DWORD),
+            ("pcPriClassBase", _wintypes.LONG),
+            ("dwFlags", _wintypes.DWORD),
+            ("szExeFile", _wintypes.WCHAR * 260),
+        ]
+
+    class _ProcessMemoryCounters(_ctypes.Structure):
+        _fields_ = [
+            ("cb", _wintypes.DWORD),
+            ("PageFaultCount", _wintypes.DWORD),
+            ("PeakWorkingSetSize", _ctypes.c_size_t),
+            ("WorkingSetSize", _ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", _ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", _ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", _ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", _ctypes.c_size_t),
+            ("PagefileUsage", _ctypes.c_size_t),
+            ("PeakPagefileUsage", _ctypes.c_size_t),
+        ]
+
+    _kernel32.CreateToolhelp32Snapshot.argtypes = [_wintypes.DWORD, _wintypes.DWORD]
+    _kernel32.CreateToolhelp32Snapshot.restype = _wintypes.HANDLE
+    _kernel32.Process32FirstW.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_ProcessEntry32W)]
+    _kernel32.Process32FirstW.restype = _wintypes.BOOL
+    _kernel32.Process32NextW.argtypes = [_wintypes.HANDLE, _ctypes.POINTER(_ProcessEntry32W)]
+    _kernel32.Process32NextW.restype = _wintypes.BOOL
+    _kernel32.OpenProcess.argtypes = [_wintypes.DWORD, _wintypes.BOOL, _wintypes.DWORD]
+    _kernel32.OpenProcess.restype = _wintypes.HANDLE
+    _kernel32.CloseHandle.argtypes = [_wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = _wintypes.BOOL
+    _kernel32.K32GetProcessMemoryInfo.argtypes = [
+        _wintypes.HANDLE,
+        _ctypes.POINTER(_ProcessMemoryCounters),
+        _wintypes.DWORD,
+    ]
+    _kernel32.K32GetProcessMemoryInfo.restype = _wintypes.BOOL
+    _kernel32.PeekNamedPipe.argtypes = [
+        _wintypes.HANDLE,
+        _wintypes.LPVOID,
+        _wintypes.DWORD,
+        _wintypes.LPVOID,
+        _ctypes.POINTER(_wintypes.DWORD),
+        _wintypes.LPVOID,
+    ]
+    _kernel32.PeekNamedPipe.restype = _wintypes.BOOL
+
+
+_TH32CS_SNAPPROCESS = 0x00000002
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_PROCESS_VM_READ = 0x0010
+
+
+def _windows_processes() -> list[tuple[int, int]]:
+    """Every running process as (pid, parent pid), from one Toolhelp snapshot."""
+    snapshot = _kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == _wintypes.HANDLE(-1).value:
+        return []
+    entries: list[tuple[int, int]] = []
+    try:
+        entry = _ProcessEntry32W()
+        entry.dwSize = _ctypes.sizeof(_ProcessEntry32W)
+        ok = _kernel32.Process32FirstW(snapshot, _ctypes.byref(entry))
+        while ok:
+            entries.append((int(entry.th32ProcessID), int(entry.th32ParentProcessID)))
+            ok = _kernel32.Process32NextW(snapshot, _ctypes.byref(entry))
+    finally:
+        _kernel32.CloseHandle(snapshot)
+    return entries
+
+
+def _windows_children_map() -> dict[int, list[int]]:
+    children: dict[int, list[int]] = {}
+    for pid, parent in _windows_processes():
+        if pid != parent:
+            children.setdefault(parent, []).append(pid)
+    return children
+
+
+def _windows_rss(pid: int) -> int | None:
+    """Working set of ``pid``, Windows' resident-memory equivalent of RSS."""
+    for access in (_PROCESS_QUERY_LIMITED_INFORMATION | _PROCESS_VM_READ, _PROCESS_QUERY_LIMITED_INFORMATION):
+        handle = _kernel32.OpenProcess(access, False, pid)
+        if handle:
+            break
+    else:
+        return None
+    try:
+        counters = _ProcessMemoryCounters()
+        counters.cb = _ctypes.sizeof(_ProcessMemoryCounters)
+        if not _kernel32.K32GetProcessMemoryInfo(handle, _ctypes.byref(counters), counters.cb):
+            return None
+        return int(counters.WorkingSetSize)
+    finally:
+        _kernel32.CloseHandle(handle)
+
+
+
 def process_tree_rss_bytes(pid: int) -> int:
-    """Summed resident set size of ``pid`` and every descendant."""
+    """Summed resident set size of ``pid`` and every descendant (working set on Windows)."""
+    if IS_WINDOWS:
+        read = _windows_rss
+    elif os.path.isdir("/proc"):
+        read = _linux_status_rss
+    else:
+        read = _macos_rss
     total = 0
     for child in process_tree_pids(pid):
-        rss = _linux_status_rss(child) if os.path.isdir("/proc") else _macos_rss(child)
+        rss = read(child)
         if rss:
             total += rss
     return total
 
 
 def process_tree_pss_bytes(pid: int) -> int | None:
-    """Summed PSS on Linux; None where PSS is unavailable (macOS)."""
+    """Summed PSS on Linux; None where PSS is unavailable (macOS, Windows)."""
     if not os.path.isdir("/proc"):
         return None
     total = 0
@@ -299,18 +433,136 @@ class MemorySampler:
 # ---------------------------------------------------------------------------
 
 
+def new_group_kwargs() -> dict:
+    """``Popen`` arguments that start the child as the leader of a new group."""
+    if IS_WINDOWS:
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def pgid_of(pid: int) -> int | None:
+    """Group handle for ``terminate_pgroup``: the pgid on POSIX, the pid on Windows."""
+    if IS_WINDOWS:
+        return pid
+    try:
+        return os.getpgid(pid)
+    except ProcessLookupError:
+        return None
+
+
+def pipe_name(path: str) -> str:
+    """Named pipe the daemon binds for socket ``path`` on Windows.
+
+    Mirrors ``path_to_pipe_name`` in crates/platform-windows/src/ipc.rs: the
+    file stem filtered to ``[A-Za-z0-9_-]`` and cut to 32 characters, then the
+    first 16 hex digits of the SHA-256 of the path with ``\\`` turned into
+    ``/`` and ASCII lowercased.
+    """
+    stem = ntpath.splitext(ntpath.basename(path))[0]
+    stem = "".join(ch for ch in stem if (ch.isascii() and ch.isalnum()) or ch in "-_")[:32] or "horon-agent"
+    normalized = "".join(chr(ord(ch) + 32) if "A" <= ch <= "Z" else ch for ch in path.replace("\\", "/"))
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return "\\\\.\\pipe\\%s-%s" % (stem, digest[:16])
+
+
+class PipeStream:
+    """The subset of a socket the benchmarks use, over a connected Windows named pipe."""
+
+    def __init__(self, fh) -> None:
+        self._fh = fh
+        self._timeout: float | None = None
+
+    def settimeout(self, value: float | None) -> None:
+        self._timeout = value
+
+    def sendall(self, data: bytes) -> None:
+        view = memoryview(data)
+        while view:
+            written = self._fh.write(view)
+            view = view[written:]
+
+    def recv(self, size: int) -> bytes:
+        """Bytes already in the pipe, b"" once the server closed it, TimeoutError past the timeout."""
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(self._fh.fileno())
+        deadline = None if self._timeout is None else time.perf_counter() + self._timeout
+        available = _wintypes.DWORD(0)
+        while True:
+            if not _kernel32.PeekNamedPipe(handle, None, 0, None, _ctypes.byref(available), None):
+                return b""
+            if available.value:
+                return self._fh.read(min(size, available.value))
+            if deadline is not None and time.perf_counter() >= deadline:
+                raise TimeoutError("timed out")
+            time.sleep(0.002)
+
+    def close(self) -> None:
+        self._fh.close()
+
+    def __enter__(self) -> "PipeStream":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+ERROR_PIPE_BUSY = 231
+
+
+def _pipe_unavailable(exc: OSError) -> bool:
+    """True when a named pipe exists but has no free instance at this moment.
+
+    The daemon creates its next pipe instance only after accepting a client, so
+    a connect right after another one finds every instance taken (busy) or, in
+    the gap, no instance at all (not found). ``open()`` goes through the C
+    runtime, which reports busy as errno EINVAL with no ``winerror``.
+    """
+    if getattr(exc, "winerror", None) == ERROR_PIPE_BUSY:
+        return True
+    return exc.errno in (errno.EINVAL, errno.EBUSY, errno.ENOENT)
+
+
+def ipc_connect(path: str, timeout: float | None = None, connect_timeout: float = 5.0):
+    """Connect to the daemon socket at ``path``; the result has sendall/recv/settimeout/close.
+
+    On Windows the daemon listens on the named pipe derived from ``path``. A
+    pipe with no free instance refuses the open until the server creates the
+    next one, so that case is retried for up to ``connect_timeout``.
+    """
+    if not IS_WINDOWS:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(path)
+        except OSError:
+            sock.close()
+            raise
+        return sock
+    name = pipe_name(path)
+    deadline = time.perf_counter() + connect_timeout
+    while True:
+        try:
+            fh = open(name, "r+b", buffering=0)  # noqa: SIM115 - owned by PipeStream
+            break
+        except OSError as exc:
+            if not _pipe_unavailable(exc) or time.perf_counter() >= deadline:
+                raise
+            time.sleep(0.01)
+    stream = PipeStream(fh)
+    stream.settimeout(timeout)
+    return stream
+
+
 def wait_for_socket(path: str, timeout_s: float) -> bool:
+    """True once the daemon socket at ``path`` accepts a connection."""
     deadline = time.perf_counter() + timeout_s
     while time.perf_counter() < deadline:
-        if os.path.exists(path):
-            try:
-                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                sock.settimeout(0.2)
-                sock.connect(path)
-                sock.close()
-                return True
-            except OSError:
-                pass
+        try:
+            ipc_connect(path, timeout=0.2, connect_timeout=0.2).close()
+            return True
+        except OSError:
+            pass
         time.sleep(0.02)
     return False
 
@@ -333,8 +585,26 @@ def free_port() -> int:
 
 
 def terminate_pgroup(pgid: int | None, timeout: float = 10.0) -> None:
-    """SIGTERM then SIGKILL a whole process group, waiting for it to die."""
+    """Kill a whole process group (Windows: the process tree), waiting for it to die.
+
+    POSIX sends SIGTERM, then SIGKILL. Windows has no group signal a console-less
+    child honours, so the tree is ended with ``taskkill /T /F``.
+    """
     if pgid is None:
+        return
+    if IS_WINDOWS:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pgid), "/T", "/F"],
+                capture_output=True,
+                timeout=timeout + 5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline and any(pid == pgid for pid, _ in _windows_processes()):
+            time.sleep(0.05)
         return
     import signal
 

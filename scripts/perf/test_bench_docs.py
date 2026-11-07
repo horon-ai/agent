@@ -66,26 +66,81 @@ class BlockReplacement(unittest.TestCase):
             bench_docs.replace_block(DOC, "main --> <!-- x", "x")
 
 
+def job_dir(results: Path, name: str, platform: str, status: str = "success", files: dict | None = None) -> Path:
+    directory = results / name
+    directory.mkdir()
+    (directory / "platform.txt").write_text(platform + "\n", encoding="utf-8")
+    (directory / "status.txt").write_text(status + "\n", encoding="utf-8")
+    for file_name, text in (files or {}).items():
+        (directory / file_name).write_text(text, encoding="utf-8")
+    return directory
+
+
 class Rendering(unittest.TestCase):
     def test_missing_suites_are_listed_as_unmeasured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             results = Path(tmp)
-            (results / "tools.md").write_text("### Tool latency\n\n| a |\n", encoding="utf-8")
-            (results / "startup.txt").write_text("serve ready 12 ms\n", encoding="utf-8")
-            (results / "reload.md").write_text("   \n", encoding="utf-8")
+            job_dir(
+                results,
+                "benchmark-linux-1",
+                "linux",
+                files={
+                    "tools.md": "### Tool latency\n\n| a |\n",
+                    "startup.txt": "serve ready 12 ms\n",
+                    "reload.md": "   \n",
+                },
+            )
             body = bench_docs.render_body(results, "abc1234", now=NOW)
-        self.assertIn("### Tool latency", body)
-        self.assertIn("### 기동\n\n```text\nserve ready 12 ms\n```", body)
+        self.assertIn("#### Tool latency", body)
+        self.assertIn("#### 기동\n\n```text\nserve ready 12 ms\n```", body)
+        linux = body.split("### Linux", 1)[1].split("### macOS", 1)[0]
         for name in ("compare.md", "loading-cold.txt", "loading-warm.txt", "reload.md", "compile.md"):
             with self.subTest(fragment=name):
-                self.assertIn(f"측정 안 됨: 이 실행에서 `{name}` 파일이", body)
+                self.assertIn(f"측정 안 됨: 이 실행에서 `{name}` 파일이", linux)
         self.assertIn("2026-11-07 03:04 UTC", body)
+
+    def test_every_os_gets_its_section_in_fixed_order_even_without_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            # Directory names do not decide the OS or the order; platform.txt does.
+            job_dir(results, "a-windows", "windows", files={"tools.md": "### W\n"})
+            job_dir(results, "b-linux", "linux", files={"tools.md": "### L\n"})
+            body = bench_docs.render_body(results, "abc1234", now=NOW)
+        positions = [body.index(f"\n### {title}\n") for title in ("Linux", "macOS", "Windows")]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("| macOS | `—` | `—` | 결과 없음 |", body)
+        self.assertIn("이 실행에서 macOS 결과가 없습니다", body)
+        self.assertLess(body.index("#### L"), body.index("#### W"))
+
+    def test_a_failed_job_is_marked_and_its_partial_results_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            job_dir(
+                results,
+                "benchmark-windows-1",
+                "windows",
+                status="failure",
+                files={"runner.txt": "windows-latest\n", "horon-version.txt": "horon-agent v1\n", "tools.md": "### W\n"},
+            )
+            body = bench_docs.render_body(results, "abc1234", now=NOW)
+        self.assertIn("| Windows | `windows-latest` | `horon-agent v1` | 일부 실패 (`failure`) |", body)
+        windows = body.split("### Windows", 1)[1]
+        self.assertIn("끝까지 성공하지 못했습니다", windows)
+        self.assertIn("#### W", windows)
+
+    def test_two_jobs_claiming_one_os_are_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            job_dir(results, "one", "linux")
+            job_dir(results, "two", "linux")
+            with self.assertRaises(bench_docs.DocError):
+                bench_docs.render_body(results, "abc1234", now=NOW)
 
     def test_headings_nest_under_the_block_and_fences_are_untouched(self) -> None:
         source = "# Comparison\n\n## Memory\n\n```sh\n# not a heading\n```\n"
         out = bench_docs.demote_headings(source)
-        self.assertEqual(out.splitlines()[0], "### Comparison")
-        self.assertIn("#### Memory", out)
+        self.assertEqual(out.splitlines()[0], "#### Comparison")
+        self.assertIn("##### Memory", out)
         self.assertIn("# not a heading", out.splitlines())
 
 

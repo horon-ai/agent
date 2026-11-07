@@ -33,8 +33,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -82,7 +82,7 @@ class MockServer:
             stdout=subprocess.PIPE,
             stderr=log,
             text=True,
-            start_new_session=True,
+            **bc.new_group_kwargs(),
         )
         assert self.proc.stdout is not None
         line = self.proc.stdout.readline()
@@ -503,9 +503,9 @@ def spawn(argv: list[str], cwd: str, env: dict, stdout=subprocess.PIPE, stderr=s
         stderr=stderr,
         text=True,
         bufsize=1,
-        start_new_session=True,
+        **bc.new_group_kwargs(),
     )
-    return Proc(proc=proc, pgid=os.getpgid(proc.pid))
+    return Proc(proc=proc, pgid=bc.pgid_of(proc.pid))
 
 
 SYSCALL_NAMES = ("fsync", "fdatasync")
@@ -591,7 +591,7 @@ def _measure_oneshot(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        start_new_session=True,
+        **bc.new_group_kwargs(),
     )
     sampler = bc.MemorySampler(proc.pid, interval=0.03).start()
     timed_out = False
@@ -599,7 +599,7 @@ def _measure_oneshot(
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
-        bc.terminate_pgroup(os.getpgid(proc.pid))
+        bc.terminate_pgroup(bc.pgid_of(proc.pid))
         try:
             stdout, stderr = proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
@@ -715,6 +715,19 @@ def _tree_size(root: Path) -> int:
     return total
 
 
+def _npm_shim_target(shim: str) -> str | None:
+    """Script an npm ``.cmd`` shim in ``node_modules/.bin`` runs (Windows has no symlink)."""
+    try:
+        text = Path(shim).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r'%dp0%\\\.\.\\([^"\r\n]+?)"', text)
+    if match is None:
+        return None
+    target = Path(shim).parent.parent / match.group(1).replace("\\", os.sep)
+    return str(target) if target.exists() else None
+
+
 def measure_install_size(binary: str) -> tuple[int | None, str | None]:
     """Binary size, or the npm package plus its installed dependencies for node tools."""
     try:
@@ -723,6 +736,8 @@ def measure_install_size(binary: str) -> tuple[int | None, str | None]:
         return None, "binary path not resolvable"
     if not os.path.exists(real):
         return None, "binary missing"
+    if real.lower().endswith(".cmd") and Path(real).parent.name == ".bin":
+        real = _npm_shim_target(real) or real
     package_dir = None
     current = Path(real).parent
     for _ in range(6):
@@ -788,9 +803,7 @@ class UnixDebugSession:
         self.cwd = cwd
 
     def command(self, command: str, timeout: float = 180.0) -> str:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect(self.socket_path)
+        sock = bc.ipc_connect(self.socket_path, timeout=timeout)
         request = {"type": "debug_command", "id": 1, "command": command, "session_id": self.session_id}
         sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
         data = b""
@@ -827,17 +840,27 @@ def start_daemon(
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=log,
-        start_new_session=True,
+        **bc.new_group_kwargs(),
     )
-    handle = Proc(proc=proc, pgid=os.getpgid(proc.pid))
+    handle = Proc(proc=proc, pgid=bc.pgid_of(proc.pid))
     if not bc.wait_for_socket(main_socket_path(socket_path), timeout):
         if not bc.wait_for_socket(debug_socket, timeout):
             handle.close()
-            raise RuntimeError(f"daemon socket not ready: {log_path}")
+            raise RuntimeError(f"daemon socket not ready: {log_tail(log_path)}")
     if not bc.wait_for_socket(debug_socket, timeout):
         handle.close()
-        raise RuntimeError("daemon debug socket not ready")
+        raise RuntimeError(f"daemon debug socket not ready: {log_tail(log_path)}")
     return handle
+
+
+def log_tail(path: str, limit: int = 300) -> str:
+    """Last ``limit`` characters of a daemon log, so a failed start says why."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read().strip()
+    except OSError:
+        return f"{path} (unreadable)"
+    return " ".join(text[-limit:].split()) or f"{path} (empty)"
 
 
 def main_socket_path(socket_path: str) -> str:
@@ -960,9 +983,7 @@ def make_horon_daemon(binary: str, root: str, cwd: str):
 
 
 def sessions_client(debug_socket: str, command: str, timeout: float = 60.0) -> str:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    sock.connect(debug_socket)
+    sock = bc.ipc_connect(debug_socket, timeout=timeout)
     try:
         sock.sendall((json.dumps({"type": "debug_command", "id": 1, "command": command}) + "\n").encode())
         data = b""
@@ -1298,9 +1319,9 @@ def measure_opencode_sessions(
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=log,
-        start_new_session=True,
+        **bc.new_group_kwargs(),
     )
-    pgid = os.getpgid(proc.pid)
+    pgid = bc.pgid_of(proc.pid)
     sessions: list[str] = []
     samples: list[dict] = []
     errors: list[str] = []

@@ -12,6 +12,7 @@ Two surfaces are measured:
   API in three stages, timed separately so a regression names its stage:
   the API socket becomes connectable, the bridge answers `hello` with
   `hello_ok`, and a no-op request (`list_sessions`, limit 1) returns its reply.
+  `api-bridge` exists only on Unix, so Windows reports this surface as skipped.
 """
 
 from __future__ import annotations
@@ -27,7 +28,12 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import bench_common as bc  # noqa: E402
 
 API_VERSION_MAJOR = 1
 STAGE_TIMEOUT_S = 20.0
@@ -106,18 +112,7 @@ def isolated_env(root: str) -> dict[str, str]:
     return env
 
 def wait_for_socket(path: str, timeout_s: float) -> bool:
-    deadline = time.perf_counter() + timeout_s
-    while time.perf_counter() < deadline:
-        if os.path.exists(path):
-            try:
-                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                sock.connect(path)
-                sock.close()
-                return True
-            except OSError:
-                pass
-        time.sleep(0.005)
-    return False
+    return bc.wait_for_socket(path, timeout_s)
 
 def measure_server_startup(binary: str, runs: int) -> list[float]:
     times: list[float] = []
@@ -152,11 +147,11 @@ def measure_server_startup(binary: str, runs: int) -> list[float]:
 def api_socket_path(env: dict[str, str]) -> str:
     return os.path.join(env["HORON_AGENT_RUNTIME_DIR"], "horon-agent-api.sock")
 
-def send_frame(stream: socket.socket, frame: dict) -> None:
+def send_frame(stream, frame: dict) -> None:
     stream.sendall((json.dumps(frame) + "\n").encode())
 
 def read_frames_until(
-    stream: socket.socket, predicate, deadline: float, buffer: bytearray
+    stream, predicate, deadline: float, buffer: bytearray
 ) -> dict | None:
     while time.perf_counter() < deadline:
         while b"\n" in buffer:
@@ -190,7 +185,7 @@ def measure_bridge_readiness_once(binary: str) -> BridgeReadiness:
     env = isolated_env(root)
     api_socket = api_socket_path(env)
     proc = None
-    stream: socket.socket | None = None
+    stream = None
     try:
         start = time.perf_counter()
         proc = subprocess.Popen(
@@ -199,15 +194,14 @@ def measure_bridge_readiness_once(binary: str) -> BridgeReadiness:
             stderr=subprocess.DEVNULL,
             env=env,
             stdin=subprocess.DEVNULL,
-            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+            **bc.new_group_kwargs(),
         )
 
         if not wait_for_socket(api_socket, STAGE_TIMEOUT_S):
             return BridgeReadiness(None, None, None, None, "api socket never became connectable")
         socket_ms = (time.perf_counter() - start) * 1000
 
-        stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        stream.connect(api_socket)
+        stream = bc.ipc_connect(api_socket)
         buffer = bytearray()
         send_frame(
             stream,
@@ -251,21 +245,17 @@ def measure_bridge_readiness_once(binary: str) -> BridgeReadiness:
             except OSError:
                 pass
         if proc is not None:
+            bc.terminate_pgroup(bc.pgid_of(proc.pid), timeout=5)
             try:
-                if hasattr(os, "killpg"):
-                    os.killpg(os.getpgid(proc.pid), 15)
-                else:
-                    proc.terminate()
-                proc.wait(timeout=5)
-            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
                 proc.kill()
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    pass
         shutil.rmtree(root, ignore_errors=True)
 
 def measure_bridge_startup(binary: str, runs: int) -> list[BridgeReadiness]:
+    if bc.IS_WINDOWS:
+        print("  skipped: api-bridge is Unix-only, so Windows has no harness bridge to time")
+        return []
     results: list[BridgeReadiness] = []
     for _ in range(runs):
         readiness = measure_bridge_readiness_once(binary)
@@ -315,7 +305,7 @@ def main() -> int:
     args = parse_args()
     binary = args.binary
 
-    if not os.path.exists(binary):
+    if not os.path.isfile(binary):
         print(f"Binary not found: {binary}")
         print("Run: cargo build --release")
         return 1

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Write a benchmark run into the generated block of docs/performance/RESULTS.md.
 
-`.github/workflows/benchmark-docs.yml` runs every benchmark suite after a push to
-`main` passes CI, then calls this script once per branch (`main`, `dev`) to
-replace the block between the two markers below. Everything outside the block is
-left byte-for-byte as it was: the rest of RESULTS.md is a hand-written record.
+`.github/workflows/benchmark-docs.yml` runs every benchmark suite on Linux, macOS
+and Windows after a push to `main` passes CI, then calls this script once per
+branch (`main`, `dev`) to replace the block between the two markers below.
+Everything outside the block is left byte-for-byte as it was: the rest of
+RESULTS.md is a hand-written record.
 
     <!-- bench-auto:start commit=<sha> -->
     ...generated...
@@ -13,9 +14,15 @@ left byte-for-byte as it was: the rest of RESULTS.md is a hand-written record.
 The start marker carries the measured commit, so the next run can ask "did the
 agent code change since the last measurement?" (`last-commit`).
 
+`--results` is a directory holding one sub-directory per benchmark job (one
+downloaded artifact each). A job directory names its OS in `platform.txt`
+(`linux`, `macos`, `windows`) and its job outcome in `status.txt`; the OS
+sections appear in that fixed order, and an OS with no directory is shown as
+not measured rather than left out.
+
 Subcommands:
 
-    render      --doc PATH --results DIR --commit SHA [--run-url URL] [--runner TEXT]
+    render      --doc PATH --results DIR --commit SHA [--run-url URL]
     last-commit --doc PATH     prints the recorded commit, or nothing
 """
 
@@ -32,7 +39,10 @@ END = "<!-- bench-auto:end -->"
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 HEADING_RE = re.compile(r"^(#{1,6}) ")
 
-# Fragments written by benchmark.yml, in the order they appear in the block.
+# The OS sections, in the order they appear. (key in platform.txt, title)
+PLATFORMS = (("linux", "Linux"), ("macos", "macOS"), ("windows", "Windows"))
+
+# Fragments written by benchmark.yml, in the order they appear in an OS section.
 # (file name, title used when the fragment is plain text or missing)
 FRAGMENTS = (
     ("compare.md", "경쟁 도구 비교"),
@@ -44,9 +54,10 @@ FRAGMENTS = (
     ("compile.md", "컴파일 루프"),
 )
 
-# Fragment headings are shifted so the shallowest one becomes this level; the
-# block itself sits under a `##` section of RESULTS.md.
-FRAGMENT_LEVEL = 3
+# The block sits under a `##` section of RESULTS.md, each OS gets `###`, and
+# fragment headings are shifted so the shallowest one becomes this level.
+PLATFORM_LEVEL = 3
+FRAGMENT_LEVEL = 4
 
 
 class DocError(Exception):
@@ -108,45 +119,94 @@ def demote_headings(markdown: str, level: int = FRAGMENT_LEVEL) -> str:
     return "\n".join(out)
 
 
+def _read(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8").strip()
+    return text or None
+
+
+def find_platform_dirs(results: Path) -> dict[str, Path]:
+    """Map each OS key to the job directory that names it in platform.txt.
+
+    `results` itself counts as a job directory too, because a download of a
+    single artifact may land flat instead of in a sub-directory.
+    """
+    found: dict[str, Path] = {}
+    known = {key for key, _ in PLATFORMS}
+    for directory in [results, *sorted(p for p in results.iterdir() if p.is_dir())]:
+        key = (_read(directory / "platform.txt") or "").lower()
+        if key not in known:
+            continue
+        if key in found:
+            raise DocError(f"two result directories claim {key}: {found[key].name}, {directory.name}")
+        found[key] = directory
+    return found
+
+
 def _fragment(results: Path, name: str, title: str) -> str:
     heading = "#" * FRAGMENT_LEVEL + " " + title
-    path = results / name
-    if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+    content = _read(results / name)
+    if content is None:
         return f"{heading}\n\n측정 안 됨: 이 실행에서 `{name}` 파일이 만들어지지 않았습니다."
-    content = path.read_text(encoding="utf-8").strip("\n")
     if name.endswith(".md"):
         return demote_headings(content)
     return f"{heading}\n\n```text\n{content}\n```"
+
+
+def _status_label(directory: Path | None) -> str:
+    if directory is None:
+        return "결과 없음"
+    status = _read(directory / "status.txt")
+    if status == "success":
+        return "성공"
+    if status is None:
+        return "상태 모름"
+    return f"일부 실패 (`{status}`)"
+
+
+def _platform_section(title: str, directory: Path | None) -> str:
+    heading = "#" * PLATFORM_LEVEL + " " + title
+    if directory is None:
+        return f"{heading}\n\n이 실행에서 {title} 결과가 없습니다. 작업이 시작되지 못했거나 결과 파일을 올리지 못했습니다."
+    parts = [heading]
+    if _read(directory / "status.txt") not in ("success", None):
+        parts.append("이 OS의 측정 작업이 끝까지 성공하지 못했습니다. 아래에서 결과가 없는 묶음은 그 때문입니다.")
+    parts += [_fragment(directory, name, fragment_title) for name, fragment_title in FRAGMENTS]
+    return "\n\n".join(parts)
 
 
 def render_body(
     results: Path,
     commit: str,
     run_url: str | None = None,
-    runner: str | None = None,
     now: _dt.datetime | None = None,
 ) -> str:
     now = now or _dt.datetime.now(_dt.timezone.utc)
-    version_file = results / "horon-version.txt"
-    version = version_file.read_text(encoding="utf-8").strip() if version_file.is_file() else None
+    dirs = find_platform_dirs(results)
     lines = [
         "이 구간은 `.github/workflows/benchmark-docs.yml` 이 자동으로 다시 씁니다. 손으로 고치지 않습니다.",
         "",
         f"- 커밋: `{commit}`",
         f"- 측정 시각: {now.strftime('%Y-%m-%d %H:%M')} UTC",
     ]
-    if version:
-        lines.append(f"- 바이너리: `{version}`")
-    if runner:
-        lines.append(f"- 러너: `{runner}`")
     if run_url:
-        lines.append(f"- 실행: <{run_url}> (원본 JSON 은 `benchmark-<run_id>` 아티팩트)")
+        lines.append(f"- 실행: <{run_url}> (원본 JSON 은 OS별 `benchmark-<os>-<run_id>` 아티팩트)")
     lines += [
         "",
-        "호스티드 러너의 절대값은 기계마다 달라 기준선이 아닙니다. 같은 실행 안의 상대 비교(horon 대비 배수)와 커밋 사이의 추세만 읽습니다.",
+        "OS마다 다른 GitHub 호스티드 러너에서 따로 잽니다. 기계가 다르므로 OS끼리 절대값을 비교하지 않고, 같은 OS 안의 상대 비교(horon 대비 배수)와 커밋 사이의 추세만 읽습니다.",
+        "",
+        "| OS | 러너 | 바이너리 | 상태 |",
+        "| --- | --- | --- | --- |",
     ]
+    for key, title in PLATFORMS:
+        directory = dirs.get(key)
+        runner = (_read(directory / "runner.txt") if directory else None) or "—"
+        version = (_read(directory / "horon-version.txt") if directory else None) or "—"
+        version = version.splitlines()[0]
+        lines.append(f"| {title} | `{runner}` | `{version}` | {_status_label(directory)} |")
     parts = ["\n".join(lines)]
-    parts += [_fragment(results, name, title) for name, title in FRAGMENTS]
+    parts += [_platform_section(title, dirs.get(key)) for key, title in PLATFORMS]
     return "\n\n".join(parts)
 
 
@@ -158,7 +218,6 @@ def main(argv: list[str]) -> int:
     render.add_argument("--results", required=True, type=Path)
     render.add_argument("--commit", required=True)
     render.add_argument("--run-url")
-    render.add_argument("--runner")
     last = sub.add_parser("last-commit", help="print the commit recorded in the block")
     last.add_argument("--doc", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -170,7 +229,7 @@ def main(argv: list[str]) -> int:
             return 0
         if not args.results.is_dir():
             raise DocError(f"results directory not found: {args.results}")
-        body = render_body(args.results, args.commit, args.run_url, args.runner)
+        body = render_body(args.results, args.commit, args.run_url)
         args.doc.write_text(replace_block(text, args.commit, body), encoding="utf-8")
     except DocError as exc:
         print(f"bench_docs: {args.doc}: {exc}", file=sys.stderr)
