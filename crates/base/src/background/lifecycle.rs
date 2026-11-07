@@ -36,9 +36,17 @@ pub struct FinalizedTask {
 }
 
 /// The terminal-transition broadcast and the once-only gate that feeds it.
+///
+/// Cancellation is remembered here rather than decided by the caller: stopping
+/// a task's process group makes the task's own future notice the death and
+/// publish `Failed` before the cancel path reaches its own write, and the gate
+/// keeps whichever arrived first. Knowing that this task was cancelled is what
+/// lets that earlier record report the cancellation that caused it, whichever
+/// path wins.
 pub(super) struct Finalizer {
     tx: tokio::sync::broadcast::Sender<FinalizedTask>,
     sent: std::sync::Mutex<std::collections::HashSet<String>>,
+    cancelled: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Finalizer {
@@ -46,6 +54,7 @@ impl Finalizer {
         Self {
             tx: tokio::sync::broadcast::channel(FINALIZED_CHANNEL_CAPACITY).0,
             sent: std::sync::Mutex::new(std::collections::HashSet::new()),
+            cancelled: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -59,6 +68,7 @@ impl Finalizer {
     /// racing a cancel, a status read after a natural finish), so the gate is
     /// keyed by task id rather than by path.
     pub(super) fn send_once(&self, status: &TaskStatusFile, cancelled: bool) {
+        let cancelled = cancelled || self.take_cancelled(&status.task_id);
         {
             let Ok(mut sent) = self.sent.lock() else {
                 return;
@@ -81,6 +91,25 @@ impl Finalizer {
             cancelled,
         });
     }
+
+    /// Remember that this task was cancelled, before anything signals it.
+    fn mark_cancelled(&self, task_id: &str) {
+        let mut cancelled = self.cancelled.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancelled.len() > FINALIZED_SEEN_LIMIT {
+            // Every mark is removed by the one terminal transition it belongs
+            // to, so this only fills when a task never reaches one.
+            cancelled.clear();
+        }
+        cancelled.insert(task_id.to_string());
+    }
+
+    /// Take the cancellation mark for this task, if there is one.
+    fn take_cancelled(&self, task_id: &str) -> bool {
+        self.cancelled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(task_id)
+    }
 }
 
 impl BackgroundTaskManager {
@@ -91,6 +120,15 @@ impl BackgroundTaskManager {
     /// server reload. Receivers see events published after subscribing only.
     pub fn subscribe_finalized(&self) -> tokio::sync::broadcast::Receiver<FinalizedTask> {
         self.finalizer.subscribe()
+    }
+
+    /// Record that this task is being cancelled, before it is signalled.
+    ///
+    /// Must be called ahead of `cancel_with_grace`: that path stops the process
+    /// group first, and the task's own future can publish `Failed` during the
+    /// grace window.
+    pub fn mark_task_cancelled(&self, task_id: &str) {
+        self.finalizer.mark_cancelled(task_id);
     }
 
     pub(super) fn emit_finalized(&self, status: &TaskStatusFile, cancelled: bool) {

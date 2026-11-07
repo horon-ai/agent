@@ -2078,9 +2078,36 @@ impl Agent {
                             tool_elapsed.as_secs_f64()
                         ));
 
-                        let bg_info = crate::background::global()
-                            .adopt(&tc.name, &self.session.id, tool_handle)
+                        let manager = crate::background::global();
+                        let finalized = manager.subscribe_finalized();
+                        // The command and directory belong to the tool that ran,
+                        // so a background terminal the user opens afterwards
+                        // names the same thing the call did.
+                        let background_command = tool_wait::tool_background_command(&tc.name, &tc.input);
+                        let background_cwd = self.session.working_dir.clone().map(std::path::PathBuf::from);
+                        let bg_info = manager
+                            .adopt_with_options_for_tool_call(
+                                &tc.name,
+                                None,
+                                &self.session.id,
+                                true,
+                                false,
+                                &tc.id,
+                                background_command.as_deref(),
+                                background_cwd.as_deref(),
+                                tool_handle,
+                            )
                             .await;
+                        crate::server::background_work::report_started(
+                            &self.session.id,
+                            &tc.id,
+                            &bg_info.task_id,
+                            &tc.name,
+                            background_command.as_deref(),
+                            background_cwd.as_deref(),
+                            finalized,
+                            None,
+                        );
 
                         let bg_msg = format!(
                             "Tool '{}' was moved to background by the user (task_id: {}). \

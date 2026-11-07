@@ -2495,6 +2495,8 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
         .unwrap();
 }
 
+#[path = "client_lifecycle_tests/acp_background_work.rs"]
+mod acp_background_work;
 #[path = "client_lifecycle_tests/acp_permission.rs"]
 mod acp_permission;
 #[path = "client_lifecycle_tests/acp_plan_diff.rs"]

@@ -1377,12 +1377,18 @@ pub(super) async fn handle_client(
                 super::tool_cancel::handle_cancel_tool_call(id, &call_id, &client_session_id, &client_event_tx);
             }
 
-            Request::CancelBackgroundTerminal { id, .. } => {
-                super::tool_cancel::answer_unsupported(id, "cancel_background_terminal", &client_event_tx);
+            Request::CancelBackgroundTerminal { id, call_id } => {
+                super::background_work::handle_cancel_background_terminal(
+                    id,
+                    &call_id,
+                    &client_session_id,
+                    &client_event_tx,
+                )
+                .await;
             }
 
             Request::ListBackgroundWork { id } => {
-                super::tool_cancel::answer_unsupported(id, "list_background_work", &client_event_tx);
+                super::background_work::handle_list_background_work(id, &client_session_id, &client_event_tx).await;
             }
 
             Request::SoftInterrupt {

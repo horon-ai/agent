@@ -11,9 +11,9 @@
 //! cancel path, but only when the named run is still the one running, so a
 //! cancel that lost the race with a finished turn cannot stop its successor.
 //!
-//! The two background-work requests are answered `unsupported` in this wave;
-//! the tool-call cancellation in this module is what makes them unnecessary for
-//! a v2 editor that only wants to stop a foreground call.
+//! The background-work requests live in [`super::background_work`]: they share
+//! the background manager's lifetime broadcast, not this module's per-call
+//! signal registry.
 
 use super::*;
 
@@ -44,24 +44,6 @@ pub(super) fn handle_cancel_tool_call(
             reason: (!accepted).then(|| "unknown".to_string()),
         },
         "tool_call_cancel",
-    );
-}
-
-/// Answer a request whose real handler arrives in the next wave.
-///
-/// The wire request exists now so a v2 adapter can send it and get a defined
-/// answer instead of a decode error; the behaviour is added by the row that
-/// owns the background-work lifetime events.
-pub(super) fn answer_unsupported(id: u64, request: &'static str, client_event_tx: &mpsc::UnboundedSender<ServerEvent>) {
-    crate::logging::info(&format!("SERVER_REQUEST_UNSUPPORTED id={} request={}", id, request));
-    reply(
-        client_event_tx,
-        ServerEvent::Error {
-            id,
-            message: "unsupported".to_string(),
-            retry_after_secs: None,
-        },
-        request,
     );
 }
 

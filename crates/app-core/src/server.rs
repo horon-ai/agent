@@ -2,6 +2,7 @@ mod available_models_cache;
 mod available_models_dedup;
 mod await_members_state;
 mod background_tasks;
+pub(crate) mod background_work;
 mod client_actions;
 mod client_api;
 mod client_ask;
@@ -125,9 +126,7 @@ use tokio::sync::{Mutex, OnceCell, RwLock, broadcast, mpsc};
 pub(super) type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 pub(super) type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
-fn idle_monitor_should_start(client_count: usize, has_live_headless_worker: bool) -> bool {
-    client_count == 0 && !has_live_headless_worker
-}
+pub(super) use self::lifecycle::idle_monitor_should_start;
 
 /// How this server treats a reload marker written by another process.
 ///
