@@ -993,12 +993,6 @@ jobs:
       # The two Windows targets are installed into `stable`; the same pin makes
       # `cargo xwin` resolve that toolchain instead of rust-toolchain.toml's.
       RUSTUP_TOOLCHAIN: stable
-      # XWIN_CACHE_DIR is the environment form of `--xwin-cache-dir`, "xwin cache
-      # directory to put CRT and SDK files" (cargo-xwin README, option table).
-      # The download is the bulk of this job's 14.5 minutes in run 42373575639,
-      # and the directory sits outside the checkout and outside `target/` so
-      # Swatinem/rust-cache does not store it as part of the build cache.
-      XWIN_CACHE_DIR: ${{ github.workspace }}/../.cache/cargo-xwin
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1034,23 +1028,37 @@ jobs:
         uses: taiki-e/install-action@cargo-xwin
 
       - name: Resolve cargo-xwin version and cache directory
+        # XWIN_CACHE_DIR is the environment form of `--xwin-cache-dir`, "xwin
+        # cache directory to put CRT and SDK files" (cargo-xwin README, option
+        # table). The download is the bulk of this job's 14.5 minutes in run
+        # 42373575639. The directory sits outside the checkout and `target/`, so
+        # Swatinem/rust-cache does not store it, and it is resolved to an
+        # absolute path without `..` here: actions/cache rejects `..` in `path`
+        # and skipped the save in run 42387478682.
         id: xwin
         shell: bash
         run: |
           version=$(cargo xwin --version | head -n1 | tr -d '\n' | tr -c 'A-Za-z0-9._-' '-')
+          dir="$HOME/.cache/cargo-xwin"
+          mkdir -p "$dir"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          mkdir -p "$XWIN_CACHE_DIR"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "XWIN_CACHE_DIR=$dir" >> "$GITHUB_ENV"
 
       - uses: actions/cache@v6
         # The CRT and SDK archives are the 14.5 minutes of run 42373575639. The
         # key carries the cargo-xwin version and both cross targets because the
         # cached files are version-pinned and target-pinned.
         with:
-          path: ${{ env.XWIN_CACHE_DIR }}
+          path: ${{ steps.xwin.outputs.dir }}
           key: cargo-xwin-${{ runner.os }}-${{ steps.xwin.outputs.version }}-x86_64-pc-windows-msvc-aarch64-pc-windows-msvc
 
       - name: Check Windows x64 target
-        run: cargo xwin check --locked --target x86_64-pc-windows-msvc
+        shell: bash
+        run: |
+          cargo xwin check --locked --target x86_64-pc-windows-msvc
+          # Shows the CRT and SDK landed in the cached directory.
+          du -sh "$XWIN_CACHE_DIR"
 
       # cargo-xwin currently feeds clang-style ring builds MSVC /imsvc flags for
       # aarch64-pc-windows-msvc on Linux. Keep this advisory until upstream
