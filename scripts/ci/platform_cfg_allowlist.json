@@ -88,6 +88,10 @@
       "count": 1,
       "reason": "asserts unix ownership and permission bits on published session files."
     },
+    "crates/app-core/src/server/socket.rs": {
+      "count": 6,
+      "reason": "the daemon lock guard exists only where the listening endpoint is a file: on Unix it holds the adapter's flock-based InstanceLock so a crashed daemon releases the lock with its last descriptor, and on Windows the single-owner named pipe is the liveness test, so the guard holds nothing and there is no lock file to create, unlink or fail to open. The primitive (flock, pipe creation) is in the adapter; what stays here is which shape the product's lock has on each platform."
+    },
     "crates/app-core/src/server/socket_tests.rs": {
       "count": 13,
       "reason": "binds real Unix socket files and holds daemon flock files; Windows uses named pipes with no filesystem node or lock file."
