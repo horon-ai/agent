@@ -126,6 +126,19 @@ pub(crate) fn send_for_version(session_id: &str, shape: impl FnOnce(Option<u32>)
     owner.is_some_and(|(version, sender)| sender.send(shape(version)).is_ok())
 }
 
+/// Whether the ACP connection that owns this session negotiated protocol v2.
+///
+/// Tool code asks this once when a call starts and keeps the answer, so the
+/// per-chunk path of a long-running command costs one bool test instead of a
+/// registry lookup. A later re-subscribe that changes the version cannot make
+/// that call report to the wrong connection: `send_v2` re-checks ownership on
+/// every event.
+pub(crate) fn owns_v2(session_id: &str) -> bool {
+    lock()
+        .get(session_id)
+        .is_some_and(|entry| entry.protocol_version == Some(2))
+}
+
 /// [`send`], but only when the owning ACP connection negotiated protocol v2.
 pub(crate) fn send_v2(session_id: &str, event: ServerEvent) -> bool {
     let sender = lock()

@@ -41,6 +41,13 @@ use super::InterruptSignal;
 use crate::message::ToolCall;
 use crate::tool::{Registry, ToolContext, ToolEffects, ToolOutput};
 
+/// Result text of a member the user cancelled through `cancel_tool_call`.
+///
+/// The text travels as the member's error so every caller that already writes
+/// a result for a member that failed writes the same thing for a cancelled
+/// one. It is not a failure report: it says the work was stopped on purpose.
+pub(crate) const CANCELLED_RESULT: &str = crate::agent::turn_streaming_mpsc::CANCELLED_TOOL_RESULT;
+
 /// Most calls one concurrent group may hold.
 pub(crate) const MAX_GROUP_MEMBERS: usize = 10;
 
@@ -202,6 +209,10 @@ pub(crate) struct GroupOutcome {
     /// Members that produced a result, sorted by their index in the group
     /// slice. Errors are per member and are never swallowed.
     pub results: Vec<(usize, Result<ToolOutput>)>,
+    /// Members the user cancelled through `cancel_tool_call`. Their work was
+    /// aborted and they produced no result; the caller writes the cancellation
+    /// result it also reports as `tool_cancelled`.
+    pub cancelled: Vec<usize>,
     /// Members that produced no result: the group was already cancelled before
     /// they were dispatched, or they were aborted in flight. The caller writes
     /// a skip result for each of them.
@@ -214,6 +225,7 @@ pub(crate) struct GroupOutcome {
 /// Per-member slot before the outcome is assembled.
 enum MemberSlot {
     Finished(Result<ToolOutput>),
+    Cancelled,
     Aborted,
 }
 
@@ -244,6 +256,7 @@ pub(crate) async fn run_group(
     if cancel.as_ref().is_some_and(|cancel| cancel.signal.is_set()) {
         return GroupOutcome {
             results: Vec::new(),
+            cancelled: Vec::new(),
             unstarted: (0..calls.len()).collect(),
             stopped: Some(GroupStop::Shutdown),
         };
@@ -266,14 +279,30 @@ pub(crate) async fn run_group(
         let name = call.name.clone();
         let input = call.input.clone();
         let handle = tokio::spawn(async move { registry.execute(&name, input, ctx).await });
-        aborts.push(handle.abort_handle());
+        let abort = handle.abort_handle();
+        aborts.push(abort.clone());
+        // Each member is cancellable by its own call id while it runs, which
+        // is what lets a `cancel_tool_call` name one member of a concurrent
+        // group. The guard lives exactly as long as the member's future.
+        let cancel = InterruptSignal::new();
+        let cancel_guard = crate::tool_cancel_registry::register(&base_ctx.session_id, &call.id, cancel.clone());
         in_flight.push(async move {
-            let slot = match handle.await {
-                Ok(result) => MemberSlot::Finished(result),
-                Err(error) if error.is_cancelled() => MemberSlot::Aborted,
-                // Mirrors the streaming loop's handling: a panicking tool is
-                // that call's error, not a lost group.
-                Err(error) => MemberSlot::Finished(Err(anyhow::anyhow!("Tool task panicked: {error}"))),
+            let _cancel_guard = cancel_guard;
+            let slot = tokio::select! {
+                biased;
+                result = handle => match result {
+                    Ok(result) => MemberSlot::Finished(result),
+                    Err(error) if error.is_cancelled() => MemberSlot::Aborted,
+                    // Mirrors the streaming loop's handling: a panicking tool is
+                    // that call's error, not a lost group.
+                    Err(error) => MemberSlot::Finished(Err(anyhow::anyhow!("Tool task panicked: {error}"))),
+                },
+                // The user cancelled this member only: abort its work and keep
+                // the rest of the group running.
+                _ = cancel.notified() => {
+                    abort.abort();
+                    MemberSlot::Cancelled
+                }
             };
             (index, slot)
         });
@@ -298,13 +327,16 @@ pub(crate) async fn run_group(
     });
     let watches_signal = cancel.is_some();
     let watches_interrupt = interrupt_poll.is_some();
+    let mut cancelled: Vec<usize> = Vec::new();
 
     while !in_flight.is_empty() {
         tokio::select! {
             biased;
             Some((index, slot)) = in_flight.next() => {
-                if let MemberSlot::Finished(result) = slot {
-                    results.push((index, result));
+                match slot {
+                    MemberSlot::Finished(result) => results.push((index, result)),
+                    MemberSlot::Cancelled => cancelled.push(index),
+                    MemberSlot::Aborted => {}
                 }
             }
             _ = wait_for_cancel(cancel.as_ref().map(|cancel| &cancel.signal)), if watches_signal && stop.is_none() => {
@@ -323,14 +355,24 @@ pub(crate) async fn run_group(
             // recorded rather than dropped. Aborted members resolve at their
             // next await point and land in `unstarted` instead.
             while let Some((index, slot)) = in_flight.next().await {
-                if let MemberSlot::Finished(result) = slot {
-                    results.push((index, result));
+                match slot {
+                    MemberSlot::Finished(result) => results.push((index, result)),
+                    MemberSlot::Cancelled => cancelled.push(index),
+                    MemberSlot::Aborted => {}
                 }
             }
             break;
         }
     }
 
+    cancelled.sort_unstable();
+
+    // A cancelled member also owes one result, so it is recorded as an error
+    // carrying the cancellation text: every caller writes that result and the
+    // transcript stays valid, exactly as for a member that failed.
+    for index in &cancelled {
+        results.push((*index, Err(anyhow::anyhow!(CANCELLED_RESULT))));
+    }
     results.sort_by_key(|(index, _)| *index);
 
     let mut produced = vec![false; calls.len()];
@@ -345,6 +387,7 @@ pub(crate) async fn run_group(
 
     GroupOutcome {
         results,
+        cancelled,
         unstarted,
         stopped: stop.or(interrupt_pending_at_dispatch.then_some(GroupStop::Interrupt)),
     }

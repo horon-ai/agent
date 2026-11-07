@@ -48,6 +48,12 @@ pub(crate) struct AskPrompt {
     pub ask_id: String,
     pub questions: Vec<AskQuestion>,
     pub response_tx: tokio::sync::oneshot::Sender<Vec<AskAnswer>>,
+    /// Session the tool ran in, so the connection forwarding this prompt can
+    /// reach that session's v2 side channel.
+    pub session_id: String,
+    /// The tool call that asked, so a v2 editor can name the call its
+    /// `elicitation/create` belongs to.
+    pub tool_call_id: String,
 }
 
 struct Installed {

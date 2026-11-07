@@ -15,6 +15,7 @@ use super::client_lifecycle_logging::{
     ServerRequestLifecycleFields, interrupt_request_log_fields, request_payload_summary, request_type_from_line,
     request_type_is_read_only, server_request_lifecycle_fields,
 };
+use super::client_lifecycle_tool_move::move_tool_to_background;
 use super::client_lightweight_control::{
     LightweightControlContext, handle_lightweight_control_request, parse_swarm_spawn_mode,
 };
@@ -1016,15 +1017,54 @@ pub(super) async fn handle_client(
         // that writer can be busy long enough that an already-decoded cancel would sit
         // behind outbound bytes instead of signalling the agent's lock-free cancel
         // handle. Queue the Ack through the event channel and signal cancellation first.
-        if let Request::Cancel { id } = request {
+        //
+        // A targeted `cancel_turn` takes the same path, but only while the run it
+        // names is the one running: the caller saw that run start, so stopping it
+        // cannot reach a turn that replaced it. A stale id, or a session that
+        // reported no run, stops nothing and is answered with the Ack below.
+        let targeted_cancel = match &request {
+            Request::Cancel { id } => Some((*id, true)),
+            Request::CancelTurn { id, run_id } => Some((
+                *id,
+                super::foreground_state::current_run_id(&client_session_id).as_deref() == Some(run_id.as_str()),
+            )),
+            _ => None,
+        };
+        if let Some((id, stop_turn)) = targeted_cancel {
             let ack_queued = client_event_tx.send(ServerEvent::Ack { id }).is_ok();
             crate::logging::info(&format!(
-                "SERVER_INTERRUPT_CANCEL_PRE_ACK_DISPATCH id={} session={} ack_queued={} decoded_to_dispatch_ms={}",
+                "SERVER_INTERRUPT_CANCEL_PRE_ACK_DISPATCH id={} session={} ack_queued={} targeted={} stops_turn={} decoded_to_dispatch_ms={}",
                 id,
                 client_session_id,
                 ack_queued,
+                !matches!(request, Request::Cancel { .. }),
+                stop_turn,
                 request_decoded_at.elapsed().as_millis()
             ));
+            if !stop_turn {
+                // Nothing to stop: the run the caller named is not the one
+                // running. The Ack above is the whole reply, so the successor
+                // turn (if any) keeps going.
+                if request_lifecycle_logged {
+                    log_request_lifecycle_handled(
+                        ServerRequestLifecycleFields {
+                            phase: "handled",
+                            request_id,
+                            request_kind: &request_kind,
+                            client_session_id: &client_session_id,
+                            client_connection_id: &client_connection_id,
+                            client_instance_id: current_client_instance_id.as_deref(),
+                            client_is_processing,
+                            message_id: processing_message_id,
+                            processing_session_id: processing_session_id.as_deref(),
+                            line_bytes: line.len(),
+                        },
+                        request_lifecycle_start,
+                        request_decoded_at,
+                    );
+                }
+                continue;
+            }
             let cancel_dispatch_start = Instant::now();
             let queued_v2 = last_v2_message
                 .clone()
@@ -1326,39 +1366,29 @@ pub(super) async fn handle_client(
                 }
             }
 
-            Request::Cancel { id } => {
-                let queued_v2 = last_v2_message
-                    .clone()
-                    .filter(|message| processing_message_id == Some(message.request_id));
-                cancel_processing_message(
-                    &mut ProcessingState {
-                        client_is_processing: &mut client_is_processing,
-                        message_id: &mut processing_message_id,
-                        session_id: &mut processing_session_id,
-                        task: &mut processing_task,
-                        turn_acquired: &turn_acquired,
-                    },
-                    &session_control,
+            // `Cancel` and a matching `CancelTurn` were answered before the
+            // dispatch match: the reply is the Ack queued there, and the turn
+            // is already being stopped.
+            Request::Cancel { .. } => { continue; }
+
+            Request::CancelTurn { .. } => { continue; }
+
+            Request::CancelToolCall { id, call_id } => {
+                super::tool_cancel::handle_cancel_tool_call(id, &call_id, &client_session_id, &client_event_tx);
+            }
+
+            Request::CancelBackgroundTerminal { id, call_id } => {
+                super::background_work::handle_cancel_background_terminal(
+                    id,
+                    &call_id,
+                    &client_session_id,
                     &client_event_tx,
-                    &SwarmStatusRefs {
-                        members: &swarm_members,
-                        swarms_by_id: &swarms_by_id,
-                        event_history: &event_history,
-                        event_counter: &event_counter,
-                        event_tx: &swarm_event_tx,
-                    },
-                    Some(id),
-                    Some(request_decoded_at),
-                    queued_v2.as_ref(),
                 )
                 .await;
-                if !client_is_processing {
-                    let mut connections = client_connections.write().await;
-                    if let Some(info) = connections.get_mut(&client_connection_id) {
-                        info.is_processing = false;
-                        info.current_tool_name = None;
-                    }
-                }
+            }
+
+            Request::ListBackgroundWork { id } => {
+                super::background_work::handle_list_background_work(id, &client_session_id, &client_event_tx).await;
             }
 
             Request::SoftInterrupt {
@@ -4291,38 +4321,6 @@ async fn clear_soft_interrupts(
     crate::logging::info(&format!(
         "SERVER_SOFT_INTERRUPT_CLEAR_RESULT id={} session={} persisted_clear={} ack_queued={}",
         id, session_id, persisted_clear, ack_queued
-    ));
-}
-
-pub(crate) fn move_tool_to_background(
-    id: u64,
-    session_control: &SessionControlHandle,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    crate::logging::info(&format!(
-        "SERVER_BACKGROUND_TOOL_REQUEST id={} session={}",
-        id, session_control.session_id
-    ));
-    let running = crate::running_tool_registry::current(&session_control.session_id);
-    // Fire regardless: the agent resets the signal before every tool wait, so
-    // an idle fire is harmless, and this keeps the pre-#1778 behavior.
-    let signalled = session_control.request_background_current_tool();
-    let ack_queued = client_event_tx.send(ServerEvent::Ack { id }).is_ok();
-    let running = running.filter(|_| signalled);
-    let moved = running.is_some();
-    let (tool_call_id, tool_name) = match running {
-        Some(tool) => (Some(tool.call_id), Some(tool.name)),
-        None => (None, None),
-    };
-    let _ = client_event_tx.send(ServerEvent::BackgroundToolResult {
-        id,
-        moved,
-        tool_call_id,
-        tool_name,
-    });
-    crate::logging::info(&format!(
-        "SERVER_BACKGROUND_TOOL_RESULT id={} session={} signalled={} ack_queued={}",
-        id, session_control.session_id, signalled, ack_queued
     ));
 }
 

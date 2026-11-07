@@ -20,6 +20,10 @@ use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
 
+mod stream;
+
+pub(crate) use stream::BackgroundTail;
+
 /// Context budget for one command's output; the rest is saved as an artifact.
 const MAX_OUTPUT_BYTES: usize = 30_000;
 const DEFAULT_TIMEOUT_MS: u64 = 120000;
@@ -94,13 +98,6 @@ fn timeout_message(timeout_ms: u64) -> String {
 /// The longest deadline a caller may request. Anything above it is clamped so
 /// a typo in the unit cannot leave a command waiting for an hour.
 const MAX_TIMEOUT_MS: u64 = 600000;
-
-/// The most raw command output kept in memory while a foreground command
-/// runs. Past this point only a rolling tail is retained.
-const MAX_COLLECTED_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
-/// How much of the newest output is kept once [`MAX_COLLECTED_OUTPUT_BYTES`]
-/// has been reached.
-const COLLECTED_OUTPUT_TAIL_BYTES: usize = 1024 * 1024;
 
 /// A resolved `timeout` argument.
 struct BashTimeout {
@@ -567,80 +564,6 @@ impl PromotedCommandProgress {
         if let Some(update) = pending {
             apply_progress_update(task_id, update).await;
         }
-    }
-}
-
-/// Collect a command's output stream line by line, reporting any parsed
-/// progress so a later background promotion has live progress instead of
-/// sitting at 0% until completion.
-async fn collect_output_reporting_progress<R>(
-    reader: Option<R>,
-    progress: std::sync::Arc<PromotedCommandProgress>,
-) -> String
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut out = BoundedOutput::default();
-    let Some(reader) = reader else {
-        return String::new();
-    };
-    let mut lines = BufReader::new(reader).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        if let Ok(Some(update)) = parse_progress_line(&line) {
-            progress.record(update).await;
-        }
-        out.push_line(&line);
-    }
-    out.finish()
-}
-
-/// Command output bounded in memory: the first [`MAX_COLLECTED_OUTPUT_BYTES`]
-/// are kept, then only a rolling tail of the newest
-/// [`COLLECTED_OUTPUT_TAIL_BYTES`]. The dropped middle is marked with the same
-/// elision marker as [`horon_agent_core::util::head_tail`], so the model still
-/// learns how much of the output it never saw instead of silently reading a
-/// truncated stream.
-#[derive(Default)]
-struct BoundedOutput {
-    head: String,
-    tail: String,
-    spilling: bool,
-    total: usize,
-}
-
-impl BoundedOutput {
-    fn push_line(&mut self, line: &str) {
-        self.total += line.len() + 1;
-        if !self.spilling {
-            self.head.push_str(line);
-            self.head.push('\n');
-            if self.head.len() > MAX_COLLECTED_OUTPUT_BYTES {
-                self.spilling = true;
-                let split = self.head.len().saturating_sub(COLLECTED_OUTPUT_TAIL_BYTES);
-                let split = match self.head[split..].find('\n') {
-                    Some(offset) => split + offset + 1,
-                    None => split,
-                };
-                self.tail = self.head.split_off(split);
-            }
-            return;
-        }
-        self.tail.push_str(line);
-        self.tail.push('\n');
-        while self.tail.len() > COLLECTED_OUTPUT_TAIL_BYTES {
-            let Some(newline) = self.tail.find('\n') else {
-                break;
-            };
-            self.tail.drain(..=newline);
-        }
-    }
-
-    fn finish(self) -> String {
-        if !self.spilling {
-            return self.head;
-        }
-        let elided = self.total.saturating_sub(self.head.len() + self.tail.len());
-        format!("{}\n[…{elided}B elided…]\n{}", self.head, self.tail)
     }
 }
 
@@ -1960,6 +1883,11 @@ impl BashTool {
         let promoted_progress = std::sync::Arc::new(PromotedCommandProgress::default());
         let stdout_progress = std::sync::Arc::clone(&promoted_progress);
         let stderr_progress = std::sync::Arc::clone(&promoted_progress);
+        // Asked once, here: a session no v2 connection owns gets `None`, which
+        // collects no bytes and arms no timer for the whole run.
+        let v2 = crate::tool::acp_session::owns_v2(&ctx.session_id);
+        let stdout_stream = stream::OutputStream::for_call(&ctx.session_id, &ctx.tool_call_id, v2);
+        let stderr_stream = stream::OutputStream::for_call(&ctx.session_id, &ctx.tool_call_id, v2);
 
         // Run the command (read stdout/stderr, service stdin, wait for exit) in a
         // dedicated task so that, if it exceeds the foreground timeout, we can hand
@@ -1974,9 +1902,9 @@ impl BashTool {
             } else {
                 horon_agent_platform::process::ProcessGroupGuard::new(Some(child_pid))
             };
-            let stdout_task = tokio::spawn(collect_output_reporting_progress(stdout_handle, stdout_progress));
+            let stdout_task = tokio::spawn(stream::collect_output(stdout_handle, stdout_progress, stdout_stream));
 
-            let stderr_task = tokio::spawn(collect_output_reporting_progress(stderr_handle, stderr_progress));
+            let stderr_task = tokio::spawn(stream::collect_output(stderr_handle, stderr_progress, stderr_stream));
 
             let stdin_task = if has_stdin_channel {
                 Some(tokio::spawn(async move {
@@ -2090,16 +2018,30 @@ impl BashTool {
                 // it, promote it to a background task so it keeps running, renders
                 // as a background-task card, and the agent is told where to find it.
                 let display_name = summarize_background_command(params.intent.as_deref(), &params.command);
+                let finalized = crate::background::global().subscribe_finalized();
                 let info = crate::background::global()
-                    .adopt_with_options(
+                    .adopt_with_options_for_tool_call(
                         "bash",
                         Some(display_name.clone()),
                         &ctx.session_id,
                         params.notify,
                         params.wake,
+                        &ctx.tool_call_id,
+                        Some(&params.command),
+                        start_dir.as_deref(),
                         work_handle,
                     )
                     .await;
+                crate::server::background_work::report_started(
+                    &ctx.session_id,
+                    &ctx.tool_call_id,
+                    &info.task_id,
+                    "bash",
+                    Some(&params.command),
+                    start_dir.as_deref(),
+                    finalized,
+                    None,
+                );
                 // Route progress parsed from the still-running command's output
                 // to the new background task, including any update seen before
                 // promotion, so the task row shows real progress from the start.
@@ -2344,13 +2286,22 @@ impl BashTool {
 
         let wake = params.wake;
         let notify = params.notify || wake;
+        // Subscribe before the task exists: the manager publishes a task's
+        // terminal transition once, and one that exits immediately must still
+        // be reported.
+        let finalized = manager.subscribe_finalized();
+        let start_cwd = start_dir.clone();
+        let call_command = command.clone();
         let info = manager
-            .spawn_with_notify(
+            .spawn_with_notify_for_tool_call(
                 "bash",
                 Some(display_name.clone()),
                 &ctx.session_id,
                 notify,
                 wake,
+                &ctx.tool_call_id,
+                Some(params.command.as_str()),
+                start_cwd.as_deref(),
                 move |output_path| async move {
                     let plan = bash_pty::plan(pty_mode, &command)?;
                     let has_terminal = matches!(&plan, bash_pty::PtyPlan::Terminal(_));
@@ -2498,6 +2449,20 @@ impl BashTool {
                 },
             )
             .await?;
+        crate::server::background_work::report_started(
+            &ctx.session_id,
+            &ctx.tool_call_id,
+            &info.task_id,
+            "bash",
+            Some(call_command.as_str()),
+            start_cwd.as_deref(),
+            finalized,
+            Some(stream::BackgroundTail::new(
+                &ctx.session_id,
+                &ctx.tool_call_id,
+                info.output_file.clone(),
+            )),
+        );
 
         let service_state = match (service.as_deref(), params.ready.as_ref()) {
             (Some(_), Some(spec)) => {

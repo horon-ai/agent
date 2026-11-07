@@ -28,6 +28,7 @@ enum Block {
         tool_use_id: String,
     },
     Image {},
+    Audio {},
     #[serde(other)]
     Inert,
 }
@@ -61,6 +62,7 @@ pub(crate) fn validate_tools(messages: &[ProjectedMessage], cut: Option<usize>) 
                     | Block::ToolResult { .. }
                     | Block::ToolReference { .. }
                     | Block::Image {}
+                    | Block::Audio {}
                     | Block::Inert => None,
                 })
                 .unwrap_or(false);
@@ -98,7 +100,7 @@ pub(crate) fn validate_tools(messages: &[ProjectedMessage], cut: Option<usize>) 
                         latest_user = Some(index);
                     }
                 }
-                Block::Image {} => {
+                Block::Image {} | Block::Audio {} => {
                     if user && !hidden && !tool_images {
                         latest_user = Some(index);
                     }

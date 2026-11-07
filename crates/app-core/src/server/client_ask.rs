@@ -75,6 +75,17 @@ pub(super) fn spawn_ask_forwarder(
                     },
                 );
             }
+            // A v2 editor pairs this question with the tool call that asked, so
+            // the call id goes out immediately before the question itself and on
+            // the same connection. A v1 connection receives no such event, which
+            // is what keeps its byte stream unchanged.
+            crate::tool::acp_session::send_v2(
+                &prompt.session_id,
+                ServerEvent::AskToolCall {
+                    request_id: ask_id.clone(),
+                    tool_call_id: prompt.tool_call_id,
+                },
+            );
             reply(
                 &client_event_tx,
                 ServerEvent::AskRequested {
@@ -420,6 +431,10 @@ pub(super) fn handle_permission_decision(
 #[cfg(test)]
 #[path = "client_ask_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "client_ask_tool_call_tests.rs"]
+mod tool_call_tests;
 
 #[cfg(test)]
 #[path = "client_ask_receipt_tests.rs"]

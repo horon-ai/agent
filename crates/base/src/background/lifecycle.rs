@@ -35,10 +35,107 @@ pub struct FinalizedTask {
     pub cancelled: bool,
 }
 
+/// Read the status document written before a task's final update.
+///
+/// The final write carries progress and event history over from this earlier
+/// document. An unreadable or malformed one only means the final document
+/// starts from empty defaults, so the failure is logged and not propagated.
+async fn read_prior_status(path: &std::path::Path) -> Option<TaskStatusFile> {
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(content) => content,
+        Err(err) => {
+            crate::logging::warn(&format!(
+                "background task status {} is unreadable: {err}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+    match serde_json::from_str::<TaskStatusFile>(&content) {
+        Ok(status) => Some(status),
+        Err(err) => {
+            crate::logging::warn(&format!(
+                "background task status {} is not valid JSON: {err}",
+                path.display()
+            ));
+            None
+        }
+    }
+}
+
+/// The shortened output preview published on completion.
+///
+/// A task's output artifact is expected to exist, but completion reporting is
+/// best effort: an unreadable artifact is logged and reported as empty output
+/// rather than losing the completion event.
+async fn read_output_preview(path: &std::path::Path, task_id: &str) -> String {
+    let output = match tokio::fs::read_to_string(path).await {
+        Ok(output) => output,
+        Err(err) => {
+            crate::logging::warn(&format!(
+                "background task {task_id} output artifact {} is unreadable: {err}",
+                path.display()
+            ));
+            String::new()
+        }
+    };
+    if output.len() > 500 {
+        format!("{}...", crate::util::truncate_str(&output, 500))
+    } else {
+        output
+    }
+}
+
+/// Read a finished task's output for detached and orphan reconciliation.
+async fn read_task_output(path: &std::path::Path, task_id: &str) -> String {
+    match fs::read_to_string(path).await {
+        Ok(output) => output,
+        Err(err) => {
+            crate::logging::warn(&format!(
+                "background task {task_id} output artifact {} is unreadable: {err}",
+                path.display()
+            ));
+            String::new()
+        }
+    }
+}
+
+/// Persist an adopted task's buffered output once its work returned.
+///
+/// The artifact was created when the task was adopted; replacing it with the
+/// real output is best effort, so a failure is logged instead of losing the
+/// terminal status and completion event that follow.
+async fn write_adopted_output(path: &std::path::Path, task_id: &str, output: &str) {
+    let mut file = match File::create(path).await {
+        Ok(file) => file,
+        Err(err) => {
+            crate::logging::warn(&format!(
+                "background task {task_id} output artifact {} could not be replaced: {err}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    if let Err(err) = file.write_all(output.as_bytes()).await {
+        crate::logging::warn(&format!(
+            "background task {task_id} output artifact {} could not be written: {err}",
+            path.display()
+        ));
+    }
+}
+
 /// The terminal-transition broadcast and the once-only gate that feeds it.
+///
+/// Cancellation is remembered here rather than decided by the caller: stopping
+/// a task's process group makes the task's own future notice the death and
+/// publish `Failed` before the cancel path reaches its own write, and the gate
+/// keeps whichever arrived first. Knowing that this task was cancelled is what
+/// lets that earlier record report the cancellation that caused it, whichever
+/// path wins.
 pub(super) struct Finalizer {
     tx: tokio::sync::broadcast::Sender<FinalizedTask>,
     sent: std::sync::Mutex<std::collections::HashSet<String>>,
+    cancelled: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Finalizer {
@@ -46,6 +143,7 @@ impl Finalizer {
         Self {
             tx: tokio::sync::broadcast::channel(FINALIZED_CHANNEL_CAPACITY).0,
             sent: std::sync::Mutex::new(std::collections::HashSet::new()),
+            cancelled: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -57,21 +155,31 @@ impl Finalizer {
     ///
     /// Finalization paths can observe the same task twice (a reconciliation
     /// racing a cancel, a status read after a natural finish), so the gate is
-    /// keyed by task id rather than by path.
-    pub(super) fn send_once(&self, status: &TaskStatusFile, cancelled: bool) {
+    /// keyed by task id rather than by path. Returns whether this call is the
+    /// one that published, which is how a cancel path tells "my cancellation is
+    /// what the client saw" from "the task had already ended".
+    pub(super) fn send_once(&self, status: &TaskStatusFile, cancelled: bool) -> bool {
         {
             let Ok(mut sent) = self.sent.lock() else {
-                return;
+                return false;
             };
             if !sent.insert(status.task_id.clone()) {
-                return;
+                // The gate is closed: this task already published, so this call
+                // says nothing and must leave the cancellation mark for the
+                // caller to judge. Taking it here would let a dropped record
+                // answer as if the client had seen a cancellation.
+                return false;
             }
             if sent.len() > FINALIZED_SEEN_LIMIT {
                 sent.clear();
                 sent.insert(status.task_id.clone());
             }
         }
-        let _ = self.tx.send(FinalizedTask {
+        // Taken unconditionally, after the gate: a path that already knows it
+        // cancelled the task must still clear the mark, or it lingers.
+        let marked = self.take_cancelled(&status.task_id);
+        let cancelled = cancelled || marked;
+        let event = FinalizedTask {
             task_id: status.task_id.clone(),
             session_id: status.session_id.clone(),
             tool_call_id: status.tool_call_id.clone(),
@@ -79,7 +187,35 @@ impl Finalizer {
             exit_code: status.exit_code,
             signal: None,
             cancelled,
-        });
+        };
+        // No live subscriber is the normal case for a session with no ACP v2
+        // client: the status file on disk already carries the same news.
+        if let Err(err) = self.tx.send(event) {
+            crate::logging::debug(&format!(
+                "background task {} finalization had no receiver: {err}",
+                status.task_id
+            ));
+        }
+        true
+    }
+
+    /// Remember that this task was cancelled, before anything signals it.
+    pub(super) fn mark_cancelled(&self, task_id: &str) {
+        let mut cancelled = self.cancelled.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancelled.len() > FINALIZED_SEEN_LIMIT {
+            // Every mark is removed by the one terminal transition it belongs
+            // to, so this only fills when a task never reaches one.
+            cancelled.clear();
+        }
+        cancelled.insert(task_id.to_string());
+    }
+
+    /// Take the cancellation mark for this task, if there is one.
+    pub(super) fn take_cancelled(&self, task_id: &str) -> bool {
+        self.cancelled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(task_id)
     }
 }
 
@@ -93,8 +229,21 @@ impl BackgroundTaskManager {
         self.finalizer.subscribe()
     }
 
-    pub(super) fn emit_finalized(&self, status: &TaskStatusFile, cancelled: bool) {
-        self.finalizer.send_once(status, cancelled);
+    /// How many cancellation marks are waiting for their task's transition.
+    ///
+    /// A mark is taken by the one terminal event it belongs to, so this is zero
+    /// once every cancelled task has been reported. Tests and monitoring read
+    /// it to tell a leak from a healthy set.
+    pub fn pending_cancelled_marks(&self) -> usize {
+        self.finalizer
+            .cancelled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    pub(super) fn emit_finalized(&self, status: &TaskStatusFile, cancelled: bool) -> bool {
+        self.finalizer.send_once(status, cancelled)
     }
 
     /// Tasks running in this process for one session.
@@ -102,22 +251,29 @@ impl BackgroundTaskManager {
     /// Detached tasks belong to a child process rather than to this process's
     /// task map, so they are not listed here; a task whose terminal status is
     /// already on disk is excluded even if the map removal is still pending.
+    ///
+    /// The task map is the authority for "live in this process", so the
+    /// snapshot waits for the lock instead of probing it: the map entry is
+    /// removed only after the terminal status is written, which makes a
+    /// `Running` file for a mapped task mean the task future is still running.
+    /// A best-effort probe that gives up while another writer holds the lock
+    /// would drop exactly those running tasks.
     pub async fn live_tasks_for_session(&self, session_id: &str) -> Vec<TaskStatusFile> {
-        let candidates: Vec<(String, PathBuf)> = {
+        let candidates: Vec<PathBuf> = {
             let tasks = self.tasks.read().await;
             tasks
                 .values()
                 .filter(|task| task.session_id == session_id)
-                .map(|task| (task.task_id.clone(), task.status_path.clone()))
+                .map(|task| task.status_path.clone())
                 .collect()
         };
 
         let mut live = Vec::with_capacity(candidates.len());
-        for (task_id, status_path) in candidates {
+        for status_path in candidates {
             let Some(status) = self.read_status_file(&status_path).await else {
                 continue;
             };
-            if status.status != BackgroundTaskStatus::Running || !self.is_live_task(&task_id) {
+            if status.status != BackgroundTaskStatus::Running {
                 continue;
             }
             live.push(status);
@@ -293,12 +449,9 @@ impl BackgroundTaskManager {
             };
 
             let (notify_flag, wake_flag) = *delivery_flags_rx.borrow();
-            let prior_status = tokio::fs::read_to_string(&status_path_clone)
-                .await
-                .ok()
-                .and_then(|content| serde_json::from_str::<TaskStatusFile>(&content).ok());
+            let prior_status = read_prior_status(&status_path_clone).await;
             let prior_progress = prior_status.as_ref().and_then(|status| status.progress.clone());
-            let prior_event_history = prior_status.map(|status| status.event_history).unwrap_or_default();
+            let prior_event_history = prior_status.map(|status| status.event_history).unwrap_or_else(Vec::new);
 
             // Update status file
             let mut final_status = TaskStatusFile {
@@ -342,20 +495,15 @@ impl BackgroundTaskManager {
             // rely on. Awaiting registration first means a task that finishes
             // instantly cannot race the insert below and leave a permanent
             // phantom entry in the map.
-            let _ = registered_rx.await;
+            if let Err(err) = registered_rx.await {
+                crate::logging::warn(&format!(
+                    "background task {task_id_clone} registered without a registration handle: {err}"
+                ));
+            }
             tasks_for_prune.write().await.remove(&task_id_clone);
 
             // Read output preview for notification
-            let output_preview = tokio::fs::read_to_string(&output_path_clone)
-                .await
-                .map(|s| {
-                    if s.len() > 500 {
-                        format!("{}...", crate::util::truncate_str(&s, 500))
-                    } else {
-                        s
-                    }
-                })
-                .unwrap_or_default();
+            let output_preview = read_output_preview(&output_path_clone, &task_id_clone).await;
 
             // Publish completion event to the bus
             Bus::global().publish(BusEvent::BackgroundTaskCompleted(BackgroundTaskCompleted {
@@ -389,7 +537,11 @@ impl BackgroundTaskManager {
         };
 
         self.tasks.write().await.insert(task_id.clone(), running_task);
-        let _ = registered_tx.send(());
+        if registered_tx.send(()).is_err() {
+            crate::logging::warn(&format!(
+                "background task {task_id} finished before its registration completed"
+            ));
+        }
 
         Ok(BackgroundTaskInfo {
             task_id,
@@ -460,7 +612,12 @@ impl BackgroundTaskManager {
         // returning its ID. Adopted work buffers its output until completion,
         // when the wrapper below replaces this initially empty file. Create it
         // before spawning that wrapper so a fast completion cannot be truncated.
-        let _ = std::fs::write(&output_path, "");
+        if let Err(err) = std::fs::write(&output_path, "") {
+            crate::logging::warn(&format!(
+                "background task {task_id} output artifact {} could not be created: {err}",
+                output_path.display()
+            ));
+        }
 
         let initial_status = TaskStatusFile {
             task_id: task_id.clone(),
@@ -519,17 +676,12 @@ impl BackgroundTaskManager {
                 ),
             };
 
-            if let Ok(mut file) = File::create(&output_path_clone).await {
-                let _ = file.write_all(output_text.as_bytes()).await;
-            }
+            write_adopted_output(&output_path_clone, &task_id_clone, &output_text).await;
 
             let (notify_flag, wake_flag) = *delivery_flags_rx.borrow();
-            let prior_status = tokio::fs::read_to_string(&status_path_clone)
-                .await
-                .ok()
-                .and_then(|content| serde_json::from_str::<TaskStatusFile>(&content).ok());
+            let prior_status = read_prior_status(&status_path_clone).await;
             let prior_progress = prior_status.as_ref().and_then(|status| status.progress.clone());
-            let prior_event_history = prior_status.map(|status| status.event_history).unwrap_or_default();
+            let prior_event_history = prior_status.map(|status| status.event_history).unwrap_or_else(Vec::new);
 
             let mut final_status = TaskStatusFile {
                 task_id: task_id_clone.clone(),
@@ -567,7 +719,11 @@ impl BackgroundTaskManager {
             // Prune the live-map entry only after the terminal status file is
             // persisted (and after registration below, so instant completions
             // cannot race the insert and leave a phantom entry).
-            let _ = registered_rx.await;
+            if let Err(err) = registered_rx.await {
+                crate::logging::warn(&format!(
+                    "adopted background task {task_id_clone} registered without a registration handle: {err}"
+                ));
+            }
             tasks_for_prune.write().await.remove(&task_id_clone);
 
             let output_preview = if output_text.len() > 500 {
@@ -610,7 +766,11 @@ impl BackgroundTaskManager {
         };
 
         self.tasks.write().await.insert(task_id.clone(), running_task);
-        let _ = registered_tx.send(());
+        if registered_tx.send(()).is_err() {
+            crate::logging::warn(&format!(
+                "adopted background task {task_id} finished before its registration completed"
+            ));
+        }
 
         BackgroundTaskInfo {
             task_id,
@@ -632,14 +792,23 @@ impl BackgroundTaskManager {
             return status;
         };
 
-        let reaped_exit = horon_agent_platform::try_reap_child_process(pid).ok().flatten();
+        let reaped_exit = match horon_agent_platform::try_reap_child_process(pid) {
+            Ok(exit) => exit,
+            Err(err) => {
+                crate::logging::warn(&format!(
+                    "background task {} pid {pid} could not be reaped: {err}",
+                    status.task_id
+                ));
+                None
+            }
+        };
 
         if reaped_exit.is_none() && horon_agent_platform::is_process_running(pid) {
             return status;
         }
 
         let output_path = self.output_path_for(&status.task_id);
-        let output = fs::read_to_string(&output_path).await.unwrap_or_default();
+        let output = read_task_output(&output_path, &status.task_id).await;
         let exit_code = reaped_exit.or_else(|| Self::parse_exit_code_from_output(&output));
         let completed_at = Utc::now();
         let duration_secs = Self::status_duration_secs(&status.started_at, completed_at);
@@ -685,7 +854,7 @@ impl BackgroundTaskManager {
             exit_code,
             output_preview,
             output_file: output_path,
-            duration_secs: duration_secs.unwrap_or_default(),
+            duration_secs: duration_secs.unwrap_or(0.0),
             notify: status.notify,
             wake: status.wake,
         }));
@@ -764,7 +933,7 @@ impl BackgroundTaskManager {
         self.emit_finalized(&status, false);
 
         let output_path = self.output_path_for(&status.task_id);
-        let output = fs::read_to_string(&output_path).await.unwrap_or_default();
+        let output = read_task_output(&output_path, &status.task_id).await;
         let output_preview = if output.len() > 500 {
             format!("{}...", crate::util::truncate_str(&output, 500))
         } else {
@@ -779,7 +948,7 @@ impl BackgroundTaskManager {
             exit_code: None,
             output_preview,
             output_file: output_path,
-            duration_secs: duration_secs.unwrap_or_default(),
+            duration_secs: duration_secs.unwrap_or(0.0),
             notify: status.notify,
             wake: status.wake,
         }));
