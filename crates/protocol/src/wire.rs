@@ -941,7 +941,10 @@ pub enum Request {
     },
 }
 
+pub mod acp_v2_events;
+pub mod event_types;
 mod events;
+pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
 pub use events::{FileDiffWire, PlanEntryWire, ServerEvent};
 
 /// One question's chosen option labels, as answered by a client.
