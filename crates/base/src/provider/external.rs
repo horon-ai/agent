@@ -20,14 +20,25 @@ pub struct DirectOpenAiCompatibleSpec {
     pub models: Vec<String>,
     pub headers: Vec<(String, String)>,
     pub extra_body: Option<serde_json::Value>,
+    /// Explicit `prompt_cache_key` policy; `None` keeps the per-host default.
+    pub prompt_cache_key: Option<bool>,
+    /// Configured legacy `prompt_cache_retention` override. The model-support
+    /// policy is applied per request, so a model switch re-evaluates it.
+    pub prompt_cache_retention: Option<String>,
 }
 
 /// Build the direct Chat Completions runtime for a resolved profile.
 pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<Arc<dyn Provider>> {
+    let configured_retention = spec.prompt_cache_retention;
     let mut provider =
         OpenAiCompatibleProvider::new(spec.base_url, spec.auth, spec.api_key, spec.default_model, spec.models)?
             .with_display_name(spec.display_name)
-            .with_profile_id(spec.profile_id);
+            .with_profile_id(spec.profile_id)
+            .with_prompt_cache_key_policy(spec.prompt_cache_key)
+            .with_prompt_cache_retention_resolver(Arc::new(move |model: &str| {
+                super::openai::effective_prompt_cache_retention(model, configured_retention.as_deref())
+                    .map(str::to_owned)
+            }));
     if !spec.headers.is_empty() {
         provider = provider.with_headers(spec.headers);
     }
@@ -97,6 +108,8 @@ pub fn build_openai_compatible_profile_runtime(
         models,
         headers,
         extra_body: None,
+        prompt_cache_key: None,
+        prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
     })
 }
 
@@ -207,6 +220,8 @@ pub fn build_named_openai_compatible_runtime(
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect(),
         extra_body: profile.extra_body.clone(),
+        prompt_cache_key: profile.prompt_cache_key,
+        prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
     })
 }
 

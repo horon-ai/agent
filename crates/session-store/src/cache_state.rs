@@ -19,6 +19,8 @@ pub(crate) struct WriterState {
     pub blobs: std::collections::BTreeMap<String, Stamp>,
     /// Whether the log's directory entry has been confirmed with a flush.
     pub log_directory_durable: bool,
+    /// Log bytes were written and their flush is deferred to the batch's end.
+    pub pending_log_sync: bool,
 }
 
 impl BlockingWriter {
@@ -55,22 +57,31 @@ impl BlockingWriter {
         context.materialize((&self.paths, &probe), Some(&self.state.index))
     }
 
-    /// Runs one synchronous commit with derived publication held back to its end.
+    /// Runs one synchronous commit with the log flush and derived publication
+    /// held back to its end.
     ///
     /// Every append inside still validates and durably commits its own original,
-    /// including the reserved-byte retry. Only the derived checkpoint and catalog
-    /// work is deferred, so one commit publishes them once instead of once per
-    /// event. A nested call leaves publication to its outer batch, and the flag is
-    /// cleared on the way out even when the job fails, so a failed batch cannot
-    /// mute later publications.
+    /// including the reserved-byte retry, and still writes its log bytes; only the
+    /// log flush, the derived checkpoint and the catalog work are deferred. One
+    /// commit therefore pays one flush instead of one per event. A caller that
+    /// publishes a head must call Self::flush_pending_log after the last append and
+    /// before that head, so a confirmed head never names an unflushed event. A
+    /// nested call leaves everything to its outer batch, and the flag is cleared on
+    /// the way out even when the job fails, so a failed batch cannot mute later
+    /// publications.
     /// # Errors
-    /// Returns the error from `job`, leaving committed originals discoverable.
+    /// Returns the error from `job`, or the flush error when the deferred flush
+    /// fails too: an unconfirmed original outranks the job's own error.
     /// # Panics
-    /// Resumes a panic from `job` after restoring normal publication.
+    /// Resumes a panic from `job` after attempting the deferred flush and recording
+    /// its failure in Self::cache_warning.
     pub fn batched<T, E>(
         &mut self,
         job: impl FnOnce(&mut Self) -> std::result::Result<T, E>,
-    ) -> std::result::Result<T, E> {
+    ) -> std::result::Result<T, E>
+    where
+        E: From<StoreError>,
+    {
         if self.state.batch {
             return job(self);
         }
@@ -80,8 +91,19 @@ impl BlockingWriter {
         self.state.batch = false;
         self.state.batch_dirty = None;
         match result {
-            Ok(result) => result,
-            Err(panic) => std::panic::resume_unwind(panic),
+            Ok(Ok(value)) => self.flush_pending_log().map(|()| value).map_err(E::from),
+            Ok(Err(error)) => match self.flush_pending_log() {
+                Ok(()) => Err(error),
+                Err(flush) => Err(E::from(flush)),
+            },
+            Err(panic) => {
+                // Bytes the job already wrote must not be left unconfirmed by a
+                // panic either; a failure here is reported with the other warnings.
+                if let Err(error) = self.flush_pending_log() {
+                    self.state.warning = Some(error);
+                }
+                std::panic::resume_unwind(panic)
+            }
         }
     }
 

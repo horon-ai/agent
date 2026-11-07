@@ -941,3 +941,58 @@ fn summary_compaction_is_available_for_the_chat_provider() {
     assert!(provider.supports_compaction());
     assert!(provider.uses_horon_agent_compaction());
 }
+
+#[tokio::test]
+async fn split_completion_with_context_sends_the_key_and_plain_completion_does_not() {
+    tokio::time::timeout(DEADLINE, async {
+        let server = MockServer::start(Reply::sse(&["data: [DONE]\n\n"]));
+        let provider = OpenAiCompatibleProvider::new(
+            format!("{}/v1", server.url),
+            ChatAuth::None,
+            None,
+            "m",
+            vec!["m".to_string()],
+        )
+        .expect("provider")
+        .with_prompt_cache_key_policy(Some(true));
+
+        let mut stream = provider
+            .complete_split_with_context(
+                &[Message::user("hi")],
+                &[super::prompt_cache_tests::prompt_tool()],
+                "static",
+                "dynamic",
+                None,
+                &super::prompt_cache_tests::cache_context("root-a"),
+            )
+            .await
+            .expect("stream opens");
+        let _ = collect(&mut stream).await;
+
+        let mut plain = provider
+            .complete_split(&[Message::user("hi")], &[], "static", "dynamic", None)
+            .await
+            .expect("stream opens");
+        let _ = collect(&mut plain).await;
+
+        let requests = server.requests();
+        let keyed: Value = serde_json::from_str(&requests[0].body).expect("body is JSON");
+        let unkeyed: Value = serde_json::from_str(&requests[1].body).expect("body is JSON");
+        assert!(
+            super::prompt_cache_tests::is_prompt_cache_key(&keyed["prompt_cache_key"]),
+            "{keyed}"
+        );
+        assert!(unkeyed.get("prompt_cache_key").is_none(), "{unkeyed}");
+        let folded = keyed["messages"].as_array().expect("messages").iter().any(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("<system-reminder>\ndynamic\n</system-reminder>"))
+        });
+        assert!(
+            folded,
+            "the dynamic system part is folded into the conversation: {keyed}"
+        );
+    })
+    .await
+    .expect("prompt cache request checks finish within the deadline");
+}

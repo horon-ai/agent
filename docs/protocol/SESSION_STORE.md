@@ -58,6 +58,12 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 [`../architecture/CRATES.md`](../architecture/CRATES.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
 있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
 
+한 묶음 커밋은 로그 flush를 한 번만 낸다. 묶음 안의 append는 원본 바이트를 다 쓰고도 flush를
+미루고, 묶음 끝의 `flush_pending_log`가 그 파일을 한 번에 확정한다. `local-head.json`을 비롯한
+선택 상태 파일은 그 flush가 성공한 뒤에 쓴다. flush가 실패하면 저장은 오류로 돌아가고 선택
+상태는 남지 않으므로, 같은 이벤트를 다시 보내면 각 이벤트가 `events.jsonl`에 한 번만 들어간다.
+블롭은 지금처럼 블롭마다 flush한다.
+
 `edit-stats/`는 세션이 아닌 장부를 담는 루트의 예약된 자식이고, 카탈로그는 이를 명시적으로
 건너뛴다(`reader.rs::EDIT_STATS_DIR`).
 

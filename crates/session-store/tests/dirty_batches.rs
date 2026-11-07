@@ -103,7 +103,8 @@ fn one_batch_keeps_one_durable_marker_and_commits_each_original_before_returning
     assert_eq!(count(&points, IoPoint::DirtyFileSync), 1);
     assert_eq!(count(&points, IoPoint::DirtyDirectorySync), 1);
     assert_eq!(count(&points, IoPoint::LogDataSync), 2);
-    assert_eq!(count(&points, IoPoint::LogFileSync), 2);
+    // Both originals were written, and one flush confirmed the batch's log.
+    assert_eq!(count(&points, IoPoint::LogFileSync), 1);
     assert_eq!(count(&points, IoPoint::LogDirectorySync), 2);
     assert!(fs::read(paths.events_log(&id).unwrap()).unwrap().starts_with(&prefix));
     assert_eq!(full_scan(&paths, &id).unwrap().events.len(), 3);

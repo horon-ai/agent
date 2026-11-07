@@ -196,6 +196,30 @@ impl BlockingWriter {
         result
     }
 
+    /// Confirms the log bytes a batched commit wrote but deferred.
+    ///
+    /// `batched` skips the per-append flush, so one commit pays one flush instead
+    /// of one per event. Whoever publishes a head must call this after the last
+    /// append and before that head, so a confirmed head never names an event whose
+    /// bytes were not flushed. Outside a batch a successful append has already
+    /// flushed and cleared the debt, so the call is a no-op there; the one case it
+    /// still acts on is a non-batched append that failed at its own flush, whose
+    /// pending debt stays recorded for the retry.
+    /// # Errors
+    /// Returns the path or I/O error of the flush. The pending debt stays recorded,
+    /// so a retry flushes the same bytes instead of acknowledging them.
+    pub fn flush_pending_log(&mut self) -> Result<(), StoreError> {
+        if !self.state.pending_log_sync {
+            return Ok(());
+        }
+        let path = self.paths.events_log(&self.id)?;
+        // Opened writable because a platform flush may be `fdatasync`.
+        let file = checked_file(&path, true)?;
+        self.disk.sync_file(&file, IoPoint::LogFileSync)?;
+        self.state.pending_log_sync = false;
+        Ok(())
+    }
+
     fn commit(&mut self, sealed: &SealedEvent, line: &[u8]) -> Result<AppendOutcome, StoreError> {
         let event = sealed.envelope();
         self.reconcile()?;
@@ -242,9 +266,18 @@ impl BlockingWriter {
         // the full flush to the same call on every supported OS, so a second one
         // would repeat the syscall. The point stays observable for failure
         // injection at the data boundary.
+        //
+        // The debt is recorded before the boundary is observed, so a failure here
+        // still leaves the written bytes covered by the next flush. Inside a batch
+        // that flush is deferred, so one commit pays one flush instead of one per
+        // event; the batch's exit and Self::flush_pending_log both settle it.
+        self.state.pending_log_sync = true;
         self.disk.hit(IoPoint::LogDataSync)?;
-        // Also on retries: a prior failed attempt may have created this file.
-        self.disk.sync_file(&file, IoPoint::LogFileSync)?;
+        if !self.state.batch {
+            // Also on retries: a prior failed attempt may have created this file.
+            self.disk.sync_file(&file, IoPoint::LogFileSync)?;
+            self.state.pending_log_sync = false;
+        }
         // The directory entry only changes when the log is created; after that
         // the name is already durable and only the file's contents move.
         if created || !self.state.log_directory_durable {

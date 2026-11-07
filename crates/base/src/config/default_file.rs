@@ -347,6 +347,8 @@ tool_profile = "acp"
 #   api_key_env = "MYPROFILE_API_KEY"         # or api_key, or env_file
 #   auth = "bearer"                           # bearer, header, or none
 #   default_model = "my-model"
+#   prompt_cache_key = true                   # lineage-stable cache key: true, false, or omitted
+#                                             # (omitted sends it only to api.openai.com and openrouter.ai)
 #   [[providers.myprofile.models]]
 #   id = "my-model"
 # Every model request posts to <base_url>/chat/completions with that profile's

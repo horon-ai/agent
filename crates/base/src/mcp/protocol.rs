@@ -406,6 +406,7 @@ impl McpConfig {
     /// Load config from file
     pub fn load_from_file(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
+        horon_agent_perf_counters::record_mcp_config_read(content.len() as u64);
         Ok(serde_json::from_str(&content)?)
     }
 
@@ -538,6 +539,7 @@ impl McpConfig {
     /// Parse MCP servers from Codex CLI's config.toml ([mcp_servers.*] sections)
     fn load_from_codex_toml(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
+        horon_agent_perf_counters::record_mcp_config_read(content.len() as u64);
         let table: toml::Table = content.parse()?;
 
         let mut config = Self::default();
@@ -600,6 +602,7 @@ impl McpConfig {
         let Ok(content) = std::fs::read_to_string(path) else {
             return config;
         };
+        horon_agent_perf_counters::record_mcp_config_read(content.len() as u64);
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
             return config;
         };
@@ -634,6 +637,7 @@ impl McpConfig {
     fn parse_project_locals(files: &[crate::workspace_trust::ProjectConfigFile]) -> Self {
         let mut merged = Self::default();
         for file in files {
+            horon_agent_perf_counters::record_mcp_config_read(file.bytes.len() as u64);
             if let Ok(config) = serde_json::from_slice::<Self>(&file.bytes) {
                 Self::merge_servers_preferring_runnable(&mut merged.servers, config.servers);
             }
