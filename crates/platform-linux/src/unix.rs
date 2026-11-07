@@ -401,15 +401,31 @@ pub(crate) fn set_permissions_owner_only_file(file: &std::fs::File) -> io::Resul
 }
 
 /// Verify `metadata` describes a single-link regular file owned by this user.
+///
+/// The three conditions are reported separately: a caller that used to check
+/// only the owner would otherwise tell a user whose file is fine that it is not
+/// theirs, when a backup tool's hard link is what it has to remove.
 pub(crate) fn verify_private_file_metadata(metadata: &std::fs::Metadata) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
 
-    // SAFETY: `geteuid` has no preconditions and never fails.
-    let euid = unsafe { libc::geteuid() };
-    if !metadata.is_file() || metadata.uid() != euid || metadata.nlink() != 1 {
+    if !metadata.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "a credential file must be a single-link regular file owned by this user",
+            "a credential file must be a regular file",
+        ));
+    }
+    // SAFETY: `geteuid` has no preconditions and never fails.
+    let euid = unsafe { libc::geteuid() };
+    if metadata.uid() != euid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "a credential file must be owned by the current user",
+        ));
+    }
+    if metadata.nlink() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "a credential file must not be hard-linked (another name refers to it)",
         ));
     }
     Ok(())
@@ -421,10 +437,16 @@ pub(crate) fn verify_private_dir_metadata(metadata: &std::fs::Metadata) -> io::R
 
     // SAFETY: `geteuid` has no preconditions and never fails.
     let euid = unsafe { libc::geteuid() };
-    if !metadata.is_dir() || metadata.uid() != euid {
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "a credential directory must be a directory",
+        ));
+    }
+    if metadata.uid() != euid {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "a credential directory must be a directory owned by this user",
+            "a credential directory must be owned by the current user",
         ));
     }
     Ok(())

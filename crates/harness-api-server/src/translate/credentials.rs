@@ -109,7 +109,7 @@ impl BridgeState {
             return Err(format!("{} must be a non-symlink directory", path.display()));
         }
         horon_agent_platform::fs::verify_private_dir_metadata(&metadata)
-            .map_err(|_| format!("{} is not owned by the current user", path.display()))?;
+            .map_err(|error| format!("{}: {error}", path.display()))?;
         horon_agent_platform::fs::set_dir_permissions_owner_only(path).map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -123,8 +123,11 @@ impl BridgeState {
         if metadata.file_type().is_symlink() || !metadata.is_file() {
             return Err(format!("{} must be a regular, non-symlink file", path.display()));
         }
+        // Report the condition that actually failed: the check also refuses a
+        // hard link and a non-regular file, and calling either of those an
+        // ownership problem sends the user looking at the wrong thing.
         horon_agent_platform::fs::verify_private_file_metadata(&metadata)
-            .map_err(|_| format!("{} is not owned by the current user", path.display()))?;
+            .map_err(|error| format!("{}: {error}", path.display()))?;
         Ok(())
     }
 }
