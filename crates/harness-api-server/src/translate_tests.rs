@@ -242,8 +242,7 @@ fn task7_event_save_list_todo_titles_archive_and_edit_stats_survive_restart() {
     let row = task7_list(false, None).remove(0);
     assert_eq!(row.title.as_deref(), Some("custom title"));
     assert_eq!(row.updated_at_ms, Some(session.updated_at.timestamp_millis()));
-    // The listing reports the newest evidence of activity: the binding holds the
-    // activation this test pinned, and the event log's own time is later.
+    // The listing reports the newest activity: the pinned binding or the later event log time.
     let logged = session.updated_at.timestamp_millis();
     let pinned = session.last_active_at.map_or(logged, |at| at.timestamp_millis());
     assert_eq!(row.last_active_at_ms, Some(logged.max(pinned)));

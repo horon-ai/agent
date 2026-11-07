@@ -496,6 +496,12 @@ pub fn socket_nodes_can_be_stale() -> bool {
     false
 }
 
+/// The single-owner named pipe is the daemon's exclusivity rule, so no lock
+/// file is held next to it.
+pub fn daemon_lock_file_is_used() -> bool {
+    false
+}
+
 /// Windows has no readiness-descriptor handshake, so there is nothing to
 /// report.
 pub fn signal_ready_fd(_ready_env_var: &str) {}

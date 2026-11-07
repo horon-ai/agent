@@ -189,6 +189,14 @@ pub fn socket_nodes_can_be_stale() -> bool {
     true
 }
 
+/// Whether a daemon holds an instance lock file next to its socket.
+///
+/// `flock` is released with the holder's last descriptor, so the lock doubles as
+/// a liveness test for a daemon whose socket node can outlive it.
+pub fn daemon_lock_file_is_used() -> bool {
+    true
+}
+
 /// Report readiness on the descriptor named by `ready_env_var`.
 ///
 /// The variable is cleared first so child processes (tool subprocesses) never
