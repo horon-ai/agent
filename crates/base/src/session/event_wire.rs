@@ -55,9 +55,16 @@ impl LocalRuntime {
     /// Whether the durable binding on disk has to change.
     ///
     /// `working_dir`, `migration_epoch` and `provider_session_id` are what a
-    /// restart resumes into; `status` is what a reader shows. `last_pid` and
-    /// `last_active_at` move with every batch, so on their own they never justify
-    /// a write: the next status or binding change publishes the current values.
+    /// restart resumes into; `status` is what a reader shows. `last_pid` is the
+    /// process a restart hands the crash detector, so it may never be skipped:
+    /// a session resumed by a new daemon would otherwise be judged by the dead
+    /// process that owned it before, and a live session would be reported as
+    /// crashed. It changes only when a process takes the session over, so it
+    /// costs one write per activation rather than one per batch.
+    ///
+    /// `last_active_at` alone still writes nothing: it moves with every batch and
+    /// only the activity clock depends on it, so readers take the newest of this
+    /// binding and the log's own activity instead of a flush per commit.
     fn owed(&self, path: &Path) -> bool {
         let stored: LocalRuntime = match std::fs::read(path) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
@@ -71,6 +78,7 @@ impl LocalRuntime {
             || self.migration_epoch != stored.migration_epoch
             || self.provider_session_id != stored.provider_session_id
             || self.status != stored.status
+            || self.last_pid != stored.last_pid
     }
 }
 

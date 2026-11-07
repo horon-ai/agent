@@ -81,7 +81,7 @@ impl CatalogEntry {
             .get("last_active_at_ms")
             .and_then(serde_json::Value::as_i64);
         let local_path = paths.session_dir(&self.session_id)?.join("local-runtime.json");
-        let last_active_at_ms = match std::fs::symlink_metadata(&local_path) {
+        let recorded_activity = match std::fs::symlink_metadata(&local_path) {
             Ok(_) => {
                 #[derive(Deserialize)]
                 struct LocalActivity {
@@ -97,6 +97,10 @@ impl CatalogEntry {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => historical_activity,
             Err(error) => return Err(error.into()),
         };
+        // A binding written when the session was taken over carries that
+        // activation, not the last batch of a long turn: the log's own activity
+        // is newer then, and the listing sorts by what actually happened last.
+        let last_active_at_ms = recorded_activity.map(|recorded| recorded.max(self.activity_at.timestamp_millis()));
         Ok(Summary {
             session_id: self.session_id.clone(),
             head: self.head.clone(),

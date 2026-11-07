@@ -142,6 +142,75 @@ fn local_runtime_skips_status_only_commits() -> Result<()> {
     Ok(())
 }
 
+/// A process that holds a session active skips the binding for the batches of a
+/// long turn, so the clock on disk is the activation, not the last batch. The
+/// listing and the crash hint must still report the work, and a restart must
+/// still know which process owns the session.
+#[test]
+fn skipped_binding_commits_keep_reader_visible_activity() -> Result<()> {
+    let _lock = tests::lock_env();
+    let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-runtime-clock-")?;
+    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+
+    // Given an active session whose binding was published when its process took
+    // it over, three hours before the work this turn does.
+    let mut owner = std::process::Command::new("true").spawn()?;
+    let owner_pid = owner.id();
+    owner.wait()?;
+    let activation = chrono::Utc::now() - chrono::Duration::hours(3);
+    let mut session = Session::create_with_id("runtime_clock".into(), None, None);
+    session.mark_active_with_pid(owner_pid);
+    session.last_active_at = Some(activation);
+    session.add_message(Role::User, text("first prompt"));
+    session.save()?;
+    let binding = session_dir(&session)?.join("local-runtime.json");
+
+    // When the turn commits further batches while the binding is skipped.
+    for batch in ["second batch", "third batch"] {
+        session.add_message(Role::Assistant, text(batch));
+        session.save()?;
+    }
+
+    // Then the binding on disk still names the activation and the process, and
+    // the listing reports the newest work instead of that frozen clock.
+    let stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;
+    assert_eq!(stored["last_pid"], serde_json::json!(owner_pid));
+    let recorded: chrono::DateTime<chrono::Utc> = serde_json::from_value(stored["last_active_at"].clone())?;
+    assert_eq!(recorded, activation, "a mid-turn commit must not republish the binding");
+    let paths = store_paths()?;
+    let id = store::SessionId::parse("runtime_clock")?;
+    let row = store::catalog::row(&paths, &id, store::ReadProbe::default())?;
+    assert!(
+        row.last_active_at_ms
+            .is_some_and(|listed| listed >= row.updated_at.timestamp_millis()),
+        "the listing must not sort by the frozen activation clock"
+    );
+
+    // And when that process is gone, the crash hint still offers the session
+    // even though the binding's clock is beyond the 24 hour window.
+    let dead_pid = {
+        let mut child = std::process::Command::new("true").spawn()?;
+        let pid = child.id();
+        child.wait()?;
+        pid
+    };
+    let mut abandoned = Session::load("runtime_clock")?;
+    abandoned.mark_active_with_pid(dead_pid);
+    abandoned.save()?;
+    let window_start = chrono::Utc::now() - chrono::Duration::hours(25);
+    let mut stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;
+    stored["last_active_at"] = serde_json::to_value(window_start)?;
+    std::fs::write(&binding, serde_json::to_vec(&stored)?)?;
+    drop(abandoned);
+
+    let crashes = crate::session::crash::find_recent_crashed_sessions();
+    assert!(
+        crashes.iter().any(|(id, _)| id == "runtime_clock"),
+        "a session active this recently must stay in the crash hint"
+    );
+    Ok(())
+}
+
 #[test]
 fn facade_cache_loss_rebuilds() -> Result<()> {
     let _lock = tests::lock_env();
