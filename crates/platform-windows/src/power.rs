@@ -91,12 +91,15 @@ impl SleepInhibitor for PowerGuard {
         }
 
         let clear_result = match self.done_rx.take() {
-            Some(done_rx) => done_rx.recv().map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("power guard exited before cleanup: {error}"),
-                )
-            }),
+            Some(done_rx) => done_rx
+                .recv()
+                .map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("power guard exited before cleanup: {error}"),
+                    )
+                })
+                .and_then(|cleared| cleared),
             None => Ok(()),
         };
 
