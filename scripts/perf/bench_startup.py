@@ -305,7 +305,7 @@ def main() -> int:
     args = parse_args()
     binary = args.binary
 
-    if not os.path.exists(binary):
+    if not os.path.isfile(binary):
         print(f"Binary not found: {binary}")
         print("Run: cargo build --release")
         return 1

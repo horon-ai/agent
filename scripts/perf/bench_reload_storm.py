@@ -271,7 +271,7 @@ def run(args: argparse.Namespace) -> int:
     skipped: list[dict] = []
 
     binary = os.path.abspath(args.binary)
-    if not os.path.exists(binary):
+    if not os.path.isfile(binary):
         skipped.append({"name": SUITE, "reason": "horon-agent binary not found at %s" % binary})
         return finish(args, results, skipped, started_at)
 
