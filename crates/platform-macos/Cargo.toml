@@ -9,6 +9,11 @@ description = "macOS platform adapter: F_FULLFSYNC and plain fsync for durable w
 name = "horon_agent_platform_macos"
 path = "src/lib.rs"
 
+# `tokio` is used only by the shared Unix sources this crate includes through
+# `#[path]` (`platform-linux/src/{ipc,signal}.rs`), which cargo-machete does not scan.
+[package.metadata.cargo-machete]
+ignored = ["tokio"]
+
 [dependencies]
 horon-agent-platform-api = { path = "../platform-api" }
 libc = "0.2"
