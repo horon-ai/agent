@@ -473,7 +473,8 @@ Linux의 차이는 힙이 아니라 실행 파일 상주 페이지입니다. 세
 | 세션당 스레드 | GitHub macOS 러너 | 1.34 | 0.26 | 측정 불가 |
 | 100세션 턴 뒤 트리 RSS | GitHub Linux 러너 | 96.2 MB | 79.2 MB | 65.5 MB |
 | 100세션 턴 뒤 트리 RSS | GitHub macOS 러너 | 84.5 MB | 75.4 MB | 70.1 MB |
-| one-shot fsync·fdatasync 호출 (warm) | GitHub Linux 러너 | 27 | 22 | 5 |
+| one-shot fsync·fdatasync 호출 (cold, 첫 표본) | GitHub Linux 러너 | 32 | 27 | 19 |
+| one-shot fsync·fdatasync 호출 (warm, 마지막 표본) | GitHub Linux 러너 | 27 | 22 | 5 |
 | one-shot 시간 중앙값 (표본 3) | GitHub Linux 러너 | 367.0 ms | 363.9 ms | 288.7 ms |
 | one-shot 시간 중앙값 (표본 20) | GitHub macOS 러너 | 219.3 ms | 215.8 ms | 312.9 ms |
 
@@ -483,6 +484,8 @@ Linux의 차이는 힙이 아니라 실행 파일 상주 페이지입니다. 세
 
 - **표본 3개의 macOS 중앙값은 회귀처럼 보였습니다.** 42388003895에서 이후 384.3 ms, 이전 254.4 ms였지만 표본이 이후 616·384·245 ms, 이전 594·254·235 ms로 흩어져 있었습니다. 같은 비교를 표본 20개로 다시 잰 42389421614에서 중앙값 215.8 대 219.3 ms, 최솟값 174.7 대 173.5 ms로 차이가 없었습니다. 그래서 `benchmark.yml`에 `oneshot_runs` 입력을 두었습니다.
 - **jcode와의 차이는 아직 남아 있습니다.** Linux에서 세션 하나가 늘 때 메모리는 jcode의 약 2.6배이고 one-shot은 1.26배 느립니다. 이 계획은 그 차이를 줄였을 뿐 없애지 않았습니다.
+- **세션당 스레드는 계획의 기준(기울기 0.1 미만)을 이 측정에서 넘지 못했습니다.** 세션 1·10·100 세 점의 기울기는 Linux 0.16, macOS 0.26입니다. writer 풀은 최대 4개 스레드라 세션 수에 비례하지 않지만, 세 점뿐인 측정에서는 데몬이 그때그때 띄우는 런타임 스레드가 기울기에 섞입니다. 같은 브랜치를 로컬 드라이버로 세션 1·10·100·500에서 잰 기울기는 0.042였고, 세션 100개에 한 턴씩 저장한 실표면 QA에서는 스레드가 2개 늘었습니다(0.02). 같은 러너에서 0.1 미만을 보이려면 `sessions`에 500 같은 큰 값을 넣어 다시 재야 합니다.
+- **`ab_perf.py` 경로별 A/B는 돌리지 않았습니다.** 이 계획의 시간 비회귀 판정은 위 one-shot 표(같은 러너 번갈아 측정)와 구조 성능 게이트로 했고, `perf_counters_surface`·start→first request 같은 경로별 A/B는 기록에 없습니다.
 - **hibernation의 효과는 위 표에 없습니다.** 벤치마크는 턴 직후 잠깐 쉬고 재므로 30분 창이 지나지 않습니다. 해제가 실제로 일어나는지는 `crates/app-core/src/server/idle_hibernation_tests.rs`가 확인합니다.
 
 ## 자동 측정: `main` 최신 측정 커밋
