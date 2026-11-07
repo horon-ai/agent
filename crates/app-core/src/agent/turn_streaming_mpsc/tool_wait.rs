@@ -212,6 +212,21 @@ fn exit_code(exit: &serde_json::Value) -> Option<i32> {
     Some(code)
 }
 
+/// The command line a moved-to-background call reports to a v2 editor.
+///
+/// A shell call's command is what a terminal shows; other tools have no command
+/// and report only their display name, so this answers `None` for them instead
+/// of inventing one.
+pub(super) fn tool_background_command(tool_name: &str, input: &serde_json::Value) -> Option<String> {
+    if tool_name != "bash" {
+        return None;
+    }
+    input
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
 pub(super) fn reload_interrupted_tool_result(tc: &ToolCall, elapsed_secs: f64) -> (String, bool) {
     let action = tc.input.get("action").and_then(|value| value.as_str()).unwrap_or("");
     let is_wait_like =

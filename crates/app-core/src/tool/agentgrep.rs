@@ -251,6 +251,13 @@ impl Tool for AgentGrepTool {
         let params: AgentGrepInput = serde_json::from_value(input)?;
         let display_name = summarize_background_search(&params);
         let session_id = ctx.session_id.clone();
+        let tool_call_id = ctx.tool_call_id.clone();
+        // The task record names what the search covers, so a live-background
+        // list can show it the same way a shell's command line is shown.
+        let command = summarize_agentgrep_request(&params, &ctx, None);
+        // A search with no root reports the failure in its own result, so the
+        // task record simply carries no directory.
+        let search_root = Result::ok(resolve_search_root(&ctx, params.path.as_deref()));
         // The search shells out to ripgrep and walks/reads files (and for
         // trace/outline modes also loads the session and reads more files),
         // all of which is blocking work with no async yield points. Offload it
@@ -261,7 +268,16 @@ impl Tool for AgentGrepTool {
         // spinner and an unresponsive interrupt. This mirrors how the sibling
         // grep/glob/ls tools offload their work.
         let work_handle = tokio::task::spawn_blocking(move || run_agentgrep_blocking(&params, &ctx));
-        await_or_background_search(work_handle, AGENTGREP_FOREGROUND_BUDGET, display_name, session_id).await
+        await_or_background_search(
+            work_handle,
+            AGENTGREP_FOREGROUND_BUDGET,
+            display_name,
+            session_id,
+            tool_call_id,
+            Some(command),
+            search_root,
+        )
+        .await
     }
 }
 
@@ -270,20 +286,38 @@ async fn await_or_background_search(
     foreground_budget: Duration,
     display_name: String,
     session_id: String,
+    tool_call_id: String,
+    command: Option<String>,
+    cwd: Option<std::path::PathBuf>,
 ) -> Result<ToolOutput> {
     match tokio::time::timeout(foreground_budget, &mut work_handle).await {
         Ok(joined) => joined.map_err(|err| anyhow::anyhow!("agentgrep task failed to join: {err}"))?,
         Err(_) => {
-            let info = crate::background::global()
-                .adopt_with_options(
+            let manager = crate::background::global();
+            let finalized = manager.subscribe_finalized();
+            let info = manager
+                .adopt_with_options_for_tool_call(
                     "agentgrep",
                     Some(display_name.clone()),
                     &session_id,
                     true,
                     false,
+                    &tool_call_id,
+                    command.as_deref(),
+                    cwd.as_deref(),
                     work_handle,
                 )
                 .await;
+            crate::server::background_work::report_started(
+                &session_id,
+                &tool_call_id,
+                &info.task_id,
+                "agentgrep",
+                command.as_deref(),
+                cwd.as_deref(),
+                finalized,
+                None,
+            );
             Ok(ToolOutput::new(format!(
                     "Search is still running after 5s and is continuing in background.\n\n\
                      Task ID: {}\n\

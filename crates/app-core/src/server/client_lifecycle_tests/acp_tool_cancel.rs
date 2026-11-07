@@ -306,32 +306,3 @@ async fn cancel_turn_with_the_reported_run_id_stops_the_turn() {
 
     h.close(vec![editor]).await;
 }
-
-/// The two background-work requests exist on the wire in this wave and answer
-/// `unsupported`; the row that owns background lifetimes replaces them.
-#[tokio::test]
-async fn background_work_requests_answer_unsupported() {
-    let h = Harness::new();
-    let mut editor = h.connect_v2(None, false).await;
-    for (id, request) in [
-        (20u64, json!({"type": "list_background_work", "id": 20})),
-        (
-            21,
-            json!({"type": "cancel_background_terminal", "id": 21, "call_id": "call-x"}),
-        ),
-    ] {
-        editor.send(request).await;
-        let reply = editor
-            .until(|event| matches!(event, ServerEvent::Error { id: reply, .. } if *reply == id))
-            .await;
-        let answer = reply
-            .iter()
-            .find(|event| matches!(event, ServerEvent::Error { id: reply, .. } if *reply == id))
-            .expect("the request is answered");
-        let ServerEvent::Error { message, .. } = answer else {
-            unreachable!()
-        };
-        assert_eq!(message, "unsupported");
-    }
-    h.close(vec![editor]).await;
-}

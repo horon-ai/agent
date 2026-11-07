@@ -271,7 +271,7 @@ impl Harness {
 
     /// A v1 editor (`acp` without a version) or, with `acp: false`, a plain
     /// client such as the desktop.
-    async fn connect_other(&self, target: Option<&str>, acp: bool) -> (Conn, Vec<String>) {
+    pub(super) async fn connect_other(&self, target: Option<&str>, acp: bool) -> (Conn, Vec<String>) {
         let mut conn = self.connect();
         let mut subscribe = json!({"type": "subscribe", "id": 1, "working_dir": self.work_dir()});
         if acp {
