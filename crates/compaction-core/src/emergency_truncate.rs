@@ -80,6 +80,17 @@ pub fn emergency_truncate_large_payloads(
                     };
                     truncated += 1;
                 }
+                ContentBlock::Audio { format, data } if data.len() > max_image_chars => {
+                    let original_len = data.len();
+                    let format = format.clone();
+                    *block = ContentBlock::Text {
+                        text: format!(
+                            "[Audio omitted during emergency context recovery: format={format}, original_base64_chars={original_len}. Re-record or re-attach the clip if it is needed.]"
+                        ),
+                        cache_control: None,
+                    };
+                    truncated += 1;
+                }
                 _ => {}
             }
         }

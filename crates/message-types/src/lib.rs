@@ -198,6 +198,16 @@ pub enum ContentBlock {
         media_type: String,
         data: String,
     },
+    /// Recorded audio supplied by the user (ACP v2 `audio` prompt content).
+    ///
+    /// `format` is the container name the provider expects (`wav` or `mp3`)
+    /// and `data` is base64 without a data-URL prefix. Providers that accept
+    /// audio input replay it as an `input_audio` part; every other surface
+    /// treats it as an opaque attachment and renders a text placeholder.
+    Audio {
+        format: String,
+        data: String,
+    },
     /// Hidden OpenAI Responses compaction window used to preserve native
     /// compaction state across turns/saves when horon-agent triggers it.
     ///
@@ -508,6 +518,7 @@ pub fn ends_with_fresh_user_turn(messages: &[Message]) -> bool {
                         saw_user_text = true;
                     }
                 }
+                ContentBlock::Image { .. } | ContentBlock::Audio { .. } => {}
                 _ => return false,
             }
         }
@@ -540,7 +551,7 @@ fn is_fresh_user_text_message(message: &Message) -> bool {
                     saw_user_text = true;
                 }
             }
-            ContentBlock::Image { .. } => {}
+            ContentBlock::Image { .. } | ContentBlock::Audio { .. } => {}
             _ => return false,
         }
     }
@@ -874,6 +885,24 @@ mod tests {
         assert_eq!(replace_text_suffix(&mut text, "raw citation", "wrong"), None);
         assert_eq!(replace_text_suffix(&mut text, "", "wrong"), None);
         assert_eq!(text, before);
+    }
+
+    #[test]
+    fn stored_messages_without_audio_still_deserialize() {
+        let json = r#"{"role":"user","content":[{"type":"text","text":"hello"},{"type":"image","media_type":"image/png","data":"AAAA"}]}"#;
+        let message: Message = serde_json::from_str(json).expect("pre-audio message still deserializes");
+        assert_eq!(serde_json::to_string(&message).unwrap(), json);
+    }
+
+    #[test]
+    fn audio_block_round_trips_through_stored_json() {
+        let json = r#"{"role":"user","content":[{"type":"audio","format":"wav","data":"AAAA"}]}"#;
+        let message: Message = serde_json::from_str(json).expect("audio message deserializes");
+        assert!(matches!(
+            &message.content[0],
+            ContentBlock::Audio { format, data } if format == "wav" && data == "AAAA"
+        ));
+        assert_eq!(serde_json::to_string(&message).unwrap(), json);
     }
 
     fn text_of(message: &Message) -> &str {

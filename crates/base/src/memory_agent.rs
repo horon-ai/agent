@@ -68,6 +68,9 @@ pub fn build_transcript_for_extraction(messages: &[crate::message::Message]) -> 
                 crate::message::ContentBlock::Image { .. } => {
                     transcript.push_str("[Image]\n");
                 }
+                crate::message::ContentBlock::Audio { .. } => {
+                    transcript.push_str("[audio]\n");
+                }
                 crate::message::ContentBlock::OpenAICompaction { .. } => {
                     transcript.push_str("[OpenAI native compaction]\n");
                 }

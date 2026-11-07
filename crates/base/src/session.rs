@@ -1196,7 +1196,7 @@ request in this new forked session, using the inherited conversation only as con
                     // Export copy only: the stored item stays verbatim for
                     // replay, but queries can carry pasted credentials.
                     ContentBlock::ProviderNative { item, .. } => redact_json_value(item),
-                    ContentBlock::Image { .. } => {}
+                    ContentBlock::Image { .. } | ContentBlock::Audio { .. } => {}
                     ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
                 }
             }

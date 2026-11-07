@@ -213,6 +213,12 @@ pub fn build_responses_input_with_logger(
                                 "image_url": format!("data:{};base64,{}", media_type, data)
                             }));
                         }
+                        ContentBlock::Audio { format, data } => {
+                            content_parts.push(serde_json::json!({
+                                "type": "input_audio",
+                                "input_audio": { "data": data, "format": format }
+                            }));
+                        }
                         ContentBlock::Text { text, .. } => {
                             content_parts.push(serde_json::json!({
                                 "type": "input_text",
