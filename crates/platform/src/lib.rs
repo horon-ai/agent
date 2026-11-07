@@ -108,6 +108,11 @@ pub fn terminate_process_group(pid: u32, grace: Duration) -> bool {
     Current::terminate_process_group(pid, grace)
 }
 
+/// Stop `pid` itself, for a process that leads no group.
+pub fn terminate_process(pid: u32, grace: Duration) -> bool {
+    Current::terminate_process(pid, grace)
+}
+
 /// Reap a child of the current process without blocking.
 pub fn try_reap_child_process(pid: u32) -> io::Result<Option<i32>> {
     Current::try_reap_child_process(pid)

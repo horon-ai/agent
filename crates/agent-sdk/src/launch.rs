@@ -623,9 +623,18 @@ fn stop_daemon_started_by_failed_launch(home: &Path, runtime_dir: &Path, registe
 }
 
 fn stop_daemon_pid(pid: i32) {
+    let pid = pid as u32;
     // Ask politely, then force: the adapter sends the termination signal, waits
     // out the grace period, and escalates to a kill the daemon cannot ignore.
-    horon_agent_platform::terminate_process_group(pid as u32, Duration::from_secs(2));
+    if horon_agent_platform::terminate_process_group(pid, Duration::from_secs(2)) {
+        return;
+    }
+    // The group signal reaches nothing when the recorded daemon is not a group
+    // leader - one a supervisor started, or an older build's process. Stop that
+    // process itself, which is what this caller did before the adapter owned
+    // process control; the shared group call stays honest about the group it
+    // could not reach.
+    horon_agent_platform::terminate_process(pid, Duration::from_secs(5));
 }
 
 fn remove_ephemeral_home(home: &Path, timeout: Duration) {

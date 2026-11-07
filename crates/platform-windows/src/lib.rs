@@ -127,6 +127,13 @@ impl PlatformAdapter for Adapter {
         !Self::is_process_running(pid)
     }
 
+    fn terminate_process(pid: u32, grace: Duration) -> bool {
+        // A Windows process owns no group to fall back from, and the tree kill
+        // above is the only termination this platform offers, so the single
+        // process form is the same call.
+        Self::terminate_process_group(pid, grace)
+    }
+
     fn try_reap_child_process(_pid: u32) -> io::Result<Option<i32>> {
         // Windows has no zombie state: closing the process handle is enough.
         Ok(None)

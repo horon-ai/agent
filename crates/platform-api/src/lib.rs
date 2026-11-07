@@ -109,6 +109,14 @@ pub trait PlatformAdapter {
     /// then force it. Returns whether the group is gone.
     fn terminate_process_group(pid: u32, grace: Duration) -> bool;
 
+    /// Stop `pid` itself: ask politely, wait up to `grace`, then force it.
+    ///
+    /// This is the form for a pid that leads no process group, where the group
+    /// call reaches nothing. Unix signals the process alone and leaves its
+    /// children to it; Windows has no process groups and terminates the tree, so
+    /// both calls are the same there. Returns whether the process is gone.
+    fn terminate_process(pid: u32, grace: Duration) -> bool;
+
     /// Reap a child of the current process without blocking.
     ///
     /// `Ok(Some(code))` when the child exited and was reaped now, `Ok(None)`

@@ -35,21 +35,25 @@ pub(crate) fn is_process_running(pid: u32) -> bool {
 /// Send a signal to an entire detached process group/session led by `pid`.
 ///
 /// Detached tasks are spawned with `setsid()`, so the leader PID is also the
-/// process-group/session ID. Signaling `-pid` reaches the full tree.
+/// process-group/session ID. Signaling `-pid` reaches the full tree. A process
+/// that leads no group is not reached this way, and the failure is reported
+/// instead of being answered with a signal to the leader alone: a caller told
+/// the group stopped would leave every child of that leader running.
 pub(crate) fn signal_detached_process_group(pid: u32, signal: i32) -> io::Result<()> {
     let group = unsafe { libc::kill(-(pid as i32), signal) };
     if group == 0 {
         return Ok(());
     }
-    // A pid that is not a group leader leads no group, so there is nothing to
-    // signal under `-pid`. Fall back to the process itself, which lets callers
-    // pass either kind of pid.
-    let process = unsafe { libc::kill(pid as i32, signal) };
-    if process == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+    Err(io::Error::last_os_error())
+}
+
+/// Send a signal to `pid` alone, whether or not it leads a group.
+pub(crate) fn signal_process(pid: u32, signal: i32) -> io::Result<()> {
+    let result = unsafe { libc::kill(pid as i32, signal) };
+    if result == 0 {
+        return Ok(());
     }
+    Err(io::Error::last_os_error())
 }
 
 /// Stop a process group gracefully: send SIGTERM to the group led by `pid`,
@@ -59,11 +63,28 @@ pub(crate) fn signal_detached_process_group(pid: u32, signal: i32) -> io::Result
 /// is how `bash` children are started. Returns whether the group is gone when
 /// this returns.
 pub(crate) fn terminate_process_group(pid: u32, grace: Duration) -> bool {
+    stop_until_gone(pid, grace, signal_detached_process_group)
+}
+
+/// Stop `pid` itself: SIGTERM, wait up to `grace`, then SIGKILL.
+///
+/// A process that leads no group - one a supervisor started, or a daemon whose
+/// exec changed its group - cannot be reached through `-pid`, and the group
+/// signal says so. This stops that one process and reaches no child, so it is
+/// the fallback for a caller that already learned the group is not there.
+pub(crate) fn terminate_process(pid: u32, grace: Duration) -> bool {
+    stop_until_gone(pid, grace, signal_process)
+}
+
+/// Send SIGTERM through `signal`, wait up to `grace`, then send SIGKILL. The
+/// group and single-process forms differ only in that call, so the escalation
+/// and the polling live here once.
+fn stop_until_gone(pid: u32, grace: Duration, signal: fn(u32, i32) -> io::Result<()>) -> bool {
     if !is_process_running(pid) {
         return true;
     }
-    // Best effort: the poll below decides whether the group actually exits.
-    drop(signal_detached_process_group(pid, libc::SIGTERM));
+    // Best effort: the poll below decides whether the target actually exits.
+    drop(signal(pid, libc::SIGTERM));
     let deadline = Instant::now() + grace;
     loop {
         if !is_process_running(pid) {

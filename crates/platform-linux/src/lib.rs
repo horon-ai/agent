@@ -69,6 +69,10 @@ impl PlatformAdapter for Adapter {
         unix::terminate_process_group(pid, grace)
     }
 
+    fn terminate_process(pid: u32, grace: Duration) -> bool {
+        unix::terminate_process(pid, grace)
+    }
+
     fn try_reap_child_process(pid: u32) -> io::Result<Option<i32>> {
         unix::try_reap_child_process(pid)
     }
