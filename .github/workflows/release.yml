@@ -168,8 +168,10 @@ jobs:
         include:
           - # Build Linux x86_64 release assets on a CentOS 7 / manylinux2014
             # glibc 2.17 baseline so they run on older distros as well as newer
-            # Debian/Ubuntu containers used by many TB tasks.
-            os: ubuntu-22.04
+            # Debian/Ubuntu containers used by many TB tasks. The build runs
+            # inside the manylinux2014 container, so the host image only needs
+            # Docker; ubuntu-22.04 is deprecated and retired on 2027-04-17.
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: horon-agent-linux-x86_64
             compat_container: true
