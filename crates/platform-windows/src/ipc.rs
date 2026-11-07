@@ -387,16 +387,32 @@ pub fn socket_is_owner_only(_path: &Path) -> bool {
 }
 
 /// An exclusive lock on a lock file, guaranteeing one live owner per path.
+///
+/// Dropping the guard closes the handle and then unlinks the file, in that
+/// order: an empty share mode makes the file undeletable while this handle is
+/// open, so a lock left behind by every run would accumulate beside each socket.
 pub struct InstanceLock {
-    _file: std::fs::File,
+    file: Option<std::fs::File>,
+    path: std::path::PathBuf,
+}
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        // Close first, then remove; the file exists only while this process can
+        // still be said to hold the lock.
+        drop(self.file.take());
+        drop(std::fs::remove_file(&self.path));
+    }
 }
 
 /// Take the exclusive lock beside `path`, or report that a live owner holds it.
 ///
 /// Windows has no `flock`: opening the lock file with an empty share mode makes
 /// every later opener fail with a sharing violation for as long as this handle
-/// lives, and closing the handle releases it. The file stays in place, because
-/// unlinking a file another process may be opening would race.
+/// lives, and closing the handle releases it. The file is unlinked only after
+/// that close, and a process that opened it in between keeps its own handle, so
+/// the unlink fails while somebody still owns the file and no holder is ever
+/// split across two files.
 pub fn lock_instance_file(path: &Path) -> io::Result<Option<InstanceLock>> {
     use std::os::windows::fs::OpenOptionsExt;
 
@@ -413,7 +429,10 @@ pub fn lock_instance_file(path: &Path) -> io::Result<Option<InstanceLock>> {
         .share_mode(0)
         .open(path)
     {
-        Ok(file) => Ok(Some(InstanceLock { _file: file })),
+        Ok(file) => Ok(Some(InstanceLock {
+            file: Some(file),
+            path: path.to_path_buf(),
+        })),
         Err(error)
             if matches!(
                 error.raw_os_error(),

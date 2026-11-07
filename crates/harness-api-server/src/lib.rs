@@ -256,14 +256,25 @@ async fn run_bridge_with_deadline(
     // Whoever lost the race had its clients dropped. Refusing to start when a
     // live bridge holds the lock makes on-demand spawning idempotent, which is
     // what every caller already assumes.
-    let _lock = match single_instance_lock(&api_socket)? {
-        Some(lock) => lock,
-        None => {
+    let _lock = match single_instance_lock(&api_socket) {
+        Ok(Some(lock)) => Some(lock),
+        Ok(None) => {
             eprintln!(
                 "harness API bridge: another bridge already owns {}; exiting",
                 api_socket.display()
             );
             return Ok(());
+        }
+        // The lock is advisory. A platform that cannot open it right now - a
+        // filter driver holding the file, a directory the caller may not write -
+        // must not stop the only bridge serving this desktop, so the launch
+        // continues and reports why the single-owner check was skipped.
+        Err(error) => {
+            eprintln!(
+                "harness API bridge: single-instance lock for {} is unavailable ({error:#}); continuing",
+                api_socket.display()
+            );
+            None
         }
     };
     // A stale socket file blocks bind. On Windows there is no file to remove:

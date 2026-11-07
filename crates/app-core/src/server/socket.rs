@@ -262,14 +262,33 @@ pub(super) fn cleanup_held_daemon_lock() {
 /// The lock file is unlinked when the guard drops, and the kernel releases the
 /// lock when the process exits, so a crashed daemon never wedges its
 /// replacement out.
+#[cfg(unix)]
 pub(super) struct DaemonLockGuard {
     _lock: horon_agent_platform::ipc::InstanceLock,
 }
 
+/// The daemon lock on a platform whose listening endpoint is not a file.
+///
+/// `flock` is what makes the lock a liveness test: a crashed holder releases it
+/// with its last descriptor. Windows has no such lock - its answer is the
+/// single-owner named pipe - so there is no lock file to hold, remove or fail
+/// to open on. Holding nothing is the whole of this guard, and the daemon's
+/// pipe instance keeps the single-owner rule.
+#[cfg(not(unix))]
+pub(super) struct DaemonLockGuard;
+
+#[cfg(unix)]
 pub(super) fn try_acquire_daemon_lock(path: &std::path::Path) -> Result<Option<DaemonLockGuard>> {
     Ok(horon_agent_platform::ipc::lock_instance_file(path)?.map(|lock| DaemonLockGuard { _lock: lock }))
 }
 
+#[cfg(not(unix))]
+pub(super) fn try_acquire_daemon_lock(_path: &std::path::Path) -> Result<Option<DaemonLockGuard>> {
+    Ok(None)
+}
+
+/// Take this socket's daemon lock, or report the live daemon that holds it.
+#[cfg(unix)]
 pub(super) fn acquire_daemon_lock_for(socket: &std::path::Path) -> Result<DaemonLockGuard> {
     let path = daemon_lock_path_for(socket);
     let guard = try_acquire_daemon_lock(&path)?.ok_or_else(|| {
@@ -280,6 +299,11 @@ pub(super) fn acquire_daemon_lock_for(socket: &std::path::Path) -> Result<Daemon
     })?;
     let _ = HELD_DAEMON_LOCK.set(path);
     Ok(guard)
+}
+
+#[cfg(not(unix))]
+pub(super) fn acquire_daemon_lock_for(_socket: &std::path::Path) -> Result<DaemonLockGuard> {
+    Ok(DaemonLockGuard)
 }
 
 pub fn set_socket_path(path: &str) {
