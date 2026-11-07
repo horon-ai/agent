@@ -55,8 +55,17 @@ input = ["text", "image"]
 | `headers` | 모든 요청에 붙는 추가 HTTP 헤더다. |
 | `extra_body` | 요청 본문에 합칠 최상위 JSON 객체다. 백엔드 전용 필드(`chat_template_kwargs` 등)를 넣을 때 쓴다. |
 | `requires_api_key` | 키가 필요한지 명시한다. 로컬 엔드포인트처럼 키가 없으면 `false`로 둔다. |
+| `prompt_cache_key` | 요청 본문에 계보 고정 `prompt_cache_key`를 실을지 정한다. `true`는 항상 싣고, `false`는 싣지 않으며, 비우면 `api.openai.com`과 `openrouter.ai` 호스트에만 싣는다. 엄격한 스키마의 게이트웨이가 모르는 필드로 400을 내면 `false`로 둔다. |
 
 `default_model` 한 줄만으로도 호출은 된다. `models` 배열은 컨텍스트 크기와 입력 형식을 알려 모델 선택과 압축 계산을 돕는다.
+
+## 프롬프트 캐시 키
+
+`prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 24자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.
+
+세션 id가 없는 호출에는 키를 싣지 않는다. `prompt_cache_key = true`는 호스트를 가리지 않고 싣지만, 모르는 필드를 거부하는 엔드포인트에는 `false`를 쓴다.
+
+`api.openai.com` 호스트에는 `prompt_cache_retention`도 함께 실린다. 값은 `HORON_AGENT_OPENAI_PROMPT_CACHE_RETENTION`(`in_memory` 또는 `24h`)이 있으면 그것이고, 없으면 모델이 확장 보존을 지원할 때만 `24h`다. 기본 30분 보존을 쓰는 모델에는 필드를 싣지 않는다. 다른 호스트에는 이 필드를 싣지 않는다. `extra_body`는 두 필드보다 나중에 합쳐지므로 프로파일에서 값을 덮어쓸 수 있다.
 
 ## API 키와 파일 위치
 

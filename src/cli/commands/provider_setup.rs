@@ -175,6 +175,7 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
             input: Vec::new(),
         }],
         extra_body: None,
+        prompt_cache_key: None,
         supports_reasoning_effort: None,
         disable_reasoning_heuristics: false,
     };
@@ -397,6 +398,9 @@ fn append_profile_section(mut content: String, name: &str, profile: &NamedProvid
     }
     if let Some(requires_api_key) = profile.requires_api_key {
         content.push_str(&format!("requires_api_key = {requires_api_key}\n"));
+    }
+    if let Some(prompt_cache_key) = profile.prompt_cache_key {
+        content.push_str(&format!("prompt_cache_key = {prompt_cache_key}\n"));
     }
     if profile.provider_routing {
         content.push_str("provider_routing = true\nallow_provider_pinning = true\n");

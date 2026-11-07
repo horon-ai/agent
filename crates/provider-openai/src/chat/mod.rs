@@ -14,6 +14,10 @@ pub mod transport;
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "prompt_cache_tests.rs"]
+mod prompt_cache_tests;
+
 use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request};
 use crate::chat::stream::ChatCompletionsStream;
 use crate::chat::transport::{
@@ -21,15 +25,39 @@ use crate::chat::transport::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use horon_agent_message_types::{Message, ToolDefinition};
+use horon_agent_message_types::{Message, ToolDefinition, messages_with_dynamic_system_context};
 use horon_agent_provider_core::{
-    EventStream, ModelRoute, Provider, shared_http_client, transport::send_with_initial_response_timeout,
+    EventStream, ModelRoute, Provider, ProviderRequestContext, shared_http_client,
+    transport::send_with_initial_response_timeout,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
 /// Stable, machine-facing provider name.
 pub const PROVIDER_NAME: &str = "openai-compatible";
+
+/// Prefix of a derived prompt cache key, matching OpenAI's documented format.
+const PROMPT_CACHE_KEY_PREFIX: &str = "pck_";
+
+/// Reserved per-request field pinning a request to one prompt cache slot.
+const PROMPT_CACHE_KEY_FIELD: &str = "prompt_cache_key";
+
+/// Reserved per-request field selecting an extended prompt cache retention.
+const PROMPT_CACHE_RETENTION_FIELD: &str = "prompt_cache_retention";
+
+/// Number of digest bytes a prompt cache key keeps (24 hex characters).
+const PROMPT_CACHE_KEY_DIGEST_BYTES: usize = 12;
+
+/// The official OpenAI endpoint, the only host that receives the retention field.
+const OFFICIAL_OPENAI_HOST: &str = "api.openai.com";
+
+/// Resolves the `prompt_cache_retention` value for a model id.
+///
+/// The model-support policy lives in base, so the runtime asks once per request
+/// instead of storing a value: a model switch must not keep a retention the new
+/// model refuses.
+pub type PromptCacheRetentionResolver = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 /// A provider that talks Chat Completions to any OpenAI-compatible endpoint.
 pub struct OpenAiCompatibleProvider {
@@ -44,6 +72,12 @@ pub struct OpenAiCompatibleProvider {
     /// Profile-level body fields merged into every request, overriding the
     /// generated values (e.g. `chat_template_kwargs`).
     extra_body: Option<Value>,
+    /// Explicit `prompt_cache_key` policy. `None` sends the key only to hosts
+    /// whose gateway is known to accept the field.
+    prompt_cache_key: Option<bool>,
+    /// Resolves the retention to send for the active model. Only consulted for
+    /// [`OFFICIAL_OPENAI_HOST`].
+    prompt_cache_retention: Option<PromptCacheRetentionResolver>,
     profile_id: Option<String>,
     display_name: String,
     model: Mutex<String>,
@@ -86,6 +120,8 @@ impl OpenAiCompatibleProvider {
             api_key: api_key.filter(|key| !key.trim().is_empty()),
             headers: Vec::new(),
             extra_body: None,
+            prompt_cache_key: None,
+            prompt_cache_retention: None,
             profile_id: None,
             display_name,
             model: Mutex::new(default_model),
@@ -118,6 +154,22 @@ impl OpenAiCompatibleProvider {
         self
     }
 
+    /// Set the `prompt_cache_key` policy.
+    ///
+    /// `Some(true)` forces the field on, `Some(false)` disables it, and `None`
+    /// keeps the default: the field is sent only to [`OFFICIAL_OPENAI_HOST`] and
+    /// `openrouter.ai`, whose gateways document it.
+    pub fn with_prompt_cache_key_policy(mut self, enabled: Option<bool>) -> Self {
+        self.prompt_cache_key = enabled;
+        self
+    }
+
+    /// Set the resolver for `prompt_cache_retention`.
+    pub fn with_prompt_cache_retention_resolver(mut self, resolver: PromptCacheRetentionResolver) -> Self {
+        self.prompt_cache_retention = Some(resolver);
+        self
+    }
+
     /// Initial reasoning effort for the selected model.
     pub fn with_reasoning_effort(self, effort: impl Into<String>) -> Self {
         let effort = effort.into();
@@ -147,13 +199,20 @@ impl OpenAiCompatibleProvider {
         self.profile_id.as_deref()
     }
 
-    fn build_body(&self, messages: &[Message], tools: &[ToolDefinition], system: &str) -> Vec<u8> {
+    fn build_body(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        context: Option<&ProviderRequestContext>,
+    ) -> Vec<u8> {
         let reasoning = self
             .reasoning_effort
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         let mut body = build_chat_completions_request(&self.model(), messages, tools, system, reasoning.as_deref());
+        self.apply_prompt_cache(&mut body, context);
         if let Some(extra) = &self.extra_body
             && let (Some(target), Some(source)) = (body.as_object_mut(), extra.as_object())
         {
@@ -164,28 +223,50 @@ impl OpenAiCompatibleProvider {
         serde_json::to_vec(&body).expect("a JSON object always serializes")
     }
 
+    /// Add the prompt-cache fields this endpoint accepts.
+    ///
+    /// The key is derived from the already-built body, so a request pays no
+    /// second build: the cacheable prefix is the system message plus the tool
+    /// catalog, both read straight out of the body about to be sent. The
+    /// profile's `extra_body` is merged afterwards, so it still wins on either
+    /// field.
+    fn apply_prompt_cache(&self, body: &mut Value, context: Option<&ProviderRequestContext>) {
+        let host = base_url_host(&self.base_url);
+        let key_enabled = self
+            .prompt_cache_key
+            .unwrap_or_else(|| host.as_deref().is_some_and(host_accepts_prompt_cache_key));
+        if key_enabled && let Some(scope) = context.and_then(cache_scope) {
+            let key = derive_prompt_cache_key(scope, body);
+            if let Some(object) = body.as_object_mut() {
+                object.insert(PROMPT_CACHE_KEY_FIELD.to_string(), Value::String(key));
+            }
+        }
+        if host.as_deref() == Some(OFFICIAL_OPENAI_HOST)
+            && let Some(retention) = self
+                .prompt_cache_retention
+                .as_ref()
+                .and_then(|resolve| resolve(&self.model()))
+            && let Some(object) = body.as_object_mut()
+        {
+            object.insert(PROMPT_CACHE_RETENTION_FIELD.to_string(), Value::String(retention));
+        }
+    }
+
     fn sanitize(&self, message: String) -> String {
         redact_secret(message, self.api_key.as_deref())
     }
-}
 
-fn normalize_models(models: Vec<String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    models
-        .into_iter()
-        .map(|model| model.trim().to_string())
-        .filter(|model| !model.is_empty() && seen.insert(model.clone()))
-        .collect()
-}
-
-#[async_trait]
-impl Provider for OpenAiCompatibleProvider {
-    async fn complete(
+    /// POST one streaming completion with the request's session identity.
+    ///
+    /// `context` only selects the cache policy; `None` builds exactly the body
+    /// this provider sent before cache keys existed.
+    async fn send(
         &self,
         messages: &[Message],
         tools: &[ToolDefinition],
         system: &str,
         resume_session_id: Option<&str>,
+        context: Option<&ProviderRequestContext>,
     ) -> Result<EventStream> {
         if resume_session_id.is_some() {
             anyhow::bail!(
@@ -194,7 +275,7 @@ impl Provider for OpenAiCompatibleProvider {
         }
 
         let endpoint = self.endpoint();
-        let body = self.build_body(messages, tools, system);
+        let body = self.build_body(messages, tools, system, context);
         let mut request = self
             .client
             .post(&endpoint)
@@ -225,6 +306,122 @@ impl Provider for OpenAiCompatibleProvider {
 
         let redact: Option<Arc<str>> = self.api_key.as_deref().map(Arc::from);
         Ok(Box::pin(ChatCompletionsStream::new(response.bytes_stream(), redact)))
+    }
+}
+
+fn normalize_models(models: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty() && seen.insert(model.clone()))
+        .collect()
+}
+
+/// The host of a validated `http(s)://` base URL, lowercased.
+fn base_url_host(base_url: &str) -> Option<String> {
+    let (_, rest) = base_url.split_once("://")?;
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|authority| !authority.is_empty())?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split_once(']')?.0,
+        None => authority.split(':').next()?,
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// Whether a host is documented to understand `prompt_cache_key`.
+fn host_accepts_prompt_cache_key(host: &str) -> bool {
+    matches!(host, OFFICIAL_OPENAI_HOST | "openrouter.ai")
+}
+
+/// The cache scope a request shares with the rest of its lineage.
+fn cache_scope(context: &ProviderRequestContext) -> Option<&str> {
+    context
+        .cache_root_id
+        .as_deref()
+        .or(context.session_id.as_deref())
+        .map(str::trim)
+        .filter(|scope| !scope.is_empty())
+}
+
+/// Derive the lineage-stable cache key from the body about to be sent.
+///
+/// The key covers the cacheable prefix only: the scope, the static system
+/// prompt and the tool catalog. Conversation turns, and a compaction that
+/// rewrites them, leave it unchanged, so the same lineage keeps one slot while a
+/// different lineage gets its own.
+fn derive_prompt_cache_key(scope: &str, body: &Value) -> String {
+    let system = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.first())
+        .filter(|first| first["role"].as_str() == Some("system"))
+        .and_then(|first| first["content"].as_str())
+        .unwrap_or_default();
+    let tools = body.get("tools").map(Value::to_string).unwrap_or_default();
+
+    let mut hasher = Sha256::new();
+    hasher.update(scope.as_bytes());
+    hasher.update([0]);
+    hasher.update(system.as_bytes());
+    hasher.update([0]);
+    hasher.update(tools.as_bytes());
+    let digest = hasher.finalize();
+
+    let mut key = String::with_capacity(PROMPT_CACHE_KEY_PREFIX.len() + PROMPT_CACHE_KEY_DIGEST_BYTES * 2);
+    key.push_str(PROMPT_CACHE_KEY_PREFIX);
+    for byte in &digest[..PROMPT_CACHE_KEY_DIGEST_BYTES] {
+        use std::fmt::Write as _;
+        write!(key, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    key
+}
+
+#[async_trait]
+impl Provider for OpenAiCompatibleProvider {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+    ) -> Result<EventStream> {
+        self.send(messages, tools, system, resume_session_id, None).await
+    }
+
+    async fn complete_with_context(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        resume_session_id: Option<&str>,
+        context: &ProviderRequestContext,
+    ) -> Result<EventStream> {
+        self.send(messages, tools, system, resume_session_id, Some(context))
+            .await
+    }
+
+    async fn complete_split_with_context(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+        system_static: &str,
+        system_dynamic: &str,
+        resume_session_id: Option<&str>,
+        context: &ProviderRequestContext,
+    ) -> Result<EventStream> {
+        let dynamic_messages = messages_with_dynamic_system_context(messages, system_dynamic);
+        self.send(
+            &dynamic_messages,
+            tools,
+            system_static,
+            resume_session_id,
+            Some(context),
+        )
+        .await
     }
 
     fn name(&self) -> &str {
@@ -335,6 +532,8 @@ impl Provider for OpenAiCompatibleProvider {
             api_key: self.api_key.clone(),
             headers: self.headers.clone(),
             extra_body: self.extra_body.clone(),
+            prompt_cache_key: self.prompt_cache_key,
+            prompt_cache_retention: self.prompt_cache_retention.clone(),
             profile_id: self.profile_id.clone(),
             display_name: self.display_name.clone(),
             model: Mutex::new(self.model()),

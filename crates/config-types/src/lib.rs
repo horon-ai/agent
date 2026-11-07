@@ -545,7 +545,7 @@ pub struct NamedProviderModelConfig {
     pub input: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct NamedProviderConfig {
     #[serde(rename = "type")]
@@ -577,6 +577,12 @@ pub struct NamedProviderConfig {
     /// Must be a JSON object; keys here override horon-agent-generated body fields.
     #[serde(default, alias = "extra-body", skip_serializing_if = "Option::is_none")]
     pub extra_body: Option<serde_json::Value>,
+    /// Send a lineage-stable `prompt_cache_key` with every request to this
+    /// endpoint. Unset sends it only to hosts whose gateway documents the field
+    /// (`api.openai.com`, `openrouter.ai`); `false` keeps strict-schema
+    /// endpoints from rejecting an unknown field.
+    #[serde(default, alias = "prompt-cache-key", skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<bool>,
     /// Whether this endpoint accepts the DeepSeek-style top-level
     /// `reasoning_effort` request field (`/effort` support). When unset, horon-agent
     /// auto-detects it from the active model id (DeepSeek-family models
@@ -593,31 +599,6 @@ pub struct NamedProviderConfig {
     /// provider/model capability settings continue to work.
     #[serde(default, alias = "disable-reasoning-heuristics")]
     pub disable_reasoning_heuristics: bool,
-}
-
-impl Default for NamedProviderConfig {
-    fn default() -> Self {
-        Self {
-            provider_type: NamedProviderType::OpenAiCompatible,
-            base_url: String::new(),
-            api: None,
-            auth: NamedProviderAuth::Bearer,
-            auth_header: None,
-            headers: std::collections::BTreeMap::new(),
-            api_key_env: None,
-            api_key: None,
-            env_file: None,
-            default_model: None,
-            requires_api_key: None,
-            provider_routing: false,
-            model_catalog: false,
-            allow_provider_pinning: false,
-            models: Vec::new(),
-            extra_body: None,
-            supports_reasoning_effort: None,
-            disable_reasoning_heuristics: false,
-        }
-    }
 }
 
 /// Remembered trust decisions for external auth sources managed by other tools.
