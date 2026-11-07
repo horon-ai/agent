@@ -991,6 +991,21 @@ impl BackgroundTaskManager {
             // Read the persisted record once: it carries both the child pid
             // and the tool-call link the final record must keep.
             let prior_status = self.read_status_file(&task.status_path).await;
+            // A task that finished on its own keeps its own record. Its map
+            // entry outlives the terminal write by the instant the wrapper
+            // takes to prune it, so being in the map is not proof that it is
+            // still running; the status file is.
+            if prior_status
+                .as_ref()
+                .is_some_and(|status| status.status != BackgroundTaskStatus::Running)
+            {
+                return Ok(false);
+            }
+            // Marked only now that the task is known to be running: stopping
+            // the process group below lets its own future publish `Failed`
+            // first, and the mark is what makes that earlier record report the
+            // cancellation that caused it.
+            self.finalizer.mark_cancelled(task_id);
             // Stop the process group before dropping the future. Aborting the
             // handle kills the shell (kill_on_drop), but its children — a
             // compiler, a test runner — would keep running orphaned, and the
@@ -1042,9 +1057,16 @@ impl BackgroundTaskManager {
             if let Ok(json) = serde_json::to_string_pretty(&final_status) {
                 write_status_json(&task.status_path, &json).await;
             }
-            self.emit_finalized(&final_status, true);
-
-            Ok(true)
+            // The gate decides what the client saw. Winning it means this
+            // cancellation is the task's transition; losing it means the task
+            // had already published its own, so this cancel did not happen and
+            // the reply must not claim it did. The mark tells the two losing
+            // cases apart: still present means the winner reported a plain
+            // completion, gone means the winner carried our cancellation.
+            if self.emit_finalized(&final_status, true) {
+                return Ok(true);
+            }
+            Ok(!self.finalizer.take_cancelled(task_id))
         } else {
             let status_path = self.status_path_for(task_id);
             let Some(mut status) = self.read_status_file(&status_path).await else {
@@ -1058,6 +1080,10 @@ impl BackgroundTaskManager {
             let Some(pid) = status.pid else {
                 return Ok(false);
             };
+
+            // Confirmed running and detached: this call is what ends it, so the
+            // transition below is a cancellation.
+            self.finalizer.mark_cancelled(task_id);
 
             // The daemon's cancel path and the platform adapter agree on one
             // meaning: ask the group to stop, wait up to the grace period, then
@@ -1082,8 +1108,10 @@ impl BackgroundTaskManager {
                 terminal_event_record(event_status, event_exit_code, event_error.as_deref()),
             );
             self.write_status_file(&status_path, &status).await;
-            self.emit_finalized(&status, true);
-            Ok(true)
+            if self.emit_finalized(&status, true) {
+                return Ok(true);
+            }
+            Ok(!self.finalizer.take_cancelled(task_id))
         }
     }
 

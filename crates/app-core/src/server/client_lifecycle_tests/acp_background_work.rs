@@ -8,6 +8,8 @@
 
 use super::acp_v2_events::{Conn, Harness, is_idle};
 use super::*;
+use crate::background::FinalizedTask;
+use crate::bus::BackgroundTaskStatus;
 use crate::protocol::{BackgroundWorkEvent, BackgroundWorkItem};
 use serde_json::json;
 
@@ -343,6 +345,105 @@ async fn foreground_bash_forwards_output_before_the_call_ends() {
     h.close(vec![editor]).await;
 }
 
+/// A cancel that loses the race with a task finishing on its own must not be
+/// reported as a cancellation.
+///
+/// `true` exits in microseconds, so the request and the natural end overlap.
+/// Whatever the race decides, the pair must agree: a `reason:"final"` answer
+/// never comes with a `cancelled` event for the same call, and no cancellation
+/// mark is left behind either way.
+#[tokio::test]
+async fn cancel_racing_a_self_finishing_task_never_reports_cancelled() {
+    let h = Harness::new();
+    let mut editor = h.connect_v2(None, false).await;
+    let session_id = h.only_session().await;
+
+    for attempt in 0..20u64 {
+        let call_id = format!("call-race-{attempt}");
+        // Spawn the task directly and arm its listener the way the bash tool
+        // does: this test drives the request path, and a turn would add a
+        // second listener for the same task.
+        let finalized = crate::background::global().subscribe_finalized();
+        let info = crate::background::global()
+            .spawn_with_notify_for_tool_call(
+                "bash",
+                Some("race".to_string()),
+                &session_id,
+                false,
+                false,
+                &call_id,
+                Some("true"),
+                None,
+                |_output| async { Ok(crate::background::TaskResult::completed(Some(0))) },
+            )
+            .await
+            .expect("the race task spawns");
+        crate::server::background_work::report_started(
+            &session_id,
+            &call_id,
+            &info.task_id,
+            "bash",
+            Some("true"),
+            None,
+            finalized,
+            None,
+        );
+
+        let mut events = cancel_terminal(&mut editor, 100 + attempt, &call_id).await;
+        let (accepted, reason) = cancel_reply(&events);
+        // The transition is what both paths converge on: the broadcast when it
+        // is in time, the 500 ms status check when the task already ended. A
+        // cancel that wins the race emits it before the reply, so it can
+        // already be in hand.
+        let task_id = info.task_id.clone();
+        let ended = |event: &ServerEvent| {
+            matches!(event, ServerEvent::BackgroundWork(work)
+                if work.task_id == task_id && work.state != "started")
+        };
+        if !events.iter().any(ended) {
+            events.extend(
+                tokio::time::timeout(Duration::from_secs(5), editor.until(ended))
+                    .await
+                    .expect("the task's end is reported"),
+            );
+        }
+
+        let outcome = events
+            .iter()
+            .find_map(|event| match event {
+                ServerEvent::BackgroundWork(work) if work.task_id == info.task_id && work.state != "started" => {
+                    Some(work.clone())
+                }
+                _ => None,
+            })
+            .expect("the task's end is present");
+        if accepted {
+            assert!(reason.is_none(), "an accepted cancel carries no reason: {events:#?}");
+            assert_eq!(
+                outcome.state, "cancelled",
+                "an accepted cancel is confirmed as a cancellation: {events:#?}"
+            );
+        } else {
+            assert_eq!(
+                reason.as_deref(),
+                Some("final"),
+                "a task that ended first refuses as final: {events:#?}"
+            );
+            assert_ne!(
+                outcome.state, "cancelled",
+                "a refused cancel is never reported as a cancellation: {events:#?}"
+            );
+        }
+    }
+
+    assert_eq!(
+        crate::background::global().pending_cancelled_marks(),
+        0,
+        "every cancellation mark is consumed by its task's one transition"
+    );
+    h.close(vec![editor]).await;
+}
+
 /// QA failure: a session no v2 connection owns gets neither event, and the
 /// command's own result is unchanged.
 #[tokio::test]
@@ -424,6 +525,78 @@ async fn cancel_of_a_finished_terminal_reports_final() {
         cancel_reply(&reply),
         (false, Some("final".to_string())),
         "a finished terminal is not cancellable: {reply:#?}"
+    );
+    h.close(vec![editor]).await;
+}
+
+/// A cancelled task whose end was pushed out of the broadcast is still reported
+/// as `cancelled` when the listener recovers through `Lagged`.
+///
+/// The recovery path reads the status file instead of the event, so it must
+/// decide the state the same way the periodic check does: a task whose error is
+/// the cancellation text is a cancellation, not a failure.
+#[tokio::test]
+async fn lagged_listener_still_reports_a_cancelled_task() {
+    let h = Harness::new();
+    let mut editor = h.connect_v2(None, false).await;
+    let session_id = h.only_session().await;
+    let task = crate::background::global()
+        .spawn_with_notify_for_tool_call(
+            "bash",
+            Some("lagged".to_string()),
+            &session_id,
+            false,
+            false,
+            "call-lagged",
+            Some("sleep 30"),
+            None,
+            |_output| async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(crate::background::TaskResult::completed(Some(0)))
+            },
+        )
+        .await
+        .expect("the lagged task spawns");
+
+    // A channel of capacity one that nobody drains: by the time the listener
+    // reads, the transition it wanted has been pushed out.
+    let (flood_tx, flood_rx) = tokio::sync::broadcast::channel::<FinalizedTask>(1);
+    for filler in 0..8u16 {
+        let _ = flood_tx.send(FinalizedTask {
+            task_id: format!("filler-{filler}"),
+            session_id: session_id.clone(),
+            tool_call_id: None,
+            status: BackgroundTaskStatus::Completed,
+            exit_code: Some(0),
+            signal: None,
+            cancelled: false,
+        });
+    }
+
+    crate::background::global()
+        .cancel_with_grace(&task.task_id, Duration::from_millis(200))
+        .await
+        .expect("the task is cancelled");
+
+    crate::server::background_work::watch_finalized(flood_rx, &session_id, "call-lagged", &task.task_id, None);
+
+    let events = tokio::time::timeout(
+        Duration::from_secs(10),
+        editor.until(|event| matches!(event, ServerEvent::BackgroundWork(work) if work.task_id == task.task_id)),
+    )
+    .await
+    .expect("the lagged listener reports the task's end");
+    let work = events
+        .iter()
+        .find_map(|event| match event {
+            ServerEvent::BackgroundWork(work) if work.task_id == task.task_id => Some(work.clone()),
+            _ => None,
+        })
+        .expect("the transition is present");
+    assert_eq!(work.call_id, "call-lagged");
+    assert_eq!(
+        work.state, "cancelled",
+        "a lagged listener keeps the cancellation the status file records: {events:#?}"
     );
     h.close(vec![editor]).await;
 }
