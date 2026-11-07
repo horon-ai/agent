@@ -650,7 +650,7 @@ impl SkillRegistry {
 
     fn parse_skill_inner(path: &Path) -> Result<Skill> {
         let content = std::fs::read_to_string(path)?;
-
+        horon_agent_perf_counters::record_skill_file_read(content.len() as u64);
         // Parse YAML frontmatter
         let (frontmatter, body) = Self::parse_frontmatter(&content)?;
 

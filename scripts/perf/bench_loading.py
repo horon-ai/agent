@@ -82,13 +82,17 @@ import tempfile
 import time
 from pathlib import Path
 
-REPORT_SCHEMA_VERSION = 2
+# 3 added the skill/MCP read counters, the two loading stages and the fixture
+# size fields; a report from before that cannot be compared field for field.
+REPORT_SCHEMA_VERSION = 3
 DEFAULT_SEED = 20261021
 MODES = ("cold", "warm")
 DEFAULT_MODE = "warm"
 COMPARISON_MODE = "warm"
 STAGES = (
     "skill_catalog",
+    "skill_request_overlay",
+    "mcp_config_load",
     "attach_history",
     "resume_ready",
     "provider_dispatch",
@@ -96,14 +100,27 @@ STAGES = (
 )
 # Stages whose counters describe the measured fixture. `session_save` is
 # excluded from the stability claim because it recreates the scratch session,
-# whose log carries timestamps and whose catalog rows accumulate.
-STABILITY_STAGES = STAGES[:4]
+# whose log carries timestamps and whose catalog rows accumulate. The two
+# loading stages are listed by name so adding a stage never silently changes
+# which stages make that claim.
+STABILITY_STAGES = (
+    "skill_catalog",
+    "skill_request_overlay",
+    "mcp_config_load",
+    "attach_history",
+    "resume_ready",
+    "provider_dispatch",
+)
 REQUIRED_COUNTERS = (
     "store_read_bytes",
     "full_source_hashes",
     "request_deep_copies",
     "request_deep_copy_bytes",
     "skill_dir_reads",
+    "skill_file_reads",
+    "skill_bytes_read",
+    "mcp_config_reads",
+    "mcp_config_bytes",
 )
 STABILITY_RELATIVE_TOLERANCE = 0.01
 STABILITY_CRITERION = {
@@ -113,7 +130,13 @@ STABILITY_CRITERION = {
 TOTAL_COUNTERS = tuple(
     dict.fromkeys(
         REQUIRED_COUNTERS
-        + ("store_read_bytes", "io_read_bytes", "io_write_bytes", "io_published_bytes", "full_source_hash_bytes")
+        + (
+            "store_read_bytes",
+            "io_read_bytes",
+            "io_write_bytes",
+            "io_published_bytes",
+            "full_source_hash_bytes",
+        )
     )
 )
 # Files the loading path publishes into the measured HOME. A fixture template
@@ -154,23 +177,49 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def skill_markdown(name: str, index: int) -> str:
-    return (
+def skill_markdown(name: str, index: int, body_bytes: int) -> str:
+    header = (
         "---\n"
         "name: %s\n"
         "description: fixture skill %d for the loading baseline\n"
-        "---\n\n"
-        "Body of %s.\n" % (name, index, name)
+        "---\n\n" % (name, index)
     )
+    if body_bytes <= 0:
+        return header + "Body of %s.\n" % name
+    filler = "body of %s " % name
+    body = (filler * (body_bytes // len(filler) + 1))[:body_bytes]
+    return header + body
 
 
-def write_skills(root: Path, count: int) -> None:
+def write_skills(root: Path, count: int, body_bytes: int = 0) -> None:
     root.mkdir(parents=True, exist_ok=True)
     for index in range(count):
         name = "fixture-skill-%04d" % index
         directory = root / name
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "SKILL.md").write_text(skill_markdown(name, index), encoding="utf-8")
+        (directory / "SKILL.md").write_text(skill_markdown(name, index, body_bytes), encoding="utf-8")
+
+
+def claude_json(size: int) -> str:
+    """A valid ~/.claude.json of exactly `size` bytes, padded with a JSON string."""
+    prefix = '{"mcpServers":{"fixture-claude":{"command":"true"}},"padding":"'
+    suffix = '"}'
+    padding = size - len(prefix) - len(suffix)
+    if padding < 0:
+        raise MeasurementError(
+            "--mcp-config-bytes %d is too small for the fixture shape (minimum %d)"
+            % (size, len(prefix) + len(suffix))
+        )
+    return prefix + ("x" * padding) + suffix
+
+
+def write_claude_json(home: Path, size: int) -> None:
+    if size <= 0:
+        return
+    # `user_home_path` sandboxes user-level files under `<horon home>/external`.
+    external = home / "external"
+    external.mkdir(parents=True, exist_ok=True)
+    (external / ".claude.json").write_text(claude_json(size), encoding="utf-8")
 
 
 def private_directories(*paths: Path) -> None:
@@ -186,8 +235,8 @@ def private_tree(root: Path) -> None:
         os.chmod(path, 0o700 if path.is_dir() else 0o600)
 
 
-def fixture_key(events: int, skills: int) -> str:
-    return "events-%d-skills-%d" % (events, skills)
+def fixture_key(events: int, skills: int, skill_body_bytes: int, mcp_config_bytes: int) -> str:
+    return "events-%d-skills-%d-body-%d-mcp-%d" % (events, skills, skill_body_bytes, mcp_config_bytes)
 
 
 def derived_files(home: Path) -> list[str]:
@@ -217,17 +266,32 @@ def generate_events(script: Path, events: int, seed: int, out_dir: Path) -> dict
     return json.loads(completed.stdout.decode("utf-8", "replace").strip().splitlines()[-1])
 
 
-def build_template(root: Path, events: int, skills: int, seed: int, script: Path, verify: bool) -> dict:
+def build_template(
+    root: Path,
+    events: int,
+    skills: int,
+    skill_body_bytes: int,
+    mcp_config_bytes: int,
+    seed: int,
+    script: Path,
+    verify: bool,
+) -> dict:
     """Build the pristine fixture once. Every measured HOME is a copy of it."""
-    home = root / "templates" / fixture_key(events, skills)
+    home = root / "templates" / fixture_key(events, skills, skill_body_bytes, mcp_config_bytes)
     if home.exists():
         shutil.rmtree(home)
-    write_skills(home / "skills", skills)
+    write_skills(home / "skills", skills, skill_body_bytes)
+    write_claude_json(home, mcp_config_bytes)
+    # The MCP config stage needs a user-level source and the switch that turns
+    # the Claude source on; with the default off, the fixture would never be read.
+    (home / "config.toml").write_text("[mcp]\nclaude_user = true\n", encoding="utf-8")
     private_directories(home, home / "sessions")
 
     facts = {
         "events": events,
         "skills": skills,
+        "skill_body_bytes": skill_body_bytes,
+        "mcp_config_bytes": mcp_config_bytes,
         "template": str(home),
         "home": None,
         "session": "perf-events-%d" % events if events else "perf-empty",
@@ -303,6 +367,10 @@ def probe_environment(home: str) -> dict:
     env["HORON_AGENT_HOME"] = home
     env["HOME"] = home
     env["HORON_AGENT_PERF_COUNTERS"] = "1"
+    # The measured fixture decides which MCP sources are in play. An ambient
+    # switch would silently turn the Claude source off and report a real zero,
+    # which looks like a measurement instead of a configuration change.
+    env.pop("HORON_AGENT_DISABLE_CLAUDE_MCP", None)
     return env
 
 
@@ -423,6 +491,15 @@ def run_probe(binary: Path, fixture: dict, home: Path, timeout: float, mode: str
         if missing:
             run["status"] = "failed"
             run["reasons"].append("%s is missing counters %s" % (name, ", ".join(missing)))
+
+    if run["status"] == "ok" and int(fixture.get("mcp_config_bytes") or 0) > 0:
+        reads = (run["stage_delta"].get("mcp_config_load") or {}).get("mcp_config_reads")
+        if not reads:
+            run["status"] = "failed"
+            run["reasons"].append(
+                "mcp_config_load read no config (mcp_config_reads=%r) while the fixture carries a %d-byte ~/.claude.json"
+                % (reads, int(fixture["mcp_config_bytes"]))
+            )
 
     if run["status"] == "ok":
         for name in STAGES:
@@ -569,7 +646,9 @@ def measure_fixture(
     keep: bool,
 ) -> dict:
     template = Path(facts["template"])
-    base = work_root / mode / fixture_key(facts["events"], facts["skills"])
+    base = work_root / mode / fixture_key(
+        facts["events"], facts["skills"], facts["skill_body_bytes"], facts["mcp_config_bytes"]
+    )
     homes = {}
     discarded = 0
     if mode == "warm":
@@ -712,6 +791,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--events", default="0,1000,10000,100000", help="event counts to fixture")
     parser.add_argument("--skills", default="0,200,1000", help="skill counts to fixture")
+    parser.add_argument(
+        "--skill-body-bytes",
+        type=int,
+        default=0,
+        help="body bytes after each fixture skill's frontmatter; 0 keeps the historical short body",
+    )
+    parser.add_argument(
+        "--mcp-config-bytes",
+        type=int,
+        default=0,
+        help="size of the ~/.claude.json fixture copied into every HOME; 0 (default) writes none",
+    )
     parser.add_argument("--iterations", type=int, default=30, help="measured runs per side")
     parser.add_argument("--warmup", type=int, default=3, help="warmup runs per side (warm mode only)")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -740,6 +831,13 @@ def compare_reports(paths: list[str]) -> int:
         except (OSError, ValueError) as error:
             print("cannot read report %s: %s" % (path, error))
             return 2
+    schemas = [report.get("schema_version") for report in reports]
+    if schemas[0] != schemas[1] or schemas[0] != REPORT_SCHEMA_VERSION:
+        print(
+            "refusing to compare: reports must share schema_version %d (found %r); "
+            "regenerate the older report with this script" % (REPORT_SCHEMA_VERSION, schemas)
+        )
+        return 2
     modes = [report.get("mode") for report in reports]
     if any(mode not in MODES for mode in modes):
         print("refusing to compare: a report carries no usable mode label (found %r)" % (modes,))
@@ -756,7 +854,12 @@ def compare_reports(paths: list[str]) -> int:
 
     def index(report: dict) -> dict:
         return {
-            (fixture["fixture"]["events"], fixture["fixture"]["skills"]): fixture
+            (
+                fixture["fixture"]["events"],
+                fixture["fixture"]["skills"],
+                fixture["fixture"].get("skill_body_bytes", 0),
+                fixture["fixture"].get("mcp_config_bytes", 0),
+            ): fixture
             for fixture in report.get("fixtures") or []
         }
 
@@ -767,13 +870,19 @@ def compare_reports(paths: list[str]) -> int:
         print("refusing to compare: the two reports share no fixture")
         return 2
     print("mode  %s (both sides)" % modes[0])
-    for events, skills in common:
-        left = baseline[(events, skills)]
-        right = candidate[(events, skills)]
+    for events, skills, skill_body_bytes, mcp_config_bytes in common:
+        left = baseline[(events, skills, skill_body_bytes, mcp_config_bytes)]
+        right = candidate[(events, skills, skill_body_bytes, mcp_config_bytes)]
+        label = "events=%d skills=%d body=%d mcp=%d" % (
+            events,
+            skills,
+            skill_body_bytes,
+            mcp_config_bytes,
+        )
         if left.get("status") != "measured" or right.get("status") != "measured":
-            print("events=%d skills=%d: measurement failure on one side, not compared" % (events, skills))
+            print("%s: measurement failure on one side, not compared" % label)
             continue
-        print("events=%d skills=%d" % (events, skills))
+        print(label)
         for name in STAGES:
             left_stage = left["stages"][name]
             right_stage = right["stages"][name]
@@ -785,9 +894,13 @@ def compare_reports(paths: list[str]) -> int:
                 % (name, left_p50 or 0.0, right_p50 or 0.0, delta or 0.0, left_stage["verdict"], right_stage["verdict"])
             )
             for counter in REQUIRED_COUNTERS:
-                before = sorted(set(left_stage["counters"]["a"][counter]))
-                after = sorted(set(right_stage["counters"]["a"][counter]))
-                if before != after:
+                before = sorted(set(left_stage.get("counters", {}).get("a", {}).get(counter) or []))
+                after = sorted(set(right_stage.get("counters", {}).get("a", {}).get(counter) or []))
+                if not before or not after:
+                    print(
+                        "      counter %s: not measured (baseline %r, candidate %r)" % (counter, before, after)
+                    )
+                elif before != after:
                     print("      counter %s: %s -> %s" % (counter, before, after))
     return 0
 
@@ -796,6 +909,18 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.compare:
         return compare_reports(args.compare)
+    if args.skill_body_bytes < 0:
+        print("--skill-body-bytes must be zero or positive")
+        return 2
+    if args.mcp_config_bytes < 0:
+        print("--mcp-config-bytes must be zero or positive")
+        return 2
+    if args.mcp_config_bytes > 0:
+        try:
+            claude_json(args.mcp_config_bytes)
+        except MeasurementError as error:
+            print(str(error))
+            return 2
 
     binary = Path(args.binary).resolve()
     if not binary.is_file():
@@ -826,6 +951,8 @@ def main(argv: list[str]) -> int:
                     root,
                     events,
                     skills,
+                    args.skill_body_bytes,
+                    args.mcp_config_bytes,
                     args.seed,
                     script,
                     verify=not args.no_verify_regeneration,
@@ -845,10 +972,12 @@ def main(argv: list[str]) -> int:
                 if measured["status"] != "measured" or not measured["stability"]["stable"]:
                     failure = True
                 print(
-                    "fixture events=%d skills=%d mode=%s -> %s (fixture-stage counters stable: %s, criterion %s%s)"
+                    "fixture events=%d skills=%d body=%d mcp=%d mode=%s -> %s (fixture-stage counters stable: %s, criterion %s%s)"
                     % (
                         events,
                         skills,
+                        args.skill_body_bytes,
+                        args.mcp_config_bytes,
                         args.mode,
                         measured["status"],
                         measured["stability"]["stable"],
@@ -878,6 +1007,15 @@ def main(argv: list[str]) -> int:
                         totals["store_read_bytes"]["p50_ms"] or 0.0,
                         totals["full_source_hashes"]["p50_ms"] or 0.0,
                         totals["skill_dir_reads"]["p50_ms"] or 0.0,
+                    )
+                )
+                print(
+                    "  total skill_file_reads p50 %.0f  skill_bytes_read p50 %.0f  mcp_config_reads p50 %.0f  mcp_config_bytes p50 %.0f"
+                    % (
+                        totals["skill_file_reads"]["p50_ms"] or 0.0,
+                        totals["skill_bytes_read"]["p50_ms"] or 0.0,
+                        totals["mcp_config_reads"]["p50_ms"] or 0.0,
+                        totals["mcp_config_bytes"]["p50_ms"] or 0.0,
                     )
                 )
                 if not measured["stability"]["stable"]:
