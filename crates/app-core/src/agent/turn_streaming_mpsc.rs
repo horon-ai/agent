@@ -6,6 +6,13 @@ use std::panic::AssertUnwindSafe;
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
 use super::streaming::find_wrap_marker_incremental;
 
+mod tool_wait;
+
+/// Result text of a call the user cancelled, shared with the blocking turn
+/// loop so both paths record the same thing for the same event.
+pub(crate) use tool_wait::USER_CANCELLED as CANCELLED_TOOL_RESULT;
+use tool_wait::{reload_interrupted_tool_result, send_tool_diff, send_tool_exit};
+
 /// Result text for a call skipped because the user interrupted the turn. Both
 /// the group-boundary check and a mid-group interrupt write this, so the
 /// transcript reads the same however the interrupt was noticed.
@@ -13,106 +20,6 @@ const USER_INTERRUPT_SKIP: &str = "[Skipped: user interrupted]";
 
 /// Result text for a call skipped because the server is reloading.
 const RELOAD_SKIP: &str = "[Skipped - server reloading]";
-
-/// Send the file changes a tool call made, immediately before its `ToolDone`.
-///
-/// The diffs come from the tool's own metadata and are read before the history
-/// caps and the round budget rewrite the result. They leave only through the
-/// ACP connection's sender, so a client that renders no diffs never sees them.
-fn send_tool_diff(session_id: &str, call_id: &str, output: &crate::tool::ToolOutput) {
-    let Some(diffs) = output
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("file_diffs"))
-        .and_then(|diffs| serde_json::from_value::<Vec<crate::protocol::FileDiffWire>>(diffs.clone()).ok())
-    else {
-        return;
-    };
-    if diffs.is_empty() {
-        return;
-    }
-    crate::tool::acp_session::send_for_version(session_id, |version| {
-        let mut diffs = diffs;
-        // Deletes, creates and moves are v2 fields: a v1 owner gets the diff
-        // bytes it always got.
-        if version != Some(2) {
-            for diff in &mut diffs {
-                diff.deleted = false;
-                diff.created = false;
-                diff.old_path = None;
-            }
-        }
-        ServerEvent::ToolDiff {
-            id: call_id.to_string(),
-            diffs,
-        }
-    });
-}
-
-/// Send how a shell call exited, immediately before its `ToolDone`, to an ACP
-/// connection that negotiated v2 (its terminal view). A call handed to a
-/// background task reports `backgrounded` without an exit.
-fn send_tool_exit(session_id: &str, call_id: &str, tool_name: &str, output: &crate::tool::ToolOutput) {
-    if tool_name != "bash" {
-        return;
-    }
-    let Some(metadata) = output.metadata.as_ref() else {
-        return;
-    };
-    let event = if let Some(exit) = metadata.get("exit_status") {
-        ServerEvent::ToolExit {
-            id: call_id.to_string(),
-            exit_code: exit
-                .get("exit_code")
-                .and_then(serde_json::Value::as_i64)
-                .and_then(|code| i32::try_from(code).ok()),
-            signal: exit
-                .get("signal")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string),
-            backgrounded: false,
-        }
-    } else if metadata.get("background").and_then(serde_json::Value::as_bool) == Some(true) {
-        ServerEvent::ToolExit {
-            id: call_id.to_string(),
-            exit_code: None,
-            signal: None,
-            backgrounded: true,
-        }
-    } else {
-        return;
-    };
-    crate::tool::acp_session::send_v2(session_id, event);
-}
-
-fn reload_interrupted_tool_result(tc: &ToolCall, elapsed_secs: f64) -> (String, bool) {
-    let action = tc
-        .input
-        .get("action")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    let is_wait_like =
-        (tc.name == "bg" && action == "wait") || (tc.name == "swarm" && matches!(action, "await_members" | "run_plan"));
-
-    if is_wait_like {
-        let input = serde_json::to_string(&tc.input).unwrap_or_else(|_| "{}".to_string());
-        return (
-            format!(
-                "[Tool '{}' wait interrupted by server reload after {:.1}s. The underlying operation may still be running. Resume the wait by rerunning the same tool call with input: {}]",
-                tc.name, elapsed_secs, input
-            ),
-            false,
-        );
-    }
-
-    (
-        format!(
-            "[Tool '{}' interrupted by server reload after {:.1}s]",
-            tc.name, elapsed_secs
-        ),
-        true,
-    )
-}
 
 /// Called only after automatic continuations have been exhausted.
 fn incomplete_turn_stop(stop_reason: Option<&str>) -> Option<ServerEvent> {
@@ -1970,7 +1877,7 @@ impl Agent {
                 let registry_clone = self.registry.clone_sharing_compaction();
                 let tool_name_for_spawn = tc.name.clone();
                 let tool_input_for_spawn = tc.input.clone();
-                let tool_handle = tokio::spawn(async move {
+                let mut tool_handle = tokio::spawn(async move {
                     registry_clone
                         .execute(&tool_name_for_spawn, tool_input_for_spawn, ctx)
                         .await
@@ -1979,241 +1886,264 @@ impl Agent {
                 // Reset background signal before waiting
                 self.background_tool_signal.reset();
 
-                // Wait for tool completion OR background signal from user (Alt+B)
-                // OR graceful shutdown signal from server reload
-                let bg_signal = self.background_tool_signal.clone();
-                let shutdown_signal = self.graceful_shutdown.clone();
-                let allow_reload_handoff = tc.name == "bash";
-                let tool_result;
-                let mut tool_handle = tool_handle;
+                // The wait itself lives in `tool_wait`: completion, Alt+B, a
+                // server reload, and a per-call cancel all end here, and only
+                // the last one is new. The cancel signal is registered for
+                // just this call, so a `cancel_tool_call` cannot reach a
+                // sibling or the next call of the turn.
+                let cancel_signal = InterruptSignal::new();
+                let tool_cancel_guard =
+                    crate::tool_cancel_registry::register(self.session_id(), &tc.id, cancel_signal.clone());
                 let running_tool_guard = crate::running_tool_registry::register(self.session_id(), &tc.id, &tc.name);
-                tokio::select! {
-                    biased;
-                    res = &mut tool_handle => {
-                        tool_result = Some(match res {
-                            Ok(r) => r,
-                            Err(e) => Err(anyhow::anyhow!("Tool task panicked: {}", e)),
-                        });
-                    }
-                    _ = async {
-                        tokio::select! {
-                            _ = bg_signal.notified() => {}
-                            _ = shutdown_signal.notified() => {}
-                        }
-                    } => {
-                        if self.is_graceful_shutdown() && allow_reload_handoff {
-                            tool_result = match tokio::time::timeout(
-                                Duration::from_millis(750),
-                                &mut tool_handle,
-                            )
-                            .await
-                            {
-                                Ok(res) => Some(match res {
-                                    Ok(r) => r,
-                                    Err(e) => Err(anyhow::anyhow!("Tool task panicked: {}", e)),
-                                }),
-                                Err(_) => None,
-                            };
-                        } else {
-                            tool_result = None;
-                        }
-                    }
-                };
+                let wait_outcome = tool_wait::wait_for_tool(
+                    &mut tool_handle,
+                    &self.background_tool_signal,
+                    &self.graceful_shutdown,
+                    &cancel_signal,
+                    tc.name == "bash",
+                )
+                .await;
                 drop(running_tool_guard);
+                drop(tool_cancel_guard);
 
                 self.unlock_tools_if_needed(&tc.name, &tc.input);
                 let tool_elapsed = tool_start.elapsed();
                 crate::session_metrics::record_activity(&self.session.id);
 
-                if let Some(result) = tool_result {
-                    // Normal tool completion
-                    logging::info(&format!(
-                        "Tool finished: {} in {:.2}s",
-                        tc.name,
-                        tool_elapsed.as_secs_f64()
-                    ));
-                    if inline_output_tap {
-                        // Update the tool marker in place with duration/error.
-                        self.inline_tail
-                            .finish_tool(tool_elapsed.as_secs_f64(), result.is_err());
-                        self.publish_inline_tail();
-                    }
-
-                    match result {
-                        Ok(output) => {
-                            // The editor learns what the file holds before it
-                            // hears that the call finished.
-                            send_tool_diff(&self.session.id, &tc.id, &output);
-                            send_tool_exit(&self.session.id, &tc.id, &tc.name, &output);
-                            let output = cap_tool_output_for_history(&tc.name, &self.session.id, output);
-                            // A one-member group is part of the same round, so
-                            // it spends from the same budget as the concurrent
-                            // groups around it.
-                            let mut output = round_budget.admit(&tc.name, output);
-                            if let Some(reminder) = rule_passive.take() {
-                                output.output.push_str(&reminder);
-                            }
-                            let _ = event_tx.send(ServerEvent::ToolDone {
-                                id: tc.id.clone(),
-                                name: tc.name.clone(),
-                                output: output.output.clone(),
-                                error: None,
-                            });
-
-                            let side_pane_images = tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
-                            if !side_pane_images.is_empty() {
-                                logging::info(&format!(
-                                    "SidePaneImages: emitting {} image(s) from tool '{}' (session={})",
-                                    side_pane_images.len(),
-                                    tc.name,
-                                    self.session.id
-                                ));
-                                let _ = event_tx.send(ServerEvent::SidePaneImages {
-                                    session_id: self.session.id.clone(),
-                                    images: side_pane_images,
-                                });
-                            }
-
-                            let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
-                            self.add_message_with_duration(Role::User, blocks, Some(tool_elapsed.as_millis() as u64));
-                            tool_results_dirty = true;
-                        }
-                        Err(e) => {
-                            // A takeover is not a tool failure: the tool already
-                            // fired this turn's cancel signal. Recording its
-                            // error would let the model answer it while the
-                            // resumed turn works, and the siblings in this
-                            // message would run too.
-                            if e.downcast_ref::<crate::tool::SupersededToolCall>().is_some() {
-                                crate::tool::superseded::clear(&self.session.id);
-                                logging::info(&format!(
-                                    "Tool '{}' handed the turn to another owner; stopping without recording a result",
-                                    tc.name
-                                ));
-                                break;
-                            }
-                            let error_msg = format!("Error: {}", e);
-                            let _ = event_tx.send(ServerEvent::ToolDone {
-                                id: tc.id.clone(),
-                                name: tc.name.clone(),
-                                output: error_msg.clone(),
-                                error: Some(error_msg.clone()),
-                            });
-
-                            self.add_message_with_duration(
-                                Role::User,
-                                vec![ContentBlock::ToolResult {
-                                    tool_use_id: tc.id.clone(),
-                                    content: error_msg,
-                                    is_error: Some(true),
-                                }],
-                                Some(tool_elapsed.as_millis() as u64),
-                            );
-                            tool_results_dirty = true;
-                        }
-                    }
-                } else if self.is_graceful_shutdown() {
-                    // The turn's cancel signal was fired by the tool itself: the
-                    // approval wait was taken over by the ambient runner. The
-                    // tool may not have handed back its typed error yet, so the
-                    // out-of-band mark is what names the reason. Reporting a
-                    // reload here would be a lie: nothing reloaded.
-                    if crate::tool::superseded::is_marked(&self.session.id) {
-                        crate::tool::superseded::clear(&self.session.id);
+                match wait_outcome {
+                    tool_wait::ToolWait::Finished(result) => {
+                        // Normal tool completion
                         logging::info(&format!(
-                            "Tool '{}' handed the turn to another owner after {:.1}s; stopping without a result",
+                            "Tool finished: {} in {:.2}s",
+                            tc.name,
+                            tool_elapsed.as_secs_f64()
+                        ));
+                        if inline_output_tap {
+                            // Update the tool marker in place with duration/error.
+                            self.inline_tail
+                                .finish_tool(tool_elapsed.as_secs_f64(), result.is_err());
+                            self.publish_inline_tail();
+                        }
+
+                        match result {
+                            Ok(output) => {
+                                // The editor learns what the file holds before it
+                                // hears that the call finished.
+                                send_tool_diff(&self.session.id, &tc.id, &output);
+                                send_tool_exit(&self.session.id, &tc.id, &tc.name, &output);
+                                let output = cap_tool_output_for_history(&tc.name, &self.session.id, output);
+                                // A one-member group is part of the same round, so
+                                // it spends from the same budget as the concurrent
+                                // groups around it.
+                                let mut output = round_budget.admit(&tc.name, output);
+                                if let Some(reminder) = rule_passive.take() {
+                                    output.output.push_str(&reminder);
+                                }
+                                let _ = event_tx.send(ServerEvent::ToolDone {
+                                    id: tc.id.clone(),
+                                    name: tc.name.clone(),
+                                    output: output.output.clone(),
+                                    error: None,
+                                });
+
+                                let side_pane_images =
+                                    tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
+                                if !side_pane_images.is_empty() {
+                                    logging::info(&format!(
+                                        "SidePaneImages: emitting {} image(s) from tool '{}' (session={})",
+                                        side_pane_images.len(),
+                                        tc.name,
+                                        self.session.id
+                                    ));
+                                    let _ = event_tx.send(ServerEvent::SidePaneImages {
+                                        session_id: self.session.id.clone(),
+                                        images: side_pane_images,
+                                    });
+                                }
+
+                                let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
+                                self.add_message_with_duration(
+                                    Role::User,
+                                    blocks,
+                                    Some(tool_elapsed.as_millis() as u64),
+                                );
+                                tool_results_dirty = true;
+                            }
+                            Err(e) => {
+                                // A takeover is not a tool failure: the tool already
+                                // fired this turn's cancel signal. Recording its
+                                // error would let the model answer it while the
+                                // resumed turn works, and the siblings in this
+                                // message would run too.
+                                if e.downcast_ref::<crate::tool::SupersededToolCall>().is_some() {
+                                    crate::tool::superseded::clear(&self.session.id);
+                                    logging::info(&format!(
+                                        "Tool '{}' handed the turn to another owner; stopping without recording a result",
+                                        tc.name
+                                    ));
+                                    break;
+                                }
+                                let error_msg = format!("Error: {}", e);
+                                let _ = event_tx.send(ServerEvent::ToolDone {
+                                    id: tc.id.clone(),
+                                    name: tc.name.clone(),
+                                    output: error_msg.clone(),
+                                    error: Some(error_msg.clone()),
+                                });
+
+                                self.add_message_with_duration(
+                                    Role::User,
+                                    vec![ContentBlock::ToolResult {
+                                        tool_use_id: tc.id.clone(),
+                                        content: error_msg,
+                                        is_error: Some(true),
+                                    }],
+                                    Some(tool_elapsed.as_millis() as u64),
+                                );
+                                tool_results_dirty = true;
+                            }
+                        }
+                    }
+                    tool_wait::ToolWait::Reloaded => {
+                        // The turn's cancel signal was fired by the tool itself: the
+                        // approval wait was taken over by the ambient runner. The
+                        // tool may not have handed back its typed error yet, so the
+                        // out-of-band mark is what names the reason. Reporting a
+                        // reload here would be a lie: nothing reloaded.
+                        if crate::tool::superseded::is_marked(&self.session.id) {
+                            crate::tool::superseded::clear(&self.session.id);
+                            logging::info(&format!(
+                                "Tool '{}' handed the turn to another owner after {:.1}s; stopping without a result",
+                                tc.name,
+                                tool_elapsed.as_secs_f64()
+                            ));
+                            tool_handle.abort();
+                            return Ok(());
+                        }
+                        // Server reload - abort tool and save interrupted result
+                        logging::info(&format!(
+                            "Tool '{}' interrupted by server reload after {:.1}s",
                             tc.name,
                             tool_elapsed.as_secs_f64()
                         ));
                         tool_handle.abort();
-                        return Ok(());
-                    }
-                    // Server reload - abort tool and save interrupted result
-                    logging::info(&format!(
-                        "Tool '{}' interrupted by server reload after {:.1}s",
-                        tc.name,
-                        tool_elapsed.as_secs_f64()
-                    ));
-                    tool_handle.abort();
 
-                    // For wait-like tools, the interruption is expected: the reload
-                    // interrupted the wait, so it should be resumed after reload
-                    // rather than treated as failed work.
-                    let (interrupted_msg, is_error) = reload_interrupted_tool_result(tc, tool_elapsed.as_secs_f64());
+                        // For wait-like tools, the interruption is expected: the reload
+                        // interrupted the wait, so it should be resumed after reload
+                        // rather than treated as failed work.
+                        let (interrupted_msg, is_error) =
+                            reload_interrupted_tool_result(tc, tool_elapsed.as_secs_f64());
 
-                    let _ = event_tx.send(ServerEvent::ToolDone {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        output: interrupted_msg.clone(),
-                        error: if is_error {
-                            Some("interrupted by reload".to_string())
-                        } else {
-                            None
-                        },
-                    });
+                        let _ = event_tx.send(ServerEvent::ToolDone {
+                            id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            output: interrupted_msg.clone(),
+                            error: if is_error {
+                                Some("interrupted by reload".to_string())
+                            } else {
+                                None
+                            },
+                        });
 
-                    self.add_message_with_duration(
-                        Role::User,
-                        vec![ContentBlock::ToolResult {
-                            tool_use_id: tc.id.clone(),
-                            content: interrupted_msg,
-                            is_error: Some(is_error),
-                        }],
-                        Some(tool_elapsed.as_millis() as u64),
-                    );
-                    self.save_session()?;
-
-                    // Add results for any remaining tools too
-                    for remaining_tc in &tool_calls[(tool_index + 1)..] {
-                        self.add_message(
+                        self.add_message_with_duration(
                             Role::User,
                             vec![ContentBlock::ToolResult {
-                                tool_use_id: remaining_tc.id.clone(),
-                                content: "[Skipped - server reloading]".to_string(),
-                                is_error: Some(true),
+                                tool_use_id: tc.id.clone(),
+                                content: interrupted_msg,
+                                is_error: Some(is_error),
                             }],
+                            Some(tool_elapsed.as_millis() as u64),
                         );
+                        self.save_session()?;
+
+                        // Add results for any remaining tools too
+                        for remaining_tc in &tool_calls[(tool_index + 1)..] {
+                            self.add_message(
+                                Role::User,
+                                vec![ContentBlock::ToolResult {
+                                    tool_use_id: remaining_tc.id.clone(),
+                                    content: "[Skipped - server reloading]".to_string(),
+                                    is_error: Some(true),
+                                }],
+                            );
+                        }
+                        self.save_session()?;
+                        return Ok(());
                     }
-                    self.save_session()?;
-                    return Ok(());
-                } else {
-                    // User pressed Alt+B — move tool to background
-                    logging::info(&format!(
-                        "Tool '{}' moved to background after {:.1}s",
-                        tc.name,
-                        tool_elapsed.as_secs_f64()
-                    ));
+                    tool_wait::ToolWait::Background => {
+                        // User pressed Alt+B — move tool to background
+                        logging::info(&format!(
+                            "Tool '{}' moved to background after {:.1}s",
+                            tc.name,
+                            tool_elapsed.as_secs_f64()
+                        ));
 
-                    let bg_info = crate::background::global()
-                        .adopt(&tc.name, &self.session.id, tool_handle)
-                        .await;
+                        let manager = crate::background::global();
+                        let finalized = manager.subscribe_finalized();
+                        // The command and directory belong to the tool that ran,
+                        // so a background terminal the user opens afterwards
+                        // names the same thing the call did.
+                        let background_command = tool_wait::tool_background_command(&tc.name, &tc.input);
+                        let background_cwd = self.session.working_dir.clone().map(std::path::PathBuf::from);
+                        let bg_info = manager
+                            .adopt_with_options_for_tool_call(
+                                &tc.name,
+                                None,
+                                &self.session.id,
+                                true,
+                                false,
+                                &tc.id,
+                                background_command.as_deref(),
+                                background_cwd.as_deref(),
+                                tool_handle,
+                            )
+                            .await;
+                        crate::server::background_work::report_started(
+                            &self.session.id,
+                            &tc.id,
+                            &bg_info.task_id,
+                            &tc.name,
+                            background_command.as_deref(),
+                            background_cwd.as_deref(),
+                            finalized,
+                            None,
+                        );
 
-                    let bg_msg = format!(
-                        "Tool '{}' was moved to background by the user (task_id: {}). \
+                        let bg_msg = format!(
+                            "Tool '{}' was moved to background by the user (task_id: {}). \
                          Use the `bg` tool with action 'wait' to wait for completion/checkpoints, \
                          or action 'status'/'output' to inspect it.",
-                        tc.name, bg_info.task_id
-                    );
+                            tc.name, bg_info.task_id
+                        );
 
-                    let _ = event_tx.send(ServerEvent::ToolDone {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        output: bg_msg.clone(),
-                        error: None,
-                    });
+                        let _ = event_tx.send(ServerEvent::ToolDone {
+                            id: tc.id.clone(),
+                            name: tc.name.clone(),
+                            output: bg_msg.clone(),
+                            error: None,
+                        });
 
-                    self.add_message_with_duration(
-                        Role::User,
-                        vec![ContentBlock::ToolResult {
-                            tool_use_id: tc.id.clone(),
-                            content: bg_msg,
-                            is_error: None,
-                        }],
-                        Some(tool_elapsed.as_millis() as u64),
-                    );
-                    self.save_session()?;
+                        self.add_message_with_duration(
+                            Role::User,
+                            vec![ContentBlock::ToolResult {
+                                tool_use_id: tc.id.clone(),
+                                content: bg_msg,
+                                is_error: None,
+                            }],
+                            Some(tool_elapsed.as_millis() as u64),
+                        );
+                        self.save_session()?;
 
-                    self.background_tool_signal.reset();
+                        self.background_tool_signal.reset();
+                    }
+                    tool_wait::ToolWait::Cancelled => {
+                        // Only this call stops. The turn keeps its agent, its
+                        // stop signal and its remaining calls: the cancelled call
+                        // reports its result and the model decides what happens
+                        // next, exactly as it would after a failed call.
+                        self.apply_tool_cancel(tc, tool_elapsed, &event_tx);
+                        tool_results_dirty = true;
+                    }
                 }
 
                 // NOTE: We do NOT inject between tools (non-urgent) because that would
@@ -2560,6 +2490,7 @@ impl Agent {
         }
 
         let mut results: HashMap<usize, Result<crate::tool::ToolOutput>> = HashMap::new();
+        let mut cancelled_members: HashSet<usize> = HashSet::new();
         let mut tool_elapsed = Duration::ZERO;
         let mut stopped: Option<super::tool_round::GroupStop> = None;
         if !dispatch.is_empty() {
@@ -2595,6 +2526,11 @@ impl Agent {
             stopped = outcome.stopped;
             for (position, result) in outcome.results {
                 results.insert(dispatch[position].0, result);
+            }
+            // A member the user cancelled stops alone: the rest of the group
+            // keeps running and this one reports the cancellation result.
+            for position in outcome.cancelled {
+                cancelled_members.insert(dispatch[position].0);
             }
         }
 
@@ -2674,6 +2610,14 @@ impl Agent {
                 StreamedGroupMember::Execute => {
                     self.unlock_tools_if_needed(&tc.name, &tc.input);
                     crate::session_metrics::record_activity(&self.session.id);
+                    if cancelled_members.contains(&index) {
+                        // Cancelled by `cancel_tool_call`: this member stopped
+                        // and its siblings were left alone.
+                        any_member_failed = true;
+                        self.apply_tool_cancel(tc, tool_elapsed, event_tx);
+                        *tool_results_dirty = true;
+                        continue;
+                    }
                     let result = results.remove(&index);
                     any_member_failed |= result.as_ref().is_none_or(|result| result.is_err());
 
@@ -2819,6 +2763,9 @@ mod round_tests;
 #[cfg(test)]
 #[path = "turn_streaming_mpsc_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "turn_streaming_mpsc/tool_cancel_tests.rs"]
+mod tool_cancel_tests;
 
 #[cfg(test)]
 #[path = "turn_streaming_mpsc_failover_tests.rs"]

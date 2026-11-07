@@ -553,6 +553,17 @@ pub(crate) fn is_running(session_id: &str) -> bool {
     active().contains_key(session_id)
 }
 
+/// The run id the session is executing right now, or `None` when it is idle.
+///
+/// A targeted cancel compares its own `run_id` with this: equal means the turn
+/// the caller saw is still the one running, so stopping it cannot hit a turn
+/// that replaced it.
+pub(crate) fn current_run_id(session_id: &str) -> Option<String> {
+    let slot = active().get(session_id).map(|turn| Arc::clone(&turn.slot))?;
+    let run_id = lock_slot(&slot).run_id.clone();
+    run_id.filter(|run_id| !run_id.is_empty())
+}
+
 /// The current foreground state of `session_id`, for a v2 connection that just
 /// attached. An idle session has no run, so its `run_id` is empty.
 pub(crate) fn snapshot(session_id: &str) -> ServerEvent {

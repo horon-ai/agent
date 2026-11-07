@@ -36,9 +36,17 @@ pub struct FinalizedTask {
 }
 
 /// The terminal-transition broadcast and the once-only gate that feeds it.
+///
+/// Cancellation is remembered here rather than decided by the caller: stopping
+/// a task's process group makes the task's own future notice the death and
+/// publish `Failed` before the cancel path reaches its own write, and the gate
+/// keeps whichever arrived first. Knowing that this task was cancelled is what
+/// lets that earlier record report the cancellation that caused it, whichever
+/// path wins.
 pub(super) struct Finalizer {
     tx: tokio::sync::broadcast::Sender<FinalizedTask>,
     sent: std::sync::Mutex<std::collections::HashSet<String>>,
+    cancelled: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Finalizer {
@@ -46,6 +54,7 @@ impl Finalizer {
         Self {
             tx: tokio::sync::broadcast::channel(FINALIZED_CHANNEL_CAPACITY).0,
             sent: std::sync::Mutex::new(std::collections::HashSet::new()),
+            cancelled: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -57,20 +66,30 @@ impl Finalizer {
     ///
     /// Finalization paths can observe the same task twice (a reconciliation
     /// racing a cancel, a status read after a natural finish), so the gate is
-    /// keyed by task id rather than by path.
-    pub(super) fn send_once(&self, status: &TaskStatusFile, cancelled: bool) {
+    /// keyed by task id rather than by path. Returns whether this call is the
+    /// one that published, which is how a cancel path tells "my cancellation is
+    /// what the client saw" from "the task had already ended".
+    pub(super) fn send_once(&self, status: &TaskStatusFile, cancelled: bool) -> bool {
         {
             let Ok(mut sent) = self.sent.lock() else {
-                return;
+                return false;
             };
             if !sent.insert(status.task_id.clone()) {
-                return;
+                // The gate is closed: this task already published, so this call
+                // says nothing and must leave the cancellation mark for the
+                // caller to judge. Taking it here would let a dropped record
+                // answer as if the client had seen a cancellation.
+                return false;
             }
             if sent.len() > FINALIZED_SEEN_LIMIT {
                 sent.clear();
                 sent.insert(status.task_id.clone());
             }
         }
+        // Taken unconditionally, after the gate: a path that already knows it
+        // cancelled the task must still clear the mark, or it lingers.
+        let marked = self.take_cancelled(&status.task_id);
+        let cancelled = cancelled || marked;
         let _ = self.tx.send(FinalizedTask {
             task_id: status.task_id.clone(),
             session_id: status.session_id.clone(),
@@ -80,6 +99,26 @@ impl Finalizer {
             signal: None,
             cancelled,
         });
+        true
+    }
+
+    /// Remember that this task was cancelled, before anything signals it.
+    pub(super) fn mark_cancelled(&self, task_id: &str) {
+        let mut cancelled = self.cancelled.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancelled.len() > FINALIZED_SEEN_LIMIT {
+            // Every mark is removed by the one terminal transition it belongs
+            // to, so this only fills when a task never reaches one.
+            cancelled.clear();
+        }
+        cancelled.insert(task_id.to_string());
+    }
+
+    /// Take the cancellation mark for this task, if there is one.
+    pub(super) fn take_cancelled(&self, task_id: &str) -> bool {
+        self.cancelled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(task_id)
     }
 }
 
@@ -93,8 +132,21 @@ impl BackgroundTaskManager {
         self.finalizer.subscribe()
     }
 
-    pub(super) fn emit_finalized(&self, status: &TaskStatusFile, cancelled: bool) {
-        self.finalizer.send_once(status, cancelled);
+    /// How many cancellation marks are waiting for their task's transition.
+    ///
+    /// A mark is taken by the one terminal event it belongs to, so this is zero
+    /// once every cancelled task has been reported. Tests and monitoring read
+    /// it to tell a leak from a healthy set.
+    pub fn pending_cancelled_marks(&self) -> usize {
+        self.finalizer
+            .cancelled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    pub(super) fn emit_finalized(&self, status: &TaskStatusFile, cancelled: bool) -> bool {
+        self.finalizer.send_once(status, cancelled)
     }
 
     /// Tasks running in this process for one session.
