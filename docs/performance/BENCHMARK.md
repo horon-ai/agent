@@ -20,7 +20,7 @@ horon의 성능은 세 가지 장치로 본다. 무엇을 묻는지가 서로 �
 | `macos` | `macos-latest` | RSS | |
 | `windows` | `windows-latest` | Working Set | 데몬 연결은 Named Pipe, 하네스 브리지 기동은 측정 안 함(`api-bridge`는 Unix 전용) |
 
-OS마다 작업을 다음처럼 나눠 돌린다.
+OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안에서 작업을 다음처럼 나눠 돌린다. OS마다 따로 부르므로 한 OS의 측정은 그 OS의 빌드가 끝나자마자 시작하고, 가장 느린 OS의 빌드를 기다리지 않는다.
 
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
