@@ -63,6 +63,10 @@ pub(crate) fn auth_methods() -> Vec<Value> {
 
 /// IS-12: v1 config options renamed to `configId`, every select group renamed
 /// to `groupId`, order kept, select options only.
+///
+/// alpha.13 requires every select to keep at least one value
+/// (`SessionConfigSelectOptions` is `minItems: 1`), so a select that would
+/// publish none is dropped rather than sent as a frame the schema refuses.
 pub(crate) fn config_options(v1_options: &[Value]) -> Vec<Value> {
     v1_options
         .iter()
@@ -81,6 +85,9 @@ pub(crate) fn config_options(v1_options: &[Value]) -> Vec<Value> {
                     renamed.insert(key.clone(), value.clone());
                 }
             }
+            if is_empty_values(renamed.get("options")) {
+                return None;
+            }
             Some(Value::Object(renamed))
         })
         .collect()
@@ -95,22 +102,32 @@ fn select_groups(options: &Value) -> Value {
     Value::Array(
         options
             .iter()
-            .map(|option| {
+            .filter_map(|option| {
                 let Some(option) = option.as_object() else {
-                    return option.clone();
+                    return Some(option.clone());
                 };
                 if !option.contains_key("group") {
-                    return Value::Object(option.clone());
+                    return Some(Value::Object(option.clone()));
+                }
+                // A group whose own value list is empty is refused by the
+                // alpha.13 `SessionConfigSelectGroup` (`minItems: 1`): drop it.
+                if is_empty_values(option.get("options")) {
+                    return None;
                 }
                 let mut renamed = serde_json::Map::new();
                 for (key, value) in option {
                     let key = if key == "group" { "groupId" } else { key.as_str() };
                     renamed.insert(key.to_string(), value.clone());
                 }
-                Value::Object(renamed)
+                Some(Value::Object(renamed))
             })
             .collect(),
     )
+}
+
+/// A select value list with no entries, or none at all.
+fn is_empty_values(options: Option<&Value>) -> bool {
+    options.and_then(Value::as_array).is_none_or(Vec::is_empty)
 }
 
 /// The value of one `session/set_config_option` request.

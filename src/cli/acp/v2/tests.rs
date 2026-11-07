@@ -1,4 +1,4 @@
-//! Every v2 builder is validated against the vendored `schema-v2.0.0-alpha.10`
+//! Every v2 builder is validated against the vendored `schema-v2.0.0-alpha.13`
 //! `$defs` entry it produces, plus the IS-1/IS-6/IS-12/IS-15 rules that schema
 //! validation cannot express.
 
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-const SCHEMA_JSON: &str = include_str!("../../../../tests/fixtures/acp/schema-v2.0.0-alpha.10.json");
+const SCHEMA_JSON: &str = include_str!("../../../../tests/fixtures/acp/schema-v2.0.0-alpha.13.json");
 
 fn validator(def_name: &str) -> Arc<jsonschema::Validator> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> = OnceLock::new();
@@ -120,6 +120,48 @@ fn select_table() {
     assert_eq!(rpc.code, -32022);
     assert_eq!(rpc.message, "Unsupported protocol version");
     assert_eq!(rpc.data, Some(json!({ "requested": 0, "supported": [1, 2] })));
+}
+
+#[test]
+fn error_frames_match_schema() {
+    use super::super::rpc::RpcError;
+
+    let unsupported = InitError::Unsupported {
+        requested: 0,
+        supported: vec![1, ACP_V2_PROTOCOL_VERSION],
+    }
+    .to_rpc();
+    assert_eq!(unsupported.code, -32022);
+    let invalid = InitError::InvalidParams("initialize requires protocolVersion".to_string()).to_rpc();
+    assert_eq!(invalid.code, -32602);
+    let not_found = RpcError::session_not_found("sess-1");
+
+    // alpha.13 names the `data` of the two data-carrying codes: `-32022` is an
+    // `UnsupportedProtocolVersionErrorData`, `-32002` a
+    // `SessionNotFoundErrorData`. The plain errors carry none.
+    let cases: [(&RpcError, i64, Option<&str>); 3] = [
+        (&unsupported, -32022, Some("UnsupportedProtocolVersionErrorData")),
+        (&invalid, -32602, None),
+        (&not_found, -32002, Some("SessionNotFoundErrorData")),
+    ];
+    for (rpc, code, data_def) in cases {
+        let frame = json!({ "jsonrpc": "2.0", "id": 7, "error": rpc.to_wire() });
+        let error = &frame["error"];
+        assert_eq!(error["code"], code, "{frame}");
+        assert_matches("Error", error);
+        match data_def {
+            Some(def) => assert_matches(def, &error["data"]),
+            None => assert!(error.get("data").is_none(), "a plain error carries no data: {error}"),
+        }
+    }
+    assert_eq!(
+        unsupported.to_wire()["data"],
+        json!({ "requested": 0, "supported": [1, 2] })
+    );
+    assert_eq!(
+        RpcError::session_not_found("sess-1").to_wire()["data"],
+        json!({ "sessionId": "sess-1" })
+    );
 }
 
 #[test]
@@ -271,6 +313,39 @@ fn config_options_matches_schema() {
         "ConfigOptionUpdate",
         &json!({ "configOptions": config_options(v1_options.as_array().unwrap()) }),
     );
+
+    // alpha.13 requires `minItems: 1` for a select's values and for each
+    // group's values, so anything that would publish an empty list is dropped
+    // instead of sent as a frame the schema refuses.
+    let empties = json!([
+        {
+            "type": "select",
+            "id": "no-values",
+            "name": "No values",
+            "category": "mode",
+            "currentValue": "a",
+            "options": [],
+        },
+        {
+            "type": "select",
+            "id": "grouped",
+            "name": "Grouped",
+            "category": "model",
+            "currentValue": "a",
+            "options": [
+                { "group": "g1", "name": "Empty group", "options": [] },
+                { "group": "g2", "name": "Only value", "options": [{ "value": "a", "name": "A" }] },
+                { "group": "g3", "name": "No list" },
+            ],
+        },
+    ]);
+    let filtered = config_options(empties.as_array().unwrap());
+    assert_eq!(filtered.len(), 1, "a select with no values is dropped: {filtered:?}");
+    assert_eq!(filtered[0]["configId"], "grouped");
+    let groups = filtered[0]["options"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "a group with no values is dropped: {groups:?}");
+    assert_eq!(groups[0]["groupId"], "g2");
+    assert_matches("SessionConfigOption", &filtered[0]);
 }
 
 #[test]
