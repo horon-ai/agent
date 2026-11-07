@@ -47,6 +47,7 @@ pub mod session_effort;
 pub mod session_rebuild;
 pub mod startup_profile;
 pub mod tool;
+pub mod tool_cancel_registry;
 pub mod turn_cancel_registry;
 pub mod update;
 

@@ -2495,20 +2495,17 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
         .unwrap();
 }
 
-#[path = "client_lifecycle_tests/system_prompt.rs"]
-mod system_prompt;
-
 #[path = "client_lifecycle_tests/acp_permission.rs"]
 mod acp_permission;
-
-#[path = "client_lifecycle_tests/acp_session_mcp.rs"]
-mod acp_session_mcp;
-
 #[path = "client_lifecycle_tests/acp_plan_diff.rs"]
 mod acp_plan_diff;
-
+#[path = "client_lifecycle_tests/acp_session_mcp.rs"]
+mod acp_session_mcp;
+#[path = "client_lifecycle_tests/acp_tool_cancel.rs"]
+mod acp_tool_cancel;
 #[path = "client_lifecycle_tests/acp_v2_events.rs"]
 mod acp_v2_events;
-
 #[path = "client_lifecycle_tests/reattach_init.rs"]
 mod reattach_init;
+#[path = "client_lifecycle_tests/system_prompt.rs"]
+mod system_prompt;

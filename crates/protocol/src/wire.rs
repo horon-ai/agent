@@ -167,6 +167,43 @@ pub enum Request {
     #[serde(rename = "cancel")]
     Cancel { id: u64 },
 
+    /// Cancel one specific turn, named by the run id the daemon reported.
+    ///
+    /// The daemon answers `Ack` in both cases. When `run_id` is the run the
+    /// session is executing right now, the cancel takes the same path a plain
+    /// `cancel` does. When it names no run, or a run that already ended, the
+    /// daemon stops nothing and answers `Ack` alone, so a cancel that lost the
+    /// race with a finished turn cannot stop the one that replaced it. A
+    /// connection that has not yet seen a `foreground_state` for its turn
+    /// keeps using `cancel`, whose behaviour is unchanged.
+    #[serde(rename = "cancel_turn")]
+    CancelTurn { id: u64, run_id: String },
+
+    /// Cancel one tool call of the turn running in this session.
+    ///
+    /// `call_id` is the tool call id the daemon reported in `tool_start`. The
+    /// answer is [`ServerEvent::ToolCallCancelResult`]: `accepted: true` when a
+    /// signal was delivered to the running call, `accepted: false` with
+    /// `reason: "unknown"` when no call by that id is running here. The turn
+    /// continues afterwards: the cancelled call reports a `tool_done` whose
+    /// result text the model sees. A background task is not stopped by this
+    /// request; it has its own [`Request::CancelBackgroundTerminal`].
+    #[serde(rename = "cancel_tool_call")]
+    CancelToolCall { id: u64, call_id: String },
+
+    /// Cancel one background terminal this session started.
+    ///
+    /// Answered with [`ServerEvent::ToolCallCancelResult`]; the final
+    /// `background_work` event is what confirms the stop.
+    #[serde(rename = "cancel_background_terminal")]
+    CancelBackgroundTerminal { id: u64, call_id: String },
+
+    /// List the background work still running in this session.
+    ///
+    /// Answered with [`ServerEvent::BackgroundWorkList`].
+    #[serde(rename = "list_background_work")]
+    ListBackgroundWork { id: u64 },
+
     /// Move the currently executing tool to background
     #[serde(rename = "background_tool")]
     BackgroundTool { id: u64 },

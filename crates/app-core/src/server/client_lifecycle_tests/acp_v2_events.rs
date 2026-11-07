@@ -9,14 +9,14 @@ use tokio::sync::Semaphore;
 
 const DEADLINE: Duration = Duration::from_secs(30);
 
-struct Step {
+pub(super) struct Step {
     gate: Option<Arc<Semaphore>>,
     events: Vec<StreamEvent>,
 }
 
 /// Answers each provider call with the next scripted step, then plain text.
 #[derive(Clone, Default)]
-struct V2Provider {
+pub(super) struct V2Provider {
     script: Arc<std::sync::Mutex<VecDeque<Step>>>,
 }
 
@@ -30,7 +30,7 @@ fn text_events(text: &str) -> Vec<StreamEvent> {
 }
 
 impl V2Provider {
-    fn push(&self, step: Step) {
+    pub(super) fn push(&self, step: Step) {
         self.script
             .lock()
             .expect("the script is never poisoned")
@@ -38,7 +38,7 @@ impl V2Provider {
     }
 
     /// The next call answers `text` only once the returned gate gets a permit.
-    fn push_gated_text(&self, text: &str) -> Arc<Semaphore> {
+    pub(super) fn push_gated_text(&self, text: &str) -> Arc<Semaphore> {
         let gate = Arc::new(Semaphore::new(0));
         self.push(Step {
             gate: Some(Arc::clone(&gate)),
@@ -47,7 +47,7 @@ impl V2Provider {
         gate
     }
 
-    fn push_tool_call(&self, id: &str, name: &str, input: Value) {
+    pub(super) fn push_tool_call(&self, id: &str, name: &str, input: Value) {
         self.push(Step {
             gate: None,
             events: vec![
@@ -98,14 +98,14 @@ impl Provider for V2Provider {
     }
 }
 
-struct Conn {
+pub(super) struct Conn {
     task: tokio::task::JoinHandle<Result<()>>,
     reader: BufReader<crate::transport::ReadHalf>,
     writer: crate::transport::WriteHalf,
 }
 
 impl Conn {
-    async fn send(&mut self, value: Value) {
+    pub(super) async fn send(&mut self, value: Value) {
         let mut line = value.to_string();
         line.push('\n');
         self.writer
@@ -125,7 +125,7 @@ impl Conn {
         (line, event)
     }
 
-    async fn until(&mut self, stop: impl Fn(&ServerEvent) -> bool) -> Vec<ServerEvent> {
+    pub(super) async fn until(&mut self, stop: impl Fn(&ServerEvent) -> bool) -> Vec<ServerEvent> {
         self.until_raw(stop).await.into_iter().map(|(_, event)| event).collect()
     }
 
@@ -142,10 +142,10 @@ impl Conn {
     }
 }
 
-struct Harness {
+pub(super) struct Harness {
     _env: IsolatedReloadRecoveryEnv,
     work: tempfile::TempDir,
-    provider: V2Provider,
+    pub(super) provider: V2Provider,
     sessions: SessionAgents,
     global_session_id: Arc<RwLock<String>>,
     client_count: Arc<RwLock<usize>>,
@@ -171,7 +171,7 @@ struct Harness {
 }
 
 impl Harness {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let env = IsolatedReloadRecoveryEnv::new();
         crate::config::invalidate_config_cache();
@@ -248,7 +248,7 @@ impl Harness {
     }
 
     /// A v2 editor connection, attached once its foreground snapshot arrived.
-    async fn connect_v2(&self, target: Option<&str>, permission_requests: bool) -> Conn {
+    pub(super) async fn connect_v2(&self, target: Option<&str>, permission_requests: bool) -> Conn {
         let mut conn = self.connect();
         let mut subscribe = json!({
             "type": "subscribe",
@@ -290,7 +290,7 @@ impl Harness {
         (conn, lines)
     }
 
-    async fn only_session(&self) -> String {
+    pub(super) async fn only_session(&self) -> String {
         let sessions = self.sessions.read().await;
         assert_eq!(sessions.len(), 1, "exactly one session exists");
         sessions.keys().next().expect("a subscribed session").clone()
@@ -306,7 +306,7 @@ impl Harness {
         )
     }
 
-    async fn close(self, conns: Vec<Conn>) {
+    pub(super) async fn close(self, conns: Vec<Conn>) {
         self.sessions.write().await.clear();
         for conn in conns {
             let Conn { task, reader, writer } = conn;
@@ -321,7 +321,7 @@ impl Harness {
     }
 }
 
-fn is_idle(event: &ServerEvent) -> bool {
+pub(super) fn is_idle(event: &ServerEvent) -> bool {
     matches!(
         event,
         ServerEvent::ForegroundState {
@@ -332,7 +332,7 @@ fn is_idle(event: &ServerEvent) -> bool {
     )
 }
 
-fn is_running(event: &ServerEvent) -> bool {
+pub(super) fn is_running(event: &ServerEvent) -> bool {
     matches!(
         event,
         ServerEvent::ForegroundState {
@@ -343,7 +343,7 @@ fn is_running(event: &ServerEvent) -> bool {
     )
 }
 
-fn position(events: &[ServerEvent], what: &str, matches: impl Fn(&ServerEvent) -> bool) -> usize {
+pub(super) fn position(events: &[ServerEvent], what: &str, matches: impl Fn(&ServerEvent) -> bool) -> usize {
     events
         .iter()
         .position(matches)
@@ -361,7 +361,7 @@ fn inserted_id(events: &[ServerEvent], request_id: u64) -> String {
 }
 
 /// (start_message_id, user_content, run_id) of the turn's running state.
-fn running_state(events: &[ServerEvent]) -> (Option<String>, Option<String>, String) {
+pub(super) fn running_state(events: &[ServerEvent]) -> (Option<String>, Option<String>, String) {
     events
         .iter()
         .find_map(|event| match event {

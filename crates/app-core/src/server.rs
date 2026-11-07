@@ -12,12 +12,11 @@ mod client_comm_message;
 mod client_comm_swarms;
 mod client_disconnect_cleanup;
 mod client_lifecycle;
-// The daemon's own Alt+B handler, reachable from the agent-side tests that
-// hold a concurrent group in flight. Test builds only: the request dispatcher
-// stays the sole production caller.
+// Alt+B handler, reachable from the agent-side tests only.
 #[cfg(test)]
-pub(crate) use self::client_lifecycle::move_tool_to_background;
+pub(crate) use self::client_lifecycle_tool_move::move_tool_to_background;
 mod client_lifecycle_logging;
+mod client_lifecycle_tool_move;
 mod client_lightweight_control;
 mod client_session;
 mod client_state;
@@ -70,6 +69,7 @@ mod swarm_labels;
 mod swarm_mutation_state;
 mod swarm_persistence;
 mod swarm_watchdog;
+mod tool_cancel;
 mod util;
 
 pub(super) use self::await_members_state::AwaitMembersRuntime;

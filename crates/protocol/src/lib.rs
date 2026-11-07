@@ -610,6 +610,10 @@ impl Request {
             Request::Message { id, .. } => *id,
             Request::WithdrawMessage { id, .. } => *id,
             Request::Cancel { id } => *id,
+            Request::CancelTurn { id, .. }
+            | Request::CancelToolCall { id, .. }
+            | Request::CancelBackgroundTerminal { id, .. }
+            | Request::ListBackgroundWork { id } => *id,
             Request::BackgroundTool { id } => *id,
             Request::SoftInterrupt { id, .. } => *id,
             Request::CancelSoftInterrupts { id, .. } => *id,
