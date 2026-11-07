@@ -526,6 +526,8 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
         continue-on-error: true
 
       - uses: Swatinem/rust-cache@v2
@@ -897,5 +899,11 @@ jobs:
       # cargo-xwin/ring interop is fixed; native Windows ARM64 smoke covers the
       # release artifact path.
       - name: Check Windows ARM64 target (advisory)
-        continue-on-error: true
-        run: cargo xwin check --locked --target aarch64-pc-windows-msvc --no-default-features --features pdf
+        # Advisory: a failure is recorded in the step summary instead of failing
+        # the step, so the known cargo-xwin/ring breakage does not attach a
+        # failure annotation to every run.
+        shell: bash
+        run: |
+          if ! cargo xwin check --locked --target aarch64-pc-windows-msvc --no-default-features --features pdf; then
+            echo "Advisory Windows ARM64 cross-check failed (cargo-xwin/ring interop); native Windows ARM64 jobs cover the release path." >> "$GITHUB_STEP_SUMMARY"
+          fi

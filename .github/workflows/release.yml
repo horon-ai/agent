@@ -235,6 +235,8 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
         continue-on-error: true
         id: sccache
 
@@ -374,6 +376,8 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
         continue-on-error: true
         id: sccache
 
@@ -485,6 +489,8 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
         continue-on-error: true
         id: sccache
 
