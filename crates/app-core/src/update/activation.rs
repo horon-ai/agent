@@ -148,7 +148,7 @@ mod tests {
         }
         let result: Result<()> = with_rollback(std::slice::from_ref(&link), || {
             std::fs::remove_file(&link)?;
-            std::os::unix::fs::symlink("new", &link)?;
+            horon_agent_platform::fs::symlink_file(Path::new("new"), &link)?;
             bail!("later switch failed");
         });
         assert!(result.is_err());
