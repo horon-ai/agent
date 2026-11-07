@@ -277,11 +277,15 @@ async fn run_bridge_with_deadline(
             None
         }
     };
-    // A stale socket file blocks bind. On Windows there is no file to remove:
-    // the pipe namespace is not the filesystem, and the adapter leaves the
-    // call empty. Safe to unlink here only because we hold the exclusive lock
-    // above, so no live bridge owns the path.
-    horon_agent_platform::ipc::remove_socket(&api_socket);
+    // A stale socket file blocks bind. Only a platform whose listening
+    // endpoints are filesystem nodes has one to remove: on Windows the pipe
+    // namespace is not the filesystem, and probing the pipe would consume one
+    // published instance of a server that is already gone. Unlinking is safe
+    // because a live bridge would have made this process exit above, whatever
+    // the advisory lock answered.
+    if horon_agent_platform::ipc::socket_nodes_can_be_stale() {
+        horon_agent_platform::ipc::remove_socket(&api_socket);
+    }
     if let Some(parent) = api_socket.parent() {
         std::fs::create_dir_all(parent).ok();
     }
