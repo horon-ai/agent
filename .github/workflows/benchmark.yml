@@ -78,10 +78,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: benchmark-${{ github.ref }}
-  cancel-in-progress: false
-
 env:
   HORON_AGENT_CI: "1"
   CARGO_BUILD_RUSTC_WRAPPER: ""
@@ -119,6 +115,11 @@ jobs:
     # rows share the same CPU, disk, and load. The OSes never share a number.
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
+    # One run at a time per branch and OS: a rerun of one OS no longer waits
+    # for the other OSes of an earlier run to finish.
+    concurrency:
+      group: benchmark-${{ github.ref }}-${{ matrix.os }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -168,6 +169,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: benchmark-${{ runner.os }}
+          # Save the dependency build even when a suite fails, so a rerun after
+          # a measurement-script fix does not rebuild every crate from scratch.
+          cache-on-failure: "true"
 
       - name: Select suites
         id: sel

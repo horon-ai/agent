@@ -66,7 +66,9 @@ npm_install_into() {
 
 record_bin() {
   local name="$1" path="$2"
-  if [ -x "$path" ]; then
+  # Git Bash does not mark a `.cmd` shim executable, so on Windows a regular
+  # file is enough; CreateProcess runs `.cmd` and `.exe` either way.
+  if [ -x "$path" ] || { [ "$WINDOWS" = 1 ] && [ -f "$path" ]; }; then
     if [ "$WINDOWS" = 1 ] && have cygpath; then
       path="$(cygpath -m "$path")"
     fi
