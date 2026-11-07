@@ -1,8 +1,9 @@
 name: Benchmark docs
 
 # After a push to `main` passes CI, measure the commit with every benchmark suite
-# and write the result into the generated block of docs/performance/RESULTS.md on
-# both `main` and `dev`.
+# on Linux, macOS and Windows (one job each) and write the result into the
+# generated block of docs/performance/RESULTS.md on both `main` and `dev`, one
+# section per OS.
 #
 # The run is skipped unless the agent code changed since the commit the block
 # last recorded (paths in `CODE_PATHS`), so a docs-only push costs nothing. The
@@ -113,15 +114,18 @@ jobs:
     uses: ./.github/workflows/benchmark.yml
     with:
       ref: ${{ needs.gate.outputs.sha }}
+      os: all
       suites: all
-      # Repository variable BENCHMARK_RUNNER=macos-persistent moves the
-      # measurement to the quieter self-hosted machine.
-      runner: ${{ vars.BENCHMARK_RUNNER || 'ubuntu-24.04' }}
 
   docs:
     name: Write RESULTS.md on main and dev
     needs: [gate, benchmark]
-    if: needs.gate.outputs.run == 'true' && needs.benchmark.result == 'success'
+    # An OS whose job failed still uploads what it measured and is marked as
+    # failed in its section, so one OS never hides the other two. Nothing is
+    # written when the whole benchmark was cancelled or never ran.
+    if: >-
+      !cancelled() && needs.gate.outputs.run == 'true' &&
+      (needs.benchmark.result == 'success' || needs.benchmark.result == 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -129,7 +133,7 @@ jobs:
     env:
       SHA: ${{ needs.gate.outputs.sha }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      RUNNER_LABEL: ${{ vars.BENCHMARK_RUNNER || 'ubuntu-24.04' }}
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -138,7 +142,8 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: benchmark-${{ github.run_id }}
+          # One sub-directory per OS job; bench_docs.py finds each by platform.txt.
+          pattern: benchmark-*-${{ github.run_id }}
           path: ${{ runner.temp }}/bench-results
 
       - name: Commit the measurement to main and dev
@@ -159,7 +164,7 @@ jobs:
               git switch --quiet -C "$branch" "origin/$branch"
               if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "$DOC" \
                   --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
-                  --run-url "$RUN_URL" --runner "$RUNNER_LABEL"; then
+                  --run-url "$RUN_URL"; then
                 echo "::error::$branch: $DOC has no usable bench-auto block"
                 break
               fi
