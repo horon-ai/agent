@@ -125,6 +125,11 @@ pub(crate) fn watch_finalized(
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(BACKGROUND_TAIL_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Ticks that saw a terminal status without a broadcast yet. The status
+        // file is written before the transition is published, so reporting on
+        // the first sighting would race the real event and could report a
+        // completion while the cancel path is still publishing a cancellation.
+        let mut terminal_ticks = 0u8;
         loop {
             tokio::select! {
                 received = receiver.recv() => match received {
@@ -150,7 +155,10 @@ pub(crate) fn watch_finalized(
                             if let Some(tail) = tail.as_mut() {
                                 tail.drain().await;
                             }
-                            report_final_status(&session_id, &call_id, &status, false).await;
+                            // Same rule as the 500 ms check below: the status
+                            // file says whether a cancel ended this task.
+                            let cancelled = status.error.as_deref() == Some(CANCELLED_ERROR);
+                            report_final_status(&session_id, &call_id, &status, cancelled).await;
                             return;
                         }
                     }
@@ -174,12 +182,16 @@ pub(crate) fn watch_finalized(
                         && let Some(status) = crate::background::global().status(&task_id).await
                         && status.status != BackgroundTaskStatus::Running
                     {
-                        let cancelled = status.error.as_deref() == Some(CANCELLED_ERROR);
-                        if let Some(tail) = tail.as_mut() {
-                            tail.drain().await;
+                        if terminal_ticks == 0 {
+                            terminal_ticks = 1;
+                        } else {
+                            let cancelled = status.error.as_deref() == Some(CANCELLED_ERROR);
+                            if let Some(tail) = tail.as_mut() {
+                                tail.drain().await;
+                            }
+                            report_final_status(&session_id, &call_id, &status, cancelled).await;
+                            return;
                         }
-                        report_final_status(&session_id, &call_id, &status, cancelled).await;
-                        return;
                     }
                 }
             }
@@ -318,28 +330,24 @@ pub(super) async fn handle_cancel_background_terminal(
         None => refused(id, "unknown"),
         Some(task) if task.status != BackgroundTaskStatus::Running => refused(id, "final"),
         Some(task) if task.tool_name != "bash" => refused(id, "not_cancellable"),
-        Some(task) => {
-            // Marked before the signal: stopping the process group lets the
-            // task future publish its own "failed" record during the grace
-            // window, and the mark is what makes that earlier record report the
-            // cancellation that caused it.
-            manager.mark_task_cancelled(&task.task_id);
-            match manager.cancel_with_grace(&task.task_id, CANCEL_GRACE).await {
-                Ok(true) => ServerEvent::ToolCallCancelResult {
-                    id,
-                    accepted: true,
-                    reason: None,
-                },
-                Ok(false) => refused(id, "final"),
-                Err(error) => {
-                    crate::logging::warn(&format!(
-                        "SERVER_BACKGROUND_TERMINAL_CANCEL_FAILED id={} session={} call_id={} error={error:#}",
-                        id, session_id, call_id
-                    ));
-                    refused(id, "final")
-                }
+        // A task that finished on its own answers `final` without being marked:
+        // `cancel_with_grace` records the cancellation only once it has taken
+        // the task out of the live map.
+        Some(task) => match manager.cancel_with_grace(&task.task_id, CANCEL_GRACE).await {
+            Ok(true) => ServerEvent::ToolCallCancelResult {
+                id,
+                accepted: true,
+                reason: None,
+            },
+            Ok(false) => refused(id, "final"),
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "SERVER_BACKGROUND_TERMINAL_CANCEL_FAILED id={} session={} call_id={} error={error:#}",
+                    id, session_id, call_id
+                ));
+                refused(id, "final")
             }
-        }
+        },
     };
     let accepted = matches!(answer, ServerEvent::ToolCallCancelResult { accepted: true, .. });
     crate::logging::info(&format!(
