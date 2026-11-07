@@ -82,7 +82,16 @@ impl Disk {
                     self.directory(parent)?;
                 }
                 match horon_agent_platform::fs::create_private_dir(path) {
-                    Ok(()) => {}
+                    // A platform whose create is `create_dir_all` reports success
+                    // for a leaf that already exists as a junction or a symlink,
+                    // and the recursive create above follows an intermediate one.
+                    // The leaf is therefore re-checked: it has to be the private
+                    // directory this call was asked for, not a link elsewhere.
+                    Ok(()) => {
+                        if !horon_agent_platform::fs::is_private_dir(&fs::symlink_metadata(path)?) {
+                            return Err(unsafe_path(path));
+                        }
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                         return self.directory(path);
                     }
