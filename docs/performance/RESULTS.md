@@ -440,6 +440,39 @@ Linux의 차이는 힙이 아니라 실행 파일 상주 페이지입니다. 세
 - **`perf_counters_surface`는 데몬을 띄우지 않습니다.** 이 워크로드가 말하는 것은 "공용 코드에 회귀가 없다"까지이고, 저장 경로나 TLS 경로의 비용은 one-shot 표가 답합니다.
 - **p99는 없습니다.** 표본이 12개 이하라 실행기가 20개 미만을 이유로 거절했습니다.
 
+## `cache-context-session-opt` 계획의 측정
+
+이 계획은 OpenAI 호환 요청에 `prompt_cache_key`와 보존 기간을 싣고(`ee9f46bc`), 압축 꼬리를 회복 대역(기준의 0.8)에 맞추고(`6e7f5052`), 묶음 저장의 로그 동기화를 묶음 끝 한 번으로 합칩니다(`626eebb3`). 기준선 B0는 `6a228fdc`이고 후보는 `dev`의 `aebf8578`입니다. `dev` 끝 `4eca65c3`과 B0의 차이는 CI 워크플로 파일뿐이라 제품 코드는 같습니다. 측정일은 2026-11-07, 기계는 Apple Silicon macOS 26.4와 그 위의 Docker `rust:1-bookworm` 컨테이너입니다.
+
+| 지표 | 환경 | B0 `6a228fdc` | 중간 후보 `b1061fea` | 후보 `aebf8578` | 변화 |
+| --- | --- | --- | --- | --- | --- |
+| one-shot fsync·fdatasync 호출 (중앙값, 7회) | Linux (Docker) | 40 cold / 35 warm | 40 cold / 35 warm | 32 cold / 27 warm | -23% |
+| 그중 fsync / fdatasync (warm) | Linux (Docker) | 12 / 23 | 12 / 23 | 12 / 15 | fdatasync만 -8 |
+| 3건 묶음 저장의 `LogFileSync` | 단위 테스트 관측 (`tests/batch_sync.rs`) | 3 | 3 | 1 | -2 |
+| `save-profile 200` 한 번 저장 (중앙값, 60회 교차) | macOS | 355.96 ms (MAD 92.57) | 해당 없음 | 375.39 ms (MAD 121.04) | +19.43 ms, 잡음 대역 411.75 ms 안 |
+| 구조 성능 게이트 | macOS | 해당 없음 | 해당 없음 | 55개 상한 통과 | 회귀 없음 |
+
+중간 후보는 캐시 키와 압축 변경만 들어간 상태이고 fsync 수가 B0와 같습니다. 그래서 후보의 감소분은 묶음 저장 변경에서만 나옵니다. jcode 기록값(warm 5) 대비 배수는 7.0×에서 5.4×로 줄었습니다.
+
+원본 산출물은 `.hyper/qa/cache-context-session-opt/` 아래(`linux/b0-compare.json`, `linux/mid-compare.json`, `linux/cand-compare.json`, `5-ab-quiet-samples.json`)에 있습니다. `.hyper/`는 무시되므로 이 절이 추적되는 기록입니다.
+
+명령:
+
+```bash
+python3 scripts/perf/bench_compare.py --syscalls --oneshot-runs 7 \
+  --bin horon=/target/release/horon-agent --sessions 1 --turns 1 --json-out compare.json
+HORON_AGENT_HOME=$(mktemp -d) target/release/examples/source_hash_probe save-profile 200
+HORON_AGENT_PERF_COUNTERS=1 python3 scripts/perf/check_structural.py
+cargo test -p horon-agent-session-store --test batch_sync -- --nocapture
+```
+
+### 이 숫자들이 말하지 않는 것
+
+- **저장 시간 A/B는 판정력이 낮습니다.** 측정하는 동안 다른 작업의 cargo 빌드와 테스트가 같은 기계에서 돌았고, 그 작업은 이 계획이 멈출 수 없었습니다. 그래서 B0끼리 잰 대조 값도 33.94 ms 차이가 났고 잡음 대역이 중앙값보다 넓습니다. 이 표는 "큰 회귀는 없다"까지만 말합니다. 저장 비용의 근거는 위의 fsync 수와 `LogFileSync` 관측입니다. 같은 이유로 앞서 잰 20회 표본(B0 중앙값 46~67 ms)과 절대값을 비교하지 않습니다.
+- **macOS 기본 동기화는 `full`(F_FULLFSYNC)입니다.** 묶음당 줄어드는 동기화 한 번이 macOS에서 실제로 몇 ms인지는 부하 없는 기계에서 다시 재야 합니다.
+- **캐시 키의 효과는 여기 없습니다.** 캐시 적중은 모델 회사의 사용량(`cached_tokens`)으로만 보이며, 이 측정은 가짜 모델 서버를 씁니다. 요청 하나당 추가 비용은 이미 만든 시스템 프롬프트와 도구 JSON에 대한 SHA-256 한 번과 도구 배열 직렬화 한 번이고, 따로 재지 않았습니다.
+- **압축 회복 대역은 시간 지표가 아닙니다.** 24k 창의 남기는 꼬리가 10,800에서 3,625 토큰으로 줄고 200k 창은 140,000 / 20,000 그대로라는 것은 단위 테스트로 확인했습니다.
+
 ## 자동 측정: `main` 최신 측정 커밋
 
 `main` 에 올라간 커밋이 CI 와 구조 성능 게이트를 모두 통과하고 직전 측정 이후 에이전트 코드(`src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf`)가 바뀌었으면, `.github/workflows/benchmark-docs.yml` 이 전체 벤치마크 묶음을 돌리고 아래 구간을 `main` 과 `dev` 에서 함께 다시 씁니다. 측정 방법과 묶음별 뜻은 [`BENCHMARK.md`](BENCHMARK.md) 의 "자동 벤치마크와 문서 갱신"에 있습니다.
