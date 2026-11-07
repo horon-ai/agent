@@ -102,22 +102,29 @@ impl BackgroundTaskManager {
     /// Detached tasks belong to a child process rather than to this process's
     /// task map, so they are not listed here; a task whose terminal status is
     /// already on disk is excluded even if the map removal is still pending.
+    ///
+    /// The task map is the authority for "live in this process", so the
+    /// snapshot waits for the lock instead of probing it: the map entry is
+    /// removed only after the terminal status is written, which makes a
+    /// `Running` file for a mapped task mean the task future is still running.
+    /// A best-effort probe that gives up while another writer holds the lock
+    /// would drop exactly those running tasks.
     pub async fn live_tasks_for_session(&self, session_id: &str) -> Vec<TaskStatusFile> {
-        let candidates: Vec<(String, PathBuf)> = {
+        let candidates: Vec<PathBuf> = {
             let tasks = self.tasks.read().await;
             tasks
                 .values()
                 .filter(|task| task.session_id == session_id)
-                .map(|task| (task.task_id.clone(), task.status_path.clone()))
+                .map(|task| task.status_path.clone())
                 .collect()
         };
 
         let mut live = Vec::with_capacity(candidates.len());
-        for (task_id, status_path) in candidates {
+        for status_path in candidates {
             let Some(status) = self.read_status_file(&status_path).await else {
                 continue;
             };
-            if status.status != BackgroundTaskStatus::Running || !self.is_live_task(&task_id) {
+            if status.status != BackgroundTaskStatus::Running {
                 continue;
             }
             live.push(status);
