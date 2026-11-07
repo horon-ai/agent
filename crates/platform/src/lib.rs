@@ -44,10 +44,11 @@ pub fn sync_file(file: &File, mode: SyncMode) -> io::Result<()> {
 /// crash.
 ///
 /// A path that is not a directory is an error on every platform, before any
-/// operating-system call happens. Windows then has nothing left to flush and
-/// returns `Ok(())`.
+/// operating-system call happens. The check follows a symlink, so a home or a
+/// session root that is a link to its directory is flushed through the link as
+/// it always was. Windows then has nothing left to flush and returns `Ok(())`.
 pub fn sync_dir(path: &Path, mode: SyncMode) -> io::Result<()> {
-    if !std::fs::symlink_metadata(path)?.is_dir() {
+    if !std::fs::metadata(path)?.is_dir() {
         return Err(io::Error::new(io::ErrorKind::NotADirectory, "not a directory"));
     }
     Current::sync_dir(path, mode)
