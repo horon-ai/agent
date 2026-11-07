@@ -21,9 +21,14 @@ Measured:
 
 horon is the baseline; every other row shows its multiple of horon.
 
+A second build of horon is a row too: `--bin horon-base=<path>` measures it with
+the same runner right after the candidate, so a before/after pair is produced on
+one machine, one mock server, and one load level instead of two runs.
+
 Usage:
     python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent \
-        --sessions 1 5 10 --turns 3 --json-out out.json --markdown-out out.md
+        --bin horon-base=./baseline/target/release/horon-agent \
+        --sessions 1 10 100 --turns 3 --json-out out.json --markdown-out out.md
 
 Missing tools are listed under "skipped" with a reason and do not fail the run.
 A measurement that fails records null plus an error string instead of a zero.
@@ -1473,8 +1478,14 @@ class ToolRunner:
     name = ""
     label = ""
 
-    def __init__(self, binary: str):
+    def __init__(self, binary: str, name: str | None = None, label: str | None = None):
         self.binary = binary
+        # A second build of the same agent is its own row, so name and label are
+        # per instance rather than per class.
+        if name:
+            self.name = name
+        if label:
+            self.label = label
 
     def oneshot(
         self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
@@ -1639,6 +1650,44 @@ RUNNERS = {
 }
 
 
+def horon_kind(name: str) -> bool:
+    """True for the candidate row and for extra builds of the same agent.
+
+    `--bin horon-base=<path>` adds a second horon build as its own row; it uses
+    the horon harness because it is the same program at another commit.
+    """
+    return name == "horon" or name.startswith("horon-")
+
+
+def runner_class(name: str):
+    """Runner for one row, or None for an unknown tool name."""
+    if name in RUNNERS:
+        return RUNNERS[name]
+    return HoronRunner if horon_kind(name) else None
+
+
+def row_label(name: str) -> str | None:
+    """Extra horon builds are labelled by row name; other rows keep theirs."""
+    return name if name != "horon" and horon_kind(name) else None
+
+
+def order_tools(tools: list[str], overrides: dict[str, str]) -> list[str]:
+    """Place every extra horon build immediately after the candidate row.
+
+    A baseline build is measured right after the candidate so both rows come
+    from one machine, one mock server, and one load level. Running the two
+    builds in separate workflow runs would compare two runs instead. The user's
+    order for the other tools is kept as given.
+    """
+    ordered = list(tools)
+    if "horon" not in ordered:
+        ordered.insert(0, "horon")
+    extra = sorted(name for name in overrides if horon_kind(name) and name not in ordered)
+    index = ordered.index("horon") + 1
+    ordered[index:index] = extra
+    return ordered
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -1760,22 +1809,20 @@ def summarize_oneshot(runs: list[dict]) -> dict:
     }
 
 
-def measure_tool(
-    runner: ToolRunner,
-    mock: MockServer,
-    session_counts: list[int],
-    turns: int,
-    version_runs: int,
-    oneshot_runs: int,
-    timeout: float,
-    syscalls: bool = False,
-) -> dict:
-    root = bc.short_temp_dir(f"hcmp-{runner.name[:6]}-")
+def _prepare_measure_root(runner: ToolRunner) -> tuple[str, str]:
+    # Unix socket paths are length-limited, so the prefix stays short and the
+    # row name contributes only its alphanumerics.
+    tag = "".join(ch for ch in runner.name if ch.isalnum())[:8]
+    root = bc.short_temp_dir(f"hcmp-{tag}-")
     cwd = os.path.join(root, "ws")
     os.makedirs(cwd, exist_ok=True)
     with open(os.path.join(cwd, "sample.txt"), "w", encoding="utf-8") as fh:
         fh.write("benchmark fixture\n")
-    result: dict = {
+    return root, cwd
+
+
+def _empty_result(runner: ToolRunner) -> dict:
+    return {
         "name": runner.name,
         "label": runner.label,
         "binary": runner.binary,
@@ -1786,60 +1833,127 @@ def measure_tool(
         "install_size_bytes": None,
         "error": None,
     }
+
+
+def _measure_metadata(runner: ToolRunner, result: dict, root: str, version_runs: int) -> None:
+    """Version string, `--version` timing, and install size for one row."""
+    version_env = runner.env_for_version(root)
+    result["version"] = tool_version(runner.binary, version_env)
+    result["version_ms"] = measure_version([runner.binary, "--version"], version_env, version_runs)
+    size, size_error = measure_install_size(runner.binary)
+    result["install_size_bytes"] = size
+    if size_error:
+        result["install_size_error"] = size_error
+
+
+def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd: str,
+                           count: int, turns: int, timeout: float) -> dict:
+    """One session-count sample for one row."""
+    mock.reset()
     try:
-        version_env = runner.env_for_version(root)
-        result["version"] = tool_version(runner.binary, version_env)
-        result["version_ms"] = measure_version([runner.binary, "--version"], version_env, version_runs)
-        size, size_error = measure_install_size(runner.binary)
-        result["install_size_bytes"] = size
-        if size_error:
-            result["install_size_error"] = size_error
-
-        runs: list[dict] = []
-        for _ in range(max(1, oneshot_runs)):
-            try:
-                runs.append(runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls))
-            except Exception as exc:  # noqa: BLE001
-                runs.append({"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
-                             "error": str(exc)[:300]})
-        result["oneshot"] = summarize_oneshot(runs)
-
-        points = []
-        for count in session_counts:
-            mock.reset()
-            try:
-                measurement = runner.sessions(mock, root, cwd, count, turns, timeout)
-            except Exception as exc:  # noqa: BLE001
-                points.append({"sessions": count, "error": str(exc)[:300], "samples": [], "errors": [str(exc)[:300]]})
-                continue
-            idle = next((s for s in measurement["samples"] if s["phase"] == "idle"), None)
-            post = measurement["samples"][-1] if measurement["samples"] else None
-            errors = list(measurement.get("errors") or [])
-            created = measurement.get("sessions_created")
-            if created is not None and created != count:
-                errors.append(f"only {created}/{count} sessions were created")
-            points.append(
-                {
-                    "sessions": count,
-                    "idle_rss_bytes": (idle or {}).get("rss_bytes"),
-                    "idle_pss_bytes": (idle or {}).get("pss_bytes"),
-                    "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
-                    "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
-                    "thread_count": (post or {}).get("thread_count"),
-                    "fd_count": (post or {}).get("fd_count"),
-                    "counter_error": measurement.get("counter_error"),
-                    "samples": measurement["samples"],
-                    "turn_ms": measurement.get("turn_ms"),
-                    "errors": errors,
-                    "sessions_created": created,
-                }
-            )
-        result["sessions_memory"] = summarize_sessions(points, turns)
+        measurement = runner.sessions(mock, root, cwd, count, turns, timeout)
     except Exception as exc:  # noqa: BLE001
-        result["error"] = str(exc)[:400]
+        return {"sessions": count, "error": str(exc)[:300], "samples": [], "errors": [str(exc)[:300]]}
+    idle = next((s for s in measurement["samples"] if s["phase"] == "idle"), None)
+    post = measurement["samples"][-1] if measurement["samples"] else None
+    errors = list(measurement.get("errors") or [])
+    created = measurement.get("sessions_created")
+    if created is not None and created != count:
+        errors.append(f"only {created}/{count} sessions were created")
+    return {
+        "sessions": count,
+        "idle_rss_bytes": (idle or {}).get("rss_bytes"),
+        "idle_pss_bytes": (idle or {}).get("pss_bytes"),
+        "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
+        "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
+        "thread_count": (post or {}).get("thread_count"),
+        "fd_count": (post or {}).get("fd_count"),
+        "counter_error": measurement.get("counter_error"),
+        "samples": measurement["samples"],
+        "turn_ms": measurement.get("turn_ms"),
+        "errors": errors,
+        "sessions_created": created,
+    }
+
+
+def row_groups(runners: list[ToolRunner]) -> list[list[ToolRunner]]:
+    """Measurement groups: every horon build together, then one row each.
+
+    A before/after pair has to share one machine, one mock server, and one load
+    level, so all horon builds are measured as one interleaved group. A single
+    horon build is the same code path with a group of one, and a competitor is
+    never interleaved with anything because it is a separate tool.
+    """
+    horon_rows = [runner for runner in runners if horon_kind(runner.name)]
+    other_rows = [runner for runner in runners if not horon_kind(runner.name)]
+    return ([horon_rows] if horon_rows else []) + [[runner] for runner in other_rows]
+
+
+def measure_tools(
+    runners: list[ToolRunner],
+    mock: MockServer,
+    session_counts: list[int],
+    turns: int,
+    version_runs: int,
+    oneshot_runs: int,
+    timeout: float,
+    syscalls: bool = False,
+) -> list[dict]:
+    """Measure one or more rows, alternating them phase by phase.
+
+    A single row is the plain case. Two horon builds pass together: every
+    one-shot repeat and every session count visits both rows before moving on,
+    so a load change on the shared runner lands on both sides of the pair
+    instead of on whichever row ran second.
+    """
+    results = [_empty_result(runner) for runner in runners]
+    roots: dict[str, tuple[str, str]] = {}
+    try:
+        for runner, result in zip(runners, results):
+            try:
+                root, cwd = _prepare_measure_root(runner)
+                roots[runner.name] = (root, cwd)
+                _measure_metadata(runner, result, root, version_runs)
+            except Exception as exc:  # noqa: BLE001
+                # A row that cannot even be set up records the reason and is
+                # left out of the phases below, instead of failing the run.
+                result["error"] = str(exc)[:400]
+
+        oneshot_runs_by_row: list[list[dict]] = [[] for _ in runners]
+        for _ in range(max(1, oneshot_runs)):
+            for index, runner in enumerate(runners):
+                if results[index]["error"]:
+                    continue
+                root, cwd = roots[runner.name]
+                try:
+                    oneshot_runs_by_row[index].append(
+                        runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    oneshot_runs_by_row[index].append(
+                        {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
+                         "error": str(exc)[:300]}
+                    )
+        for index, result in enumerate(results):
+            if not result["error"]:
+                result["oneshot"] = summarize_oneshot(oneshot_runs_by_row[index])
+
+        points_by_row: list[list[dict]] = [[] for _ in runners]
+        for count in session_counts:
+            for index, runner in enumerate(runners):
+                if results[index]["error"]:
+                    continue
+                root, cwd = roots[runner.name]
+                points_by_row[index].append(
+                    _measure_session_point(runner, mock, root, cwd, count, turns, timeout)
+                )
+        for index, result in enumerate(results):
+            if not result["error"]:
+                result["sessions_memory"] = summarize_sessions(points_by_row[index], turns)
     finally:
-        shutil.rmtree(root, ignore_errors=True)
-    return result
+        for root, _cwd in roots.values():
+            shutil.rmtree(root, ignore_errors=True)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -1886,6 +2000,16 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
         f"Baseline: **horon**."
     )
     lines.append("")
+    horon_rows = [result["label"] for result in results if horon_kind(result["name"])]
+    if len(horon_rows) > 1:
+        lines.append(
+            "Extra horon builds (" + ", ".join(f"`{label}`" for label in horon_rows[1:]) + ") "
+            "were measured in this same job, alternating with `horon` phase by phase, so the "
+            "ratio between them is a same-machine before/after rather than two runs. `horon` is "
+            "still the 1.0× baseline, so an extra build reading \"more\" than 1.0× took more time "
+            "or memory than the candidate."
+        )
+        lines.append("")
 
     skipped = report.get("skipped") or []
     if skipped:
@@ -2040,43 +2164,53 @@ def main(argv: list[str] | None = None) -> int:
 
     if "horon" not in args.tools:
         args.tools = ["horon"] + list(args.tools)
+    args.tools = order_tools(args.tools, overrides)
 
+    runners: list[ToolRunner] = []
+    for name in args.tools:
+        runner_cls = runner_class(name)
+        if runner_cls is None:
+            skipped.append({"name": name, "reason": "unknown tool"})
+            continue
+        binary = resolve_bin(name, overrides.get(name), os.environ)
+        if not binary:
+            skipped.append({"name": name, "reason": "binary not found (pass --bin name=path)"})
+            continue
+        runners.append(runner_cls(binary, name=name, label=row_label(name)))
+
+    by_name: dict[str, dict] = {}
     mock = MockServer().start()
     try:
-        for name in args.tools:
-            runner_cls = RUNNERS.get(name)
-            if runner_cls is None:
-                skipped.append({"name": name, "reason": "unknown tool"})
-                continue
-            binary = resolve_bin(name, overrides.get(name), os.environ)
-            if not binary:
-                skipped.append({"name": name, "reason": "binary not found (pass --bin name=path)"})
-                continue
-            runner = runner_cls(binary)
-            bc.eprint(f"[bench_compare] measuring {name} ({binary})")
-            results.append(
-                measure_tool(
-                    runner,
-                    mock,
-                    args.sessions,
-                    args.turns,
-                    args.version_runs,
-                    args.oneshot_runs,
-                    args.timeout,
-                    syscalls=syscalls,
-                )
-            )
-            bc.eprint(f"[bench_compare] finished {name}")
+        for group in row_groups(runners):
+            names = ", ".join(runner.name for runner in group)
+            bc.eprint(f"[bench_compare] measuring {names}")
+            for result in measure_tools(
+                group,
+                mock,
+                args.sessions,
+                args.turns,
+                args.version_runs,
+                args.oneshot_runs,
+                args.timeout,
+                syscalls=syscalls,
+            ):
+                by_name[result["name"]] = result
+            bc.eprint(f"[bench_compare] finished {names}")
     finally:
         mock.stop()
+    results = [by_name[runner.name] for runner in runners if runner.name in by_name]
 
     report = bc.build_report(SUITE, results, skipped, started_at)
     report["parameters"] = {
         "sessions": args.sessions,
         "turns": args.turns,
         "version_runs": args.version_runs,
+        "oneshot_runs": args.oneshot_runs,
         "timeout_s": args.timeout,
         "syscalls": syscalls,
+        # Which rows this report contains and where each binary came from, so a
+        # before/after pair can be traced back to its two commits.
+        "rows": [{"name": result["name"], "binary": result["binary"]} for result in results],
     }
     markdown = render_markdown(report, args.sessions, args.turns)
     if args.json_out:
