@@ -84,10 +84,9 @@ def build_sessions(home: Path, count: int, events: int, seed: int, generator) ->
 def resume_once(socket_path: str, session_id: str, cwd: str, chunk: int, deadline: float) -> dict:
     """Connect, subscribe to `session_id`, and time the `history` frame."""
     started = time.perf_counter()
-    stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    stream.settimeout(deadline)
+    stream = None
     try:
-        stream.connect(socket_path)
+        stream = common.ipc_connect(socket_path, timeout=deadline, connect_timeout=deadline)
         request = json.dumps(
             {
                 "type": "subscribe",
@@ -137,7 +136,8 @@ def resume_once(socket_path: str, session_id: str, cwd: str, chunk: int, deadlin
     except OSError as error:
         return {"session": session_id, "history_ms": None, "error": "%s: %s" % (type(error).__name__, error)}
     finally:
-        stream.close()
+        if stream is not None:
+            stream.close()
 
 
 def storm(socket_path: str, session_ids: list[str], cwd: str, chunk: int, deadline: float) -> dict:
@@ -196,7 +196,7 @@ def start_daemon(binary: str, root: Path, repo: Path, log_path: Path) -> tuple[s
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
+        **common.new_group_kwargs(),
     )
     log.close()
     return process, socket_path, env["HORON_AGENT_HOME"]
