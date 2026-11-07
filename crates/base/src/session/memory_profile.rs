@@ -21,6 +21,8 @@ pub(super) struct ContentBlockMemoryStats {
     pub(super) tool_result_bytes: usize,
     pub(super) image_blocks: usize,
     pub(super) image_data_bytes: usize,
+    pub(super) audio_blocks: usize,
+    pub(super) audio_data_bytes: usize,
     pub(super) openai_compaction_blocks: usize,
     pub(super) openai_compaction_bytes: usize,
     pub(super) large_block_count: usize,
@@ -44,6 +46,8 @@ impl ContentBlockMemoryStats {
         self.tool_result_bytes += other.tool_result_bytes;
         self.image_blocks += other.image_blocks;
         self.image_data_bytes += other.image_data_bytes;
+        self.audio_blocks += other.audio_blocks;
+        self.audio_data_bytes += other.audio_data_bytes;
         self.openai_compaction_blocks += other.openai_compaction_blocks;
         self.openai_compaction_bytes += other.openai_compaction_bytes;
         self.large_block_count += other.large_block_count;
@@ -116,6 +120,11 @@ impl ContentBlockMemoryStats {
                 self.image_data_bytes += data.len();
                 self.record_bytes(data.len());
             }
+            ContentBlock::Audio { data, .. } => {
+                self.audio_blocks += 1;
+                self.audio_data_bytes += data.len();
+                self.record_bytes(data.len());
+            }
             ContentBlock::OpenAICompaction { encrypted_content, .. } => {
                 self.openai_compaction_blocks += 1;
                 self.openai_compaction_bytes += encrypted_content.len();
@@ -139,6 +148,7 @@ impl ContentBlockMemoryStats {
             + self.reasoning_bytes
             + self.tool_result_bytes
             + self.image_data_bytes
+            + self.audio_data_bytes
             + self.openai_compaction_bytes
     }
 
@@ -155,6 +165,8 @@ impl ContentBlockMemoryStats {
             "tool_result_bytes": self.tool_result_bytes,
             "image_blocks": self.image_blocks,
             "image_data_bytes": self.image_data_bytes,
+            "audio_blocks": self.audio_blocks,
+            "audio_data_bytes": self.audio_data_bytes,
             "openai_compaction_blocks": self.openai_compaction_blocks,
             "openai_compaction_bytes": self.openai_compaction_bytes,
             "large_block_count": self.large_block_count,

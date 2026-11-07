@@ -13,7 +13,7 @@ fn is_user_prompt(message: &StoredMessage) -> bool {
             ContentBlock::Text { text, .. } => {
                 !text.trim().is_empty() && super::parse_attached_image_label(text).is_none()
             }
-            ContentBlock::Image { .. } => true,
+            ContentBlock::Image { .. } | ContentBlock::Audio { .. } => true,
             _ => false,
         })
         // Tool-result rows can include synthetic text and images. They are a

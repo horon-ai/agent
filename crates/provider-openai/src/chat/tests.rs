@@ -368,6 +368,33 @@ fn user_images_become_chat_image_parts() {
     assert_eq!(content[1]["text"], json!("look"));
 }
 
+#[test]
+fn user_audio_becomes_input_audio_parts() {
+    let mut message = Message::user("listen");
+    message.content.insert(
+        0,
+        ContentBlock::Audio {
+            format: "wav".to_string(),
+            data: "AAAA".to_string(),
+        },
+    );
+    let messages = vec![message];
+
+    let chat = build_chat_completions_request("m", &messages, &[], "", None);
+    let content = &chat["messages"][0]["content"];
+    assert_eq!(
+        content[0],
+        json!({ "type": "input_audio", "input_audio": { "data": "AAAA", "format": "wav" } })
+    );
+    assert_eq!(content[1], json!({ "type": "text", "text": "listen" }));
+
+    let responses = crate::request::build_responses_input(&messages);
+    assert_eq!(
+        responses[0]["content"][0],
+        json!({ "type": "input_audio", "input_audio": { "data": "AAAA", "format": "wav" } })
+    );
+}
+
 // ---------------------------------------------------------------------------
 // (b) tools -> chat tools[].function
 

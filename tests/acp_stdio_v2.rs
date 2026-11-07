@@ -7,14 +7,14 @@
 //! profile and a provider profile pointed at the scripted upstream) and drives the
 //! shipped `horon-agent acp` binary over stdio through the mock client in its
 //! v2 mode. The client validates every frame it reads against the vendored
-//! `schema-v2.0.0-alpha.10.json` as it arrives, and each test re-validates
+//! `schema-v2.0.0-alpha.13.json` as it arrives, and each test re-validates
 //! every frame of the connection in both directions at the end and asserts
 //! zero violations. Every wait is for an exact frame with a bounded timeout.
 //!
 //! Two kinds of frame are accounted for by name rather than validated:
 //! requests this suite writes on purpose with params the schema refuses (the
 //! v1-only methods on a v2 connection, a `null` id, an `sse` MCP server), and
-//! the agent's `id: null` error answer to the `null`-id probe. The alpha.10
+//! the agent's `id: null` error answer to the `null`-id probe. The alpha.13
 //! `Error` response branch documents `null` as the id "only when the request's
 //! id could not be determined, such as for a parse error or an invalid
 //! request", but its `anyOf` lists only the integer and string forms, so the
@@ -280,7 +280,7 @@ impl Conn {
     }
 
     /// The agent's answer to the `id: null` probe. The reader refuses it
-    /// (alpha.10's `RequestId` has no `null` form), so the refusal is checked
+    /// (alpha.13's `RequestId` has no `null` form), so the refusal is checked
     /// to be about `/id` and nothing else, and the error object is returned.
     fn read_null_id_error(&mut self) -> Value {
         let end = Instant::now() + WAIT;

@@ -378,3 +378,166 @@ fn tool_input_optional_id_preserves_legacy_wire_format() -> Result<()> {
     );
     Ok(())
 }
+use crate::wire::acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
+
+/// Encode, check the wire tag and the named fields, then decode and re-encode.
+fn assert_v2_event_roundtrip(event: ServerEvent, wire_type: &str, fields: &[&str]) -> Result<serde_json::Value> {
+    let wire = serde_json::to_value(&event)?;
+    assert_eq!(wire["type"], wire_type, "wire tag must be stable: {wire}");
+    for field in fields {
+        assert!(wire.get(*field).is_some(), "missing field {field}: {wire}");
+    }
+    let decoded = parse_event_json(&serde_json::to_string(&event)?)?;
+    assert_eq!(serde_json::to_value(&decoded)?, wire, "round trip must preserve {wire_type}");
+    Ok(wire)
+}
+
+#[test]
+fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
+    let cancel = assert_v2_event_roundtrip(
+        ServerEvent::ToolCallCancelResult {
+            id: 7,
+            accepted: true,
+            reason: None,
+        },
+        "tool_call_cancel_result",
+        &["id", "accepted"],
+    )?;
+    assert_eq!(cancel["accepted"], true);
+    assert!(cancel.get("reason").is_none(), "an accepted cancel names no reason: {cancel}");
+
+    let refused = assert_v2_event_roundtrip(
+        ServerEvent::ToolCallCancelResult {
+            id: 8,
+            accepted: false,
+            reason: Some("final".into()),
+        },
+        "tool_call_cancel_result",
+        &["id", "accepted", "reason"],
+    )?;
+    assert_eq!(refused["reason"], "final");
+
+    assert_v2_event_roundtrip(
+        ServerEvent::ToolCancelled { id: "call-1".into() },
+        "tool_cancelled",
+        &["id"],
+    )?;
+
+    let delta = assert_v2_event_roundtrip(
+        ServerEvent::ToolOutputDelta {
+            id: "call-1".into(),
+            data: "AAEC".into(),
+        },
+        "tool_output_delta",
+        &["id", "data"],
+    )?;
+    assert_eq!(delta["data"], "AAEC");
+
+    // A newtype variant must flatten its payload into the same object as the
+    // tag, because the enum is internally tagged.
+    let started = assert_v2_event_roundtrip(
+        ServerEvent::BackgroundWork(BackgroundWorkEvent {
+            call_id: "call-1".into(),
+            task_id: "task-1".into(),
+            kind: "terminal".into(),
+            state: "started".into(),
+            command: Some("sleep 30".into()),
+            cwd: Some("/tmp".into()),
+            exit_code: None,
+            signal: None,
+            output: None,
+        }),
+        "background_work",
+        &["call_id", "task_id", "kind", "state", "command", "cwd"],
+    )?;
+    assert_eq!(started["state"], "started");
+    assert!(started.get("output").is_none(), "started work carries no output: {started}");
+    assert!(started.get("exit_code").is_none(), "started work carries no exit code: {started}");
+
+    let finished = assert_v2_event_roundtrip(
+        ServerEvent::BackgroundWork(BackgroundWorkEvent {
+            call_id: "call-1".into(),
+            task_id: "task-1".into(),
+            kind: "terminal".into(),
+            state: "completed".into(),
+            command: Some("true".into()),
+            cwd: None,
+            exit_code: Some(0),
+            signal: None,
+            output: Some("b2s=".into()),
+        }),
+        "background_work",
+        &["call_id", "task_id", "kind", "state", "exit_code", "output"],
+    )?;
+    assert_eq!(finished["exit_code"], 0);
+    assert_eq!(finished["output"], "b2s=");
+
+    let list = assert_v2_event_roundtrip(
+        ServerEvent::BackgroundWorkList {
+            id: 9,
+            items: vec![
+                BackgroundWorkItem {
+                    call_id: "call-1".into(),
+                    task_id: "task-1".into(),
+                    kind: "terminal".into(),
+                    command: Some("sleep 30".into()),
+                    cwd: Some("/tmp".into()),
+                    output: Some("YQ==".into()),
+                },
+                BackgroundWorkItem {
+                    call_id: "call-2".into(),
+                    task_id: "task-2".into(),
+                    kind: "tool_call".into(),
+                    command: None,
+                    cwd: None,
+                    output: None,
+                },
+            ],
+        },
+        "background_work_list",
+        &["id", "items"],
+    )?;
+    assert_eq!(list["items"][0]["call_id"], "call-1");
+    assert_eq!(list["items"][0]["output"], "YQ==");
+    assert!(list["items"][1].get("command").is_none(), "absent command stays off the wire");
+
+    assert_v2_event_roundtrip(
+        ServerEvent::AskToolCall {
+            request_id: "req-1".into(),
+            tool_call_id: "call-q".into(),
+        },
+        "ask_tool_call",
+        &["request_id", "tool_call_id"],
+    )?;
+
+    let stored = assert_v2_event_roundtrip(
+        ServerEvent::SoftInterruptStored {
+            message_id: "row-1".into(),
+            content: "stop".into(),
+        },
+        "soft_interrupt_stored",
+        &["message_id", "content"],
+    )?;
+    assert_eq!(stored["content"], "stop");
+    Ok(())
+}
+
+#[test]
+fn existing_frames_keep_their_exact_bytes() -> Result<()> {
+    for frame in [
+        r#"{"type":"cancel","id":1}"#,
+        r#"{"type":"ask_requested","request_id":"a","questions":[]}"#,
+        r#"{"type":"message","id":1,"content":"x"}"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(frame)?;
+        let reencoded = if value["type"] == "cancel" || value["type"] == "message" {
+            let request: Request = serde_json::from_str(frame)?;
+            serde_json::to_string(&request)?
+        } else {
+            let event: ServerEvent = serde_json::from_str(frame)?;
+            serde_json::to_string(&event)?
+        };
+        assert_eq!(reencoded, frame, "existing frame must serialize back byte for byte");
+    }
+    Ok(())
+}

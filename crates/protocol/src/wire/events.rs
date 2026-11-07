@@ -2,35 +2,7 @@
 
 use super::*;
 
-/// One entry of the agent's plan, as a client renders it in a plan update.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlanEntryWire {
-    pub content: String,
-    /// `"high"` | `"medium"` | `"low"`.
-    pub priority: String,
-    /// `"pending"` | `"in_progress"` | `"completed"`.
-    pub status: String,
-}
-
-/// One file change a tool call made, as a client renders it in a tool call
-/// update.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileDiffWire {
-    pub path: String,
-    #[serde(default)]
-    pub old_text: Option<String>,
-    pub new_text: String,
-    /// The tool removed this file rather than writing it.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub deleted: bool,
-    /// Previous path when the tool moved or renamed the file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub old_path: Option<String>,
-    /// The tool created this file: it did not exist before the call, even when
-    /// the tool read its prior text as empty.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub created: bool,
-}
+pub use super::event_types::{FileDiffWire, PlanEntryWire};
 
 /// Server event sent to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1095,139 +1067,53 @@ pub enum ServerEvent {
         /// Serialized `SessionSnapshot`, the same shape the API reply carries.
         snapshot: serde_json::Value,
     },
-}
 
-#[cfg(test)]
-mod approval_failover_wire_tests {
-    use super::*;
+    /// Answer to `cancel_tool_call` and `cancel_background_terminal`.
+    ///
+    /// `accepted` says a cancellation was started for the named call. A
+    /// refusal names why in `reason`: `unknown` for a call this session does
+    /// not know, `final` for one that already ended, and `not_cancellable` for
+    /// one that exists but cannot be cancelled through this request.
+    #[serde(rename = "tool_call_cancel_result")]
+    ToolCallCancelResult {
+        id: u64,
+        accepted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 
-    fn encode(event: &ServerEvent) -> serde_json::Value {
-        serde_json::to_value(event).expect("server event serializes")
-    }
+    /// The tool call named by `id` was cancelled and its work stopped.
+    ///
+    /// Its `tool_done` still follows with the cancellation text the model sees,
+    /// so a client treats this as the reason that result reports an error.
+    #[serde(rename = "tool_cancelled")]
+    ToolCancelled { id: String },
 
-    fn assert_roundtrip(event: ServerEvent, wire_type: &str) -> serde_json::Value {
-        let wire = encode(&event);
-        assert_eq!(wire["type"], wire_type, "wire tag must be stable: {wire}");
-        let decoded: ServerEvent = serde_json::from_value(wire.clone()).expect("server event deserializes");
-        assert_eq!(encode(&decoded), wire, "round trip must preserve the payload");
-        wire
-    }
+    /// Output a running tool call produced, as base64 of the original bytes.
+    #[serde(rename = "tool_output_delta")]
+    ToolOutputDelta { id: String, data: String },
 
-    #[test]
-    fn approval_and_failover_events_roundtrip_with_their_wire_tags() {
-        let pending = assert_roundtrip(
-            ServerEvent::ApprovalPending {
-                request_id: "req-1".into(),
-                action: "bash".into(),
-                expires_at: Some("2026-10-17T12:00:00Z".into()),
-            },
-            "approval_pending",
-        );
-        assert_eq!(pending["expires_at"], "2026-10-17T12:00:00Z");
+    /// One background work item changed state.
+    #[serde(rename = "background_work")]
+    BackgroundWork(BackgroundWorkEvent),
 
-        let resolved = assert_roundtrip(
-            ServerEvent::ApprovalResolved {
-                request_id: "req-1".into(),
-                approved: true,
-                via: "file".into(),
-                resolved_by: "runner".into(),
-            },
-            "approval_resolved",
-        );
-        assert_eq!(resolved["approved"], true);
-        assert_eq!(resolved["resolved_by"], "runner");
+    /// Answer to `list_background_work`: the work still running in this
+    /// session.
+    #[serde(rename = "background_work_list")]
+    BackgroundWorkList { id: u64, items: Vec<BackgroundWorkItem> },
 
-        let switched = assert_roundtrip(
-            ServerEvent::FailoverSwitched {
-                chain_id: "chain-1".into(),
-                from: "openai".into(),
-                to: "anthropic".into(),
-                reason: "rate_limit".into(),
-                attempt: 2,
-                max: 3,
-            },
-            "failover_switched",
-        );
-        assert_eq!(switched["attempt"], 2);
-        assert_eq!(switched["max"], 3);
+    /// The `ask` tool call named by `tool_call_id` sent this `request_id`.
+    ///
+    /// Sent immediately before [`ServerEvent::AskRequested`] for the same
+    /// request, so a client can tie the questions to the tool call that asked
+    /// them.
+    #[serde(rename = "ask_tool_call")]
+    AskToolCall { request_id: String, tool_call_id: String },
 
-        let needs_human = assert_roundtrip(
-            ServerEvent::RunNeedsHumanResume {
-                request_id: Some("req-1".into()),
-                session_id: "sess-1".into(),
-                reason: "unverifiable".into(),
-                attempts: 2,
-            },
-            "run_needs_human_resume",
-        );
-        assert_eq!(needs_human["session_id"], "sess-1");
-        assert_eq!(needs_human["attempts"], 2);
-
-        // A stop with no permission request behind it (an exhausted failover
-        // budget) must say so on the wire instead of naming a chain id that
-        // resolves to nothing.
-        let needs_human_without_request = assert_roundtrip(
-            ServerEvent::RunNeedsHumanResume {
-                request_id: None,
-                session_id: "sess-1".into(),
-                reason: "failover_budget_exhausted".into(),
-                attempts: 3,
-            },
-            "run_needs_human_resume",
-        );
-        assert_eq!(needs_human_without_request["request_id"], serde_json::Value::Null);
-    }
-
-    #[test]
-    fn approval_and_failover_acks_roundtrip_with_their_wire_tags() {
-        assert_roundtrip(
-            ServerEvent::ApprovalAck {
-                request_id: "req-1".into(),
-            },
-            "approval_ack",
-        );
-        let ack = assert_roundtrip(
-            ServerEvent::FailoverAck {
-                chain_id: "chain-1".into(),
-                from: "openai".into(),
-                to: "anthropic".into(),
-                attempt: 1,
-            },
-            "failover_ack",
-        );
-        assert_eq!(ack["chain_id"], "chain-1");
-        assert_eq!(ack["attempt"], 1);
-    }
-
-    #[test]
-    fn approval_pending_omits_absent_expiry_and_accepts_unknown_fields() {
-        let event = ServerEvent::ApprovalPending {
-            request_id: "req-1".into(),
-            action: "bash".into(),
-            expires_at: None,
-        };
-        let wire = encode(&event);
-        assert!(
-            wire.get("expires_at").is_none(),
-            "absent expiry stays off the wire: {wire}"
-        );
-
-        // Forward compatibility: a newer peer may add fields, and an explicit
-        // null expiry must read as "unknown" rather than fail the parse.
-        let decoded: ServerEvent = serde_json::from_str(
-            r#"{"type":"approval_pending","request_id":"req-2","action":"write","expires_at":null,"future_field":{"nested":1}}"#,
-        )
-        .expect("unknown fields must not break parsing");
-        let ServerEvent::ApprovalPending {
-            request_id,
-            action,
-            expires_at,
-        } = decoded
-        else {
-            panic!("wrong event type");
-        };
-        assert_eq!(request_id, "req-2");
-        assert_eq!(action, "write");
-        assert_eq!(expires_at, None);
-    }
+    /// A soft interrupt was stored as a conversation row while a turn ran.
+    ///
+    /// `message_id` is the id the stored row has, which replay reports for the
+    /// same message, so a client can add the row it did not see arrive.
+    #[serde(rename = "soft_interrupt_stored")]
+    SoftInterruptStored { message_id: String, content: String },
 }

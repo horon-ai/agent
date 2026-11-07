@@ -1,5 +1,5 @@
 //! IS-6 to IS-11 for the v2 session update mapper. Every frame a test maps is
-//! validated against the vendored `schema-v2.0.0-alpha.10` and checked for v1-only
+//! validated against the vendored `schema-v2.0.0-alpha.13` and checked for v1-only
 //! shapes.
 
 use super::mapper::{V2Mapper, config_option_update};

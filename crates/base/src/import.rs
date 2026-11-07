@@ -409,19 +409,6 @@ fn convert_content_blocks(content: &ClaudeCodeContent) -> Vec<ContentBlock> {
     }
 }
 
-fn truncate_import_text(text: String, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text;
-    }
-    let suffix = format!("\n[... {} bytes omitted from imported history]", text.len() - max_bytes);
-    let prefix_budget = max_bytes.saturating_sub(suffix.len());
-    format!(
-        "{}{}",
-        horon_agent_core::util::truncate_str(&text, prefix_budget),
-        suffix
-    )
-}
-
 fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (String, bool) {
     let mut parts = Vec::new();
     let mut changed = blocks.len() != 1;
@@ -464,11 +451,15 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
                 changed = true;
                 format!("[Imported image: {media_type}]")
             }
+            ContentBlock::Audio { format, .. } => {
+                changed = true;
+                format!("[Imported audio: {format}]")
+            }
         };
 
         let text = if truncate_blocks {
             let original_len = text.len();
-            let truncated = truncate_import_text(text, IMPORT_BLOCK_MAX_TEXT_BYTES);
+            let truncated = text::truncate_import_text(text, IMPORT_BLOCK_MAX_TEXT_BYTES);
             changed |= truncated.len() < original_len;
             truncated
         } else {
@@ -482,7 +473,7 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
     let combined = parts.join("\n\n");
     if truncate_blocks {
         let original_len = combined.len();
-        let combined = truncate_import_text(combined, IMPORT_BLOCK_MAX_TEXT_BYTES);
+        let combined = text::truncate_import_text(combined, IMPORT_BLOCK_MAX_TEXT_BYTES);
         changed |= combined.len() < original_len;
         (combined, changed)
     } else {
@@ -1412,6 +1403,8 @@ pub fn import_cursor_session_from_path(session_path: &Path, session_id_hint: Opt
     session.title = title.or_else(|| Some(format!("Cursor session {}", session_id)));
     finalize_imported_session(session, created_at, Some(created_at))
 }
+
+mod text;
 
 #[cfg(test)]
 #[path = "import_tests.rs"]
