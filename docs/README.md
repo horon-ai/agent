@@ -35,7 +35,7 @@
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.md`](safety/SECURITY.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
-| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | 구조 게이트, A/B 측정과 `fsync` 호출 수 |
+| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정 |
 | | [`RESULTS.md`](performance/RESULTS.md) | 측정 결과와 한계 |
 | | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산과 사고 대응 절차 |
 | `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |
