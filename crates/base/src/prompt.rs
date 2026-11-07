@@ -205,10 +205,6 @@ pub fn append_swarm_effort_directive(split: &mut SplitSystemPrompt, effort: Opti
     }
     split.dynamic_part.push_str(directive);
 }
-/// Mission-continuation template (embedded at compile time). Consumed by the
-/// `mission` module in the upper `horon-agent-app-core` layer; the asset lives here
-/// alongside the other prompt templates.
-pub const MISSION_CONTINUATION_TEMPLATE: &str = include_str!("prompt/mission_continuation.md");
 /// Split system prompt for efficient caching
 /// Static content is cached, dynamic content is not
 #[derive(Debug, Clone, Default)]

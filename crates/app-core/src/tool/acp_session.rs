@@ -97,7 +97,6 @@ pub(crate) fn clear(session_id: &str, token: u64) {
 }
 
 /// Whether an ACP connection owns this session right now.
-#[cfg(test)]
 pub(crate) fn is_acp(session_id: &str) -> bool {
     lock().contains_key(session_id)
 }

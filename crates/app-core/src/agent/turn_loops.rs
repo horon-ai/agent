@@ -2295,7 +2295,7 @@ impl Agent {
                 println!();
             }
 
-            // Check for soft interrupts (e.g. Telegram messages) and inject them for the next turn
+            // Check for soft interrupts (e.g. client replies) and inject them for the next turn
             let injected = self
                 .inject_soft_interrupts(super::interrupts::reborrow_in_flight(&mut in_flight))
                 .await;

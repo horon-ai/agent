@@ -2136,9 +2136,9 @@ impl Agent {
                     ));
                     tool_handle.abort();
 
-                    // For selfdev reload and wait-like tools, the interruption is expected:
-                    // selfdev initiated the restart, while wait-like tools should be resumed
-                    // after reload rather than treated as failed work.
+                    // For wait-like tools, the interruption is expected: the reload
+                    // interrupted the wait, so it should be resumed after reload
+                    // rather than treated as failed work.
                     let (interrupted_msg, is_error) = reload_interrupted_tool_result(tc, tool_elapsed.as_secs_f64());
 
                     let _ = event_tx.send(ServerEvent::ToolDone {

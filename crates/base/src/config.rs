@@ -8,10 +8,9 @@ pub use horon_agent_config_types::{
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
     ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
-    NamedProviderModelConfig, NamedProviderType, NotificationsConfig, PowerConfig, ProviderConfig,
-    ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery,
-    StreamRuleRepeat, SwarmSpawnMode, SwarmStripLayout, TerminalConfig, TurnRecoveryMode, UpdateChannel,
-    WebSearchConfig, WebSearchEngine,
+    NamedProviderModelConfig, NamedProviderType, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
+    SecretsMode, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode,
+    TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 use serde::{Deserialize, Serialize};
@@ -32,7 +31,6 @@ const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
 fn custom_websearch_config_toml_roundtrip() {
     let input = r#"
 engine = "custom"
-prefer_native = false
 fallback_engines = []
 [custom]
 endpoint = "https://search.example.test/api"
@@ -50,7 +48,6 @@ snippet_pointer = "/summary"
 "#;
     let config: WebSearchConfig = toml::from_str(input).unwrap();
     assert_eq!(config.engine, WebSearchEngine::Custom);
-    assert!(!config.native_enabled());
     assert_eq!(WebSearchEngine::parse("custom"), Some(WebSearchEngine::Custom));
     assert!(WebSearchEngine::Custom.is_local());
     assert_eq!(WebSearchEngine::Custom.as_str(), "custom");
@@ -89,7 +86,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_BING_API_KEY",
     "HORON_AGENT_BING_API_KEY_ENV",
     "HORON_AGENT_BING_MARKET",
-    "HORON_AGENT_COPILOT_PREMIUM",
     "HORON_AGENT_GEMINI_FORCE_OAUTH",
     "GOOGLE_CLOUD_PROJECT",
     "GOOGLE_CLOUD_PROJECT_ID",
@@ -100,7 +96,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_DIFF_LINE_WRAP",
     "HORON_AGENT_DISABLE_BASE_TOOLS",
     "HORON_AGENT_DISABLED_TOOLS",
-    "HORON_AGENT_FOCUS_HOOK",
     "HORON_AGENT_GATEWAY_BIND_ADDR",
     "HORON_AGENT_GATEWAY_ENABLED",
     "HORON_AGENT_GATEWAY_PORT",
@@ -145,7 +140,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_SAME_PROVIDER_ACCOUNT_FAILOVER",
     "HORON_AGENT_SEARXNG_URL",
     "HORON_AGENT_SHOW_THINKING",
-    "HORON_AGENT_SPAWN_HOOK",
     "HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS",
     "HORON_AGENT_MAX_RETRIES",
     "HORON_AGENT_MCP_TOOLS",
@@ -163,17 +157,12 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_SWARM_MODEL",
     "HORON_AGENT_SWARM_MAX_CONCURRENT_AGENTS",
     "HORON_AGENT_SWARM_SPAWN_MODE",
-    "HORON_AGENT_SWARM_STRIP_LAYOUT",
     "HORON_AGENT_TOOL_PROFILE",
     "HORON_AGENT_TOOLS",
     "HORON_AGENT_TRUSTED_EXTERNAL_AUTH_SOURCES",
     "HORON_AGENT_UPDATE_CHANNEL",
     "HORON_AGENT_WEBSEARCH_ENGINE",
     "HORON_AGENT_WEBSEARCH_FALLBACK_ENGINES",
-    "HORON_AGENT_WEBSEARCH_NATIVE_ALLOWED_DOMAINS",
-    "HORON_AGENT_WEBSEARCH_NATIVE_BLOCKED_DOMAINS",
-    "HORON_AGENT_WEBSEARCH_NATIVE_MAX_USES",
-    "HORON_AGENT_WEBSEARCH_PREFER_NATIVE",
     "XDG_CONFIG_HOME",
 ];
 
@@ -207,9 +196,8 @@ struct ConfigCache {
 
 static CONFIG_CACHE: LazyLock<RwLock<ConfigCache>> = LazyLock::new(|| {
     let config = leak_config(Config::load());
-    // Fingerprint after the load: applying env overrides may set env vars
-    // (e.g. copilot_premium -> HORON_AGENT_COPILOT_PREMIUM), and fingerprinting
-    // first would guarantee a spurious full reload on the next check.
+    // Fingerprint after the load so it describes the state the loaded config
+    // was resolved from.
     let fingerprint = ConfigCacheFingerprint::current();
     // Seed the global context-limit cache from named provider configs on first
     // load so every codepath (TUI info widget, compaction budget, model
@@ -272,10 +260,8 @@ pub fn config() -> &'static Config {
                 &fingerprint,
             ));
             cache.config = leak_config(Config::load());
-            // Loading applies env overrides that can themselves set env vars
-            // (e.g. copilot_premium propagates config -> HORON_AGENT_COPILOT_PREMIUM).
-            // Re-fingerprint after the load so those self-inflicted env changes
-            // don't trigger a guaranteed second reload on the next check.
+            // Re-fingerprint after the load so the next check compares against
+            // the state this reload actually observed.
             cache.fingerprint = ConfigCacheFingerprint::current();
             cache.force_reload = false;
         }
@@ -472,9 +458,6 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stream_rules: Vec<StreamRuleConfig>,
 
-    /// Terminal window/pane spawning configuration
-    pub terminal: TerminalConfig,
-
     /// Lifecycle hooks (external commands at turn/session/tool boundaries)
     pub hooks: HooksConfig,
 
@@ -483,9 +466,6 @@ pub struct Config {
 
     /// Safety / notification configuration
     pub safety: SafetyConfig,
-
-    /// Desktop notifications for interactive sessions (e.g. turn completion)
-    pub notifications: NotificationsConfig,
 
     /// WebSocket gateway configuration (for iOS/web clients)
     pub gateway: GatewayConfig,
@@ -679,10 +659,13 @@ pub const IRC_TOOL: &str = "irc";
 
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
-/// Out-of-scope tools (swarm/batch/bg, memory, selfdev, compile_remote,
-/// session and conversation search, feedback, todo/goal)
-/// stay off because the profile is an allow-list. `skill_manage` is the
-/// registry key for the skill tool
+/// Every other registered built-in stays off because the profile is an
+/// allow-list: `swarm`, `batch`, `bg`, `memory`, `irc`, `schedule`, `todo`,
+/// `goal`, `horon_agent_docs`, `invalid`, `session_search`,
+/// `conversation_search`, the opt-in `codemode`/`redo`/`hashline_edit`/
+/// `ast_grep`/`ast_edit`/`lsp`/`context_notes`/`toolbox`/
+/// `integration_tools` surface, and the per-session `request_permission` and
+/// `submit_plan` tools. `skill_manage` is the registry key for the skill tool
 /// (`resolve_tool_name` maps `skill` to it); `mcp` is the wildcard covering
 /// every `mcp__server__tool` plus the fixed `mcp_search`/`mcp_call` surface.
 ///
@@ -1237,8 +1220,8 @@ mod channel_compat;
 mod tool_tiers;
 
 #[cfg(test)]
-#[path = "config_color_tests.rs"]
-mod color_tests;
+#[path = "config_display_tests.rs"]
+mod display_tests;
 
 /// Whether integration discovery settings carry no information beyond the shipped
 /// default, so `[sponsors]` can be left out of written config files.

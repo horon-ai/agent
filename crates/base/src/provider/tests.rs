@@ -4,11 +4,6 @@ mod tool_tiers;
 
 fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
     let _guard = crate::storage::lock_test_env();
-    // Concrete provider runtimes live downstream (horon-agent-provider-*-runtime),
-    // so base tests register shared stubs through the same composition-root
-    // registry the binary uses. Registration is idempotent (last write wins),
-    // and per-test overrides can re-register a different stub.
-    register_test_external_runtimes();
     let temp = tempfile::tempdir().expect("tempdir");
     let prev_home = std::env::var_os("HORON_AGENT_HOME");
     let mut profile_env_keys = vec![
@@ -268,13 +263,6 @@ impl Provider for StubExternalRuntime {
 
 fn test_openai_runtime() -> Arc<StubExternalRuntime> {
     Arc::new(StubExternalRuntime::openai())
-}
-
-/// Register the shared external-runtime stubs for every downstream provider
-/// slot base can hot-initialize. Called by `with_clean_provider_test_env` so
-/// hot-init/startup tests find a runtime the way the real binary does.
-fn register_test_external_runtimes() {
-    external::register_external_provider(external::OPENAI_RUNTIME, || test_openai_runtime() as Arc<dyn Provider>);
 }
 
 include!("tests/model_resolution.rs");

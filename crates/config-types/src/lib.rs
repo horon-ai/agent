@@ -643,19 +643,9 @@ pub struct AgentsConfig {
     pub swarm_root_effort: Option<String>,
     /// Root reasoning effort in deep swarm mode. Unset or invalid means `max`.
     pub swarm_deep_root_effort: Option<String>,
-    /// Default terminal mode for swarm-created agents.
+    /// Default spawn mode for swarm-created agents. Every mode runs the worker
+    /// in this process; the value only names how the coordinator reports it.
     pub swarm_spawn_mode: SwarmSpawnMode,
-    /// Maximum percentage (1-90) of the chat column height the inline swarm
-    /// gallery band may occupy. Leave unset to use the built-in default (40%).
-    /// Lower values keep more of the transcript visible; set near the minimum
-    /// to effectively collapse the gallery to a thin strip.
-    pub swarm_gallery_max_pct: Option<u8>,
-    /// Layout of the inline swarm strip above the status line:
-    /// `"vertical"` (default) lists one agent per row (session icon + status
-    /// glyph + task), capped to a few lines; `"horizontal"` packs all agents
-    /// as chips on a single row.
-    #[serde(default)]
-    pub swarm_strip_layout: SwarmStripLayout,
     /// Jev Decisions provider for recall: auto, openrouter, typesafe, aimlapi,
     /// or horon-agent. Auto uses a provider-specific BYOK credential before HoronAgent.
     #[serde(default = "default_memory_jev_provider")]
@@ -760,8 +750,6 @@ impl Default for AgentsConfig {
             swarm_root_effort: None,
             swarm_deep_root_effort: None,
             swarm_spawn_mode: SwarmSpawnMode::default(),
-            swarm_gallery_max_pct: None,
-            swarm_strip_layout: SwarmStripLayout::default(),
             memory_jev_provider: default_memory_jev_provider(),
             memory_jev_threshold: default_memory_jev_threshold(),
             memory_model: None,
@@ -799,25 +787,30 @@ impl AgentsConfig {
 }
 
 /// How swarm-created agents should be spawned.
+///
+/// Every mode runs the worker in this process; the agent never opens a terminal
+/// window. The mode names how the coordinator surfaces the worker.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SwarmSpawnMode {
-    /// Open a visible/headed terminal window. This was the historical default.
-    Visible,
-    /// Create the worker in-process without opening a terminal window.
+    /// Create the worker in-process.
     Headless,
-    /// Like headless (no terminal window), but the coordinator renders a live
-    /// inline gallery viewport of each worker's streaming output.
+    /// Like headless, but the coordinator renders a live inline gallery
+    /// viewport of each worker's streaming output.
     #[default]
+    #[serde(alias = "visible", alias = "headed")]
     Inline,
-    /// Try visible first and fall back to headless if a window cannot be opened.
+    /// Historical "try visible first" mode. Resolves to the configured mode,
+    /// which is in-process, so an old config keeps working unchanged.
     Auto,
 }
 
 impl SwarmSpawnMode {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "visible" | "headed" => Some(Self::Visible),
+            // `visible`/`headed` selected the removed terminal-window spawn;
+            // they now mean in-process like `inline`.
+            "visible" | "headed" => Some(Self::Inline),
             "headless" => Some(Self::Headless),
             "inline" => Some(Self::Inline),
             "auto" => Some(Self::Auto),
@@ -828,87 +821,11 @@ impl SwarmSpawnMode {
     /// Canonical lowercase string for this mode (matches the config/env values).
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Visible => "visible",
             Self::Headless => "headless",
             Self::Inline => "inline",
             Self::Auto => "auto",
         }
     }
-}
-
-/// Layout of the inline swarm strip shown above the status line.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum SwarmStripLayout {
-    /// One agent per row: session icon + status glyph + task label, capped to
-    /// a few lines with a `+N more` overflow marker.
-    #[default]
-    Vertical,
-    /// All agents packed as chips on a single row (the historical layout).
-    Horizontal,
-}
-
-impl SwarmStripLayout {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "vertical" | "list" => Some(Self::Vertical),
-            "horizontal" | "chips" | "strip" => Some(Self::Horizontal),
-            _ => None,
-        }
-    }
-
-    /// Canonical lowercase string for this layout (matches config/env values).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Vertical => "vertical",
-            Self::Horizontal => "horizontal",
-        }
-    }
-}
-
-/// Terminal window/pane spawning configuration.
-///
-/// Without a `spawn_hook`, Unix clients inside tmux are opened in a right-side
-/// pane by the built-in launcher. `HORON_AGENT_TERMINAL` explicitly selects a terminal
-/// emulator instead.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct TerminalConfig {
-    /// External command that takes over headed session spawns (new terminal
-    /// windows for swarm agents, resume-in-new-terminal, self-dev, restarts).
-    ///
-    /// When set, horon-agent runs `<spawn_hook> <horon-agent-binary> <args...>` instead of
-    /// opening a terminal emulator itself, with `HORON_AGENT_SPAWN_*` metadata env
-    /// vars describing the spawn (kind, session id, title, cwd, full command).
-    /// This lets multiplexers and wrappers (tmux, kitty remote, zellij, herd
-    /// runners, window managers) decide where and how the session appears.
-    ///
-    /// Example: `spawn_hook = "tmux new-window"` opens each headed spawn as a
-    /// tmux window in the current server. If the hook fails to launch, horon-agent
-    /// falls back to its built-in terminal detection.
-    ///
-    /// Env override: `HORON_AGENT_SPAWN_HOOK` (set empty to disable a config hook).
-    pub spawn_hook: Option<String>,
-    /// External command used to focus/raise an existing session window.
-    ///
-    /// When set, horon-agent runs the hook (instead of wmctrl/xdotool) whenever it
-    /// wants to bring a session's window to the foreground, with
-    /// `HORON_AGENT_FOCUS_SESSION_ID` and `HORON_AGENT_FOCUS_TITLE` env vars. Pair this
-    /// with `spawn_hook` so wrappers that own placement (tmux, kitty remote,
-    /// herd) also own focus (e.g. `tmux select-window`, Wayland compositor
-    /// IPC like `niri msg`).
-    ///
-    /// Env override: `HORON_AGENT_FOCUS_HOOK` (set empty to disable a config hook).
-    pub focus_hook: Option<String>,
-    /// Terminal used by in-app session spawns on macOS.
-    ///
-    /// One of: `ghostty`, `iterm2`, `wezterm`, `warp`, `alacritty`, `vscode`,
-    /// `terminal` (Apple Terminal). When set, this is the source of truth for
-    /// which terminal horon-agent launches into and is preferred over the legacy
-    /// `~/.horon-agent/preferred_terminal.json` file.
-    ///
-    /// macOS only; ignored on other platforms.
-    pub preferred: Option<String>,
 }
 
 /// Lifecycle hooks: external commands horon-agent runs at well-defined points.
@@ -1053,20 +970,20 @@ pub struct AutoReviewConfig {
     pub model: Option<String>,
 }
 
-/// Integration discovery configuration (legacy `[sponsors]` section name).
+/// Integration discovery configuration (the `[sponsors]` section).
 ///
 /// Integration discovery makes third-party developer tools discoverable to
-/// the agent via a `discover_tools` tool backed by a hosted directory. Some
-/// providers may share revenue with HoronAgent when a referred user becomes a
-/// customer, but partnership status never influences recommendations.
-/// See <https://horon-agent.sh/discovery-tools>.
+/// the agent via the `integration_tools` tool backed by a hosted directory.
+/// Some providers may share revenue with HoronAgent when a referred user
+/// becomes a customer, but partnership status never influences
+/// recommendations. See <https://horon-agent.sh/discovery-tools>.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SponsorsConfig {
     /// Enable integration discovery. Enabled by default; set to false to opt
     /// out. When false, no discovery categories are added to the prompt, the
-    /// `discover_tools` tool is not registered, and horon-agent never contacts the
-    /// discovery endpoint.
+    /// `integration_tools` tool is not registered, and horon-agent never
+    /// contacts the discovery endpoint.
     pub enabled: bool,
     /// Base URL of the discovery endpoint.
     pub endpoint: String,
@@ -1444,9 +1361,6 @@ pub struct ProviderConfig {
     /// Whether horon-agent should automatically try another account on the same provider
     /// before falling back to a different provider.
     pub same_provider_account_failover: bool,
-    /// Copilot premium request mode: "normal", "one", or "zero"
-    /// "zero" means all requests are free (no premium requests consumed)
-    pub copilot_premium: Option<String>,
     /// Pin the `gemini` provider to Code Assist OAuth even when a Gemini
     /// Developer API key (`gemini.env` / `GEMINI_API_KEY`) is present. Without
     /// this an API key silently wins and every turn bills per token on the
@@ -1457,12 +1371,6 @@ pub struct ProviderConfig {
     /// GOOGLE_CLOUD_PROJECT". `GOOGLE_CLOUD_PROJECT` (or its legacy `_ID`
     /// alias) overrides this value. Config values are never exported to env.
     pub gemini_project: Option<String>,
-    /// When set (non-empty), /model only lists routes from these providers.
-    /// Entries match provider labels ("openai", "anthropic", "copilot",
-    /// "openrouter", ...), api methods ("claude-oauth",
-    /// "openai-compatible:myprofile", ...), or openai-compatible profile ids
-    /// ("myprofile"). The active model's routes always stay visible.
-    pub model_picker_providers: Option<Vec<String>>,
     /// Max seconds to wait for streaming data before timing out a request with
     /// no data received. Base budget only: high reasoning efforts scale it up
     /// automatically (see `horon_agent_base::provider::stream_idle_timeout_for_effort`).
@@ -1512,10 +1420,8 @@ impl Default for ProviderConfig {
             preserve_reasoning_context: true,
             cross_provider_failover: CrossProviderFailoverMode::Countdown,
             same_provider_account_failover: true,
-            copilot_premium: None,
             gemini_force_oauth: false,
             gemini_project: None,
-            model_picker_providers: None,
             stream_idle_timeout_secs: 180,
             max_retries: 8,
             retry_backoff_cap_secs: 30,
@@ -1627,45 +1533,6 @@ impl Default for AmbientConfig {
             approval_timeout_secs: default_approval_timeout_secs(),
             approval_default_on_timeout: default_approval_default_on_timeout(),
             approval_for_clientless_runs: false,
-        }
-    }
-}
-
-/// Desktop notification configuration for interactive sessions.
-///
-/// Unlike `[safety]` (ambient-mode ntfy/email/channel notifications), this
-/// section controls lightweight local desktop notifications for the normal
-/// interactive TUI, e.g. "agent finished a long turn".
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct NotificationsConfig {
-    /// Send a desktop notification when an agent turn completes (default: true).
-    /// Notifications fire only for long turns (see thresholds below) and, by
-    /// default, only while the terminal window is unfocused.
-    pub turn_complete: bool,
-    /// Minimum turn duration, in seconds, before a completed turn notifies
-    /// (default: 120).
-    pub turn_complete_min_secs: u64,
-    /// Lower duration threshold, in seconds, used when the session has todos
-    /// recorded, since todos indicate longer task-style work (default: 30).
-    pub turn_complete_todo_min_secs: u64,
-    /// Only notify while the terminal window is unfocused (default: true).
-    /// Requires a terminal that reports focus events (most modern terminals).
-    pub turn_complete_only_when_unfocused: bool,
-    /// macOS Notification Center sound name played on turn completion
-    /// (e.g. "Glass", "Ping", "Hero"). Empty string disables the sound.
-    /// Ignored on non-macOS platforms. Default: "Glass".
-    pub turn_complete_sound: String,
-}
-
-impl Default for NotificationsConfig {
-    fn default() -> Self {
-        Self {
-            turn_complete: true,
-            turn_complete_min_secs: 120,
-            turn_complete_todo_min_secs: 30,
-            turn_complete_only_when_unfocused: true,
-            turn_complete_sound: "Glass".to_string(),
         }
     }
 }

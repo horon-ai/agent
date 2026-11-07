@@ -206,36 +206,3 @@ async fn set_model_does_not_wait_for_busy_agent_lock() {
         }) if model == "test-model-b" && provider_name == "test-effort"
     ));
 }
-
-#[tokio::test]
-async fn set_service_tier_does_not_wait_for_busy_agent_lock() {
-    let _guard = crate::storage::lock_test_env();
-    let _runtime = IsolatedRuntimeDir::new();
-
-    let (provider, agent, client_event_tx, mut client_event_rx) = test_agent("session_busy_set_service_tier").await;
-    let busy_agent_lock = agent.lock().await;
-
-    timeout(
-        Duration::from_millis(100),
-        handle_set_service_tier(9, "priority".to_string(), &agent, &client_event_tx),
-    )
-    .await
-    .expect("service tier changes must not wait for a busy agent mutex");
-
-    assert!(client_event_rx.try_recv().is_err());
-
-    drop(busy_agent_lock);
-
-    let event = timeout(Duration::from_secs(1), client_event_rx.recv())
-        .await
-        .expect("deferred service tier change should finish after agent is idle");
-    assert_eq!(provider.service_tier().as_deref(), Some("priority"));
-    assert!(matches!(
-        event,
-        Some(ServerEvent::ServiceTierChanged {
-            id: 9,
-            service_tier: Some(service_tier),
-            error: None,
-        }) if service_tier == "priority"
-    ));
-}

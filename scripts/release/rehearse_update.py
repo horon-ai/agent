@@ -416,7 +416,7 @@ def headless_check(launcher, env, workspace, home, old, new, server, args) -> in
         log(f"before: {before}")
         started = time.monotonic()
         result = subprocess.run(
-            [str(launcher), "update", "--no-selfdev"],
+            [str(launcher), "update"],
             cwd=workspace,
             env=env,
             stdin=subprocess.DEVNULL,
@@ -538,7 +538,7 @@ def main() -> int:
         return headless_check(launcher, env, workspace, home, old, new, server, args)
 
     extra = [a for a in args.horon_agent_args if a != "--"]
-    cmd = [str(launcher), "--no-selfdev", *extra]
+    cmd = [str(launcher), *extra]
     log("launching: " + " ".join(cmd))
     time.sleep(0.6)
     try:

@@ -202,7 +202,7 @@ ls -lh "$out_dir/$artifact" "$out_dir/$artifact.tar.gz"
 if [[ -n "$git_hash" ]]; then
   # `version` prints e.g. "version\tv0.61.2 (268913473)", so take the whole
   # value rather than just the first whitespace-separated field.
-  embedded="$("$out_dir/$artifact.bin" --no-update --no-selfdev version 2>/dev/null \
+  embedded="$("$out_dir/$artifact.bin" --no-update version 2>/dev/null \
     | awk -F'\t' '$1 == "version" { print $2; exit }')"
   if [[ -n "$embedded" && "$embedded" != *"$git_hash"* ]]; then
     echo "error: embedded build metadata reports '$embedded' but the tree is at '$git_hash'" >&2

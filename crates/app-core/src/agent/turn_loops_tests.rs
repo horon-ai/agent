@@ -487,7 +487,7 @@ async fn a_single_multi_paragraph_reminder_reaches_the_request_whole() {
     let provider: Arc<dyn Provider> = Arc::new(TextOnlyProvider);
     let mut agent = Agent::new(provider, Registry::empty());
 
-    let mission = include_str!("../../../base/src/prompt/mission_continuation.md");
+    let mission = include_str!("testdata/mission_reminder.md");
     assert!(
         mission.matches("\n\n").count() >= 10,
         "the fixture is multi-paragraph: {} blank-line breaks",
@@ -708,7 +708,7 @@ fn a_korean_reminder_is_bounded_by_characters_not_bytes() {
 /// reminder had been dropped, with no hint that the instruction was the one.
 #[test]
 fn an_oversized_instruction_survives_a_short_warning_merge() {
-    let mission = include_str!("../../../base/src/prompt/mission_continuation.md");
+    let mission = include_str!("testdata/mission_reminder.md");
     let warning = "<system-reminder>You have repeated the same tool call three times in a row. Vary the call or stop repeating it.</system-reminder>";
     assert!(
         mission.chars().count() > Agent::MAX_REMINDER_SLOT_CHARS,
@@ -766,7 +766,7 @@ async fn the_slot_drops_the_shortest_reminder_first_in_every_shape() {
     let provider: Arc<dyn Provider> = Arc::new(TextOnlyProvider);
     let mut agent = Agent::new(provider, Registry::empty());
 
-    let mission = include_str!("../../../base/src/prompt/mission_continuation.md");
+    let mission = include_str!("testdata/mission_reminder.md");
     let warning = "<system-reminder>You have repeated the same tool call three times in a row. Vary the call or stop repeating it.</system-reminder>";
     let long = |tag: &str| format!("<system-reminder>{}</system-reminder>", tag.repeat(1_500));
     let short = |tag: &str| format!("<system-reminder>{}</system-reminder>", tag.repeat(700));

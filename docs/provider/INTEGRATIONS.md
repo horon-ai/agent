@@ -164,7 +164,6 @@ JSON을 돌려주는 HTTP 엔드포인트는 무엇이든 `~/.horon-agent/config
 ```toml
 [websearch]
 engine = "custom"
-prefer_native = false
 fallback_engines = []
 
 [websearch.custom]
@@ -181,8 +180,10 @@ url_pointer = "/url"
 snippet_pointer = "/snippet"
 ```
 
-`prefer_native`의 기본값은 true다. 지원하는 모델 제공자가 로컬 사용자 정의 엔진을
-제공자 네이티브 검색으로 바꾸지 않게 하려면 **false**로 둔다. 기존 DuckDuckGo와 Bing
+이 빌드에는 로컬 엔진을 프로바이더 네이티브 검색으로 넘기는 설정이 없다.
+`engine = "native"`는 선택 값으로만 남아 있고 검색 순서에서 빠진다. 그래서 그 값에
+`fallback_engines`까지 비어 있으면 기본 DuckDuckGo와 Bing으로 검색한다.
+`engine = "custom"`이면 설정한 엔드포인트로만 검색한다. 기존 DuckDuckGo와 Bing
 기본값은 그대로다. 오류가 나거나 결과가 비면 `fallback_engines`를 순서대로 시도한다.
 기본 대체 엔진은 Bing이다. 비공개 질의를 다른 곳으로 보내면 안 되면 `[]`로 둔다. 사용자
 정의 엔진을 대체 엔진으로 쓸 수도 있다.

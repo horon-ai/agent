@@ -1,5 +1,5 @@
 {
-  "total": 104,
+  "total": 99,
   "tracked_files": {
     "crates/agent-sdk/src/ssh.rs": 8,
     "crates/agent-sdk/src/structured.rs": 1,
@@ -10,7 +10,6 @@
     "crates/app-core/src/agent/turn_loops.rs": 1,
     "crates/app-core/src/server/foreground_state.rs": 2,
     "crates/app-core/src/server/state.rs": 1,
-    "crates/app-core/src/session_launch.rs": 1,
     "crates/app-core/src/tool/activator_clone.rs": 4,
     "crates/app-core/src/tool/artifacts.rs": 1,
     "crates/app-core/src/tool/bash.rs": 2,
@@ -31,8 +30,6 @@
     "crates/base/src/monitor/mod.rs": 4,
     "crates/base/src/secrets.rs": 3,
     "crates/base/src/workspace_trust.rs": 1,
-    "crates/edit-bench/src/generate.rs": 1,
-    "crates/edit-bench/src/run.rs": 2,
     "crates/harness-api-server/src/lib.rs": 1,
     "crates/harness-api-server/src/translate.rs": 3,
     "crates/harness-api/examples/harness_repl.rs": 15,
@@ -42,7 +39,6 @@
     "crates/provider-openai/src/chat/request.rs": 1,
     "crates/provider-openai/src/stream.rs": 3,
     "crates/session-store/examples/schema_roundtrip.rs": 4,
-    "crates/terminal-launch/src/lib.rs": 1,
     "src/cli/acp/util.rs": 1,
     "src/cli/acp/v2/replay.rs": 1
   },

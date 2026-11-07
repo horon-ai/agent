@@ -1,6 +1,6 @@
 //! Last-line secret scanning for model-authored Discovery text.
 //!
-//! `discover_tools` sends a model-written `query` and `reason` to a hosted
+//! `integration_tools` sends a model-written `query` and `reason` to a hosted
 //! endpoint, so the client refuses anything that recognizably contains a
 //! credential or personal identifier. This is a high-confidence backstop, not a
 //! substitute for the schema instruction to summarize the need rather than

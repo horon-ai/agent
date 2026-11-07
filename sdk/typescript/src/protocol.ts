@@ -32,7 +32,6 @@ export type RuntimeCommand =
   | "skills"
   | "context"
   | "info"
-  | "cache"
   | "memory"
   | "swarm"
   | "agents"
@@ -44,7 +43,6 @@ export type RuntimeCommand =
   | "overnight"
   | "productivity"
   | "initiatives"
-  | "premium"
   | "refresh_model_list"
   | "continue"
   | "resume_all"
@@ -54,7 +52,8 @@ export type RuntimeCommand =
   | "judge"
   | "subagent"
   | "auth"
-  | "logout";
+  | "logout"
+  | "plan";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 

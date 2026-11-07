@@ -1,7 +1,7 @@
 [package]
 name = "horon-agent"
 version = "0.98.1"
-description = "Possibly the greatest coding agent ever built — blazing-fast TUI, multi-model, swarm coordination, 30+ tools"
+description = "Headless agent backend for horon: one binary serving a Unix socket, the harness API, and ACP, speaking an OpenAI-compatible model protocol"
 edition = "2024"
 rust-version = "1.99"
 autobins = false
@@ -27,7 +27,6 @@ members = [
     "crates/batch-types",
     "crates/build-support",
     "crates/compaction-core",
-    "crates/edit-bench",
     "crates/config-types",
     "crates/command-risk",
     "crates/core",
@@ -204,44 +203,13 @@ opt-level = 3
 [profile.test.package.compact_str]
 opt-level = 3
 
-# Keep the text-shaping stack optimized even in dev/selfdev/test builds.
-#
-# rustybuzz + ttf-parser + fontdb do glyph shaping and font discovery for the
-# inline transcript rendering path. At opt-level = 0 they are 15-40x slower,
-# which made scrolling real (emoji/markdown-heavy) transcripts janky in
-# dev/selfdev builds even though the production release build was smooth. These
-# are stable third-party crates that almost never recompile, so pinning them to
-# opt-level = 3 costs a one-time compile and is then reused across every
-# iterative horon-agent rebuild. It does NOT slow down recompiles of horon-agent's own
-# crates.
-[profile.dev.package.rustybuzz]
-opt-level = 3
-[profile.selfdev.package.rustybuzz]
-opt-level = 3
-[profile.test.package.rustybuzz]
-opt-level = 3
-
-[profile.dev.package.ttf-parser]
-opt-level = 3
-[profile.selfdev.package.ttf-parser]
-opt-level = 3
-[profile.test.package.ttf-parser]
-opt-level = 3
-
-[profile.dev.package.fontdb]
-opt-level = 3
-[profile.selfdev.package.fontdb]
-opt-level = 3
-[profile.test.package.fontdb]
-opt-level = 3
-
 # Keep the raster image pipeline optimized in dev/selfdev/test builds.
 #
-# Inline transcript images decode (png/zune-jpeg/fdeflate/miniz_oxide), resize
-# (image), and base64-encode (kitty transmit) at draw time; at opt-level 0 a
-# single screenshot costs 100-200ms per decode/resize, which reads as input
-# lag. These are pure pixel crates with no horon-agent logic, so optimizing them
-# does not hurt rebuild times for our own code.
+# Tool-result images decode (png/zune-jpeg/fdeflate/miniz_oxide), resize
+# (image), and base64-encode for provider transport. At opt-level 0 a single
+# image costs 100-200ms per decode/resize, which reads as input lag. These are
+# pure pixel crates with no horon-agent logic, so optimizing them does not hurt
+# rebuild times for our own code.
 [profile.dev.package.image]
 opt-level = 3
 [profile.selfdev.package.image]

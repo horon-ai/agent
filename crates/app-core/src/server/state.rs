@@ -1024,42 +1024,6 @@ pub(super) fn session_event_fanout_sender_with_fallback(
     tx
 }
 
-/// Sender for a turn whose stream belongs to one connection but whose
-/// foreground state belongs to its session, like every other turn's: the guard
-/// such a turn reports through emits `ForegroundState` here, and every v2
-/// attachment of the session must see it even though the turn's other events
-/// (and its terminal `Done`/`Error`, which answer a request id only the requester
-/// knows) stay with `stream_tx`.
-pub(super) fn session_foreground_sender_with_fallback(
-    session_id: String,
-    swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
-    stream_tx: mpsc::UnboundedSender<ServerEvent>,
-) -> mpsc::UnboundedSender<ServerEvent> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerEvent>();
-    register_session_event_sink(&session_id, tx.clone());
-    tokio::spawn(async move {
-        // Settles the stop reason of the turn's closing foreground state and
-        // reports that idle state as forwarded, so the turn owner releases the
-        // agent only after it went out.
-        let mut stop_observer = super::foreground_state::StopObserver::default();
-        while let Some(mut event) = rx.recv().await {
-            stop_observer.apply(&mut event);
-            if !matches!(event, ServerEvent::ForegroundState { .. }) {
-                let _ = stream_tx.send(event);
-                continue;
-            }
-            let idle_run = super::foreground_state::idle_run_id(&event);
-            if fanout_session_event(&swarm_members, &session_id, event.clone()).await == 0 {
-                let _ = stream_tx.send(event);
-            }
-            if let Some(run_id) = idle_run {
-                super::foreground_state::note_forwarded(&run_id);
-            }
-        }
-    });
-    tx
-}
-
 pub(super) fn enqueue_soft_interrupt(
     queue: &SoftInterruptQueue,
     content: String,
@@ -1821,84 +1785,6 @@ mod tests {
             next_client_event(&mut client_rx).await,
             ServerEvent::ApprovalPending { ref request_id, .. } if request_id == "req-between-turns"
         ));
-    }
-
-    /// A turn whose stream answers one connection (`handle_agent_task`) still
-    /// reports its foreground state to every attachment of its session, gives
-    /// it the same stop reason a client-driven turn would, and releases the turn
-    /// owner's lock only after that idle state went out.
-    #[tokio::test]
-    async fn a_single_connection_turn_reports_its_state_to_the_whole_session() {
-        let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("isolated home");
-        let session_id = "state-test-foreground-only-turn".to_string();
-        let (client_tx, mut client_rx) = mpsc::unbounded_channel();
-        let members: Arc<RwLock<HashMap<String, SwarmMember>>> = Arc::new(RwLock::new(HashMap::from([(
-            session_id.clone(),
-            client_member(&session_id, &client_tx),
-        )])));
-        let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
-        let tx = session_foreground_sender_with_fallback(session_id.clone(), Arc::clone(&members), stream_tx);
-
-        // The turn's own stream stays with the connection it answers.
-        tx.send(ServerEvent::TextDelta {
-            text: "only here".to_string(),
-        })
-        .expect("the forwarder reads");
-        assert!(matches!(
-            next_client_event(&mut stream_rx).await,
-            ServerEvent::TextDelta { ref text } if text == "only here"
-        ));
-
-        let mut guard = crate::server::foreground_state::ForegroundGuard::new(&tx);
-        let lock = Arc::new(tokio::sync::Mutex::new(()));
-        let kept = guard.keep_until_forwarded(Arc::clone(&lock).lock_owned().await);
-        let mut report = guard.report(None);
-        report.inserted(&session_id, "message-1");
-        report.started(&tx, &session_id, "run-1", Some("prompt".to_string()));
-        assert!(
-            matches!(
-                next_client_event(&mut client_rx).await,
-                ServerEvent::ForegroundState { running: true, ref run_id, .. } if run_id == "run-1"
-            ),
-            "the session's attachments see the turn start"
-        );
-        assert!(
-            stream_rx.try_recv().is_err(),
-            "foreground state is the session's, not the requester's stream"
-        );
-
-        tx.send(ServerEvent::TurnStopped {
-            reason: crate::protocol::TurnStopReason::ProviderGuardrail,
-            message: "refused".to_string(),
-            provider_stop_reason: None,
-        })
-        .expect("the forwarder reads");
-        guard.finish(true);
-        let closing = tokio::spawn(guard.close(kept));
-        let idle = loop {
-            let event = next_client_event(&mut client_rx).await;
-            if let ServerEvent::ForegroundState {
-                running: false,
-                stop_reason,
-                ..
-            } = event
-            {
-                break stop_reason;
-            }
-        };
-        assert_eq!(
-            idle.as_deref(),
-            Some("refusal"),
-            "the turn's stop is settled like any other turn's"
-        );
-        tokio::time::timeout(Duration::from_secs(5), closing)
-            .await
-            .expect("close returns once the idle state was forwarded")
-            .expect("close does not panic");
-        assert!(
-            lock.try_lock().is_ok(),
-            "the turn releases its lock after the idle state went out"
-        );
     }
 
     #[tokio::test]

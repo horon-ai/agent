@@ -438,9 +438,9 @@ fn swarm_spawn_mode_parses_supported_values() {
         toml::from_str("[agents]\nswarm_spawn_mode = \"auto\"\n").expect("auto swarm_spawn_mode should parse");
     assert_eq!(cfg.agents.swarm_spawn_mode, SwarmSpawnMode::Auto);
 
-    let cfg: Config =
-        toml::from_str("[agents]\nswarm_spawn_mode = \"visible\"\n").expect("visible swarm_spawn_mode should parse");
-    assert_eq!(cfg.agents.swarm_spawn_mode, SwarmSpawnMode::Visible);
+    let cfg: Config = toml::from_str("[agents]\nswarm_spawn_mode = \"visible\"\n")
+        .expect("a legacy visible swarm_spawn_mode must keep parsing");
+    assert_eq!(cfg.agents.swarm_spawn_mode, SwarmSpawnMode::Inline);
 }
 
 #[test]
@@ -451,7 +451,7 @@ fn swarm_spawn_mode_rejects_invalid_values() {
 
 #[test]
 fn swarm_spawn_mode_as_str_round_trips() {
-    for mode in [SwarmSpawnMode::Visible, SwarmSpawnMode::Headless, SwarmSpawnMode::Auto] {
+    for mode in [SwarmSpawnMode::Headless, SwarmSpawnMode::Inline, SwarmSpawnMode::Auto] {
         assert_eq!(SwarmSpawnMode::parse(mode.as_str()), Some(mode));
     }
 }
@@ -530,23 +530,6 @@ fn wake_mode_defaults_parses_and_env_overrides() {
     cfg.apply_env_overrides();
     assert_eq!(cfg.server.wake_mode, crate::config::WakeMode::External);
     restore_env_var("HORON_AGENT_WAKE_MODE", prev);
-}
-
-#[test]
-fn spawn_hook_defaults_to_none_and_parses_from_toml() {
-    assert_eq!(Config::default().terminal.spawn_hook, None);
-
-    let cfg: Config =
-        toml::from_str("[terminal]\nspawn_hook = \"tmux new-window\"\n").expect("spawn_hook should parse");
-    assert_eq!(cfg.terminal.spawn_hook.as_deref(), Some("tmux new-window"));
-}
-
-#[test]
-fn terminal_preferred_defaults_to_none_and_parses_from_toml() {
-    assert_eq!(Config::default().terminal.preferred, None);
-
-    let cfg: Config = toml::from_str("[terminal]\npreferred = \"ghostty\"\n").expect("preferred should parse");
-    assert_eq!(cfg.terminal.preferred.as_deref(), Some("ghostty"));
 }
 
 #[test]
@@ -643,46 +626,6 @@ fn test_env_override_lifecycle_hooks() {
 
     restore_env_var("HORON_AGENT_HOOK_TURN_END", prev_turn_end);
     restore_env_var("HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS", prev_timeout);
-}
-
-#[test]
-fn test_env_override_spawn_hook() {
-    let _guard = crate::storage::lock_test_env();
-    let prev = std::env::var_os("HORON_AGENT_SPAWN_HOOK");
-    crate::env::set_var("HORON_AGENT_SPAWN_HOOK", "kitty @ launch --type=tab --");
-
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.terminal.spawn_hook.as_deref(), Some("kitty @ launch --type=tab --"));
-
-    // Empty env value disables a config-file hook.
-    crate::env::set_var("HORON_AGENT_SPAWN_HOOK", "  ");
-    let mut cfg = Config::default();
-    cfg.terminal.spawn_hook = Some("tmux new-window".to_string());
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.terminal.spawn_hook, None);
-
-    restore_env_var("HORON_AGENT_SPAWN_HOOK", prev);
-}
-
-#[test]
-fn test_env_override_focus_hook() {
-    let _guard = crate::storage::lock_test_env();
-    let prev = std::env::var_os("HORON_AGENT_FOCUS_HOOK");
-    crate::env::set_var("HORON_AGENT_FOCUS_HOOK", "niri-focus-horon-agent");
-
-    let mut cfg = Config::default();
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.terminal.focus_hook.as_deref(), Some("niri-focus-horon-agent"));
-
-    // Empty env value disables a config-file hook.
-    crate::env::set_var("HORON_AGENT_FOCUS_HOOK", "");
-    let mut cfg = Config::default();
-    cfg.terminal.focus_hook = Some("wmctrl -a".to_string());
-    cfg.apply_env_overrides();
-    assert_eq!(cfg.terminal.focus_hook, None);
-
-    restore_env_var("HORON_AGENT_FOCUS_HOOK", prev);
 }
 
 #[test]
@@ -968,9 +911,7 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "batch",
         "bg",
         "memory",
-        "selfdev",
-        "desktop_selfdev",
-        "compile_remote",
+        "irc",
         "schedule",
         "session_search",
         "conversation_search",
