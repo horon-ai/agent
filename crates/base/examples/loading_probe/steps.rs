@@ -2,10 +2,10 @@
 //! `loading_probe_contract` integration test.
 //!
 //! The steps are the real loading and preparation paths, in a fixed order:
-//! skill catalog discovery, a full session load, a startup-stub load, the owned
-//! request snapshot, and a real save. Each step reports its own wall time and
-//! the process counters it moved, so a caller can tell which part of a slow
-//! preparation paid.
+//! skill catalog discovery, repeated request overlays and an MCP config load,
+//! a full session load, a startup-stub load, the owned request snapshot, and a
+//! real save. Each step reports its own wall time and the process counters it
+//! moved, so a caller can tell which part of a slow preparation paid.
 //!
 //! The load path is not read-only, so repeated runs of the same fixture are not
 //! interchangeable samples. Loading the measured session publishes derived
@@ -19,6 +19,7 @@
 //! them. The scratch save is this probe's own session, never the fixture.
 
 use anyhow::{Context, Result, bail, ensure};
+use horon_agent_base::mcp::McpConfig;
 use horon_agent_base::message::{ContentBlock, Message, Role};
 use horon_agent_base::session::Session;
 use horon_agent_base::skill::SkillRegistry;
@@ -29,13 +30,21 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// Fixed step order. Callers assert it instead of trusting the JSON order.
-pub const ORDER: [&str; 5] = [
+pub const ORDER: [&str; 7] = [
     "skill_catalog",
+    "skill_request_overlay",
+    "mcp_config_load",
     "attach_history",
     "resume_ready",
     "provider_dispatch",
     "session_save",
 ];
+
+/// Request boundaries the overlay and MCP stages measure after their warmup.
+pub const REPEAT_REQUESTS: usize = 9;
+
+/// Project workspace the overlay and MCP stages resolve against.
+pub const PROJECT_DIR: &str = "loading_probe_project";
 
 /// Scratch session the save step owns; never the measured fixture.
 pub const SCRATCH_SESSION: &str = "loading_probe_scratch";
@@ -127,6 +136,10 @@ fn delta(before: &Snapshot, after: &Snapshot) -> Value {
         "request_deep_copy_bytes": after.request_deep_copy_bytes.saturating_sub(before.request_deep_copy_bytes),
         "request_messages_copied": after.request_messages_copied.saturating_sub(before.request_messages_copied),
         "skill_dir_reads": after.skill_dir_reads.saturating_sub(before.skill_dir_reads),
+        "skill_file_reads": after.skill_file_reads.saturating_sub(before.skill_file_reads),
+        "skill_bytes_read": after.skill_bytes_read.saturating_sub(before.skill_bytes_read),
+        "mcp_config_reads": after.mcp_config_reads.saturating_sub(before.mcp_config_reads),
+        "mcp_config_bytes": after.mcp_config_bytes.saturating_sub(before.mcp_config_bytes),
         "io_read_bytes": after.io_read_bytes.saturating_sub(before.io_read_bytes),
         "io_write_bytes": after.io_write_bytes.saturating_sub(before.io_write_bytes),
         "hash_bytes_read": after.hash_bytes_read.saturating_sub(before.hash_bytes_read),
@@ -257,6 +270,20 @@ pub fn run(options: &Options) -> Result<Value> {
         );
     }
 
+    let project = home.join(PROJECT_DIR);
+    prepare_overlay_project(&project, options.skill_count)?;
+    // The first request boundary of each new stage is a warmup: whatever the
+    // first call would populate (a freshly scanned overlay, a first parse of a
+    // user config) is paid here, outside the measured stage, so the recorded
+    // delta describes a repeat request rather than a cold start.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build a Tokio runtime for the request overlay stage")?;
+    let overlay_base = SkillRegistry::load_global()?;
+    let overlay_skills = request_overlay(&runtime, &overlay_base, &project);
+    let mcp_servers = McpConfig::load_for_dir(Some(&project)).servers.len();
+
     let mut stages = Stages::new();
     let mut loaded: Option<Session> = None;
 
@@ -269,6 +296,25 @@ pub fn run(options: &Options) -> Result<Value> {
             options.skill_count
         );
         Ok(json!({"skills": loaded, "expected": options.skill_count}))
+    });
+
+    stages.stage("skill_request_overlay", || {
+        for _ in 0..REPEAT_REQUESTS {
+            request_overlay(&runtime, &overlay_base, &project);
+        }
+        Ok(json!({"skills": overlay_skills, "requests": REPEAT_REQUESTS}))
+    });
+
+    stages.stage("mcp_config_load", || {
+        let mut servers = mcp_servers;
+        for _ in 0..REPEAT_REQUESTS {
+            servers = McpConfig::load_for_dir(Some(&project)).servers.len();
+        }
+        ensure!(
+            servers == mcp_servers,
+            "repeat MCP loads returned {servers} servers after the warmup reported {mcp_servers}"
+        );
+        Ok(json!({"servers": servers, "requests": REPEAT_REQUESTS}))
     });
 
     stages.stage("attach_history", || {
@@ -365,6 +411,42 @@ pub fn run(options: &Options) -> Result<Value> {
         "failure_kinds": failure_kinds,
         "exit_code": exit_code_for(&stages.kinds),
         "outcome": if stages.failures.is_empty() { "ok" } else { "failure" },
+    }))
+}
+
+/// Write the project workspace the overlay stage resolves against.
+///
+/// The skill names differ from the catalog fixtures so the composed registry
+/// carries both sets, and the directory is reset on every run so a stale file
+/// from an earlier run cannot decide this run's measurements.
+fn prepare_overlay_project(project: &Path, count: usize) -> Result<()> {
+    let root = project.join(".horon-agent").join("skills");
+    std::fs::create_dir_all(project).context("create the probe project directory")?;
+    if root.exists() {
+        std::fs::remove_dir_all(&root).context("reset the probe project skills")?;
+    }
+    std::fs::create_dir_all(&root).context("create the probe project skill root")?;
+    for index in 0..count {
+        let name = format!("overlay-skill-{index:04}");
+        let directory = root.join(&name);
+        std::fs::create_dir_all(&directory).context("create a probe project skill directory")?;
+        std::fs::write(
+            directory.join("SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: project overlay skill {index} for the loading probe\n---\n\nBody of {name}.\n"
+            ),
+        )
+        .context("write a probe project skill file")?;
+    }
+    Ok(())
+}
+
+/// One request boundary over the project overlay, as the daemon runs it.
+fn request_overlay(runtime: &tokio::runtime::Runtime, base: &SkillRegistry, project: &Path) -> usize {
+    runtime.block_on(SkillRegistry::with_request_overlay(Some(project), async move {
+        SkillRegistry::effective_for_working_dir(base, Some(project))
+            .list()
+            .len()
     }))
 }
 

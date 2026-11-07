@@ -49,6 +49,12 @@ impl EnvVarGuard {
         horon_agent_base::env::set_var(key, value);
         Self { key, previous }
     }
+
+    fn unset(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        horon_agent_base::env::remove_var(key);
+        Self { key, previous }
+    }
 }
 
 impl Drop for EnvVarGuard {
@@ -97,6 +103,19 @@ fn strip_derived(session_dir: &Path) {
 }
 
 fn write_fixture(home: &Path) -> (usize, String) {
+    // The MCP config stage reads a user-level Claude file, and the future MCP
+    // source table gates that read on `[mcp] claude_user`. Both belong to the
+    // fixture so the stage has something real to parse.
+    std::fs::write(home.join("config.toml"), "[mcp]\nclaude_user = true\n").expect("config file");
+    // `user_home_path` sandboxes user-level files under `<HORON_AGENT_HOME>/external`.
+    let external = home.join("external");
+    std::fs::create_dir_all(&external).expect("external home");
+    std::fs::write(
+        external.join(".claude.json"),
+        r#"{"mcpServers":{"fixture-claude":{"command":"true"}}}"#,
+    )
+    .expect("claude json");
+
     let mut session = Session::create_with_id(FIXTURE_SESSION.into(), None, None);
     for index in 0..FIXTURE_MESSAGES {
         let role = if index % 2 == 0 { Role::User } else { Role::Assistant };
@@ -153,6 +172,7 @@ fn loading_probe_contract() {
     let temp = tempfile::TempDir::new().expect("temp home");
     let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
     let _real_home = EnvVarGuard::set_path("HOME", temp.path());
+    let _claude_switch = EnvVarGuard::unset("HORON_AGENT_DISABLE_CLAUDE_MCP");
     write_skills(temp.path(), FIXTURE_SKILLS);
     let (records, log_sha) = write_fixture(temp.path());
 
@@ -198,6 +218,10 @@ fn loading_probe_contract() {
         "request_deep_copy_bytes",
         "request_messages_copied",
         "skill_dir_reads",
+        "skill_file_reads",
+        "skill_bytes_read",
+        "mcp_config_reads",
+        "mcp_config_bytes",
     ] {
         assert!(
             counters.get(counter).and_then(Value::as_u64).is_some(),
@@ -213,6 +237,42 @@ fn loading_probe_contract() {
     assert!(
         delta(skills, "skill_dir_reads") >= 1,
         "catalog discovery must enumerate a skill directory"
+    );
+
+    let overlay = stage(&report, "skill_request_overlay");
+    assert_eq!(
+        overlay.pointer("/detail/requests").and_then(Value::as_u64),
+        Some(steps::REPEAT_REQUESTS as u64)
+    );
+    assert!(
+        overlay.pointer("/detail/skills").and_then(Value::as_u64).unwrap_or(0) >= (FIXTURE_SKILLS * 2) as u64,
+        "the composed request registry must carry both the global and the project skills"
+    );
+    for counter in [
+        "skill_file_reads",
+        "skill_bytes_read",
+        "mcp_config_reads",
+        "mcp_config_bytes",
+    ] {
+        assert!(
+            overlay
+                .get("delta")
+                .and_then(|delta| delta.get(counter))
+                .and_then(Value::as_u64)
+                .is_some(),
+            "the repeated request stage must report {counter}"
+        );
+    }
+
+    let mcp = stage(&report, "mcp_config_load");
+    assert_eq!(
+        mcp.pointer("/detail/requests").and_then(Value::as_u64),
+        Some(steps::REPEAT_REQUESTS as u64)
+    );
+    assert_eq!(
+        mcp.pointer("/detail/servers").and_then(Value::as_u64),
+        Some(1),
+        "the ~/.claude.json fixture server must survive the merge"
     );
 
     let attach = stage(&report, "attach_history");

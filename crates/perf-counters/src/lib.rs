@@ -7,7 +7,9 @@
 //! [`record_full_source_hash`] counts whole-log digests, and
 //! [`record_request_deep_copy`] counts owned copies of the provider projection
 //! built for a request. [`record_skill_dir_read`] counts skill-directory scans
-//! made while discovering the skill catalog.
+//! made while discovering the skill catalog, [`record_skill_file_read`] counts
+//! SKILL.md files opened and the bytes read from them, and
+//! [`record_mcp_config_read`] counts MCP configuration files parsed and their bytes.
 //!
 //! Each recording call is one relaxed atomic read (the gate) plus one relaxed
 //! atomic add; high-water marks add a compare-and-swap that only spins when a new
@@ -58,6 +60,10 @@ static REQUEST_DEEP_COPIES: AtomicU64 = AtomicU64::new(0);
 static REQUEST_DEEP_COPY_BYTES: AtomicU64 = AtomicU64::new(0);
 static REQUEST_MESSAGES_COPIED: AtomicU64 = AtomicU64::new(0);
 static SKILL_DIR_READS: AtomicU64 = AtomicU64::new(0);
+static SKILL_FILE_READS: AtomicU64 = AtomicU64::new(0);
+static SKILL_BYTES_READ: AtomicU64 = AtomicU64::new(0);
+static MCP_CONFIG_READS: AtomicU64 = AtomicU64::new(0);
+static MCP_CONFIG_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOOL_OUTPUT_SPILLS: AtomicU64 = AtomicU64::new(0);
 static TOOL_OUTPUT_SPILL_ORIGINAL_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOOL_OUTPUT_SPILL_KEPT_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -229,6 +235,30 @@ pub fn record_skill_dir_read() {
     SKILL_DIR_READS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// One SKILL.md file read while building or consulting the skill catalog.
+///
+/// `bytes` is the file length that read consumed, so a discovery path that only
+/// reads a frontmatter prefix reports the prefix bytes, not the whole body.
+pub fn record_skill_file_read(bytes: u64) {
+    if !enabled() {
+        return;
+    }
+    SKILL_FILE_READS.fetch_add(1, Ordering::Relaxed);
+    SKILL_BYTES_READ.fetch_add(bytes, Ordering::Relaxed);
+}
+
+/// One MCP configuration file parsed, with the bytes it contained.
+///
+/// Counted per file read, whether the source is a user-level file or a
+/// project-local config the workspace trust check authorized.
+pub fn record_mcp_config_read(bytes: u64) {
+    if !enabled() {
+        return;
+    }
+    MCP_CONFIG_READS.fetch_add(1, Ordering::Relaxed);
+    MCP_CONFIG_BYTES.fetch_add(bytes, Ordering::Relaxed);
+}
+
 /// One oversized tool output condensed for the model's context, with the full
 /// text saved as a session artifact. `kept_bytes` is what the model received.
 pub fn record_tool_output_spill(original_bytes: u64, kept_bytes: u64) {
@@ -296,6 +326,10 @@ pub fn reset() {
         &REQUEST_DEEP_COPY_BYTES,
         &REQUEST_MESSAGES_COPIED,
         &SKILL_DIR_READS,
+        &SKILL_FILE_READS,
+        &SKILL_BYTES_READ,
+        &MCP_CONFIG_READS,
+        &MCP_CONFIG_BYTES,
         &TOOL_OUTPUT_SPILLS,
         &TOOL_OUTPUT_SPILL_ORIGINAL_BYTES,
         &TOOL_OUTPUT_SPILL_KEPT_BYTES,
@@ -339,6 +373,10 @@ pub struct Snapshot {
     pub request_deep_copy_bytes: u64,
     pub request_messages_copied: u64,
     pub skill_dir_reads: u64,
+    pub skill_file_reads: u64,
+    pub skill_bytes_read: u64,
+    pub mcp_config_reads: u64,
+    pub mcp_config_bytes: u64,
     pub tool_output_spills: u64,
     pub tool_output_spill_original_bytes: u64,
     pub tool_output_spill_kept_bytes: u64,
@@ -396,6 +434,10 @@ pub fn snapshot() -> Snapshot {
         request_deep_copy_bytes: REQUEST_DEEP_COPY_BYTES.load(Ordering::Relaxed),
         request_messages_copied: REQUEST_MESSAGES_COPIED.load(Ordering::Relaxed),
         skill_dir_reads: SKILL_DIR_READS.load(Ordering::Relaxed),
+        skill_file_reads: SKILL_FILE_READS.load(Ordering::Relaxed),
+        skill_bytes_read: SKILL_BYTES_READ.load(Ordering::Relaxed),
+        mcp_config_reads: MCP_CONFIG_READS.load(Ordering::Relaxed),
+        mcp_config_bytes: MCP_CONFIG_BYTES.load(Ordering::Relaxed),
         tool_output_spills: TOOL_OUTPUT_SPILLS.load(Ordering::Relaxed),
         tool_output_spill_original_bytes: TOOL_OUTPUT_SPILL_ORIGINAL_BYTES.load(Ordering::Relaxed),
         tool_output_spill_kept_bytes: TOOL_OUTPUT_SPILL_KEPT_BYTES.load(Ordering::Relaxed),
@@ -443,6 +485,10 @@ mod tests {
         record_request_deep_copy(1_024, 4);
         record_skill_dir_read();
         record_skill_dir_read();
+        record_skill_file_read(4_096);
+        record_skill_file_read(128);
+        record_mcp_config_read(300);
+        record_mcp_config_read(20);
         record_tool_output_spill(1_000, 100);
         record_tool_output_spill(500, 50);
         record_read_unchanged(40);
@@ -468,6 +514,10 @@ mod tests {
         assert_eq!(snapshot.request_deep_copy_bytes, 1_024);
         assert_eq!(snapshot.request_messages_copied, 4);
         assert_eq!(snapshot.skill_dir_reads, 2);
+        assert_eq!(snapshot.skill_file_reads, 2);
+        assert_eq!(snapshot.skill_bytes_read, 4_224);
+        assert_eq!(snapshot.mcp_config_reads, 2);
+        assert_eq!(snapshot.mcp_config_bytes, 320);
         assert_eq!(snapshot.tool_output_spills, 2);
         assert_eq!(snapshot.tool_output_spill_original_bytes, 1_500);
         assert_eq!(snapshot.tool_output_spill_kept_bytes, 150);
@@ -509,6 +559,10 @@ mod tests {
             "request_deep_copy_bytes",
             "request_messages_copied",
             "skill_dir_reads",
+            "skill_file_reads",
+            "skill_bytes_read",
+            "mcp_config_reads",
+            "mcp_config_bytes",
             "tool_output_spills",
             "tool_output_spill_original_bytes",
             "tool_output_spill_kept_bytes",
