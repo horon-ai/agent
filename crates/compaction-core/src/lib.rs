@@ -112,6 +112,16 @@ pub const DEFAULT_RECENT_TOKENS: usize = 20_000;
 /// amount of conversation verbatim.
 pub const MIN_RECENT_TOKENS: usize = 1_024;
 
+/// Fraction of the trigger point the kept tail may reach after compaction.
+///
+/// The tail plus the summary allowance must stay below this band, otherwise a
+/// small window compacts and immediately crosses the trigger again.
+pub const COMPACTION_RECOVERY_BAND: f32 = 0.8;
+
+/// Ceiling on the token allowance reserved for the summary itself when the
+/// recovery band is applied.
+pub const SUMMARY_TOKEN_ALLOWANCE_CAP: usize = 4_096;
+
 /// Slack kept between the trigger point and the reserve boundary. The trigger
 /// may never come closer than this to `window - reserve`.
 pub const THRESHOLD_SAFETY_HEADROOM_TOKENS: usize = 1_024;
@@ -252,6 +262,7 @@ pub fn compute_context_budget(
     let threshold_tokens = ((window as f64) * ratio).round() as usize;
     let threshold_tokens = threshold_tokens.min(ceiling);
     let recent_tokens = recent_tokens_for_window(window, ratio, configured_recent);
+    let recent_tokens = clamp_recent_to_recovery_band(threshold_tokens, recent_tokens);
 
     Ok(ContextBudget {
         window,
@@ -260,6 +271,22 @@ pub fn compute_context_budget(
         threshold_tokens,
         recent_tokens,
     })
+}
+
+/// Cap the recent-tail allowance so the kept tail plus the summary allowance
+/// stays inside [`COMPACTION_RECOVERY_BAND`] of the trigger point.
+///
+/// A tail sized only by the remaining window can already sit close to the
+/// trigger: on a 24k window the old 10,800-token tail plus a summary crossed the
+/// 6,592-token trigger immediately, so compaction repeated every turn. The
+/// summary allowance shrinks with the window (a quarter of the trigger, capped
+/// at [`SUMMARY_TOKEN_ALLOWANCE_CAP`]) because a small window cannot spend the
+/// full 4,096 tokens on a summary.
+fn clamp_recent_to_recovery_band(threshold_tokens: usize, recent_tokens: usize) -> usize {
+    let summary_allowance = (threshold_tokens / 4).min(SUMMARY_TOKEN_ALLOWANCE_CAP);
+    let band_ceiling = (threshold_tokens as f64 * f64::from(COMPACTION_RECOVERY_BAND)) as usize;
+    let band_recent = band_ceiling.saturating_sub(summary_allowance).max(MIN_RECENT_TOKENS);
+    recent_tokens.min(band_recent)
 }
 
 /// Context size to measure: the conservative (larger) of the local estimate and
@@ -1048,57 +1075,6 @@ pub fn clean_file_reference(word: &str) -> &str {
     word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '_' && c != '-')
 }
 
-pub fn emergency_truncate_tool_results(messages: &mut [Message], max_bytes: usize) -> usize {
-    let mut truncated = 0;
-
-    for msg in messages.iter_mut() {
-        for block in msg.content.iter_mut() {
-            match block {
-                ContentBlock::ToolResult { content, .. } if content.len() > max_bytes => {
-                    *content = emergency_truncated_tool_result(content, max_bytes);
-                    truncated += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    truncated
-}
-
-pub fn emergency_truncate_large_payloads(
-    messages: &mut [Message],
-    max_tool_result_bytes: usize,
-    max_image_chars: usize,
-) -> usize {
-    let mut truncated = 0;
-
-    for msg in messages.iter_mut() {
-        for block in msg.content.iter_mut() {
-            match block {
-                ContentBlock::ToolResult { content, .. } if content.len() > max_tool_result_bytes => {
-                    *content = emergency_truncated_tool_result(content, max_tool_result_bytes);
-                    truncated += 1;
-                }
-                ContentBlock::Image { media_type, data } if data.len() > max_image_chars => {
-                    let original_len = data.len();
-                    let media_type = media_type.clone();
-                    *block = ContentBlock::Text {
-                        text: format!(
-                            "[Image omitted during emergency context recovery: media_type={media_type}, original_base64_chars={original_len}. Rely on adjacent browser/tool text, screenshots saved to disk, or re-open/re-screenshot if visual details are needed.]"
-                        ),
-                        cache_control: None,
-                    };
-                    truncated += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    truncated
-}
-
 /// Whether a provider error is a deterministic rejection of an inline image
 /// (a 400 `invalid_request_error` naming an image block: unsupported
 /// `media_type`, undecodable data, dimension or animation limits). The same
@@ -1321,29 +1297,16 @@ pub fn decay_old_tool_images_in_contents(contents: &mut [&mut Vec<ContentBlock>]
     stripped
 }
 
-pub fn emergency_truncated_tool_result(content: &str, max_bytes: usize) -> String {
-    let original_len = content.len();
-    let keep_head = max_bytes / 2;
-    let keep_tail = max_bytes / 4;
-    let head = truncate_str_boundary(content, keep_head);
-    let tail = tail_str_boundary(content, keep_tail);
-    let truncated_len = original_len.saturating_sub(head.len() + tail.len());
-    format!(
-        "{}\n\n... [{} chars truncated for context recovery] ...\n\n{}",
-        head, truncated_len, tail,
-    )
-}
+mod emergency_truncate;
+pub use emergency_truncate::{
+    EMERGENCY_SIGNAL_LINE_MAX_BYTES, EMERGENCY_SIGNAL_MAX_LINES, EMERGENCY_SIGNAL_TOTAL_MAX_BYTES,
+    emergency_truncate_large_payloads, emergency_truncate_tool_results, emergency_truncated_tool_result,
+    tail_str_boundary,
+};
 
-pub fn tail_str_boundary(value: &str, max_bytes: usize) -> &str {
-    if value.len() <= max_bytes {
-        return value;
-    }
-    let mut start = value.len().saturating_sub(max_bytes);
-    while start < value.len() && !value.is_char_boundary(start) {
-        start += 1;
-    }
-    &value[start..]
-}
+#[cfg(test)]
+#[path = "recovery_band_tests.rs"]
+mod recovery_band_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1765,9 +1728,12 @@ mod tests {
     #[test]
     fn emergency_truncation_is_utf8_safe() {
         let original = format!("{}middle{}", "é".repeat(20), "尾".repeat(20));
-        let truncated = emergency_truncated_tool_result(&original, 25);
+        let truncated = emergency_truncated_tool_result(&original, 25, None);
         assert!(truncated.contains("chars truncated for context recovery"));
+        assert!(!truncated.starts_with("[tool error] "));
         assert!(truncated.is_char_boundary(truncated.len()));
+        let error = emergency_truncated_tool_result(&original, 25, Some(true));
+        assert!(error.starts_with("[tool error] "));
     }
 
     #[test]
@@ -1981,12 +1947,9 @@ mod compaction_policy_tests {
     #[test]
     fn compaction_policy_threshold_and_recent_per_window_tier() {
         let b = budget(16_000, 1024, DEFAULT_RECENT_TOKENS);
-        assert_eq!((b.reserve, b.threshold_tokens, b.recent_tokens), (1024, 7_200, 8_000));
+        assert_eq!((b.reserve, b.threshold_tokens, b.recent_tokens), (1024, 7_200, 3_960));
         let b = budget(32_000, 1024, DEFAULT_RECENT_TOKENS);
-        assert_eq!(
-            (b.reserve, b.threshold_tokens, b.recent_tokens),
-            (1_280, 16_000, 14_400)
-        );
+        assert_eq!((b.reserve, b.threshold_tokens, b.recent_tokens), (1_280, 16_000, 8_800));
         let b = budget(64_000, 1024, DEFAULT_RECENT_TOKENS);
         assert_eq!(
             (b.reserve, b.threshold_tokens, b.recent_tokens),

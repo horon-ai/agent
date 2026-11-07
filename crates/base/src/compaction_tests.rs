@@ -1240,11 +1240,11 @@ fn compaction_policy_recent_retention_uses_token_budget() {
     // 32k window -> reserve 16_384 (configured default) -> threshold ceiling
     // 32_000 - 16_384 - 1_024 = 14_592, below window*0.50 = 16_000.
     assert_eq!(manager.compaction_threshold_tokens(), 14_592);
-    // Recent tail: window * (1 - 0.50 - 0.05) = 14_400 tokens; each 4_000-char
-    // message costs 822 tokens (821 measured for the ASCII run plus 1 of
-    // framing), so 17 messages stay and 13 are summarized. The old fixed
-    // ten-message rule would have kept 10 and compacted 20.
-    assert_eq!(manager.recent_cutoff(&messages), 13);
+    // Recent tail: the recovery band caps the window-based 14,400 tokens at
+    // floor(14,592 * 0.8) - min(4,096, 14,592 / 4) = 8,025 tokens; at 822 tokens
+    // per 4,000-char message, 9 messages stay and 21 are summarized. The old
+    // fixed ten-message rule would have kept 10 and compacted 20.
+    assert_eq!(manager.recent_cutoff(&messages), 21);
 }
 
 #[test]
@@ -1428,11 +1428,11 @@ fn compaction_policy_retention_is_not_a_fixed_message_count() {
     // 40 messages of 4_000 chars each: 1_001 tokens apiece.
     let messages = policy_messages(40, 4_000);
 
-    // 16k window: ratio 0.45, recent allowance 8_000 tokens -> 9 kept verbatim
-    // (822 tokens per 4_000-char message).
+    // 16k window: ratio 0.45, the recovery band caps the tail at
+    // floor(7,200 * 0.8) - min(4,096, 1,800) = 3,960 tokens, so 4 messages stay.
     let small = CompactionManager::new().with_budget(16_000);
     let small_kept = messages.len() - small.recent_cutoff(&messages);
-    assert_eq!(small_kept, 9);
+    assert_eq!(small_kept, 4);
     assert!(
         small_kept < 10,
         "a small-window session must keep fewer than the old fixed ten messages, kept {small_kept}"
