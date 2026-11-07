@@ -44,7 +44,6 @@ RuntimeCommand: TypeAlias = Literal[
     "skills",
     "context",
     "info",
-    "cache",
     "memory",
     "swarm",
     "agents",
@@ -56,7 +55,6 @@ RuntimeCommand: TypeAlias = Literal[
     "overnight",
     "productivity",
     "initiatives",
-    "premium",
     "refresh_model_list",
     "continue",
     "resume_all",
@@ -67,6 +65,7 @@ RuntimeCommand: TypeAlias = Literal[
     "subagent",
     "auth",
     "logout",
+    "plan",
 ]
 
 PermissionDecision: TypeAlias = Literal["allow", "allow_always", "deny"]

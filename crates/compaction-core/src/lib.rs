@@ -1240,8 +1240,8 @@ pub fn strip_large_images_in_contents(contents: &mut [&mut Vec<ContentBlock>], t
     stripped
 }
 
-/// Inline tool-result images (computer-use and browser screenshots) are decayed
-/// once the transcript holds more than this many of them. See
+/// Inline tool-result images (`read`) are decayed once the transcript holds
+/// more than this many of them. See
 /// [`decay_old_tool_images_in_contents`].
 pub const TOOL_IMAGE_DECAY_TRIGGER_COUNT: usize = 12;
 
@@ -1252,15 +1252,15 @@ pub const TOOL_IMAGE_DECAY_TRIGGER_CHARS: usize = 48 * 1024 * 1024;
 /// After decay, at most this many of the newest tool-result images keep their
 /// inline data. The gap to the trigger count is hysteresis: decay rewrites
 /// older messages (invalidating provider prompt caches and forcing a full
-/// snapshot write), so it only runs every few screenshots instead of on each.
+/// snapshot write), so it only runs every few images instead of on each.
 pub const TOOL_IMAGE_DECAY_KEEP_COUNT: usize = 6;
 
 /// After decay, the retained tool-result images fit within this many base64
 /// characters, except that the newest image is always kept regardless of size.
 pub const TOOL_IMAGE_DECAY_KEEP_CHARS: usize = 24 * 1024 * 1024;
 
-/// Bound the inline image payload that tool results (screenshots from the
-/// computer and browser tools) accumulate in a transcript.
+/// Bound the inline image payload that tool results (images returned by
+/// `read`) accumulate in a transcript.
 ///
 /// Only images in messages that carry a `ToolResult` are considered, so images
 /// the user pasted are untouched. Nothing happens until the tool images exceed
@@ -1268,7 +1268,7 @@ pub const TOOL_IMAGE_DECAY_KEEP_CHARS: usize = 24 * 1024 * 1024;
 /// Then every tool image except the newest [`TOOL_IMAGE_DECAY_KEEP_COUNT`]
 /// (that also fit within [`TOOL_IMAGE_DECAY_KEEP_CHARS`]) is replaced with a
 /// short text marker. The newest image always survives so the model still sees
-/// the screenshot it just asked for.
+/// the image it just asked for.
 ///
 /// Returns the number of images replaced.
 pub fn decay_old_tool_images_in_contents(contents: &mut [&mut Vec<ContentBlock>]) -> usize {

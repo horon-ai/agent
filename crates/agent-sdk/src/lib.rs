@@ -127,15 +127,10 @@
 //!
 //! # Web search
 //!
-//! The built-in `websearch` tool uses the provider's server-side search where
-//! supported (Anthropic first-party API, or an OpenAI API key on
-//! non-codex models) and local scraping otherwise. Provider searches arrive as
-//! ordinary `ToolStart`/`ToolInputDelta`/`ToolExec`/`ToolDone` events named
-//! `web_search`, with no `ToolCall` to answer, and appear in history. The
-//! session tool policy governs them like any tool. A custom tool named
-//! `websearch` is always called through your application and never replaced by
-//! provider search. Set `HORON_AGENT_WEBSEARCH_PREFER_NATIVE=0` to always search
-//! locally.
+//! The built-in `websearch` tool searches locally with the engines configured
+//! under `[websearch]` in `config.toml`; it needs no SDK code. The session tool
+//! policy governs it like any tool. A custom tool named `websearch` replaces it
+//! and is always called through your application.
 
 mod client;
 pub mod collections;

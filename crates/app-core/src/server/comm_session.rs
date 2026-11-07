@@ -1,4 +1,3 @@
-use super::ClientConnectionInfo;
 use super::client_lifecycle::process_message_streaming_mpsc;
 use super::comm_worktree::{self, IsoApply, Isolation};
 use super::swarm_mutation_state::{
@@ -18,14 +17,11 @@ use crate::protocol::{NotificationType, ServerEvent};
 use crate::provider::Provider;
 use crate::session::Session;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
-use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
-type ClientConnections = Arc<RwLock<HashMap<String, ClientConnectionInfo>>>;
 
 /// Serialize spawn admission through member registration within one swarm.
 /// Without a reservation or lock, many recursive agents can all observe the same
@@ -42,62 +38,6 @@ fn spawn_admission_lock(swarm_id: &str) -> Arc<Mutex<()>> {
     let lock = Arc::new(Mutex::new(()));
     locks.insert(swarm_id.to_string(), Arc::downgrade(&lock));
     lock
-}
-
-/// Look up the most recent terminal env snapshot for the live client connection
-/// driving `session_id`, so spawn hooks target that client's terminal instead
-/// of the long-lived server's stale startup env (#405). Prefers the most
-/// recently seen connection when a session has more than one client attached.
-async fn client_terminal_env_for_session(
-    session_id: &str,
-    client_connections: &ClientConnections,
-) -> Vec<(String, String)> {
-    let connections = client_connections.read().await;
-    connections
-        .values()
-        .filter(|info| info.session_id == session_id && !info.terminal_env.is_empty())
-        .max_by_key(|info| info.last_seen)
-        .map(|info| info.terminal_env.clone())
-        .unwrap_or_default()
-}
-
-fn create_visible_spawn_session(
-    working_dir: Option<&str>,
-    model_override: Option<&str>,
-    provider_key_override: Option<&str>,
-    route_api_method_override: Option<&str>,
-    effort_override: Option<&str>,
-) -> anyhow::Result<(String, PathBuf)> {
-    let cwd = working_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
-    let mut session = Session::create(None, None);
-    session.working_dir = Some(cwd.display().to_string());
-    if let Some(model) = model_override {
-        session.model = Some(model.to_string());
-    }
-    if let Some(provider_key) = provider_key_override {
-        session.provider_key = Some(provider_key.to_string());
-    }
-    if let Some(route_api_method) = route_api_method_override
-        .map(str::trim)
-        .filter(|route| !route.is_empty())
-    {
-        session.route_api_method = Some(route_api_method.to_string());
-    }
-    if let Some(effort) = effort_override.map(str::trim).filter(|e| !e.is_empty()) {
-        // Persisted effort is restored (and validated against the resolved
-        // provider/model) by `restore_reasoning_effort_from_session` when the
-        // headed client attaches to this session.
-        session.reasoning_effort = Some(effort.to_string());
-    }
-    // The headed client attaches in a separate process and must find the
-    // prepared model/provider/effort on disk, so bypass the untouched-session
-    // save gate from 783c979a0.
-    session.save_prepared()?;
-
-    Ok((session.id.clone(), cwd))
 }
 
 async fn resolve_spawn_working_dir(
@@ -133,22 +73,6 @@ async fn resolve_spawn_working_dir(
         .and_then(|member| member.working_dir.as_ref())
         .map(|dir| dir.display().to_string())
         .filter(|dir| !dir.trim().is_empty())
-}
-
-/// Launch a headed window for `session_id`, exporting the given spawn context
-/// (`HORON_AGENT_SPAWN_KIND`, swarm/coordinator ids, ...) to spawn hooks and
-/// spawned terminals so external programs can reroute the window.
-fn spawn_visible_session_window_with_context(
-    session_id: &str,
-    cwd: &std::path::Path,
-    provider_key: Option<&str>,
-    context: &crate::session_launch::SessionSpawnContext,
-) -> anyhow::Result<bool> {
-    let exe = crate::build::client_update_candidate()
-        .map(|(path, _label)| path)
-        .or_else(|| std::env::current_exe().ok())
-        .unwrap_or_else(|| PathBuf::from("horon-agent"));
-    crate::session_launch::spawn_resume_in_new_terminal_with_context(&exe, session_id, cwd, provider_key, context)
 }
 
 fn provider_key_for_spawn_model(model: Option<&str>, provider_key_override: Option<&str>) -> Option<String> {
@@ -371,126 +295,6 @@ fn resolve_swarm_spawn_selection(
     }
 }
 
-fn cleanup_prepared_visible_spawn_session(session_id: &str) {
-    // A prepared session can sit in the event store's directory or in the legacy
-    // file pair; the session layer removes whichever exists so a failed launch
-    // leaves no orphan behind.
-    let _ = crate::session::discard_session_original(session_id);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_visible_spawn_session<F>(
-    working_dir: Option<&str>,
-    model_override: Option<&str>,
-    provider_key_override: Option<&str>,
-    route_api_method_override: Option<&str>,
-    effort_override: Option<&str>,
-    launch_visible: F,
-) -> anyhow::Result<(String, bool)>
-where
-    F: FnOnce(&str, &std::path::Path, Option<&str>) -> anyhow::Result<bool>,
-{
-    let provider_key = provider_key_for_spawn_model(model_override, provider_key_override);
-    let (new_session_id, cwd) = create_visible_spawn_session(
-        working_dir,
-        model_override,
-        provider_key.as_deref(),
-        route_api_method_override,
-        effort_override,
-    )?;
-
-    match launch_visible(&new_session_id, &cwd, provider_key.as_deref()) {
-        Ok(launched) => {
-            if !launched {
-                cleanup_prepared_visible_spawn_session(&new_session_id);
-            }
-            Ok((new_session_id, launched))
-        }
-        Err(error) => {
-            cleanup_prepared_visible_spawn_session(&new_session_id);
-            Err(error)
-        }
-    }
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "visible spawn registration updates swarm state, event history, and UI delivery metadata together"
-)]
-async fn register_visible_spawned_member(
-    session_id: &str,
-    swarm_id: &str,
-    working_dir: Option<&str>,
-    has_startup_message: bool,
-    report_back_to_session_id: Option<&str>,
-    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
-    swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
-    event_counter: &Arc<std::sync::atomic::AtomicU64>,
-    swarm_event_tx: &broadcast::Sender<SwarmEvent>,
-) {
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let now = Instant::now();
-    let friendly_name = crate::id::extract_session_name(session_id)
-        .map(|name| name.to_string())
-        .unwrap_or_else(|| session_id.to_string());
-    let (status, detail) = if has_startup_message {
-        ("running".to_string(), Some("startup queued".to_string()))
-    } else {
-        ("spawned".to_string(), Some("launching client".to_string()))
-    };
-
-    {
-        let mut members = swarm_members.write().await;
-        members.insert(
-            session_id.to_string(),
-            SwarmMember {
-                session_id: session_id.to_string(),
-                event_tx,
-                event_txs: HashMap::new(),
-                working_dir: working_dir.map(PathBuf::from),
-                swarm_id: Some(swarm_id.to_string()),
-                swarm_enabled: true,
-                status,
-                detail,
-                task_label: None,
-                friendly_name: Some(friendly_name),
-                report_back_to_session_id: report_back_to_session_id.map(str::to_string),
-                latest_completion_report: None,
-                role: "agent".to_string(),
-                joined_at: now,
-                last_status_change: now,
-                is_headless: false,
-                output_tail: None,
-                todo_progress: None,
-                todo_items: Vec::new(),
-                runtime: crate::protocol::SwarmMemberRuntime::default(),
-            },
-        );
-    }
-
-    {
-        let mut swarms = swarms_by_id.write().await;
-        swarms
-            .entry(swarm_id.to_string())
-            .or_insert_with(HashSet::new)
-            .insert(session_id.to_string());
-    }
-
-    record_swarm_event_for_session(
-        session_id,
-        SwarmEventType::MemberChange {
-            action: "joined".to_string(),
-        },
-        swarm_members,
-        event_history,
-        event_counter,
-        swarm_event_tx,
-    )
-    .await;
-    broadcast_swarm_status(swarm_id, swarm_members, swarms_by_id).await;
-}
-
 /// Resolve the reasoning effort for a spawned swarm worker (#1165).
 ///
 /// Precedence mirrors the model path: an explicit `effort` on the spawn call
@@ -511,10 +315,8 @@ pub(super) fn resolve_swarm_spawn_effort(
 
 /// Spawn mode for one swarm spawn. An explicit per-call mode wins, except
 /// `auto`: a model passing `auto` expresses no preference, so the user's
-/// configured `agents.swarm_spawn_mode` (inline by default) decides. Without
-/// this, `auto` tried a visible window first and, from terminals horon-agent cannot
-/// target (VS Code, Cursor), opened a separate terminal app instead of the
-/// inline gallery the user configured. Configuring `auto` still works.
+/// configured `agents.swarm_spawn_mode` (inline by default) decides. Every mode
+/// runs the worker in this process; horon-agent never opens a terminal window.
 pub(super) fn resolve_swarm_spawn_mode(
     requested: Option<SwarmSpawnMode>,
     configured: SwarmSpawnMode,
@@ -555,7 +357,6 @@ pub(super) async fn spawn_swarm_agent(
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
     mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
     soft_interrupt_queues: &SessionInterruptQueues,
-    client_connections: &ClientConnections,
 ) -> anyhow::Result<String> {
     if let Some(schema) = output_schema.as_ref() {
         // Reject before a session exists: a child that can never submit a valid
@@ -593,10 +394,6 @@ pub(super) async fn spawn_swarm_agent(
     };
     let worktree_guard = worktree_child.clone().map(comm_worktree::WorktreeGuard::new);
     let coordinator = resolve_coordinator_spawn_identity(req_session_id, sessions).await;
-    // Capture the requesting client's terminal env so spawn hooks place the new
-    // window in the terminal the user is attached to, not the server's stale
-    // startup env (#405).
-    let client_terminal_env = client_terminal_env_for_session(req_session_id, client_connections).await;
     let agents_config = &crate::config::config().agents;
     let configured_swarm_model = session_swarm_model(req_session_id, sessions, agents_config.swarm_model.clone()).await;
     let resolved_spawn_mode = resolve_swarm_spawn_mode(spawn_mode, agents_config.swarm_spawn_mode);
@@ -607,7 +404,8 @@ pub(super) async fn spawn_swarm_agent(
     let spawn_route_api_method = selection.route_api_method.clone();
     let spawn_effort = resolve_swarm_spawn_effort(requested_effort.as_deref(), agents_config.swarm_effort.as_deref());
     crate::logging::info(&format!(
-        "Swarm spawn model resolution: requested_model={:?} requested_effort={:?} configured_swarm_effort={:?} configured_swarm_model={:?} coordinator_model={:?} coordinator_provider_key={:?} coordinator_route={:?} -> spawn_model={:?} spawn_provider_key={:?} spawn_route={:?}",
+        "Swarm spawn model resolution: spawn_mode={:?} requested_model={:?} requested_effort={:?} configured_swarm_effort={:?} configured_swarm_model={:?} coordinator_model={:?} coordinator_provider_key={:?} coordinator_route={:?} -> spawn_model={:?} spawn_provider_key={:?} spawn_route={:?}",
+        resolved_spawn_mode,
         requested_model,
         requested_effort,
         agents_config.swarm_effort,
@@ -624,88 +422,43 @@ pub(super) async fn spawn_swarm_agent(
         .as_deref()
         .map(append_swarm_completion_report_instructions);
 
-    // A schema-spawned child must run in this process: the `yield` tool, its
-    // slot, and the structured result all live here, and a visible child is a
-    // separate process that cannot install them. Headless also matches the
-    // isolation rule below.
-    let visible_spawn = if worktree_child.is_some() || output_schema.is_some() {
-        let why = if output_schema.is_some() {
-            "structured output"
-        } else {
-            "isolation"
-        };
-        Err(anyhow::anyhow!(
-            "{why} needs a headless child (isolation={})",
-            isolation.as_str()
-        ))
+    let cmd = if let Some(ref dir) = resolved_working_dir {
+        format!("create_session:{dir}")
     } else {
-        match resolved_spawn_mode {
-            // Inline workers run in-process like headless ones; the difference is
-            // purely how the coordinator renders them (a live inline gallery).
-            SwarmSpawnMode::Headless | SwarmSpawnMode::Inline => Err(anyhow::anyhow!("headless spawn requested")),
-            SwarmSpawnMode::Visible | SwarmSpawnMode::Auto => prepare_visible_spawn_session(
-                resolved_working_dir.as_deref(),
-                spawn_model.as_deref(),
-                spawn_provider_key.as_deref(),
-                spawn_route_api_method.as_deref(),
-                spawn_effort.as_deref(),
-                |session_id, cwd, provider_key| {
-                    // Tag the headed window as a swarm-agent spawn so spawn hooks
-                    // and terminals can identify and reroute it (HORON_AGENT_SPAWN_*).
-                    let context = crate::session_launch::SessionSpawnContext::kind("swarm-agent")
-                        .env("HORON_AGENT_SPAWN_SWARM_ID", swarm_id)
-                        .env("HORON_AGENT_SPAWN_COORDINATOR_SESSION_ID", req_session_id)
-                        .with_client_terminal_env(client_terminal_env.clone());
-                    spawn_visible_session_window_with_context(session_id, cwd, provider_key, &context)
-                },
-            ),
-        }
+        "create_session".to_string()
     };
-
-    let (new_session_id, is_headless_fallback) = match visible_spawn {
-        Ok((new_session_id, true)) => Ok((new_session_id, false)),
-        Ok((_, false)) | Err(_) => {
-            let cmd = if let Some(ref dir) = resolved_working_dir {
-                format!("create_session:{dir}")
-            } else {
-                "create_session".to_string()
-            };
-            create_headless_session(
-                sessions,
-                global_session_id,
-                provider_template,
-                &cmd,
-                swarm_members,
-                swarms_by_id,
-                swarm_coordinators,
-                swarm_plans,
-                soft_interrupt_queues,
-                spawn_model.clone(),
-                spawn_provider_key.clone(),
-                spawn_route_api_method.clone(),
-                spawn_effort.clone(),
-                output_schema,
-                Some(Arc::clone(mcp_pool)),
-                Some(req_session_id.to_string()),
-                super::headless::HeadlessMemoryScope::RealProject,
-            )
-            .await
-            .and_then(|result_json| {
-                serde_json::from_str::<serde_json::Value>(&result_json)
-                    .ok()
-                    .and_then(|value| {
-                        value
-                            .get("session_id")
-                            .and_then(|session_id| session_id.as_str())
-                            .map(|session_id| session_id.to_string())
-                    })
-                    .map(|session_id| (session_id, true))
-                    .ok_or_else(|| anyhow::anyhow!("Failed to parse spawned session id"))
+    let new_session_id = create_headless_session(
+        sessions,
+        global_session_id,
+        provider_template,
+        &cmd,
+        swarm_members,
+        swarms_by_id,
+        swarm_coordinators,
+        swarm_plans,
+        soft_interrupt_queues,
+        spawn_model.clone(),
+        spawn_provider_key.clone(),
+        spawn_route_api_method.clone(),
+        spawn_effort.clone(),
+        output_schema,
+        Some(Arc::clone(mcp_pool)),
+        Some(req_session_id.to_string()),
+        super::headless::HeadlessMemoryScope::RealProject,
+    )
+    .await
+    .and_then(|result_json| {
+        serde_json::from_str::<serde_json::Value>(&result_json)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("session_id")
+                    .and_then(|session_id| session_id.as_str())
+                    .map(|session_id| session_id.to_string())
             })
-        }
-    }?;
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse spawned session id"))
+    })?;
 
-    let startup_message = startup_message.clone();
     {
         let mut plans = swarm_plans.write().await;
         if let Some(plan) = plans.get_mut(swarm_id)
@@ -724,21 +477,6 @@ pub(super) async fn spawn_swarm_agent(
         swarms_by_id,
     )
     .await;
-    if !is_headless_fallback {
-        register_visible_spawned_member(
-            &new_session_id,
-            swarm_id,
-            resolved_working_dir.as_deref(),
-            startup_message.is_some(),
-            Some(req_session_id),
-            swarm_members,
-            swarms_by_id,
-            event_history,
-            event_counter,
-            swarm_event_tx,
-        )
-        .await;
-    }
     // Label the worker with what it was spawned for so the swarm strip and
     // member lists can show the task, not just the animal name. An explicit
     // spawn `label` wins; otherwise the label is derived from the raw prompt
@@ -754,9 +492,7 @@ pub(super) async fn spawn_swarm_agent(
     };
     persist_swarm_state_for(swarm_id, &swarm_state).await;
 
-    if let Some(initial_msg) = startup_message
-        && is_headless_fallback
-    {
+    if let Some(initial_msg) = startup_message {
         record_swarm_event_for_session(
             &new_session_id,
             SwarmEventType::MemberChange {
@@ -877,7 +613,6 @@ pub(super) async fn handle_comm_spawn(
     mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
     soft_interrupt_queues: &SessionInterruptQueues,
     swarm_mutation_runtime: &SwarmMutationRuntime,
-    client_connections: &ClientConnections,
 ) {
     // Hold this swarm's admission through member registration so concurrent
     // recursive requests cannot all pass the population check against stale
@@ -978,7 +713,6 @@ pub(super) async fn handle_comm_spawn(
         swarm_event_tx,
         mcp_pool,
         soft_interrupt_queues,
-        client_connections,
     )
     .await
     {
@@ -1453,65 +1187,3 @@ async fn ensure_spawn_coordinator_swarm(
 #[cfg(test)]
 #[path = "comm_session_tests.rs"]
 mod comm_session_tests;
-
-/// The prepared-session cleanup has to leave no session original behind.
-///
-/// A prepared session's durable original now lives in the event store's own
-/// directory, so deleting the legacy snapshot and journal alone would leave the
-/// launch-failure path with an orphan the catalog still lists. This asserts the
-/// session entries of the directory, not one file. The store's own catalog state
-/// lives in the same directory under dot names and belongs to every session, so
-/// it is not a leftover of this cleanup.
-#[cfg(test)]
-mod cleanup_lock_tests {
-    use super::*;
-
-    #[test]
-    fn cleanup_prepared_visible_spawn_session_removes_the_original() {
-        let _guard = crate::storage::lock_test_env();
-        let temp_home = tempfile::TempDir::new().expect("temp home");
-        crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
-
-        let session_id = "session_prepared_cleanup_original";
-        let mut session = Session::create_with_id(session_id.into(), None, None);
-        session.save_prepared().expect("the prepared session saves");
-        Session::append_resume_key(session_id, "req_prepared").expect("the resume key appends");
-
-        cleanup_prepared_visible_spawn_session(session_id);
-
-        let sessions_dir = crate::storage::horon_agent_dir()
-            .expect("horon-agent dir")
-            .join("sessions");
-        let mut remaining: Vec<String> = std::fs::read_dir(&sessions_dir)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                    // The store keeps its own catalog beside the session
-                    // directories; a dot entry is store state, not a session
-                    // this cleanup was asked to remove.
-                    .filter(|name| !name.starts_with('.'))
-                    .collect()
-            })
-            .unwrap_or_default();
-        remaining.sort();
-        assert!(
-            remaining.is_empty(),
-            "cleanup must leave no original behind, found {remaining:?}"
-        );
-        // The store refuses to list while any dirty marker is present, so a
-        // marker left by the discarded session would wedge every later listing.
-        let dirty = sessions_dir.join(".catalog.dirty");
-        let stale: Vec<String> = std::fs::read_dir(&dirty)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert!(stale.is_empty(), "cleanup must clear the dirty marker, found {stale:?}");
-
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}

@@ -528,39 +528,4 @@ mod tests {
         assert!(should_spawn_background_update_check_with_config(&args, true));
         assert!(!should_spawn_background_update_check_with_config(&args, false));
     }
-
-    #[test]
-    fn no_external_provider_runtime_is_registered() {
-        // Every external provider runtime was removed. Model requests run on the
-        // direct OpenAI-compatible provider, so no factory may be registered for
-        // any runtime key.
-        assert!(
-            !crate::provider::external::external_provider_registered(crate::provider::external::OPENAI_RUNTIME),
-            "the OpenAI runtime must not be registered"
-        );
-        assert!(
-            crate::provider::external::instantiate_external_provider(crate::provider::external::OPENAI_RUNTIME)
-                .is_none(),
-            "the OpenAI runtime must not instantiate"
-        );
-
-        // Every removed provider runtime must stay unregistered and fail to
-        // instantiate in this build.
-        for key in [
-            crate::provider::external::GEMINI_RUNTIME,
-            crate::provider::external::CURSOR_RUNTIME,
-            crate::provider::external::ANTIGRAVITY_RUNTIME,
-            crate::provider::external::COPILOT_RUNTIME,
-            crate::provider::external::ANTHROPIC_RUNTIME,
-        ] {
-            assert!(
-                !crate::provider::external::external_provider_registered(key),
-                "{key} runtime must not be registered in this build"
-            );
-            assert!(
-                crate::provider::external::instantiate_external_provider(key).is_none(),
-                "{key} runtime must not instantiate in this build"
-            );
-        }
-    }
 }

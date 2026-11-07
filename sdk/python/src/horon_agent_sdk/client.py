@@ -2012,7 +2012,7 @@ class HoronAgentClient:
         return client_id in result["cancelled"]
 
     async def background_tool(self, session_id: str) -> None:
-        """Move the running tool call to the background (the TUI's Alt+B)."""
+        """Move the running tool call to the background."""
         await self.background_tool_result(session_id)
 
     async def background_tool_result(self, session_id: str) -> dict[str, Any]:

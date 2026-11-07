@@ -476,7 +476,7 @@ impl McpManager {
     )]
     pub async fn connect(&self, name: &str, config: &McpServerConfig) -> Result<()> {
         // Partner-discovery provenance: if this server's command matches a
-        // setup the agent saw in a discover_tools listing, tag it so calls to
+        // setup the agent saw in a integration_tools listing, tag it so calls to
         // it are metered coarsely (counts only; see sponsors::provenance).
         if let Some(sponsor) = crate::sponsors::provenance::on_server_connected(name, &config.command, &config.args) {
             crate::logging::info(&format!(

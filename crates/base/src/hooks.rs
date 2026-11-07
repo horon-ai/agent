@@ -3,8 +3,7 @@
 //! Hooks are external commands that horon-agent runs at well-defined lifecycle
 //! points so other programs can observe or gate agent behavior without
 //! forking horon-agent. They are configured in `[hooks]` in config.toml (or
-//! `HORON_AGENT_HOOK_*` env vars) and follow the same command-line conventions as
-//! `[terminal] spawn_hook`: the command is parsed shell-style but executed
+//! `HORON_AGENT_HOOK_*` env vars); the command is parsed shell-style but executed
 //! directly (no shell), with `HORON_AGENT_HOOK_*` metadata env vars describing the
 //! event.
 //!

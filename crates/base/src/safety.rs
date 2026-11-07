@@ -11,8 +11,8 @@ use crate::storage;
 
 /// How often a pending approval re-reads `history.json` while it waits.
 ///
-/// Another process (the IMAP poller, a channel bridge, the CLI) records its
-/// decision in the file, so a waiter that only listened for in-process
+/// Another process (an approval tool, an operator's script, the CLI) records
+/// its decision in the file, so a waiter that only listened for in-process
 /// notifications would miss it forever.
 pub const DEFAULT_DECISION_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -294,7 +294,7 @@ pub struct AmbientTranscript {
     pub summary: Option<String>,
     pub compactions: u32,
     pub memories_modified: u32,
-    /// Full conversation transcript (markdown) for email notifications
+    /// Full conversation transcript (markdown) appended to the ambient notification body
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<String>,
 }
@@ -508,9 +508,9 @@ impl SafetySystem {
     /// Look up the decision for `request_id`, falling back to `history.json`.
     ///
     /// The in-memory copy is authoritative only for decisions recorded by this
-    /// instance. Another process (the IMAP poller, a channel bridge) writes the
-    /// file directly, so a miss in memory must re-read it, cache what it finds,
-    /// and notify the registered callbacks exactly once per request.
+    /// instance. Another process (the approval tool, an operator's script) writes
+    /// the file directly, so a miss in memory must re-read it, cache what it
+    /// finds, and notify the registered callbacks exactly once per request.
     pub fn decision_for(&self, request_id: &str) -> Option<Decision> {
         let in_memory = self
             .history
@@ -895,11 +895,11 @@ fn record_decision_on_disk(
 }
 
 // ---------------------------------------------------------------------------
-// File-based permission decision (for IMAP poller / external callers)
+// File-based permission decision (for external callers)
 // ---------------------------------------------------------------------------
 
 /// Record a permission decision by directly manipulating the queue/history JSON files.
-/// Used by the IMAP reply poller which doesn't have access to the live SafetySystem instance.
+/// Used by callers that have no access to the live SafetySystem instance.
 ///
 /// Shares `~/.horon-agent/approvals/.decisions.lock` with
 /// [`SafetySystem::record_decision`], so a request keeps exactly one decision

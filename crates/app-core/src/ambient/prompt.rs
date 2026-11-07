@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use super::{AmbientState, Priority, ScheduleTarget, ScheduledItem, take_pending_directives};
+use super::{AmbientState, Priority, ScheduleTarget, ScheduledItem};
 
 // ---------------------------------------------------------------------------
 // Ambient System Prompt Builder
@@ -407,24 +407,6 @@ pub fn build_ambient_system_prompt(
     prompt.push_str(&format!("- User usage rate: {}\n", budget.user_usage_rate_desc,));
     prompt.push_str(&format!("- Budget for this cycle: {}\n", budget.cycle_budget_desc,));
     prompt.push('\n');
-
-    // --- User Directives (from email/Telegram replies) ---
-    let pending_directives = take_pending_directives();
-    if !pending_directives.is_empty() {
-        prompt.push_str("## User Directives (from replies)\n");
-        prompt.push_str(
-            "The user replied to ambient notifications with these instructions. \
-             Address them as your **top priority** this cycle.\n\n",
-        );
-        for dir in &pending_directives {
-            let ago = format_duration_rough(Utc::now() - dir.received_at);
-            prompt.push_str(&format!(
-                "- [reply to cycle {}] ({} ago): {}\n",
-                dir.in_reply_to_cycle, ago, dir.text,
-            ));
-        }
-        prompt.push('\n');
-    }
 
     // --- Instructions ---
     prompt.push_str(

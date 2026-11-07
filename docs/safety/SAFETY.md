@@ -96,7 +96,7 @@ Transcript Logger -> Session Reporter
 
 #### 사용자 지정 규칙
 
-이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1674-1682`), 승인 대기 정책은 `[ambient]`에 있다(`:1565-1600`).
+이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1543-1550`), 승인 대기 정책은 `[ambient]`에 있다(`:1473-1510`).
 
 ```toml
 [safety]
@@ -574,8 +574,9 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
   전환을 허용할지 정하는 모드 게이트로만 읽고(`crates/app-core/src/server/provider_control.rs`),
   클라이언트가 붙어 있으면 원래 프로바이더 오류를 그대로 턴에 돌려줍니다. 3초 카운트다운을 띄우고
   취소를 받는 일은 클라이언트 몫인데, 이 headless 빌드에는 그 화면을 그리는 클라이언트가 없습니다
-  (TUI는 headless 전환 때 빠졌습니다). 붙은 클라이언트가 전환을 원하면 `Request::SetRoute`로 직접 요청해야
-  합니다. 서버가 스스로 전환하는 것은 무인 실행에서만입니다.
+  (TUI는 headless 전환 때 빠졌습니다). 붙은 클라이언트가 다른 모델을 쓰려면 `set_model`로
+  모델을 고르고, 별도의 라우트 전환 요청은 이 빌드에 없습니다. 서버가 스스로
+  전환하는 것은 무인 실행에서만입니다.
 - **`FailoverSwitched`는 ack 전까지 남습니다.** `failover-events.json`에 최대 100개를 두고, 재시작이나
   재연결 때 다시 방출합니다. 재방출은 같은 키로 중복될 수 있으니 소비자는 `(session_id, chain_id, from, to, attempt)`로
   무시해야 합니다. 100개를 넘으면 가장 오래된 항목부터 버리므로 그 알림은 다시 나가지 않습니다.

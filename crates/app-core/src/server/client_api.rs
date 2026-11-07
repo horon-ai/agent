@@ -1,5 +1,5 @@
 use super::{connect_socket, debug_socket_path, socket_path};
-use crate::protocol::{HistoryMessage, Request, ServerEvent};
+use crate::protocol::{Request, ServerEvent};
 use crate::transport::{ReadHalf, WriteHalf};
 use anyhow::Result;
 use std::path::PathBuf;
@@ -134,23 +134,6 @@ impl Client {
         }
     }
 
-    pub async fn get_state(&mut self) -> Result<ServerEvent> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let request = Request::GetState { id };
-        let json = serde_json::to_string(&request)? + "\n";
-        self.writer.write_all(json.as_bytes()).await?;
-
-        let mut line = String::new();
-        let n = self.reader.read_line(&mut line).await?;
-        if n == 0 {
-            anyhow::bail!("Server disconnected");
-        }
-        let event: ServerEvent = serde_json::from_str(&line)?;
-        Ok(event)
-    }
-
     pub async fn clear(&mut self) -> Result<()> {
         let id = self.next_id;
         self.next_id += 1;
@@ -161,7 +144,7 @@ impl Client {
         Ok(())
     }
 
-    pub async fn get_history(&mut self) -> Result<Vec<HistoryMessage>> {
+    pub async fn get_history(&mut self) -> Result<Vec<crate::protocol::HistoryMessage>> {
         let event = self.get_history_event().await?;
         match event {
             ServerEvent::History { messages, .. } => Ok(messages),
@@ -235,24 +218,6 @@ impl Client {
         Ok(id)
     }
 
-    /// Ask the server to continue every live session that was interrupted and
-    /// would auto-resume on a reload. Returns the request id so callers can
-    /// correlate the `ResumeAllResult` event.
-    pub async fn resume_all_sessions(&mut self) -> Result<u64> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let request = Request::ResumeAllSessions { id };
-        let json = serde_json::to_string(&request)? + "\n";
-        self.writer.write_all(json.as_bytes()).await?;
-        Ok(id)
-    }
-
-    pub async fn reload(&mut self) -> Result<()> {
-        self.reload_with_force(true).await?;
-        Ok(())
-    }
-
     /// Request a graceful, conditional reload: when `force` is false the server
     /// only reloads if it has a strictly-newer reload candidate binary. Used by
     /// `horon-agent server reload` so an upgrade is picked up without risking a
@@ -267,43 +232,8 @@ impl Client {
         Ok(id)
     }
 
-    pub async fn cycle_model(&mut self, direction: i8) -> Result<u64> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let request = Request::CycleModel { id, direction };
-        let json = serde_json::to_string(&request)? + "\n";
-        self.writer.write_all(json.as_bytes()).await?;
-        Ok(id)
-    }
-
-    pub async fn refresh_models(&mut self) -> Result<u64> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let request = Request::RefreshModels { id };
-        let json = serde_json::to_string(&request)? + "\n";
-        self.writer.write_all(json.as_bytes()).await?;
-        Ok(id)
-    }
-
-    pub async fn notify_auth_changed(&mut self) -> Result<u64> {
-        self.notify_auth_changed_for_provider(None).await
-    }
-
-    pub async fn notify_auth_changed_for_provider(&mut self, provider: Option<&str>) -> Result<u64> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let request = Request::NotifyAuthChanged {
-            id,
-            provider: provider.map(str::to_string),
-            auth: None,
-            prefer_strongest: false,
-        };
-        let json = serde_json::to_string(&request)? + "\n";
-        self.writer.write_all(json.as_bytes()).await?;
-        Ok(id)
+    pub async fn reload(&mut self) -> Result<u64> {
+        self.reload_with_force(true).await
     }
 
     pub async fn debug_command(&mut self, command: &str, session_id: Option<&str>) -> Result<u64> {

@@ -1162,21 +1162,6 @@ request in this new forked session, using the inherited conversation only as con
         false
     }
 
-    /// Check if this session is working on the horon-agent repository
-    pub fn is_self_dev(&self) -> bool {
-        if let Some(ref dir) = self.working_dir {
-            // Check if working dir contains horon-agent source
-            let path = std::path::Path::new(dir);
-            path.join("Cargo.toml").exists()
-                && path.join("src/main.rs").exists()
-                && std::fs::read_to_string(path.join("Cargo.toml"))
-                    .map(|s| s.contains("name = \"horon-agent\""))
-                    .unwrap_or(false)
-        } else {
-            false
-        }
-    }
-
     pub fn redacted_for_export(&self) -> anyhow::Result<Self> {
         let mut redacted = self.history_snapshot()?;
         if let Some(title) = redacted.title.as_mut() {

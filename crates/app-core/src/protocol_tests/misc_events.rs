@@ -42,63 +42,7 @@ fn test_memory_activity_event_roundtrip() -> Result<()> {
 }
 
 #[test]
-fn test_input_shell_request_roundtrip() -> Result<()> {
-    let req = Request::InputShell {
-        id: 88,
-        command: "ls -la".to_string(),
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"input_shell\""));
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 88);
-    let Request::InputShell { id, command } = decoded else {
-        return Err(anyhow!("expected InputShell request"));
-    };
-    assert_eq!(id, 88);
-    assert_eq!(command, "ls -la");
-    Ok(())
-}
-
-#[test]
-fn test_input_shell_result_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::InputShellResult {
-        result: crate::message::InputShellResult {
-            command: "pwd".to_string(),
-            cwd: Some("/tmp/project".to_string()),
-            output: "/tmp/project\n".to_string(),
-            exit_code: Some(0),
-            duration_ms: 7,
-            truncated: false,
-            failed_to_start: false,
-        },
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"input_shell_result\""));
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::InputShellResult { result } = decoded else {
-        return Err(anyhow!("expected InputShellResult event"));
-    };
-    assert_eq!(result.command, "pwd");
-    assert_eq!(result.cwd.as_deref(), Some("/tmp/project"));
-    assert_eq!(result.exit_code, Some(0));
-    Ok(())
-}
-
-#[test]
 fn test_protocol_enum_roundtrips_cover_wire_names() -> Result<()> {
-    let transcript_modes = [
-        (TranscriptMode::Insert, "insert"),
-        (TranscriptMode::Append, "append"),
-        (TranscriptMode::Replace, "replace"),
-        (TranscriptMode::Send, "send"),
-    ];
-    for (mode, wire) in transcript_modes {
-        let json = serde_json::to_string(&mode)?;
-        assert_eq!(json, format!("\"{}\"", wire));
-        let decoded: TranscriptMode = serde_json::from_str(&json)?;
-        assert_eq!(decoded, mode);
-    }
-
     let delivery_modes = [
         (CommDeliveryMode::Notify, "notify"),
         (CommDeliveryMode::Interrupt, "interrupt"),
@@ -124,30 +68,6 @@ fn test_protocol_enum_roundtrips_cover_wire_names() -> Result<()> {
         assert_eq!(decoded, feature);
     }
 
-    Ok(())
-}
-
-#[test]
-fn test_set_feature_roundtrip() -> Result<()> {
-    let req = Request::SetFeature {
-        id: 77,
-        feature: FeatureToggle::Swarm,
-        enabled: true,
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"set_feature\""));
-    let decoded = parse_request_json(&json)?;
-    let Request::SetFeature {
-        id,
-        feature,
-        enabled,
-    } = decoded
-    else {
-        return Err(anyhow!("expected SetFeature"));
-    };
-    assert_eq!(id, 77);
-    assert_eq!(feature, FeatureToggle::Swarm);
-    assert!(enabled);
     Ok(())
 }
 

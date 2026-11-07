@@ -1,9 +1,9 @@
 {
-  "total": 2006,
+  "total": 1942,
   "totals_by_pattern": {
-    "dot_ok": 733,
-    "let_underscore": 777,
-    "unwrap_or_default": 496
+    "dot_ok": 724,
+    "let_underscore": 730,
+    "unwrap_or_default": 488
   },
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": {
@@ -126,11 +126,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 1
     },
-    "crates/app-core/src/ambient/directives.rs": {
-      "dot_ok": 2,
-      "let_underscore": 1,
-      "unwrap_or_default": 1
-    },
     "crates/app-core/src/ambient/manager.rs": {
       "dot_ok": 0,
       "let_underscore": 2,
@@ -223,7 +218,7 @@
     },
     "crates/app-core/src/server/client_actions.rs": {
       "dot_ok": 2,
-      "let_underscore": 49,
+      "let_underscore": 29,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/server/client_comm_channels.rs": {
@@ -248,7 +243,7 @@
     },
     "crates/app-core/src/server/client_lifecycle.rs": {
       "dot_ok": 2,
-      "let_underscore": 69,
+      "let_underscore": 63,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/server/client_lifecycle_logging.rs": {
@@ -292,9 +287,9 @@
       "unwrap_or_default": 4
     },
     "crates/app-core/src/server/comm_session.rs": {
-      "dot_ok": 4,
-      "let_underscore": 11,
-      "unwrap_or_default": 13
+      "dot_ok": 3,
+      "let_underscore": 10,
+      "unwrap_or_default": 12
     },
     "crates/app-core/src/server/comm_sync.rs": {
       "dot_ok": 0,
@@ -368,7 +363,7 @@
     },
     "crates/app-core/src/server/provider_control.rs": {
       "dot_ok": 1,
-      "let_underscore": 23,
+      "let_underscore": 12,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/server/reload.rs": {
@@ -398,7 +393,7 @@
     },
     "crates/app-core/src/server/state.rs": {
       "dot_ok": 2,
-      "let_underscore": 8,
+      "let_underscore": 6,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/server/swarm.rs": {
@@ -449,16 +444,6 @@
     "crates/app-core/src/session_effort.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/session_launch.rs": {
-      "dot_ok": 1,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/ssh_remote.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/startup_profile.rs": {
@@ -1016,11 +1001,6 @@
       "let_underscore": 6,
       "unwrap_or_default": 0
     },
-    "crates/base/src/process_title.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/prompt.rs": {
       "dot_ok": 12,
       "let_underscore": 0,
@@ -1176,11 +1156,6 @@
       "let_underscore": 1,
       "unwrap_or_default": 0
     },
-    "crates/base/src/terminal_launch.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/todo.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
@@ -1265,21 +1240,6 @@
       "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
-    },
-    "crates/edit-bench/src/compare.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/edit-bench/src/generate.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
-    "crates/edit-bench/src/run.rs": {
-      "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 4
     },
     "crates/edit-safety/examples/snapshot_demo.rs": {
       "dot_ok": 0,
@@ -1587,7 +1547,7 @@
       "unwrap_or_default": 1
     },
     "crates/terminal-launch/src/lib.rs": {
-      "dot_ok": 4,
+      "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },

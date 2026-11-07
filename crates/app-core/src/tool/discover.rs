@@ -90,7 +90,7 @@ impl fmt::Display for DiscoveryFetchError {
 
 impl std::error::Error for DiscoveryFetchError {}
 
-/// `discover_tools`: fetch discoverable third-party tools for a category from
+/// `integration_tools`: fetch discoverable third-party tools for a category from
 /// the hosted integration directory.
 ///
 /// Disclosure contract: some integration providers may share revenue with HoronAgent, but

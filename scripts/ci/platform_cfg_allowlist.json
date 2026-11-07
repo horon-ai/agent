@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "files": {
     "crates/agent-sdk/src/client.rs": {
       "count": 4,
@@ -96,10 +95,6 @@
     "crates/app-core/src/server/tests.rs": {
       "count": 1,
       "reason": "raw pipe-descriptor readiness test (FromRawFd)."
-    },
-    "crates/app-core/src/session_launch.rs": {
-      "count": 10,
-      "reason": "launching a terminal or session window per OS (macOS `open`/osascript, Linux terminal-emulator argv, Windows `cmd start`). The window is the product; there is no portable primitive."
     },
     "crates/app-core/src/tool/bash.rs": {
       "count": 1,
@@ -217,10 +212,6 @@
       "count": 3,
       "reason": "assert POSIX owner-only modes after hardening and symlink refusal of an external auth file."
     },
-    "crates/base/src/terminal_launch.rs": {
-      "count": 2,
-      "reason": "the spawn-hook test writes an executable #!/bin/sh hook (module gate plus the chmod inside it)."
-    },
     "crates/base/tests/loading_probe_contract.rs": {
       "count": 1,
       "reason": "widens directory modes to 0755 to simulate a preflight failure, which needs POSIX mode bits."
@@ -294,8 +285,8 @@
       "reason": "test asserts the unix euid-derived user discriminator in the active-pid directory name."
     },
     "crates/terminal-launch/src/lib.rs": {
-      "count": 62,
-      "reason": "launching a terminal window is the product: macOS `open`/osascript, Linux terminal-emulator argv plus DISPLAY detection, Windows `cmd start`/ConPTY argv, and the tests assert each platform's argv and quoting. There is no portable primitive for opening a terminal window."
+      "count": 1,
+      "reason": "one `#[cfg(unix)]` test method asserting the client terminal-env snapshot captures set vars only; the spawn and launch surfaces were removed, so no OS primitive remains in the file."
     },
     "crates/update-core/src/lib.rs": {
       "count": 7,
@@ -321,5 +312,6 @@
       "count": 1,
       "reason": "one match arm labelling the Unix-only `api-bridge` command."
     }
-  }
+  },
+  "version": 1
 }

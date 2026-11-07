@@ -46,7 +46,7 @@ const RESTART_REQUIRED_SECTIONS: &[&str] = &[
     "acp",
 ];
 
-/// Liveness of a dotted config key such as `keybindings.scroll_up`.
+/// Liveness of a dotted config key such as `tools.profile`.
 pub fn liveness_for_key(key: &str) -> Liveness {
     let section = key.split('.').next().unwrap_or(key);
     if RESTART_REQUIRED_SECTIONS.contains(&section) {
@@ -59,7 +59,7 @@ pub fn liveness_for_key(key: &str) -> Liveness {
 /// A single changed config key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigChange {
-    /// Dotted key path, e.g. `keybindings.scroll_up`.
+    /// Dotted key path, e.g. `tools.profile`.
     pub key: String,
     /// Rendered previous value, or `None` when the key was absent.
     pub before: Option<String>,
@@ -131,10 +131,7 @@ pub fn summarize_changes(changes: &[ConfigChange]) -> String {
         .filter(|c| c.liveness == Liveness::NeedsRestart)
         .collect();
     if restart.is_empty() {
-        out.push_str(
-            "All changes are live in running horon-agent sessions; no restart needed.\
-             \nKeybinding edits apply to the next keystroke.",
-        );
+        out.push_str("All changes are live in running horon-agent sessions; no restart needed.");
     } else {
         let keys: Vec<&str> = restart.iter().map(|c| c.key.as_str()).collect();
         out.push_str(&format!(

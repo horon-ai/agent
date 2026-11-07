@@ -1790,17 +1790,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horon-agent-edit-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "horon-agent-edit-safety"
 version = "0.1.0"
 dependencies = [
@@ -2212,7 +2201,6 @@ name = "horon-agent-terminal-launch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs",
 ]
 
 [[package]]

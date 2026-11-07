@@ -365,6 +365,9 @@ fn agents_md_distinct_project_and_global_files_are_both_loaded() {
 
 #[test]
 fn captured_agents_md_keeps_split_prompt_stable_after_file_write() {
+    // The prompt reads `HORON_AGENT_HOME` and `HOME`; tests that repoint them
+    // hold this lock, so reading without it sees another test's home.
+    let _guard = crate::storage::lock_test_env();
     let project_dir = tempfile::TempDir::new().unwrap();
     let agents_md = project_dir.path().join("AGENTS.md");
     std::fs::write(&agents_md, "original session instructions").unwrap();
@@ -853,6 +856,7 @@ fn prompt_guidance_missing_or_unreadable_project_keeps_global_content() {
 
 #[test]
 fn foreign_rules_section_is_absent_unless_enabled() {
+    let _guard = crate::storage::lock_test_env();
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(project.path().join(".cursorrules"), "cursor body").unwrap();
 
