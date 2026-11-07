@@ -308,6 +308,9 @@ fn render_message(message: &Message, allowance: usize, out: &mut String) {
             ContentBlock::Image { .. } => {
                 out.push_str("[image attachment — content not read] ");
             }
+            ContentBlock::Audio { .. } => {
+                out.push_str("[audio attachment — content not read] ");
+            }
             ContentBlock::ProviderNative { .. } => {
                 out.push_str("[provider-native item — content not read] ");
             }

@@ -551,6 +551,7 @@ pub fn build_compaction_conversation_text(messages: &[Message], existing_summary
                 | ContentBlock::OpenAIReasoning { .. }
                 | ContentBlock::ToolReference { .. } => {}
                 ContentBlock::Image { .. } => conversation_text.push_str("[Image]\n"),
+                ContentBlock::Audio { .. } => conversation_text.push_str("[audio]\n"),
                 ContentBlock::OpenAICompaction { .. } => conversation_text.push_str("[OpenAI native compaction]\n"),
             }
         }
@@ -713,9 +714,10 @@ fn block_token_count(block: &ContentBlock, family: TokenFamily) -> usize {
         }
         ContentBlock::ToolUse { input, .. } => estimate_tokens_for_family(&input.to_string(), family),
         ContentBlock::ToolResult { content, .. } => estimate_tokens_for_family(content, family),
-        // An image is charged by resolution, not by transport length, so its
-        // flat cost must not move with the estimator. See IMAGE_TOKEN_COST.
-        ContentBlock::Image { .. } => IMAGE_TOKEN_COST,
+        // An image or audio clip is charged by attachment, not by transport
+        // length, so both keep a flat cost that the estimator cannot move.
+        // See IMAGE_TOKEN_COST.
+        ContentBlock::Image { .. } | ContentBlock::Audio { .. } => IMAGE_TOKEN_COST,
         ContentBlock::OpenAICompaction { encrypted_content, .. } => {
             estimate_tokens_for_family(encrypted_content, family)
         }
@@ -749,7 +751,7 @@ pub fn content_char_count(content: &[ContentBlock]) -> usize {
             // payload length. See IMAGE_TOKEN_COST: counting base64 length here
             // overestimates context by ~100x and triggers spurious repeated
             // compactions.
-            ContentBlock::Image { .. } => IMAGE_TOKEN_COST * CHARS_PER_TOKEN_UPPER_BOUND,
+            ContentBlock::Image { .. } | ContentBlock::Audio { .. } => IMAGE_TOKEN_COST * CHARS_PER_TOKEN_UPPER_BOUND,
             ContentBlock::OpenAICompaction { encrypted_content, .. } => encrypted_content.len(),
             // The provider expands a reference into the full definition, but
             // that definition is already accounted for by the tool catalog.
@@ -1107,16 +1109,20 @@ pub fn strip_all_images_in_contents(contents: &mut [&mut Vec<ContentBlock>]) -> 
     let mut stripped = 0;
     for content in contents.iter_mut() {
         for block in content.iter_mut() {
-            if let ContentBlock::Image { media_type, .. } = block {
-                let media_type = media_type.clone();
-                *block = ContentBlock::Text {
-                    text: format!(
-                        "[Image omitted: the provider rejected an image in this conversation (media_type={media_type}). Re-open or re-screenshot it in PNG/JPEG if visual details are needed.]"
-                    ),
-                    cache_control: None,
-                };
-                stripped += 1;
-            }
+            let note = match block {
+                ContentBlock::Image { media_type, .. } => format!(
+                    "[Image omitted: the provider rejected an image in this conversation (media_type={media_type}). Re-open or re-screenshot it in PNG/JPEG if visual details are needed.]"
+                ),
+                ContentBlock::Audio { format, .. } => format!(
+                    "[Audio omitted: the provider rejected an audio clip in this conversation (format={format}). Record or attach it again if it is needed.]"
+                ),
+                _ => continue,
+            };
+            *block = ContentBlock::Text {
+                text: note,
+                cache_control: None,
+            };
+            stripped += 1;
         }
     }
     stripped
@@ -1173,15 +1179,15 @@ pub fn emergency_strip_large_images(messages: &mut [Message], target_total_chars
 /// content-block vectors so it can be reused for both provider `Message`s and
 /// the session's stored-message representation (which share `ContentBlock`).
 pub fn strip_large_images_in_contents(contents: &mut [&mut Vec<ContentBlock>], target_total_chars: usize) -> usize {
-    // Collect (content_index, block_index, payload_len) for every inline image,
-    // in transcript order (oldest first).
+    // Collect (content_index, block_index, payload_len) for every inline image
+    // or audio clip, in transcript order (oldest first).
     let mut images: Vec<(usize, usize, usize)> = Vec::new();
     let mut total: usize = 0;
     for (ci, content) in contents.iter().enumerate() {
         for (bi, block) in content.iter().enumerate() {
-            if let ContentBlock::Image { data, .. } = block {
-                images.push((ci, bi, data.len()));
-                total = total.saturating_add(data.len());
+            if let Some(len) = inline_attachment_len(block) {
+                images.push((ci, bi, len));
+                total = total.saturating_add(len);
             }
         }
     }
@@ -1199,21 +1205,33 @@ pub fn strip_large_images_in_contents(contents: &mut [&mut Vec<ContentBlock>], t
             break;
         }
         let block = &mut contents[ci][bi];
-        if let ContentBlock::Image { media_type, data } = block {
-            let original_len = data.len();
-            let media_type = media_type.clone();
-            *block = ContentBlock::Text {
-                text: format!(
-                    "[Image omitted during request-size recovery: media_type={media_type}, original_base64_chars={original_len}. The request body exceeded the provider size limit; older images were dropped. Rely on adjacent browser/tool text, screenshots saved to disk, or re-open/re-screenshot if visual details are needed.]"
-                ),
-                cache_control: None,
-            };
-            total = total.saturating_sub(payload_len);
-            stripped += 1;
-        }
+        let note = match block {
+            ContentBlock::Image { media_type, .. } => format!(
+                "[Image omitted during request-size recovery: media_type={media_type}, original_base64_chars={payload_len}. The request body exceeded the provider size limit; older images were dropped. Rely on adjacent browser/tool text, screenshots saved to disk, or re-open/re-screenshot if visual details are needed.]"
+            ),
+            ContentBlock::Audio { format, .. } => format!(
+                "[Audio omitted during request-size recovery: format={format}, original_base64_chars={payload_len}. The request body exceeded the provider size limit; older audio clips were dropped.]"
+            ),
+            _ => continue,
+        };
+        *block = ContentBlock::Text {
+            text: note,
+            cache_control: None,
+        };
+        total = total.saturating_sub(payload_len);
+        stripped += 1;
     }
 
     stripped
+}
+
+/// Inline attachment payload length: images and audio clips both live in the
+/// request body as base64 and are trimmed together when the body is too large.
+fn inline_attachment_len(block: &ContentBlock) -> Option<usize> {
+    match block {
+        ContentBlock::Image { data, .. } | ContentBlock::Audio { data, .. } => Some(data.len()),
+        _ => None,
+    }
 }
 
 /// Inline tool-result images (`read`) are decayed once the transcript holds
@@ -1527,6 +1545,22 @@ mod tests {
             SYSTEM_OVERHEAD_TOKENS + 4 * IMAGE_TOKEN_COST,
             tokens
         );
+    }
+
+    #[test]
+    fn audio_token_cost_matches_images() {
+        // Audio is billed by the attachment, not by the base64 payload, so it
+        // keeps the same flat cost an image does.
+        let mut audio_msg = Message::user("");
+        audio_msg.content = vec![ContentBlock::Audio {
+            format: "wav".to_string(),
+            data: "A".repeat(1_400_000),
+        }];
+        assert_eq!(
+            message_char_count(&audio_msg),
+            IMAGE_TOKEN_COST * CHARS_PER_TOKEN_UPPER_BOUND
+        );
+        assert_eq!(message_token_count(&audio_msg), IMAGE_TOKEN_COST + 1);
     }
 
     /// The Korean prose sample the estimator's anchors are measured against:

@@ -197,7 +197,7 @@ fn chat_message_content(content: Option<&Value>) -> Value {
 
     let mut texts: Vec<&str> = Vec::new();
     let mut chat_parts: Vec<Value> = Vec::new();
-    let mut has_image = false;
+    let mut has_media = false;
     for part in parts {
         match part.get("type").and_then(Value::as_str) {
             Some("input_text") | Some("output_text") | Some("text") => {
@@ -208,15 +208,21 @@ fn chat_message_content(content: Option<&Value>) -> Value {
             }
             Some("input_image") => {
                 if let Some(url) = part.get("image_url").and_then(image_url_string) {
-                    has_image = true;
+                    has_media = true;
                     chat_parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+                }
+            }
+            Some("input_audio") => {
+                if let Some(audio) = part.get("input_audio") {
+                    has_media = true;
+                    chat_parts.push(json!({ "type": "input_audio", "input_audio": audio }));
                 }
             }
             _ => {}
         }
     }
 
-    if has_image {
+    if has_media {
         Value::Array(chat_parts)
     } else if texts.len() > 1 {
         Value::String(texts.join("\n"))
