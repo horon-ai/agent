@@ -151,6 +151,18 @@ jobs:
         with:
           arch: amd64
 
+      - name: Use the MSVC linker from bash
+        # Every later step runs in Git Bash, whose /usr/bin/link.exe (coreutils)
+        # comes before MSVC's in PATH, so cargo would call the wrong `link.exe`.
+        # Naming the MSVC linker by its full path makes the PATH order irrelevant.
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $link = (Get-Command link.exe -All | Where-Object { $_.Source -like '*\MSVC\*' } | Select-Object -First 1).Source
+          if (-not $link) { throw 'MSVC link.exe not found on PATH after msvc-dev-cmd' }
+          Write-Output "MSVC linker: $link"
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
