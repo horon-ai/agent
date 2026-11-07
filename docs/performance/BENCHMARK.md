@@ -20,7 +20,16 @@ horon의 성능은 세 가지 장치로 본다. 무엇을 묻는지가 서로 �
 | `macos` | `macos-latest` | RSS | |
 | `windows` | `windows-latest` | Working Set | 데몬 연결은 Named Pipe, 하네스 브리지 기동은 측정 안 함(`api-bridge`는 Unix 전용) |
 
-OS마다 작업 하나가 모든 묶음을 한 기계에서 돌린다. 그래서 같은 OS 안의 비교 행은 CPU·디스크·부하를 공유한다. OS끼리는 기계가 달라 절대값을 비교하지 않는다. 작업 하나가 실패해도 다른 OS는 계속 돈다.
+OS마다 작업을 다음처럼 나눠 돌린다.
+
+| 작업 | 수 | 하는 일 |
+| --- | --- | --- |
+| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. |
+| `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`다. |
+| `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
+| `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
+
+한 묶음의 표에 들어가는 비교 행(horon과 각 경쟁 도구, 각 이벤트 수)은 한 기계에서 함께 잰다. 그래서 그 행들은 CPU·디스크·부하를 공유한다. 서로 다른 묶음끼리, 그리고 OS끼리는 기계가 달라 절대값을 비교하지 않는다. 단위 하나가 실패해도 다른 단위와 다른 OS는 계속 돈다. 그 OS의 `status.txt`는 `success`가 아니게 기록되고, 이미 잰 결과는 아티팩트에 남는다.
 
 ### 실행하기
 
@@ -33,13 +42,13 @@ gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
-| `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 작업이 하나씩 뜬다. |
+| `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. |
 | `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `compile` 중 쉼표로 고른다. |
 | `competitors` | `jcode,claude_code,codex,opencode,pi` | horon과 비교할 도구. 설치에 실패한 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 
-모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다.
+모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 `merge` 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다. 중간 아티팩트 이름은 `benchmark-`로 시작하지 않으므로 `benchmark-docs.yml`의 다운로드에 섞이지 않는다.
 
 시크릿과 API 요금은 없다. 모델이 필요한 측정은 모두 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙는다.
 

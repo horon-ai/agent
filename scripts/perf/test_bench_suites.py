@@ -31,6 +31,7 @@ import bench_compile  # noqa: E402
 import bench_select  # noqa: E402
 import bench_reload_storm  # noqa: E402
 import bench_tools  # noqa: E402
+import bench_merge  # noqa: E402
 
 
 class ToolCaseReporting(unittest.TestCase):
@@ -149,6 +150,90 @@ class PlatformSelection(unittest.TestCase):
     def test_unknown_os_fails_instead_of_measuring_nothing(self) -> None:
         with self.assertRaises(SystemExit):
             bench_select.platforms("linux,freebsd")
+
+
+class JobSelection(unittest.TestCase):
+    """The measure, compile, and merge matrices come from bench_select."""
+
+    def test_all_splits_loading_and_leaves_compile_to_its_own_job(self) -> None:
+        units = {entry["unit"] for entry in bench_select.jobs("linux", "all")}
+        self.assertEqual(units, {"compare", "startup", "loading-cold", "loading-warm", "tools", "reload"})
+        self.assertEqual(bench_select.compile_jobs("linux", "all"), [{"os": "linux", "runner": "ubuntu-24.04"}])
+
+    def test_subset_measures_only_the_chosen_units_on_every_chosen_os(self) -> None:
+        entries = bench_select.jobs("linux,windows", "tools")
+        self.assertEqual([(e["os"], e["unit"]) for e in entries], [("linux", "tools"), ("windows", "tools")])
+        self.assertEqual(bench_select.compile_jobs("linux,windows", "tools"), [])
+
+    def test_compile_only_has_no_measure_job(self) -> None:
+        self.assertEqual(bench_select.jobs("all", "compile"), [])
+        self.assertEqual(len(bench_select.compile_jobs("all", "compile")), 3)
+
+    def test_merge_expects_every_unit_with_compile_last(self) -> None:
+        self.assertEqual(
+            bench_select.expected_units("loading,compile"), ["loading-cold", "loading-warm", "compile"]
+        )
+
+
+def _part(root: Path, name: str, status: str | None, files: dict[str, str]) -> None:
+    directory = root / name
+    directory.mkdir()
+    for file_name, text in files.items():
+        (directory / file_name).write_text(text, encoding="utf-8")
+    if status is not None:
+        (directory / "status.txt").write_text(status + "\n", encoding="utf-8")
+
+
+class MergeParts(unittest.TestCase):
+    """bench_merge rebuilds the one artifact bench_docs.py reads."""
+
+    def _run(self, add_parts) -> tuple[Path, str]:
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        root = Path(holder.name)
+        parts = root / "parts"
+        parts.mkdir()
+        _part(parts, "bench-part-linux-build-7", "success", {"commit.txt": "abc\n", "horon-version.txt": "v1\n"})
+        add_parts(parts)
+        out = root / "out"
+        bench_merge.merge(parts, out, "linux", "ubuntu-24.04", ["tools", "startup"])
+        return out, (out / "status.txt").read_text(encoding="utf-8").strip()
+
+    def test_every_part_succeeded(self) -> None:
+        def add(parts: Path) -> None:
+            _part(parts, "bench-part-linux-tools-7", "success", {"tools.json": "{}", "tools.md": "t"})
+            _part(parts, "bench-part-linux-startup-7", "success", {"startup.txt": "s"})
+
+        out, status = self._run(add)
+        self.assertEqual(status, "success")
+        self.assertEqual(
+            sorted(p.name for p in out.iterdir()),
+            ["commit.txt", "horon-version.txt", "platform.txt", "runner.txt", "startup.txt",
+             "status.txt", "tools.json", "tools.md"],
+        )
+
+    def test_missing_part_fails_but_keeps_the_others(self) -> None:
+        def add(parts: Path) -> None:
+            _part(parts, "bench-part-linux-tools-7", "success", {"tools.md": "t"})
+
+        out, status = self._run(add)
+        self.assertEqual(status, "failure")
+        self.assertTrue((out / "tools.md").is_file())
+
+    def test_failed_part_fails(self) -> None:
+        def add(parts: Path) -> None:
+            _part(parts, "bench-part-linux-tools-7", "failure", {"tools.md": "t"})
+            _part(parts, "bench-part-linux-startup-7", "success", {"startup.txt": "s"})
+
+        self.assertEqual(self._run(add)[1], "failure")
+
+    def test_duplicate_result_name_is_an_error(self) -> None:
+        def add(parts: Path) -> None:
+            _part(parts, "bench-part-linux-tools-7", "success", {"tools.md": "t"})
+            _part(parts, "bench-part-linux-startup-7", "success", {"tools.md": "other"})
+
+        with self.assertRaises(SystemExit):
+            self._run(add)
 
 
 
