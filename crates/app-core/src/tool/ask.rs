@@ -358,7 +358,10 @@ impl Tool for AskTool {
         let policy = self.policy();
         if let Some(tx) = ask_bridge::sender_for(&ctx.session_id) {
             let _awaiting = ask_bridge::begin_awaiting_answer(&ctx.session_id);
-            match self.wait_for_client(&request, tx).await {
+            match self
+                .wait_for_client(&request, tx, &ctx.session_id, &ctx.tool_call_id)
+                .await
+            {
                 ClientReply::Answered(answers) => return answered(&request, answers, policy),
                 ClientReply::None(reason) => {
                     if policy == AskPolicy::Error {
@@ -385,16 +388,24 @@ impl AskTool {
     ///
     /// A dropped answer channel is a disconnect: the turn resumes on the
     /// recommended option instead of waiting for a person who is gone.
+    ///
+    /// `session_id` and `tool_call_id` travel with the prompt because the
+    /// connection that forwards it is the only place that knows the negotiated
+    /// protocol version, and a v2 editor pairs the question with its call.
     async fn wait_for_client(
         &self,
         request: &AskRequest,
         tx: tokio::sync::mpsc::UnboundedSender<AskPrompt>,
+        session_id: &str,
+        tool_call_id: &str,
     ) -> ClientReply {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let prompt = AskPrompt {
             ask_id: crate::id::new_id("ask"),
             questions: request.questions.clone(),
             response_tx,
+            session_id: session_id.to_string(),
+            tool_call_id: tool_call_id.to_string(),
         };
         if tx.send(prompt).is_err() {
             return ClientReply::None(NoAnswer::Disconnected);
@@ -413,6 +424,10 @@ impl AskTool {
 #[cfg(test)]
 #[path = "ask_tests.rs"]
 mod ask_tests;
+
+#[cfg(test)]
+#[path = "ask_tool_call_tests.rs"]
+mod ask_tool_call_tests;
 
 #[cfg(test)]
 #[path = "ask_client_tests.rs"]

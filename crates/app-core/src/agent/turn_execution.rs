@@ -1,6 +1,8 @@
 use super::*;
 use crate::{terminal_eprintln as eprintln, terminal_println as println};
 
+pub(in crate::agent) mod audio;
+
 impl Agent {
     /// Refuse to run a model turn when this session moved to another machine
     /// or this in-memory copy is older than the transcript on disk.
@@ -236,10 +238,7 @@ impl Agent {
         continues_turn: bool,
         starts_run: bool,
     ) -> String {
-        let mut blocks: Vec<ContentBlock> = images
-            .into_iter()
-            .map(|(media_type, data)| ContentBlock::Image { media_type, data })
-            .collect();
+        let mut blocks = audio::attachment_blocks(images);
         blocks.push(ContentBlock::Text {
             text: user_message.to_string(),
             cache_control: None,
