@@ -56,6 +56,10 @@ on:
         type: string
         required: false
         default: "3"
+      oneshot_runs:
+        type: string
+        required: false
+        default: "3"
       baseline_ref:
         description: "Optional ref built beside the measured commit and compared as a second horon row"
         type: string
@@ -81,6 +85,10 @@ on:
         default: "1 5 10"
       turns:
         description: "Turns per session for the memory comparison"
+        required: false
+        default: "3"
+      oneshot_runs:
+        description: "One-shot prompt repeats per build; raise it when a median must separate two builds"
         required: false
         default: "3"
       baseline_ref:
@@ -144,6 +152,7 @@ jobs:
       COMPETITORS: ${{ inputs.competitors }}
       SESSIONS: ${{ inputs.sessions }}
       TURNS: ${{ inputs.turns }}
+      ONESHOT_RUNS: ${{ inputs.oneshot_runs }}
       # The baseline checkout lives inside the workspace because actions/checkout
       # only writes below $GITHUB_WORKSPACE. It is a sibling tree with its own
       # target directory, so neither build reuses the other's artifacts.
@@ -337,7 +346,7 @@ jobs:
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
             --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args \
-            --sessions $SESSIONS --turns "$TURNS" --syscalls \
+            --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
       - name: "Suite: startup"
