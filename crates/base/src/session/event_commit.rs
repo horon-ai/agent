@@ -48,6 +48,10 @@ impl Session {
                 for event in events {
                     writer.append(&event)?;
                 }
+                // One flush confirms every original this commit wrote, and it runs
+                // before any head or binding below may name one of them: a batched
+                // append defers its flush, so this is the commit's one flush.
+                writer.flush_pending_log()?;
                 if let Some(source) = external_source {
                     event_store::publish_local_durable(
                         &commit_paths.session_dir(&commit_id)?.join("local-explicit-source.json"),

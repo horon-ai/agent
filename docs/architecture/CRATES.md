@@ -107,6 +107,8 @@ HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루�
 - 더티 표식 생성(`writer.rs`의 `.catalog.dirty/<id>`)
 - 원본에서 다시 만들 수 없는 로컬 상태: `local-head.json`, `local-head-explicit.json`, `local-explicit-source.json`, `local-runtime.json`
 
+한 묶음 커밋은 로그 flush를 한 번만 낸다. `BlockingWriter::batched` 안의 append는 원본 바이트를 다 쓴 뒤 flush를 미루고, 묶음 끝의 `flush_pending_log`가 그 한 번을 낸다. `local-head.json` 같은 선택 상태는 그 flush가 성공한 뒤에만 쓴다. flush가 실패하면 `batched`는 오류를 돌려주고 확정된 선택 상태는 남기지 않으므로, 같은 이벤트를 다시 보내면 로그에 한 번만 들어간다. 블롭 flush는 블롭마다 그대로다.
+
 파생은 임시 파일에 쓰고 rename만 한다. `cache_io::publish_derived`와 `event_store::publish_local_derived`가 그 경로이고 fsync하지 않는다.
 
 - 파생 대상: `checkpoint.json`, `sparse-index.jsonl`, `summary.json`, 카탈로그 행(`.catalog.index.jsonl`), `facade-cache.json`, 더티 표식 삭제
