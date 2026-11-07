@@ -195,7 +195,7 @@ struct ConfigCache {
 }
 
 static CONFIG_CACHE: LazyLock<RwLock<ConfigCache>> = LazyLock::new(|| {
-    let config = leak_config(Config::load());
+    let config = leak_config(Config::load_counted());
     // Fingerprint after the load so it describes the state the loaded config
     // was resolved from.
     let fingerprint = ConfigCacheFingerprint::current();
@@ -259,7 +259,7 @@ pub fn config() -> &'static Config {
                 &cache.fingerprint,
                 &fingerprint,
             ));
-            cache.config = leak_config(Config::load());
+            cache.config = leak_config(Config::load_counted());
             // Re-fingerprint after the load so the next check compares against
             // the state this reload actually observed.
             cache.fingerprint = ConfigCacheFingerprint::current();
@@ -649,10 +649,9 @@ pub const IRC_TOOL: &str = "irc";
 /// (`resolve_tool_name` maps `skill` to it); `mcp` is the wildcard covering
 /// every `mcp__server__tool` plus the fixed `mcp_search`/`mcp_call` surface.
 ///
-/// The list is the reachability contract, not the eager surface: a session
-/// whose `core` list is on ([`ToolLoadTiers::core_listed`]) sends only
-/// [`ESSENTIAL_TOOLS`] eagerly and names the rest in its system prompt, where
-/// [`TOOLBOX_TOOL`] reaches them. Every other session sends all of them.
+/// The list is the reachability contract, not the eager surface: a `core`
+/// listing sends only [`ESSENTIAL_TOOLS`] eagerly and names the rest in its
+/// system prompt, where [`TOOLBOX_TOOL`] reaches them; others send all of them.
 pub const CORE_TOOLS: &[&str] = &[
     "bash",
     "read",
@@ -682,13 +681,11 @@ pub const ESSENTIAL_TOOLS: &[&str] = &["read", "write", "edit", "apply_patch", "
 /// The always-visible dispatcher for built-in tools that are not carried
 /// eagerly.
 ///
-/// Deliberately outside [`CORE_TOOLS`]: the `core` allow-list joins it
-/// explicitly and the `acp` list never does, so [`CORE_TOOLS`] itself stays the
-/// fifteen-tool surface. It is registered under the `full` and `core` profiles.
-/// Its load tier is pinned [`LoadMode::Essential`] by [`ToolLoadTiers::tier`] so
-/// the one tool that can reach the deferred surface is never itself deferred.
-/// There is no promotion action: it loads a schema by reference and nothing
-/// else.
+/// Deliberately outside [`CORE_TOOLS`]: the `core` allow-list joins it and the
+/// `acp` list never does, so [`CORE_TOOLS`] itself stays the fifteen-tool
+/// surface. It is registered under `full` and `core`, and [`ToolLoadTiers::tier`]
+/// pins its tier to [`LoadMode::Essential`] so the one tool that reaches the
+/// deferred surface is never itself deferred. It only loads a schema.
 pub const TOOLBOX_TOOL: &str = "toolbox";
 
 /// How one built-in tool enters the model's tool list.
@@ -1206,6 +1203,9 @@ mod display_tests;
 #[cfg(test)]
 #[path = "config/storage_tests.rs"]
 mod storage_tests;
+
+#[cfg(test)]
+mod tool_profile_tests;
 
 /// Whether integration discovery settings carry no information beyond the shipped
 /// default, so `[sponsors]` can be left out of written config files.

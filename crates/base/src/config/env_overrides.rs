@@ -564,3 +564,54 @@ fn parse_env_list(raw: &str) -> Vec<String> {
         .map(ToString::to_string)
         .collect()
 }
+
+/// Number of times the process config cache resolved `Config`. Test-only
+/// observability for the startup-path tests.
+#[cfg(any(test, feature = "test-support"))]
+static CONFIG_LOAD_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl Config {
+    /// Load `Config` and count the load when test observability is compiled.
+    ///
+    /// Every population and reload of the process config cache goes through
+    /// here, so the counter is the number of `Config::load` calls the process
+    /// made for its global config.
+    pub(crate) fn load_counted() -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        CONFIG_LOAD_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self::load()
+    }
+
+    /// Number of global `Config::load` calls so far. Test-only observability.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn config_load_count() -> u64 {
+        CONFIG_LOAD_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Apply a tool profile to the loaded config without re-reading the file.
+    ///
+    /// A headless launch that selects no profile applies
+    /// [`CORE_TOOL_PROFILE`] by setting `HORON_AGENT_TOOL_PROFILE`.
+    /// Invalidating the cache afterwards made the next `config()` parse the
+    /// file a second time, so this patches the loaded value instead and keeps
+    /// the launch at one `Config::load`.
+    ///
+    /// The stored environment fingerprint is refreshed from the current
+    /// environment: the caller sets the variable right before this call, and an
+    /// unsynchronized fingerprint would make the next `config()` treat it as an
+    /// external change and reload anyway.
+    pub fn set_loaded_tool_profile(profile: &str) {
+        let mut cache = super::CONFIG_CACHE
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cache.config.tools.profile != profile {
+            // The global config is handed out as `&'static Config`; publish a
+            // new leaked copy instead of mutating a reference readers hold.
+            let mut patched = cache.config.clone();
+            patched.tools.profile = profile.to_string();
+            cache.config = super::leak_config(patched);
+        }
+        cache.fingerprint = super::ConfigCacheFingerprint::current();
+        cache.last_checked = std::time::Instant::now();
+    }
+}

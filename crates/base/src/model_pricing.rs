@@ -61,6 +61,11 @@ struct PricingCache {
 static MEMORY_CACHE: Mutex<Option<(PathBuf, Arc<PricingCache>)>> = Mutex::new(None);
 static REFRESH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
+/// On-disk catalog reads observed by [`load_cache`]. Test-only: it is what
+/// proves a startup with refreshes disabled never opens the cache file.
+#[cfg(test)]
+static CACHE_DISK_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn cache_path() -> PathBuf {
     crate::storage::horon_agent_dir()
         .unwrap_or_else(|_| PathBuf::from(".").join(".horon-agent"))
@@ -85,6 +90,8 @@ fn load_cache() -> Option<Arc<PricingCache>> {
             return Some(Arc::clone(cache));
         }
     }
+    #[cfg(test)]
+    CACHE_DISK_READS.fetch_add(1, Ordering::Relaxed);
     let cache: PricingCache = crate::storage::read_json(&path).ok()?;
     let cache = Arc::new(cache);
     if let Ok(mut memory) = MEMORY_CACHE.lock() {
@@ -314,15 +321,15 @@ fn ensure_cache_fresh() -> Option<Arc<PricingCache>> {
 /// Load the on-disk catalog and schedule a background refresh when it is
 /// missing or stale.
 ///
-/// Safe to call from startup and catalog paths: the refresh itself is gated by
-/// [`schedule_refresh`], so this is a cheap memory-cache hit when the catalog
-/// is fresh and a no-op when refreshes are disabled. A missing catalog is not
-/// an error here: callers keep working unpriced until the refresh lands.
+/// A process that did not ask for refreshes returns before touching the disk,
+/// so the default one-shot never parses the pricing catalog; lookups keep
+/// their own lazy read for the priced-model paths that need it. When refreshes
+/// are enabled this is a cheap memory-cache hit for a fresh catalog.
 pub fn ensure_fresh() {
     // Test builds must not read or write the real home (process-global test
     // sandboxes swap `HORON_AGENT_HOME` between cases) and never reach the
-    // network, so the startup hook is a no-op there.
-    if cfg!(any(test, feature = "test-support")) {
+    // network unless the environment opts in, so the gate comes first.
+    if !refresh_requested_now() {
         return;
     }
     let cache = load_cache();
@@ -347,8 +354,9 @@ async fn refresh_with_logging() {
 /// refresh, so enabling this costs one fetch, not a fetch per start.
 pub fn ensure_fresh_at_startup() {
     // Test builds must not read or write the real home and never reach the
-    // network.
-    if cfg!(any(test, feature = "test-support")) {
+    // network unless the environment opts in. Disabled refreshes return here
+    // without reading the catalog at all.
+    if !refresh_requested_now() {
         return;
     }
     let cache = load_cache();
@@ -356,9 +364,6 @@ pub fn ensure_fresh_at_startup() {
         if cache_is_stale(cache.as_ref()) {
             schedule_refresh();
         }
-        return;
-    }
-    if !refresh_requested(crate::config::config().features.pricing_refresh) {
         return;
     }
     if REFRESH_IN_FLIGHT.swap(true, Ordering::SeqCst) {
@@ -413,6 +418,20 @@ fn refresh_requested(config_enabled: bool) -> bool {
     match refresh_env_override() {
         Some(force) => force,
         None => !cfg!(any(test, feature = "test-support")) && refresh_wanted(config_enabled),
+    }
+}
+
+/// Whether this process wants a catalog refresh, decided before any file
+/// access.
+///
+/// The environment wins when set, and an unset environment in a test build is
+/// a "no" without resolving the config, so the startup hooks cannot read the
+/// real home of a test binary just to answer this question.
+fn refresh_requested_now() -> bool {
+    match refresh_env_override() {
+        Some(force) => force,
+        None if cfg!(any(test, feature = "test-support")) => false,
+        None => refresh_wanted(crate::config::config().features.pricing_refresh),
     }
 }
 
@@ -594,6 +613,56 @@ mod tests {
         assert!(!refresh_requested(true));
 
         restore_refresh_env(prev);
+    }
+
+    #[test]
+    fn startup_skips_cache_read_when_refresh_off() {
+        let _guard = crate::storage::lock_test_env();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_refresh = std::env::var_os(REFRESH_ENV);
+        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::remove_var(REFRESH_ENV);
+        clear_memory_cache_for_tests();
+
+        // Leave a cache file behind so an unconditional startup read would be
+        // visible in the counter.
+        save_test_cache(&[(
+            "anthropic",
+            "claude-sonnet-4",
+            ModelCost {
+                input_usd_per_mtok: 3.0,
+                output_usd_per_mtok: 15.0,
+                cache_read_usd_per_mtok: Some(0.3),
+                cache_write_usd_per_mtok: None,
+            },
+        )]);
+        clear_memory_cache_for_tests();
+        let reads_before = CACHE_DISK_READS.load(Ordering::Relaxed);
+
+        ensure_fresh();
+        ensure_fresh_at_startup();
+
+        assert_eq!(
+            CACHE_DISK_READS.load(Ordering::Relaxed),
+            reads_before,
+            "a disabled refresh must not read the pricing cache"
+        );
+
+        // Positive control: the catalog is read only when a refresh is enabled.
+        crate::env::set_var(REFRESH_ENV, "1");
+        ensure_fresh_at_startup();
+        assert!(
+            CACHE_DISK_READS.load(Ordering::Relaxed) > reads_before,
+            "enabling the refresh must read the catalog to decide freshness"
+        );
+
+        clear_memory_cache_for_tests();
+        restore_refresh_env(prev_refresh);
+        match prev_home {
+            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
+            None => crate::env::remove_var("HORON_AGENT_HOME"),
+        }
     }
 
     #[test]
