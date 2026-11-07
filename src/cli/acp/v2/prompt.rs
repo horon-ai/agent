@@ -19,6 +19,25 @@ use tokio::sync::oneshot;
 /// its hand-off with an error is answered here instead of left unanswered.
 pub(super) const SESSION_CLOSED: &str = "The session closed before the request was answered";
 
+/// The answer to a v2 `session/prompt` whose `prompt` array is empty.
+///
+/// The alpha.13 `PromptRequest.prompt` is `minItems: 1`, and the empty
+/// `user_message` an empty array would insert is not a turn, so the adapter
+/// refuses it before the daemon ever sees it. v1 keeps accepting an empty
+/// array: its `PromptRequest` sets no `minItems`, and its surface must not
+/// change.
+const EMPTY_PROMPT: &str = "session/prompt requires at least one prompt content block";
+
+/// Whether the request's `prompt` array is present and empty. A missing or
+/// non-array `prompt` never reaches this check: `prompt_from_params` refuses it
+/// first.
+fn is_empty_prompt(params: &Value) -> bool {
+    params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .is_some_and(|prompt| prompt.is_empty())
+}
+
 impl AcpRuntime {
     pub(in super::super) async fn handle_session_prompt_v2(&self, message: IncomingRequest) -> Result<()> {
         let id = message.id;
@@ -30,6 +49,11 @@ impl AcpRuntime {
             Ok(prompt) => prompt,
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
+        if is_empty_prompt(&message.params) {
+            return self
+                .write_error_value(id, JSONRPC_INVALID_PARAMS, EMPTY_PROMPT.to_string())
+                .await;
+        }
         let content = message
             .params
             .get("prompt")

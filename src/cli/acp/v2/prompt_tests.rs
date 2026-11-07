@@ -150,6 +150,34 @@ async fn prompt_answers_message_id_on_insert_not_on_done() {
     client.close_stdin().await;
 }
 
+/// alpha.13 `PromptRequest.prompt` is `minItems: 1`: the adapter refuses an
+/// empty array with `-32602` before the daemon sees a `message`, so no turn
+/// starts and no empty `user_message` is ever written.
+#[tokio::test]
+async fn empty_prompt_is_invalid_params_and_never_reaches_the_daemon() {
+    let mut client = v2_client().await;
+    let (_session, mut daemon) = attach_v2(&client, PROMPT_CANCEL_BOUND).await;
+    client
+        .send(json!({"jsonrpc":"2.0","id":"empty","method":"session/prompt",
+            "params":{"sessionId":SID,"prompt":[]}}))
+        .await;
+    let (before, response) = client.recv_response(json!("empty")).await;
+    assert!(before.is_empty(), "{before:?}");
+    assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+    assert!(
+        response["error"].get("data").is_none(),
+        "an empty prompt is a plain invalid-params error: {response}"
+    );
+    super::tests::assert_matches("Error", &response["error"]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), daemon.recv())
+            .await
+            .is_err(),
+        "an empty prompt writes no daemon message"
+    );
+    client.close_stdin().await;
+}
+
 #[tokio::test]
 async fn pre_insert_errors_have_no_updates() {
     let mut client = v2_client().await;
@@ -592,7 +620,7 @@ fn auth_failure_matches_whole_tokens() {
         "no credentials found",
         "Authentication failed",
     ] {
-        assert_eq!(super::state::error_code(message), ACP_AUTH_REQUIRED, "{message}");
+        assert_eq!(super::foreground::error_code(message), ACP_AUTH_REQUIRED, "{message}");
     }
     for message in [
         "request 4011 failed",
@@ -600,7 +628,11 @@ fn auth_failure_matches_whole_tokens() {
         "authentication of the tool server failed",
         "nologgedin",
     ] {
-        assert_eq!(super::state::error_code(message), JSONRPC_INTERNAL_ERROR, "{message}");
+        assert_eq!(
+            super::foreground::error_code(message),
+            JSONRPC_INTERNAL_ERROR,
+            "{message}"
+        );
     }
 }
 
