@@ -160,7 +160,7 @@ p99 는 표본이 20 개 이상일 때만 나온다. 그 아래에서는 키를 
 
 ### 요청형 벤치마크 워크플로
 
-`.github/workflows/benchmark.yml` 은 수동 실행(`workflow_dispatch`)으로만 뜬다. push, PR, 예약 실행에서는 돌지 않는다. 경쟁 도구를 설치하고 릴리스 빌드를 하며 러너 시간을 수십 분 쓰기 때문이다.
+`.github/workflows/benchmark.yml` 은 push, PR, 예약 실행에서 직접 돌지 않는다. 경쟁 도구를 설치하고 릴리스 빌드를 하며 러너 시간을 수십 분 쓰기 때문이다. 수동 실행(`workflow_dispatch`)과, 아래 "자동 벤치마크와 문서 갱신"의 `benchmark-docs.yml` 이 부르는 `workflow_call` 두 경로로만 뜬다.
 
 ```bash
 gh workflow run benchmark.yml --ref dev -f suites=all
@@ -189,6 +189,19 @@ gh workflow run benchmark.yml --ref dev -f suites=compare,tools -f competitors=c
 | `tools` | `bench_tools.py` | debug 소켓 `tool:` 명령으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 케이스의 지연 |
 | `reload` | `bench_reload_storm.py` | 세션 N 개(기본 1, 10, 40)를 동시에 `subscribe` 해서 `history` 프레임이 올 때까지의 지연 |
 | `compile` | `bench_compile.py` | `cargo check` 의 warm no-op, leaf(`src/main.rs`), core(`crates/app-core`), build-meta 터치 후 재빌드 시간. mtime 만 올렸다가 되돌린다. `--quick` 은 no-op 만 잰다. |
+
+#### 자동 벤치마크와 문서 갱신
+
+`.github/workflows/benchmark-docs.yml` 은 `main` 에 push 된 커밋의 CI 가 성공하면(`workflow_run`) 뜬다. 다음 순서로 진행하고, 앞 단계가 막으면 뒤 단계는 돌지 않는다.
+
+1. 직전 측정 커밋(`RESULTS.md` 의 `<!-- bench-auto:start commit=... -->`)과 지금 커밋 사이에 `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf` 가 바뀌었는지 본다. 기록이 없거나 그 커밋이 이력에 없으면 부모 커밋과 비교한다. 바뀐 것이 없으면 측정하지 않는다.
+2. 같은 커밋의 `structural-perf.yml` push 실행이 성공할 때까지 최대 80분 기다린다. 실패하면 멈춘다.
+3. `benchmark.yml` 을 `suites=all` 과 기본 경쟁 도구로 부른다. 러너는 저장소 변수 `BENCHMARK_RUNNER`(없으면 `ubuntu-latest`, `macos-persistent` 면 상주 macOS 러너)로 고른다.
+4. 측정 작업이 성공하면 `scripts/perf/bench_docs.py render` 로 `docs/performance/RESULTS.md` 의 `bench-auto` 구간만 다시 쓰고, `main` 과 `dev` 에 `docs(perf): record benchmark for <sha>` 커밋으로 push 한다. 구간 밖의 글은 바이트 단위로 그대로 두고, 표시가 없거나 둘 이상이면 그 브랜치는 쓰지 않고 실패로 남긴다.
+
+문서 커밋은 `GITHUB_TOKEN` 으로 push 하므로 GitHub 가 그 push 로 워크플로를 새로 띄우지 않는다. 문서만 바뀐 커밋은 1단계에서 걸러지므로 측정이 스스로를 다시 부르지 않는다. `workflow_run` 은 기본 브랜치에 있는 워크플로 파일만 실행하므로 이 자동화는 이 파일이 `main` 에 올라간 뒤부터 동작한다.
+
+자동 구간의 수치는 회귀 판정 기준이 아니라 추세 기록이다. 호스티드 러너의 절대값은 기계마다 달라 같은 실행 안의 상대 비교만 읽는다. 구간은 손으로 고치지 않는다. 다음 측정이 덮어쓴다.
 
 #### 경쟁 도구 비교
 

@@ -1,10 +1,13 @@
 name: Benchmark
 
-# On request only. This workflow never runs on push, pull_request, or a schedule:
-# it installs third-party agent CLIs, builds a release binary, and spends tens of
-# minutes of runner time, so it runs only when someone dispatches it:
+# Two entry points, never push, pull_request, or a schedule directly: it installs
+# third-party agent CLIs, builds a release binary, and spends tens of minutes of
+# runner time.
 #
 #   gh workflow run benchmark.yml --ref <branch> -f suites=all
+#
+# and `workflow_call` from benchmark-docs.yml, which runs every suite on a `main`
+# commit after its CI passed and writes the result into docs/performance/RESULTS.md.
 #
 # No secrets and no real model calls. Every suite that needs a model talks to
 # scripts/perf/mock_llm_server.py on localhost, so a run costs no API credit and
@@ -16,6 +19,33 @@ name: Benchmark
 # competitor is listed as skipped.
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit to check out and measure (default: the triggering commit)"
+        type: string
+        required: false
+        default: ""
+      suites:
+        type: string
+        required: false
+        default: all
+      competitors:
+        type: string
+        required: false
+        default: jcode,claude_code,codex,opencode,pi
+      sessions:
+        type: string
+        required: false
+        default: "1 5 10"
+      turns:
+        type: string
+        required: false
+        default: "3"
+      runner:
+        type: string
+        required: false
+        default: ubuntu-latest
   workflow_dispatch:
     inputs:
       suites:
@@ -80,6 +110,9 @@ jobs:
           df -h /
 
       - uses: actions/checkout@v7
+        with:
+          # Empty for a dispatch, so the dispatched ref's commit is measured.
+          ref: ${{ inputs.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -114,6 +147,7 @@ jobs:
             cargo build --release --locked -p horon-agent-base --example loading_probe
           fi
           mkdir -p "$RESULTS"
+          git rev-parse HEAD > "$RESULTS/commit.txt"
           ./target/release/horon-agent --version | tee "$RESULTS/horon-version.txt"
 
       - uses: actions/setup-node@v7
@@ -184,7 +218,7 @@ jobs:
           {
             echo "## Benchmark"
             echo
-            echo "- commit: \`${GITHUB_SHA}\`, runner: \`${{ runner.os }}/${{ runner.arch }}\` (${{ runner.environment }})"
+            echo "- commit: \`$(cat "$RESULTS/commit.txt")\`, runner: \`${{ runner.os }}/${{ runner.arch }}\` (${{ runner.environment }})"
             echo "- suites: \`$SUITES\`"
             echo
             for f in compare tools reload compile; do

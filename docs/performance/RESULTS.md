@@ -439,3 +439,13 @@ Linux의 차이는 힙이 아니라 실행 파일 상주 페이지입니다. 세
 - **첫 세션 RSS와 세션당 증가분은 다른 축입니다.** Linux 후보는 첫 세션 값이 +1.3 MiB 높고 세션당 증가분은 -452 KiB입니다. 두 값을 하나의 "메모리"로 합치지 않습니다.
 - **`perf_counters_surface`는 데몬을 띄우지 않습니다.** 이 워크로드가 말하는 것은 "공용 코드에 회귀가 없다"까지이고, 저장 경로나 TLS 경로의 비용은 one-shot 표가 답합니다.
 - **p99는 없습니다.** 표본이 12개 이하라 실행기가 20개 미만을 이유로 거절했습니다.
+
+## 자동 측정: `main` 최신 측정 커밋
+
+`main` 에 올라간 커밋이 CI 와 구조 성능 게이트를 모두 통과하고 직전 측정 이후 에이전트 코드(`src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf`)가 바뀌었으면, `.github/workflows/benchmark-docs.yml` 이 전체 벤치마크 묶음을 돌리고 아래 구간을 `main` 과 `dev` 에서 함께 다시 씁니다. 측정 방법과 묶음별 뜻은 [`BENCHMARK.md`](BENCHMARK.md) 의 "자동 벤치마크와 문서 갱신"에 있습니다.
+
+<!-- bench-auto:start -->
+
+아직 자동 측정이 없습니다.
+
+<!-- bench-auto:end -->
