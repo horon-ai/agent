@@ -84,6 +84,17 @@ pub struct TaskStatusFile {
     /// this long with no new output bytes and no progress events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stall_wake_seconds: Option<u64>,
+    /// Tool call that started this task, when the caller supplied one. Files
+    /// written before this field existed deserialize with `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Shell command line the task runs, when known, so a client can show it
+    /// without re-reading the tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Working directory the task runs in, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 fn default_true() -> bool {
