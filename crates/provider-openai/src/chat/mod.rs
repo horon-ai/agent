@@ -10,6 +10,8 @@ pub mod request;
 pub mod stream;
 pub mod transport;
 
+mod prompt_cache_memo;
+
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
@@ -18,6 +20,7 @@ mod tests;
 #[path = "prompt_cache_tests.rs"]
 mod prompt_cache_tests;
 
+use crate::chat::prompt_cache_memo::PromptCacheKeyMemo;
 use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request};
 use crate::chat::stream::ChatCompletionsStream;
 use crate::chat::transport::{
@@ -31,23 +34,16 @@ use horon_agent_provider_core::{
     transport::send_with_initial_response_timeout,
 };
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
 /// Stable, machine-facing provider name.
 pub const PROVIDER_NAME: &str = "openai-compatible";
-
-/// Prefix of a derived prompt cache key, matching OpenAI's documented format.
-const PROMPT_CACHE_KEY_PREFIX: &str = "pck_";
 
 /// Reserved per-request field pinning a request to one prompt cache slot.
 const PROMPT_CACHE_KEY_FIELD: &str = "prompt_cache_key";
 
 /// Reserved per-request field selecting an extended prompt cache retention.
 const PROMPT_CACHE_RETENTION_FIELD: &str = "prompt_cache_retention";
-
-/// Number of digest bytes a prompt cache key keeps (24 hex characters).
-const PROMPT_CACHE_KEY_DIGEST_BYTES: usize = 12;
 
 /// The official OpenAI endpoint, the only host that receives the retention field.
 const OFFICIAL_OPENAI_HOST: &str = "api.openai.com";
@@ -80,6 +76,11 @@ pub struct OpenAiCompatibleProvider {
     prompt_cache_retention: Option<PromptCacheRetentionResolver>,
     profile_id: Option<String>,
     display_name: String,
+    /// The most recent `prompt_cache_key` derivation and the inputs it covers.
+    /// Requests in one lineage repeat those inputs on every turn, so the memo
+    /// turns a full SHA-256 pass over the system prompt and tool catalog into a
+    /// string comparison.
+    prompt_cache_memo: Mutex<Option<PromptCacheKeyMemo>>,
     model: Mutex<String>,
     models: Vec<String>,
     reasoning_effort: Mutex<Option<String>>,
@@ -124,6 +125,7 @@ impl OpenAiCompatibleProvider {
             prompt_cache_retention: None,
             profile_id: None,
             display_name,
+            prompt_cache_memo: Mutex::new(None),
             model: Mutex::new(default_model),
             models,
             reasoning_effort: Mutex::new(None),
@@ -236,7 +238,7 @@ impl OpenAiCompatibleProvider {
             .prompt_cache_key
             .unwrap_or_else(|| host.as_deref().is_some_and(host_accepts_prompt_cache_key));
         if key_enabled && let Some(scope) = context.and_then(cache_scope) {
-            let key = derive_prompt_cache_key(scope, body);
+            let key = self.prompt_cache_key_for(scope, body);
             if let Some(object) = body.as_object_mut() {
                 object.insert(PROMPT_CACHE_KEY_FIELD.to_string(), Value::String(key));
             }
@@ -250,6 +252,44 @@ impl OpenAiCompatibleProvider {
         {
             object.insert(PROMPT_CACHE_RETENTION_FIELD.to_string(), Value::String(retention));
         }
+    }
+
+    /// The key for this request's cacheable prefix.
+    ///
+    /// The memo holds scope, system text and tool catalog beside the key, so a
+    /// steady-state turn only compares those three and skips both the
+    /// serialization of the tool catalog and the SHA-256 pass. The lock never
+    /// spans an await: this runs inside the synchronous body build.
+    fn prompt_cache_key_for(&self, scope: &str, body: &Value) -> String {
+        let (system, tools) = prompt_cache_key_field_values(body);
+        let mut memo = self
+            .prompt_cache_memo
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match memo.as_mut() {
+            Some(existing) if existing.matches(scope, system, tools) => existing.key().to_string(),
+            Some(existing) => {
+                existing.refresh(scope, system, tools);
+                existing.key().to_string()
+            }
+            None => {
+                let derived = PromptCacheKeyMemo::derive(scope, system, tools);
+                let key = derived.key().to_string();
+                *memo = Some(derived);
+                key
+            }
+        }
+    }
+
+    /// Keys this provider derived so far; a steady-state turn must not grow it.
+    #[cfg(test)]
+    fn prompt_cache_key_derivations(&self) -> u64 {
+        self.prompt_cache_memo
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(PromptCacheKeyMemo::derivations)
+            .unwrap_or(0)
     }
 
     fn sanitize(&self, message: String) -> String {
@@ -348,36 +388,17 @@ fn cache_scope(context: &ProviderRequestContext) -> Option<&str> {
         .filter(|scope| !scope.is_empty())
 }
 
-/// Derive the lineage-stable cache key from the body about to be sent.
-///
-/// The key covers the cacheable prefix only: the scope, the static system
-/// prompt and the tool catalog. Conversation turns, and a compaction that
-/// rewrites them, leave it unchanged, so the same lineage keeps one slot while a
-/// different lineage gets its own.
-fn derive_prompt_cache_key(scope: &str, body: &Value) -> String {
+/// The cacheable prefix read out of a request body about to be sent: the static
+/// system text and the tool catalog. Conversation turns are deliberately absent
+/// so a compaction that rewrites them leaves the key alone.
+fn prompt_cache_key_field_values(body: &Value) -> (&str, Option<&Value>) {
     let system = body["messages"]
         .as_array()
         .and_then(|messages| messages.first())
         .filter(|first| first["role"].as_str() == Some("system"))
         .and_then(|first| first["content"].as_str())
-        .unwrap_or_default();
-    let tools = body.get("tools").map(Value::to_string).unwrap_or_default();
-
-    let mut hasher = Sha256::new();
-    hasher.update(scope.as_bytes());
-    hasher.update([0]);
-    hasher.update(system.as_bytes());
-    hasher.update([0]);
-    hasher.update(tools.as_bytes());
-    let digest = hasher.finalize();
-
-    let mut key = String::with_capacity(PROMPT_CACHE_KEY_PREFIX.len() + PROMPT_CACHE_KEY_DIGEST_BYTES * 2);
-    key.push_str(PROMPT_CACHE_KEY_PREFIX);
-    for byte in &digest[..PROMPT_CACHE_KEY_DIGEST_BYTES] {
-        use std::fmt::Write as _;
-        write!(key, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    key
+        .unwrap_or("");
+    (system, body.get("tools"))
 }
 
 #[async_trait]
@@ -522,10 +543,18 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn fork(&self) -> Arc<dyn Provider> {
-        // The HTTP client, endpoint and credential are shared; the routed model
-        // and per-request settings are this adapter's own, so a fork starts from
-        // the parent's current state and moves independently.
-        Arc::new(Self {
+        Arc::new(self.clone_for_fork())
+    }
+}
+
+impl OpenAiCompatibleProvider {
+    /// Copy this adapter for a fork.
+    ///
+    /// The HTTP client, endpoint and credential are shared; the routed model
+    /// and per-request settings are this adapter's own, so a fork starts from
+    /// the parent's current state and moves independently.
+    fn clone_for_fork(&self) -> Self {
+        Self {
             client: self.client.clone(),
             base_url: self.base_url.clone(),
             auth: self.auth.clone(),
@@ -536,9 +565,13 @@ impl Provider for OpenAiCompatibleProvider {
             prompt_cache_retention: self.prompt_cache_retention.clone(),
             profile_id: self.profile_id.clone(),
             display_name: self.display_name.clone(),
+            // A fork repeats the same prefix, but it is a separate lineage
+            // object: starting empty keeps a parent's memo from being reused
+            // with a scope it never derived.
+            prompt_cache_memo: Mutex::new(None),
             model: Mutex::new(self.model()),
             models: self.models.clone(),
             reasoning_effort: Mutex::new(self.reasoning_effort()),
-        })
+        }
     }
 }
