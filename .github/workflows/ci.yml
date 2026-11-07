@@ -856,6 +856,12 @@ jobs:
       # The two Windows targets are installed into `stable`; the same pin makes
       # `cargo xwin` resolve that toolchain instead of rust-toolchain.toml's.
       RUSTUP_TOOLCHAIN: stable
+      # XWIN_CACHE_DIR is the environment form of `--xwin-cache-dir`, "xwin cache
+      # directory to put CRT and SDK files" (cargo-xwin README, option table).
+      # The download is the bulk of this job's 14.5 minutes in run 42373575639,
+      # and the directory sits outside the checkout and outside `target/` so
+      # Swatinem/rust-cache does not store it as part of the build cache.
+      XWIN_CACHE_DIR: ${{ github.workspace }}/../.cache/cargo-xwin
     steps:
       - name: Free disk space
         # cargo-xwin unpacks the Windows SDK and CRT into the target dir on top
@@ -890,6 +896,22 @@ jobs:
         # Pre-built release binary; building it from the git source cost several
         # minutes on every run.
         uses: taiki-e/install-action@cargo-xwin
+
+      - name: Resolve cargo-xwin version and cache directory
+        id: xwin
+        shell: bash
+        run: |
+          version=$(cargo xwin --version | head -n1 | tr -d '\n' | tr -c 'A-Za-z0-9._-' '-')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          mkdir -p "$XWIN_CACHE_DIR"
+
+      - uses: actions/cache@v6
+        # The CRT and SDK archives are the 14.5 minutes of run 42373575639. The
+        # key carries the cargo-xwin version and both cross targets because the
+        # cached files are version-pinned and target-pinned.
+        with:
+          path: ${{ env.XWIN_CACHE_DIR }}
+          key: cargo-xwin-${{ runner.os }}-${{ steps.xwin.outputs.version }}-x86_64-pc-windows-msvc-aarch64-pc-windows-msvc
 
       - name: Check Windows x64 target
         run: cargo xwin check --locked --target x86_64-pc-windows-msvc
