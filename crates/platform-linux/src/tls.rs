@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use horon_agent_platform_api::log::{PlatformLogLevel as Level, log as report};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::CertificateDer;
 use rustls::{ClientConfig, RootCertStore};
@@ -17,12 +18,19 @@ const ALPN_PROTOCOLS: [&[u8]; 2] = [b"h2", b"http/1.1"];
 pub(crate) fn client_config() -> Arc<ClientConfig> {
     match build(Vec::new()) {
         Ok(config) => Arc::new(config),
-        // Version selection is the only fallible step here, and it fails only
-        // when the provider has no TLS 1.2/1.3 cipher suite or key exchange
-        // group; the aws-lc-rs provider ships both. The fallback trusts only
-        // the bundled webpki roots, a subset of the documented union, so it
-        // never widens what the process accepts.
-        Err(_) => Arc::new(bundled_roots_only()),
+        // The configuration could not be built from the system roots. The
+        // fallback is the documented union built again from the same sources
+        // plus the bundled webpki anchors, so it never narrows or widens what
+        // the process accepts on a machine whose store is readable.
+        Err(error) => {
+            report(
+                Level::Warn,
+                &format!(
+                    "[tls] the system root store could not be attached ({error}); rebuilding from the bundled roots"
+                ),
+            );
+            Arc::new(bundled_roots_only())
+        }
     }
 }
 
@@ -64,13 +72,37 @@ fn root_store(extra_roots: Vec<CertificateDer<'static>>) -> RootCertStore {
     roots
 }
 
-/// The webpki half of the trust set, for the unreachable failure path above.
+/// The trust set built without the failed step above.
+///
+/// The provider is named here instead of taken from the process default, so a
+/// library process (the SDK, the harness bridge) that never ran the binary's
+/// `main` gets a configuration rather than a panic. Version selection is the
+/// only step left that can reject it, and it depends solely on that provider;
+/// if it ever does, the provider is installed as the process default and
+/// rustls's own builder finishes the configuration, which is then the only
+/// construction that can still produce one.
 fn bundled_roots_only() -> ClientConfig {
-    let mut config = ClientConfig::builder()
-        .with_root_certificates(root_store(Vec::new()))
-        .with_no_client_auth();
-    config.alpn_protocols = alpn();
-    config
+    let provider = provider();
+    let roots = root_store(Vec::new());
+    match ClientConfig::builder_with_provider(provider.clone()).with_safe_default_protocol_versions() {
+        Ok(versions) => {
+            let mut config = versions.with_root_certificates(roots).with_no_client_auth();
+            config.alpn_protocols = alpn();
+            config
+        }
+        Err(error) => {
+            report(
+                Level::Error,
+                &format!("[tls] no protocol version is usable with this crypto provider ({error})"),
+            );
+            drop(provider.as_ref().clone().install_default());
+            let mut config = ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            config.alpn_protocols = alpn();
+            config
+        }
+    }
 }
 
 #[cfg(test)]
