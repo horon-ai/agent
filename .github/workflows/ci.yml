@@ -89,6 +89,49 @@ jobs:
         # every gate behind it. Naming the real cause first (221159294).
         run: python3 scripts/ci/check_module_files.py
 
+      # sccache is enabled once for the whole job and never for a single step:
+      # a run that wrapped only one cargo invocation produced
+      # `<unknown rustc version>` artifacts that the next unwrapped invocation
+      # rejected with E0514 ("compiled by an incompatible version of rustc",
+      # run 42373575639). One wrapper for every cargo call keeps the
+      # fingerprints equal.
+      #
+      # CARGO_INCREMENTAL=0 is required, not an optimization: sccache cannot
+      # cache incremental units, and the profiles this job builds
+      # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
+      # true, so with incremental on nothing is ever cached.
+      #
+      # Hosted runners only: the self-hosted runner is a persistent machine
+      # whose toolchains and caches belong to its owner, and a pull request
+      # from a fork must not install or start a cache there. This step is one
+      # of the quality gates, so it must keep reporting failures: no
+      # continue-on-error below.
+      - name: Setup sccache
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
+
+      - name: Enable sccache
+        # Only a successful `sccache --start-server` writes the wrapper, so a
+        # runner without a usable sccache builds the whole job unwrapped instead
+        # of mixing wrapped and unwrapped cargo calls.
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          if ! command -v sccache >/dev/null 2>&1; then
+            echo "sccache is not available; this job builds without a wrapper"
+            exit 0
+          fi
+          if sccache --start-server; then
+            {
+              echo "RUSTC_WRAPPER=sccache"
+              echo "CARGO_INCREMENTAL=0"
+            } >> "$GITHUB_ENV"
+          else
+            echo "sccache failed to start; this job builds without a wrapper"
+          fi
+
       - name: Check formatting
         # These gates are independent. Report every failure in one run instead
         # of letting a Clippy error hide stale lockfiles or budget violations.
@@ -187,6 +230,16 @@ jobs:
         shell: bash
         run: cargo machete
 
+      - name: sccache stats
+        # Printed only when the wrapper was actually enabled, so a run that
+        # built without sccache does not report misleading numbers. The
+        # condition starts with `!cancelled()` like every other quality step:
+        # a cancelled run should stop, and this is diagnostic output, not a
+        # gate.
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
+        shell: bash
+        run: sccache --show-stats
+
   release-automation:
     name: Release Automation
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
@@ -284,6 +337,48 @@ jobs:
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
 
+      # The wrapper is set once for the whole job, before the first cargo call,
+      # so every compile in this job (release build, test compile, e2e, the
+      # SDK parity test and the macOS warning budget) shares one fingerprint.
+      # A run that wrapped only one step emitted `<unknown rustc version>`
+      # artifacts that the next unwrapped compile rejected with E0514,
+      # "compiled by an incompatible version of rustc" (run 42373575639).
+      #
+      # CARGO_INCREMENTAL=0 is required: sccache cannot cache incremental
+      # units and both profiles this job builds ([profile.dev] and
+      # [profile.release]) set incremental = true in Cargo.toml, so leaving
+      # incremental on would mean zero cache hits.
+      #
+      # Hosted runners only. The self-hosted runner is a persistent machine
+      # whose caches belong to its owner, and a fork pull request must not
+      # install or start a cache on it.
+      - name: Setup sccache
+        if: runner.environment == 'github-hosted'
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
+        continue-on-error: true
+
+      - name: Enable sccache
+        # Nothing is written unless `sccache --start-server` succeeds, so a
+        # runner without a working sccache builds the entire job without a
+        # wrapper rather than mixing wrapped and unwrapped cargo calls.
+        if: runner.environment == 'github-hosted'
+        shell: bash
+        run: |
+          if ! command -v sccache >/dev/null 2>&1; then
+            echo "sccache is not available; this job builds without a wrapper"
+            exit 0
+          fi
+          if sccache --start-server; then
+            {
+              echo "RUSTC_WRAPPER=sccache"
+              echo "CARGO_INCREMENTAL=0"
+            } >> "$GITHUB_ENV"
+          else
+            echo "sccache failed to start; this job builds without a wrapper"
+          fi
+
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -304,13 +399,9 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=mold"]
           EOF
           fi
-          # NOTE: intentionally NOT exporting RUSTC_WRAPPER=sccache here. Only this
-          # step used sccache while the later `cargo test --no-run` steps did not,
-          # so sccache emitted rlibs/rmetas stamped `<unknown rustc version>` that
-          # the non-sccache test compile then rejected with E0514
-          # ("compiled by an incompatible version of rustc"). rust-cache already
-          # caches target/ across runs, so a clean, wrapper-consistent build is
-          # both correct and fast enough.
+          # The sccache wrapper is not set here: the job-wide `Enable sccache`
+          # step above sets it for every cargo call, which is what keeps the
+          # artifacts of this build and the later test compiles consistent.
           RUSTC="$(rustup which rustc)"
           export RUSTC
           CARGO_BIN="$(rustup which cargo)"
@@ -505,6 +596,13 @@ jobs:
         run: |
           scripts/ci/check_security.sh --strict
 
+      - name: sccache stats
+        # Runs even after a failed gate so the cache state is visible in the
+        # log, but only when the wrapper was really enabled.
+        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
+        shell: bash
+        run: sccache --show-stats
+
   windows-build-test:
     name: Build & Test (windows-latest)
     runs-on: windows-latest
@@ -530,11 +628,43 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      # Job-wide, before the first cargo call: a wrapper applied to one step
+      # only left `<unknown rustc version>` artifacts that the next unwrapped
+      # compile rejected with E0514 ("compiled by an incompatible version of
+      # rustc", run 42373575639). Every cargo call in this job must share the
+      # same wrapper.
+      #
+      # CARGO_INCREMENTAL=0 is required, not a speed tweak: sccache cannot
+      # cache incremental units, and both [profile.dev] and [profile.release]
+      # in Cargo.toml set incremental = true, so nothing would be cached.
+      #
+      # This job runs on a GitHub-hosted Windows image only; the guard keeps
+      # the step out of any other environment.
       - name: Setup sccache
+        if: runner.environment == 'github-hosted'
         uses: mozilla-actions/sccache-action@v0.0.11
         with:
           disable_annotations: true
         continue-on-error: true
+
+      - name: Enable sccache
+        # The wrapper is written only when the server actually starts, so a
+        # runner without a working sccache runs every cargo call unwrapped
+        # instead of mixing wrapped and unwrapped builds.
+        if: runner.environment == 'github-hosted'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
+            Write-Host 'sccache is not available; this job builds without a wrapper'
+            exit 0
+          }
+          sccache --start-server
+          if ($LASTEXITCODE -eq 0) {
+            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CARGO_INCREMENTAL=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            Write-Host 'sccache failed to start; this job builds without a wrapper'
+          }
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -544,13 +674,6 @@ jobs:
       - name: Build release binary
         shell: pwsh
         run: |
-          if (Get-Command sccache -ErrorAction SilentlyContinue) {
-            sccache --start-server *> $null
-            if ($LASTEXITCODE -eq 0) {
-              $env:RUSTC_WRAPPER = 'sccache'
-            }
-          }
-
           & cargo build --locked --release --target x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) {
             throw 'Windows release build failed'
@@ -673,6 +796,13 @@ jobs:
         run: |
           & ./scripts/install/test_install_windows_launcher.ps1
           & ./scripts/install/test_windows_setup.ps1
+
+      - name: sccache stats
+        # Runs even after a failed test so the cache state is in the log, and
+        # only when the wrapper was enabled for this job.
+        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
+        shell: pwsh
+        run: sccache --show-stats
 
   fmt:
     name: Format
