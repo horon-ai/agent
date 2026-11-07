@@ -182,18 +182,41 @@ pub fn set_permissions_executable(path: &Path) -> io::Result<()> {
 /// Create a directory its owner alone can enter, creating missing parents when
 /// `recursive` is set.
 ///
-/// An already existing directory is accepted: callers use this to reach a known
-/// state, not to detect that a directory is new.
+/// Every level this call creates is private, not just the leaf: a parent made
+/// with the process umask would expose the names below it, and a session tree
+/// is meant to be closed at every level. An already existing directory is
+/// accepted as it is: callers use this to reach a known state, not to detect
+/// that a directory is new.
 pub fn create_private_dir(path: &Path, recursive: bool) -> io::Result<()> {
     if recursive
         && let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(parent)?;
+        create_missing_private_levels(parent)?;
     }
     match Current::create_private_dir(path) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
         other => other,
+    }
+}
+
+/// Create the deepest missing ancestor of `path`, one private level at a time.
+fn create_missing_private_levels(path: &Path) -> io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if !parent.as_os_str().is_empty() {
+                create_missing_private_levels(parent)?;
+            }
+            match Current::create_private_dir(path) {
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+                other => other,
+            }
+        }
+        Err(error) => Err(error),
     }
 }
 
