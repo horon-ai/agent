@@ -38,6 +38,8 @@ gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 | `competitors` | `jcode,claude_code,codex,opencode,pi` | horon과 비교할 도구. 설치에 실패한 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
+| `oneshot_runs` | `3` | one-shot 프롬프트를 빌드마다 몇 번 잴지. 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
+| `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 `horon-base` 줄로 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
 
 모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다.
 

@@ -107,6 +107,14 @@ HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루�
 - 더티 표식 생성(`writer.rs`의 `.catalog.dirty/<id>`)
 - 원본에서 다시 만들 수 없는 로컬 상태: `local-head.json`, `local-head-explicit.json`, `local-explicit-source.json`, `local-runtime.json`
 
+더티 표식은 빈 파일이고 리더는 존재만 검사하므로, 확정할 것은 그 이름을 담은 디렉터리 항목 하나다.
+`writer.rs::dirty`는 어느 플랫폼에서나 빈 파일을 만든 뒤 디렉터리 fsync를 내고, 그 디렉터리 flush가
+생성을 확정하는 플랫폼(Unix)에서는 파일 fsync를 생략한다. 판단은 core가 아니라 어댑터의
+`directory_sync_is_effective()`가 하고, 이 값이 `false`인 Windows는 파일 fsync를 유지한다. 이
+생략으로 줄어드는 것은 표식 생성당 시스템 호출 하나이고, 프로세스 크래시 뒤 표식 존재는 재시작
+테스트가 확인한다. 전원 손실은 저널링 파일시스템이 디렉터리 항목을 보존한다는 전제에 기대며, 그
+항목을 잃어도 원본은 남고 목록 행 하나만 다시 만들면 된다.
+
 한 묶음 커밋은 로그 flush를 한 번만 낸다. `BlockingWriter::batched` 안의 append는 원본 바이트를 다 쓴 뒤 flush를 미루고, 묶음 끝의 `flush_pending_log`가 그 한 번을 낸다. `local-head.json` 같은 선택 상태는 그 flush가 성공한 뒤에만 쓴다. flush가 실패하면 `batched`는 오류를 돌려주고 확정된 선택 상태는 남기지 않으므로, 같은 이벤트를 다시 보내면 로그에 한 번만 들어간다. 블롭 flush는 블롭마다 그대로다.
 
 파생은 임시 파일에 쓰고 rename만 한다. `cache_io::publish_derived`와 `event_store::publish_local_derived`가 그 경로이고 fsync하지 않는다.
@@ -116,6 +124,21 @@ HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루�
 크래시 뒤에 rename 결과가 남지 않았으면 다음 로드가 원본에서 다시 만든다. 파생을 믿는 조건은 `Stamp`다. device, inode, 길이, mtime, ctime이 원본 이벤트 로그와 맞아야 하고, 저장한 값은 sha256으로 한 번 더 검사한다(`cache_io::decode`). 맞지 않으면 캐시를 버리고 원본에서 다시 만든다. `.catalog.dirty` 표식이 있는 세션의 카탈로그 행도 같은 이유로 신뢰하지 않는다.
 
 `[storage] sync`가 이 모드를 고르고 `HORON_AGENT_STORAGE_SYNC`가 프로세스 하나에 대해 덮어쓴다. 모르는 값은 `full`로 떨어지고 프로세스당 한 번만 경고한다. 기본값은 `full`이고 맥 기본값을 `fast`로 바꾸지 않는다.
+
+#### 커밋 I/O는 고정 크기 writer 풀이 맡는다
+
+세션 수명 커밋 I/O의 스레드 소유는 `crates/base/src/session/event_pool.rs`가 맡고,
+`crates/session-store`는 여전히 `BlockingWriter`라는 블로킹 경계만 노출한다. 풀은
+`clamp(available_parallelism, 2, 4)`개의 워커를 프로세스당 한 번 만들고, 세션을 `registry_key` 해시로
+워커 하나에 고정 배정한다. `BlockingWriter`는 `Send`이지만 `Sync`가 아니므로 워커의 세션 맵이 값을
+소유하고, 그 항목이 사라질 때 `.writer.lock`이 풀린다.
+
+계약은 이전 구조와 같다. 한 세션의 job은 제출 순서대로 실행되고 `call()`은 응답 랑데부로 기다리며,
+마지막 파사드의 drop은 앞선 job을 drain한 뒤 `Close` 응답을 받고 락을 놓는다. job panic은
+`catch_unwind`가 그 세션 항목만 제거하므로 같은 워커의 다른 세션은 계속 커밋한다. 워커 스레드에서
+자기 writer를 다시 부르는 재진입은 교착 대신 오류다. 대가는 머리 막힘이다. 큰 세션의 저장이 그
+워커를 오래 붙잡으면 같은 워커에 배정된 다른 세션의 저장이 그만큼 늦어지고, 다른 워커의 세션은
+영향받지 않는다. 세션당 스레드와 RSS 기울기는 이 맞바꿈을 재는 측정이다.
 
 ## 소유 규칙
 

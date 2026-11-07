@@ -23,7 +23,7 @@
 | | [`CRATES.md`](architecture/CRATES.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
-| | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, 영속 런타임 저널 |
+| | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, 보조 호출 |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.md`](runtime/TURNS.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
@@ -37,7 +37,7 @@
 | | [`SECURITY.md`](safety/SECURITY.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정 |
 | | [`RESULTS.md`](performance/RESULTS.md) | 측정 결과와 한계 |
-| | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산과 사고 대응 절차 |
+| | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
 | `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |
 | | [`WINDOWS.md`](release/WINDOWS.md) | Windows 빌드와 서명 |
 

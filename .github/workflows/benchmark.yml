@@ -7,6 +7,10 @@ name: Benchmark
 #   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=all
 #   gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=tools
 #
+#   # Before/after on one runner: build `dev`'s merge base beside the branch.
+#   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
+#     -f sessions="1 10 100" -f baseline_ref=<merge-base sha>
+#
 # and `workflow_call` from benchmark-docs.yml, which runs every suite on every OS
 # for a `main` commit after its CI passed and writes the result into
 # docs/performance/RESULTS.md.
@@ -52,6 +56,15 @@ on:
         type: string
         required: false
         default: "3"
+      oneshot_runs:
+        type: string
+        required: false
+        default: "3"
+      baseline_ref:
+        description: "Optional ref built beside the measured commit and compared as a second horon row"
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       os:
@@ -67,13 +80,21 @@ on:
         required: false
         default: jcode,claude_code,codex,opencode,pi
       sessions:
-        description: "Concurrent session counts for the memory comparison (space-separated)"
+        description: "Concurrent session counts for the memory comparison (space-separated); wider spreads such as '1 10 100' make the per-session slope measurable"
         required: false
         default: "1 5 10"
       turns:
         description: "Turns per session for the memory comparison"
         required: false
         default: "3"
+      oneshot_runs:
+        description: "One-shot prompt repeats per build; raise it when a median must separate two builds"
+        required: false
+        default: "3"
+      baseline_ref:
+        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row; empty measures one build"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -114,7 +135,9 @@ jobs:
     # Every suite of one OS runs in one job on one machine, so the comparison
     # rows share the same CPU, disk, and load. The OSes never share a number.
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    # Two release builds when a baseline_ref is set: the candidate and the
+    # baseline tree, each in its own target directory.
+    timeout-minutes: 240
     # One run at a time per branch and OS: a rerun of one OS no longer waits
     # for the other OSes of an earlier run to finish.
     concurrency:
@@ -129,6 +152,11 @@ jobs:
       COMPETITORS: ${{ inputs.competitors }}
       SESSIONS: ${{ inputs.sessions }}
       TURNS: ${{ inputs.turns }}
+      ONESHOT_RUNS: ${{ inputs.oneshot_runs }}
+      # The baseline checkout lives inside the workspace because actions/checkout
+      # only writes below $GITHUB_WORKSPACE. It is a sibling tree with its own
+      # target directory, so neither build reuses the other's artifacts.
+      BASELINE_DIR: .bench-baseline
     steps:
       - name: Free disk space
         if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' }}
@@ -136,6 +164,17 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Free disk space (macOS)
+        # A hosted macOS runner has the least free space of the three, and this
+        # job can build two release trees when a baseline_ref is set. Skipped on
+        # any self-hosted machine: its caches and toolchains are its owner's.
+        if: ${{ !cancelled() && runner.os == 'macOS' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet \
+            "$HOME/Library/Caches/Homebrew"
           df -h /
 
       - uses: actions/checkout@v7
@@ -146,6 +185,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      - name: Select suites
+        id: sel
+        shell: bash
+        run: python scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/msvc-dev-cmd
         if: ${{ runner.os == 'Windows' }}
@@ -173,10 +217,46 @@ jobs:
           # a measurement-script fix does not rebuild every crate from scratch.
           cache-on-failure: "true"
 
-      - name: Select suites
-        id: sel
+      - name: Check out the baseline ref beside the measured commit
+        # After the rust-cache step on purpose: rust-cache hashes every
+        # .cargo/config.toml and rust-toolchain file under the workspace, and a
+        # second tree there would fold the baseline commit into the candidate's
+        # cache key. A before/after pair has to be measured on one machine in
+        # one job, so the second tree appears only once that key is settled.
+        if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.baseline_ref }}
+          path: .bench-baseline
+
+      - name: Hide the baseline tree from the candidate's git status
+        # build-meta marks a build dirty when `git status --porcelain` is not
+        # empty, so an untracked second checkout would label the measured
+        # candidate "dirty" in its own --version output. `.git/info/exclude` is
+        # local to this checkout, so no tracked file changes.
+        if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
         shell: bash
-        run: python scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
+        run: |
+          printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+
+      - uses: Swatinem/rust-cache@v2
+        # The baseline tree gets its own cache entry and its own target
+        # directory. Adding it as a second workspace to the step above would
+        # fold its Cargo.lock into one key, so every baseline bump would
+        # invalidate the candidate's cached artifacts too. Two separate steps
+        # rather than two restores inside one: the action keeps its config in
+        # per-step state, so only the second step's post would save anything.
+        if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        with:
+          key: benchmark-baseline-${{ runner.os }}
+          workspaces: ".bench-baseline -> target"
+          # ~/.cargo is shared with the candidate build, and this step's post
+          # runs first. Trimming the registry to the baseline's dependency set
+          # would then leave the candidate's own cache entry incomplete.
+          cache-all-crates: "true"
+          cache-on-failure: "true"
 
       - name: Install strace
         # The compare suite counts fsync/fdatasync calls with --syscalls. On a
@@ -191,6 +271,29 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq strace
           fi
+
+      - name: Build the baseline release binary
+        # The same profile as the candidate step below, from its own checkout
+        # and its own target directory, so neither build reuses the other's
+        # artifacts and the two rows stay comparable. Only the compare suite
+        # consumes this row, so nothing else pays for the second build.
+        if: ${{ !cancelled() && inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        shell: bash
+        run: |
+          mkdir -p "$RESULTS"
+          git -C "$BASELINE_DIR" rev-parse HEAD > "$RESULTS/baseline-commit.txt"
+          (
+            cd "$BASELINE_DIR" || exit
+            cargo build --release --locked -p horon-agent
+          )
+          root="$(cd "$BASELINE_DIR" && pwd)"
+          exe=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            root="$(cygpath -m "$root")"
+            exe=".exe"
+          fi
+          echo "BASELINE_BIN=$root/target/release/horon-agent$exe" >> "$GITHUB_ENV"
+          "$root/target/release/horon-agent$exe" --version | tee "$RESULTS/baseline-version.txt"
 
       - name: Build release binary and probes
         shell: bash
@@ -231,10 +334,19 @@ jobs:
         run: |
           bins_args=""
           [[ -f "$RUNNER_TEMP/bench-tools/bins.args" ]] && bins_args=$(cat "$RUNNER_TEMP/bench-tools/bins.args")
+          # The baseline build is a second horon row, measured in this same job
+          # alternating with the candidate. --syscalls therefore counts fsync
+          # for both builds under one strace-capable runner.
+          baseline_args=()
+          if [[ -n "${BASELINE_BIN:-}" ]]; then
+            baseline_args=(--bin "horon-base=$BASELINE_BIN")
+          else
+            echo "baseline_ref not set: measuring one build only" | tee "$RESULTS/baseline-absent.txt"
+          fi
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
-            --bin "horon=$HORON_BIN" $bins_args \
-            --sessions $SESSIONS --turns "$TURNS" --syscalls \
+            --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args \
+            --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
       - name: "Suite: startup"
@@ -284,6 +396,9 @@ jobs:
             echo "## Benchmark (${{ matrix.os }})"
             echo
             echo "- commit: \`$(cat "$RESULTS/commit.txt" 2>/dev/null)\`, runner: \`${{ matrix.runner }}\` (${{ runner.os }}/${{ runner.arch }})"
+            if [[ -s "$RESULTS/baseline-commit.txt" ]]; then
+              echo "- baseline commit: \`$(cat "$RESULTS/baseline-commit.txt")\` (measured beside the commit above)"
+            fi
             echo "- suites: \`$SUITES\`"
             echo
             for f in compare tools reload compile; do

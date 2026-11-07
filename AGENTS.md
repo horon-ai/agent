@@ -63,6 +63,7 @@ done, regardless of what else it fixes.
 |`[features] foreign_rules`, `stream_rules`|`false`|`true`|
 |`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
 |`[features] pricing_refresh`|`false`|`true`; `HORON_AGENT_PRICING_REFRESH=1` or `0` overrides it for one process|
+|`[server] idle_hibernation_secs`|`1800`|`0` disables the sweep; `HORON_AGENT_IDLE_HIBERNATION_SECS` overrides it for one process|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is
@@ -71,6 +72,13 @@ crash-durable flush (plain `fsync` on macOS, the same as `full` elsewhere).
 Originals are confirmed with it and derived caches are rebuilt instead, which
 `docs/architecture/CRATES.md` states as the boundary. `pricing_refresh` off
 keeps a one-shot run off the network; a catalog already on disk is still read.
+
+`[server] idle_hibernation_secs` is the idle window before the daemon releases
+a session's derived caches. It drops the provider projection and the tool-output
+index and writes nothing, so the next turn rebuilds both from resident state
+without a disk read; `docs/performance/MEMORY.md` lists what is released and
+what stays. `0` disables the sweep, and the daemon checks every ten seconds, so
+the release lands up to one tick after the threshold passes.
 
 Tools outside the core set (swarm, memory, session search, todo, irc) stay in
 the tree but off.

@@ -39,7 +39,8 @@ sessions/
   <id>.bak                   legacy recoverable snapshot (preserved)
   .catalog.index.jsonl       derived cache: one row per session, for listing
   .catalog.lock              catalog write lock
-  .catalog.dirty/<id>        durable marker: the catalog row for <id> is being rebuilt (creation flushed, removal not)
+  .catalog.dirty/<id>        durable marker: empty file, one per session being rebuilt
+                             (confirmed by its directory entry where that is durable)
   .origin-id                 this HOME's writer identity, created once at 0600
   edit-stats/                per-session edit counters (not a session)
 ```
@@ -57,6 +58,25 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 락 아래에서 다시 만든다. 원본과 파생의 경계, 재생성 조건, `[storage] sync`는
 [`../architecture/CRATES.md`](../architecture/CRATES.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
 있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
+
+`.catalog.dirty/<id>` 표식은 예외 없이 원본이지만 내용이 없는 빈 파일이다. 리더는 바이트가 아니라
+존재만 검사하므로(`cache_io.rs::dirty_present`), 크래시가 보존해야 하는 것은 그 이름을 담은 디렉터리
+항목 하나다. 그래서 표식은 두 단계로 확정한다.
+
+- 표식을 만들 때는 항상 빈 파일을 만든 뒤 디렉터리 fsync를 낸다. 디렉터리 flush가 생성 자체를
+  확정하는 플랫폼(Unix)에서는 표식 파일의 fsync를 생략하고 디렉터리 fsync만 낸다. Windows는
+  디렉터리를 flush할 수 없어 파일 fsync를 유지한다
+  (`horon_agent_platform::directory_sync_is_effective`).
+- 디렉터리 fsync가 실패하면 append는 오류로 돌아가고 이벤트 로그에는 바이트가 들어가지 않는다.
+  그래서 표식이 없는데 로그만 내구해지는 순서는 생기지 않는다.
+- 같은 묶음 안에서 한 번 확인한 표식은 그대로 재사용한다. 표식 하나가 그 묶음의 모든 원본을 덮기
+  때문이고, 매 append마다 디렉터리 작업을 되풀이하지 않는다.
+
+프로세스 크래시는 kill -9 뒤 재시작으로 검증한다(`tests/dirty_batches.rs`의
+`an_empty_marker_left_by_a_crash_repairs_the_next_listing`, macOS 10회 재시작 QA). 전원 손실은
+저널링 파일시스템이 디렉터리 항목을 보존한다는 전제 위에서 같은 보장을 받는다. 그 항목을 잃어도
+비용은 목록 행 하나를 다시 만드는 것뿐이다. 원본 이벤트 로그·블롭·로컬 상태 파일은 그대로 남고,
+다음 목록 조회가 스탬프를 대조해 행을 재생성한다.
 
 한 묶음 커밋은 로그 flush를 한 번만 낸다. 묶음 안의 append는 원본 바이트를 다 쓰고도 flush를
 미루고, 묶음 끝의 `flush_pending_log`가 그 파일을 한 번에 확정한다. `local-head.json`을 비롯한
@@ -183,12 +203,36 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
   길이 편집이면 전체 재생을 강제한다. 변하지 않은 접두부 안의 임의 변조를 찾는 일은 `doctor`의
   몫이고, 웜 연결은 접두부 전체를 해시한다고 주장하지 않는다.
 
-### 락
+### 락과 writer 풀
 
 세션마다 `BlockingWriter` 하나가 세션 수명 동안 `.writer.lock`에 `flock`을 잡는다. 외부 프로세스를
 포함한 두 번째 writer는 `busy`로 답한다. 카탈로그 쓰기는 `.catalog.lock`을 잡고, 세션 락을 잡는
 동안 카탈로그 락을 쥐지 않는다. 더러운 세션은 그 리더가 다시 만들므로, 실패한 캐시 갱신보다 낡은
 목록이 오래 살지 못한다.
+
+커밋 I/O는 세션마다 전용 스레드를 만들지 않는다. 프로세스 전역 writer 풀이
+`clamp(available_parallelism, 2, 4)`개의 워커(`session-writer-0`…)를 한 번 만들고, 세션은
+`registry_key`(정규화한 세션 디렉터리 경로)의 해시로 워커 하나에 고정 배정된다. 같은 세션 디렉터리의
+두 표기가 서로 다른 워커로 가서 `BlockingWriter`를 두 개 여는 일이 없도록 키를 먼저 정규화한다.
+해셔는 프로세스 내내 같은 값을 내므로 한 세션은 수명 동안 같은 워커에 남는다.
+
+풀은 이전 구조의 계약을 그대로 지킨다.
+
+- **제출 순서**: 한 세션의 job은 제출한 순서대로 그 워커에서 실행된다. `call()`은 job이 끝날 때까지
+  응답 랑데부로 기다리므로 호출부 시그니처와 블로킹 의미가 바뀌지 않는다.
+- **락 수명**: `.writer.lock`은 워커의 세션 항목이 들고 있는 `BlockingWriter`가 쥔다. 세션 항목은
+  마지막 파사드의 drop이 큐에 넣은 `Close`가 도착할 때 사라지므로, drop은 앞선 job을 모두 drain한
+  뒤에 락을 놓는다. 항목에서 `BlockingWriter`를 슬롯 리스보다 먼저 선언해, 같은 세션을 다시 열려는
+  대기자는 락이 풀린 뒤에 깨어난다.
+- **panic 격리**: job은 `catch_unwind`로 감싼다. panic하면 그 세션 항목만 제거되어 락이 풀리고,
+  같은 워커의 다른 세션은 계속 커밋한다. 그 세션의 대기 호출자는 응답이 사라져 "reply lost" 오류를
+  받고, 프로세스는 살아 있다.
+- **재진입**: 워커 스레드에서 자기 writer를 다시 `call`하거나 drop하면 교착 대신 오류가 된다.
+  열기 경로도 워커에서 호출되면 같은 이유로 오류를 돌려준다.
+- **머리 막힘**: 저장 하나가 이벤트 로그를 세 번 읽으므로 큰 세션의 저장은 그 워커를 수백 ms 붙잡을
+  수 있고, 같은 워커에 배정된 다른 세션의 저장은 그만큼 기다린다. 다른 워커의 세션은 영향받지 않는다.
+  이것은 스레드 수를 세션 수에서 떼어 낸 대가이며, 세션당 스레드·RSS 기울기를 재는 측정에서 함께
+  본다.
 
 ### 복제 전송
 
@@ -319,6 +363,7 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 | blob 청크 | 1 MiB | `blob_exchange.rs::BLOB_CHUNK_BYTES` |
 | 이력 페이지 | 기본 50, 최대 200 | `GetHistoryPage` |
 | 카탈로그 인덱스 재작성 | 죽은 바이트가 살아 있는 바이트의 2배 초과, 또는 64 MiB 초과 | `catalog.rs::needs_compaction` |
+| 새 세션의 표식-로그 창 | 표식은 첫 로그 줄보다 먼저 내구해진다. 그 사이에 프로세스가 죽으면 표식만 남고, 다음 목록 조회는 그 세션을 `busy`로 본다. 세션을 다시 열어 저장하면 풀린다. 로그를 먼저 내구하게 하려면 append마다 순서를 뒤집어야 하므로 이 창은 현재 구조의 한계로 남긴다 | `writer.rs::dirty`, `catalog.rs::list` |
 
 ## 영속 런타임 상태 저널
 

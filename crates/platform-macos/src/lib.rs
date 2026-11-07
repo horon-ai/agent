@@ -68,6 +68,12 @@ impl PlatformAdapter for Adapter {
         }
     }
 
+    fn directory_sync_is_effective() -> bool {
+        // The entry table a directory flush writes is what names a new file, so
+        // the flush confirms a creation whose file was never flushed.
+        true
+    }
+
     fn tls_client_config() -> Arc<ClientConfig> {
         tls::client_config()
     }
@@ -553,5 +559,11 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         Adapter::sync_dir(directory.path(), SyncMode::Full).expect("full directory sync");
         Adapter::sync_dir(directory.path(), SyncMode::Fast).expect("fast directory sync");
+    }
+
+    #[test]
+    fn directory_sync_is_effective_on_unix() {
+        // The flush writes the entry table that names a newly created file.
+        assert!(Adapter::directory_sync_is_effective());
     }
 }

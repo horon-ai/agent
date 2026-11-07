@@ -1,9 +1,13 @@
-//! Session-lifetime writer: all commit I/O runs on its dedicated thread.
+//! Session-lifetime writer: all commit I/O for a session runs on one pool worker.
+//!
+//! The facade is unchanged for callers: `call` still blocks until its job ran,
+//! jobs of one session still run in submission order, and dropping the last
+//! facade still drains queued jobs before the session's file lock is released.
+//! What changed is where they run: a fixed set of long-lived pool threads
+//! (`event_pool`) instead of a thread per session.
 use anyhow::{Context, Result, anyhow};
 use horon_agent_session_store as store;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError, Weak, mpsc};
-
-type Job = Box<dyn FnOnce(&mut store::BlockingWriter) + Send>;
 
 /// One registry key per session directory.
 ///
@@ -41,8 +45,9 @@ enum Startup {
 
 pub(super) struct Writer {
     _slot: Arc<WriterSlot>,
-    queue: Option<mpsc::Sender<Job>>,
-    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Handle of this session in its worker's map; never reused.
+    session: u64,
+    commands: Option<mpsc::Sender<super::event_pool::Command>>,
     operation: Mutex<Operation>,
     #[cfg(any(test, feature = "test-support"))]
     preparation_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -78,12 +83,12 @@ impl std::fmt::Debug for Writer {
     }
 }
 
-// A slot survives the last facade until its writer thread releases the file lock.
+// A slot survives the last facade until its writer releases the file lock.
 type Key = std::path::PathBuf;
 type Writers = std::collections::HashMap<Key, Weak<WriterSlot>>;
 static WRITERS: std::sync::LazyLock<Mutex<Writers>> = std::sync::LazyLock::new(|| Mutex::new(Writers::new()));
 
-struct WriterSlot {
+pub(super) struct WriterSlot {
     key: Key,
     state: Mutex<SlotState>,
     stopped: Condvar,
@@ -108,9 +113,14 @@ impl Drop for WriterSlot {
     }
 }
 
-struct WriterThreadLifetime(Arc<WriterSlot>);
+/// Marks the session slot as running for as long as its writer holds the lock.
+///
+/// The pool worker keeps this next to the `BlockingWriter`, and declares the
+/// writer first, so the lock is released before this drop notifies a waiting
+/// opener of the same session.
+pub(super) struct WriterSlotLease(pub(super) Arc<WriterSlot>);
 
-impl Drop for WriterThreadLifetime {
+impl Drop for WriterSlotLease {
     fn drop(&mut self) {
         // The BlockingWriter was dropped first, including its OS file lock.
         let mut state = self.0.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -156,6 +166,11 @@ impl Writer {
         hook: store::IoHook,
         startup: Startup,
     ) -> Result<Arc<Self>> {
+        // Opening from a worker would queue the open behind the job that is
+        // asking for it. No caller does that; report it instead of deadlocking.
+        if super::event_pool::on_worker_thread() {
+            return Err(anyhow!("session writer cannot be opened from a pool worker"));
+        }
         // The root does not exist before the first writer creates it.
         // SessionId is already validated; BlockingWriter validates all paths before I/O.
         let key = registry_key(paths.root(), id.as_str());
@@ -181,7 +196,7 @@ impl Writer {
                 }
             }
         };
-        // Only this session serializes startup and the previous thread's drain.
+        // Only this session serializes startup and the previous writer's drain.
         // The process-wide registry is never held during filesystem work.
         let mut state = slot.state.lock().map_err(|_| anyhow!("writer slot poisoned"))?;
         loop {
@@ -195,39 +210,42 @@ impl Writer {
             tests::note_waiting(&key);
             state = slot.stopped.wait(state).map_err(|_| anyhow!("writer slot poisoned"))?;
         }
-        let (queue, jobs) = mpsc::channel::<Job>();
+        let session = super::event_pool::next_session();
         let (ready, started) = mpsc::channel();
-        let thread_slot = Arc::clone(&slot);
-        let thread = std::thread::Builder::new()
-            .name("session-events".into())
-            .spawn(move || {
-                let _lifetime = WriterThreadLifetime(thread_slot);
-                // On startup panic, close the reply before the lifetime tries
-                // to lock slot state, so its waiting creator can release it.
-                let startup_reply = ready;
-                let opened = store::with_cache_repair(&paths, &id, || match startup {
-                    Startup::Recover => store::BlockingWriter::with_hook(paths.clone(), id.clone(), hook),
-                    Startup::Exchange => store::BlockingWriter::lock_for_exchange(
-                        paths.clone(),
-                        id.clone(),
-                        (hook, store::ReadProbe::default()),
-                    ),
-                });
-                match opened {
-                    Ok(mut writer) => {
-                        writer.enable_cache(store::ReadProbe::default());
-                        if startup_reply.send(Ok(())).is_ok() {
-                            for job in jobs {
-                                job(&mut writer);
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        let _ = startup_reply.send(Err(error));
-                    }
-                }
-            })?;
+        let open_paths = paths.clone();
+        let open_id = id.clone();
+        let open: super::event_pool::OpenAttempt = Box::new(move || {
+            store::with_cache_repair(&open_paths, &open_id, || match startup {
+                Startup::Recover => store::BlockingWriter::with_hook(open_paths.clone(), open_id.clone(), hook),
+                Startup::Exchange => store::BlockingWriter::lock_for_exchange(
+                    open_paths.clone(),
+                    open_id.clone(),
+                    (hook, store::ReadProbe::default()),
+                ),
+            })
+        });
         state.running = true;
+        let submitted = super::event_pool::submit(
+            &key,
+            super::event_pool::Command::Open {
+                session,
+                lease: WriterSlotLease(Arc::clone(&slot)),
+                open,
+                ready,
+            },
+        );
+        let commands = match submitted {
+            Ok(commands) => commands,
+            Err(failed) => {
+                state.running = false;
+                slot.stopped.notify_all();
+                drop(state);
+                // Dropping the command drops the lease, which takes the slot
+                // state lock this function just released.
+                drop(failed);
+                return Err(anyhow!("session writer pool stopped"));
+            }
+        };
         let opened = started.recv().context("session writer startup stopped")?;
         if let Err(error) = &opened
             && error.code == store::StoreErrorCode::Busy
@@ -240,11 +258,11 @@ impl Writer {
                 key.display(),
             ));
         }
-        opened?;
+        opened.map_err(anyhow::Error::from)?;
         let writer = Arc::new(Self {
             _slot: Arc::clone(&slot),
-            queue: Some(queue),
-            thread: Mutex::new(Some(thread)),
+            session,
+            commands: Some(commands),
             operation: Mutex::new(Operation {
                 incarnation: store::EventId::new_v4(),
                 generation: 0,
@@ -300,17 +318,38 @@ impl Writer {
         &self,
         job: impl FnOnce(&mut store::BlockingWriter) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        // A job that waits for the worker running it never returns; other
+        // sessions on that worker would wait with it.
+        if super::event_pool::on_worker_thread() {
+            return Err(anyhow!("session writer cannot be called from a pool worker"));
+        }
         let (reply, result) = mpsc::channel();
-        self.queue
+        self.commands
             .as_ref()
             .context("writer already stopped")?
-            .send(Box::new(move |writer| {
-                if reply.send(job(writer)).is_err() {
-                    crate::logging::warn("Session commit reply was cancelled; durable originals retained");
-                }
-            }))
+            .send(super::event_pool::Command::Run {
+                session: self.session,
+                job: Box::new(move |writer| {
+                    if reply.send(job(writer)).is_err() {
+                        crate::logging::warn("Session commit reply was cancelled; durable originals retained");
+                    }
+                }),
+            })
             .map_err(|_| anyhow!("session writer stopped"))?;
         result.recv().context("session writer reply lost")?
+    }
+
+    /// Queue a job without waiting for it, so a test can have work in flight.
+    #[cfg(test)]
+    pub(super) fn enqueue_job(&self, job: impl FnOnce(&mut store::BlockingWriter) + Send + 'static) -> Result<()> {
+        self.commands
+            .as_ref()
+            .context("writer already stopped")?
+            .send(super::event_pool::Command::Run {
+                session: self.session,
+                job: Box::new(job),
+            })
+            .map_err(|_| anyhow!("session writer stopped"))
     }
 }
 
@@ -318,12 +357,26 @@ impl Drop for Writer {
     fn drop(&mut self) {
         #[cfg(test)]
         tests::note_drop_started(self);
-        self.queue.take();
-        if let Ok(thread) = self.thread.get_mut()
-            && let Some(thread) = thread.take()
-            && thread.join().is_err()
+        let Some(commands) = self.commands.take() else {
+            return;
+        };
+        let (done, closed) = mpsc::channel();
+        if commands
+            .send(super::event_pool::Command::Close {
+                session: self.session,
+                done,
+            })
+            .is_err()
         {
-            crate::logging::warn("Session writer terminated abnormally during drain");
+            return;
+        }
+        if super::event_pool::on_worker_thread() {
+            // The close is queued behind the job this thread is running; waiting
+            // for its ack would wait for ourselves.
+            return;
+        }
+        if closed.recv().is_err() {
+            crate::logging::warn("Session writer pool stopped before this session drained");
         }
     }
 }
