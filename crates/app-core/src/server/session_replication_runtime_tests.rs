@@ -11,6 +11,10 @@ fn session_replication_local_publication_is_private_and_catalog_readable() {
     session.save().unwrap();
     // When the same data is read by the strict common catalog.
     let listed = crate::recent_session_index::recent(10).unwrap();
+    assert!(
+        listed.iter().any(|entry| entry.session_id == "replica_permissions"),
+        "the common catalog lists the published session: {listed:?}"
+    );
     // Then every local state file is owner-only and the normal listing works.
     let directory = session.event_log_path().unwrap().parent().unwrap().to_owned();
     // A plain commit publishes the local runtime, the explicit-selection flag

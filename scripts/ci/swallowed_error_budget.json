@@ -1,7 +1,7 @@
 {
-  "total": 2007,
+  "total": 2006,
   "totals_by_pattern": {
-    "dot_ok": 734,
+    "dot_ok": 733,
     "let_underscore": 777,
     "unwrap_or_default": 496
   },
@@ -1012,7 +1012,7 @@
       "unwrap_or_default": 2
     },
     "crates/base/src/process_memory.rs": {
-      "dot_ok": 31,
+      "dot_ok": 30,
       "let_underscore": 6,
       "unwrap_or_default": 0
     },

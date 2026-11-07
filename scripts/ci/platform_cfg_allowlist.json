@@ -178,7 +178,7 @@
       "reason": "symlink retarget, permission-denied pause and unix-socket refusal: POSIX filesystem entries with no Windows form."
     },
     "crates/base/src/process_memory.rs": {
-      "count": 20,
+      "count": 18,
       "reason": "glibc mallinfo2/malloc_trim statistics and the glibc/musl tests exist only where the system allocator is glibc/musl, and the PSS/RssAnon/RssFile breakdown only exists in Linux /proc; the cross-platform facts moved to platform::process::process_memory_facts."
     },
     "crates/base/src/prompt_tests.rs": {

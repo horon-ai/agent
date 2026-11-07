@@ -606,7 +606,21 @@ pub(crate) fn process_working_dirs() -> Vec<std::path::PathBuf> {
                 .to_str()
                 .is_some_and(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
         })
-        .filter_map(|entry| std::fs::read_link(entry.path().join("cwd")).ok())
+        .filter_map(|entry| {
+            let path = entry.path().join("cwd");
+            match std::fs::read_link(&path) {
+                Ok(cwd) => Some(cwd),
+                Err(err) => {
+                    // The process exited between the `/proc` listing and this
+                    // read, which the kernel reports as ENOENT; its working
+                    // directory is simply not part of the snapshot.
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        report(Level::Debug, &format!("cannot read {}: {err}", path.display()));
+                    }
+                    None
+                }
+            }
+        })
         .collect()
 }
 
@@ -669,7 +683,13 @@ fn proc_status_bytes(status: &str, key: &str) -> Option<u64> {
 fn proc_status_count(status: &str, key: &str) -> Option<u64> {
     status.lines().find_map(|line| {
         let rest = line.trim_start().strip_prefix(key)?;
-        rest.split_whitespace().next()?.parse::<u64>().ok()
+        match rest.split_whitespace().next()?.parse::<u64>() {
+            Ok(count) => Some(count),
+            Err(err) => {
+                report(Level::Debug, &format!("cannot parse {key} from /proc status: {err}"));
+                None
+            }
+        }
     })
 }
 
@@ -685,8 +705,14 @@ pub(crate) fn set_process_name(name: &str) {
     comm[..len].copy_from_slice(&bytes[..len]);
     // SAFETY: `comm` is a NUL-terminated 16-byte buffer, which is exactly what
     // `PR_SET_NAME` reads. A refused name change only costs a cosmetic `ps`
-    // label, so the result is deliberately ignored.
-    let _ = unsafe { libc::prctl(libc::PR_SET_NAME, comm.as_ptr(), 0, 0, 0) };
+    // label, so it is reported and not turned into a failure.
+    let result = unsafe { libc::prctl(libc::PR_SET_NAME, comm.as_ptr(), 0, 0, 0) };
+    if result < 0 {
+        report(
+            Level::Debug,
+            &format!("cannot set the process name: {}", std::io::Error::last_os_error()),
+        );
+    }
 }
 
 /// Set the short process name this process reports.

@@ -100,20 +100,14 @@ impl std::error::Error for DiscoveryFetchError {}
 /// It never includes transcript content, file paths, credentials, or user
 /// identity.
 ///
-/// No HTTP client is held: building one parses the whole TLS trust store, and
-/// the registry is constructed at `serve` startup. `provider::shared_http_client()`
-/// is process-wide, so the request context borrows it at the point of use.
+/// No HTTP client is held, so building the registry at `serve` startup does not
+/// parse the TLS trust store; `provider::shared_http_client()` is process-wide.
+#[derive(Default)]
 pub struct DiscoverToolsTool;
 
 impl DiscoverToolsTool {
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl Default for DiscoverToolsTool {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
