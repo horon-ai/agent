@@ -96,7 +96,7 @@ fn stop_until_gone(pid: u32, grace: Duration, signal: fn(u32, i32) -> io::Result
         }
         std::thread::sleep(Duration::from_millis(50).min(deadline - now));
     }
-    drop(signal_detached_process_group(pid, libc::SIGKILL));
+    drop(signal(pid, libc::SIGKILL));
     // SIGKILL is immediate for the kernel, but the process entry lingers
     // until it is reaped. Poll briefly instead of claiming success blindly.
     for _ in 0..50 {
