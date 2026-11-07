@@ -50,6 +50,22 @@ class PipeName(unittest.TestCase):
         main = r"D:\a\_temp\hb-x\run\bench.sock"
         self.assertNotEqual(bc.pipe_name(main), bc.pipe_name(main.replace(".sock", "-debug.sock")))
 
+class PipeBusy(unittest.TestCase):
+    """A pipe between instances must be retried; a real failure must not be."""
+
+    def test_busy_reported_by_open_is_retried(self) -> None:
+        # open() on a busy pipe raises EINVAL without winerror (CI run 42352215328).
+        self.assertTrue(bc._pipe_unavailable(OSError(22, "Invalid argument")))
+
+    def test_busy_winerror_is_retried(self) -> None:
+        exc = OSError(22, "busy")
+        exc.winerror = bc.ERROR_PIPE_BUSY
+        self.assertTrue(bc._pipe_unavailable(exc))
+
+    def test_access_denied_is_not_retried(self) -> None:
+        self.assertFalse(bc._pipe_unavailable(PermissionError(13, "Access is denied")))
+
+
 
 @unittest.skipIf(bc.IS_WINDOWS, "Unix-socket round trip")
 class UnixSocket(unittest.TestCase):

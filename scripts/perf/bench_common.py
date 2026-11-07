@@ -24,6 +24,7 @@ Exports:
 from __future__ import annotations
 
 import datetime
+import errno
 import hashlib
 import json
 import ntpath
@@ -509,12 +510,25 @@ class PipeStream:
 ERROR_PIPE_BUSY = 231
 
 
+def _pipe_unavailable(exc: OSError) -> bool:
+    """True when a named pipe exists but has no free instance at this moment.
+
+    The daemon creates its next pipe instance only after accepting a client, so
+    a connect right after another one finds every instance taken (busy) or, in
+    the gap, no instance at all (not found). ``open()`` goes through the C
+    runtime, which reports busy as errno EINVAL with no ``winerror``.
+    """
+    if getattr(exc, "winerror", None) == ERROR_PIPE_BUSY:
+        return True
+    return exc.errno in (errno.EINVAL, errno.EBUSY, errno.ENOENT)
+
+
 def ipc_connect(path: str, timeout: float | None = None, connect_timeout: float = 5.0):
     """Connect to the daemon socket at ``path``; the result has sendall/recv/settimeout/close.
 
     On Windows the daemon listens on the named pipe derived from ``path``. A
-    pipe whose every instance is taken answers "busy" until the server creates
-    the next one, so that case is retried for up to ``connect_timeout``.
+    pipe with no free instance refuses the open until the server creates the
+    next one, so that case is retried for up to ``connect_timeout``.
     """
     if not IS_WINDOWS:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -532,7 +546,7 @@ def ipc_connect(path: str, timeout: float | None = None, connect_timeout: float 
             fh = open(name, "r+b", buffering=0)  # noqa: SIM115 - owned by PipeStream
             break
         except OSError as exc:
-            if getattr(exc, "winerror", None) != ERROR_PIPE_BUSY or time.perf_counter() >= deadline:
+            if not _pipe_unavailable(exc) or time.perf_counter() >= deadline:
                 raise
             time.sleep(0.01)
     stream = PipeStream(fh)
