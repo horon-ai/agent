@@ -219,7 +219,10 @@ fn home_paths() -> Result<store::SessionPaths, store::StoreError> {
     } else {
         home
     };
-    Ok(store::SessionPaths::new(home.join("sessions")))
+    // A replica's blobs and receipts are originals under this home, so they are
+    // flushed at the level the operator configured, like the daemon's own.
+    Ok(store::SessionPaths::new(home.join("sessions"))
+        .with_sync_mode(horon_agent_base::config::config().storage_sync_mode()))
 }
 
 fn existing_session(

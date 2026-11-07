@@ -134,7 +134,7 @@ pub(super) fn external_source(paths: &store::SessionPaths, id: &store::SessionId
 }
 
 pub(super) fn paths() -> Result<store::SessionPaths> {
-    Ok(super::storage_paths::store_paths()?.with_sync_mode(crate::config::config().storage_sync_mode()))
+    super::storage_paths::store_paths()
 }
 
 pub(super) fn graph(paths: &store::SessionPaths, id: &store::SessionId) -> Result<store::EventGraph> {
