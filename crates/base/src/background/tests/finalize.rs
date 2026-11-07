@@ -450,3 +450,96 @@ async fn live_snapshot_excludes_finished_and_other_session_tasks() -> Result<()>
     manager.cancel(&other.task_id).await?;
     Ok(())
 }
+
+/// A task whose status writes fail still finalizes once, without panicking.
+///
+/// The status directory becomes read-only while the task runs, so the terminal
+/// status document cannot be written. Finalization must log the failure, drop
+/// the live entry, and publish the completion event exactly as usual instead of
+/// unwinding inside the task future.
+///
+/// The bus is process-wide and tests run in parallel, so the completion event is
+/// matched by task id rather than taken as the next one that arrives.
+#[cfg(unix)]
+#[tokio::test]
+async fn unwritable_status_directory_still_reports_the_task_exactly_once() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Restore the directory mode even when an assertion unwinds first.
+    struct RestorePermissions {
+        path: std::path::PathBuf,
+        mode: u32,
+    }
+
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            if let Err(err) = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode)) {
+                eprintln!("failed to restore permissions on {}: {err}", self.path.display());
+            }
+        }
+    }
+
+    let tmp = tempdir()?;
+    let task_dir = tmp.path().join("tasks");
+    std::fs::create_dir(&task_dir)?;
+    let manager = BackgroundTaskManager::with_output_dir(task_dir.clone());
+    let mut finalized = manager.subscribe_finalized();
+    let mut bus_rx = Bus::global().subscribe();
+
+    let original = std::fs::metadata(&task_dir)?.permissions();
+    let _restore = RestorePermissions {
+        path: task_dir.clone(),
+        mode: original.mode(),
+    };
+    std::fs::set_permissions(&task_dir, std::fs::Permissions::from_mode(0o555))?;
+
+    let spawned = manager
+        .spawn_with_notify(
+            "bash",
+            None,
+            "session-unwritable",
+            false,
+            false,
+            |_output_path| async move { Ok(TaskResult::completed(Some(0))) },
+        )
+        .await;
+    let info = spawned?;
+
+    let event = tokio::time::timeout(Duration::from_secs(5), finalized.recv())
+        .await
+        .map_err(|_| anyhow!("no finalization broadcast within 5s"))?
+        .map_err(|err| anyhow!("finalization broadcast closed: {err}"))?;
+    assert_eq!(event.task_id, info.task_id);
+    assert_eq!(event.session_id, "session-unwritable");
+    assert_eq!(event.status, BackgroundTaskStatus::Completed);
+    assert!(matches!(
+        finalized.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+
+    // The completion event is published last, so receiving it proves the task
+    // future ran to its end rather than unwinding on the failed status write.
+    // Other tests share the bus, so skip events that belong to them.
+    let completed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match bus_rx.recv().await {
+                Ok(BusEvent::BackgroundTaskCompleted(event)) if event.task_id == info.task_id => return Some(event),
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    eprintln!("completion watcher lagged behind {skipped} bus events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    })
+    .await
+    .map_err(|_| anyhow!("no completion event within 5s"))?
+    .ok_or_else(|| anyhow!("bus closed before the completion event"))?;
+    assert_eq!(completed.status, BackgroundTaskStatus::Completed);
+
+    // The status document could not be persisted, so the disk holds nothing.
+    assert!(manager.status(&info.task_id).await.is_none());
+    assert!(manager.live_tasks_for_session("session-unwritable").await.is_empty());
+
+    Ok(())
+}
