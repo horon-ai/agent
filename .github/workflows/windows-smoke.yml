@@ -44,7 +44,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64
 
@@ -163,7 +163,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64_arm64
 

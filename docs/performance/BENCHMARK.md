@@ -173,7 +173,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare,tools -f competitors=c
 | `competitors` | `jcode,claude_code,codex,opencode,pi` | horon 과 비교할 도구. 설치에 실패한 도구는 `skipped` 로 남는다. |
 | `sessions` | `1 5 10` | 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
-| `runner` | `ubuntu-latest` | `macos-persistent` 를 고르면 저장소의 상주 macOS 러너에서 돈다. 수치가 덜 흔들린다. |
+| `runner` | `ubuntu-24.04` | `macos-persistent` 를 고르면 저장소의 상주 macOS 러너에서 돈다. 수치가 덜 흔들린다. |
 
 모든 묶음은 한 작업, 한 기계에서 돌아 비교 행이 같은 CPU·디스크·부하를 공유한다. 모델이 필요한 측정은 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙으므로 시크릿과 API 요금이 없다. 결과는 작업 요약(step summary)의 표와 `benchmark-<run_id>` 아티팩트(JSON, 마크다운)로 남고, 임계값으로 실패하지 않는다. 스크립트 자체가 오류를 낼 때만 실패한다.
 
@@ -196,7 +196,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare,tools -f competitors=c
 
 1. 직전 측정 커밋(`RESULTS.md` 의 `<!-- bench-auto:start commit=... -->`)과 지금 커밋 사이에 `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf` 가 바뀌었는지 본다. 기록이 없거나 그 커밋이 이력에 없으면 부모 커밋과 비교한다. 바뀐 것이 없으면 측정하지 않는다.
 2. 같은 커밋의 `structural-perf.yml` push 실행이 성공할 때까지 최대 80분 기다린다. 실패하면 멈춘다.
-3. `benchmark.yml` 을 `suites=all` 과 기본 경쟁 도구로 부른다. 러너는 저장소 변수 `BENCHMARK_RUNNER`(없으면 `ubuntu-latest`, `macos-persistent` 면 상주 macOS 러너)로 고른다.
+3. `benchmark.yml` 을 `suites=all` 과 기본 경쟁 도구로 부른다. 러너는 저장소 변수 `BENCHMARK_RUNNER`(없으면 `ubuntu-24.04`, `macos-persistent` 면 상주 macOS 러너)로 고른다.
 4. 측정 작업이 성공하면 `scripts/perf/bench_docs.py render` 로 `docs/performance/RESULTS.md` 의 `bench-auto` 구간만 다시 쓰고, `main` 과 `dev` 에 `docs(perf): record benchmark for <sha>` 커밋으로 push 한다. 구간 밖의 글은 바이트 단위로 그대로 두고, 표시가 없거나 둘 이상이면 그 브랜치는 쓰지 않고 실패로 남긴다.
 
 문서 커밋은 `GITHUB_TOKEN` 으로 push 하므로 GitHub 가 그 push 로 워크플로를 새로 띄우지 않는다. 문서만 바뀐 커밋은 1단계에서 걸러지므로 측정이 스스로를 다시 부르지 않는다. `workflow_run` 은 기본 브랜치에 있는 워크플로 파일만 실행하므로 이 자동화는 이 파일이 `main` 에 올라간 뒤부터 동작한다.

@@ -30,7 +30,7 @@ concurrency:
 jobs:
   require-issue:
     name: Require Linked Issue
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Dependency updates do not carry a linkable issue of their own.
     if: ${{ github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' }}

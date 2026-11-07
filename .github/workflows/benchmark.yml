@@ -45,7 +45,7 @@ on:
       runner:
         type: string
         required: false
-        default: ubuntu-latest
+        default: ubuntu-24.04
   workflow_dispatch:
     inputs:
       suites:
@@ -65,12 +65,12 @@ on:
         required: false
         default: "3"
       runner:
-        description: "ubuntu-latest, or macos-persistent for the repository's persistent macOS runner (quieter numbers)"
+        description: "ubuntu-24.04, or macos-persistent for the repository's persistent macOS runner (quieter numbers)"
         type: choice
         required: false
-        default: ubuntu-latest
+        default: ubuntu-24.04
         options:
-          - ubuntu-latest
+          - ubuntu-24.04
           - macos-persistent
 
 permissions:
@@ -92,7 +92,7 @@ jobs:
     # Every suite runs in one job on one machine, so the comparison rows share the
     # same CPU, disk, and load. Only users with write access can dispatch, and the
     # first-party guard below keeps the persistent macOS runner off fork code.
-    runs-on: ${{ inputs.runner == 'macos-persistent' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.runner == 'macos-persistent' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 180
     env:
       RUSTUP_TOOLCHAIN: stable

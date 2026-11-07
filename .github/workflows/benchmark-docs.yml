@@ -45,7 +45,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
@@ -116,20 +116,20 @@ jobs:
       suites: all
       # Repository variable BENCHMARK_RUNNER=macos-persistent moves the
       # measurement to the quieter self-hosted machine.
-      runner: ${{ vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+      runner: ${{ vars.BENCHMARK_RUNNER || 'ubuntu-24.04' }}
 
   docs:
     name: Write RESULTS.md on main and dev
     needs: [gate, benchmark]
     if: needs.gate.outputs.run == 'true' && needs.benchmark.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     env:
       SHA: ${{ needs.gate.outputs.sha }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      RUNNER_LABEL: ${{ vars.BENCHMARK_RUNNER || 'ubuntu-latest' }}
+      RUNNER_LABEL: ${{ vars.BENCHMARK_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v7
         with:

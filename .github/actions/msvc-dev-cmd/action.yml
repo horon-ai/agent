@@ -1,0 +1,41 @@
+name: Configure MSVC build environment
+description: >-
+  Run vcvarsall.bat from the newest Visual Studio install that has the C++
+  tools and export its environment to the following steps. Replaces
+  ilammy/msvc-dev-cmd@v1, which runs on the deprecated Node.js 20 runtime.
+inputs:
+  arch:
+    description: vcvarsall.bat architecture argument (amd64, amd64_arm64, arm64, ...)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        MSVC_ARCH: ${{ inputs.arch }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if (-not $install) {
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+        }
+        if (-not $install) { throw 'No Visual Studio install with the C++ tools was found' }
+        $vcvars = Join-Path $install 'VC\Auxiliary\Build\vcvarsall.bat'
+        $env:VSCMD_SKIP_SENDTELEMETRY = '1'
+        $before = @{}
+        Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+        $lines = cmd.exe /d /c "`"$vcvars`" $env:MSVC_ARCH >nul && set"
+        if ($LASTEXITCODE -ne 0) { throw "vcvarsall.bat $env:MSVC_ARCH failed with exit code $LASTEXITCODE" }
+        $count = 0
+        foreach ($line in $lines) {
+          $eq = $line.IndexOf('=')
+          if ($eq -le 0) { continue }
+          $name = $line.Substring(0, $eq)
+          $value = $line.Substring($eq + 1)
+          if ($before[$name] -ceq $value) { continue }
+          "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $count++
+        }
+        if ($count -eq 0) { throw 'vcvarsall.bat changed no environment variables' }
+        Write-Host "Configured MSVC ($env:MSVC_ARCH) from $install; exported $count variables"

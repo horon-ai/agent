@@ -58,7 +58,7 @@ jobs:
     # transitively, so gating this one job skips the whole workflow: a skipped
     # dependency skips its dependents.
     if: github.repository == 'horon-ai/agent'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Bounded wait for the exact-commit CI evidence plus metadata work. The
     # previous 3-hour wait always outlived the job limit when no CI run existed;
     # 45 minutes covers a slow hosted matrix and then fails loudly.
@@ -364,7 +364,7 @@ jobs:
           python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - name: Configure MSVC build environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64
 
@@ -475,7 +475,7 @@ jobs:
           python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
       - name: Configure MSVC build environment (ARM64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64_arm64
 
@@ -715,7 +715,7 @@ jobs:
 
   build-freebsd:
     name: Build (x86_64-unknown-freebsd)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     needs: create-release
@@ -836,7 +836,7 @@ jobs:
     # Every platform is independent. Wait until all jobs reach a terminal state,
     # then require all platform assets before publishing. Partial sets stay draft.
     if: ${{ !cancelled() && needs.create-release.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: read

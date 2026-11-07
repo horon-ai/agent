@@ -48,12 +48,12 @@ env:
 # The self-hosted runner is a persistent machine, never a disposable VM, so fork
 # code must not run on it. Every self-hosted branch therefore requires either a
 # non-PR event or a PR whose head repository is this repository, and falls back
-# to `ubuntu-latest` otherwise. The GitHub-hosted-only jobs use the negated
+# to `ubuntu-24.04` otherwise. The GitHub-hosted-only jobs use the negated
 # condition so a fork PR still gets them.
 jobs:
   quality:
     name: Quality Guardrails
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     steps:
       - name: Free disk space
@@ -179,7 +179,7 @@ jobs:
 
   release-automation:
     name: Release Automation
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -197,7 +197,7 @@ jobs:
 
   build:
     name: Build & Test (${{ matrix.os }})
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || matrix.os }}
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || matrix.runner }}
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
     # known-good commit were cancelled at the cap, each getting further through
@@ -225,7 +225,10 @@ jobs:
         # `include` re-adds any combination `exclude` removes; with
         # CI_SELF_HOSTED only the macOS entry exists. A fork PR falls back to
         # both GitHub-hosted entries for the same reason as `runs-on` above.
-        include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","target":"aarch64-apple-darwin"}]') }}
+        # `os` stays the label in the job name, which scripts/release/check_ci.py
+        # requires verbatim; `runner` is the pinned image the job runs on, so
+        # the ubuntu-latest migration notice does not attach to the run.
+        include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]') }}
 
     steps:
       - name: Free disk space (Linux)
@@ -503,7 +506,7 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64
 
@@ -657,7 +660,7 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -677,7 +680,7 @@ jobs:
 
   typescript-sdk:
     name: TypeScript SDK
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -714,7 +717,7 @@ jobs:
 
   python-sdk:
     name: Python SDK (${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -752,7 +755,7 @@ jobs:
 
   setup-friction:
     name: Setup Friction Eval (Linux installer)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 10
     steps:
@@ -809,7 +812,7 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ./.github/actions/msvc-dev-cmd
         with:
           arch: amd64_arm64
 
@@ -836,7 +839,7 @@ jobs:
 
   windows-cross-check:
     name: Windows Cross-Target Check (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 50
     env:

@@ -43,7 +43,7 @@ jobs:
     # macOS runner, as in ci.yml. A pull request from a fork runs the workflow
     # file it carries, so it must never reach that persistent machine; fork PRs
     # fall back to the GitHub-hosted runner.
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 75
     env:
       # Some dependencies ship a `rust-toolchain.toml` inside their published

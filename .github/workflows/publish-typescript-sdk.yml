@@ -24,7 +24,7 @@ concurrency:
 jobs:
   publish:
     name: Publish @horon-ai/agent-sdk
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       # The pinned 1.99.1 toolchain would otherwise shadow the installed stable

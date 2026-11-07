@@ -39,7 +39,7 @@ concurrency:
 jobs:
   smoke:
     name: FreeBSD Smoke (x86_64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # QEMU with 3 cargo jobs compiles the binary plus the platform test harness;
     # 120 minutes left no headroom on a cold hosted runner.
     timeout-minutes: 180
