@@ -95,6 +95,44 @@ class SessionAggregateTests(unittest.TestCase):
         self.assertIsNone(bench.plan_first_session(points, "idle_rss_bytes"))
         self.assertIsNone(bench.slope_series(points, "idle_rss_bytes"))
 
+    def test_session_population_slopes_include_threads_and_fds(self) -> None:
+        points = [
+            {"sessions": 1, "idle_rss_bytes": 40e6, "thread_count": 12, "fd_count": 20},
+            {"sessions": 10, "idle_rss_bytes": 50e6, "thread_count": 21, "fd_count": 38},
+            {"sessions": 100, "idle_rss_bytes": 140e6, "thread_count": 111, "fd_count": 218},
+        ]
+        summary = bench.summarize_sessions(points, 1)
+        self.assertEqual(summary["first_session_threads"], 12)
+        self.assertAlmostEqual(summary["each_additional_threads"], 1.0, delta=1e-6)
+        self.assertAlmostEqual(summary["each_additional_fds"], 2.0, delta=1e-6)
+        self.assertEqual(summary["skipped"], [])
+
+    def test_session_counters_stay_null_with_a_skip_reason(self) -> None:
+        # A tool without `server:memory` must still report the RSS slopes; the
+        # thread and fd slopes are None with the reason beside them.
+        reason = "server:memory unavailable: unknown command"
+        points = [
+            {"sessions": 1, "idle_rss_bytes": 40e6, "counter_error": reason},
+            {"sessions": 2, "idle_rss_bytes": 50e6, "counter_error": reason},
+        ]
+        summary = bench.summarize_sessions(points, 1)
+        self.assertIsNone(summary["each_additional_threads"])
+        self.assertIsNone(summary["each_additional_fds"])
+        self.assertIsNone(summary["first_session_threads"])
+        self.assertEqual(summary["skipped"], [reason])
+        self.assertIsNotNone(summary["each_additional_idle_rss_bytes"])
+
+    def test_process_counters_come_from_the_server_memory_payload(self) -> None:
+        payload = {"process": {"thread_count": 17, "fd_count": 42, "rss_bytes": 1}}
+        counters, reason = bench.read_process_counters(lambda: payload)
+        self.assertEqual(counters, {"thread_count": 17, "fd_count": 42})
+        self.assertIsNone(reason)
+
+    def test_process_counters_name_the_missing_field(self) -> None:
+        counters, reason = bench.read_process_counters(lambda: {"process": {"rss_bytes": 1}})
+        self.assertEqual(counters, {})
+        self.assertIn("thread_count", reason or "")
+
 
 class InstallSizeTests(unittest.TestCase):
     def test_package_directory_is_measured(self) -> None:

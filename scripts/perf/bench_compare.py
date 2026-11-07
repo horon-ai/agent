@@ -11,8 +11,9 @@ Measured:
   oneshot_ms        one headless prompt through to completion, plus peak
                     process-tree RSS and whether a tool round-trip happened
   sessions_memory   idle and post-turn process-tree RSS for N concurrent
-                    sessions x K turns; "first session" and "each additional
-                    session" (least-squares slope)
+                    sessions x K turns, plus the server's own thread and
+                    descriptor counts after the turns; "first session" and
+                    "each additional session" (least-squares slope)
   fsync_calls       fsync + fdatasync calls made by one one-shot run, counted
                     with strace (``--syscalls``; Linux only, recorded as
                     skipped when strace is missing)
@@ -874,8 +875,14 @@ def measure_daemon_sessions(
     turns: int,
     cwd: str,
     timeout: float,
+    probe=None,
 ) -> dict:
-    """Generic N-session harness for a single daemon process."""
+    """Generic N-session harness for a single daemon process.
+
+    ``probe`` optionally returns the daemon's ``server:memory`` payload; its
+    thread and descriptor counts are sampled once every session has saved a
+    turn, so a per-session cost shows up in the population comparison.
+    """
     daemon = None
     sessions: list[UnixDebugSession] = []
     samples: list[dict] = []
@@ -915,12 +922,17 @@ def measure_daemon_sessions(
                     "turn_ms": round(elapsed, 2),
                 }
             )
+        counters, counter_error = read_process_counters(probe)
+        if samples:
+            samples[-1].update(counters)
         return {
             "sessions": session_count,
             "samples": samples,
             "turn_ms": turn_times,
             "errors": errors,
             "sessions_created": len(sessions),
+            "counters": counters,
+            "counter_error": counter_error,
         }
     finally:
         for session in sessions:
@@ -1001,6 +1013,53 @@ def sessions_client(debug_socket: str, command: str, timeout: float = 60.0) -> s
     finally:
         sock.close()
     raise TimeoutError("debug command timed out")
+
+
+COUNTER_KEYS = ("thread_count", "fd_count")
+
+
+def server_memory_probe(debug_socket: str):
+    """Callable that reads the daemon's own process counters.
+
+    ``server:memory`` is the surface that reports the server process's thread
+    and descriptor counts; it belongs to the horon/jcode command family, so it
+    is passed only to daemons that speak it and every failure stays a skip
+    reason instead of a measurement error.
+    """
+
+    def probe() -> dict:
+        return json.loads(sessions_client(debug_socket, "server:memory", timeout=30))
+
+    return probe
+
+
+def read_process_counters(probe) -> tuple[dict, str | None]:
+    """Thread/descriptor counts from a ``server:memory`` payload.
+
+    Returns the counters that were present plus, when any were not, the reason.
+    A tool without that debug command, or one whose payload has a different
+    process shape, leaves the counters out rather than reporting a zero.
+    """
+    if probe is None:
+        return {}, "no server:memory probe for this tool"
+    try:
+        payload = probe()
+    except Exception as exc:  # noqa: BLE001
+        return {}, f"server:memory unavailable: {str(exc)[:120]}"
+    process = payload.get("process") if isinstance(payload, dict) else None
+    if not isinstance(process, dict):
+        return {}, "server:memory reported no process section"
+    counters: dict[str, int] = {}
+    missing: list[str] = []
+    for key in COUNTER_KEYS:
+        value = process.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            counters[key] = value
+        else:
+            missing.append(key)
+    if missing:
+        return counters, "server:memory did not report " + ", ".join(missing)
+    return counters, None
 
 
 def make_jcode_daemon(binary: str, root: str, cwd: str):
@@ -1451,7 +1510,13 @@ class HoronRunner(ToolRunner):
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         self._root(root, mock)
         return measure_daemon_sessions(
-            self.name, make_horon_daemon(self.binary, root, cwd), count, turns, cwd, timeout
+            self.name,
+            make_horon_daemon(self.binary, root, cwd),
+            count,
+            turns,
+            cwd,
+            timeout,
+            probe=server_memory_probe(debug_socket_for(os.path.join(root, "run", "bench.sock"))),
         )
 
 
@@ -1476,7 +1541,13 @@ class JcodeRunner(ToolRunner):
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         self._root(root, mock)
         return measure_daemon_sessions(
-            self.name, make_jcode_daemon(self.binary, root, cwd), count, turns, cwd, timeout
+            self.name,
+            make_jcode_daemon(self.binary, root, cwd),
+            count,
+            turns,
+            cwd,
+            timeout,
+            probe=server_memory_probe(debug_socket_for(os.path.join(root, "run", "bench.sock"))),
         )
 
 
@@ -1634,6 +1705,31 @@ def slope_series(points: list[dict], key: str) -> float | None:
     return max(0.0, slope)
 
 
+def summarize_sessions(points: list[dict], turns: int) -> dict:
+    """Per-population summary: the first session's cost and each additional one.
+
+    Memory slopes come from the RSS/PSS tree samples. Thread and descriptor
+    slopes come from the daemon's own ``server:memory`` counters and stay
+    ``None`` for a tool that does not report them; the reason is kept beside the
+    null so a missing counter is not read as a zero-cost session.
+    """
+    skipped = sorted({point["counter_error"] for point in points if point.get("counter_error")})
+    return {
+        "turns": turns,
+        "points": points,
+        "first_session_idle_rss_bytes": plan_first_session(points, "idle_rss_bytes"),
+        "each_additional_idle_rss_bytes": slope_series(points, "idle_rss_bytes"),
+        "first_session_post_turn_rss_bytes": plan_first_session(points, "post_turn_rss_bytes"),
+        "each_additional_post_turn_rss_bytes": slope_series(points, "post_turn_rss_bytes"),
+        "first_session_idle_pss_bytes": plan_first_session(points, "idle_pss_bytes"),
+        "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
+        "first_session_threads": plan_first_session(points, "thread_count"),
+        "each_additional_threads": slope_series(points, "thread_count"),
+        "first_session_fds": plan_first_session(points, "fd_count"),
+        "each_additional_fds": slope_series(points, "fd_count"),
+        "skipped": skipped,
+    }
+
 
 def summarize_oneshot(runs: list[dict]) -> dict:
     """Collapse repeated one-shot runs into one comparable row.
@@ -1729,22 +1825,16 @@ def measure_tool(
                     "idle_pss_bytes": (idle or {}).get("pss_bytes"),
                     "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
                     "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
+                    "thread_count": (post or {}).get("thread_count"),
+                    "fd_count": (post or {}).get("fd_count"),
+                    "counter_error": measurement.get("counter_error"),
                     "samples": measurement["samples"],
                     "turn_ms": measurement.get("turn_ms"),
                     "errors": errors,
                     "sessions_created": created,
                 }
             )
-        result["sessions_memory"] = {
-            "turns": turns,
-            "points": points,
-            "first_session_idle_rss_bytes": plan_first_session(points, "idle_rss_bytes"),
-            "each_additional_idle_rss_bytes": slope_series(points, "idle_rss_bytes"),
-            "first_session_post_turn_rss_bytes": plan_first_session(points, "post_turn_rss_bytes"),
-            "each_additional_post_turn_rss_bytes": slope_series(points, "post_turn_rss_bytes"),
-            "first_session_idle_pss_bytes": plan_first_session(points, "idle_pss_bytes"),
-            "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
-        }
+        result["sessions_memory"] = summarize_sessions(points, turns)
     except Exception as exc:  # noqa: BLE001
         result["error"] = str(exc)[:400]
     finally:
@@ -1780,6 +1870,11 @@ def relative(value, baseline, lower_is_better: bool = True) -> str:
 def fmt_calls(value) -> str:
     """Call counts are integers; a missing sample stays visible as an em dash."""
     return str(round(value)) if value is not None else "—"
+
+
+def fmt_slope(value) -> str:
+    """Per-session count slope; two decimals keep a sub-1 slope visible."""
+    return f"{value:.2f}" if isinstance(value, (int, float)) else "—"
 
 
 def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
@@ -1857,7 +1952,6 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     lines.append("")
 
     # Sessions
-    base_first = baseline_value(results, ("sessions_memory", "first_session_idle_rss_bytes"))
     base_additional = baseline_value(results, ("sessions_memory", "each_additional_idle_rss_bytes"))
     rows = []
     for result in results:
@@ -1872,6 +1966,8 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
                 bc.fmt_bytes(first),
                 bc.fmt_bytes(additional),
                 relative(additional, base_additional) if result["name"] != "horon" else "baseline",
+                fmt_slope(memory.get("each_additional_threads")),
+                fmt_slope(memory.get("each_additional_fds")),
                 bc.fmt_bytes(post_first),
                 bc.fmt_bytes(post_additional),
             ]
@@ -1879,17 +1975,26 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     lines.append(
         f"**Session memory** (idle after {turns} turn(s) per session; sizes are process-tree sums, "
         f"RSS; PSS also recorded on Linux). \"Each additional\" is the least-squares slope across the "
-        f"measured session counts; 0 B means growth stayed below RSS sampling noise."
+        f"measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and "
+        f"descriptors come from the daemon's own `server:memory` after the turns."
     )
     lines.append("")
     lines.append(
         bc.markdown_table(
-            ["Tool", "First session", "Each additional", "vs horon (additional)", "First (post-turn)",
-             "Each additional (post-turn)"],
+            ["Tool", "First session", "Each additional", "vs horon (additional)", "Threads/session",
+             "FDs/session", "First (post-turn)", "Each additional (post-turn)"],
             rows,
         )
     )
     lines.append("")
+    counter_skips = []
+    for result in results:
+        reasons = (result.get("sessions_memory") or {}).get("skipped") or []
+        if reasons:
+            counter_skips.append(f"{result['label']} ({'; '.join(reasons)})")
+    if counter_skips:
+        lines.append("Threads/descriptors unavailable: " + ", ".join(counter_skips))
+        lines.append("")
 
     # Per-count detail
     rows = []
