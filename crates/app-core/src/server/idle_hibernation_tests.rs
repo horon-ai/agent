@@ -105,7 +105,7 @@ async fn session_with_projection() -> (Arc<Mutex<Agent>>, String) {
 fn idle_sweep_due_respects_disable_idle_and_recent_activity() {
     let start = Instant::now();
     let threshold = Duration::from_secs(30);
-    let state = IdleState::new(start, start);
+    let state = IdleState::new(start);
     let later = start + threshold;
 
     assert!(
@@ -125,6 +125,10 @@ fn idle_sweep_due_respects_disable_idle_and_recent_activity() {
         "a recent request resets activity"
     );
     assert!(state.due(later, threshold, threshold, None), "an idle session is due");
+    assert!(
+        IdleState::new(start).due(later, threshold, threshold, None),
+        "a session first seen past the threshold is due on that tick"
+    );
 }
 
 /// Test 6: a whole turn between two ticks re-arms the window by generation, not
@@ -133,7 +137,7 @@ fn idle_sweep_due_respects_disable_idle_and_recent_activity() {
 fn idle_sweep_rearms_for_a_turn_entirely_between_ticks() {
     let start = Instant::now();
     let threshold = Duration::from_secs(1);
-    let mut state = IdleState::new(start, start);
+    let mut state = IdleState::new(start);
     state.released = true;
     let now = start + Duration::from_secs(10);
     assert!(!state.due(now, threshold, Duration::from_secs(10), None));
@@ -172,7 +176,7 @@ async fn idle_sweep_skips_busy_then_releases_once_and_never_with_zero() {
         crate::turn_cancel_registry::register_active_turn(&busy_id, horon_agent_agent_runtime::InterruptSignal::new());
     let mut idle: HashMap<String, IdleState> = HashMap::new();
     for id in [&busy_id, &idle_id] {
-        idle.insert(id.clone(), IdleState::new(old, old));
+        idle.insert(id.clone(), IdleState::new(old));
     }
     assert_eq!(
         reclaim_idle_caches(&sessions, &members, &mut idle, threshold).await,
@@ -214,7 +218,7 @@ async fn idle_sweep_skips_a_contended_agent_lock() {
     let old = Instant::now() - Duration::from_secs(60);
     let members = Arc::new(RwLock::new(HashMap::from([(id.clone(), member(&id, old))])));
     let threshold = Duration::from_secs(1);
-    let mut idle: HashMap<String, IdleState> = HashMap::from([(id.clone(), IdleState::new(old, old))]);
+    let mut idle: HashMap<String, IdleState> = HashMap::from([(id.clone(), IdleState::new(old))]);
 
     let held = agent.lock().await;
     assert_eq!(
@@ -225,7 +229,6 @@ async fn idle_sweep_skips_a_contended_agent_lock() {
     assert!(idle.is_empty(), "the window is dropped, not queued");
     drop(held);
 
-    idle.insert(id.clone(), IdleState::new(old, old));
     assert_eq!(
         reclaim_idle_caches(&sessions, &members, &mut idle, threshold).await,
         1,
@@ -252,7 +255,7 @@ async fn idle_sweep_reclaims_the_projection_idle_compaction_materialized() {
     let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::from([(id.clone(), Arc::clone(&agent))])));
     let old = Instant::now() - Duration::from_secs(60);
     let members = Arc::new(RwLock::new(HashMap::from([(id.clone(), member(&id, old))])));
-    let mut idle: HashMap<String, IdleState> = HashMap::from([(id.clone(), IdleState::new(old, old))]);
+    let mut idle: HashMap<String, IdleState> = HashMap::from([(id.clone(), IdleState::new(old))]);
 
     assert_eq!(
         reclaim_idle_caches(&sessions, &members, &mut idle, Duration::from_secs(1)).await,

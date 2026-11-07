@@ -34,11 +34,21 @@ struct IdleState {
 }
 
 impl IdleState {
-    fn new(now: Instant, last_status_change: Instant) -> Self {
+    /// The window opens at the session's last status change, not when the
+    /// sweep first sees it, so a session restored or attached long after it
+    /// went idle is released on the first tick past the threshold.
+    fn new(last_status_change: Instant) -> Self {
         Self {
-            since: now,
+            since: last_status_change,
             last_status_change,
             released: false,
+        }
+    }
+
+    fn busy(now: Instant, last_status_change: Instant) -> Self {
+        Self {
+            since: now,
+            ..Self::new(last_status_change)
         }
     }
 
@@ -120,10 +130,14 @@ async fn reclaim_idle_caches(
             idle.remove(&id);
             continue;
         };
+        // A session seen mid-turn opens its window now, not at its last status
+        // change, so it waits a whole threshold after the turn ends.
         if running || crate::turn_cancel_registry::has_active_turn(&id) {
-            idle.remove(&id);
+            idle.insert(id, IdleState::busy(Instant::now(), last_status_change));
             continue;
         }
+        // A briefly held lock says nothing about idleness: drop the window, and
+        // the next sweep backdates it to the last status change again.
         let Ok(mut agent) = agent.try_lock() else {
             idle.remove(&id);
             continue;
@@ -132,7 +146,7 @@ async fn reclaim_idle_caches(
         let activity_idle = crate::session_metrics::last_activity_age_secs(&id).map(Duration::from_secs);
         let state = idle
             .entry(id.clone())
-            .or_insert_with(|| IdleState::new(now, last_status_change));
+            .or_insert_with(|| IdleState::new(last_status_change));
         state.observe_status(last_status_change);
         if !state.due(now, threshold, last_status_change.elapsed(), activity_idle) {
             continue;
