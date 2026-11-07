@@ -727,7 +727,10 @@ fn obfuscate_block(block: &mut ContentBlock, vault: &mut SecretVault, extra: &[R
         }
         ContentBlock::ToolUse { input, .. } => obfuscate_value(input, vault, extra),
         ContentBlock::ProviderNative { item, .. } => obfuscate_value(item, vault, extra),
-        ContentBlock::Image { .. } | ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
+        ContentBlock::Image { .. }
+        | ContentBlock::Audio { .. }
+        | ContentBlock::OpenAICompaction { .. }
+        | ContentBlock::ToolReference { .. } => {}
     }
 }
 
@@ -747,7 +750,10 @@ fn detect_block(block: &ContentBlock) -> Vec<String> {
         ContentBlock::ToolResult { content, .. } => check(content),
         ContentBlock::ToolUse { input, .. } => check(&input.to_string()),
         ContentBlock::ProviderNative { item, .. } => check(&item.to_string()),
-        ContentBlock::Image { .. } | ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
+        ContentBlock::Image { .. }
+        | ContentBlock::Audio { .. }
+        | ContentBlock::OpenAICompaction { .. }
+        | ContentBlock::ToolReference { .. } => {}
     }
     labels
 }

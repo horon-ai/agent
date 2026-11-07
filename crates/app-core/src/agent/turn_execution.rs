@@ -1696,9 +1696,8 @@ impl Agent {
                     | ContentBlock::OpenAIReasoning { .. }
                     | ContentBlock::ToolReference { .. }
                     | ContentBlock::ProviderNative { .. } => {}
-                    ContentBlock::Image { .. } => {
-                        transcript.push_str("[Image]\n");
-                    }
+                    ContentBlock::Image { .. } => transcript.push_str("[Image]\n"),
+                    ContentBlock::Audio { .. } => transcript.push_str("[audio]\n"),
                     ContentBlock::OpenAICompaction { .. } => {
                         transcript.push_str("[OpenAI native compaction]\n");
                     }

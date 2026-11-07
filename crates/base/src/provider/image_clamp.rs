@@ -799,4 +799,24 @@ mod tests {
             ContentBlock::Text { text, .. } if text.starts_with("[Image omitted: image/png")
         ));
     }
+
+    #[test]
+    fn audio_blocks_are_left_untouched_by_image_clamping() {
+        let encoded = "A".repeat(64);
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Audio {
+                format: "wav".to_string(),
+                data: encoded.clone(),
+            }],
+            timestamp: None,
+            tool_duration_ms: None,
+        }];
+        assert!(filter_unsupported_outbound_images(&messages, false).is_none());
+        assert!(clamp_outbound_images(&messages).is_none());
+        assert!(matches!(
+            &messages[0].content[0],
+            ContentBlock::Audio { format, data } if format == "wav" && data == &encoded
+        ));
+    }
 }

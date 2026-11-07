@@ -208,6 +208,9 @@ impl Tool for ConversationSearchTool {
                             crate::message::ContentBlock::Image { .. } => {
                                 output.push_str("[Image]\n");
                             }
+                            crate::message::ContentBlock::Audio { .. } => {
+                                output.push_str("[audio]\n");
+                            }
                             crate::message::ContentBlock::OpenAICompaction { .. } => {
                                 output.push_str("[OpenAI native compaction]\n");
                             }

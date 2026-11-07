@@ -417,7 +417,7 @@ fn is_turn_start(message: &StoredMessage) -> bool {
                     saw_user_text = true;
                 }
             }
-            ContentBlock::Image { .. } => {}
+            ContentBlock::Image { .. } | ContentBlock::Audio { .. } => {}
             _ => return false,
         }
     }
