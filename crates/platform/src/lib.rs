@@ -54,6 +54,15 @@ pub fn sync_dir(path: &Path, mode: SyncMode) -> io::Result<()> {
     Current::sync_dir(path, mode)
 }
 
+/// Whether flushing a directory's entry confirms a file created inside it.
+///
+/// `true` on Unix, where the flush writes the entry table that names the file,
+/// and `false` on Windows, where `sync_dir` flushes nothing and a creation is
+/// confirmed only by flushing the file itself.
+pub fn directory_sync_is_effective() -> bool {
+    Current::directory_sync_is_effective()
+}
+
 static TLS_CONFIG_BUILDS: AtomicU64 = AtomicU64::new(0);
 static TLS_CONFIG: LazyLock<Arc<ClientConfig>> = LazyLock::new(|| {
     TLS_CONFIG_BUILDS.fetch_add(1, Ordering::Relaxed);
@@ -296,6 +305,13 @@ mod tests {
         let error = sync_dir(&missing, SyncMode::Full).expect_err("a missing path must be rejected");
         eprintln!("sync_dir(missing) -> {error:?}");
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn directory_sync_effectiveness_matches_the_host() {
+        // The facade forwards the adapter's answer: Unix confirms a creation by
+        // flushing the directory entry, Windows flushes the file instead.
+        assert_eq!(directory_sync_is_effective(), !cfg!(windows));
     }
 
     #[test]

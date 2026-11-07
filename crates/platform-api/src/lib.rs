@@ -86,6 +86,19 @@ pub trait PlatformAdapter {
     /// `Ok(())` and leaves the identity check to the caller.
     fn sync_dir(path: &Path, mode: SyncMode) -> io::Result<()>;
 
+    /// Whether flushing a directory's entry confirms a file created inside it.
+    ///
+    /// Unix flushes the entry table itself, so a creation that precedes this
+    /// flush survives a power failure even when the file's own bytes were never
+    /// flushed. That is enough for a file whose only meaning is its name: the
+    /// catalog dirty marker is empty, readers test its existence, and a lost
+    /// timestamp or size costs nothing.
+    ///
+    /// Windows cannot open a directory for a flush and leaves the entry to NTFS
+    /// journaling, so `false` there means a creation is confirmed only by
+    /// flushing the file itself.
+    fn directory_sync_is_effective() -> bool;
+
     /// Build the client TLS configuration this operating system trusts.
     ///
     /// The trust set is the bundled webpki roots plus the roots the operating
