@@ -236,6 +236,23 @@ impl Logger {
     }
 }
 
+/// Route platform-adapter reports into this crate's log file.
+///
+/// The adapters sit below this crate (which depends on the application
+/// foundation, and the foundation depends on the adapters), so they cannot call
+/// it directly. They report through `horon_agent_platform_api::log` instead,
+/// and this sink puts those messages in the same file at the same levels.
+fn platform_log_sink(level: horon_agent_platform_api::log::PlatformLogLevel, message: &str) {
+    use horon_agent_platform_api::log::PlatformLogLevel;
+
+    match level {
+        PlatformLogLevel::Error => error(message),
+        PlatformLogLevel::Warn => warn(message),
+        PlatformLogLevel::Info => info(message),
+        PlatformLogLevel::Debug => debug(message),
+    }
+}
+
 /// Initialize the logger (call once at startup)
 pub fn init() {
     let mut guard = match LOGGER.lock() {
@@ -246,6 +263,8 @@ pub fn init() {
         *guard = Logger::new();
     }
     drop(guard);
+
+    horon_agent_platform_api::log::set_log_sink(platform_log_sink);
 
     // Prune stale daily log files once per process, off the startup path so
     // disk I/O never blocks launch. cleanup_old_logs is scoped to our own

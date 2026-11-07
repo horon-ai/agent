@@ -503,18 +503,14 @@ impl DurableRuntimeStore {
     fn preserve_tail_locked(&mut self, path: &Path, bytes: &[u8]) -> JournalResult<()> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options
             .open(path)
             .map_err(|error| JournalError::io_context("create the recovery tail", path, error))?;
         self.hit(JournalIoPoint::RecoveryTailWrite)?;
         file.write_all(bytes)?;
         self.hit(JournalIoPoint::RecoveryTailFileSync)?;
-        file.sync_all()?;
+        horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode())?;
         self.hit(JournalIoPoint::RecoveryTailDirectorySync)?;
         let dir = self.dir.clone();
         sync_directory_entry(&dir)
@@ -534,18 +530,14 @@ impl DurableRuntimeStore {
     fn write_and_rename_locked(&mut self, temp: &Path, bytes: &[u8]) -> JournalResult<()> {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options
             .open(temp)
             .map_err(|error| JournalError::io_context("create the journal temp file", temp, error))?;
         self.hit(JournalIoPoint::RewriteTempWrite)?;
         file.write_all(bytes)?;
         self.hit(JournalIoPoint::RewriteFileSync)?;
-        file.sync_all()?;
+        horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode())?;
         drop(file);
         self.hit(JournalIoPoint::RewriteRename)?;
         let journal = self.journal_path.clone();
@@ -758,18 +750,14 @@ impl DurableRuntimeStore {
         let path = self.journal_path.clone();
         let mut options = OpenOptions::new();
         options.create(true).append(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
+        horon_agent_platform::fs::request_owner_only_mode(&mut options);
         let mut file = options
             .open(&path)
             .map_err(|error| JournalError::io_context("open the journal for append", &path, error))?;
         self.hit(JournalIoPoint::RecordWrite)?;
         file.write_all(bytes)?;
         self.hit(JournalIoPoint::RecordFileSync)?;
-        file.sync_all()?;
+        horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode())?;
         if previous_len == 0 {
             self.hit(JournalIoPoint::RecordDirectorySync)?;
             let dir = self.dir.clone();
@@ -783,7 +771,7 @@ impl DurableRuntimeStore {
         let rolled_back = match OpenOptions::new().write(true).open(&path) {
             Ok(file) => match file.set_len(previous_len) {
                 Ok(()) => match self.hit(JournalIoPoint::RecordRollbackFileSync) {
-                    Ok(()) => file.sync_all(),
+                    Ok(()) => horon_agent_platform::sync_file(&file, crate::config::config().storage_sync_mode()),
                     Err(injected) => Err(injected),
                 },
                 Err(truncate_error) => Err(truncate_error),
@@ -882,26 +870,15 @@ fn process_lock_for(dir: &Path) -> Arc<Mutex<()>> {
 }
 
 fn ensure_private_dir(path: &Path) -> JournalResult<()> {
-    std::fs::create_dir_all(path)
+    horon_agent_platform::create_private_dir(path, true)
         .map_err(|error| JournalError::io_context("create the journal directory", path, error))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| JournalError::io_context("restrict the journal directory", path, error))?;
-    }
+    horon_agent_platform::set_permissions_private_dir(path)
+        .map_err(|error| JournalError::io_context("restrict the journal directory", path, error))?;
     Ok(())
 }
 
-#[cfg(unix)]
+/// Flush one directory entry so a journal file created or replaced in it survives.
 fn sync_directory_entry(path: &Path) -> JournalResult<()> {
-    let dir = File::open(path).map_err(|error| JournalError::io_context("open the journal directory", path, error))?;
-    dir.sync_all()
+    horon_agent_platform::sync_dir(path, crate::config::config().storage_sync_mode())
         .map_err(|error| JournalError::io_context("sync the journal directory", path, error))
-}
-
-#[cfg(not(unix))]
-fn sync_directory_entry(path: &Path) -> JournalResult<()> {
-    let _ = path;
-    Ok(())
 }

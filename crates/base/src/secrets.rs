@@ -244,7 +244,7 @@ fn random_key() -> [u8; 32] {
 fn placeholder_key_path() -> std::io::Result<PathBuf> {
     let dir = crate::storage::horon_agent_dir().map_err(std::io::Error::other)?;
     std::fs::create_dir_all(&dir)?;
-    if let Err(err) = crate::platform::set_directory_permissions_owner_only(&dir) {
+    if let Err(err) = horon_agent_platform::fs::set_dir_permissions_owner_only(&dir) {
         crate::logging::warn(&format!("could not tighten permissions on {}: {err}", dir.display()));
     }
     Ok(dir.join(PLACEHOLDER_KEY_FILE))
@@ -261,18 +261,14 @@ fn load_or_create_key(path: &Path) -> std::io::Result<[u8; 32]> {
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
+    horon_agent_platform::fs::request_owner_only_mode(&mut options);
 
     match options.open(path) {
         Ok(mut file) => {
             let key = random_key();
             file.write_all(engine.encode(key).as_bytes())?;
             file.sync_all()?;
-            crate::platform::set_permissions_owner_only(path)?;
+            horon_agent_platform::fs::set_file_permissions_owner_only(path)?;
             Ok(key)
         }
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {

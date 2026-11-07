@@ -341,11 +341,11 @@ async fn bash_pty_child_owns_the_terminal_and_survives_group_interrupt() {
         .expect("wait for the pty child");
     assert!(!status.success(), "SIGINT must terminate the child: {status:?}");
     assert!(
-        !crate::platform::is_process_running(child_pid),
+        !horon_agent_platform::is_process_running(child_pid),
         "the signalled child must be gone"
     );
     assert!(
-        crate::platform::is_process_running(std::process::id()),
+        horon_agent_platform::is_process_running(std::process::id()),
         "a group SIGINT for the child must never reach the parent"
     );
 }
@@ -1035,7 +1035,7 @@ async fn process_group_kill_guard_terminates_descendants() {
         .parse::<u32>()
         .expect("numeric descendant pid");
 
-    let guard = ProcessGroupKillGuard::new(child.id());
+    let guard = horon_agent_platform::process::ProcessGroupGuard::new(child.id());
     drop(guard);
     tokio::time::timeout(Duration::from_secs(2), child.wait())
         .await
@@ -1046,7 +1046,7 @@ async fn process_group_kill_guard_terminates_descendants() {
     // too tight under parallel load (issue #593).
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
-        if !crate::platform::is_process_running(descendant_pid) {
+        if !horon_agent_platform::is_process_running(descendant_pid) {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

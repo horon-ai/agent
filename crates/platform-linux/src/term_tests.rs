@@ -1,21 +1,27 @@
-use super::*;
-#[cfg(target_os = "linux")]
+//! Behaviour of the Linux stdin-state reader.
+//!
+//! The reader answers from `/proc`, so these tests run real child processes and
+//! inspect the same interfaces the implementation does. They are Linux-only
+//! because the whole module is.
+
 use std::process::{Command, Stdio};
 
-/// Hold a socket on fd 0 for the duration of a check, restoring the previous stdin on drop.
+use horon_agent_platform_api::StdinState;
+
+use super::term::{direct_children, process_tree_stdin_state, stdin_state};
+
+/// Hold a socket on fd 0 for the duration of a check, restoring the previous
+/// stdin on drop.
 ///
-/// The macOS reader answers `Reading` when fd 0 is a pipe or a vnode *and* any thread of the
-/// process is blocked. A cargo test harness always has such a thread (the main thread waits on
-/// the test results), so with an inherited terminal, pipe, `/dev/null` or regular file this
-/// process is indistinguishable from one that is genuinely reading stdin, and the assertion
-/// below would depend on how the suite was launched. A socket is not an interactive stdin
-/// stream, so the check can answer about the process instead of about the caller's terminal.
-#[cfg(unix)]
+/// A cargo test harness always has a thread blocked somewhere, so with an
+/// inherited terminal, pipe or regular file on fd 0 this process cannot be
+/// distinguished from one that is reading stdin. A socket is not an interactive
+/// stdin stream, so the check answers about the process instead of about the
+/// caller's terminal.
 struct SocketStdin {
     previous: i32,
 }
 
-#[cfg(unix)]
 impl SocketStdin {
     fn install() -> Self {
         let mut ends = [0 as libc::c_int; 2];
@@ -33,7 +39,6 @@ impl SocketStdin {
     }
 }
 
-#[cfg(unix)]
 impl Drop for SocketStdin {
     fn drop(&mut self) {
         unsafe {
@@ -45,48 +50,16 @@ impl Drop for SocketStdin {
 
 #[test]
 fn test_own_process_not_reading_stdin() {
-    #[cfg(unix)]
     let _stdin = SocketStdin::install();
     let pid = std::process::id();
-    let state = is_waiting_for_stdin(pid);
-    assert_ne!(state, StdinState::Reading);
-}
-
-/// The positive half of the macOS reader, which the own-process test above cannot cover because
-/// it detaches stdin to get a deterministic answer: a process whose fd 0 is a pipe and whose
-/// thread blocks in read(0) must be reported `Reading`.
-#[cfg(target_os = "macos")]
-#[test]
-fn test_blocked_pipe_reader_is_detected() {
-    let mut child = std::process::Command::new("cat")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .expect("failed to spawn cat");
-
-    let pid = child.id();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let state = loop {
-        let state = is_waiting_for_stdin(pid);
-        if state == StdinState::Reading || std::time::Instant::now() >= deadline {
-            break state;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
-
-    child.kill().ok();
-    child.wait().ok();
-
-    assert_eq!(state, StdinState::Reading, "cat should be waiting for stdin");
+    assert_ne!(stdin_state(pid), StdinState::Reading);
 }
 
 #[test]
 fn test_nonexistent_pid() {
-    let state = is_waiting_for_stdin(u32::MAX);
-    assert_ne!(state, StdinState::Reading);
+    assert_ne!(stdin_state(u32::MAX), StdinState::Reading);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_blocked_process_detected() {
     let mut child = Command::new("cat")
@@ -98,7 +71,7 @@ fn test_blocked_process_detected() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    let state = linux::check_process_tree(pid);
+    let state = process_tree_stdin_state(pid);
 
     child.kill().ok();
     child.wait().ok();
@@ -106,7 +79,6 @@ fn test_blocked_process_detected() {
     assert_eq!(state, StdinState::Reading, "cat should be waiting for stdin");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_running_process_not_reading() {
     let mut child = Command::new("sleep")
@@ -119,7 +91,7 @@ fn test_running_process_not_reading() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    let state = linux::check(pid);
+    let state = stdin_state(pid);
 
     child.kill().ok();
     child.wait().ok();
@@ -127,10 +99,9 @@ fn test_running_process_not_reading() {
     assert_eq!(state, StdinState::NotReading, "sleep should not be reading stdin");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_child_process_tree_detection() {
-    // bash -c "cat" spawns bash which spawns cat - cat is the one reading stdin
+    // `bash -c "cat"` spawns bash which spawns cat; cat is the one reading.
     let mut child = Command::new("bash")
         .arg("-c")
         .arg("cat")
@@ -142,8 +113,7 @@ fn test_child_process_tree_detection() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    // The bash process itself may not be reading, but its child (cat) should be
-    let state = linux::check_process_tree(pid);
+    let state = process_tree_stdin_state(pid);
 
     child.kill().ok();
     child.wait().ok();
@@ -155,15 +125,12 @@ fn test_child_process_tree_detection() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_grandchild_process_tree_detection() {
     // Wrapper chain: an outer bash spawns an inner `bash -c cat`, so the actual
-    // stdin reader (`cat`) is a GRANDCHILD of the tracked pid. The intermediate
-    // bash is not itself reading stdin, so detection requires recursing past
-    // direct children (issue #373). A trailing `; true` keeps each bash from
-    // exec-optimizing itself away so the nesting (outer bash -> inner bash ->
-    // cat) is preserved.
+    // reader (`cat`) is a grandchild of the tracked pid and the intermediate
+    // bash is not itself reading. A trailing `; true` keeps each bash from
+    // exec-optimizing itself away, so the nesting is preserved.
     let mut child = Command::new("bash")
         .arg("-c")
         .arg("bash -c 'cat; true'; true")
@@ -175,7 +142,7 @@ fn test_grandchild_process_tree_detection() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(400));
 
-    let state = linux::check_process_tree(pid);
+    let state = process_tree_stdin_state(pid);
 
     child.kill().ok();
     child.wait().ok();
@@ -187,14 +154,10 @@ fn test_grandchild_process_tree_detection() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_direct_children_lists_immediate_children() {
-    // Spawn a parent shell that itself spawns a long-lived child (`sleep`).
-    // `direct_children` should report the immediate child PID(s) without
-    // scanning all of /proc.
-    // Use a compound command so bash does NOT exec-optimize itself away and
-    // actually stays alive as the parent of a `sleep` child.
+    // A compound command keeps bash alive as the parent of a `sleep` child
+    // instead of exec-optimizing itself away.
     let mut child = Command::new("bash")
         .arg("-c")
         .arg("sleep 5; true")
@@ -206,10 +169,10 @@ fn test_direct_children_lists_immediate_children() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    let kids = linux::direct_children(pid);
+    let kids = direct_children(pid);
 
-    // Verify parentage BEFORE killing the parent, otherwise the child
-    // reparents to init (ppid 1) and the check races.
+    // Verify parentage before killing the parent, otherwise the child reparents
+    // to init (ppid 1) and the check races.
     let mut all_parented_by_pid = !kids.is_empty();
     for kid in &kids {
         let status = std::fs::read_to_string(format!("/proc/{}/status", kid)).unwrap_or_default();
@@ -235,7 +198,6 @@ fn test_direct_children_lists_immediate_children() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_process_that_reads_then_exits() {
     use std::io::Write;
@@ -250,20 +212,15 @@ fn test_process_that_reads_then_exits() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // Should be reading initially
-    let state_before = linux::check(pid);
+    let state_before = stdin_state(pid);
 
-    // Write a line - head should read it and exit
     if let Some(ref mut stdin) = child.stdin {
         stdin.write_all(b"hello\n").ok();
         stdin.flush().ok();
     }
 
-    // Wait for exit
     let status = child.wait().expect("failed to wait");
-
-    // After exit, checking the pid should not report Reading
-    let state_after = is_waiting_for_stdin(pid);
+    let state_after = stdin_state(pid);
 
     assert_eq!(state_before, StdinState::Reading, "head should be reading before input");
     assert_ne!(
@@ -274,10 +231,8 @@ fn test_process_that_reads_then_exits() {
     assert!(status.success(), "head should exit successfully");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_process_with_closed_stdin_not_reading() {
-    // Spawn a process with stdin completely closed (null)
     let mut child = Command::new("cat")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -285,24 +240,21 @@ fn test_process_with_closed_stdin_not_reading() {
         .expect("failed to spawn cat");
 
     let pid = child.id();
-    // cat with /dev/null as stdin should read EOF immediately and exit
+    // cat with /dev/null as stdin reads EOF immediately and exits.
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    let state = is_waiting_for_stdin(pid);
+    let state = stdin_state(pid);
 
     child.kill().ok();
     child.wait().ok();
 
-    // cat with /dev/null gets EOF immediately, should not be stuck reading
     assert_ne!(state, StdinState::Reading);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn test_multiple_sequential_reads() {
     use std::io::Write;
 
-    // Use a program that reads multiple lines
     let mut child = Command::new("head")
         .arg("-n2")
         .stdin(Stdio::piped())
@@ -313,22 +265,24 @@ fn test_multiple_sequential_reads() {
     let pid = child.id();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // Should be reading first line
-    let state1 = linux::check(pid);
-    assert_eq!(state1, StdinState::Reading, "should be waiting for first line");
+    assert_eq!(
+        stdin_state(pid),
+        StdinState::Reading,
+        "should be waiting for the first line"
+    );
 
-    // Send first line
     if let Some(ref mut stdin) = child.stdin {
         stdin.write_all(b"line1\n").ok();
         stdin.flush().ok();
     }
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Should be reading second line
-    let state2 = linux::check(pid);
-    assert_eq!(state2, StdinState::Reading, "should be waiting for second line");
+    assert_eq!(
+        stdin_state(pid),
+        StdinState::Reading,
+        "should be waiting for the second line"
+    );
 
-    // Send second line
     if let Some(ref mut stdin) = child.stdin {
         stdin.write_all(b"line2\n").ok();
         stdin.flush().ok();
@@ -338,26 +292,22 @@ fn test_multiple_sequential_reads() {
     assert!(status.success());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn direct_children_of_childless_process_does_not_scan_proc() {
-    // Regression test for issue #392 A1 (second occurrence): a childless
-    // process must return an empty list via /proc/<pid>/task/<tid>/children
-    // without falling back to the whole-/proc scan. We can't observe syscalls
-    // here, but we can assert the interface itself reports readable-and-empty
-    // for a leaf process we control, which is the branch condition the fix
-    // keys on.
+    // A childless process must return an empty list through
+    // `/proc/<pid>/task/<tid>/children` without falling back to the whole-/proc
+    // scan. The syscall count cannot be observed here, but the interface itself
+    // must be readable and empty for a leaf process we control, which is the
+    // branch condition the fix keys on.
     let mut child = std::process::Command::new("sleep")
         .arg("5")
         .spawn()
         .expect("spawn sleep");
     let pid = child.id();
 
-    // `sleep` spawns no children. The children interface must be readable so
-    // direct_children() returns empty WITHOUT the proc-scan fallback.
     let path = format!("/proc/{}/task/{}/children", pid, pid);
     let readable = std::fs::read_to_string(&path).is_ok();
-    let children = super::linux::direct_children(pid);
+    let children = direct_children(pid);
 
     let _ = child.kill();
     let _ = child.wait();

@@ -191,14 +191,12 @@ pub fn danger_class(
     // `bash_destructive_gate` does. Without this the daemon's own environment
     // leaves `scratch_dir` as None, so a command writing under the scratch
     // directory is rated `Confirm` here and `Low` at the gate that will run it.
-    #[cfg(not(windows))]
-    {
-        // When the scratch directory cannot be resolved, assess with no scratch
-        // path rather than guessing one: the shell gate then sees the same `None`
-        // and the two agree, which is the property N1 asked for. The old
-        // disagreement came from one side setting it and the other not.
-        context.scratch_dir = super::tool::tool_scratch_dir_for_risk();
-    }
+    // When the scratch directory cannot be resolved, assess with no scratch path
+    // rather than guessing one: the shell gate then sees the same `None` and the
+    // two agree, which is the property N1 asked for. The old disagreement came
+    // from one side setting it and the other not. The helper answers `None` on a
+    // platform whose shells receive no scratch directory.
+    context.scratch_dir = super::tool::tool_scratch_dir_for_risk();
     let assessment = horon_agent_command_risk::assess(command, &context);
     if assessment.level.runs_immediately() {
         None

@@ -1,8 +1,7 @@
 //! Host-local listing index. Session locks are acquired only outside catalog locks.
-#[cfg(any(unix, windows))]
 use crate::blobs::new_file;
 use crate::blobs::{Disk, checked_file, log_file};
-use crate::cache_io::{Stamp, decode, encode, publish};
+use crate::cache_io::{Stamp, decode, encode, publish_derived};
 use crate::catalog_row::CatalogEntry;
 pub use crate::catalog_row::Summary;
 use crate::checkpoint::SessionCache;
@@ -17,38 +16,21 @@ pub fn needs_compaction(dead: u64, live: u64) -> bool {
 }
 
 fn lock(paths: &SessionPaths) -> Result<File, StoreError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::symlink_metadata(paths.root())?;
-        if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
-            return Err(crate::blobs::unsafe_path(paths.root()));
-        }
+    // The store root is the anchor for every other private path: a permissive
+    // root would let another user replace the catalog underneath this lock.
+    // Windows keeps it private through the agent home's inherited ACL, so only
+    // its type is verified there.
+    if !horon_agent_platform::fs::is_private_dir(&fs::symlink_metadata(paths.root())?) {
+        return Err(crate::blobs::unsafe_path(paths.root()));
     }
-    // Windows has no owner-only mode bits; the store root is kept private by the
-    // inherited ACL of the agent home, so only its type is verified here.
-    #[cfg(windows)]
-    {
-        if !fs::symlink_metadata(paths.root())?.is_dir() {
-            return Err(crate::blobs::unsafe_path(paths.root()));
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = paths;
-        return Err(crate::blobs::unsupported());
-    }
-    #[cfg(any(unix, windows))]
-    {
-        let path = paths.root().join(".catalog.lock");
-        let file = match new_file(&path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
-            Err(e) => return Err(e.into()),
-        };
-        crate::writer::lock_exclusive_named(&file, "catalog index")?;
-        Ok(file)
-    }
+    let path = paths.root().join(".catalog.lock");
+    let file = match new_file(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
+        Err(e) => return Err(e.into()),
+    };
+    crate::writer::lock_exclusive_named(&file, "catalog index")?;
+    Ok(file)
 }
 fn sessions(paths: &SessionPaths) -> Result<Vec<SessionId>, StoreError> {
     let mut ids = Vec::new();
@@ -163,12 +145,14 @@ pub(crate) fn publish_row(
     let live_size = u64::try_from(live.len()).map_err(|_| crate::recovery::corrupt("catalog size"))?;
     disk.hit(IoPoint::CatalogWrite)?;
     if repair || needs_compaction(total.saturating_add(added).saturating_sub(live_size), live_size) {
-        publish(disk, &path, &live, probe)?;
+        publish_derived(disk, &path, &live, probe)?;
     } else {
         let (mut file, _) = log_file(&path)?;
         file.write_all(&line)?;
-        disk.hit(IoPoint::CatalogFileSync)?;
-        file.sync_all()?;
+        // A listing row is derived: the dirty marker beside the original says
+        // it is due, and the next listing or repair republishes it. Nothing is
+        // flushed here, so a crash can only cost a rebuild.
+        disk.hit(IoPoint::CatalogRowStaged)?;
         probe.note_write(
             &path,
             total,
@@ -176,13 +160,11 @@ pub(crate) fn publish_row(
         )?;
     }
     disk.hit(IoPoint::CatalogPublished)?;
-    disk.sync_dir(paths.root(), IoPoint::CatalogDirectorySync)?;
     let dirty = paths.root().join(".catalog.dirty").join(row.session_id.as_str());
     match checked_file(&dirty, false) {
         Ok(_) => {
             fs::remove_file(&dirty)?;
             disk.hit(IoPoint::DirtyRemoved)?;
-            disk.sync_dir(&paths.root().join(".catalog.dirty"), IoPoint::DirtyRemovalDirectorySync)?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
@@ -246,10 +228,8 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
         return Err(StoreError::busy("catalog changed during listing; retry"));
     }
     if repair_catalog {
-        let mut disk = Disk {
-            hook: Box::new(|_| Ok(())),
-        };
-        publish(
+        let mut disk = Disk::new(Box::new(|_| Ok(())), paths.sync_mode());
+        publish_derived(
             &mut disk,
             &paths.root().join(".catalog.index.jsonl"),
             &row_bytes(&snapshot)?,

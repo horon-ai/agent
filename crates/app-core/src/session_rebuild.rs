@@ -77,7 +77,7 @@ fn exec_rebuilt_session(exe: &Path, session_id: &str, cwd: &Path) -> Result<()> 
 
     let mut cmd = ProcessCommand::new(exe);
     cmd.arg("--resume").arg(session_id).current_dir(cwd);
-    let err = crate::platform::replace_process(&mut cmd);
+    let err = horon_agent_platform::replace_process(&mut cmd);
 
     Err(anyhow::anyhow!("Failed to exec {:?}: {}", exe, err))
 }

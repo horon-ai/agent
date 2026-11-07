@@ -5,8 +5,6 @@ use crate::*;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn stage_path(paths: &SessionPaths, id: &SessionId, hash: &str) -> Result<PathBuf, StoreError> {
@@ -17,15 +15,8 @@ pub(crate) fn stage_path(paths: &SessionPaths, id: &SessionId, hash: &str) -> Re
         match fs::symlink_metadata(path) {
             Ok(meta) if !meta.is_dir() => return Err(unsafe_path(path)),
             Ok(meta) => {
-                #[cfg(unix)]
-                if meta.permissions().mode() & 0o777 != 0o700
-                    || meta.uid() != fs::metadata(paths.session_dir(id)?)?.uid()
-                {
+                if !horon_agent_platform::fs::is_private_dir_owned_by(&meta, &fs::metadata(paths.session_dir(id)?)?) {
                     return Err(unsafe_path(path));
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = &meta;
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -72,7 +63,7 @@ pub(crate) fn prepare(disk: &mut Disk, stage: &Path, total: u64) -> Result<(), S
     let temp = stage.join(".size.tmp");
     let mut file = temporary(&temp)?;
     file.write_all(total.to_string().as_bytes())?;
-    file.sync_all()?;
+    disk.sync_file(&file, IoPoint::BlobFileSync)?;
     fs::rename(temp, stage.join("size"))?;
     disk.sync_dir(stage, IoPoint::BlobDirectorySync)
 }
@@ -102,15 +93,14 @@ pub(crate) fn put(disk: &mut Disk, stage: &Path, offset: u64, bytes: &[u8]) -> R
             if read_file(&path)? != bytes {
                 return Err(conflict("different bytes at existing offset"));
             }
-            file.sync_all()?;
+            disk.sync_file(&file, IoPoint::BlobFileSync)?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let temp = stage.join(format!(".{offset}.tmp"));
             let mut file = temporary(&temp)?;
             disk.hit(IoPoint::BlobWrite)?;
             file.write_all(bytes)?;
-            disk.hit(IoPoint::BlobFileSync)?;
-            file.sync_all()?;
+            disk.sync_file(&file, IoPoint::BlobFileSync)?;
             if read_file(&temp)? != bytes {
                 return Err(conflict("staged chunk verification failed"));
             }
@@ -166,8 +156,7 @@ pub(crate) fn publish(
         file.write_all(&bytes)?;
         offset += u64::try_from(bytes.len()).map_err(|_| conflict("chunk length overflow"))?;
     }
-    disk.hit(IoPoint::BlobFileSync)?;
-    file.sync_all()?;
+    disk.sync_file(&file, IoPoint::BlobFileSync)?;
     verify(&mut file, hash, total)?;
     disk.hit(IoPoint::BlobVerified)?;
     // Destination is only replaced after a no-follow existence check, under the

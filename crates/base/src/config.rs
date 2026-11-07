@@ -9,13 +9,12 @@ pub use horon_agent_config_types::{
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
     ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
     NamedProviderModelConfig, NamedProviderType, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SecretsMode, SponsorsConfig, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode,
-    TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
+    SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode, StreamRuleConfig, StreamRuleDelivery,
+    StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::hash::{Hash, Hasher};
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -140,6 +139,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_SAME_PROVIDER_ACCOUNT_FAILOVER",
     "HORON_AGENT_SEARXNG_URL",
     "HORON_AGENT_SHOW_THINKING",
+    "HORON_AGENT_STORAGE_SYNC",
     "HORON_AGENT_STREAM_IDLE_TIMEOUT_SECS",
     "HORON_AGENT_MAX_RETRIES",
     "HORON_AGENT_MCP_TOOLS",
@@ -254,7 +254,7 @@ pub fn config() -> &'static Config {
         let fingerprint = ConfigCacheFingerprint::current();
         cache.last_checked = now;
         if cache.force_reload || cache.fingerprint != fingerprint {
-            reload_reason = Some(describe_config_reload(
+            reload_reason = Some(change_report::describe_config_reload(
                 cache.force_reload,
                 &cache.fingerprint,
                 &fingerprint,
@@ -283,64 +283,6 @@ pub fn config() -> &'static Config {
     }
 
     config
-}
-
-fn describe_config_reload(forced: bool, previous: &ConfigCacheFingerprint, next: &ConfigCacheFingerprint) -> String {
-    let mut parts = Vec::new();
-    if forced {
-        parts.push("forced=true".to_string());
-    }
-    if previous.path != next.path {
-        parts.push(format!(
-            "path={:?}->{:?}",
-            previous.path.as_ref().map(|p| p.display().to_string()),
-            next.path.as_ref().map(|p| p.display().to_string())
-        ));
-    }
-    if previous.modified != next.modified {
-        parts.push("modified_changed=true".to_string());
-    }
-    if previous.len != next.len {
-        parts.push(format!("len={:?}->{:?}", previous.len, next.len));
-    }
-    let env_changes = describe_env_changes(&previous.env, &next.env);
-    if !env_changes.is_empty() {
-        parts.push(format!("env=[{}]", env_changes.join(", ")));
-    }
-    if parts.is_empty() {
-        "unchanged".to_string()
-    } else {
-        parts.join(" ")
-    }
-}
-
-fn describe_env_changes(previous: &[(String, String)], next: &[(String, String)]) -> Vec<String> {
-    let previous_map: BTreeMap<&str, &str> = previous
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect();
-    let next_map: BTreeMap<&str, &str> = next.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
-    let keys: BTreeSet<&str> = previous_map.keys().chain(next_map.keys()).copied().collect();
-
-    keys.into_iter()
-        .filter_map(|key| match (previous_map.get(key), next_map.get(key)) {
-            (Some(previous), Some(next)) if previous != next => Some(format!(
-                "{}:changed({}->{})",
-                key,
-                env_value_fingerprint(previous),
-                env_value_fingerprint(next)
-            )),
-            (None, Some(next)) => Some(format!("{}:added({})", key, env_value_fingerprint(next))),
-            (Some(previous), None) => Some(format!("{}:removed({})", key, env_value_fingerprint(previous))),
-            _ => None,
-        })
-        .collect()
-}
-
-fn env_value_fingerprint(value: &str) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hasher);
-    format!("len:{} hash:{:016x}", value.len(), hasher.finish())
 }
 
 fn config_env_fingerprint() -> Vec<(String, String)> {
@@ -482,6 +424,9 @@ pub struct Config {
     /// Power-management configuration (prevent sleep while streaming)
     pub power: PowerConfig,
 
+    /// Durability level for writes that have to survive a crash.
+    pub storage: StorageConfig,
+
     /// Auto-review configuration
     pub autoreview: AutoReviewConfig,
 
@@ -499,6 +444,41 @@ pub struct Config {
     /// them verbatim so a CLI settings save never wipes Desktop preferences.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop: Option<toml::Table>,
+}
+
+/// Warned once per process, so a typo costs one line rather than one per write.
+static STORAGE_SYNC_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+impl Config {
+    /// The durability level every original session write is confirmed with.
+    ///
+    /// `HORON_AGENT_STORAGE_SYNC` overrides `[storage] sync` from the file. An
+    /// unrecognized value in either place falls back to `full` and is reported
+    /// once per process instead of failing the config parse.
+    pub fn storage_sync_mode(&self) -> horon_agent_platform::SyncMode {
+        let (mode, warning) = self.storage_sync_resolution();
+        if let Some(warning) = warning
+            && !STORAGE_SYNC_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            crate::logging::warn(&warning);
+        }
+        mode
+    }
+
+    /// The resolved level and the warning an unrecognized value deserves.
+    ///
+    /// Split from [`Config::storage_sync_mode`] so the fallback can be tested
+    /// without depending on the process-wide "already warned" state.
+    pub(crate) fn storage_sync_resolution(&self) -> (horon_agent_platform::SyncMode, Option<String>) {
+        let env = std::env::var_os("HORON_AGENT_STORAGE_SYNC");
+        let env = env.as_deref().and_then(|value| value.to_str());
+        let (mode, warning) = self.storage.resolve(env);
+        let mode = match mode {
+            StorageSyncMode::Full => horon_agent_platform::SyncMode::Full,
+            StorageSyncMode::Fast => horon_agent_platform::SyncMode::Fast,
+        };
+        (mode, warning)
+    }
 }
 
 /// Controls who owns autonomous wake execution.
@@ -1222,6 +1202,10 @@ mod tool_tiers;
 #[cfg(test)]
 #[path = "config_display_tests.rs"]
 mod display_tests;
+
+#[cfg(test)]
+#[path = "config/storage_tests.rs"]
+mod storage_tests;
 
 /// Whether integration discovery settings carry no information beyond the shipped
 /// default, so `[sponsors]` can be left out of written config files.

@@ -2333,8 +2333,7 @@ fn credential_snapshot_ignores_runtime_state() {
     }
 }
 
-/// The copied credential lists equal the private lists the shipped code
-/// reads, so the IS-15 snapshot cannot silently miss a store the product adds.
+/// The copied credential lists equal the private stores the shipped code reads.
 #[test]
 fn credential_lists_match_the_shipped_code() {
     fn literals(source: &str, start: &str) -> Vec<String> {
@@ -2362,8 +2361,9 @@ fn credential_lists_match_the_shipped_code() {
         "the per-agent OpenClaw store names"
     );
     assert!(
-        launch.contains(r#"home_dir().join("Library/Application Support/horon-agent")"#)
-            && launch.contains(r#".join("horon-agent")"#)
+        include_str!("../crates/platform-macos/src/lib.rs").contains(r#".join("Library/Application Support")"#)
+            && include_str!("../crates/platform/src/paths.rs").contains("home.join(app)")
+            && launch.contains(r#"user_config_dir("horon-agent")"#)
             && launch.contains(r#"ends_with(".env")"#),
         "the provider env files of user_app_config_dir()"
     );

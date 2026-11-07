@@ -1,0 +1,29 @@
+[package]
+name = "horon-agent-platform-macos"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "macOS platform adapter: F_FULLFSYNC and plain fsync for durable writes, and the system certificate verifier for TLS"
+
+[lib]
+name = "horon_agent_platform_macos"
+path = "src/lib.rs"
+
+# `tokio` is used only by the shared Unix sources this crate includes through
+# `#[path]` (`platform-linux/src/{ipc,signal}.rs`), which cargo-machete does not scan.
+[package.metadata.cargo-machete]
+ignored = ["tokio"]
+
+[dependencies]
+horon-agent-platform-api = { path = "../platform-api" }
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls-platform-verifier = "0.7"
+webpki-root-certs = "1"
+# Local IPC and the termination-signal watcher (`platform-linux/src/*.rs`).
+tokio = { version = "1", features = ["io-util", "net", "rt", "signal", "time"] }
+
+[dev-dependencies]
+rcgen = "0.14"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }

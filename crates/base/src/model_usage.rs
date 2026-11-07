@@ -27,10 +27,10 @@ pub struct CatalogUsageRevision {
 struct UsageFileStamp {
     len: u64,
     modified: Option<std::time::SystemTime>,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
-    changed: (i64, i64),
+    /// Inode and change time where the platform reports them; both zero where
+    /// it does not, so two stamps still compare equal exactly when the visible
+    /// state does.
+    identity: (u64, (i64, i64)),
 }
 
 fn usage_file_stamp(path: &Path) -> Option<UsageFileStamp> {
@@ -52,15 +52,11 @@ fn usage_file_stamp(path: &Path) -> Option<UsageFileStamp> {
             None
         }
     };
-    #[cfg(unix)]
-    use std::os::unix::fs::MetadataExt;
+    let stamp = horon_agent_platform::fs::file_stamp(&metadata);
     Some(UsageFileStamp {
         len: metadata.len(),
         modified,
-        #[cfg(unix)]
-        inode: metadata.ino(),
-        #[cfg(unix)]
-        changed: (metadata.ctime(), metadata.ctime_nsec()),
+        identity: (stamp.inode, stamp.changed),
     })
 }
 

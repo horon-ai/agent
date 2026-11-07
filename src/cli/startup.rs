@@ -115,7 +115,7 @@ pub async fn run() -> Result<()> {
         Box::pin(async { dispatch::spawn_server(&crate::cli::provider_init::ProviderChoice::Auto, None, None).await })
     }));
 
-    crate::platform::raise_nofile_limit_best_effort(8_192);
+    horon_agent_platform::raise_nofile_limit_best_effort(8_192);
     startup_profile::mark("nofile_limit");
 
     storage::harden_user_config_permissions();
@@ -211,7 +211,7 @@ fn spawn_background_update_check(args: &Args) {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     let args: Vec<String> = std::env::args().skip(1).collect();
                     let exec_path = build::client_update_candidate().map(|(p, _)| p).unwrap_or(path);
-                    let err = crate::platform::replace_process(
+                    let err = horon_agent_platform::replace_process(
                         ProcessCommand::new(&exec_path).args(&args).arg("--no-update"),
                     );
                     eprintln!("Failed to exec new binary: {}", err);

@@ -16,9 +16,10 @@ pub(super) fn destructive_command_refusal(
     working_dir: Option<std::path::PathBuf>,
 ) -> Option<String> {
     let mut risk_ctx = horon_agent_command_risk::RiskContext::from_env(working_dir);
-    // Assess the same scratch path that the child shell actually receives.
-    #[cfg(not(windows))]
-    {
+    // Assess the same scratch path that the child shell actually receives. A
+    // platform whose shells get no scratch directory leaves this unset, and the
+    // shell then sees the same `None`.
+    if horon_agent_platform::term::passes_scratch_dir_to_shell() {
         risk_ctx.scratch_dir = super::tool_scratch_dir();
     }
     let assessment = horon_agent_command_risk::assess(command, &risk_ctx);
@@ -48,7 +49,7 @@ pub(super) fn destructive_command_refusal(
 /// Lives beside the gate so the schema and the policy that reads it stay in
 /// sync, and so bash.rs stays inside the code-size budget.
 pub(super) fn bash_parameters_schema() -> serde_json::Value {
-    let cmd_desc = if cfg!(windows) {
+    let cmd_desc = if !horon_agent_platform::term::shell_is_posix() {
         "The Windows command to execute via cmd.exe. Use cmd.exe syntax and quoting, not Bash syntax."
     } else {
         "Shell command. Temp: $HORON_AGENT_SCRATCH_DIR, not /tmp. rg skips hidden and ignored by default."

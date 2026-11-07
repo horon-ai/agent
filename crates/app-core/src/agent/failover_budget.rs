@@ -1179,13 +1179,8 @@ mod tests {
         );
     }
 
-    /// A dangling symlink at the backup path is lost state, not a first run.
-    ///
-    /// `rm <path>.json; ln -s /nonexistent <path>.bak` leaves a directory entry
-    /// behind even though the link resolves to nothing. Following the link would
-    /// report `NotFound` and hand the run a fresh chain at zero, refunding every
-    /// attempt already spent.
-    #[cfg(unix)]
+    /// A dangling symlink at the backup path is lost state, not a first run:
+    /// the link resolves to nothing, so a following probe must not refund the chain.
     #[test]
     fn a_dangling_backup_symlink_is_lost_state_not_a_first_run() {
         let _home = TestHome::new();
@@ -1194,7 +1189,12 @@ mod tests {
         let path = budget_path(session).expect("path");
         let backup = path.with_extension("bak");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
-        std::os::unix::fs::symlink("/nonexistent/failover-budget-record", &backup).expect("dangling link");
+        // A platform that cannot create the link without a privilege skips this
+        // case; every other platform runs it.
+        let target = std::path::Path::new("/nonexistent/failover-budget-record");
+        let Ok(()) = horon_agent_platform::fs::symlink_file(target, &backup) else {
+            return;
+        };
 
         assert!(!path.exists(), "the primary is gone");
         assert!(std::fs::symlink_metadata(&backup).is_ok(), "the link itself is there");

@@ -428,7 +428,6 @@ mod tests {
         assert!(!injected.contains("root rules"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn find_agents_md_up_dedupes_symlinked_aliases() {
         let _lock = cache_test_lock();
@@ -438,7 +437,10 @@ mod tests {
         let root = std::fs::canonicalize(temp.path()).expect("canonicalize root");
         write(&root.join("a/AGENTS.md"), "level a rules");
         write(&root.join("a/b/file.txt"), "file body");
-        std::os::unix::fs::symlink(root.join("a/AGENTS.md"), root.join("a/b/AGENTS.md")).expect("symlink alias");
+        if horon_agent_platform::fs::symlink_file(&root.join("a/AGENTS.md"), &root.join("a/b/AGENTS.md")).is_err() {
+            // A platform that cannot create a symlink cannot build this alias.
+            return;
+        }
 
         let found = find_agents_md_up(&root.join("a/b/file.txt"), &root);
         println!("--- manual QA: deduped AGENTS.md candidates = {found:?} ---");
@@ -450,7 +452,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn find_agents_md_up_rejects_a_symlinked_agents_md_that_escapes_root() {
         let _lock = cache_test_lock();
@@ -466,8 +467,11 @@ mod tests {
         let secret = outside.path().join("credentials");
         write(&secret, "secret marker: OUTSIDE-SECRET-4c1d\n");
         let secret = std::fs::canonicalize(&secret).expect("canonicalize secret");
-        std::os::unix::fs::symlink(&secret, root.join("a/AGENTS.md")).expect("symlink escape");
-        std::os::unix::fs::symlink(&secret, root.join("a/b/c/AGENTS.md")).expect("symlink escape");
+        if horon_agent_platform::fs::symlink_file(&secret, &root.join("a/AGENTS.md")).is_err() {
+            // A platform that cannot create a symlink cannot build this escape.
+            return;
+        }
+        horon_agent_platform::fs::symlink_file(&secret, &root.join("a/b/c/AGENTS.md")).expect("symlink escape");
 
         let escaping_only = find_agents_md_up(&root.join("a/file.txt"), &root);
         println!(
@@ -528,7 +532,6 @@ mod tests {
         assert!(contain(&root, &root).is_none());
     }
 
-    #[cfg(unix)]
     #[test]
     fn contain_rejects_symlink_escaping_root() {
         let _lock = cache_test_lock();
@@ -538,7 +541,10 @@ mod tests {
         let outside = tempfile::TempDir::new().expect("outside dir");
         let outside_file = outside.path().join("secret.txt");
         write(&outside_file, "outside body");
-        std::os::unix::fs::symlink(outside.path(), root.join("escape")).expect("symlink");
+        if horon_agent_platform::fs::symlink_file(outside.path(), &root.join("escape")).is_err() {
+            // A platform that cannot create a symlink cannot build this escape.
+            return;
+        }
 
         let escaped = root.join("escape/secret.txt");
         assert!(escaped.is_file(), "fixture resolves");

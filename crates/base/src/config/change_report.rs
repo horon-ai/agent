@@ -10,8 +10,10 @@
 //! This module turns "the file changed" into a specific, checkable answer:
 //! which keys changed, from what to what, and whether each one is live now.
 
+use super::ConfigCacheFingerprint;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 /// Whether a changed config key takes effect in the running process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +181,68 @@ fn render_value(value: &Value) -> String {
         Value::String(s) => format!("\"{s}\""),
         other => other.to_string(),
     }
+}
+
+pub(super) fn describe_config_reload(
+    forced: bool,
+    previous: &ConfigCacheFingerprint,
+    next: &ConfigCacheFingerprint,
+) -> String {
+    let mut parts = Vec::new();
+    if forced {
+        parts.push("forced=true".to_string());
+    }
+    if previous.path != next.path {
+        parts.push(format!(
+            "path={:?}->{:?}",
+            previous.path.as_ref().map(|p| p.display().to_string()),
+            next.path.as_ref().map(|p| p.display().to_string())
+        ));
+    }
+    if previous.modified != next.modified {
+        parts.push("modified_changed=true".to_string());
+    }
+    if previous.len != next.len {
+        parts.push(format!("len={:?}->{:?}", previous.len, next.len));
+    }
+    let env_changes = describe_env_changes(&previous.env, &next.env);
+    if !env_changes.is_empty() {
+        parts.push(format!("env=[{}]", env_changes.join(", ")));
+    }
+    if parts.is_empty() {
+        "unchanged".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+pub(super) fn describe_env_changes(previous: &[(String, String)], next: &[(String, String)]) -> Vec<String> {
+    let previous_map: BTreeMap<&str, &str> = previous
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    let next_map: BTreeMap<&str, &str> = next.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
+    let keys: BTreeSet<&str> = previous_map.keys().chain(next_map.keys()).copied().collect();
+
+    keys.into_iter()
+        .filter_map(|key| match (previous_map.get(key), next_map.get(key)) {
+            (Some(previous), Some(next)) if previous != next => Some(format!(
+                "{}:changed({}->{})",
+                key,
+                env_value_fingerprint(previous),
+                env_value_fingerprint(next)
+            )),
+            (None, Some(next)) => Some(format!("{}:added({})", key, env_value_fingerprint(next))),
+            (Some(previous), None) => Some(format!("{}:removed({})", key, env_value_fingerprint(previous))),
+            _ => None,
+        })
+        .collect()
+}
+
+fn env_value_fingerprint(value: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("len:{} hash:{:016x}", value.len(), hasher.finish())
 }
 
 #[cfg(test)]

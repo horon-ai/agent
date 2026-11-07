@@ -1,0 +1,28 @@
+[package]
+name = "horon-agent-platform"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Selects the platform adapter for this build and caches the process-wide TLS client configuration"
+
+[lib]
+name = "horon_agent_platform"
+path = "src/lib.rs"
+
+[dependencies]
+horon-agent-platform-api = { path = "../platform-api" }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+horon-agent-platform-macos = { path = "../platform-macos" }
+
+[target.'cfg(windows)'.dependencies]
+horon-agent-platform-windows = { path = "../platform-windows" }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+horon-agent-platform-linux = { path = "../platform-linux" }
+
+[dev-dependencies]
+rcgen = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "http2", "rustls-tls-manual-roots"] }
+tempfile = "3"

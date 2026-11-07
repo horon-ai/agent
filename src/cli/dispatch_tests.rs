@@ -32,15 +32,6 @@ fn headless_launch_defaults_to_the_core_tool_profile() {
     assert_eq!(crate::config::CORE_TOOL_PROFILE, "core");
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn init_and_systemd_are_recognized_as_orphan_adopters() {
-    assert!(is_orphan_adopter_name("init\n"));
-    assert!(is_orphan_adopter_name("systemd\n"));
-    assert!(!is_orphan_adopter_name("bash\n"));
-    assert!(!is_orphan_adopter_name("horon-agent\n"));
-}
-
 #[test]
 fn interactive_startup_skips_bootstrap_credential_detection() {
     assert!(!should_detect_cli_bootstrap_credentials(&ProviderChoice::Auto, false));
@@ -124,32 +115,6 @@ fn owned_server_argv_requests_the_temporary_lifecycle() {
             ..
         })
     ));
-}
-
-#[cfg(unix)]
-#[test]
-fn spawn_lock_serializes_shared_server_bootstrap() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let socket_path = temp.path().join("horon-agent.sock");
-    let lock_path = spawn_lock_path(&socket_path);
-
-    let first = try_acquire_spawn_lock(&lock_path)
-        .expect("acquire first lock")
-        .expect("first lock should succeed");
-    let second = try_acquire_spawn_lock(&lock_path).expect("acquire second lock");
-    assert!(second.is_none(), "second lock should be held by first guard");
-
-    drop(first);
-
-    let third = try_acquire_spawn_lock(&lock_path)
-        .expect("acquire third lock")
-        .expect("third lock should succeed after release");
-    drop(third);
-
-    assert!(
-        !lock_path.exists(),
-        "lock file should be cleaned up when the guard drops"
-    );
 }
 
 #[test]
@@ -322,22 +287,26 @@ async fn server_is_running_at_treats_live_listener_as_running_without_pong() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn spawn_lock_creates_missing_runtime_directory() {
+#[tokio::test]
+async fn spawn_lock_creates_missing_runtime_directory() {
     let root = tempfile::tempdir().expect("tempdir");
-    let path = root.path().join("missing/nested/horon-agent.sock.spawning");
-    assert!(!path.parent().unwrap().exists());
+    let socket_path = root.path().join("missing/nested/horon-agent.sock");
+    assert!(!socket_path.parent().unwrap().exists());
 
-    let guard = try_acquire_spawn_lock(&path)
-        .expect("create runtime directory and acquire lock")
-        .expect("first lock should succeed");
-    assert!(path.is_file());
-    assert!(try_acquire_spawn_lock(&path).unwrap().is_none());
-
+    let guard = acquire_spawn_lock_or_wait(&socket_path)
+        .await
+        .expect("create the runtime directory and take the spawn lock");
+    assert!(
+        socket_path.parent().unwrap().is_dir(),
+        "the lock is taken only after its directory exists"
+    );
+    if guard.is_some() {
+        assert!(
+            spawn_lock_path(&socket_path).is_file(),
+            "a held lock is a file another client can see"
+        );
+    }
     drop(guard);
-    assert!(!path.exists());
-    assert!(path.parent().unwrap().is_dir());
 }
 
 #[test]

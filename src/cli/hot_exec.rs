@@ -164,7 +164,7 @@ pub fn run_auto_update() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No executable path found after update"))?;
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let err = crate::platform::replace_process(ProcessCommand::new(&exe).args(&args).arg("--no-update"));
+    let err = horon_agent_platform::replace_process(ProcessCommand::new(&exe).args(&args).arg("--no-update"));
 
     Err(anyhow::anyhow!("Failed to exec new binary {:?}: {}", exe, err))
 }

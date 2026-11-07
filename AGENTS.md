@@ -61,7 +61,16 @@ done, regardless of what else it fixes.
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`|`false`|`true`|
+|`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
+|`[features] pricing_refresh`|`false`|`true`; `HORON_AGENT_PRICING_REFRESH=1` or `0` overrides it for one process|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
+
+`[storage] sync` names a durability level, not a syscall: `full` is
+power-loss durable (macOS `F_FULLFSYNC`) and `fast` is the cheapest
+crash-durable flush (plain `fsync` on macOS, the same as `full` elsewhere).
+Originals are confirmed with it and derived caches are rebuilt instead, which
+`docs/architecture/CRATES.md` states as the boundary. `pricing_refresh` off
+keeps a one-shot run off the network; a catalog already on disk is still read.
 
 Tools outside the core set (swarm, memory, session search, todo, irc) stay in
 the tree but off.

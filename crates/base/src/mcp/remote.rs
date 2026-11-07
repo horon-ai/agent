@@ -429,6 +429,7 @@ pub(super) async fn start(
         // Even custom headers (not just Authorization) can contain credentials.
         // Never follow a redirect with them to a server-selected destination.
         client: reqwest::Client::builder()
+            .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .build()

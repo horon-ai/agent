@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::BufReader;
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,11 +24,6 @@ pub struct LegacyIndexStamp {
 
 /// Stat only: changing read permissions does not invalidate a completed import.
 pub(crate) fn index_stamps(home: &Path) -> Result<BTreeMap<String, LegacyIndexStamp>, StoreError> {
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = home;
-        return Err(crate::blobs::unsupported());
-    }
     let mut result = BTreeMap::new();
     for suffix in ["", "-wal", "-shm"] {
         let name = format!("session-metadata-v1.sqlite3{suffix}");
@@ -52,17 +45,14 @@ pub(crate) fn index_stamps(home: &Path) -> Result<BTreeMap<String, LegacyIndexSt
         // length and modification time. The identity fields stay at their
         // defaults, so a completed import stays authorized until the database
         // file itself changes, which is the property this check needs.
-        #[cfg(unix)]
-        let (device, inode, uid, gid) = (metadata.dev(), metadata.ino(), metadata.uid(), metadata.gid());
-        #[cfg(not(unix))]
-        let (device, inode, uid, gid) = (0, 0, 0, 0);
+        let ids = horon_agent_platform::fs::file_ids(&metadata);
         result.insert(
             name,
             LegacyIndexStamp {
-                device,
-                inode,
-                uid,
-                gid,
+                device: ids.device,
+                inode: ids.inode,
+                uid: ids.uid,
+                gid: ids.gid,
                 length: metadata.len(),
                 modified_seconds: modified.as_secs(),
                 modified_nanos: modified.subsec_nanos(),
@@ -123,9 +113,7 @@ pub(crate) fn publish_runtime_sources(
         return Ok(());
     }
     crate::cache_io::publish(
-        &mut crate::blobs::Disk {
-            hook: Box::new(|_| Ok(())),
-        },
+        &mut crate::blobs::Disk::new(Box::new(|_| Ok(())), paths.sync_mode()),
         &target,
         &bytes,
         &ReadProbe::default(),
@@ -272,9 +260,7 @@ pub(crate) fn mark_first_file(paths: &SessionPaths, id: &SessionId) -> Result<()
         manifest: crate::cache_io::Stamp::read(&directory.join("legacy-source-manifest.json"))?,
     };
     crate::cache_io::publish(
-        &mut crate::blobs::Disk {
-            hook: Box::new(|_| Ok(())),
-        },
+        &mut crate::blobs::Disk::new(Box::new(|_| Ok(())), paths.sync_mode()),
         &directory.join(".legacy-first-file.json"),
         &crate::cache_io::encode(&value)?,
         &ReadProbe::default(),

@@ -1,5 +1,4 @@
 const LINUX_PROCESS_TITLE_LIMIT: usize = 15;
-#[cfg(target_os = "linux")]
 const KILLALL_PROCESS_NAME: &str = "horon-agent";
 
 pub fn compact_process_title(prefix: &str, name: Option<&str>) -> String {
@@ -25,14 +24,9 @@ pub fn set_title(title: impl AsRef<str>) {
 }
 
 fn set_killall_process_name() {
-    #[cfg(target_os = "linux")]
-    unsafe {
-        let mut name = [0u8; 16];
-        let bytes = KILLALL_PROCESS_NAME.as_bytes();
-        let len = bytes.len().min(name.len().saturating_sub(1));
-        name[..len].copy_from_slice(&bytes[..len]);
-        let _ = libc::prctl(libc::PR_SET_NAME, name.as_ptr(), 0, 0, 0);
-    }
+    // `ps` and `killall` read this short name, which the adapter sets where the
+    // kernel keeps one.
+    horon_agent_platform::process::set_process_name(KILLALL_PROCESS_NAME);
 }
 
 pub fn set_server_title(server_name: &str) {

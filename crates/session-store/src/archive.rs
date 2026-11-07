@@ -39,17 +39,13 @@ pub fn origin_id(paths: &SessionPaths) -> Result<OriginId, StoreError> {
     let path = paths.root().join(".origin-id");
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    horon_agent_platform::fs::request_owner_only_mode(&mut options);
     match options.open(&path) {
         Ok(mut file) => {
             let id = OriginId::new_v4();
             file.write_all(id.as_str().as_bytes())?;
-            file.sync_all()?;
-            crate::blobs::sync_directory(paths.root())?;
+            crate::blobs::sync_file(&file, paths.sync_mode())?;
+            crate::blobs::sync_directory(paths.root(), paths.sync_mode())?;
             Ok(id)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -135,9 +131,7 @@ pub fn record(
     let mut warning = None;
     if head_file.symlink_metadata().is_ok()
         && let Err(error) = crate::cache_io::publish(
-            &mut crate::blobs::Disk {
-                hook: Box::new(|_| Ok(())),
-            },
+            &mut crate::blobs::Disk::new(Box::new(|_| Ok(())), paths.sync_mode()),
             &head_file,
             &serde_json::to_vec(&event_id).map_err(crate::cache_io::json_error)?,
             &ReadProbe::default(),

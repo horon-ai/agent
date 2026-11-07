@@ -119,30 +119,26 @@ pub async fn connect_socket(path: &std::path::Path) -> Result<Stream> {
                 path.display()
             )))
         }
-        Err(err) if err.raw_os_error() == Some(libc::EMFILE) => Err(anyhow::anyhow!(
+        Err(err) if horon_agent_platform::process::is_too_many_open_files(&err) => Err(anyhow::anyhow!(
             "{} ({})",
             err,
-            crate::util::process_fd_diagnostic_snapshot()
+            horon_agent_platform::process::fd_diagnostic_snapshot()
         )),
         Err(err) => Err(err.into()),
     }
 }
 
 pub(super) async fn socket_has_live_listener(path: &std::path::Path) -> bool {
-    #[cfg(windows)]
-    {
-        // `is_socket_path` performs one non-blocking named-pipe open and treats
-        // ERROR_PIPE_BUSY as live. Do not follow it with a second connect: the
-        // first probe can temporarily occupy the only published pipe instance
-        // before the accept loop replaces it, making that second connect wait
-        // forever inside the Windows ERROR_PIPE_BUSY retry loop.
-        crate::transport::is_socket_path(path)
+    if !crate::transport::is_socket_path(path) {
+        return false;
     }
-
-    #[cfg(not(windows))]
-    {
-        crate::transport::is_socket_path(path) && Stream::connect(path).await.is_ok()
+    // Where a connection attempt can occupy the only published listener (a
+    // Windows named pipe), the presence probe is the whole answer: a second
+    // connect would wait inside the platform's busy-retry loop.
+    if !horon_agent_platform::ipc::connect_probe_is_safe() {
+        return true;
     }
+    Stream::connect(path).await.is_ok()
 }
 
 /// Reap a provably-stale socket left behind by a dead daemon.
@@ -161,8 +157,13 @@ pub(super) async fn socket_has_live_listener(path: &std::path::Path) -> bool {
 /// socket or still be holding the lock.
 ///
 /// Returns true if a stale socket was reaped.
-#[cfg(unix)]
 pub async fn reap_stale_socket_if_dead(path: &std::path::Path) -> bool {
+    // A platform whose listening endpoints vanish with their owner never leaves
+    // a node to reap, and probing one would only consume a live instance.
+    if !horon_agent_platform::ipc::socket_nodes_can_be_stale() {
+        return false;
+    }
+
     // Nothing to reap if the path isn't even present.
     if !crate::transport::is_socket_path(path) {
         return false;
@@ -199,14 +200,6 @@ pub async fn reap_stale_socket_if_dead(path: &std::path::Path) -> bool {
     true
 }
 
-#[cfg(not(unix))]
-pub async fn reap_stale_socket_if_dead(_path: &std::path::Path) -> bool {
-    // Windows named pipes do not leave filesystem socket nodes behind after a
-    // process exits, so there is no stale artifact to reap. Probing and then
-    // "cleaning" the pipe only consumes a live server instance temporarily.
-    false
-}
-
 /// Return true if a live server process is listening on the socket path.
 ///
 /// This is intentionally weaker than [`is_server_ready`]: a live listener may
@@ -227,7 +220,6 @@ pub async fn has_live_listener(path: &std::path::Path) -> bool {
 /// never get a listener on `X` (issue #1748). The spawn lock
 /// (`cli::dispatch::spawn_lock_path`) has always been socket-scoped; this
 /// aligns the daemon lock with it.
-#[cfg(unix)]
 pub(super) fn daemon_lock_path_for(socket: &std::path::Path) -> PathBuf {
     if is_shared_socket(socket) {
         return crate::storage::runtime_dir().join("horon-agent-daemon.lock");
@@ -250,7 +242,6 @@ pub(super) fn daemon_lock_path_for(socket: &std::path::Path) -> PathBuf {
 /// derived from the socket, and the filesystem under that socket can change
 /// while the server runs. Recomputing could name a different file and leave
 /// the real lock behind (review of #1768, finding 2).
-#[cfg(unix)]
 static HELD_DAEMON_LOCK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// Remove the daemon lock this process holds, on a path that exits without
@@ -260,50 +251,35 @@ static HELD_DAEMON_LOCK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new
 /// let a third process lock a fresh inode and start a second daemon. `flock`
 /// is released by process exit either way, so a file left behind is litter
 /// rather than a stuck lock: but a per-run socket would leave one per run.
-#[cfg(unix)]
 pub(super) fn cleanup_held_daemon_lock() {
     if let Some(path) = HELD_DAEMON_LOCK.get() {
         let _ = std::fs::remove_file(path);
     }
 }
 
-#[cfg(unix)]
+/// The daemon lock, held through the platform's exclusive instance lock.
+///
+/// The lock file is unlinked when the guard drops, and the kernel releases the
+/// lock when the process exits, so a crashed daemon never wedges its
+/// replacement out. Where the platform keeps no lock file (its listening
+/// endpoint is a single-owner named pipe), the guard holds nothing and the pipe
+/// keeps the single-owner rule.
 pub(super) struct DaemonLockGuard {
-    _file: std::fs::File,
-    path: PathBuf,
+    _lock: Option<horon_agent_platform::ipc::InstanceLock>,
 }
 
-#[cfg(unix)]
-impl Drop for DaemonLockGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-#[cfg(unix)]
 pub(super) fn try_acquire_daemon_lock(path: &std::path::Path) -> Result<Option<DaemonLockGuard>> {
-    use std::fs::OpenOptions;
-    use std::os::fd::AsRawFd;
-
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if !horon_agent_platform::ipc::daemon_lock_file_is_used() {
+        return Ok(None);
     }
-
-    let file = OpenOptions::new().create(true).write(true).truncate(false).open(path)?;
-    let fd = file.as_raw_fd();
-    let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-    if ret == 0 {
-        Ok(Some(DaemonLockGuard {
-            _file: file,
-            path: path.to_path_buf(),
-        }))
-    } else {
-        Ok(None)
-    }
+    Ok(horon_agent_platform::ipc::lock_instance_file(path)?.map(|lock| DaemonLockGuard { _lock: Some(lock) }))
 }
 
-#[cfg(unix)]
+/// Take this socket's daemon lock, or report the live daemon that holds it.
 pub(super) fn acquire_daemon_lock_for(socket: &std::path::Path) -> Result<DaemonLockGuard> {
+    if !horon_agent_platform::ipc::daemon_lock_file_is_used() {
+        return Ok(DaemonLockGuard { _lock: None });
+    }
     let path = daemon_lock_path_for(socket);
     let guard = try_acquire_daemon_lock(&path)?.ok_or_else(|| {
         anyhow::anyhow!(
@@ -315,76 +291,66 @@ pub(super) fn acquire_daemon_lock_for(socket: &std::path::Path) -> Result<Daemon
     Ok(guard)
 }
 
-#[cfg(unix)]
-pub(super) fn mark_close_on_exec<T: std::os::fd::AsRawFd>(io: &T) {
-    let fd = io.as_raw_fd();
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if flags >= 0 {
-        let _ = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
-    }
-}
-
 pub fn set_socket_path(path: &str) {
     crate::env::set_var("HORON_AGENT_SOCKET", path);
 }
 
+/// Environment variable through which a spawned server learns the descriptor it
+/// reports readiness on.
+const READY_FD_ENV: &str = "HORON_AGENT_READY_FD";
+
+/// Longest the parent waits for the readiness byte before falling back to
+/// polling the socket itself.
+const READY_SIGNAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Longest the parent polls for a listening socket when the platform cannot
+/// pass the child a readiness descriptor.
+///
+/// A server bootstrap can legitimately take tens of seconds on slow hosts (auth
+/// preflights and provider init were observed at 15-60s on a Windows Server
+/// VPS, issue #503). The child's liveness is checked every poll, so a generous
+/// budget only delays the error for a genuinely hung server, while a crashed
+/// server still fails fast with its stderr.
+const READY_POLL_TIMEOUT: Duration = Duration::from_secs(120);
+const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Spawn a server child process and wait until it signals readiness.
 ///
-/// Creates an anonymous pipe, passes the write-end fd to the child via
-/// `HORON_AGENT_READY_FD`, and awaits a single byte on the read end. The server
-/// calls `signal_ready_fd()` once its accept loops are spawned, so the future
-/// resolves only after the daemon can start servicing client requests.
+/// Where the platform can pass a descriptor to the child, the parent hands over
+/// a pipe write end as `HORON_AGENT_READY_FD` and awaits a single byte on the
+/// read end. The server calls `signal_ready_fd()` once its accept loops are
+/// spawned, so the future resolves only after the daemon can start servicing
+/// client requests.
 ///
-/// Falls back to a short poll loop if the pipe read times out (e.g. server
-/// built without ready-fd support, or crash before bind).
-#[cfg(unix)]
+/// Falls back to polling the socket when the pipe read times out (a server
+/// built without ready-fd support, or one that crashed before bind), and uses
+/// the poll path outright on a platform that cannot pass the descriptor.
 pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std::process::Child> {
-    use std::os::unix::io::FromRawFd;
-    use std::os::unix::process::CommandExt;
-
-    // Create a pipe: fds[0] = read end, fds[1] = write end.
-    // Use pipe2 with O_CLOEXEC on the read end (parent keeps it).
-    // The write end needs CLOEXEC cleared so it survives exec in the child.
-    let mut fds = [0i32; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        anyhow::bail!("pipe() failed: {}", std::io::Error::last_os_error());
-    }
-    let read_fd = fds[0];
-    let write_fd = fds[1];
-
-    // Set CLOEXEC on the read end (parent only)
-    unsafe {
-        let flags = libc::fcntl(read_fd, libc::F_GETFD);
-        if flags >= 0 {
-            libc::fcntl(read_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-        }
+    let mut spawned = horon_agent_platform::spawn_with_ready_pipe(cmd, READY_FD_ENV)?;
+    match spawned.ready.take() {
+        Some(ready) => await_ready_descriptor(&mut spawned.child, ready).await?,
+        None => await_listening_socket(&mut spawned.child).await?,
     }
 
-    // Pass the write-end fd to the child and tell it the fd number.
-    unsafe {
-        cmd.pre_exec(move || {
-            // Clear CLOEXEC on the write end so it survives exec
-            let flags = libc::fcntl(write_fd, libc::F_GETFD);
-            if flags >= 0 {
-                libc::fcntl(write_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
-            }
-            libc::setsid();
-            Ok(())
+    // The shared daemon outlives the spawning client. Keep draining the stderr
+    // pipe after startup so later reloads cannot die on SIGPIPE when they emit
+    // provider/model selection notices during boot.
+    if let Some(mut stderr) = spawned.child.stderr.take() {
+        std::thread::spawn(move || {
+            let mut sink = std::io::sink();
+            let _ = std::io::copy(&mut stderr, &mut sink);
         });
     }
-    cmd.env("HORON_AGENT_READY_FD", write_fd.to_string());
 
-    let mut child = cmd.spawn()?;
+    Ok(spawned.child)
+}
 
-    // Close our copy of the write end so we get EOF if the child dies.
-    unsafe { libc::close(write_fd) };
-
-    // Wait for the ready signal (or timeout / child death).
-    let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
-    let mut async_file = tokio::fs::File::from_std(read_file);
+/// Wait for the readiness byte on `ready`, falling back to polling the socket.
+async fn await_ready_descriptor(child: &mut std::process::Child, ready: std::fs::File) -> Result<()> {
+    let mut async_file = tokio::fs::File::from_std(ready);
     let mut buf = [0u8; 1];
     match tokio::time::timeout(
-        Duration::from_secs(10),
+        READY_SIGNAL_TIMEOUT,
         tokio::io::AsyncReadExt::read(&mut async_file, &mut buf),
     )
     .await
@@ -394,7 +360,7 @@ pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std:
         }
         Ok(Ok(_)) => {
             if let Some(status) = child.try_wait()? {
-                handle_server_start_exit(&mut child, status).await?;
+                handle_server_start_exit(child, status).await?;
             }
             crate::logging::info("Server closed ready pipe without signalling; falling back to poll");
             wait_for_server_ready(&socket_path(), Duration::from_secs(5)).await?;
@@ -408,18 +374,27 @@ pub async fn spawn_server_notify(cmd: &mut std::process::Command) -> Result<std:
             wait_for_server_ready(&socket_path(), Duration::from_secs(5)).await?;
         }
     }
+    Ok(())
+}
 
-    if let Some(mut stderr) = child.stderr.take() {
-        // The shared daemon outlives the spawning client. Keep draining the
-        // stderr pipe after startup so later reloads cannot die on SIGPIPE
-        // when they emit provider/model selection notices during boot.
-        std::thread::spawn(move || {
-            let mut sink = std::io::sink();
-            let _ = std::io::copy(&mut stderr, &mut sink);
-        });
+/// Wait until the socket has a live listener, failing fast when the child exits.
+async fn await_listening_socket(child: &mut std::process::Child) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed() < READY_POLL_TIMEOUT {
+        if has_live_listener(&socket_path()).await {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait()? {
+            let stderr_output = take_server_start_stderr(child);
+            anyhow::bail!(format_server_start_error(status, &stderr_output));
+        }
+        tokio::time::sleep(READY_POLL_INTERVAL).await;
     }
-
-    Ok(child)
+    anyhow::bail!(
+        "Timed out waiting for server to become ready at {} after {}ms",
+        socket_path().display(),
+        READY_POLL_TIMEOUT.as_millis()
+    )
 }
 
 /// Wait until a server socket is connectable and responds to a ping.
@@ -453,7 +428,6 @@ pub async fn is_server_ready(path: &std::path::Path) -> bool {
     probe_server_ready(path, Duration::from_millis(50)).await
 }
 
-#[cfg(unix)]
 pub(super) fn take_server_start_stderr(child: &mut std::process::Child) -> String {
     use std::io::Read;
 
@@ -468,13 +442,11 @@ pub(super) fn take_server_start_stderr(child: &mut std::process::Child) -> Strin
         .unwrap_or_default()
 }
 
-#[cfg(unix)]
 pub(super) fn server_start_matches_existing_server(stderr_output: &str) -> bool {
     stderr_output.contains("Another horon-agent server process is already running")
         || stderr_output.contains("Refusing to replace active server socket")
 }
 
-#[cfg(any(unix, test))]
 pub(super) async fn wait_for_existing_server(path: &std::path::Path, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -486,7 +458,6 @@ pub(super) async fn wait_for_existing_server(path: &std::path::Path, timeout: Du
     false
 }
 
-#[cfg(unix)]
 pub(super) fn format_server_start_error(status: std::process::ExitStatus, stderr_output: &str) -> String {
     if stderr_output.trim().is_empty() {
         format!(
@@ -502,7 +473,6 @@ pub(super) fn format_server_start_error(status: std::process::ExitStatus, stderr
     }
 }
 
-#[cfg(unix)]
 pub(super) async fn handle_server_start_exit(
     child: &mut std::process::Child,
     status: std::process::ExitStatus,
@@ -519,22 +489,13 @@ pub(super) async fn handle_server_start_exit(
     anyhow::bail!(format_server_start_error(status, &stderr_output));
 }
 
-/// Write a single byte to the fd in `HORON_AGENT_READY_FD` and close it.
-/// Called after startup plumbing is ready so the parent process knows the
-/// server can accept and service client requests. The env var is cleared so child
-/// processes (e.g. tool subprocesses) don't inherit a stale fd.
+/// Report that the server can accept requests.
+///
+/// Where the platform passes a readiness descriptor, this writes one byte to
+/// the descriptor named by `HORON_AGENT_READY_FD` and closes it; the variable is
+/// cleared first so child processes (tool subprocesses) never inherit a stale
+/// descriptor number. A platform without that handshake reports nothing, and
+/// its parent polls the socket instead.
 pub(super) fn signal_ready_fd() {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::FromRawFd;
-
-        if let Ok(fd_str) = std::env::var("HORON_AGENT_READY_FD") {
-            crate::env::remove_var("HORON_AGENT_READY_FD");
-            if let Ok(fd) = fd_str.parse::<i32>() {
-                let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-                let _ = std::io::Write::write_all(&mut file, b"R");
-                // file is dropped here which closes the fd
-            }
-        }
-    }
+    horon_agent_platform::ipc::signal_ready_fd(READY_FD_ENV);
 }

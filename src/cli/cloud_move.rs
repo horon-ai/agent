@@ -1163,7 +1163,7 @@ pub(crate) fn run_cli(command: super::args::CloudCommand) -> Result<()> {
                 let exe = std::env::current_exe()?;
                 let mut command = Command::new(exe);
                 command.arg("--resume").arg(&report.session_id);
-                let error = crate::platform::replace_process(&mut command);
+                let error = horon_agent_platform::replace_process(&mut command);
                 bail!("failed to resume locally: {error}");
             }
             Ok(())
@@ -1215,7 +1215,7 @@ fn exec_attach(session_id: &str, host: &str, repo_root: Option<&str>, target: &T
         command.arg("--remote-working-dir").arg(root);
     }
     command.arg("--resume").arg(session_id);
-    let error = crate::platform::replace_process(&mut command);
+    let error = horon_agent_platform::replace_process(&mut command);
     bail!("failed to attach to `{host}`: {error}")
 }
 

@@ -2,7 +2,6 @@ use super::{StdinInputRequest, Tool, ToolContext, ToolEffects, ToolOutput};
 use super::{bash_interceptor, git_guard};
 use crate::background::TaskResult;
 use crate::bus::{BackgroundTaskProgress, BackgroundTaskProgressKind, BackgroundTaskProgressSource};
-use crate::stdin_detect::{self, StdinState};
 use crate::util::truncate_str;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -10,17 +9,13 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-#[cfg(unix)]
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
 use std::process::Command as StdCommand;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
-use std::time::Duration;
-#[cfg(unix)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -49,7 +44,6 @@ const BASH_TOOL_DESCRIPTION: &str = "Run a bash command; prefer agentgrep or rg 
 const WINDOWS_SHELL_TOOL_DESCRIPTION: &str =
     "Run a Windows cmd.exe command (compatibility name `bash`). Use cmd.exe syntax, not Bash.";
 
-#[cfg(unix)]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -57,7 +51,6 @@ fn shell_single_quote(value: &str) -> String {
 /// Route ordinary `cargo` invocations (including those inside child scripts)
 /// through the repository wrapper. Besides applying the project's build policy,
 /// that wrapper appends real action timings to rust-actions.jsonl.
-#[cfg(unix)]
 fn wrap_repo_cargo_commands(command: &str, working_dir: Option<&Path>) -> Option<String> {
     let working_dir = working_dir?;
     let repo = crate::build::find_repo_in_ancestors(working_dir)?;
@@ -298,7 +291,7 @@ fn parse_progress_marker_with_checkpoint(line: &str) -> Option<(BackgroundTaskPr
     ))
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 fn parse_progress_marker(line: &str) -> Option<BackgroundTaskProgress> {
     parse_progress_marker_with_checkpoint(line).map(|(progress, _)| progress)
 }
@@ -658,7 +651,6 @@ impl BoundedOutput {
 /// sees their output as it streams. This follower polls the file while the task
 /// is `Running`, parsing complete lines from where it left off. It performs one
 /// final drain after the task leaves `Running` and then exits.
-#[cfg(unix)]
 fn spawn_detached_progress_follower(task_id: String, output_file: std::path::PathBuf) {
     tokio::spawn(async move {
         let manager = crate::background::global();
@@ -699,8 +691,13 @@ fn spawn_detached_progress_follower(task_id: String, output_file: std::path::Pat
 
 /// The scratch directory a child shell receives, for the approval gate to
 /// assess the same path.
-#[cfg(not(windows))]
+///
+/// A platform whose shells are not given a scratch directory reports `None`, so
+/// the gate assesses exactly what the child sees.
 pub(crate) fn tool_scratch_dir_for_risk() -> Option<std::path::PathBuf> {
+    if !horon_agent_platform::term::passes_scratch_dir_to_shell() {
+        return None;
+    }
     tool_scratch_dir()
 }
 
@@ -711,51 +708,6 @@ fn tool_scratch_dir() -> Option<std::path::PathBuf> {
         .or_else(|| crate::storage::horon_agent_dir().ok().map(|dir| dir.join("scratch")))?;
     crate::storage::ensure_dir(&dir).ok()?;
     Some(dir)
-}
-
-#[cfg(not(windows))]
-fn configure_tool_scratch(command: &mut TokioCommand) {
-    if let Some(dir) = tool_scratch_dir() {
-        command.env("TMPDIR", &dir).env("HORON_AGENT_SCRATCH_DIR", dir);
-    }
-}
-
-#[cfg(unix)]
-struct ProcessGroupKillGuard {
-    pid: Option<u32>,
-}
-
-#[cfg(unix)]
-impl ProcessGroupKillGuard {
-    fn new(pid: Option<u32>) -> Self {
-        Self { pid }
-    }
-
-    fn disarm(&mut self) {
-        self.pid = None;
-    }
-}
-
-#[cfg(unix)]
-impl Drop for ProcessGroupKillGuard {
-    fn drop(&mut self) {
-        if let Some(pid) = self.pid {
-            // Give the group a chance to run its TERM handler before the hard
-            // kill, but never block the dropping task or runtime thread for
-            // the grace period: the wait happens on its own thread.
-            let spawned = std::thread::Builder::new()
-                .name(format!("horon-agent-term-{pid}"))
-                .spawn(move || {
-                    crate::platform::terminate_process_group(pid, Duration::from_secs(1));
-                });
-            if let Err(err) = spawned {
-                crate::logging::warn(&format!(
-                    "bash process-group guard could not start a terminator for pid {pid}: {err}"
-                ));
-                let _ = crate::platform::signal_detached_process_group(pid, libc::SIGKILL);
-            }
-        }
-    }
 }
 
 /// Variables every child command sees so nothing can stop and wait for a
@@ -821,20 +773,8 @@ fn non_interactive_env(pty: bool) -> Vec<(&'static str, String)> {
     ] {
         env.push((name, value.to_string()));
     }
-    #[cfg(windows)]
-    {
-        env.push(("PYTHONIOENCODING", "utf-8".to_string()));
-        env.push(("PYTHONUTF8", "1".to_string()));
-        // cmd.exe children otherwise decode tool output as the OEM code page.
-        // Only fill the locale in when the parent left it unset, so a caller's
-        // own locale still wins.
-        let has_locale = std::env::vars_os()
-            .any(|(key, _)| key.to_string_lossy() == "LANG" || key.to_string_lossy().starts_with("LC_"));
-        if !has_locale {
-            env.push(("LANG", "C.UTF-8".to_string()));
-            env.push(("LC_ALL", "C.UTF-8".to_string()));
-        }
-    }
+    // Console code-page and locale fixes where the platform shell needs them.
+    env.extend(horon_agent_platform::term::shell_env_overrides());
     env
 }
 
@@ -915,43 +855,31 @@ fn set_bash_minimizer_test_override(value: Option<bool>) {
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
 }
 
-/// Apply the non-interactive environment to a command that runs no terminal.
+/// Build the shell command for `cmd_str` and apply the non-interactive
+/// environment to it.
+///
+/// The shell itself (`bash -c`, `cmd.exe /D /S /C`, and the quoting each needs)
+/// comes from the platform adapter; the scratch directory is passed through the
+/// same call so a child's temporary files land there.
 fn build_shell_command(cmd_str: &str, pty: bool) -> TokioCommand {
-    #[cfg(windows)]
-    {
-        let mut cmd = TokioCommand::new("cmd.exe");
-        // cmd.exe does not use the standard C runtime argument-decoding rules.
-        // Passing the command through `arg` makes Rust escape nested quotes for
-        // CommandLineToArgvW, which can corrupt commands such as:
-        //
-        //     gh issue create --title "text with spaces"
-        //
-        // Tokio's `raw_arg` is specifically provided for `cmd.exe /C`. Wrap the
-        // full command in the outer quotes expected by cmd so its inner quotes
-        // reach child programs intact. `/D` disables AutoRun hooks and `/S`
-        // selects the documented quote handling used with this form.
-        cmd.args(["/D", "/S", "/C"]).raw_arg(format!("\"{cmd_str}\""));
-        if non_interactive_env_enabled() {
-            for (name, value) in non_interactive_env(pty) {
-                cmd.env(name, value);
-            }
+    // Only a POSIX shell reads the temporary-directory variables, so the
+    // scratch directory is created and passed only where the platform uses it.
+    let scratch = if horon_agent_platform::term::passes_scratch_dir_to_shell() {
+        tool_scratch_dir()
+    } else {
+        None
+    };
+    let mut cmd = TokioCommand::from(horon_agent_platform::process::shell_command(
+        cmd_str,
+        scratch.as_deref(),
+    ));
+    // Callers add their own variables after this, so those keep the last word.
+    if non_interactive_env_enabled() {
+        for (name, value) in non_interactive_env(pty) {
+            cmd.env(name, value);
         }
-        cmd
     }
-    #[cfg(not(windows))]
-    {
-        let mut cmd = TokioCommand::new("bash");
-        cmd.arg("-c").arg(cmd_str);
-        // Before the scratch directory and before callers add their own
-        // variables, so those keep the last word.
-        if non_interactive_env_enabled() {
-            for (name, value) in non_interactive_env(pty) {
-                cmd.env(name, value);
-            }
-        }
-        configure_tool_scratch(&mut cmd);
-        cmd
-    }
+    cmd
 }
 
 fn configure_background_command_stdio(command: &mut TokioCommand) {
@@ -961,29 +889,21 @@ fn configure_background_command_stdio(command: &mut TokioCommand) {
         .stderr(Stdio::piped());
 }
 
-#[cfg(unix)]
-fn build_detached_shell_wrapper(command: &str, cwd_capture: Option<&Path>) -> StdCommand {
-    let mut cmd = StdCommand::new("bash");
-    let script = if cwd_capture.is_some() {
-        r#"eval "$HORON_AGENT_RELOAD_DETACH_COMMAND"; status=$?; pwd > "$HORON_AGENT_CWD_FILE" 2>/dev/null; printf '\n--- Command finished with exit code: %s ---\n' "$status"; exit "$status""#
-    } else {
-        r#"eval "$HORON_AGENT_RELOAD_DETACH_COMMAND"; status=$?; printf '\n--- Command finished with exit code: %s ---\n' "$status"; exit "$status""#
-    };
-    cmd.arg("-lc")
-        .arg(script)
-        .env("HORON_AGENT_RELOAD_DETACH_COMMAND", command);
+/// Build the detached wrapper that runs `command` outside this session.
+///
+/// `None` means this platform has no local shell that can record the command's
+/// final working directory, so the caller must not take the detached path.
+fn build_detached_shell_wrapper(command: &str, cwd_capture: Option<&Path>) -> Option<StdCommand> {
+    let mut cmd = horon_agent_platform::term::detached_shell_command(command, cwd_capture)?;
     if non_interactive_env_enabled() {
         for (name, value) in non_interactive_env(false) {
             cmd.env(name, value);
         }
     }
-    if let Some(path) = cwd_capture {
-        cmd.env("HORON_AGENT_CWD_FILE", path);
-    }
     if let Some(dir) = tool_scratch_dir() {
         cmd.env("TMPDIR", &dir).env("HORON_AGENT_SCRATCH_DIR", dir);
     }
-    cmd
+    Some(cmd)
 }
 
 static BASH_SESSION_CWDS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
@@ -1008,9 +928,9 @@ fn bash_session_cwd(session_id: &str) -> Option<PathBuf> {
 }
 
 fn bash_session_cwd_enabled() -> bool {
-    // The state-capture suffix is POSIX shell syntax, and the Windows
-    // compatibility path runs cmd.exe, so the memory stays off there.
-    if cfg!(windows) {
+    // The state-capture suffix is POSIX shell syntax, so the memory stays off
+    // where the platform's shell is not POSIX.
+    if !horon_agent_platform::term::shell_is_posix() {
         return false;
     }
     #[cfg(test)]
@@ -1203,33 +1123,8 @@ fn format_client_terminal_output(session_id: &str, outcome: client_terminal::Ter
 /// How a foreground command exited, for the ACP v2 terminal view
 /// (`ToolExit`, sent by the turn loop).
 fn exit_status_metadata(status: &std::process::ExitStatus) -> serde_json::Value {
-    #[cfg(unix)]
-    let signal = {
-        use std::os::unix::process::ExitStatusExt;
-        status.signal().map(signal_name)
-    };
-    #[cfg(not(unix))]
-    let signal: Option<String> = None;
+    let signal = horon_agent_platform::signal::exit_signal(status).map(horon_agent_platform::signal::signal_name);
     json!({ "exit_status": { "exit_code": status.code(), "signal": signal } })
-}
-
-#[cfg(unix)]
-fn signal_name(signal: i32) -> String {
-    let name = match signal {
-        libc::SIGHUP => "SIGHUP",
-        libc::SIGINT => "SIGINT",
-        libc::SIGQUIT => "SIGQUIT",
-        libc::SIGABRT => "SIGABRT",
-        libc::SIGKILL => "SIGKILL",
-        libc::SIGSEGV => "SIGSEGV",
-        libc::SIGPIPE => "SIGPIPE",
-        libc::SIGALRM => "SIGALRM",
-        libc::SIGTERM => "SIGTERM",
-        libc::SIGUSR1 => "SIGUSR1",
-        libc::SIGUSR2 => "SIGUSR2",
-        other => return format!("SIG{other}"),
-    };
-    name.to_string()
 }
 
 /// Render a finished command's output for the transcript.
@@ -1276,7 +1171,6 @@ fn format_command_output(session_id: &str, command: &str, output: String, exit_c
 mod utf8_truncation_tests {
     use std::time::Duration;
 
-    #[cfg(any(windows, unix))]
     use super::build_shell_command;
     use super::format_command_output;
 
@@ -1363,9 +1257,13 @@ mod utf8_truncation_tests {
         assert!(output.contains("last-line"));
     }
 
-    #[cfg(windows)]
     #[tokio::test]
     async fn build_shell_command_uses_cmd_and_executes_command() {
+        // Only the `cmd.exe` path can run this; a POSIX shell has no `echo`
+        // built-in difference to check here.
+        if horon_agent_platform::term::shell_is_posix() {
+            return;
+        }
         let output = build_shell_command("echo hello-from-cmd", false)
             .output()
             .await
@@ -1411,9 +1309,13 @@ mod utf8_truncation_tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn build_shell_command_uses_disk_backed_scratch_directory() {
+        // Only a platform that hands its shells a scratch directory can check
+        // this; elsewhere the variables are deliberately absent.
+        if !horon_agent_platform::term::passes_scratch_dir_to_shell() {
+            return;
+        }
         // Keep HORON_AGENT_HOME stable until the final directory assertion. Running
         // synchronously avoids holding the environment MutexGuard across await.
         let _env_lock = crate::storage::lock_test_env();
@@ -1749,7 +1651,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        if cfg!(windows) {
+        if !horon_agent_platform::term::shell_is_posix() {
             WINDOWS_SHELL_TOOL_DESCRIPTION
         } else {
             BASH_TOOL_DESCRIPTION
@@ -1822,8 +1724,10 @@ impl Tool for BashTool {
             return Err(anyhow::anyhow!(refusal));
         }
 
-        #[cfg(unix)]
-        if let Some(wrapped) = wrap_repo_cargo_commands(&params.command, ctx.working_dir.as_deref()) {
+        // The wrapper is a POSIX shell function; a `cmd.exe` child gets none.
+        if horon_agent_platform::term::shell_is_posix()
+            && let Some(wrapped) = wrap_repo_cargo_commands(&params.command, ctx.working_dir.as_deref())
+        {
             params.command = wrapped;
         }
 
@@ -1929,7 +1833,6 @@ impl BashTool {
 
         // A terminal's master descriptor lives in this process, so a command that
         // is handed to the detached reload-persistable path would lose it.
-        #[cfg(unix)]
         if !wants_terminal && self.supports_reload_persistence(ctx) {
             return self.execute_reload_persistable_foreground(params, ctx).await;
         }
@@ -1999,9 +1902,8 @@ impl BashTool {
 
         // A terminal already starts the child in its own session; every other
         // child becomes a process-group leader so signals reach its whole tree.
-        #[cfg(unix)]
         if !has_terminal {
-            command.process_group(0);
+            horon_agent_platform::process::isolate_process_group(command.as_std_mut());
         }
 
         let (pty_handle, pipe_note) = match plan {
@@ -2067,11 +1969,10 @@ impl BashTool {
             // call, a panicking sibling task — stop the whole process tree
             // instead of leaving the shell's children running. A terminal child
             // leads its own session already.
-            #[cfg(unix)]
             let mut process_group_guard = if has_terminal {
-                ProcessGroupKillGuard::new(None)
+                horon_agent_platform::process::ProcessGroupGuard::new(None)
             } else {
-                ProcessGroupKillGuard::new(Some(child_pid))
+                horon_agent_platform::process::ProcessGroupGuard::new(Some(child_pid))
             };
             let stdout_task = tokio::spawn(collect_output_reporting_progress(stdout_handle, stdout_progress));
 
@@ -2084,12 +1985,12 @@ impl BashTool {
 
                         let mut request_counter = 0u32;
                         loop {
-                            #[cfg(target_os = "linux")]
-                            let state = stdin_detect::linux::check_process_tree(child_pid);
-                            #[cfg(not(target_os = "linux"))]
-                            let state = stdin_detect::is_waiting_for_stdin(child_pid);
+                            // The adapter picks the strongest check the
+                            // platform offers, including the descendant walk
+                            // that finds a wrapper chain reading stdin.
+                            let state = horon_agent_platform::term::process_tree_stdin_state(child_pid);
 
-                            if state == StdinState::Reading {
+                            if state == horon_agent_platform::term::StdinState::Reading {
                                 request_counter += 1;
                                 let request_id = format!("stdin-{}-{}", tool_call_id, request_counter);
                                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -2135,7 +2036,6 @@ impl BashTool {
             };
 
             let status = child.wait().await?;
-            #[cfg(unix)]
             process_group_guard.disarm();
 
             if let Some(task) = stdin_task {
@@ -2243,16 +2143,17 @@ impl BashTool {
     /// A turn a client is waiting on reports into that client's tool result, so
     /// it runs in this process; the detached path is for unattended turns, whose
     /// command outlives the reload that ends them. ACP sessions are checked
-    /// separately because a v2 connection registers no session event sender.
-    #[cfg(unix)]
+    /// separately because a v2 connection registers no session event sender. A
+    /// platform that cannot replace its image has no reload to survive.
     fn supports_reload_persistence(&self, ctx: &ToolContext) -> bool {
-        matches!(ctx.execution_mode, crate::tool::ToolExecutionMode::AgentTurn)
+        horon_agent_platform::process::supports_process_replacement()
+            && matches!(ctx.execution_mode, crate::tool::ToolExecutionMode::AgentTurn)
+            && ctx.stdin_request_tx.is_none()
             && !crate::server::session_has_attached_client(&ctx.session_id)
             && !crate::tool::acp_session::is_acp(&ctx.session_id)
             && ctx.graceful_shutdown_signal.is_some()
     }
 
-    #[cfg(unix)]
     async fn execute_reload_persistable_foreground(&self, params: &BashInput, ctx: &ToolContext) -> Result<ToolOutput> {
         let timeout = resolve_bash_timeout(params.timeout);
         let started_at = Utc::now().to_rfc3339();
@@ -2268,7 +2169,11 @@ impl BashTool {
         // directory, because its end time is unknowable.
         let cwd_capture = session_cwd.then(BashCwdCapture::new);
 
-        let mut cmd = build_detached_shell_wrapper(&params.command, cwd_capture.as_ref().map(BashCwdCapture::path));
+        let Some(mut cmd) =
+            build_detached_shell_wrapper(&params.command, cwd_capture.as_ref().map(BashCwdCapture::path))
+        else {
+            anyhow::bail!("this platform has no shell that can record a detached command's working directory");
+        };
         cmd.env("HORON_AGENT_SESSION_ID", &ctx.session_id);
         let stdout = OpenOptions::new().create(true).append(true).open(&info.output_file)?;
         let stderr = stdout.try_clone()?;
@@ -2277,7 +2182,7 @@ impl BashTool {
             cmd.current_dir(dir);
         }
 
-        let mut child = crate::platform::spawn_detached(&mut cmd)?;
+        let mut child = horon_agent_platform::spawn_detached(&mut cmd)?;
         let pid = child.id();
         let shutdown_signal = ctx.graceful_shutdown_signal.clone();
 
@@ -2460,8 +2365,7 @@ impl BashTool {
                             // A terminal already starts the child in its own
                             // session; every other child becomes a process-group
                             // leader so group signals reach its whole tree.
-                            #[cfg(unix)]
-                            cmd.process_group(0);
+                            horon_agent_platform::process::isolate_process_group(cmd.as_std_mut());
                             None
                         }
                         bash_pty::PtyPlan::Terminal(mut handle) => {
@@ -2476,8 +2380,7 @@ impl BashTool {
                         .spawn()
                         .map_err(|e| anyhow::anyhow!("Failed to spawn command: {}", e))?;
                     drop(cmd);
-                    #[cfg(unix)]
-                    let mut process_group_guard = ProcessGroupKillGuard::new(child.id());
+                    let mut process_group_guard = horon_agent_platform::process::ProcessGroupGuard::new(child.id());
                     // Record the pid so `bg cancel` can signal the group before
                     // it drops this future; without it a cancelled command's
                     // children keep running orphaned.
@@ -2523,24 +2426,14 @@ impl BashTool {
                                     }
                                 }, if timeout_duration.is_some() => {
                                     timed_out = true;
-                                    #[cfg(unix)]
-                                    {
-                                        if let Some(pid) = child.id() {
-                                            // Give the group a second to run its
-                                            // TERM handler, then take it down.
-                                            let _ = tokio::task::spawn_blocking(move || {
-                                                crate::platform::terminate_process_group(
-                                                    pid,
-                                                    Duration::from_secs(1),
-                                                )
-                                            })
-                                            .await;
-                                        } else {
-                                            let _ = child.start_kill();
-                                        }
-                                    }
-                                    #[cfg(not(unix))]
-                                    {
+                                    if let Some(pid) = child.id() {
+                                        // Give the group a second to run its
+                                        // TERM handler, then take it down.
+                                        let _ = tokio::task::spawn_blocking(move || {
+                                            horon_agent_platform::terminate_process_group(pid, Duration::from_secs(1))
+                                        })
+                                        .await;
+                                    } else {
                                         let _ = child.start_kill();
                                     }
                                     break;
@@ -2576,7 +2469,6 @@ impl BashTool {
 
                     if timed_out {
                         let _ = child.wait().await;
-                        #[cfg(unix)]
                         process_group_guard.disarm();
                         let msg = timeout_message(timeout.duration.unwrap_or_default().as_millis() as u64);
                         let timeout_line = format!("\n--- {} ---\n", msg);
@@ -2585,7 +2477,6 @@ impl BashTool {
                     }
 
                     let status = child.wait().await?;
-                    #[cfg(unix)]
                     process_group_guard.disarm();
                     let exit_code = status.code();
 

@@ -196,40 +196,11 @@ fn write_session_resume_hint(mut writer: impl Write, session_id: &str) -> io::Re
     Ok(())
 }
 
-#[cfg(unix)]
-pub fn signal_name(sig: i32) -> &'static str {
-    match sig {
-        1 => "SIGHUP",
-        2 => "SIGINT",
-        3 => "SIGQUIT",
-        4 => "SIGILL",
-        6 => "SIGABRT",
-        9 => "SIGKILL",
-        11 => "SIGSEGV",
-        13 => "SIGPIPE",
-        14 => "SIGALRM",
-        15 => "SIGTERM",
-        _ => "unknown",
-    }
-}
-
-#[cfg(not(unix))]
-pub fn signal_name(_sig: i32) -> &'static str {
-    "unknown"
-}
-
-#[cfg(unix)]
+/// The crash reason recorded when a signal terminates this process.
 fn signal_crash_reason(sig: i32) -> String {
-    match sig {
-        libc::SIGHUP => "Terminal or window closed (SIGHUP)".to_string(),
-        libc::SIGTERM => "Terminated (SIGTERM)".to_string(),
-        libc::SIGINT => "Interrupted (SIGINT)".to_string(),
-        libc::SIGQUIT => "Quit signal (SIGQUIT)".to_string(),
-        _ => format!("Terminated by signal {} ({})", signal_name(sig), sig),
-    }
+    horon_agent_platform::signal::signal_crash_reason(sig)
 }
 
-#[cfg(unix)]
 fn handle_termination_signal(sig: i32) -> ! {
     // Record the crash before exiting so the session is not left `Active` on
     // disk. The interactive terminal-mode restoration the upstream handler also
@@ -243,34 +214,20 @@ fn handle_termination_signal(sig: i32) -> ! {
     std::process::exit(128 + sig);
 }
 
-#[cfg(unix)]
+/// Turn the signals that end a session into a recorded crash and an exit.
+///
+/// The platform installs the watchers it has: Unix watches SIGHUP, SIGTERM,
+/// SIGINT and SIGQUIT, Windows delivers these through the console and installs
+/// none.
 pub fn spawn_session_signal_watchers() {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    fn spawn_one(sig: i32, kind: SignalKind) {
-        tokio::spawn(async move {
-            let mut stream = match signal(kind) {
-                Ok(s) => s,
-                Err(e) => {
-                    crate::logging::error(&format!("Failed to install {} handler: {}", signal_name(sig), e));
-                    return;
-                }
-            };
-            if stream.recv().await.is_some() {
-                crate::logging::info(&format!("Received {} in horon-agent process", signal_name(sig)));
-                handle_termination_signal(sig);
-            }
-        });
-    }
-
-    spawn_one(libc::SIGHUP, SignalKind::hangup());
-    spawn_one(libc::SIGTERM, SignalKind::terminate());
-    spawn_one(libc::SIGINT, SignalKind::interrupt());
-    spawn_one(libc::SIGQUIT, SignalKind::quit());
+    horon_agent_platform::signal::spawn_termination_signal_watchers(|sig| {
+        crate::logging::info(&format!(
+            "Received {} in horon-agent process",
+            horon_agent_platform::signal::signal_name(sig)
+        ));
+        handle_termination_signal(sig);
+    });
 }
-
-#[cfg(not(unix))]
-pub fn spawn_session_signal_watchers() {}
 
 #[cfg(test)]
 mod tests {

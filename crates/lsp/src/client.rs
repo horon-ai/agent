@@ -295,7 +295,11 @@ impl Client {
                 });
             }
         }
-        kill_process_group(self.pid);
+        // Pid zero would name this process's own group, so it is refused
+        // rather than signalled.
+        if self.pid != 0 {
+            horon_agent_platform::process::kill_process_group(self.pid);
+        }
     }
 
     fn touch(&self) {
@@ -455,8 +459,7 @@ impl Client {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
+        horon_agent_platform::process::isolate_process_group(command.as_std_mut());
 
         let mut child = command
             .spawn()
@@ -888,23 +891,6 @@ fn now_millis() -> u64 {
         .map(|elapsed| elapsed.as_millis() as u64)
         .unwrap_or(0)
 }
-
-/// Kill the server's process group so `cargo check` or `rustc` grandchildren die
-/// with it. The child was started as its own group leader, so `-pid` is safe.
-#[cfg(unix)]
-fn kill_process_group(pid: u32) {
-    if pid == 0 {
-        return;
-    }
-    // SAFETY: `pid` is the process group the child was started in; a negative
-    // pid is exactly how a whole group is signalled.
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_process_group(_pid: u32) {}
 
 #[cfg(test)]
 #[path = "client_tests.rs"]

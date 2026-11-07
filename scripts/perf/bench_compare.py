@@ -13,6 +13,9 @@ Measured:
   sessions_memory   idle and post-turn process-tree RSS for N concurrent
                     sessions x K turns; "first session" and "each additional
                     session" (least-squares slope)
+  fsync_calls       fsync + fdatasync calls made by one one-shot run, counted
+                    with strace (``--syscalls``; Linux only, recorded as
+                    skipped when strace is missing)
   install_size_bytes  binary or npm package directory size
 
 horon is the baseline; every other row shows its multiple of horon.
@@ -505,8 +508,76 @@ def spawn(argv: list[str], cwd: str, env: dict, stdout=subprocess.PIPE, stderr=s
     return Proc(proc=proc, pgid=os.getpgid(proc.pid))
 
 
-def measure_oneshot(argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float) -> dict:
-    """Run one headless prompt and time it, sampling peak tree RSS."""
+SYSCALL_NAMES = ("fsync", "fdatasync")
+
+
+def strace_available() -> bool:
+    """True when one-shot runs can be counted with strace on this host."""
+    return sys.platform.startswith("linux") and shutil.which("strace") is not None
+
+
+def strace_argv(argv: list[str], out_path: str) -> list[str]:
+    """Wrap a command in a call-counting strace run.
+
+    ``-f`` follows the tool's worker processes (the session writer may be a
+    child of the process measured), ``-c`` prints one summary instead of every
+    line, and ``-o`` keeps the summary out of the tool's own stdout.
+    """
+    return ["strace", "-f", "-c", "-e", "trace=" + ",".join(SYSCALL_NAMES), "-o", out_path, *argv]
+
+
+def parse_strace_summary(text: str) -> dict | None:
+    """Sum the fsync/fdatasync call counts in ``strace -c`` output.
+
+    Rows look like `` 62.50  0.000412  82  5  fsync``; the errors column is
+    blank when every call succeeded, so the call count is always the fourth
+    field. Returns None when neither syscall row is present, which is what
+    strace prints when the filter matched nothing.
+    """
+    counts = dict.fromkeys(SYSCALL_NAMES, 0)
+    seen = False
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[-1] not in counts:
+            continue
+        try:
+            calls = int(parts[3])
+        except ValueError:
+            continue
+        counts[parts[-1]] += calls
+        seen = True
+    if not seen:
+        return None
+    return {
+        "total": sum(counts.values()),
+        "fsync": counts["fsync"],
+        "fdatasync": counts["fdatasync"],
+    }
+
+
+def measure_oneshot(
+    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, syscalls: bool = False
+) -> dict:
+    """Run one headless prompt and time it, sampling peak tree RSS.
+
+    With ``syscalls`` the run is wrapped in a call-counting strace, so the same
+    sample also reports how many fsync/fdatasync calls the tool made; the
+    summary file lives in a throwaway directory removed before returning.
+    """
+    trace_dir = bc.short_temp_dir("hcmp-strace-") if syscalls else None
+    try:
+        return _measure_oneshot(argv, cwd, env, mock, timeout, trace_dir)
+    finally:
+        if trace_dir:
+            shutil.rmtree(trace_dir, ignore_errors=True)
+
+
+def _measure_oneshot(
+    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, trace_dir: str | None
+) -> dict:
+    trace_path = os.path.join(trace_dir, "summary.txt") if trace_dir else None
+    if trace_path:
+        argv = strace_argv(argv, trace_path)
     try:
         before = mock.stats()["request_count"]
     except Exception:  # noqa: BLE001
@@ -552,6 +623,13 @@ def measure_oneshot(argv: list[str], cwd: str, env: dict, mock: MockServer, time
     elif proc.returncode not in (0, None):
         detail = (stderr or "").strip().splitlines()
         error = f"exit {proc.returncode}: " + (detail[-1] if detail else "no stderr")
+    syscall_counts = None
+    if trace_path:
+        try:
+            with open(trace_path, encoding="utf-8", errors="replace") as fh:
+                syscall_counts = parse_strace_summary(fh.read())
+        except OSError:
+            syscall_counts = None
     return {
         "ms": None if timed_out else round(elapsed_ms, 2),
         "peak_rss_bytes": peak or None,
@@ -560,6 +638,8 @@ def measure_oneshot(argv: list[str], cwd: str, env: dict, mock: MockServer, time
         "exit_code": proc.returncode,
         "error": error,
         "stdout_tail": (stdout or "").strip()[-300:],
+        "fsync_calls": (syscall_counts or {}).get("total"),
+        "fsync_breakdown": syscall_counts,
     }
 
 
@@ -826,17 +906,20 @@ def measure_daemon_sessions(
             daemon.close()
 
 
-def make_horon_daemon(binary: str, root: str, cwd: str):
-    socket_path = os.path.join(root, "run", "bench.sock")
-    debug_socket = socket_path.replace(".sock", "-debug.sock")
-    env = horon_env(root, binary)
-    argv = [
+def horon_daemon_argv(binary: str, socket_path: str) -> list[str]:
+    """argv for the isolated horon daemon under test.
+
+    There is no debug-socket argument. `serve` derives the debug socket from the
+    main one by substituting the `-debug.sock` suffix
+    (`crates/app-core/src/server/socket.rs`), and debug commands are gated by
+    `HORON_AGENT_DEBUG_CONTROL`, which `horon_env` sets.
+    """
+    return [
         binary,
         "--no-update",
         "serve",
         "--socket",
         socket_path,
-        "--debug-socket",
         "--provider-profile",
         "mock",
         "--model",
@@ -844,6 +927,18 @@ def make_horon_daemon(binary: str, root: str, cwd: str):
         "--tools",
         "bash",
     ]
+
+
+def debug_socket_for(socket_path: str) -> str:
+    """Debug socket the daemon publishes beside its main socket."""
+    return socket_path.replace(".sock", "-debug.sock")
+
+
+def make_horon_daemon(binary: str, root: str, cwd: str):
+    socket_path = os.path.join(root, "run", "bench.sock")
+    debug_socket = debug_socket_for(socket_path)
+    env = horon_env(root, binary)
+    argv = horon_daemon_argv(binary, socket_path)
 
     def factory(count: int):
         daemon = start_daemon(
@@ -1301,7 +1396,9 @@ class ToolRunner:
     def __init__(self, binary: str):
         self.binary = binary
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         raise NotImplementedError
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
@@ -1324,9 +1421,11 @@ class HoronRunner(ToolRunner):
         env["HORON_AGENT_HOME"] = home
         return env
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         env = self._root(root, mock)
-        return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout)
+        return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         self._root(root, mock)
@@ -1347,9 +1446,11 @@ class JcodeRunner(ToolRunner):
         write_jcode_config(root, mock.base_url)
         return jcode_env(root, self.binary)
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         env = self._root(root, mock)
-        return measure_oneshot(jcode_oneshot_argv(self.binary), cwd, env, mock, timeout)
+        return measure_oneshot(jcode_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         self._root(root, mock)
@@ -1365,9 +1466,11 @@ class ClaudeRunner(ToolRunner):
     def env_for_version(self, root: str) -> dict:
         return claude_env(root, "http://127.0.0.1:1")
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         env = claude_env(root, mock.base_url)
-        return measure_oneshot(claude_oneshot_argv(self.binary), cwd, env, mock, timeout)
+        return measure_oneshot(claude_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = claude_env(root, mock.base_url)
@@ -1381,9 +1484,13 @@ class CodexRunner(ToolRunner):
     def env_for_version(self, root: str) -> dict:
         return codex_env(root)
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         env = codex_env(root)
-        return measure_oneshot(codex_oneshot_argv(self.binary, mock.base_url), cwd, env, mock, timeout)
+        return measure_oneshot(
+            codex_oneshot_argv(self.binary, mock.base_url), cwd, env, mock, timeout, syscalls=syscalls
+        )
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = codex_env(root)
@@ -1400,9 +1507,11 @@ class OpencodeRunner(ToolRunner):
     def env_for_version(self, root: str) -> dict:
         return opencode_env(root, "http://127.0.0.1:1")
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         env = opencode_env(root, mock.base_url or "")
-        return measure_oneshot(opencode_oneshot_argv(self.binary), cwd, env, mock, timeout)
+        return measure_oneshot(opencode_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         return measure_opencode_sessions(
@@ -1417,9 +1526,11 @@ class PiRunner(ToolRunner):
     def env_for_version(self, root: str) -> dict:
         return pi_env(root, "http://127.0.0.1:1")
 
-    def oneshot(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
         env = pi_env(root, mock.base_url or "")
-        return measure_oneshot(pi_oneshot_argv(self.binary), cwd, env, mock, timeout)
+        return measure_oneshot(pi_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = pi_env(root, mock.base_url or "")
@@ -1453,6 +1564,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tools", nargs="+", default=DEFAULT_TOOLS,
                         help=f"tools to measure (default: {' '.join(DEFAULT_TOOLS)})")
     parser.add_argument("--timeout", type=float, default=180.0, help="per-turn/oneshot timeout seconds")
+    parser.add_argument("--syscalls", action="store_true",
+                        help="count fsync/fdatasync calls per one-shot with strace (Linux only; "
+                             "recorded as skipped elsewhere)")
     parser.add_argument("--json-out")
     parser.add_argument("--markdown-out")
     return parser.parse_args(argv)
@@ -1512,12 +1626,17 @@ def summarize_oneshot(runs: list[dict]) -> dict:
     summary = bc.summarize(times)
     errors = [run["error"] for run in runs if run.get("error")]
     roundtrips = [run.get("tool_roundtrip") for run in runs if run.get("tool_roundtrip") is not None]
+    syscall_totals = [run["fsync_calls"] for run in runs if run.get("fsync_calls") is not None]
+    syscall_summary = bc.summarize(syscall_totals)
     return {
         "ms": summary["median"] if summary else None,
         "summary": summary,
         "peak_rss_bytes": max(peaks) if peaks else None,
         "tool_roundtrip": (all(roundtrips) if roundtrips else None),
         "mock_requests": [run.get("mock_requests") for run in runs],
+        "fsync_calls": syscall_summary["median"] if syscall_summary else None,
+        "fsync_calls_runs": syscall_totals,
+        "fsync_calls_summary": syscall_summary,
         "errors": errors,
         "error": errors[0] if errors else None,
         "runs": runs,
@@ -1532,6 +1651,7 @@ def measure_tool(
     version_runs: int,
     oneshot_runs: int,
     timeout: float,
+    syscalls: bool = False,
 ) -> dict:
     root = bc.short_temp_dir(f"hcmp-{runner.name[:6]}-")
     cwd = os.path.join(root, "ws")
@@ -1561,7 +1681,7 @@ def measure_tool(
         runs: list[dict] = []
         for _ in range(max(1, oneshot_runs)):
             try:
-                runs.append(runner.oneshot(mock, root, cwd, timeout))
+                runs.append(runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls))
             except Exception as exc:  # noqa: BLE001
                 runs.append({"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
                              "error": str(exc)[:300]})
@@ -1636,6 +1756,11 @@ def relative(value, baseline, lower_is_better: bool = True) -> str:
     return bc.fmt_ratio(ratio, better_is_lower=lower_is_better)
 
 
+def fmt_calls(value) -> str:
+    """Call counts are integers; a missing sample stays visible as an em dash."""
+    return str(round(value)) if value is not None else "—"
+
+
 def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     results = report["results"]
     lines = ["# Coding agent comparison (headless, mock model)", ""]
@@ -1654,13 +1779,14 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     # Version / binary
     rows = []
     for result in results:
-        oneshot = result.get("oneshot") or {}
+        # A tool that could not be executed at all has version_ms.summary == None;
+        # that is a missing number, not a reason to fail the whole report.
+        version_median = ((result.get("version_ms") or {}).get("summary") or {}).get("median")
         rows.append(
             [
                 result["label"],
                 result.get("version") or "—",
-                (result.get("version_ms") or {}).get("summary", {}).get("median") and
-                bc.fmt_ms(result["version_ms"]["summary"]["median"]) or "—",
+                bc.fmt_ms(version_median) if version_median else "—",
                 bc.fmt_bytes(result.get("install_size_bytes")),
             ]
         )
@@ -1670,6 +1796,7 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     # One-shot
     base_ms = baseline_value(results, ("oneshot", "ms"))
     base_rss = baseline_value(results, ("oneshot", "peak_rss_bytes"))
+    show_syscalls = any((r.get("oneshot") or {}).get("fsync_calls") is not None for r in results)
     rows = []
     for result in results:
         oneshot = result.get("oneshot") or {}
@@ -1682,24 +1809,27 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
         spread = ""
         if summary.get("samples", 0) > 1:
             spread = f"{bc.fmt_ms(summary['min'])}–{bc.fmt_ms(summary['max'])}"
-        rows.append(
-            [
-                result["label"],
-                bc.fmt_ms(ms),
-                spread,
-                relative(ms, base_ms) if result["name"] != "horon" else "baseline",
-                bc.fmt_bytes(rss),
-                relative(rss, base_rss) if result["name"] != "horon" else "baseline",
-                "yes" if roundtrip else ("no" if roundtrip is False else "—"),
-                note[:60],
-            ]
-        )
+        row = [
+            result["label"],
+            bc.fmt_ms(ms),
+            spread,
+            relative(ms, base_ms) if result["name"] != "horon" else "baseline",
+            bc.fmt_bytes(rss),
+            relative(rss, base_rss) if result["name"] != "horon" else "baseline",
+            "yes" if roundtrip else ("no" if roundtrip is False else "—"),
+        ]
+        if show_syscalls:
+            row.append(fmt_calls(oneshot.get("fsync_calls")))
+        row.append(note[:60])
+        rows.append(row)
     lines.append("**One-shot headless prompt** (includes startup, one `ls` tool call, final answer)")
     lines.append("")
     lines.append(
         bc.markdown_table(
             ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
-             "Tool round-trip", "Note"],
+             "Tool round-trip"]
+            + (["fsync calls"] if show_syscalls else [])
+            + ["Note"],
             rows,
         )
     )
@@ -1778,6 +1908,10 @@ def main(argv: list[str] | None = None) -> int:
     results: list[dict] = []
     skipped: list[dict] = []
 
+    syscalls = args.syscalls and strace_available()
+    if args.syscalls and not syscalls:
+        skipped.append({"name": "syscalls", "reason": "strace not available"})
+
     if "horon" not in args.tools:
         args.tools = ["horon"] + list(args.tools)
 
@@ -1796,7 +1930,14 @@ def main(argv: list[str] | None = None) -> int:
             bc.eprint(f"[bench_compare] measuring {name} ({binary})")
             results.append(
                 measure_tool(
-                    runner, mock, args.sessions, args.turns, args.version_runs, args.oneshot_runs, args.timeout
+                    runner,
+                    mock,
+                    args.sessions,
+                    args.turns,
+                    args.version_runs,
+                    args.oneshot_runs,
+                    args.timeout,
+                    syscalls=syscalls,
                 )
             )
             bc.eprint(f"[bench_compare] finished {name}")
@@ -1809,6 +1950,7 @@ def main(argv: list[str] | None = None) -> int:
         "turns": args.turns,
         "version_runs": args.version_runs,
         "timeout_s": args.timeout,
+        "syscalls": syscalls,
     }
     markdown = render_markdown(report, args.sessions, args.turns)
     if args.json_out:

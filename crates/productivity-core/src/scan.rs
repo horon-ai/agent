@@ -94,7 +94,7 @@ pub fn scan_all() -> Result<ScanResult> {
                 Err(_) => continue,
             };
             let len = meta.len();
-            let mtime_ns = mtime_ns(&meta);
+            let mtime_ns = horon_agent_platform::fs::mtime_ns(&meta);
             files.push((name, len, mtime_ns));
         }
     }
@@ -155,21 +155,6 @@ pub fn scan_all() -> Result<ScanResult> {
         scan_secs: started.elapsed().as_secs_f64(),
         summaries,
     })
-}
-
-#[cfg(unix)]
-fn mtime_ns(meta: &std::fs::Metadata) -> i128 {
-    use std::os::unix::fs::MetadataExt;
-    (meta.mtime() as i128) * 1_000_000_000 + (meta.mtime_nsec() as i128)
-}
-
-#[cfg(not(unix))]
-fn mtime_ns(meta: &std::fs::Metadata) -> i128 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos() as i128)
-        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------

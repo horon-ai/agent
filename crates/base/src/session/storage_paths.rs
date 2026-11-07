@@ -29,10 +29,15 @@ pub fn session_path(session_id: &str) -> Result<PathBuf> {
 }
 
 /// The store root every reader enumerates, with the OS temp-dir alias resolved.
+///
+/// The paths carry the configured durability level, so an original written
+/// through them - by a reader that republishes a receipt as much as by a turn -
+/// flushes the way the operator asked for.
 pub fn store_paths() -> Result<horon_agent_session_store::SessionPaths> {
     let home = storage::horon_agent_dir()?;
     let home = if home.exists() { home.canonicalize()? } else { home };
-    Ok(horon_agent_session_store::SessionPaths::new(home.join("sessions")))
+    Ok(horon_agent_session_store::SessionPaths::new(home.join("sessions"))
+        .with_sync_mode(crate::config::config().storage_sync_mode()))
 }
 
 pub fn session_journal_path_from_snapshot(path: &Path) -> PathBuf {

@@ -199,7 +199,7 @@ mod tests {
         fn run(&self, args: &[&str]) -> String {
             let output = git(self.path())
                 .env("GIT_CONFIG_NOSYSTEM", "1")
-                .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+                .env("GIT_CONFIG_GLOBAL", horon_agent_platform::paths::null_device())
                 .args(args)
                 .output()
                 .unwrap();

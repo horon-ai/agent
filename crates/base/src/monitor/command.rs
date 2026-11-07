@@ -481,8 +481,10 @@ impl CommandWatcher {
     /// Kill the child's whole process group, the way the `bash` tool cancels.
     pub fn cancel(&mut self) {
         if let Some(mut child) = self.child.take() {
-            #[cfg(unix)]
-            let _ = crate::platform::signal_detached_process_group(child.id(), libc::SIGKILL);
+            // The watcher starts the child as a group leader, so one kill
+            // reaches anything it spawned. Windows has no group signal and
+            // stops the child alone.
+            horon_agent_platform::process::kill_process_group(child.id());
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -555,21 +557,16 @@ where
     })
 }
 
-#[cfg(not(windows))]
 fn shell_command(command: &str) -> Command {
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(command);
-    if let Some(dir) = scratch_dir() {
-        cmd.env("TMPDIR", &dir).env("HORON_AGENT_SCRATCH_DIR", dir);
-    }
-    cmd
-}
-
-#[cfg(windows)]
-fn shell_command(command: &str) -> Command {
-    let mut cmd = Command::new("cmd.exe");
-    cmd.args(["/D", "/S", "/C"]).arg(command);
-    cmd
+    // The shell differs per OS (`bash -c` / `cmd.exe /D /S /C`), and only a
+    // POSIX shell reads the temporary-directory variables, so the scratch
+    // directory is created and passed only where the platform uses it.
+    let scratch = if horon_agent_platform::term::passes_scratch_dir_to_shell() {
+        scratch_dir()
+    } else {
+        None
+    };
+    horon_agent_platform::process::shell_command_escaped(command, scratch.as_deref())
 }
 
 fn scratch_dir() -> Option<PathBuf> {

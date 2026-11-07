@@ -154,26 +154,8 @@ fn modified_since(path: &Path, cutoff: SystemTime) -> bool {
 
 /// Working directories of live processes, so an in-progress build or shell
 /// sitting inside a scratch entry is never deleted out from under it.
-#[cfg(target_os = "linux")]
 fn busy_process_dirs() -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.bytes().all(|b| b.is_ascii_digit()))
-        })
-        .filter_map(|entry| std::fs::read_link(entry.path().join("cwd")).ok())
-        .collect()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn busy_process_dirs() -> Vec<PathBuf> {
-    Vec::new()
+    horon_agent_platform::process::process_working_dirs()
 }
 
 #[cfg(test)]

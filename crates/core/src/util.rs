@@ -284,72 +284,10 @@ pub struct SplitJson {
     pub trailing_partial: Option<String>,
 }
 
-#[cfg(unix)]
-fn read_max_open_files_limits() -> Option<(String, String)> {
-    let contents = std::fs::read_to_string("/proc/self/limits").ok()?;
-    contents.lines().find_map(|line| {
-        let parts: Vec<_> = line.split_whitespace().collect();
-        (parts.len() >= 5 && parts[0] == "Max" && parts[1] == "open" && parts[2] == "files")
-            .then(|| (parts[3].to_string(), parts[4].to_string()))
-    })
-}
-
 /// Summarize the current process's file-descriptor usage for debugging reload or
 /// connect failures such as EMFILE/`Too many open files`.
 pub fn process_fd_diagnostic_snapshot() -> String {
-    #[cfg(unix)]
-    {
-        let pid = std::process::id();
-        let fd_dir = std::path::Path::new("/proc/self/fd");
-        let mut total = 0usize;
-        let mut sockets = 0usize;
-        let mut pipes = 0usize;
-        let mut anon = 0usize;
-        let mut chars = 0usize;
-        let mut regs = 0usize;
-        let mut dirs = 0usize;
-        let mut other = 0usize;
-
-        if let Ok(entries) = std::fs::read_dir(fd_dir) {
-            for entry in entries.flatten() {
-                total += 1;
-                let target = std::fs::read_link(entry.path())
-                    .ok()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                if target.starts_with("socket:") {
-                    sockets += 1;
-                } else if target.starts_with("pipe:") {
-                    pipes += 1;
-                } else if target.starts_with("anon_inode:") {
-                    anon += 1;
-                } else if target.starts_with("/dev/") {
-                    chars += 1;
-                } else if target.starts_with('/') {
-                    match std::fs::metadata(&target) {
-                        Ok(meta) if meta.is_file() => regs += 1,
-                        Ok(meta) if meta.is_dir() => dirs += 1,
-                        Ok(_) | Err(_) => other += 1,
-                    }
-                } else {
-                    other += 1;
-                }
-            }
-        }
-
-        let (soft_limit, hard_limit) =
-            read_max_open_files_limits().unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
-
-        format!(
-            "pid={} fds={} soft_limit={} hard_limit={} kinds={{socket:{}, pipe:{}, anon_inode:{}, char:{}, file:{}, dir:{}, other:{}}}",
-            pid, total, soft_limit, hard_limit, sockets, pipes, anon, chars, regs, dirs, other
-        )
-    }
-
-    #[cfg(not(unix))]
-    {
-        format!("pid={} fd snapshot unsupported on this platform", std::process::id())
-    }
+    horon_agent_platform::process::fd_diagnostic_snapshot()
 }
 
 #[cfg(test)]

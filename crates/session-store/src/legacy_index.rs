@@ -144,15 +144,13 @@ fn open_copy(bundle: &Bundle, stage: &Path) -> Result<rusqlite::Connection, Stor
     use rusqlite::{Connection, OpenFlags};
     use std::io::Write;
     let working = stage.join("index-copy");
-    let mut disk = crate::blobs::Disk {
-        hook: Box::new(|_| Ok(())),
-    };
+    let mut disk = crate::blobs::Disk::new(Box::new(|_| Ok(())), SyncMode::Full);
     disk.directory(&working)?;
     for name in [INDEX.to_owned(), format!("{INDEX}-wal"), format!("{INDEX}-shm")] {
         if let Some(bytes) = bundle.files.get(&name) {
             let mut file = crate::blobs::new_file(&working.join(name))?;
             file.write_all(bytes)?;
-            file.sync_all()?;
+            disk.sync_file(&file, IoPoint::BlobFileSync)?;
         }
     }
     let sql_error = |e: rusqlite::Error| corrupt(format!("legacy index copy: {e}"));

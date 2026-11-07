@@ -6,6 +6,7 @@ publish = false
 description = "Stable, versioned client API for the horon-agent harness (agent runtime)"
 
 [dependencies]
+horon-agent-platform = { path = "../platform" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }
 serde = { version = "1", features = ["derive"] }

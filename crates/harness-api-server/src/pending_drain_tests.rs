@@ -5,9 +5,9 @@
 //! the loop without draining that buffer dropped the frame, and the client saw
 //! a bare close with no reason for it.
 use super::*;
+use horon_agent_platform::ipc::Listener;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
-use tokio::net::UnixListener;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_oversized_request_reports_its_error_before_the_connection_closes() {
@@ -21,7 +21,7 @@ async fn an_oversized_request_reports_its_error_before_the_connection_closes() {
                 .as_nanos()
                 % 1_000_000_000
         ));
-        let listener = UnixListener::bind(&path).unwrap();
+        let mut listener = Listener::bind(&path).unwrap();
         let (client, bridge) = tokio::io::duplex(8 * 1024);
         let (bridge_read, bridge_write) = tokio::io::split(bridge);
         let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, path.clone()));

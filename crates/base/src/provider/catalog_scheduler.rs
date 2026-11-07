@@ -47,6 +47,13 @@ pub fn bump_catalog_generation() {
 /// first successful start this is a single atomic load. It is a no-op when no
 /// tokio runtime is available, and will start on a later call once one is.
 pub(crate) fn ensure_started() {
+    // The models.dev pricing catalog is refreshed on the same cadence: read the
+    // on-disk catalog and schedule one background fetch when it is missing or
+    // stale. `schedule_refresh` keeps this off unless `[features]
+    // pricing_refresh` or `HORON_AGENT_PRICING_REFRESH=1` enables it, so the
+    // default one-shot never leaves the machine. Test builds skip the read
+    // inside `ensure_fresh`.
+    crate::model_pricing::ensure_fresh();
     if SCHEDULER_STARTED.get().is_some() {
         return;
     }

@@ -1,5 +1,6 @@
 use super::*;
 use rusqlite::{Connection, params};
+use std::io::Write;
 
 fn task7_list(include_archived: bool, limit: Option<usize>) -> Vec<SessionInfo> {
     let event = only_reply_event(BridgeState::default().api_request_to_legacy(
@@ -241,10 +242,10 @@ fn task7_event_save_list_todo_titles_archive_and_edit_stats_survive_restart() {
     let row = task7_list(false, None).remove(0);
     assert_eq!(row.title.as_deref(), Some("custom title"));
     assert_eq!(row.updated_at_ms, Some(session.updated_at.timestamp_millis()));
-    assert_eq!(
-        row.last_active_at_ms,
-        session.last_active_at.map(|at| at.timestamp_millis())
-    );
+    // The listing reports the newest activity: the pinned binding or the later event log time.
+    let logged = session.updated_at.timestamp_millis();
+    let pinned = session.last_active_at.map_or(logged, |at| at.timestamp_millis());
+    assert_eq!(row.last_active_at_ms, Some(logged.max(pinned)));
     assert_eq!(row.working_dir, session.working_dir);
     assert_eq!(row.status, "idle");
     assert!(!row.user_connected);
@@ -2799,18 +2800,16 @@ fn archive_restore_and_retention_are_reversible_and_owner_only() {
         "retention hides a session by recording it and never deletes its original"
     );
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(home.path.join("sdk-archive.json"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600);
-        let home_mode = std::fs::metadata(&home.path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(home_mode, 0o700);
-    }
+    let archive = std::fs::metadata(home.path.join("sdk-archive.json")).unwrap();
+    assert!(
+        horon_agent_platform::fs::is_private_file(&archive),
+        "the archive holds the session index and must stay owner-only"
+    );
+    let home_metadata = std::fs::metadata(&home.path).unwrap();
+    assert!(
+        horon_agent_platform::fs::is_private_dir(&home_metadata),
+        "the state home must stay owner-only"
+    );
 }
 
 #[test]
@@ -2945,19 +2944,16 @@ fn credential_provisioning_normalizes_gemini_and_rejects_removed_providers() {
         }
     ));
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&config).unwrap().permissions().mode() & 0o777, 0o700);
-        assert_eq!(
-            std::fs::metadata(config.join("gemini.env"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-    }
+    let config_metadata = std::fs::metadata(&config).unwrap();
+    assert!(
+        horon_agent_platform::fs::is_private_dir(&config_metadata),
+        "the config directory must stay owner-only"
+    );
+    let env_metadata = std::fs::metadata(config.join("gemini.env")).unwrap();
+    assert!(
+        horon_agent_platform::fs::is_private_file(&env_metadata),
+        "a key file must stay owner-only"
+    );
 }
 
 #[cfg(unix)]

@@ -72,7 +72,6 @@ pub mod monitor;
 pub mod open_url;
 pub mod output_style;
 pub mod plan;
-pub mod platform;
 pub mod power_inhibit;
 pub mod process_memory;
 pub mod process_title;

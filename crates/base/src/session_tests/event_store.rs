@@ -1005,11 +1005,11 @@ fn interrupted_commit() -> Result<InterruptedCommit> {
     );
 
     // Fail the commit where it stops being about the log: `select` publishes
-    // `local-head.json` through a rename, and a directory in that place refuses it.
+    // `local-head-explicit.json` through a rename, and a directory there refuses it.
     let blocker = log
         .parent()
         .context("the log sits in the session directory")?
-        .join("local-head.json");
+        .join("local-head-explicit.json");
     std::fs::remove_file(&blocker)?;
     std::fs::create_dir(&blocker)?;
     session.add_message(Role::User, text("reserved tail"));

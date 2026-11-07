@@ -13,22 +13,8 @@ use crate::{agent, auth, build, provider_catalog, server, session, startup_profi
 use super::{acp, commands, debug, hot_exec, output, provider_init, terminal};
 use provider_init::ProviderChoice;
 
-#[cfg(any(target_os = "linux", test))]
 fn is_file_controlled_debug_client() -> bool {
     std::env::var_os("HORON_AGENT_DEBUG_CMD_PATH").is_some()
-}
-
-#[cfg(target_os = "linux")]
-fn is_orphan_adopter_name(name: &str) -> bool {
-    matches!(name.trim(), "init" | "systemd")
-}
-
-#[cfg(target_os = "linux")]
-fn parent_is_orphan_adopter(parent_pid: libc::pid_t) -> bool {
-    if parent_pid <= 1 {
-        return true;
-    }
-    std::fs::read_to_string(format!("/proc/{parent_pid}/comm")).is_ok_and(|name| is_orphan_adopter_name(&name))
 }
 
 /// Tie file-controlled debug clients to the process that launched them.
@@ -36,31 +22,16 @@ fn parent_is_orphan_adopter(parent_pid: libc::pid_t) -> bool {
 /// These clients are automation helpers, not user-owned terminals. Without a
 /// parent-death signal they are reparented to init when a verification script
 /// or debug server exits, retaining a full TUI and session history indefinitely.
-#[cfg(target_os = "linux")]
 fn arm_debug_client_parent_death_signal() {
     if !is_file_controlled_debug_client() {
         return;
     }
-
-    // Capture the parent first, then check it again after prctl. This closes the
-    // race where the launcher exits immediately before the signal is armed.
-    // Safety: getppid has no preconditions and does not dereference pointers.
-    let parent_pid = unsafe { libc::getppid() };
-    // Safety: PR_SET_PDEATHSIG accepts a signal number as its scalar argument.
-    let armed = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) } == 0;
-    // Safety: getppid has no preconditions and does not dereference pointers.
-    let current_parent_pid = unsafe { libc::getppid() };
-    if armed
-        && (parent_is_orphan_adopter(parent_pid)
-            || current_parent_pid != parent_pid
-            || parent_is_orphan_adopter(current_parent_pid))
-    {
+    // The platform arms its parent-death behaviour and re-checks the parent
+    // afterwards, because the launcher can exit before the signal is armed.
+    if horon_agent_platform::process::bind_process_lifetime_to_parent() {
         std::process::exit(0);
     }
 }
-
-#[cfg(not(target_os = "linux"))]
-fn arm_debug_client_parent_death_signal() {}
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
@@ -696,57 +667,30 @@ async fn server_is_running_at(path: &std::path::Path) -> bool {
     server::has_live_listener(path).await || server::is_server_ready(path).await
 }
 
-#[cfg(unix)]
 fn spawn_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
     std::path::PathBuf::from(format!("{}.spawning", socket_path.display()))
 }
 
-#[cfg(unix)]
-struct SpawnLockGuard {
-    _file: std::fs::File,
-    path: std::path::PathBuf,
-}
-
-#[cfg(unix)]
-impl Drop for SpawnLockGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-#[cfg(unix)]
-fn try_acquire_spawn_lock(path: &std::path::Path) -> Result<Option<SpawnLockGuard>> {
-    use std::fs::OpenOptions;
-    use std::os::fd::AsRawFd;
-
+async fn acquire_spawn_lock_or_wait(
+    socket_path: &std::path::Path,
+) -> Result<Option<horon_agent_platform::ipc::InstanceLock>> {
+    let lock_path = spawn_lock_path(socket_path);
     // The client acquires this lock before the daemon creates its socket directory.
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = lock_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create HoronAgent runtime directory {}", parent.display()))?;
     }
-    let file = OpenOptions::new().create(true).write(true).truncate(false).open(path)?;
-    let fd = file.as_raw_fd();
-    let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
-    if ret == 0 {
-        Ok(Some(SpawnLockGuard {
-            _file: file,
-            path: path.to_path_buf(),
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-#[cfg(unix)]
-async fn acquire_spawn_lock_or_wait(socket_path: &std::path::Path) -> Result<Option<SpawnLockGuard>> {
-    let lock_path = spawn_lock_path(socket_path);
     let wait_start = std::time::Instant::now();
     let wait_timeout = std::time::Duration::from_secs(10);
     let mut announced_wait = false;
 
     loop {
-        if let Some(lock) = try_acquire_spawn_lock(&lock_path)? {
-            return Ok(Some(lock));
+        match horon_agent_platform::ipc::acquire_bootstrap_lock(&lock_path)? {
+            horon_agent_platform::ipc::LockAttempt::Acquired(lock) => return Ok(Some(lock)),
+            // No advisory lock on this platform, so this client spawns without
+            // waiting for another one: its own readiness poll covers the race.
+            horon_agent_platform::ipc::LockAttempt::Unsupported => return Ok(None),
+            horon_agent_platform::ipc::LockAttempt::Busy => {}
         }
 
         if server_is_running_at(socket_path).await {
@@ -979,7 +923,6 @@ async fn spawn_server_with_lifetime(
         return Ok(());
     }
 
-    #[cfg(unix)]
     let _spawn_lock = acquire_spawn_lock_or_wait(&socket_path).await?;
 
     if server_is_running_at(&socket_path).await {
@@ -1020,53 +963,10 @@ async fn spawn_server_with_lifetime(
     cmd.args(serve_subcommand_args(lifetime, std::process::id()));
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
-    #[cfg(unix)]
-    {
-        let _child = server::spawn_server_notify(&mut cmd).await?;
-        startup_profile::mark("server_ready");
-    }
-    #[cfg(not(unix))]
-    {
-        use std::io::Read;
-
-        let mut child = cmd.spawn()?;
-        let start = std::time::Instant::now();
-        // Windows server bootstrap can legitimately take tens of seconds on
-        // slow hosts (auth preflights + provider init were observed at 15-60s
-        // on a Windows Server VPS, issue #503). The child's liveness is
-        // checked every poll, so a generous budget only delays the error for
-        // a genuinely hung server, while a crashed server still fails fast
-        // with its stderr.
-        let timeout = std::time::Duration::from_secs(120);
-        while start.elapsed() < timeout {
-            if server::has_live_listener(&socket_path).await {
-                startup_profile::mark("server_ready");
-                return Ok(());
-            }
-
-            if let Some(status) = child.try_wait()? {
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stderr.take() {
-                    let _ = pipe.read_to_string(&mut stderr);
-                }
-                let detail = stderr.trim();
-                if detail.is_empty() {
-                    anyhow::bail!("Server exited before becoming ready (status: {})", status);
-                }
-                anyhow::bail!("Server exited before becoming ready (status: {}). {}", status, detail);
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-
-        anyhow::bail!(
-            "Timed out waiting for server to become ready at {} after {}ms",
-            server::socket_path().display(),
-            timeout.as_millis()
-        );
-    }
-
-    #[cfg(unix)]
+    // The platform reports readiness through an inherited pipe where it can pass
+    // a descriptor, and polls the listener where it cannot.
+    let _child = server::spawn_server_notify(&mut cmd).await?;
+    startup_profile::mark("server_ready");
     Ok(())
 }
 

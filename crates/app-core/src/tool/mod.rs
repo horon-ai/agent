@@ -686,7 +686,6 @@ struct LazyActivation {
 
 /// The scratch directory a child shell receives, re-exported so the approval
 /// gate can assess the same path bash does.
-#[cfg(not(windows))]
 pub(crate) use bash::tool_scratch_dir_for_risk;
 
 /// Registry of available tools (Arc-wrapped for sharing)

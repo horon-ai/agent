@@ -1,19 +1,19 @@
 {
-  "total": 2028,
+  "total": 1942,
   "totals_by_pattern": {
-    "dot_ok": 747,
-    "let_underscore": 790,
-    "unwrap_or_default": 491
+    "dot_ok": 724,
+    "let_underscore": 730,
+    "unwrap_or_default": 488
   },
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": {
-      "dot_ok": 8,
-      "let_underscore": 7,
+      "dot_ok": 7,
+      "let_underscore": 6,
       "unwrap_or_default": 0
     },
     "crates/agent-sdk/src/launch.rs": {
       "dot_ok": 5,
-      "let_underscore": 9,
+      "let_underscore": 5,
       "unwrap_or_default": 3
     },
     "crates/agent-sdk/src/ssh.rs": {
@@ -378,7 +378,7 @@
     },
     "crates/app-core/src/server/reload_state.rs": {
       "dot_ok": 1,
-      "let_underscore": 13,
+      "let_underscore": 8,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/server/session_observation.rs": {
@@ -388,7 +388,7 @@
     },
     "crates/app-core/src/server/socket.rs": {
       "dot_ok": 1,
-      "let_underscore": 9,
+      "let_underscore": 5,
       "unwrap_or_default": 1
     },
     "crates/app-core/src/server/state.rs": {
@@ -493,17 +493,12 @@
     },
     "crates/app-core/src/tool/bash.rs": {
       "dot_ok": 19,
-      "let_underscore": 13,
+      "let_underscore": 11,
       "unwrap_or_default": 7
     },
     "crates/app-core/src/tool/bash_interceptor.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/tool/bash_pty.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/app-core/src/tool/bg.rs": {
@@ -758,7 +753,7 @@
     },
     "crates/base/src/background.rs": {
       "dot_ok": 20,
-      "let_underscore": 15,
+      "let_underscore": 12,
       "unwrap_or_default": 11
     },
     "crates/base/src/bus.rs": {
@@ -828,7 +823,7 @@
     },
     "crates/base/src/durable_runtime/store.rs": {
       "dot_ok": 0,
-      "let_underscore": 4,
+      "let_underscore": 3,
       "unwrap_or_default": 0
     },
     "crates/base/src/embedding.rs": {
@@ -993,12 +988,7 @@
     },
     "crates/base/src/monitor/command.rs": {
       "dot_ok": 3,
-      "let_underscore": 5,
-      "unwrap_or_default": 1
-    },
-    "crates/base/src/monitor/file.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
+      "let_underscore": 4,
       "unwrap_or_default": 1
     },
     "crates/base/src/monitor/mod.rs": {
@@ -1006,19 +996,9 @@
       "let_underscore": 1,
       "unwrap_or_default": 2
     },
-    "crates/base/src/platform.rs": {
-      "dot_ok": 1,
-      "let_underscore": 13,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/process_memory.rs": {
-      "dot_ok": 36,
+      "dot_ok": 30,
       "let_underscore": 6,
-      "unwrap_or_default": 0
-    },
-    "crates/base/src/process_title.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/base/src/prompt.rs": {
@@ -1102,7 +1082,7 @@
       "unwrap_or_default": 8
     },
     "crates/base/src/scratch_maintenance.rs": {
-      "dot_ok": 3,
+      "dot_ok": 2,
       "let_underscore": 1,
       "unwrap_or_default": 0
     },
@@ -1261,16 +1241,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
-    "crates/core/src/stdin_detect.rs": {
-      "dot_ok": 3,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/core/src/util.rs": {
-      "dot_ok": 2,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
-    },
     "crates/edit-safety/examples/snapshot_demo.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -1287,8 +1257,8 @@
       "unwrap_or_default": 0
     },
     "crates/harness-api-server/src/lib.rs": {
-      "dot_ok": 7,
-      "let_underscore": 5,
+      "dot_ok": 6,
+      "let_underscore": 3,
       "unwrap_or_default": 3
     },
     "crates/harness-api-server/src/replication.rs": {
@@ -1299,7 +1269,7 @@
     "crates/harness-api-server/src/translate.rs": {
       "dot_ok": 28,
       "let_underscore": 0,
-      "unwrap_or_default": 50
+      "unwrap_or_default": 49
     },
     "crates/harness-api-server/src/writer.rs": {
       "dot_ok": 0,
@@ -1318,11 +1288,6 @@
     },
     "crates/harness-api/src/replication.rs": {
       "dot_ok": 1,
-      "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/harness-api/src/sockets.rs": {
-      "dot_ok": 2,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
@@ -1392,7 +1357,7 @@
       "unwrap_or_default": 0
     },
     "crates/productivity-core/src/scan.rs": {
-      "dot_ok": 5,
+      "dot_ok": 3,
       "let_underscore": 1,
       "unwrap_or_default": 1
     },
@@ -1511,21 +1476,6 @@
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
-    "crates/session-store/src/blob_staging.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/session-store/src/blobs.rs": {
-      "dot_ok": 0,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/session-store/src/cache_io.rs": {
-      "dot_ok": 0,
-      "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
     "crates/session-store/src/cache_values.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
@@ -1533,7 +1483,7 @@
     },
     "crates/session-store/src/catalog.rs": {
       "dot_ok": 0,
-      "let_underscore": 1,
+      "let_underscore": 0,
       "unwrap_or_default": 1
     },
     "crates/session-store/src/checkpoint.rs": {
@@ -1558,17 +1508,12 @@
     },
     "crates/session-store/src/legacy_runtime.rs": {
       "dot_ok": 1,
-      "let_underscore": 1,
+      "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/session-store/src/reader.rs": {
       "dot_ok": 2,
       "let_underscore": 0,
-      "unwrap_or_default": 0
-    },
-    "crates/session-store/src/record_exchange.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
       "unwrap_or_default": 0
     },
     "crates/session-store/src/writer.rs": {
@@ -1588,7 +1533,7 @@
     },
     "crates/storage/src/lib.rs": {
       "dot_ok": 0,
-      "let_underscore": 13,
+      "let_underscore": 5,
       "unwrap_or_default": 1
     },
     "crates/storage/src/session_lease.rs": {
@@ -1620,16 +1565,6 @@
       "dot_ok": 6,
       "let_underscore": 0,
       "unwrap_or_default": 1
-    },
-    "crates/transport/src/unix.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
-    "crates/transport/src/windows.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
     },
     "crates/update-core/src/lib.rs": {
       "dot_ok": 3,
@@ -1743,7 +1678,7 @@
     },
     "src/cli/dispatch.rs": {
       "dot_ok": 3,
-      "let_underscore": 2,
+      "let_underscore": 0,
       "unwrap_or_default": 3
     },
     "src/cli/hot_exec.rs": {
@@ -1782,8 +1717,8 @@
       "unwrap_or_default": 0
     },
     "src/main.rs": {
-      "dot_ok": 2,
-      "let_underscore": 3,
+      "dot_ok": 0,
+      "let_underscore": 1,
       "unwrap_or_default": 0
     }
   },

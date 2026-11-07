@@ -68,17 +68,12 @@ fn a_missing_executable_is_reported_as_not_installed() {
     assert!(!is_installed(&spec));
 }
 
-#[cfg(unix)]
 #[test]
 fn an_executable_on_path_is_installed() {
-    use std::os::unix::fs::PermissionsExt;
-
     let dir = tempfile::tempdir().expect("temp dir");
     let program = dir.path().join("fake-language-server");
     std::fs::write(&program, "#!/bin/sh\nexit 0\n").expect("write program");
-    let mut permissions = std::fs::metadata(&program).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    std::fs::set_permissions(&program, permissions).expect("chmod");
+    horon_agent_platform::set_permissions_executable(&program).expect("make it executable");
 
     let spec = ServerSpec {
         name: "fake",
@@ -88,15 +83,29 @@ fn an_executable_on_path_is_installed() {
         root_markers: &[],
     };
     assert!(is_installed_for(&spec, dir.path()));
+}
 
-    // A non-executable file with the same name is not a server.
-    let mut permissions = std::fs::metadata(&program).expect("metadata").permissions();
-    permissions.set_mode(0o644);
-    std::fs::set_permissions(&program, permissions).expect("chmod");
+/// Execute bits are a Unix property; Windows decides executability from the
+/// file extension, so the same file is installed there and this half of the
+/// contract has nothing to assert.
+#[cfg(unix)]
+#[test]
+fn a_file_without_execute_bits_is_not_installed() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let program = dir.path().join("fake-language-server");
+    std::fs::write(&program, "#!/bin/sh\nexit 0\n").expect("write program");
+    horon_agent_platform::fs::set_file_permissions_owner_only(&program).expect("strip execute bits");
+
+    let spec = ServerSpec {
+        name: "fake",
+        program: "fake-language-server",
+        args: &[],
+        extensions: &[],
+        root_markers: &[],
+    };
     assert!(!is_installed_for(&spec, dir.path()));
 }
 
-#[cfg(unix)]
 fn is_installed_for(spec: &ServerSpec, dir: &Path) -> bool {
-    is_executable(&dir.join(spec.program))
+    horon_agent_platform::fs::is_executable(&dir.join(spec.program))
 }

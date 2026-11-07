@@ -188,13 +188,10 @@ fn corrupt_session_and_stale_pid_never_erase_a_neighbours_listing() {
             .write(true)
             .open(corrupt_dir.join("events.jsonl"))
             .expect("corrupt log");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .expect("owner-only log");
-        }
         file.write_all(corrupt_bytes).expect("corrupt bytes");
+        drop(file);
+        horon_agent_platform::fs::set_file_permissions_owner_only(&corrupt_dir.join("events.jsonl"))
+            .expect("owner-only log");
     }
 
     let pid_dir = home.path().join("active_pids");

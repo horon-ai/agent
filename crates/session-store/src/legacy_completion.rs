@@ -6,10 +6,8 @@ use crate::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader, Read};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 const HEADER: &str = ".legacy-index-completed.json";
@@ -57,15 +55,8 @@ fn bounded(probe: &ReadProbe, path: &Path, limit: u64) -> Result<Vec<u8>, StoreE
 
 fn private_root(paths: &SessionPaths) -> Result<(), StoreError> {
     crate::legacy_bundle::safe_path(paths.root())?;
-    let metadata = fs::symlink_metadata(paths.root())?;
-    if !metadata.is_dir() {
+    if !horon_agent_platform::fs::is_private_dir(&fs::symlink_metadata(paths.root())?) {
         return Err(crate::blobs::unsafe_path(paths.root()));
-    }
-    #[cfg(unix)]
-    {
-        if metadata.permissions().mode() & 0o777 != 0o700 {
-            return Err(crate::blobs::unsafe_path(paths.root()));
-        }
     }
     Ok(())
 }
@@ -124,15 +115,10 @@ pub(crate) fn check(paths: &SessionPaths, probe: &ReadProbe) -> Result<(), Store
         {
             return Err(migration_required());
         }
-        let original = fs::symlink_metadata(paths.events_log(&row.session_id)?)?;
-        if !original.is_file() {
+        // The original log must still be the private single-link file the
+        // migration wrote; anything else means the source changed underneath.
+        if !horon_agent_platform::fs::is_private_file(&fs::symlink_metadata(paths.events_log(&row.session_id)?)?) {
             return Err(migration_required());
-        }
-        #[cfg(unix)]
-        {
-            if original.nlink() != 1 || original.mode() & 0o777 != 0o600 {
-                return Err(migration_required());
-            }
         }
         previous = Some(row.session_id);
     }
@@ -232,9 +218,7 @@ fn publish_complete(
     {
         return Ok(value);
     }
-    let mut disk = Disk {
-        hook: Box::new(|_| Ok(())),
-    };
+    let mut disk = Disk::new(Box::new(|_| Ok(())), paths.sync_mode());
     publish(
         &mut disk,
         &paths
@@ -246,7 +230,7 @@ fn publish_complete(
     hook(MigrationPoint::IndexInventoryPublished)?;
     hook(MigrationPoint::IndexHeaderPublish)?;
     publish(&mut disk, &paths.root().join(HEADER), &raw, &ReadProbe::default())?;
-    File::open(paths.root())?.sync_all()?;
+    crate::blobs::sync_directory(paths.root(), paths.sync_mode())?;
     Ok(value)
 }
 
@@ -274,9 +258,7 @@ pub fn complete_index_migration_with_hook(
     if !bundle.has_index() {
         return Err(StoreError::unknown_session("legacy index absent"));
     }
-    let mut disk = Disk {
-        hook: Box::new(|_| Ok(())),
-    };
+    let mut disk = Disk::new(Box::new(|_| Ok(())), destination.sync_mode());
     disk.directory(destination.root())?;
     let stage = destination
         .root()

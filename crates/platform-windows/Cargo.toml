@@ -1,0 +1,32 @@
+[package]
+name = "horon-agent-platform-windows"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Windows platform adapter: buffered file flushes, a directory sync that only checks identity, and the system certificate verifier for TLS"
+
+[lib]
+name = "horon_agent_platform_windows"
+path = "src/lib.rs"
+
+[dependencies]
+hex = "0.4"
+horon-agent-platform-api = { path = "../platform-api" }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls-platform-verifier = "0.7"
+# Named pipe names are derived from the endpoint path with a digest.
+sha2 = "0.10"
+tokio = { version = "1", features = ["io-util", "net", "time"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Power",
+    "Win32_System_Threading",
+] }
+webpki-root-certs = "1"
+
+[dev-dependencies]
+rcgen = "0.14"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -6,17 +6,13 @@ pub(super) fn origin(paths: &store::SessionPaths) -> Result<store::OriginId> {
     let path = paths.root().join(".origin-id");
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    horon_agent_platform::fs::request_owner_only_mode(&mut options);
     match options.open(&path) {
         Ok(mut file) => {
             let id = store::OriginId::new_v4();
             file.write_all(id.as_str().as_bytes())?;
-            file.sync_all()?;
-            crate::platform::sync_directory(paths.root())?;
+            horon_agent_platform::sync_file(&file, paths.sync_mode())?;
+            horon_agent_platform::sync_dir(paths.root(), paths.sync_mode())?;
             Ok(id)
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {

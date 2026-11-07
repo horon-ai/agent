@@ -42,9 +42,13 @@ impl Priority {
 }
 
 /// Dispatcher that sends notifications through the configured local channels.
+///
+/// No HTTP client is held: building one parses the whole TLS trust store, and
+/// `src/cli/startup.rs` constructs this dispatcher on every start to register
+/// the permission notifier. Only the ntfy path needs a client, so it asks for the
+/// process-wide one when it actually sends.
 #[derive(Clone)]
 pub struct NotificationDispatcher {
-    client: reqwest::Client,
     config: SafetyConfig,
 }
 
@@ -56,19 +60,14 @@ impl Default for NotificationDispatcher {
 
 impl NotificationDispatcher {
     pub fn new() -> Self {
-        let cfg = config().safety.clone();
         Self {
-            client: crate::provider::shared_http_client(),
-            config: cfg,
+            config: config().safety.clone(),
         }
     }
 
     #[cfg(test)]
     pub fn from_config(config: SafetyConfig) -> Self {
-        Self {
-            client: crate::provider::shared_http_client(),
-            config,
-        }
+        Self { config }
     }
 
     /// Send a cycle summary notification (after ambient cycle completes).
@@ -138,7 +137,7 @@ impl NotificationDispatcher {
 
         // ntfy.sh — uses SAFE body (may be publicly readable)
         if let Some(ref topic) = self.config.ntfy_topic {
-            let client = self.client.clone();
+            let client = crate::provider::shared_http_client();
             let url = format!("{}/{}", self.config.ntfy_server, topic);
             let title = title.to_string();
             let body = safe_body.to_string();

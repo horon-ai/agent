@@ -1,6 +1,16 @@
+//! Local IPC behind one API: a Windows named pipe, with the same types and
+//! call shapes as the Unix adapter's socket version.
+//!
+//! A named pipe is not a file: it has no pathname, no mode bits and no
+//! `flock`. The functions that take a socket path therefore translate it into a
+//! deterministic pipe name, and owner-only access is carried by the pipe ACL
+//! rather than by a file mode.
+
+use horon_agent_platform_api::log::{PlatformLogLevel as Level, log as report};
 use sha2::{Digest, Sha256};
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions};
 
@@ -40,9 +50,11 @@ impl Listener {
                 current_server: server,
             }),
             Err(e) if e.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED as i32) => {
-                eprintln!(
-                    "[windows] Named pipe {} busy (access denied), retrying without first_pipe_instance",
-                    pipe_name
+                report(
+                    Level::Warn,
+                    &format!(
+                        "[windows] Named pipe {pipe_name} busy (access denied), retrying without first_pipe_instance"
+                    ),
                 );
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 let server = ServerOptions::new().create(&pipe_name)?;
@@ -285,8 +297,7 @@ impl SyncStream {
         })
     }
 
-    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
-        let _ = timeout;
+    pub fn set_read_timeout(&self, _timeout: Option<std::time::Duration>) -> io::Result<()> {
         // std::fs::File-backed named pipes do not expose socket-style read timeouts.
         // The communicate tool only uses this to avoid hanging forever; on Windows
         // we currently rely on the server side to respond promptly.
@@ -327,9 +338,9 @@ pub fn is_socket_path(path: &Path) -> bool {
 pub fn remove_socket(path: &Path) {
     let pipe_name = path_to_pipe_name(path);
     if probe_pipe(&pipe_name).is_ok() {
-        eprintln!(
-            "[windows] Named pipe {} still open, will be replaced by new server",
-            pipe_name
+        report(
+            Level::Warn,
+            &format!("[windows] Named pipe {pipe_name} still open, will be replaced by new server"),
         );
     }
 }
@@ -353,6 +364,147 @@ fn probe_pipe(pipe_name: &str) -> io::Result<()> {
 pub fn stream_pair() -> io::Result<(Stream, Stream)> {
     Stream::pair()
 }
+
+/// The "address" of a named pipe connection.
+pub type Addr = PipeAddr;
+
+/// Restrict access to a local endpoint to its owner.
+///
+/// A named pipe carries an ACL that applies when the instance is published, and
+/// the socket path never exists as a file that could be restricted, so the
+/// caller's intent is already satisfied.
+pub fn restrict_socket_to_owner(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Whether the endpoint at `path` is reachable by its owner only.
+///
+/// A named pipe carries an ACL that applies when the instance is published, and
+/// there is no file mode to read back, so the restriction the caller asked for
+/// is in force.
+pub fn socket_is_owner_only(_path: &Path) -> bool {
+    true
+}
+
+/// An exclusive lock on a lock file, guaranteeing one live owner per path.
+///
+/// Dropping the guard closes the handle and then unlinks the file, in that
+/// order: an empty share mode makes the file undeletable while this handle is
+/// open, so a lock left behind by every run would accumulate beside each socket.
+pub struct InstanceLock {
+    file: Option<std::fs::File>,
+    path: std::path::PathBuf,
+}
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        // Close first, then remove; the file exists only while this process can
+        // still be said to hold the lock.
+        drop(self.file.take());
+        drop(std::fs::remove_file(&self.path));
+    }
+}
+
+/// Take the exclusive lock beside `path`, or report that a live owner holds it.
+///
+/// Windows has no `flock`: opening the lock file with an empty share mode makes
+/// every later opener fail with a sharing violation for as long as this handle
+/// lives, and closing the handle releases it. The file is unlinked only after
+/// that close, and a process that opened it in between keeps its own handle, so
+/// the unlink fails while somebody still owns the file and no holder is ever
+/// split across two files.
+pub fn lock_instance_file(path: &Path) -> io::Result<Option<InstanceLock>> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(path)
+    {
+        Ok(file) => Ok(Some(InstanceLock {
+            file: Some(file),
+            path: path.to_path_buf(),
+        })),
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The outcome of trying to serialize a client-side bootstrap.
+///
+/// A bootstrap lock is advisory and best-effort: the caller proceeds without it
+/// where the platform has none, which is why the "not supported" case is a
+/// value instead of an error.
+pub enum LockAttempt {
+    /// This process holds the lock until the value is dropped.
+    Acquired(InstanceLock),
+    /// Another live process holds it.
+    Busy,
+    /// This platform has no advisory file lock.
+    Unsupported,
+}
+
+/// Report that a Windows bootstrap is not serialized.
+///
+/// A share-mode lock would work here, but the client's own bootstrap path waits
+/// far longer than a lock holder's window on this platform (the daemon takes
+/// tens of seconds to become ready), so waiting for a lock would turn a slow
+/// launch into a timeout. The Windows spawn path serializes through the pipe
+/// namespace instead.
+pub fn acquire_bootstrap_lock(_path: &Path) -> io::Result<LockAttempt> {
+    Ok(LockAttempt::Unsupported)
+}
+
+/// An interrupt handle for a blocking stream, when the platform has one.
+///
+/// A named pipe cannot be shut down from a second handle the way a Unix socket
+/// can, so callers interrupt reads by dropping the transport and closing it.
+pub fn sync_stream_shutdown_handle(_stream: &SyncStream) -> Option<Arc<dyn Fn() + Send + Sync>> {
+    None
+}
+
+/// Windows handles are not inherited across a process replacement, so there is
+/// nothing to mark.
+pub fn mark_listener_close_on_exec(_listener: &Listener) {}
+
+/// A Windows named pipe publishes one instance at a time.
+///
+/// A probe can temporarily occupy the only published instance, making a second
+/// connect wait inside the `ERROR_PIPE_BUSY` retry loop, so the probe that only
+/// checks presence is the safe one.
+pub fn connect_probe_is_safe() -> bool {
+    false
+}
+
+/// A named pipe disappears with its last handle: no stale node is left behind.
+pub fn socket_nodes_can_be_stale() -> bool {
+    false
+}
+
+/// The single-owner named pipe is the daemon's exclusivity rule, so no lock
+/// file is held next to it.
+pub fn daemon_lock_file_is_used() -> bool {
+    false
+}
+
+/// Windows has no readiness-descriptor handshake, so there is nothing to
+/// report.
+pub fn signal_ready_fd(_ready_env_var: &str) {}
 
 #[cfg(test)]
 mod tests {

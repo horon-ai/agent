@@ -328,21 +328,13 @@ pub fn active_session_ids() -> Vec<String> {
         .collect()
 }
 
-#[cfg(unix)]
 fn process_is_running(pid: u32) -> bool {
+    // Pid zero names no process; the platform probe would answer about the
+    // caller's own group.
     if pid == 0 {
         return false;
     }
-    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-#[cfg(not(unix))]
-fn process_is_running(pid: u32) -> bool {
-    // Best-effort fallback for platforms where this low-level storage crate does
-    // not have a process API. The active PID file is still useful, and stale
-    // entries are cleaned up by higher-level session lifecycle code.
-    pid != 0
+    horon_agent_platform::is_process_running(pid)
 }
 
 /// Live snapshot of how many horon-agent sessions are running, and how many of those

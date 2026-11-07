@@ -310,9 +310,9 @@ impl BackgroundTaskManager {
             return status;
         };
 
-        let reaped_exit = crate::platform::try_reap_child_process(pid).ok().flatten();
+        let reaped_exit = horon_agent_platform::try_reap_child_process(pid).ok().flatten();
 
-        if reaped_exit.is_none() && crate::platform::is_process_running(pid) {
+        if reaped_exit.is_none() && horon_agent_platform::is_process_running(pid) {
             return status;
         }
 
@@ -402,7 +402,7 @@ impl BackgroundTaskManager {
         if owner_pid == std::process::id() {
             return true;
         }
-        !crate::platform::is_process_running(owner_pid)
+        !horon_agent_platform::is_process_running(owner_pid)
     }
 
     /// Finalize an orphaned non-detached `Running` status file as `Failed`.
@@ -988,7 +988,7 @@ impl BackgroundTaskManager {
     pub fn task_owner_is_live(&self, task: &TaskStatusFile) -> bool {
         match task.owner_pid {
             Some(owner) if owner == std::process::id() => self.is_live_task(&task.task_id),
-            Some(owner) => crate::platform::is_process_running(owner),
+            Some(owner) => horon_agent_platform::is_process_running(owner),
             None => false,
         }
     }
@@ -1452,7 +1452,7 @@ impl BackgroundTaskManager {
                 .and_then(|status| status.pid)
             {
                 let _ = tokio::task::spawn_blocking(move || {
-                    crate::platform::terminate_process_group(pid, graceful_timeout)
+                    horon_agent_platform::terminate_process_group(pid, graceful_timeout)
                 })
                 .await;
                 // Let the task's output reader drain what the stopped group
@@ -1510,18 +1510,14 @@ impl BackgroundTaskManager {
                 return Ok(false);
             };
 
-            #[cfg(unix)]
-            {
-                let _ = crate::platform::signal_detached_process_group(pid, libc::SIGTERM);
-                tokio::time::sleep(graceful_timeout).await;
-                if crate::platform::is_process_running(pid) {
-                    let _ = crate::platform::signal_detached_process_group(pid, libc::SIGKILL);
-                }
-            }
-            #[cfg(windows)]
-            {
-                let _ = crate::platform::signal_detached_process_group(pid, 0);
-            }
+            // The daemon's cancel path and the platform adapter agree on one
+            // meaning: ask the group to stop, wait up to the grace period, then
+            // force it. Windows has no catchable signal and terminates the tree
+            // immediately. The wait polls, so it runs off the async worker.
+            let termination = tokio::task::spawn_blocking(move || {
+                horon_agent_platform::terminate_process_group(pid, graceful_timeout)
+            });
+            drop(termination.await);
 
             let completed_at = Utc::now();
             status.status = BackgroundTaskStatus::Failed;
@@ -1998,7 +1994,7 @@ impl BackgroundTaskManager {
                 continue;
             };
 
-            if crate::platform::is_process_running(pid) {
+            if horon_agent_platform::is_process_running(pid) {
                 matches.push(status);
             }
         }

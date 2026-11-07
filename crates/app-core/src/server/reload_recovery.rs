@@ -310,11 +310,9 @@ fn remove_record_files(path: &std::path::Path) -> Result<()> {
         }
     }
 
-    #[cfg(unix)]
-    if let Some(parent) = path.parent()
-        && let Ok(directory) = std::fs::File::open(parent)
-    {
-        let _ = directory.sync_all();
+    if let Some(parent) = path.parent() {
+        // Best effort: a platform with no directory sync reports success.
+        let _ = horon_agent_platform::sync_dir(parent, horon_agent_platform::SyncMode::Full);
     }
     Ok(())
 }

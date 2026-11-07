@@ -54,11 +54,7 @@ impl Home {
                     copy(&entry.path(), &target)?;
                 } else if kind.is_file() {
                     std::fs::copy(entry.path(), &target)?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))?;
-                    }
+                    horon_agent_platform::fs::set_file_permissions_owner_only(&target)?;
                 } else {
                     return Err(std::io::Error::other("fixture evidence contains a non-regular entry"));
                 }

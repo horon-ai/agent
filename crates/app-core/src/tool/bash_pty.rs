@@ -6,8 +6,6 @@
 //! the rest of the tool only deals with [`PtyPlan`].
 
 use crate::config::BashPtyMode;
-#[cfg(unix)]
-use std::process::Stdio;
 use tokio::process::Command as TokioCommand;
 
 /// Programs whose interactive behavior depends on a terminal on stdin.
@@ -24,7 +22,6 @@ const PTY_ROWS: u16 = 24;
 pub(crate) type BoxedReader = Box<dyn tokio::io::AsyncRead + Unpin + Send>;
 pub(crate) type BoxedWriter = Box<dyn tokio::io::AsyncWrite + Unpin + Send>;
 
-#[cfg(not(unix))]
 const NO_TERMINAL_NOTE: &str = "Note: this command normally needs a terminal, but this platform \
 has no POSIX terminal to allocate, so it ran with pipes.";
 
@@ -47,26 +44,17 @@ pub(crate) fn plan(mode: BashPtyMode, command: &str) -> anyhow::Result<PtyPlan> 
     }
 }
 
-#[cfg(unix)]
 fn required() -> anyhow::Result<PtyPlan> {
     Ok(PtyPlan::Terminal(PtyHandle::open()?))
 }
 
-#[cfg(unix)]
 fn preferred() -> anyhow::Result<PtyPlan> {
+    if !horon_agent_platform::term::pty_supported() {
+        return Ok(PtyPlan::Pipe {
+            note: Some(NO_TERMINAL_NOTE),
+        });
+    }
     required()
-}
-
-#[cfg(not(unix))]
-fn required() -> anyhow::Result<PtyPlan> {
-    Err(unsupported().into())
-}
-
-#[cfg(not(unix))]
-fn preferred() -> anyhow::Result<PtyPlan> {
-    Ok(PtyPlan::Pipe {
-        note: Some(NO_TERMINAL_NOTE),
-    })
 }
 
 /// Whether `auto` should allocate a terminal for this command string.
@@ -173,137 +161,37 @@ fn push_segment(segments: &mut Vec<Vec<String>>, words: &mut Vec<String>, word: 
 
 /// A freshly allocated terminal.
 ///
-/// The slave end is consumed by [`PtyHandle::configure`] so the parent keeps no
-/// copy of it open: a lingering slave descriptor would keep the master end from
-/// reaching end-of-file after the child exits, and the reader would hang.
+/// The descriptor handling lives in the platform adapter; this wrapper only
+/// adapts its blocking handles to the async ones the tool needs. The slave end
+/// is consumed by [`PtyHandle::configure`] so the parent keeps no copy of it
+/// open: a lingering slave descriptor would keep the master end from reaching
+/// end-of-file after the child exits, and the reader would hang.
 pub(crate) struct PtyHandle {
-    #[cfg(unix)]
-    master: std::os::fd::OwnedFd,
-    #[cfg(unix)]
-    slave: Option<std::os::fd::OwnedFd>,
+    pty: horon_agent_platform::term::Pty,
 }
 
 impl PtyHandle {
     /// Point `command`'s stdin, stdout, and stderr at the terminal and make it
     /// the child's controlling terminal.
     pub(crate) fn configure(&mut self, command: &mut TokioCommand) -> std::io::Result<()> {
-        #[cfg(unix)]
-        {
-            let slave = self.take_slave()?;
-            command
-                .stdin(Stdio::from(slave.try_clone()?))
-                .stdout(Stdio::from(slave.try_clone()?))
-                .stderr(Stdio::from(slave));
-            // SAFETY: `pre_exec` runs in the forked child before `exec`, so every
-            // call below only changes the child's own session, terminal, signal
-            // mask, and dispositions; none can affect the parent.
-            //
-            // `setsid` detaches the child from the daemon's process group so a
-            // terminal interrupt cannot reach the daemon. `TIOCSCTTY` then makes
-            // the terminal this session's controlling terminal, which is what lets
-            // the line discipline generate SIGINT for `^C` at all (an open slave
-            // descriptor alone never does) and what interactive programs such as
-            // ssh and vim require. The interrupt dispositions are reset because a
-            // long-lived agent process commonly ignores or blocks SIGINT, and the
-            // child would otherwise inherit that and ignore `^C`.
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::setsid() == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    if libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    let mut set: libc::sigset_t = std::mem::zeroed();
-                    libc::sigemptyset(&mut set);
-                    libc::sigaddset(&mut set, libc::SIGINT);
-                    libc::sigaddset(&mut set, libc::SIGQUIT);
-                    libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
-                    libc::signal(libc::SIGINT, libc::SIG_DFL);
-                    libc::signal(libc::SIGQUIT, libc::SIG_DFL);
-                    Ok(())
-                });
-            }
-            Ok(())
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = command;
-            Err(unsupported())
-        }
+        self.pty.configure(command.as_std_mut())
     }
 
+    /// The terminal's output, as an async reader.
     pub(crate) fn reader(&self) -> std::io::Result<tokio::fs::File> {
-        #[cfg(unix)]
-        {
-            Ok(tokio::fs::File::from_std(std::fs::File::from(self.master.try_clone()?)))
-        }
-        #[cfg(not(unix))]
-        {
-            Err(unsupported())
-        }
+        Ok(tokio::fs::File::from_std(self.pty.reader()?))
     }
 
+    /// The terminal's input, as an async writer.
     pub(crate) fn writer(&self) -> std::io::Result<tokio::fs::File> {
-        #[cfg(unix)]
-        {
-            Ok(tokio::fs::File::from_std(std::fs::File::from(self.master.try_clone()?)))
-        }
-        #[cfg(not(unix))]
-        {
-            Err(unsupported())
-        }
+        Ok(tokio::fs::File::from_std(self.pty.writer()?))
     }
 
-    #[cfg(unix)]
-    fn take_slave(&mut self) -> std::io::Result<std::os::fd::OwnedFd> {
-        self.slave
-            .take()
-            .ok_or_else(|| std::io::Error::other("terminal slave end already consumed"))
-    }
-
-    #[cfg(unix)]
     fn open() -> std::io::Result<Self> {
-        use std::os::fd::{FromRawFd, OwnedFd};
-
-        let mut winsize = libc::winsize {
-            ws_row: PTY_ROWS,
-            ws_col: PTY_COLUMNS,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-        let mut master_fd: libc::c_int = -1;
-        let mut slave_fd: libc::c_int = -1;
-        // SAFETY: `openpty` writes two descriptors on success; `name` is unused
-        // (null), the termios pointer is null for kernel defaults, and `winsize`
-        // points at an initialized struct. glibc declares the window-size
-        // parameter as `*const`, macOS as `*mut`, so the raw pointer is built
-        // from a mutable borrow that is valid for both ABIs.
-        let rc = unsafe {
-            libc::openpty(
-                &mut master_fd,
-                &mut slave_fd,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                &raw mut winsize,
-            )
-        };
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: on success both descriptors are valid, distinct, and owned by
-        // nothing else, so each `OwnedFd` is the unique owner.
-        let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master_fd), OwnedFd::from_raw_fd(slave_fd)) };
-        Ok(Self {
-            master,
-            slave: Some(slave),
+        Ok(PtyHandle {
+            pty: horon_agent_platform::term::Pty::open(PTY_COLUMNS, PTY_ROWS)?,
         })
     }
-}
-
-#[cfg(not(unix))]
-fn unsupported() -> std::io::Error {
-    std::io::Error::other("this platform has no POSIX terminal to allocate")
 }
 
 #[cfg(test)]

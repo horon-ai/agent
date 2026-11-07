@@ -116,8 +116,11 @@ impl Session {
                 let publish_paths = paths.clone();
                 let publish_id = id.clone();
                 writer.call(move |owned| {
-                    local.publish(&publish_paths, &publish_id)?;
-                    event_store::select(&publish_paths, &publish_id, &head, explicit)?;
+                    let runtime_changed = local.publish(&publish_paths, &publish_id)?;
+                    let selected_changed = event_store::select(&publish_paths, &publish_id, &head, explicit)?;
+                    if runtime_changed || selected_changed {
+                        event_store::sync_local_state(&publish_paths, &publish_id)?;
+                    }
                     owned.refresh_cache(Some(&head), store::ReadProbe::default())?;
                     Ok(())
                 })?;

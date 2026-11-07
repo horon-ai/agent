@@ -12,7 +12,7 @@ use horon_agent_harness_api::{
 use horon_agent_session_store as store;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::{
     Mutex, MutexGuard, OnceLock,
     atomic::{AtomicU64, Ordering},
@@ -3393,17 +3393,7 @@ impl BridgeState {
         if let Some(home) = std::env::var_os("HORON_AGENT_HOME") {
             return Some(std::path::Path::new(&home).join("config/horon-agent"));
         }
-        #[cfg(target_os = "macos")]
-        return Some(std::path::Path::new(&std::env::var_os("HOME")?).join("Library/Application Support/horon-agent"));
-        #[cfg(target_os = "windows")]
-        return Some(std::path::Path::new(&std::env::var_os("APPDATA")?).join("horon-agent"));
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        Some(
-            std::env::var_os("XDG_CONFIG_HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::Path::new(&std::env::var_os("HOME").unwrap_or_default()).join(".config"))
-                .join("horon-agent"),
-        )
+        horon_agent_platform::paths::user_config_dir("horon-agent")
     }
 
     fn session_root(session_id: &str) -> Result<std::path::PathBuf, (ErrorCode, String)> {

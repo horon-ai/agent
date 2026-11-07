@@ -165,6 +165,16 @@ jobs:
         shell: bash
         run: python3 scripts/ci/check_wildcard_reexports.py
 
+      - name: Platform cfg gate contract tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_check_platform_cfg.py
+
+      - name: Enforce platform cfg allowlist
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_platform_cfg.py
+
       - name: Install cargo-machete
         # The crate is published as a binary; building it from source on every
         # run costs minutes and hundreds of MB on a job that already has the
@@ -336,9 +346,9 @@ jobs:
       - name: Run secret-input pty cohort (all platforms with a pty)
         if: runner.os != 'Windows'
         shell: bash
-        # `horon-agent-base --lib` is never executed on Linux CI: the only horon-agent-base
-        # test invocation anywhere in this workflow is a Windows-only
-        # `power_inhibit::tests::windows_` filter. So the masking fix for #660 had
+        # `horon-agent-base --lib` is never executed on Linux CI: no other step
+        # in this workflow runs a horon-agent-base lib test (the Windows power
+        # tests now live in horon-agent-platform-windows). So the masking fix for #660 had
         # a test that was compiled and never run, which is the same
         # looks-green-but-never-ran shape as the warning budget and the stdin
         # detector (#651). These tests fork a pty, so they cannot run on the
@@ -554,9 +564,14 @@ jobs:
           # "0 passed" and exit 0, so each name is checked against the crate's
           # test list before the run and a missing name fails the step.
           $groups = [ordered]@{
-            'horon-agent-base' = @(
+            'horon-agent-platform-windows' = @(
               'is_process_running_reports_exited_children_as_stopped',
-              'spawn_replacement_process_returns_without_waiting_for_child_exit'
+              'spawn_replacement_process_returns_without_waiting_for_child_exit',
+              'pipe_name_is_stable_and_normalizes_case_and_separators',
+              'pipe_name_falls_back_when_stem_is_empty',
+              'busy_pipe_is_reported_as_a_live_socket_path',
+              'stream_pair_round_trips_bytes',
+              'split_stream_supports_concurrent_read_and_write'
             )
             'horon-agent-app-core' = @(
               'sibling_socket_path_roundtrip',
@@ -567,13 +582,6 @@ jobs:
               'send_orders_same_millisecond_messages_by_seq',
               'mailbox_drops_oldest_beyond_cap',
               'mutual_wait_returns_unanswerable'
-            )
-            'horon-agent-transport' = @(
-              'pipe_name_is_stable_and_normalizes_case_and_separators',
-              'pipe_name_falls_back_when_stem_is_empty',
-              'busy_pipe_is_reported_as_a_live_socket_path',
-              'stream_pair_round_trips_bytes',
-              'split_stream_supports_concurrent_read_and_write'
             )
           }
 
@@ -602,7 +610,7 @@ jobs:
           & ./scripts/ci/cargo_with_timeout.ps1 `
             -Name 'Windows power-inhibit tests' `
             -TimeoutSeconds 900 `
-            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--no-default-features', '--lib', 'power_inhibit::tests::windows_', '--', '--nocapture')
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-platform-windows', '--lib', 'power::tests::', '--', '--nocapture')
 
       - name: Run Windows e2e smoke tests
         shell: pwsh

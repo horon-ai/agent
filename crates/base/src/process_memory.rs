@@ -140,36 +140,23 @@ fn memory_history() -> &'static Mutex<VecDeque<ProcessMemoryHistoryEntry>> {
     MEMORY_HISTORY.get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_HISTORY_SAMPLES)))
 }
 
-#[cfg(target_os = "linux")]
 pub fn snapshot() -> ProcessMemorySnapshot {
     snapshot_with_source("snapshot")
 }
 
-#[cfg(not(target_os = "linux"))]
-pub fn snapshot() -> ProcessMemorySnapshot {
-    snapshot_with_source("snapshot")
-}
-
-#[cfg(target_os = "linux")]
 pub fn snapshot_with_source(source: impl Into<String>) -> ProcessMemorySnapshot {
     let source = source.into();
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        logging::warn(&format!(
-            "process memory snapshot source={source} missing /proc/self/status; using defaults"
-        ));
-        let snapshot = ProcessMemorySnapshot::default();
-        record_snapshot(source, snapshot.clone());
-        return snapshot;
-    };
-
+    // Resident size, peak, virtual size, thread count, stack and descriptor
+    // count are operating-system facts, so the adapter measures them.
+    let facts = horon_agent_platform::process::process_memory_facts();
     let snapshot = ProcessMemorySnapshot {
-        rss_bytes: parse_proc_status_value_bytes(&status, "VmRSS:"),
-        peak_rss_bytes: parse_proc_status_value_bytes(&status, "VmHWM:"),
-        virtual_bytes: parse_proc_status_value_bytes(&status, "VmSize:"),
-        thread_count: parse_proc_status_count(&status, "Threads:"),
-        main_stack_bytes: parse_proc_status_value_bytes(&status, "VmStk:"),
-        fd_count: linux::fd_count(),
-        os: read_linux_memory_info(&status),
+        rss_bytes: facts.rss_bytes,
+        peak_rss_bytes: facts.peak_rss_bytes,
+        virtual_bytes: facts.virtual_bytes,
+        thread_count: facts.thread_count,
+        main_stack_bytes: facts.main_stack_bytes,
+        fd_count: facts.fd_count,
+        os: read_linux_memory_info(),
         allocator: allocator_info(),
     };
     logging::debug(&format!(
@@ -178,139 +165,6 @@ pub fn snapshot_with_source(source: impl Into<String>) -> ProcessMemorySnapshot 
     ));
     record_snapshot(source, snapshot.clone());
     snapshot
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn snapshot_with_source(source: impl Into<String>) -> ProcessMemorySnapshot {
-    let source = source.into();
-    #[cfg(target_os = "macos")]
-    let snapshot = macos::snapshot_fields().map_or_else(
-        || {
-            logging::debug(&format!(
-                "process memory snapshot source={source} proc_pidinfo unavailable; using defaults"
-            ));
-            ProcessMemorySnapshot::default()
-        },
-        |fields| ProcessMemorySnapshot {
-            allocator: allocator_info(),
-            ..fields
-        },
-    );
-    #[cfg(not(target_os = "macos"))]
-    let snapshot = {
-        logging::debug(&format!(
-            "process memory snapshot source={source} using default non-linux implementation"
-        ));
-        ProcessMemorySnapshot::default()
-    };
-    record_snapshot(source, snapshot.clone());
-    snapshot
-}
-
-/// macOS process memory via `proc_pidinfo(PROC_PIDTASKINFO)`.
-///
-/// Without this the runtime memory log records `rss_bytes: null` on every Mac,
-/// which makes "did this change help?" unanswerable from the log the incident
-/// runbook points at. `libc` already exposes the call, so no dependency is added.
-#[cfg(target_os = "linux")]
-mod linux {
-    /// Entries in `/proc/self/fd`, which is one per open descriptor plus the
-    /// directory handle the read itself holds.
-    pub(super) fn fd_count() -> Option<u64> {
-        let entries = std::fs::read_dir("/proc/self/fd").ok()?;
-        let count = entries.flatten().count();
-        // Drop the directory handle's own entry so the number matches what a
-        // soak sees when it compares two samples taken the same way.
-        Some(u64::try_from(count.saturating_sub(1)).unwrap_or(0))
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod macos {
-    use super::ProcessMemorySnapshot;
-
-    pub(super) fn snapshot_fields() -> Option<ProcessMemorySnapshot> {
-        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
-        let size = std::mem::size_of::<libc::proc_taskinfo>();
-        // SAFETY: `info` is a correctly sized, properly aligned, zeroed
-        // `proc_taskinfo`, and `size` is exactly its size, which is what
-        // `proc_pidinfo` requires for `PROC_PIDTASKINFO`.
-        let written = unsafe {
-            libc::proc_pidinfo(
-                libc::getpid(),
-                libc::PROC_PIDTASKINFO,
-                0,
-                info.as_mut_ptr().cast::<libc::c_void>(),
-                size as libc::c_int,
-            )
-        };
-        if written != size as libc::c_int {
-            return None;
-        }
-        // SAFETY: `proc_pidinfo` reported that it wrote the full struct.
-        let info = unsafe { info.assume_init() };
-        Some(ProcessMemorySnapshot {
-            rss_bytes: Some(info.pti_resident_size),
-            peak_rss_bytes: peak_rss_bytes(),
-            virtual_bytes: Some(info.pti_virtual_size),
-            thread_count: Some(u64::try_from(info.pti_threadnum).ok()?),
-            main_stack_bytes: None,
-            fd_count: super::macos::fd_count(),
-            os: None,
-            allocator: super::AllocatorInfo::default(),
-        })
-    }
-
-    /// Open descriptors via `proc_pidinfo(PROC_PIDLISTFDS)`.
-    ///
-    /// The kernel returns as many `proc_fdinfo` records as fit in the buffer,
-    /// so a full buffer means the answer is truncated and the query is retried
-    /// with room for twice as many. `written` is a byte count, not a record
-    /// count, and is negative on failure.
-    pub(super) fn fd_count() -> Option<u64> {
-        let record = std::mem::size_of::<libc::proc_fdinfo>();
-        let mut capacity = 256usize;
-        for _ in 0..8 {
-            let mut buffer: Vec<libc::proc_fdinfo> = Vec::with_capacity(capacity);
-            let bytes = capacity.checked_mul(record)?;
-            // SAFETY: the buffer has room for `capacity` records, `bytes` is
-            // exactly that many bytes, and `proc_fdinfo` is plain old data.
-            let written = unsafe {
-                libc::proc_pidinfo(
-                    libc::getpid(),
-                    libc::PROC_PIDLISTFDS,
-                    0,
-                    buffer.as_mut_ptr().cast::<libc::c_void>(),
-                    libc::c_int::try_from(bytes).ok()?,
-                )
-            };
-            if written < 0 {
-                return None;
-            }
-            let written = usize::try_from(written).ok()?;
-            if written < bytes {
-                return u64::try_from(written / record).ok();
-            }
-            capacity = capacity.checked_mul(2)?;
-        }
-        None
-    }
-
-    /// Peak resident set size from `getrusage(RUSAGE_SELF)`.
-    ///
-    /// `proc_taskinfo` carries no high-water mark, but `ru_maxrss` is exactly
-    /// that; on macOS it is reported in bytes (Linux reports kilobytes).
-    fn peak_rss_bytes() -> Option<u64> {
-        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-        // SAFETY: `getrusage` writes a full `rusage` for `RUSAGE_SELF`.
-        let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-        if result != 0 {
-            return None;
-        }
-        // SAFETY: a zero return means the struct was filled in.
-        let usage = unsafe { usage.assume_init() };
-        u64::try_from(usage.ru_maxrss).ok()
-    }
 }
 
 pub fn history(limit: usize) -> Vec<ProcessMemoryHistoryEntry> {
@@ -796,7 +650,8 @@ fn record_snapshot(source: String, snapshot: ProcessMemorySnapshot) {
 }
 
 #[cfg(target_os = "linux")]
-fn read_linux_memory_info(status: &str) -> Option<OsProcessMemoryInfo> {
+fn read_linux_memory_info() -> Option<OsProcessMemoryInfo> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let smaps = std::fs::read_to_string("/proc/self/smaps_rollup").ok();
     let info = OsProcessMemoryInfo {
         pss_bytes: smaps.as_deref().and_then(|text| parse_proc_value_bytes(text, "Pss:")),
@@ -812,9 +667,9 @@ fn read_linux_memory_info(status: &str) -> Option<OsProcessMemoryInfo> {
         anon_huge_pages_bytes: smaps
             .as_deref()
             .and_then(|text| parse_proc_value_bytes(text, "AnonHugePages:")),
-        rss_anon_bytes: parse_proc_status_value_bytes(status, "RssAnon:"),
-        rss_file_bytes: parse_proc_status_value_bytes(status, "RssFile:"),
-        rss_shmem_bytes: parse_proc_status_value_bytes(status, "RssShmem:"),
+        rss_anon_bytes: parse_proc_status_value_bytes(&status, "RssAnon:"),
+        rss_file_bytes: parse_proc_status_value_bytes(&status, "RssFile:"),
+        rss_shmem_bytes: parse_proc_status_value_bytes(&status, "RssShmem:"),
         private_clean_bytes: smaps
             .as_deref()
             .and_then(|text| parse_proc_value_bytes(text, "Private_Clean:")),
@@ -827,7 +682,7 @@ fn read_linux_memory_info(status: &str) -> Option<OsProcessMemoryInfo> {
         shared_dirty_bytes: smaps
             .as_deref()
             .and_then(|text| parse_proc_value_bytes(text, "Shared_Dirty:")),
-        swap_bytes: parse_proc_status_value_bytes(status, "VmSwap:")
+        swap_bytes: parse_proc_status_value_bytes(&status, "VmSwap:")
             .or_else(|| smaps.as_deref().and_then(|text| parse_proc_value_bytes(text, "Swap:"))),
     };
 
@@ -845,6 +700,12 @@ fn read_linux_memory_info(status: &str) -> Option<OsProcessMemoryInfo> {
     } else {
         Some(info)
     }
+}
+
+/// The proportional-set breakdown exists only in Linux `/proc`.
+#[cfg(not(target_os = "linux"))]
+fn read_linux_memory_info() -> Option<OsProcessMemoryInfo> {
+    None
 }
 
 #[cfg(feature = "jemalloc-prof")]
@@ -988,15 +849,6 @@ fn parse_proc_status_value_bytes(status: &str, key: &str) -> Option<u64> {
     parse_proc_value_bytes(status, key)
 }
 
-/// Parse a unit-less `/proc` counter such as `Threads:\t10`.
-#[cfg(target_os = "linux")]
-fn parse_proc_status_count(status: &str, key: &str) -> Option<u64> {
-    status.lines().find_map(|line| {
-        let rest = line.trim_start().strip_prefix(key)?;
-        rest.split_whitespace().next()?.parse::<u64>().ok()
-    })
-}
-
 #[cfg(target_os = "linux")]
 fn parse_proc_value_bytes(status: &str, key: &str) -> Option<u64> {
     status.lines().find_map(|line| {
@@ -1032,41 +884,6 @@ mod tests {
         assert_eq!(
             estimate_json_bytes(&value),
             serde_json::to_vec(&value).expect("serialize reference value").len()
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_snapshot_reports_real_memory() {
-        let snapshot = snapshot_with_source("test");
-        let rss = snapshot.rss_bytes.expect("rss_bytes present on macOS");
-        assert!(rss > 0, "rss_bytes must be a real measurement, got {rss}");
-        assert!(
-            snapshot.peak_rss_bytes.is_some_and(|peak| peak >= rss),
-            "peak rss must be at least the current rss"
-        );
-        assert!(snapshot.virtual_bytes.is_some_and(|virtual_bytes| virtual_bytes >= rss));
-        assert!(snapshot.thread_count.is_some_and(|threads| threads >= 1));
-        assert!(
-            snapshot.fd_count.is_some_and(|fds| fds >= 3),
-            "a live process holds at least stdin, stdout and stderr"
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_fd_count_sees_descriptors_this_test_holds() {
-        // A lower bound rather than a delta: other test threads share the
-        // process's descriptor table, so only "at least these are open" is
-        // deterministic.
-        let held: Vec<std::fs::File> = (0..8)
-            .map(|_| std::fs::File::open("/dev/null").expect("open /dev/null"))
-            .collect();
-        let count = macos::fd_count().expect("fd count available on macOS");
-        assert!(
-            count >= held.len() as u64,
-            "the process must report at least the {0} descriptors this test holds, got {count}",
-            held.len()
         );
     }
 
@@ -1236,14 +1053,6 @@ mod tests {
         assert_eq!(parse_proc_value_bytes(text, "Pss:"), Some(123 * 1024));
         assert_eq!(parse_proc_value_bytes(text, "Mapped:"), Some(2 * 1024 * 1024));
         assert_eq!(parse_proc_value_bytes(text, "Retained:"), Some(1024 * 1024 * 1024));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn parse_proc_status_count_reads_unitless_counters() {
-        let text = "Name:\thoron-agent\nThreads:\t10\nVmStk:\t     132 kB\n";
-        assert_eq!(parse_proc_status_count(text, "Threads:"), Some(10));
-        assert_eq!(parse_proc_status_count(text, "Missing:"), None);
     }
 
     #[cfg(target_os = "linux")]

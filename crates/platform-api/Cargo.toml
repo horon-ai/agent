@@ -1,0 +1,13 @@
+[package]
+name = "horon-agent-platform-api"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Contract shared by the platform adapter crates: durable sync modes and the TLS client configuration"
+
+[lib]
+name = "horon_agent_platform_api"
+path = "src/lib.rs"
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }

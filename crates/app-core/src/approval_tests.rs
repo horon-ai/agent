@@ -205,9 +205,13 @@ fn off_mode_writes_no_audit_line_for_reads_or_writes() {
 /// This asserts the difference directly: with the scratch path set the command
 /// resolves inside a bounded directory and is not destructive; with it unset the
 /// variable cannot be expanded and the classifier cannot bound it.
-#[cfg(not(windows))]
 #[test]
 fn the_approval_gate_assesses_the_same_scratch_path_the_shell_receives() {
+    // The comparison is only meaningful where the shell is handed a scratch
+    // directory at all.
+    if !horon_agent_platform::term::passes_scratch_dir_to_shell() {
+        return;
+    }
     // `RiskContext::from_env` reads `HORON_AGENT_SCRATCH_DIR` directly, so if the
     // test process has it exported the control below agrees with the wired case
     // and the assertion goes vacuous: deleting the fix would still pass. Clear it

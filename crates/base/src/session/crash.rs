@@ -296,6 +296,15 @@ fn find_crashed_via_pid_files() -> Option<Vec<(String, String)>> {
 
         match Session::load(&session_id) {
             Ok(mut session) => {
+                // The binding's activity clock is written when the session is
+                // taken over, so a daemon that died mid-turn leaves one older
+                // than the work it was doing. The hint is about the work, so the
+                // later of the two clocks decides whether this is recent, and it
+                // is read before the status change below moves `updated_at`.
+                let ts = match session.last_active_at {
+                    Some(active) => active.max(session.updated_at),
+                    None => session.updated_at,
+                };
                 // Idle-vs-interrupted disposition (upstream #988, extended to
                 // the PID detector): losing the process is only a crash when
                 // it interrupts unfinished work. A leftover streaming marker
@@ -316,7 +325,6 @@ fn find_crashed_via_pid_files() -> Option<Vec<(String, String)>> {
                     session.mark_closed();
                 }
                 let _ = session.save();
-                let ts = session.last_active_at.unwrap_or(session.updated_at);
                 if ts <= cutoff {
                     continue;
                 }
@@ -439,7 +447,7 @@ fn find_crashed_legacy_scan() -> Vec<(String, String)> {
 }
 
 pub(super) fn is_pid_running(pid: u32) -> bool {
-    crate::platform::is_process_running(pid)
+    horon_agent_platform::is_process_running(pid)
 }
 
 // ---------------------------------------------------------------------------
@@ -688,11 +696,7 @@ mod batch_crash_tests {
             use std::io::Write;
             let mut options = std::fs::OpenOptions::new();
             options.create_new(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
+            horon_agent_platform::fs::request_owner_only_mode(&mut options);
             let mut file = options.open(corrupt_dir.join("events.jsonl")).expect("corrupt log");
             file.write_all(b"{not a record}\n").expect("bytes");
         }

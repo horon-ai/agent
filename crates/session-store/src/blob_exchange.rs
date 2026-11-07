@@ -148,7 +148,7 @@ fn published(paths: &SessionPaths, id: &SessionId, r: &PayloadRef, disk: &mut Di
     match checked_file(&path, false) {
         Ok(mut file) => {
             stage::verify(&mut file, &r.sha256, r.size)?;
-            file.sync_all()?;
+            disk.sync_file(&file, IoPoint::BlobFileSync)?;
             disk.sync_dir(&paths.blobs_dir(id)?, IoPoint::BlobDirectorySync)?;
             Ok(true)
         }

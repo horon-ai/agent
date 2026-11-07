@@ -85,7 +85,7 @@ fn restore(path: &Path, previous: &Previous) -> Result<()> {
             }
             let parent = path.parent().context("activation target has no parent")?;
             let temporary = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
-            crate::platform::atomic_symlink_swap(target, path, &temporary)?;
+            horon_agent_platform::atomic_symlink_swap(target, path, &temporary)?;
         }
         Previous::File {
             backup,
@@ -134,7 +134,6 @@ mod tests {
         assert!(!fresh.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn rollback_preserves_relative_symlink_target_without_touching_its_binary() {
         let home = tempfile::tempdir().unwrap();
@@ -143,10 +142,13 @@ mod tests {
         let link = home.path().join("current");
         std::fs::write(&old, b"old-binary").unwrap();
         std::fs::write(&new, b"new-binary").unwrap();
-        std::os::unix::fs::symlink("old", &link).unwrap();
+        if horon_agent_platform::fs::symlink_file(std::path::Path::new("old"), &link).is_err() {
+            // This platform cannot create a relative symlink to test with.
+            return;
+        }
         let result: Result<()> = with_rollback(std::slice::from_ref(&link), || {
             std::fs::remove_file(&link)?;
-            std::os::unix::fs::symlink("new", &link)?;
+            horon_agent_platform::fs::symlink_file(Path::new("new"), &link)?;
             bail!("later switch failed");
         });
         assert!(result.is_err());

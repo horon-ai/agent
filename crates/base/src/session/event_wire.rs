@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use horon_agent_session_store::SessionMetadata;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
+use std::path::Path;
 
 /// Host-local only. Replica export never carries this execution ownership.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,14 +32,53 @@ impl LocalRuntime {
         }
     }
 
+    /// Publish the runtime binding, reporting whether the file changed.
+    ///
+    /// The flush of the session directory is left to the commit, which covers
+    /// every local original it published with one directory flush.
+    ///
+    /// A commit that only moves the activity clock writes nothing: the binding is
+    /// published when a resume-relevant field or the session status changes, so a
+    /// turn stays at the state a restart reads without a flush per event batch.
     pub(super) fn publish(
         &self,
         paths: &horon_agent_session_store::SessionPaths,
         id: &horon_agent_session_store::SessionId,
-    ) -> Result<()> {
-        super::event_store::publish_local(&paths.session_dir(id)?.join("local-runtime.json"), self)?;
-        crate::platform::sync_directory(&paths.session_dir(id)?)?;
-        Ok(())
+    ) -> Result<bool> {
+        let path = paths.session_dir(id)?.join("local-runtime.json");
+        if !self.owed(&path) {
+            return Ok(false);
+        }
+        super::event_store::publish_local_file(&path, self, paths.sync_mode())
+    }
+
+    /// Whether the durable binding on disk has to change.
+    ///
+    /// `working_dir`, `migration_epoch` and `provider_session_id` are what a
+    /// restart resumes into; `status` is what a reader shows. `last_pid` is the
+    /// process a restart hands the crash detector, so it may never be skipped:
+    /// a session resumed by a new daemon would otherwise be judged by the dead
+    /// process that owned it before, and a live session would be reported as
+    /// crashed. It changes only when a process takes the session over, so it
+    /// costs one write per activation rather than one per batch.
+    ///
+    /// `last_active_at` alone still writes nothing: it moves with every batch and
+    /// only the activity clock depends on it, so readers take the newest of this
+    /// binding and the log's own activity instead of a flush per commit.
+    fn owed(&self, path: &Path) -> bool {
+        let stored: LocalRuntime = match std::fs::read(path) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(stored) => stored,
+                // A damaged binding is rewritten rather than trusted.
+                Err(_) => return true,
+            },
+            Err(_) => return true,
+        };
+        self.working_dir != stored.working_dir
+            || self.migration_epoch != stored.migration_epoch
+            || self.provider_session_id != stored.provider_session_id
+            || self.status != stored.status
+            || self.last_pid != stored.last_pid
     }
 }
 

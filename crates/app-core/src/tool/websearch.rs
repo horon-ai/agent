@@ -6,15 +6,23 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// Web search using DuckDuckGo or Bing (HTML scraping, with optional Bing API)
-pub struct WebSearchTool {
-    client: reqwest::Client,
-}
+///
+/// Like [`super::webfetch::WebFetchTool`], no HTTP client is held: building one
+/// parses the whole TLS trust store, and this tool is constructed when the
+/// registry is built at `serve` startup, long before any search runs.
+/// `provider::shared_http_client()` is already process-wide, so the call sites
+/// ask for it directly.
+pub struct WebSearchTool;
 
 impl WebSearchTool {
     pub fn new() -> Self {
-        Self {
-            client: crate::provider::shared_http_client(),
-        }
+        Self
+    }
+}
+
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -190,8 +198,7 @@ impl WebSearchTool {
         // (HTTP 202, no results) for plain GET requests. Submitting the query as
         // a POST form, the same way the real HTML page does, still returns the
         // standard results markup with a 200.
-        let response = self
-            .client
+        let response = crate::provider::shared_http_client()
             .post("https://html.duckduckgo.com/html/")
             .header(
                 reqwest::header::USER_AGENT,
@@ -251,8 +258,7 @@ impl WebSearchTool {
         market: &str,
         api_key: &str,
     ) -> Result<Vec<SearchResult>> {
-        let response = self
-            .client
+        let response = crate::provider::shared_http_client()
             .get("https://api.bing.microsoft.com/v7.0/search")
             .query(&[("q", query), ("count", &num_results.to_string()), ("mkt", market)])
             .header("Ocp-Apim-Subscription-Key", api_key)
@@ -276,8 +282,7 @@ impl WebSearchTool {
             urlencoding::encode(market)
         );
 
-        let response = self
-            .client
+        let response = crate::provider::shared_http_client()
             .get(&url)
             .header(
                 reqwest::header::USER_AGENT,
@@ -337,8 +342,7 @@ impl WebSearchTool {
             })?;
 
         let endpoint = format!("{}/search", base.trim_end_matches('/'));
-        let response = self
-            .client
+        let response = crate::provider::shared_http_client()
             .get(&endpoint)
             .query(&[("q", query), ("format", "json")])
             .header(
@@ -485,6 +489,7 @@ fn custom_request(
 async fn search_custom(config: &CustomWebSearchConfig, query: &str, count: usize) -> Result<Vec<SearchResult>> {
     // Never forward user-configured credentials to redirect destinations.
     let client = reqwest::Client::builder()
+        .use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(30))
         .build()

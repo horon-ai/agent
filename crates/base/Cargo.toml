@@ -26,8 +26,8 @@ futures = "0.3"
 async-trait = "0.1"
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "blocking", "charset", "http2", "system-proxy", "rustls-tls", "rustls-tls-native-roots"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "blocking", "charset", "http2", "system-proxy", "rustls-tls-manual-roots"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -92,6 +92,7 @@ horon-agent-core = { path = "../core" }
 horon-agent-memory-types = { path = "../memory-types" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-plan = { path = "../plan" }
+horon-agent-platform = { path = "../platform" }
 horon-agent-protocol = { path = "../protocol" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }

@@ -113,8 +113,7 @@ impl BlockingWriter {
             let retry = cursor::make(&self.id, &heads, &hash, start, "import")?;
             let sync_result = (|| -> Result<(), StoreError> {
                 let file = crate::blobs::checked_file(&self.paths.events_log(&self.id)?, false)?;
-                self.disk.hit(IoPoint::LogFileSync)?;
-                file.sync_all()?;
+                self.disk.sync_file(&file, IoPoint::LogFileSync)?;
                 self.disk
                     .sync_dir(&self.paths.session_dir(&self.id)?, IoPoint::LogDirectorySync)
             })();

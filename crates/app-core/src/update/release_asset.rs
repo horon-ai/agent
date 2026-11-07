@@ -187,7 +187,7 @@ fn stage_package(
         }
         for path in files {
             if path.extension().is_some_and(|extension| extension == "bin") {
-                crate::platform::set_permissions_executable(&path)?;
+                horon_agent_platform::set_permissions_executable(&path)?;
             }
         }
     } else {
@@ -195,7 +195,7 @@ fn stage_package(
         output.write_all(binary_bytes)?;
         output.sync_all()?;
     }
-    crate::platform::set_permissions_executable(&binary)?;
+    horon_agent_platform::set_permissions_executable(&binary)?;
     super::patch_termux_interpreter_if_needed(&binary)?;
 
     let destination = versions.join(directory_version);

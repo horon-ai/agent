@@ -1,0 +1,25 @@
+[package]
+name = "horon-agent-platform-linux"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Linux and other Unix platform adapter: fdatasync for files, fsync for directories, and the system root store for TLS"
+
+[lib]
+name = "horon_agent_platform_linux"
+path = "src/lib.rs"
+
+[dependencies]
+horon-agent-platform-api = { path = "../platform-api" }
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+rustls-native-certs = "0.8"
+webpki-roots = "1"
+# Local IPC and the termination-signal watcher. `signal` is used by the entry
+# point that arms the process shutdown path.
+tokio = { version = "1", features = ["io-util", "net", "rt", "signal", "time"] }
+
+[dev-dependencies]
+rcgen = "0.14"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -33,16 +33,10 @@ pub(crate) fn safe_path(path: &Path) -> Result<(), StoreError> {
 
 fn optional(path: &Path) -> Result<Option<Vec<u8>>, StoreError> {
     safe_path(path)?;
-    let mut options = fs::OpenOptions::new();
+    // The leaf is opened without following a symlink; `safe_path` above already
+    // refused a symlinked component.
+    let mut options = horon_agent_platform::fs::no_follow_open_options();
     options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        #[cfg(target_os = "macos")]
-        options.custom_flags(0x100);
-        #[cfg(target_os = "linux")]
-        options.custom_flags(0x20000);
-    }
     match options.open(path) {
         Ok(mut file) => {
             if !file.metadata()?.is_file() {
@@ -205,27 +199,26 @@ impl Bundle {
             disk.directory(parent)?;
             let mut file = crate::blobs::new_file(&path)?;
             file.write_all(bytes)?;
-            file.sync_all()?;
+            crate::blobs::sync_file(&file, disk.mode)?;
             disk.sync_dir(parent, IoPoint::DirectorySync)?;
         }
         Ok(())
     }
 }
 
-pub(crate) fn sync_tree(path: &Path) -> Result<(), StoreError> {
+pub(crate) fn sync_tree(path: &Path, mode: SyncMode) -> Result<(), StoreError> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         if kind.is_dir() {
-            sync_tree(&entry.path())?;
+            sync_tree(&entry.path(), mode)?;
         } else if kind.is_file() {
-            File::open(entry.path())?.sync_all()?;
+            crate::blobs::sync_file(&File::open(entry.path())?, mode)?;
         } else {
             return Err(crate::blobs::unsafe_path(&entry.path()));
         }
     }
-    File::open(path)?.sync_all()?;
-    Ok(())
+    crate::blobs::sync_directory(path, mode)
 }
 
 pub(crate) fn capture_index(home: &Path) -> Result<Bundle, StoreError> {

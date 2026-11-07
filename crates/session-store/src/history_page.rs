@@ -468,9 +468,7 @@ impl HistoryPages {
         // and the next request compares that stamp against the log, sees the append and rebuilds.
         // Reuse is guarded by that comparison, never by this function, so no stale page is served.
         publish(
-            &mut Disk {
-                hook: Box::new(|_| Ok(())),
-            },
+            &mut Disk::new(Box::new(|_| Ok(())), paths.sync_mode()),
             &path,
             &bytes,
             probe,

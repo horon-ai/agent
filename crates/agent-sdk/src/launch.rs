@@ -5,7 +5,6 @@
 //! home which the returned owner tears down on drop.
 
 use crate::errors::{Error, ErrorKind, Result};
-#[cfg(unix)]
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -150,7 +149,7 @@ impl LaunchedInstance {
         if let Ok(mut slot) = self.child.lock()
             && let Some(mut child) = slot.take()
         {
-            terminate_child(&mut child);
+            horon_agent_platform::process::terminate_child(&mut child);
         }
         if self.ephemeral {
             remove_ephemeral_home(&self.horon_agent_home, self.cleanup_timeout);
@@ -212,7 +211,7 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
 
     let binary = options.binary.clone().unwrap_or_else(|| PathBuf::from("horon-agent"));
     let mut command = Command::new(&binary);
-    crate::process::no_console_window(&mut command);
+    horon_agent_platform::process::hide_console_window(&mut command);
     command
         // `--no-update` turns off the bridge's own background update check, which
         // also runs for source builds.
@@ -323,7 +322,7 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
             Ok(None) => {}
             Err(cause) => {
                 stop_daemon_started_by_failed_launch(&horon_agent_home, &runtime_dir, registered_before);
-                terminate_child(&mut child);
+                horon_agent_platform::process::terminate_child(&mut child);
                 cleanup_on_error();
                 return Err(Error::new(ErrorKind::StartupFailed, cause.to_string()));
             }
@@ -332,7 +331,7 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
     }
 
     stop_daemon_started_by_failed_launch(&horon_agent_home, &runtime_dir, registered_before);
-    terminate_child(&mut child);
+    horon_agent_platform::process::terminate_child(&mut child);
     if let Some(reader) = stderr_reader.take() {
         let _ = reader.join();
     }
@@ -448,17 +447,11 @@ fn link_credential_file(source: &Path, root: &Path, relative: &Path) -> Result<(
     link_file(source, &destination)
 }
 
-#[cfg(unix)]
-fn link_file(source: &Path, destination: &Path) -> Result<()> {
-    std::os::unix::fs::symlink(source, destination).map_err(launch_io)
-}
-
-#[cfg(windows)]
 fn link_file(source: &Path, destination: &Path) -> Result<()> {
     // Preserve rotating credentials rather than silently creating a stale copy.
-    // Windows may require Developer Mode or symlink privileges; report that OS
-    // error to the caller when links are unavailable.
-    std::os::windows::fs::symlink_file(source, destination).map_err(launch_io)
+    // Windows may require Developer Mode or symlink privileges; the adapter
+    // reports that error to the caller instead of copying.
+    horon_agent_platform::fs::symlink_file(source, destination).map_err(launch_io)
 }
 
 fn ensure_instance_directory(root: &Path, relative: &Path) -> Result<PathBuf> {
@@ -562,16 +555,12 @@ fn spawn_detached(program: &Path, args: &[&str]) -> std::io::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // A GUI host (HoronAgent Desktop) has no console to share, so each
-    // console-subsystem child would open its own window. CREATE_NO_WINDOW
-    // gives the daemon a hidden console its own children inherit, and a new
-    // process group keeps the host's Ctrl+C or exit from reaching it.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP | crate::process::CREATE_NO_WINDOW);
-    }
-    command.spawn().map(drop)
+    // console-subsystem child would open its own window on Windows; there the
+    // adapter gives the daemon a new process group with a hidden console. On
+    // Unix the child stays in the caller's session, as the SDK has always
+    // launched it, and the caller does not wait for it.
+    drop(horon_agent_platform::spawn_background_consoleless(&mut command)?);
+    Ok(())
 }
 
 /// Block until `path` accepts connections, or the timeout expires.
@@ -597,7 +586,6 @@ pub fn wait_for_socket(path: &Path, what: &str, timeout: Duration) -> Result<()>
     ))
 }
 
-#[cfg(unix)]
 fn read_daemon_pid(home: &Path, runtime_dir: &Path) -> Option<i32> {
     let raw = fs::read(home.join("servers.json")).ok()?;
     let registry: Value = serde_json::from_slice(&raw).ok()?;
@@ -612,7 +600,6 @@ fn read_daemon_pid(home: &Path, runtime_dir: &Path) -> Option<i32> {
     })
 }
 
-#[cfg(unix)]
 fn stop_instance_daemon(home: &Path, runtime_dir: &Path) {
     if let Some(pid) = read_daemon_pid(home, runtime_dir) {
         stop_daemon_pid(pid);
@@ -621,14 +608,12 @@ fn stop_instance_daemon(home: &Path, runtime_dir: &Path) {
 
 /// Pid of a daemon already registered for this runtime directory before the
 /// launch started. A failed launch must not stop that daemon.
-#[cfg(unix)]
 fn registered_daemon_pid(home: &Path, runtime_dir: &Path) -> Option<i32> {
     read_daemon_pid(home, runtime_dir)
 }
 
 /// Stop the daemon a failed launch registered. A daemon that was already
 /// registered before the launch belongs to someone else and is left alone.
-#[cfg(unix)]
 fn stop_daemon_started_by_failed_launch(home: &Path, runtime_dir: &Path, registered_before: Option<i32>) {
     if let Some(pid) = read_daemon_pid(home, runtime_dir)
         && Some(pid) != registered_before
@@ -637,79 +622,19 @@ fn stop_daemon_started_by_failed_launch(home: &Path, runtime_dir: &Path, registe
     }
 }
 
-#[cfg(unix)]
 fn stop_daemon_pid(pid: i32) {
-    signal_process_group(pid, libc::SIGTERM);
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if !process_exists(pid) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    signal_process_group(pid, libc::SIGKILL);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && process_exists(pid) {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-#[cfg(not(unix))]
-fn registered_daemon_pid(_home: &Path, _runtime_dir: &Path) -> Option<i32> {
-    None
-}
-
-#[cfg(not(unix))]
-fn stop_daemon_started_by_failed_launch(_home: &Path, _runtime_dir: &Path, _registered_before: Option<i32>) {}
-
-#[cfg(not(unix))]
-fn stop_instance_daemon(_home: &Path, _runtime_dir: &Path) {}
-
-#[cfg(unix)]
-fn signal_process_group(pid: i32, signal: i32) {
-    // SAFETY: `kill` does not retain pointers; both calls use validated pids.
-    unsafe {
-        if libc::kill(-pid, signal) != 0 {
-            libc::kill(pid, signal);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn process_exists(pid: i32) -> bool {
-    // SAFETY: signal 0 only probes whether the numeric pid exists.
-    unsafe { libc::kill(pid, 0) == 0 }
-}
-
-#[cfg(unix)]
-fn terminate_child(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
+    let pid = pid as u32;
+    // Ask politely, then force: the adapter sends the termination signal, waits
+    // out the grace period, and escalates to a kill the daemon cannot ignore.
+    if horon_agent_platform::terminate_process_group(pid, Duration::from_secs(2)) {
         return;
     }
-    // SAFETY: the child id came from `std::process::Child` and is live here.
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGTERM);
-    }
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[cfg(not(unix))]
-fn terminate_child(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
-    }
-    // std's Windows Child::kill uses TerminateProcess. There is no portable
-    // graceful signal equivalent, so terminate immediately and reap it.
-    let _ = child.kill();
-    let _ = child.wait();
+    // The group signal reaches nothing when the recorded daemon is not a group
+    // leader - one a supervisor started, or an older build's process. Stop that
+    // process itself, which is what this caller did before the adapter owned
+    // process control; the shared group call stays honest about the group it
+    // could not reach.
+    horon_agent_platform::terminate_process(pid, Duration::from_secs(5));
 }
 
 fn remove_ephemeral_home(home: &Path, timeout: Duration) {
@@ -739,55 +664,30 @@ fn stderr_suffix(stderr: &str) -> String {
 }
 
 fn home_dir() -> PathBuf {
+    // Both variables are plain environment entries, so reading them needs no
+    // operating-system branch; Windows sets only the second one.
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Resolve the user's platform horon-agent config directory.
+///
+/// The per-platform layout (macOS application support, Windows roaming data,
+/// the XDG convention elsewhere) belongs to the platform adapter; a process with
+/// no home directory falls back to a relative path, as it always has.
 pub fn user_app_config_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home_dir().join("Library/Application Support/horon-agent")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home_dir().join("AppData/Roaming"))
-            .join("horon-agent")
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home_dir().join(".config"))
-            .join("horon-agent")
-    }
+    horon_agent_platform::paths::user_config_dir("horon-agent")
+        .unwrap_or_else(|| PathBuf::from(".").join("horon-agent"))
 }
 
-#[cfg(unix)]
 fn set_owner_only_dir(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(launch_io)
+    horon_agent_platform::fs::set_dir_permissions_owner_only(path).map_err(launch_io)
 }
 
-#[cfg(unix)]
 fn set_owner_only_file(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(launch_io)
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_dir(_path: &Path) -> Result<()> {
-    // Windows access is controlled by inherited ACLs. std does not expose an
-    // owner-only ACL operation, and marking a path read-only is not equivalent.
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_file(_path: &Path) -> Result<()> {
-    Ok(())
+    horon_agent_platform::fs::set_file_permissions_owner_only(path).map_err(launch_io)
 }
 
 fn launch_io(error: std::io::Error) -> Error {
@@ -798,7 +698,6 @@ fn launch_io(error: std::io::Error) -> Error {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn swarm_model_reaches_runtime_and_overrides_generic_environment() {
         use std::os::unix::fs::PermissionsExt;
@@ -833,7 +732,6 @@ mod tests {
         assert_eq!(fs::read_to_string(captured).expect("captured model"), "inherit");
     }
 
-    #[cfg(unix)]
     #[test]
     fn wake_mode_reaches_runtime_and_overrides_generic_environment() {
         use std::os::unix::fs::PermissionsExt;
@@ -863,7 +761,6 @@ mod tests {
         assert_eq!(fs::read_to_string(captured).unwrap(), "external");
     }
 
-    #[cfg(unix)]
     #[test]
     fn private_instances_disable_auto_update() {
         use std::os::unix::fs::PermissionsExt;
@@ -922,7 +819,10 @@ mod tests {
 
         drop(instance);
 
-        assert!(!process_exists(pid), "owned bridge process survived Drop");
+        assert!(
+            !horon_agent_platform::is_process_running(pid as u32),
+            "owned bridge process survived Drop"
+        );
         assert!(!home.exists(), "ephemeral instance home survived Drop");
     }
 

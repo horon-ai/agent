@@ -5,15 +5,78 @@ use horon_agent_session_store as store;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Publish a derived host-local value without a hard-link window or shared permissions.
-pub(super) fn publish_local<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+/// Publish a host-local file the originals cannot rebuild.
+///
+/// The selected head, its explicit flag, the external-source receipt and the
+/// runtime binding are local state the event log does not carry, so the file and
+/// the rename into place are flushed with the configured durability level
+/// before the caller continues.
+pub(super) fn publish_local_durable<T: serde::Serialize>(
+    path: &Path,
+    value: &T,
+    mode: horon_agent_platform::SyncMode,
+) -> Result<()> {
+    if publish_local_file(path, value, mode)? {
+        sync_local_directory(path, mode)?;
+    }
+    Ok(())
+}
+
+/// Publish a host-local value that is rebuilt from the originals when it is lost.
+///
+/// A derived file is replaced by rename and never flushed: a crash can only
+/// invalidate it, and the restore path then reconstructs it from the event log.
+pub(super) fn publish_local_derived<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    publish_renamed(path, value, None)?;
+    Ok(())
+}
+
+/// Write `value` into `path` by rename, reporting whether the bytes changed.
+///
+/// An unchanged file is already durable, so rewriting it would only add a flush
+/// and a rename for state that did not move. The caller flushes the directory
+/// once for all the files it published in one step.
+pub(super) fn publish_local_file<T: serde::Serialize>(
+    path: &Path,
+    value: &T,
+    mode: horon_agent_platform::SyncMode,
+) -> Result<bool> {
+    publish_renamed(path, value, Some(mode))
+}
+
+/// Replace `path` by rename, flushing the staged file when `mode` asks for it.
+fn publish_renamed<T: serde::Serialize>(
+    path: &Path,
+    value: &T,
+    mode: Option<horon_agent_platform::SyncMode>,
+) -> Result<bool> {
     use std::io::Write;
+    let bytes = serde_json::to_vec(value)?;
+    let unchanged = matches!(std::fs::symlink_metadata(path), Ok(metadata) if metadata.is_file())
+        && std::fs::read(path).is_ok_and(|current| current == bytes);
+    if unchanged {
+        return Ok(false);
+    }
     let directory = path.parent().context("local state parent missing")?;
     let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-    temporary.write_all(&serde_json::to_vec(value)?)?;
-    temporary.as_file().sync_all()?;
+    temporary.write_all(&bytes)?;
+    if let Some(mode) = mode {
+        horon_agent_platform::sync_file(temporary.as_file(), mode)?;
+    }
     temporary.persist(path).map_err(|error| error.error)?;
-    crate::platform::sync_directory(directory)?;
+    Ok(true)
+}
+
+/// Flush one directory entry for the local files published in `path`.
+fn sync_local_directory(path: &Path, mode: horon_agent_platform::SyncMode) -> Result<()> {
+    let directory = path.parent().context("local state parent missing")?;
+    horon_agent_platform::sync_dir(directory, mode)?;
+    Ok(())
+}
+
+/// Flush the session directory once for every local original a commit published.
+pub(super) fn sync_local_state(paths: &store::SessionPaths, id: &store::SessionId) -> Result<()> {
+    horon_agent_platform::sync_dir(&paths.session_dir(id)?, paths.sync_mode())?;
     Ok(())
 }
 
@@ -186,17 +249,31 @@ pub(super) fn explicit_selection(paths: &store::SessionPaths, id: &store::Sessio
     }
 }
 
+/// Record the selected head and its intent, reporting whether a file changed.
 pub(super) fn select(
     paths: &store::SessionPaths,
     id: &store::SessionId,
     head: &store::EventId,
     explicit: bool,
-) -> Result<()> {
-    let file = paths.session_dir(id)?.join("local-head.json");
-    publish_local(&file, head)?;
-    publish_local(&paths.session_dir(id)?.join("local-head-explicit.json"), &explicit)?;
-    crate::platform::sync_directory(&paths.session_dir(id)?)?;
-    Ok(())
+) -> Result<bool> {
+    let directory = paths.session_dir(id)?;
+    // A head is only meaningful when the selection is explicit: every reader
+    // (selection, history paging, replica export) checks the flag first and
+    // ignores the file when the flag says there is no selection. Recording an
+    // implicit head would cost a flush per commit for a value nothing reads.
+    let mut changed = false;
+    if explicit {
+        changed |= publish_local_file(&directory.join("local-head.json"), head, paths.sync_mode())?;
+    }
+    changed |= publish_local_file(
+        &directory.join("local-head-explicit.json"),
+        &explicit,
+        paths.sync_mode(),
+    )?;
+    if changed {
+        sync_local_directory(&directory.join("local-head.json"), paths.sync_mode())?;
+    }
+    Ok(changed)
 }
 
 impl Session {
@@ -331,7 +408,8 @@ impl Session {
                 .and_then(|v| v.to_str())
                 .context("session id missing")?;
             (
-                store::SessionPaths::new(directory.parent().context("sessions root missing")?.to_path_buf()),
+                store::SessionPaths::new(directory.parent().context("sessions root missing")?.to_path_buf())
+                    .with_sync_mode(crate::config::config().storage_sync_mode()),
                 store::SessionId::parse(id)?,
             )
         } else {
@@ -341,7 +419,8 @@ impl Session {
                 .context("session id missing")?;
             let root = path.parent().context("sessions root missing")?;
             (
-                store::SessionPaths::new(root.canonicalize()?),
+                store::SessionPaths::new(root.canonicalize()?)
+                    .with_sync_mode(crate::config::config().storage_sync_mode()),
                 store::SessionId::parse(id)?,
             )
         };

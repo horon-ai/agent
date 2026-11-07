@@ -297,42 +297,141 @@ fn cost_key(cost: &ModelCost) -> [u64; 4] {
     ]
 }
 
+/// Whether a loaded catalog is missing or older than the TTL.
+fn cache_is_stale(cache: Option<&Arc<PricingCache>>) -> bool {
+    cache.is_none_or(|c| now_unix_secs().saturating_sub(c.cached_at_unix_secs) >= CACHE_TTL_SECS)
+}
+
 /// Return the freshest cache available, scheduling a refresh if needed.
 fn ensure_cache_fresh() -> Option<Arc<PricingCache>> {
     let cache = load_cache();
-    let stale = cache
-        .as_ref()
-        .map(|c| now_unix_secs().saturating_sub(c.cached_at_unix_secs) >= CACHE_TTL_SECS)
-        .unwrap_or(true);
-    if stale {
+    if cache_is_stale(cache.as_ref()) {
         schedule_refresh();
     }
     cache
 }
 
+/// Load the on-disk catalog and schedule a background refresh when it is
+/// missing or stale.
+///
+/// Safe to call from startup and catalog paths: the refresh itself is gated by
+/// [`schedule_refresh`], so this is a cheap memory-cache hit when the catalog
+/// is fresh and a no-op when refreshes are disabled. A missing catalog is not
+/// an error here: callers keep working unpriced until the refresh lands.
+pub fn ensure_fresh() {
+    // Test builds must not read or write the real home (process-global test
+    // sandboxes swap `HORON_AGENT_HOME` between cases) and never reach the
+    // network, so the startup hook is a no-op there.
+    if cfg!(any(test, feature = "test-support")) {
+        return;
+    }
+    let cache = load_cache();
+    if cache_is_stale(cache.as_ref()) {
+        schedule_refresh();
+    }
+}
+
+/// Refresh the catalog and log the outcome; the caller already passed the gate.
+async fn refresh_with_logging() {
+    if let Err(e) = refresh_now().await {
+        crate::logging::warn(&format!("models.dev pricing refresh failed: {e:#}"));
+    }
+}
+
+/// Startup hook: settle the catalog before the process does any work.
+///
+/// When refreshes are enabled and no catalog exists yet, fetch it inline: a
+/// one-shot process can exit long before a background fetch finishes, so an
+/// operator who asked for the catalog would otherwise never get one. An
+/// existing catalog (fresh or stale) only schedules the usual background
+/// refresh, so enabling this costs one fetch, not a fetch per start.
+pub fn ensure_fresh_at_startup() {
+    // Test builds must not read or write the real home and never reach the
+    // network.
+    if cfg!(any(test, feature = "test-support")) {
+        return;
+    }
+    let cache = load_cache();
+    if cache.is_some() {
+        if cache_is_stale(cache.as_ref()) {
+            schedule_refresh();
+        }
+        return;
+    }
+    if !refresh_requested(crate::config::config().features.pricing_refresh) {
+        return;
+    }
+    if REFRESH_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    // A plain thread plus `join`: entering another runtime from inside the
+    // caller's async context panics, and the join is what guarantees the file
+    // exists before a short-lived process ends.
+    let worker = std::thread::spawn(|| {
+        let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+            Ok(runtime) => runtime,
+            Err(err) => return Err(anyhow::anyhow!("pricing refresh runtime: {err}")),
+        };
+        runtime.block_on(refresh_now())
+    });
+    match worker.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => crate::logging::warn(&format!("models.dev pricing refresh failed: {err:#}")),
+        Err(_) => crate::logging::warn("models.dev pricing refresh worker panicked"),
+    }
+    REFRESH_IN_FLIGHT.store(false, Ordering::SeqCst);
+}
+
+/// Environment switch for the background catalog refresh. `1` enables it even
+/// in a test build (manual e2e checks); `0` disables it regardless of
+/// `[features] pricing_refresh`.
+const REFRESH_ENV: &str = "HORON_AGENT_PRICING_REFRESH";
+
+/// The environment override, when the variable names a value we understand.
+fn refresh_env_override() -> Option<bool> {
+    let Ok(raw) = std::env::var(REFRESH_ENV) else {
+        // Unset (or not valid UTF-8): leave the decision to the config.
+        return None;
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether a refresh is wanted for a process whose config says
+/// `config_enabled`. The environment wins when it is set.
+fn refresh_wanted(config_enabled: bool) -> bool {
+    refresh_env_override().unwrap_or(config_enabled)
+}
+
+/// Whether this process may start a refresh. Test builds never reach the
+/// network unless the environment opts in explicitly, so the unit tests stay
+/// hermetic.
+fn refresh_requested(config_enabled: bool) -> bool {
+    match refresh_env_override() {
+        Some(force) => force,
+        None => !cfg!(any(test, feature = "test-support")) && refresh_wanted(config_enabled),
+    }
+}
+
 /// Spawn one background refresh at a time. Safe to call from sync contexts;
 /// uses a thread + ad-hoc runtime when no Tokio runtime is active.
+///
+/// Off by default: a refresh only starts when `[features] pricing_refresh` is
+/// true or `HORON_AGENT_PRICING_REFRESH=1`. The on-disk cache is still read
+/// either way, so a previously fetched catalog keeps working without the
+/// network.
 pub fn schedule_refresh() {
-    // Keep tests hermetic: never hit the network from test builds (the
-    // `test-support` feature also covers downstream crates' test targets via
-    // feature unification), and let users opt out entirely.
-    // HORON_AGENT_FORCE_PRICING_REFRESH=1 re-enables the fetch for manual e2e checks
-    // (e.g. `cargo run --example pricing_e2e_check`, which builds with
-    // test-support unified in).
-    let forced = std::env::var_os("HORON_AGENT_FORCE_PRICING_REFRESH").is_some();
-    if !forced
-        && (cfg!(any(test, feature = "test-support"))
-            || std::env::var_os("HORON_AGENT_DISABLE_PRICING_REFRESH").is_some())
-    {
+    if !refresh_requested(crate::config::config().features.pricing_refresh) {
         return;
     }
     if REFRESH_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return;
     }
     let work = || async {
-        if let Err(e) = refresh_now().await {
-            crate::logging::warn(&format!("models.dev pricing refresh failed: {e:#}"));
-        }
+        refresh_with_logging().await;
         REFRESH_IN_FLIGHT.store(false, Ordering::SeqCst);
     };
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -442,6 +541,60 @@ pub(crate) fn clear_memory_cache_for_tests() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Restore the refresh switch so a test never leaks its value into another.
+    fn restore_refresh_env(prev: Option<std::ffi::OsString>) {
+        match prev {
+            Some(value) => crate::env::set_var(REFRESH_ENV, value),
+            None => crate::env::remove_var(REFRESH_ENV),
+        }
+    }
+
+    #[test]
+    fn refresh_is_off_by_default() {
+        let _guard = crate::storage::lock_test_env();
+        let prev = std::env::var_os(REFRESH_ENV);
+        crate::env::remove_var(REFRESH_ENV);
+
+        // Shipped defaults keep the toggle off, so a one-shot run never
+        // contacts models.dev unless the operator asks for it.
+        assert!(!crate::config::FeatureConfig::default().pricing_refresh);
+        assert!(!refresh_wanted(false));
+        assert!(!refresh_requested(false));
+
+        restore_refresh_env(prev);
+    }
+
+    #[test]
+    fn env_override_enables_refresh() {
+        let _guard = crate::storage::lock_test_env();
+        let prev = std::env::var_os(REFRESH_ENV);
+
+        crate::env::set_var(REFRESH_ENV, "1");
+        assert!(refresh_wanted(false));
+        // An explicit opt-in also reaches manual e2e runs made from a test build.
+        assert!(refresh_requested(false));
+
+        crate::env::set_var(REFRESH_ENV, "0");
+        assert!(!refresh_wanted(true));
+        assert!(!refresh_requested(true));
+
+        restore_refresh_env(prev);
+    }
+
+    #[test]
+    fn config_enables_refresh() {
+        let _guard = crate::storage::lock_test_env();
+        let prev = std::env::var_os(REFRESH_ENV);
+        crate::env::remove_var(REFRESH_ENV);
+
+        assert!(refresh_wanted(true));
+        // Test builds stay hermetic even when the config asks for a refresh;
+        // only the environment can start one from a test binary.
+        assert!(!refresh_requested(true));
+
+        restore_refresh_env(prev);
+    }
 
     #[test]
     fn resellers_fall_back_to_vendor_pricing_seen_elsewhere() {
