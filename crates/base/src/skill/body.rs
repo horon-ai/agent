@@ -58,8 +58,8 @@ impl FileStamp {
     fn from_metadata(metadata: &std::fs::Metadata) -> Self {
         Self {
             len: metadata.len(),
-            modified: metadata.modified().ok(),
-            created: metadata.created().ok(),
+            modified: optional_time(metadata.modified(), "modification"),
+            created: optional_time(metadata.created(), "creation"),
         }
     }
 
@@ -67,7 +67,24 @@ impl FileStamp {
     fn from_metadata(metadata: &std::fs::Metadata) -> Self {
         Self {
             len: metadata.len(),
-            modified: metadata.modified().ok(),
+            modified: optional_time(metadata.modified(), "modification"),
+        }
+    }
+}
+
+/// One timestamp a platform may decline to report.
+///
+/// The length is always known, so a missing timestamp weakens this stamp rather
+/// than invalidating it: two files of one length then compare equal, which is
+/// the same trust level a filesystem without sub-second times already has. The
+/// reason is recorded so a stale body can be traced to the platform.
+#[cfg(any(windows, not(any(unix, windows))))]
+fn optional_time(result: std::io::Result<std::time::SystemTime>, what: &str) -> Option<std::time::SystemTime> {
+    match result {
+        Ok(time) => Some(time),
+        Err(error) => {
+            crate::logging::debug(&format!("Skills: no {what} time on this platform ({error})"));
+            None
         }
     }
 }
@@ -138,7 +155,12 @@ pub(crate) fn with_cached<T>(path: &Path, cache: &BodyCache, read: impl FnOnce(&
         *guard = Some(CachedBody::new(stamp, body));
         read_from_disk = true;
     }
-    let cached = guard.as_ref().expect("the body was just cached");
+    let Some(cached) = guard.as_ref() else {
+        // The branch above always fills the cache before this point; reporting
+        // the impossible state costs one comparison and keeps a panic out of a
+        // path that a future edit could reach.
+        anyhow::bail!("skill body cache for {} is empty after caching", path.display());
+    };
     Ok(read(cached, read_from_disk))
 }
 

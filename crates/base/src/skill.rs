@@ -13,9 +13,15 @@ mod frontmatter;
 #[path = "skill/frontmatter_tests.rs"]
 mod frontmatter_tests;
 mod invocation;
+mod sources;
 #[cfg(test)]
+#[path = "skill/sources_tests.rs"]
+mod sources_tests;
+#[cfg(test)]
+#[path = "skill/tests/support.rs"]
 mod test_support;
 pub use invocation::SkillInvocation;
+pub use sources::project_skill_paths;
 
 use frontmatter::{AllowedTools, SkillFrontmatter};
 
@@ -56,31 +62,17 @@ pub struct SkillRegistry {
     skills: Arc<HashMap<String, Skill>>,
 }
 
-/// Maximum directory depth scanned under a Claude Code plugin root when
-/// looking for `skills/<name>/SKILL.md` entries. Plugin layouts vary across
-/// Claude Code versions (`cache/<marketplace>/<plugin>/<version>/skills/...`,
-/// `repos/<owner>/<repo>/skills/...`, nested `.claude/skills/...`), so we scan
-/// defensively but with a bound to avoid walking arbitrarily deep trees.
-const PLUGIN_SCAN_MAX_DEPTH: usize = 5;
-
-/// Outcome of importing one external skills directory.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct SkillCopyStats {
-    copied: usize,
-    skipped: usize,
-    failed: usize,
-}
-
 impl SkillRegistry {
     /// Process-wide shared mutable registry used by both `skill_manage` and
     /// direct slash invocation paths. Keeping a single registry prevents slash
     /// commands from seeing a stale startup-only skill snapshot after reloads.
     ///
-    /// Holds GLOBAL skills only (plugins, `~/.horon-agent/skills/`,
-    /// `~/.agents/skills/`). Project-local skills are a per-session overlay
-    /// composed at read time from the session's workspace root (issue #457);
-    /// they must never enter this shared registry, and the daemon's startup
-    /// cwd must never influence its contents.
+    /// Holds GLOBAL skills only (the user rows of [`sources::SOURCES`]:
+    /// `~/.horon-agent/skills/`, `~/.agents/skills/`, and another tool's
+    /// collection once its switch is on). Project-local skills are a
+    /// per-session overlay composed at read time from the session's workspace
+    /// root (issue #457); they must never enter this shared registry, and the
+    /// daemon's startup cwd must never influence its contents.
     pub fn shared_registry() -> Arc<RwLock<Self>> {
         #[cfg(test)]
         {
@@ -117,196 +109,28 @@ impl SkillRegistry {
         }
     }
 
-    /// Import skills from Claude Code and Codex CLI on first run.
-    /// Only runs if ~/.horon-agent/skills/ doesn't exist yet.
-    fn import_from_external() {
-        let horon_agent_skills = match crate::storage::horon_agent_dir() {
-            Ok(dir) => dir.join("skills"),
-            Err(_) => return,
-        };
-
-        if horon_agent_skills.exists() {
-            return; // Not first run
-        }
-
-        let mut sources = Vec::new();
-        let mut copied = Vec::new();
-
-        // Import from Claude Code (~/.claude/skills/)
-        if let Ok(claude_skills) = crate::storage::user_home_path(".claude/skills")
-            && claude_skills.is_dir()
-        {
-            let count = Self::copy_skills_dir(&claude_skills, &horon_agent_skills).copied;
-            if count > 0 {
-                sources.push(format!("{} from Claude Code", count));
-                copied.extend(Self::list_skill_names(&horon_agent_skills));
-            }
-        }
-
-        // Import from Codex CLI (~/.codex/skills/)
-        if let Ok(codex_skills) = crate::storage::user_home_path(".codex/skills")
-            && codex_skills.is_dir()
-        {
-            let count = Self::copy_skills_dir(&codex_skills, &horon_agent_skills).copied;
-            if count > 0 {
-                sources.push(format!("{} from Codex CLI", count));
-                copied.extend(Self::list_skill_names(&horon_agent_skills));
-            }
-        }
-
-        if !sources.is_empty() {
-            // Deduplicate names
-            copied.sort();
-            copied.dedup();
-            crate::logging::info(&format!(
-                "Skills: Imported {} ({}) from {}",
-                copied.len(),
-                copied.join(", "),
-                sources.join(" + "),
-            ));
-        }
-    }
-
-    /// Copy skill directories from src to dst.
-    fn copy_skills_dir(src: &Path, dst: &Path) -> SkillCopyStats {
-        let mut stats = SkillCopyStats::default();
-        let entries = match std::fs::read_dir(src) {
-            Ok(e) => e,
-            Err(_) => return stats,
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-
-            // Skip Codex system skills
-            if name.starts_with('.') {
-                continue;
-            }
-
-            // Only copy if SKILL.md exists
-            if !path.join("SKILL.md").exists() {
-                continue;
-            }
-
-            let dest = dst.join(&name);
-            // An earlier source (e.g. ~/.claude/skills) may already have imported
-            // this skill, often because ~/.codex/skills links to the same
-            // directory. Copying over it fails on read-only files such as
-            // `.git/objects/**` (issue #1404), and the first copy wins anyway.
-            if dest.exists() {
-                stats.skipped += 1;
-                continue;
-            }
-            if let Err(e) = Self::copy_dir_recursive(&path, &dest) {
-                crate::logging::error(&format!("Failed to copy skill '{}': {}", name, e));
-                stats.failed += 1;
-                continue;
-            }
-            stats.copied += 1;
-        }
-        stats
-    }
-
-    /// Recursively copy a directory
-    fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(dst)?;
-        for entry in std::fs::read_dir(src)? {
-            let entry = entry?;
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-
-            if src_path.is_dir() {
-                Self::copy_dir_recursive(&src_path, &dst_path)?;
-            } else if src_path.is_symlink() {
-                // Resolve symlink and copy the target
-                let target = std::fs::read_link(&src_path)?;
-                // Try to create symlink, fall back to copying the file
-                if horon_agent_platform::symlink_or_copy(&target, &dst_path).is_err()
-                    && let Ok(resolved) = std::fs::canonicalize(&src_path)
-                {
-                    std::fs::copy(&resolved, &dst_path)?;
-                }
-            } else {
-                std::fs::copy(&src_path, &dst_path)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// List skill directory names
-    fn list_skill_names(dir: &Path) -> Vec<String> {
-        std::fs::read_dir(dir)
-            .ok()
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|e| e.path().is_dir())
-                    .filter_map(|e| e.file_name().to_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     /// Load skills from all standard locations
     pub fn load() -> Result<Self> {
         Self::load_for_working_dir(None)
     }
 
-    /// Load only the shared global skill sources: Claude Code plugin installs,
-    /// `~/.horon-agent/skills/`, and `~/.agents/skills/`.
+    /// Load only the user-level rows of [`sources::SOURCES`]: horon-agent's own
+    /// `~/.horon-agent/skills/`, `~/.agents/skills/`, and the collections other
+    /// tools own once their switch is on.
     ///
     /// This is what the process-wide shared registry holds. Project-local
     /// skills are intentionally excluded: they are a per-session overlay
     /// resolved from the active session's workspace root (issue #457), never
     /// from the daemon's startup cwd, and never shared across sessions.
     pub fn load_global() -> Result<Self> {
-        // First-run import from Claude Code / Codex CLI
-        Self::import_from_external();
-
         let mut registry = Self::default();
-
-        // Load skills provided by Claude Code plugins/marketplace installs
-        // first, so explicit horon-agent/agents skills with the same name win below.
-        if let Some(plugins_root) = Self::claude_plugins_root() {
-            registry.load_plugin_skills_from_root(&plugins_root);
-        }
-
-        // Load from ~/.horon-agent/skills/ (horon-agent's own global skills)
-        if let Ok(horon_agent_dir) = crate::storage::horon_agent_dir() {
-            let horon_agent_skills = horon_agent_dir.join("skills");
-            if horon_agent_skills.exists() {
-                registry.load_from_dir(&horon_agent_skills)?;
-            }
-        }
-
-        // Load from ~/.agents/skills/ (shared cross-tool `.agents` convention)
-        if let Ok(agents_skills) = crate::storage::user_home_path(".agents/skills")
-            && agents_skills.exists()
-        {
-            registry.load_from_dir(&agents_skills)?;
-        }
-
-        // Model-managed skills (`skill_manage create`/`update`) come last, so an
-        // authored skill always wins a name collision. The switch is off by
-        // default: with it off, no managed directory is ever read.
-        if crate::config::config().tools.managed_skills
-            && let Ok(managed) = crate::managed_skills::dir()
-        {
-            registry.load_managed_dir(&managed);
-        }
-
+        sources::load_global(&mut registry);
         Ok(registry)
     }
 
-    /// Load only the project-local skill overlay for a workspace root:
-    /// `./.horon-agent/skills/`, `./.agents/skills/`, and `./.claude/skills/`.
+    /// Load only the project-level rows of [`sources::SOURCES`] for a
+    /// workspace root: `./.horon-agent/skills/`, `./.claude/skills/`, and
+    /// `./.agents/skills/`.
     ///
     /// Loaded fresh from disk on access so edits are visible without daemon
     /// restarts and two sessions in different repositories never see each
@@ -319,7 +143,7 @@ impl SkillRegistry {
     /// sees edits, deletions, and re-pointed symlinks.
     pub fn load_project_overlay(working_dir: Option<&Path>) -> Result<Self> {
         let mut overlay = Self::default();
-        overlay.load_project_local_dirs(working_dir)?;
+        overlay.load_project_local_dirs(working_dir);
         Ok(overlay)
     }
 
@@ -406,238 +230,38 @@ impl SkillRegistry {
     /// resolved against an optional active session working directory.
     pub fn load_for_working_dir(working_dir: Option<&Path>) -> Result<Self> {
         let mut registry = Self::load_global()?;
-        registry.load_project_local_dirs(working_dir)?;
+        registry.load_project_local_dirs(working_dir);
         Ok(registry)
     }
 
-    fn project_local_dir(working_dir: Option<&Path>, name: &str) -> PathBuf {
-        let path = Path::new(name).join("skills");
-        working_dir.map(|dir| dir.join(&path)).unwrap_or(path)
+    /// Read the project rows of the source table into this registry.
+    fn load_project_local_dirs(&mut self, working_dir: Option<&Path>) {
+        sources::load_project(self, working_dir);
     }
 
-    fn load_project_local_dirs(&mut self, working_dir: Option<&Path>) -> Result<()> {
-        // Load from ./.horon-agent/skills/ (project-local horon-agent skills)
-        let local_horon_agent = Self::project_local_dir(working_dir, ".horon-agent");
-        if local_horon_agent.exists() {
-            self.load_from_dir(&local_horon_agent)?;
-        }
-
-        // Load from ./.agents/skills/ (shared cross-tool `.agents` convention)
-        let local_agents = Self::project_local_dir(working_dir, ".agents");
-        if local_agents.exists() {
-            self.load_from_dir(&local_agents)?;
-        }
-
-        // Fallback: ./.claude/skills/ (project-local Claude skills for compatibility)
-        let local_claude = Self::project_local_dir(working_dir, ".claude");
-        if local_claude.exists() {
-            self.load_from_dir(&local_claude)?;
-        }
-
-        Ok(())
-    }
-
-    /// Root of the Claude Code plugin store (`~/.claude/plugins`), if present.
-    fn claude_plugins_root() -> Option<PathBuf> {
-        crate::storage::user_home_path(".claude/plugins")
-            .ok()
-            .filter(|p| p.is_dir())
-    }
-
-    /// Load skills provided by Claude Code plugins under `plugins_root`.
-    /// Returns the number of skills loaded. Errors are skipped so a broken
-    /// plugin never prevents horon-agent's own skills from loading.
-    fn load_plugin_skills_from_root(&mut self, plugins_root: &Path) -> usize {
-        let mut count = 0;
-        for dir in Self::plugin_skill_dirs_under(plugins_root) {
-            count += self.load_from_dir_count(&dir).unwrap_or(0);
-        }
-        count
-    }
-
-    /// Discover `skills/` directories provided by Claude Code plugins under
-    /// the given plugins root (normally `~/.claude/plugins`).
+    /// Read one directory of `<name>/SKILL.md` skills into this registry.
     ///
-    /// Sources, in order of trust:
-    /// - `installed_plugins.json` install paths (current Claude Code layout,
-    ///   pointing into `cache/<marketplace>/<plugin>/<version>/`).
-    /// - `repos/` checkouts (legacy plugin layout).
-    /// - `cache/` as a fallback only when the manifest is missing/unparsable,
-    ///   since the cache holds installed plugins.
-    ///
-    /// `marketplaces/` is intentionally not scanned: it mirrors the full
-    /// marketplace catalog, including plugins the user never installed.
-    fn plugin_skill_dirs_under(plugins_root: &Path) -> Vec<PathBuf> {
-        if !plugins_root.is_dir() {
-            return Vec::new();
-        }
-
-        let mut roots: Vec<PathBuf> = Self::installed_plugin_paths(&plugins_root.join("installed_plugins.json"));
-        if roots.is_empty() {
-            let cache = plugins_root.join("cache");
-            if cache.is_dir() {
-                roots.push(cache);
-            }
-        }
-        let repos = plugins_root.join("repos");
-        if repos.is_dir() {
-            roots.push(repos);
-        }
-
-        let mut dirs = std::collections::BTreeSet::new();
-        for root in roots {
-            Self::collect_plugin_skills_dirs(&root, PLUGIN_SCAN_MAX_DEPTH, &mut dirs);
-        }
-        dirs.into_iter().collect()
-    }
-
-    /// Parse install paths from a Claude Code `installed_plugins.json`
-    /// manifest. Tolerates both a list of installs per plugin (version 2) and
-    /// a single install object, and skips paths that no longer exist.
-    fn installed_plugin_paths(manifest: &Path) -> Vec<PathBuf> {
-        let Ok(raw) = std::fs::read_to_string(manifest) else {
-            return Vec::new();
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            return Vec::new();
-        };
-        let Some(plugins) = value.get("plugins").and_then(|p| p.as_object()) else {
-            return Vec::new();
-        };
-
-        let mut paths = Vec::new();
-        for installs in plugins.values() {
-            let installs: Vec<&serde_json::Value> = match installs {
-                serde_json::Value::Array(list) => list.iter().collect(),
-                other => vec![other],
-            };
-            for install in installs {
-                if let Some(path) = install.get("installPath").and_then(|p| p.as_str()) {
-                    let path = PathBuf::from(path);
-                    if path.is_dir() {
-                        paths.push(path);
-                    }
-                }
-            }
-        }
-        paths
-    }
-
-    /// Recursively collect directories named `skills` that contain at least
-    /// one `<name>/SKILL.md`, up to `depth` levels below `root`.
-    fn collect_plugin_skills_dirs(root: &Path, depth: usize, out: &mut std::collections::BTreeSet<PathBuf>) {
-        if depth == 0 {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(root) else {
-            return;
-        };
-        horon_agent_perf_counters::record_skill_dir_read();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() || path.is_symlink() {
-                continue;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name == ".git" || name == "node_modules" {
-                continue;
-            }
-            if name == "skills" && Self::dir_contains_skill(&path) {
-                out.insert(path);
-                continue;
-            }
-            Self::collect_plugin_skills_dirs(&path, depth - 1, out);
-        }
-    }
-
-    /// True if `dir` has at least one immediate subdirectory with a SKILL.md.
-    fn dir_contains_skill(dir: &Path) -> bool {
-        horon_agent_perf_counters::record_skill_dir_read();
-        std::fs::read_dir(dir)
-            .ok()
-            .is_some_and(|entries| entries.flatten().any(|e| e.path().join("SKILL.md").is_file()))
-    }
-
-    /// Load skills from a directory
+    /// The production loaders read through [`sources`]; this keeps a direct
+    /// handle on one directory for the discovery tests.
+    #[cfg(test)]
     fn load_from_dir(&mut self, dir: &Path) -> Result<()> {
         self.load_from_dir_with_stats(dir).map(|_stats| ())
     }
 
-    /// Load skills from a directory, reporting what the frontmatter reads cost.
+    /// The same read, reporting what the frontmatter reads cost.
+    #[cfg(test)]
     fn load_from_dir_with_stats(&mut self, dir: &Path) -> Result<frontmatter::ReadStats> {
-        let mut stats = frontmatter::ReadStats::default();
-        if !dir.is_dir() {
-            return Ok(stats);
+        let (skills, stats) = sources::scan_skills_dir(dir);
+        for skill in skills {
+            self.insert_skill(skill);
         }
-
-        horon_agent_perf_counters::record_skill_dir_read();
-        #[cfg(test)]
-        test_support::record_dir_scan();
-        stats.dirs += 1;
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                let skill_file = path.join("SKILL.md");
-                if skill_file.exists()
-                    && let Ok((skill, read)) = Self::parse_skill_with_stats(&skill_file)
-                {
-                    stats.add(read);
-                    self.insert_skill(skill);
-                }
-            }
-        }
-
         Ok(stats)
     }
 
-    /// Load the model-managed skill directory and return how many were added.
-    ///
-    /// A managed skill never replaces a name that is already loaded: an
-    /// authored skill (global or project) always wins. Symlinked directories
-    /// and files are refused, and the description is sanitized again on load
-    /// because the file may have been edited after `skill_manage` wrote it.
-    fn load_managed_dir(&mut self, dir: &Path) -> usize {
-        if !dir.is_dir() {
-            return 0;
-        }
-
-        horon_agent_perf_counters::record_skill_dir_read();
-        let mut count = 0;
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return 0;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                continue;
-            }
-            let skill_file = path.join("SKILL.md");
-            let is_regular_file = std::fs::symlink_metadata(&skill_file)
-                .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
-                .unwrap_or(false);
-            if !is_regular_file {
-                continue;
-            }
-            let Ok(skill) = Self::parse_skill(&skill_file) else {
-                continue;
-            };
-            if self.skills.contains_key(&skill.name) {
-                continue;
-            }
-            let description = crate::managed_skills::sanitize_description(&skill.description);
-            if description.is_empty() {
-                continue;
-            }
-            self.insert_skill(Skill { description, ..skill });
-            count += 1;
-        }
-        count
+    /// Read one directory and return how many skills it held.
+    #[cfg(test)]
+    fn load_from_dir_count(&mut self, dir: &Path) -> Result<usize> {
+        Ok(self.load_from_dir_with_stats(dir)?.files as usize)
     }
 
     /// Parse a SKILL.md file
@@ -743,43 +367,7 @@ impl SkillRegistry {
             "reloaded all skills; the skills list in the system prompt may have changed",
         );
         Arc::make_mut(&mut self.skills).clear();
-
-        let mut count = 0;
-
-        // Load skills provided by Claude Code plugins/marketplace installs
-        // first, so explicit horon-agent/agents skills with the same name win below.
-        if let Some(plugins_root) = Self::claude_plugins_root() {
-            count += self.load_plugin_skills_from_root(&plugins_root);
-        }
-
-        // Load from ~/.horon-agent/skills/ (horon-agent's own global skills)
-        if let Ok(horon_agent_dir) = crate::storage::horon_agent_dir() {
-            let horon_agent_skills = horon_agent_dir.join("skills");
-            if horon_agent_skills.exists() {
-                count += self.load_from_dir_count(&horon_agent_skills)?;
-            }
-        }
-
-        // Load from ~/.agents/skills/ (shared cross-tool `.agents` convention)
-        if let Ok(agents_skills) = crate::storage::user_home_path(".agents/skills")
-            && agents_skills.exists()
-        {
-            count += self.load_from_dir_count(&agents_skills)?;
-        }
-
-        // Managed skills load last and never replace an authored name.
-        if crate::config::config().tools.managed_skills
-            && let Ok(managed) = crate::managed_skills::dir()
-        {
-            count += self.load_managed_dir(&managed);
-        }
-
-        Ok(count)
-    }
-
-    /// Load skills from a directory and return count
-    fn load_from_dir_count(&mut self, dir: &Path) -> Result<usize> {
-        Ok(self.load_from_dir_with_stats(dir)?.files as usize)
+        Ok(sources::load_global(self))
     }
 
     /// Parse `/skill-name` and `/skill-name prompt...` invocations.
@@ -1097,37 +685,6 @@ mod tests {
         let path = dir.join("SKILL.md");
         std::fs::write(&path, content).expect("write skill");
         path
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn copy_skills_dir_skips_skill_already_imported_from_linked_source() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().expect("temp dir");
-        let claude = temp.path().join("claude-skills");
-        let skill = claude.join("s");
-        std::fs::create_dir_all(skill.join("sub")).expect("create skill");
-        std::fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: s\ndescription: test skill\n---\nbody\n",
-        )
-        .expect("write skill");
-        let readonly = skill.join("sub").join("obj");
-        std::fs::write(&readonly, "x").expect("write obj");
-        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o444)).expect("chmod");
-        let codex = temp.path().join("codex-skills");
-        std::os::unix::fs::symlink(&claude, &codex).expect("symlink");
-        let dest = temp.path().join("horon-agent-skills");
-
-        let first = SkillRegistry::copy_skills_dir(&claude, &dest);
-        assert_eq!((first.copied, first.skipped, first.failed), (1, 0, 0));
-        let second = SkillRegistry::copy_skills_dir(&codex, &dest);
-        assert_eq!((second.copied, second.skipped, second.failed), (0, 1, 0));
-        assert_eq!(
-            std::fs::read_to_string(dest.join("s").join("sub").join("obj")).expect("read obj"),
-            "x"
-        );
     }
 
     #[test]
@@ -1467,181 +1024,6 @@ mod tests {
         let registry = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("load skills");
         assert!(registry.contains("present-skill"));
         assert!(!registry.contains("missing-skill"));
-    }
-
-    /// Write `SKILL.md` for `name` inside `<plugin_dir>/skills/<name>/`.
-    fn write_plugin_skill(plugin_dir: &Path, name: &str) {
-        write_plugin_skill_with_description(plugin_dir, name, &format!("Plugin skill {name}"));
-    }
-
-    fn write_plugin_skill_with_description(plugin_dir: &Path, name: &str, description: &str) {
-        let dir = plugin_dir.join("skills").join(name);
-        std::fs::create_dir_all(&dir).expect("create plugin skill dir");
-        std::fs::write(
-            dir.join("SKILL.md"),
-            format!("---\nname: {name}\ndescription: {description}\n---\n\nUse {name}.\n"),
-        )
-        .expect("write plugin skill");
-    }
-
-    fn write_installed_plugins_manifest(plugins_root: &Path, install_paths: &[&Path]) {
-        let plugins: serde_json::Map<String, serde_json::Value> = install_paths
-            .iter()
-            .enumerate()
-            .map(|(i, path)| {
-                (
-                    format!("plugin-{i}@test-marketplace"),
-                    serde_json::json!([{ "scope": "user", "installPath": path, "version": "1.0.0" }]),
-                )
-            })
-            .collect();
-        std::fs::write(
-            plugins_root.join("installed_plugins.json"),
-            serde_json::to_string_pretty(&serde_json::json!({
-                "version": 2,
-                "plugins": plugins,
-            }))
-            .expect("serialize manifest"),
-        )
-        .expect("write manifest");
-    }
-
-    #[test]
-    fn plugin_skills_load_from_installed_plugins_manifest() {
-        let _env_guard = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let plugins_root = temp.path();
-
-        // Mirror the real Claude Code layout:
-        // cache/<marketplace>/<plugin>/<version>/skills/<skill>/SKILL.md
-        let install = plugins_root.join("cache/test-marketplace/vercel/0.40.1");
-        write_plugin_skill(&install, "ai-gateway");
-        // Nested `.claude/skills` variant inside the same install.
-        write_plugin_skill(&install.join(".claude"), "benchmark-agents");
-        write_installed_plugins_manifest(plugins_root, &[&install]);
-
-        let mut registry = SkillRegistry::default();
-        let count = registry.load_plugin_skills_from_root(plugins_root);
-
-        assert_eq!(count, 2);
-        assert!(registry.contains("ai-gateway"));
-        assert!(registry.contains("benchmark-agents"));
-    }
-
-    #[test]
-    fn plugin_skills_fall_back_to_cache_scan_without_manifest() {
-        let _env_guard = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let plugins_root = temp.path();
-
-        let install = plugins_root.join("cache/test-marketplace/my-plugin/1.0.0");
-        write_plugin_skill(&install, "cache-skill");
-
-        let mut registry = SkillRegistry::default();
-        let count = registry.load_plugin_skills_from_root(plugins_root);
-
-        assert_eq!(count, 1);
-        assert!(registry.contains("cache-skill"));
-    }
-
-    #[test]
-    fn plugin_skills_load_from_repos_layout() {
-        let _env_guard = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let plugins_root = temp.path();
-
-        let repo = plugins_root.join("repos/owner/my-plugin");
-        write_plugin_skill(&repo, "repo-skill");
-
-        let mut registry = SkillRegistry::default();
-        let count = registry.load_plugin_skills_from_root(plugins_root);
-
-        assert_eq!(count, 1);
-        assert!(registry.contains("repo-skill"));
-    }
-
-    #[test]
-    fn plugin_scan_skips_marketplace_catalog_when_manifest_exists() {
-        let _env_guard = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let plugins_root = temp.path();
-
-        // Installed plugin listed in the manifest.
-        let install = plugins_root.join("cache/test-marketplace/installed/1.0.0");
-        write_plugin_skill(&install, "installed-skill");
-        write_installed_plugins_manifest(plugins_root, &[&install]);
-
-        // Marketplace catalog entry the user never installed.
-        write_plugin_skill(
-            &plugins_root.join("marketplaces/test-marketplace/plugins/uninstalled"),
-            "uninstalled-skill",
-        );
-        // Cache entry not referenced by the manifest (stale install).
-        write_plugin_skill(&plugins_root.join("cache/test-marketplace/stale/0.1.0"), "stale-skill");
-
-        let mut registry = SkillRegistry::default();
-        registry.load_plugin_skills_from_root(plugins_root);
-
-        assert!(registry.contains("installed-skill"));
-        assert!(
-            !registry.contains("uninstalled-skill"),
-            "marketplace catalog skills must not load"
-        );
-        assert!(
-            !registry.contains("stale-skill"),
-            "cache entries outside the manifest must not load when a manifest exists"
-        );
-    }
-
-    #[test]
-    fn plugin_scan_respects_depth_bound() {
-        let _env_guard = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let plugins_root = temp.path();
-
-        // Deeper than PLUGIN_SCAN_MAX_DEPTH below the cache root.
-        let too_deep = plugins_root.join("cache/a/b/c/d/e/f");
-        write_plugin_skill(&too_deep, "too-deep-skill");
-
-        let mut registry = SkillRegistry::default();
-        let count = registry.load_plugin_skills_from_root(plugins_root);
-
-        assert_eq!(count, 0);
-        assert!(!registry.contains("too-deep-skill"));
-    }
-
-    #[test]
-    fn explicit_horon_agent_skill_wins_over_plugin_skill_with_same_name() {
-        let _env_guard = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let plugins_root = temp.path().join("plugins");
-
-        let install = plugins_root.join("cache/test-marketplace/my-plugin/1.0.0");
-        write_plugin_skill_with_description(&install, "shared-name", "plugin version");
-
-        // Explicit horon-agent skill with the same name.
-        write_test_skill(temp.path(), ".horon-agent", "shared-name");
-
-        // Mirror load ordering: plugins first, then explicit skill dirs, so
-        // the later (explicit) insert wins in the registry map.
-        let mut registry = SkillRegistry::default();
-        registry.load_plugin_skills_from_root(&plugins_root);
-        registry
-            .load_from_dir(&temp.path().join(".horon-agent/skills"))
-            .expect("load explicit skills");
-
-        let skill = registry.get("shared-name").expect("skill present");
-        assert_eq!(
-            skill.description, "Test skill shared-name",
-            "explicit horon-agent skill must override the plugin-provided one"
-        );
-    }
-
-    #[test]
-    fn plugin_skill_dirs_empty_for_missing_root() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let missing = temp.path().join("does-not-exist");
-        assert!(SkillRegistry::plugin_skill_dirs_under(&missing).is_empty());
     }
 
     fn write_request_skill(root: &Path, scope: &str, name: &str, body: &str) {

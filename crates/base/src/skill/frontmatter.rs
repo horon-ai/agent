@@ -196,10 +196,11 @@ fn skip_leading_whitespace(buf: &[u8]) -> Option<usize> {
         let (ch, width) = if rest[0].is_ascii() {
             (rest[0] as char, 1)
         } else {
-            let decoded = (2..=4.min(rest.len())).find_map(|width| {
-                std::str::from_utf8(&rest[..width])
-                    .ok()
-                    .and_then(|text| text.chars().next().map(|ch| (ch, width)))
+            let decoded = (2..=4.min(rest.len())).find_map(|width| match std::str::from_utf8(&rest[..width]) {
+                Ok(text) => text.chars().next().map(|ch| (ch, width)),
+                // The buffer ends inside this character. That is the expected
+                // outcome at a chunk boundary, so the next width is tried.
+                Err(_) => None,
             });
             decoded?
         };

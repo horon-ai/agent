@@ -320,6 +320,18 @@ dual_confirm_classes = []
 # mcp = "off"
 # memory = "essential"
 
+[skills]
+# Skill collections beside horon-agent's own that are read too. horon-agent
+# always reads ~/.horon-agent/skills and, per workspace, .horon-agent/skills,
+# .claude/skills and .agents/skills. The switches below cover the directories
+# other tools own; each one starts off, because reading another agent's skills
+# puts its instructions in front of this agent.
+#
+# ~/.claude/skills and the skills of installed Claude Code plugins.
+claude_user = false
+# ~/.codex/skills.
+codex_user = false
+
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.
 # standard emits only spec-compatible ACP messages.

@@ -201,8 +201,20 @@
       "reason": "the streaming guard's macOS test reads `pmset -g assertions` to observe the real IOKit assertion the macOS adapter creates."
     },
     "crates/base/src/skill.rs": {
-      "count": 2,
+      "count": 1,
       "reason": "tests chmod a skill to 0755 and relink a skills directory with symlink; same POSIX premise."
+    },
+    "crates/base/src/skill/body.rs": {
+      "count": 11,
+      "reason": "FileStamp is the skill-body freshness key: on unix it keeps mtime, ctime, inode and device from std::os::unix::fs::MetadataExt, on Windows the modified and creation times, elsewhere only the modification time. These are per-OS metadata fields a file-identity stamp cannot express in one portable shape; the location stays here because the stamp is not an OS operation."
+    },
+    "crates/base/src/skill/frontmatter_tests.rs": {
+      "count": 1,
+      "reason": "tests restore a file's mtime after a same-size body edit to prove ctime detects it, which needs the unix timestamp fields; the Windows limitation of that guarantee is documented in the plan."
+    },
+    "crates/base/src/skill/sources_tests.rs": {
+      "count": 1,
+      "reason": "0o000 permission test needs unix mode bits to make one skill source unreadable."
     },
     "crates/base/src/sponsors/provenance.rs": {
       "count": 1,

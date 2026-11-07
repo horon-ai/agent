@@ -200,19 +200,11 @@ impl SkillTool {
         let installed: std::collections::HashSet<&str> = skills.iter().map(|s| s.name.as_str()).collect();
 
         let mut output = if skills.is_empty() {
-            "No skills loaded.\n\n\
-            Skills are loaded from:\n\
-            - ~/.horon-agent/skills/<skill-name>/SKILL.md (global)\n\
-            - ./.horon-agent/skills/<skill-name>/SKILL.md (project-local)\n\
-            - ./.claude/skills/<skill-name>/SKILL.md (compatibility)\n\n\
-            Create a SKILL.md file with YAML frontmatter:\n\
-            ---\n\
-            name: my-skill\n\
-            description: What this skill does\n\
-            allowed-tools: bash, read, write\n\
-            ---\n\n\
-            # Skill content here\n"
-                .to_string()
+            format!(
+                "No skills loaded.\n\n{}Create a SKILL.md file with YAML frontmatter:\n---\nname: my-skill\n\
+                 description: What this skill does\nallowed-tools: bash, read, write\n---\n\n# Skill content here\n",
+                skill_source_help()
+            )
         } else {
             let mut output = format!("Loaded skills: {}\n\n", skills.len());
             for skill in &skills {
@@ -404,6 +396,27 @@ impl SkillTool {
     }
 }
 
+/// Where skills are read from, highest priority first.
+///
+/// The workspace paths come from the source table itself
+/// (`skill::project_skill_paths`), so this text cannot list a directory the
+/// loader no longer reads. The user rows are spelled out with their switches,
+/// because a switch that is off is exactly why a skill the operator installed
+/// elsewhere does not appear here.
+fn skill_source_help() -> String {
+    let mut help = String::from("Skills are loaded from, highest priority first:\n");
+    for path in crate::skill::project_skill_paths() {
+        help.push_str(&format!("- ./{path}/<skill-name>/SKILL.md (workspace)\n"));
+    }
+    help.push_str("- ~/.horon-agent/skills/<skill-name>/SKILL.md (user)\n");
+    help.push_str("- ~/.claude/skills and installed Claude Code plugins ([skills] claude_user, off by default)\n");
+    help.push_str("- ~/.agents/skills (user)\n");
+    help.push_str("- ~/.codex/skills ([skills] codex_user, off by default)\n");
+    help.push_str("- ~/.horon-agent/managed-skills ([tools] managed_skills, off by default)\n\n");
+    help.push_str("A workspace skill wins over a user skill of the same name.\n\n");
+    help
+}
+
 /// Append the curated horon-agent-endorsed skill catalog to `output`, grouped by
 /// category and marked with installed/not-installed status. `installed` is the
 /// set of skill names currently loaded in the registry.
@@ -533,6 +546,24 @@ mod tests {
 
         let result = tool.execute(input, ctx).await.unwrap();
         assert!(result.output.contains("No skills loaded"));
+        // The help text names every switch that gates a source, so a skill the
+        // operator installed elsewhere is explained rather than missing.
+        for expected in [
+            "./.horon-agent/skills/<skill-name>/SKILL.md (workspace)",
+            "./.claude/skills/<skill-name>/SKILL.md (workspace)",
+            "./.agents/skills/<skill-name>/SKILL.md (workspace)",
+            "~/.horon-agent/skills/<skill-name>/SKILL.md (user)",
+            "[skills] claude_user, off by default",
+            "[skills] codex_user, off by default",
+            "[tools] managed_skills, off by default",
+        ] {
+            assert!(
+                result.output.contains(expected),
+                "the help text must mention {expected}; got:\n{}",
+                result.output
+            );
+        }
+        assert!(result.output.contains("A workspace skill wins over a user skill"));
         // Even with no skills loaded, the endorsed catalog should be listed.
         assert!(result.output.contains("Endorsed skills"));
     }
