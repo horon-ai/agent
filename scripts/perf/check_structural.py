@@ -20,7 +20,10 @@ does not. So every check here reads a counter:
 - the peak read request of the streaming hash against the source length;
 - the largest frame each NDJSON reader accepts against its own cap, and the
   smallest frame it refuses;
-- FD and thread retention across a short attach/detach soak.
+- FD and thread retention across a short attach/detach soak;
+- the IRC mailbox cap, the messages a flood drops, one body allocation per
+  broadcast, waiters left parked after churn, and the broadcast concurrency
+  ceiling.
 
 The measurements are the repo's own tests. Each one prints one
 `STRUCTURAL_PERF section=<name> k=v k=v` line, so this gate reads the numbers
@@ -151,9 +154,19 @@ MEASUREMENTS = (
             "tool::context_condense_perf_tests::context_condensation_stays_bounded",
         ],
     },
+    {
+        "section": "irc",
+        "source": "irc-core",
+        "args": [
+            "-p",
+            "horon-agent-irc-core",
+            "--lib",
+            "perf_tests::irc_bus_stays_bounded",
+        ],
+    },
 )
 
-REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context")
+REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context", "irc")
 
 
 class GateError(Exception):
@@ -486,6 +499,39 @@ def check_context(report: Report, records: list[dict[str, str]], bounds: dict[st
         )
 
 
+def check_irc(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The mailbox stops at its cap, a broadcast shares one body, churn leaks no waiter.
+
+    Five statements about the bus shape. The flood is measured, not the cap:
+    `flood - cap` messages must have been dropped, so a mailbox that silently
+    kept them all fails on `mailbox_dropped` even if `mailbox_high_water` was
+    never sampled above the ceiling. A broadcast allocates its body once for
+    every leg, and a timeout/cancel churn leaves nothing parked. The in-flight
+    count is read where it peaked, so a concurrency limit raised without a
+    budget edit shows up here.
+    """
+    for record in records:
+        section = "irc"
+        flood = as_int(record, "flood", section)
+        cap = bounds["irc_mailbox_cap"]
+        inflight = as_int(record, "broadcast_inflight_high_water", section)
+        report.at_most(section, "mailbox_high_water", as_int(record, "mailbox_high_water", section), cap)
+        report.equal(section, "mailbox_dropped", as_int(record, "mailbox_dropped", section), flood - cap)
+        report.equal(
+            section,
+            "broadcast_body_allocations",
+            as_int(record, "broadcast_body_allocations", section),
+            bounds["irc_broadcast_body_allocations"],
+        )
+        report.equal(
+            section,
+            "waiters_live_after_churn",
+            as_int(record, "waiters_live_after_churn", section),
+            bounds["irc_waiters_live_after_churn"],
+        )
+        report.at_most(section, "broadcast_inflight_high_water", inflight, bounds["irc_broadcast_concurrency"])
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -494,6 +540,7 @@ CHECKS = {
     "frame": check_frame,
     "soak": check_soak,
     "context": check_context,
+    "irc": check_irc,
 }
 
 

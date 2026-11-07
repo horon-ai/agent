@@ -94,52 +94,6 @@ async fn test_stream_error() -> Result<()> {
     Ok(())
 }
 
-/// Test model cycling over the socket interface (server + client)
-#[tokio::test]
-async fn test_socket_model_cycle_supported_models() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = MockProvider::with_models(vec!["gpt-5.2-codex", "claude-opus-4-5-20251101"]);
-    let provider: Arc<dyn horon_agent::provider::Provider> = Arc::new(provider);
-    let server_instance = server::Server::new_with_paths(provider, socket_path.clone(), debug_socket_path.clone());
-
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    let mut client = wait_for_subscribed_server_client(&socket_path).await?;
-    let request_id = client.cycle_model(1).await?;
-
-    let mut saw_model_changed = false;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await??;
-        match event {
-            ServerEvent::Ack { .. } => continue,
-            ServerEvent::ModelChanged { id, model, error, .. } if id == request_id => {
-                assert!(error.is_none(), "Expected successful model change");
-                assert_eq!(model, "claude-opus-4-5-20251101");
-                saw_model_changed = true;
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    assert!(saw_model_changed, "Did not receive model_changed event");
-    Ok(())
-}
-
 /// Test that resume restores model selection and tool output in history
 #[tokio::test]
 async fn test_resume_restores_model_and_tool_history() -> Result<()> {
@@ -237,7 +191,6 @@ async fn test_resume_restores_model_and_tool_history() -> Result<()> {
     Ok(())
 }
 
-/// Test that subscribe selfdev hint marks the session as canary
 #[tokio::test]
 async fn test_resume_session_with_local_history_uses_metadata_only_history() -> Result<()> {
     let _env = setup_test_env()?;
@@ -384,89 +337,6 @@ async fn test_resume_session_with_local_history_uses_metadata_only_history() -> 
     Ok(())
 }
 
-/// End-to-end: resume_all_sessions continues a live session whose last
-/// visible turn is an unanswered (interrupted) user message, and reports a
-/// summary describing the resumed session.
-#[tokio::test]
-async fn test_resume_all_sessions_continues_interrupted_live_session() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-resume-all-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-
-    // A session left with a pending user turn the assistant never answered.
-    let mut session = Session::create(None, Some("Interrupted Session".to_string()));
-    session.model = Some("model-a".to_string());
-    session.add_message(
-        horon_agent::message::Role::User,
-        vec![horon_agent::message::ContentBlock::Text {
-            text: "keep going on the migration".to_string(),
-            cache_control: None,
-        }],
-    );
-    session.save()?;
-
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = MockProvider::with_models(vec!["model-a"]);
-    provider.queue_response(vec![
-        StreamEvent::TextDelta("Continuing the migration now.".to_string()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("end_turn".to_string()),
-        },
-    ]);
-    let provider: Arc<dyn horon_agent::provider::Provider> = Arc::new(provider);
-    let server_instance = server::Server::new_with_paths(provider, socket_path.clone(), debug_socket_path.clone());
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    let mut client = wait_for_server_client(&socket_path).await?;
-    let subscribe_id = client.subscribe().await?;
-    let _ = collect_until_done_unix(&mut client, subscribe_id).await?;
-
-    // Make the interrupted session live by attaching this client to it.
-    let resume_id = client.resume_session(&session.id).await?;
-    let _ = collect_until_done_unix(&mut client, resume_id).await?;
-
-    // Ask the server to continue every interrupted live session.
-    let resume_all_id = client.resume_all_sessions().await?;
-
-    let mut saw_continuation = false;
-    let mut resume_all_result: Option<(usize, usize)> = None;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && (!saw_continuation || resume_all_result.is_none()) {
-        let event = tokio::time::timeout(Duration::from_secs(2), client.read_event()).await??;
-        match event {
-            ServerEvent::TextDelta { text } if text.contains("Continuing the migration now.") => {
-                saw_continuation = true;
-            }
-            ServerEvent::ResumeAllResult {
-                id, resumed, skipped, ..
-            } if id == resume_all_id => {
-                resume_all_result = Some((resumed, skipped));
-            }
-            _ => {}
-        }
-    }
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    assert!(
-        saw_continuation,
-        "interrupted live session should stream a continuation after resume_all_sessions"
-    );
-    let (resumed, skipped) = resume_all_result.ok_or_else(|| anyhow::anyhow!("did not receive ResumeAllResult"))?;
-    assert_eq!(resumed, 1, "exactly one interrupted session should resume");
-    assert_eq!(skipped, 0, "no live session should be skipped");
-
-    Ok(())
-}
-
 #[tokio::test]
 async fn test_resume_session_reports_reload_interruption_for_peer_sessions() -> Result<()> {
     let _env = setup_test_env()?;
@@ -548,54 +418,9 @@ async fn test_resume_session_reports_reload_interruption_for_peer_sessions() -> 
     Ok(())
 }
 
-/// Test that subscribe selfdev hint marks the session as canary
+/// Test that a subscribe carrying only a working_dir attaches normally.
 #[tokio::test]
-async fn test_subscribe_selfdev_hint_marks_canary() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = MockProvider::new();
-    let provider: Arc<dyn horon_agent::provider::Provider> = Arc::new(provider);
-    let server_instance = server::Server::new_with_paths(provider, socket_path.clone(), debug_socket_path.clone());
-
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    let mut client = wait_for_server_client(&socket_path).await?;
-    let subscribe_id = client.subscribe_with_info(None, Some(true), None, false, false).await?;
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await??;
-        if matches!(event, ServerEvent::Done { id } if id == subscribe_id) {
-            break;
-        }
-    }
-
-    let history_event = client.get_history_event().await?;
-    match history_event {
-        ServerEvent::History { is_canary, .. } => {
-            assert_eq!(is_canary, Some(true));
-        }
-        _ => anyhow::bail!("Expected history event after subscribe"),
-    }
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    Ok(())
-}
-
-/// Test that working_dir alone no longer upgrades a session to self-dev.
-#[tokio::test]
-async fn test_subscribe_working_dir_without_selfdev_hint_stays_normal() -> Result<()> {
+async fn test_subscribe_with_working_dir_attaches_a_normal_session() -> Result<()> {
     let _env = setup_test_env()?;
     let runtime_dir = short_runtime_dir(format!(
         "horon-agent-test-{}",
@@ -625,7 +450,7 @@ async fn test_subscribe_working_dir_without_selfdev_hint_stays_normal() -> Resul
 
     let mut client = wait_for_server_client(&socket_path).await?;
     let subscribe_id = client
-        .subscribe_with_info(Some(nested_dir.display().to_string()), None, None, false, false)
+        .subscribe_with_info(Some(nested_dir.display().to_string()), None, false, false)
         .await?;
 
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -638,222 +463,11 @@ async fn test_subscribe_working_dir_without_selfdev_hint_stays_normal() -> Resul
 
     let history_event = client.get_history_event().await?;
     match history_event {
-        ServerEvent::History { is_canary, .. } => {
-            assert_eq!(is_canary, Some(false));
+        ServerEvent::History { session_id, .. } => {
+            assert!(session_id.starts_with("session_"), "unexpected session id {session_id}");
         }
         _ => anyhow::bail!("Expected history event after subscribe"),
     }
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    Ok(())
-}
-
-/// Test that switching models resets the provider resume session
-#[tokio::test]
-async fn test_model_switch_resets_provider_session() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = Arc::new(MockProvider::with_models(vec!["model-a", "model-b"]));
-    provider.queue_response(vec![
-        StreamEvent::TextDelta("hello".to_string()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("end_turn".to_string()),
-        },
-        StreamEvent::SessionId("session-1".to_string()),
-    ]);
-    provider.queue_response(vec![
-        StreamEvent::TextDelta("again".to_string()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("end_turn".to_string()),
-        },
-    ]);
-
-    let provider_dyn: Arc<dyn horon_agent::provider::Provider> = provider.clone();
-    let server_instance = server::Server::new_with_paths(provider_dyn, socket_path.clone(), debug_socket_path.clone());
-
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    let mut client = wait_for_subscribed_server_client(&socket_path).await?;
-
-    let msg_id = client.send_message("hello").await?;
-    let mut saw_done1 = false;
-    let mut seen_events = Vec::new();
-    // First-turn Done includes full agent-loop startup; slow Windows CI
-    // runners intermittently exceeded the old 5s budget (CI flake). Keep the
-    // loop tolerant of individual read timeouts and bound only the total wait.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        let Ok(event) = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await else {
-            continue;
-        };
-        let event = event?;
-        seen_events.push(format!("{event:?}"));
-        if matches!(event, ServerEvent::Done { id } if id == msg_id) {
-            saw_done1 = true;
-            break;
-        }
-    }
-    assert!(
-        saw_done1,
-        "Did not receive Done for first message {msg_id}. Seen events: {}\nstate={}\nlogs={}",
-        seen_events.join(" | "),
-        debug_run_command(debug_socket_path.clone(), "state", None)
-            .await
-            .unwrap_or_else(|err| format!("<state error: {err}>")),
-        std::env::var_os("HORON_AGENT_HOME")
-            .and_then(|home| latest_log_excerpt(std::path::Path::new(&home)))
-            .unwrap_or_else(|| "<no logs>".to_string())
-    );
-
-    let model_id = client.cycle_model(1).await?;
-    let mut saw_model = false;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        let Ok(event) = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await else {
-            continue;
-        };
-        if matches!(event?, ServerEvent::ModelChanged { id, error: None, .. } if id == model_id) {
-            saw_model = true;
-            break;
-        }
-    }
-    assert!(saw_model, "Did not receive ModelChanged after cycle");
-
-    let msg2_id = client.send_message("second").await?;
-    let mut saw_done2 = false;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        let Ok(event) = tokio::time::timeout(Duration::from_secs(1), client.read_event()).await else {
-            continue;
-        };
-        if matches!(event?, ServerEvent::Done { id } if id == msg2_id) {
-            saw_done2 = true;
-            break;
-        }
-    }
-    assert!(saw_done2, "Did not receive Done for second message");
-
-    let resume_ids = provider.captured_resume_session_ids.lock().unwrap().clone();
-    assert_eq!(resume_ids.len(), 2);
-    assert_eq!(resume_ids[0], None);
-    assert_eq!(resume_ids[1], None);
-
-    abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
-
-    Ok(())
-}
-
-/// Test that switching models only affects the active session
-#[tokio::test]
-async fn test_model_switch_is_per_session() -> Result<()> {
-    let _env = setup_test_env()?;
-    let runtime_dir = short_runtime_dir(format!(
-        "horon-agent-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&runtime_dir)?;
-    let socket_path = runtime_dir.join("horon-agent.sock");
-    let debug_socket_path = runtime_dir.join("horon-agent-debug.sock");
-
-    let provider = Arc::new(MockProvider::with_models(vec!["model-a", "model-b"]));
-    provider.queue_response(vec![
-        StreamEvent::TextDelta("one".to_string()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("end_turn".to_string()),
-        },
-        StreamEvent::SessionId("session-1".to_string()),
-    ]);
-    provider.queue_response(vec![
-        StreamEvent::TextDelta("two".to_string()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("end_turn".to_string()),
-        },
-        StreamEvent::SessionId("session-2".to_string()),
-    ]);
-    provider.queue_response(vec![
-        StreamEvent::TextDelta("three".to_string()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("end_turn".to_string()),
-        },
-    ]);
-
-    let provider_dyn: Arc<dyn horon_agent::provider::Provider> = provider.clone();
-    let server_instance = server::Server::new_with_paths(provider_dyn, socket_path.clone(), debug_socket_path.clone());
-
-    let server_handle = tokio::spawn(async move { server_instance.run().await });
-
-    let mut client1 = wait_for_subscribed_server_client(&socket_path).await?;
-    let mut client2 = server::Client::connect_with_path(socket_path.clone()).await?;
-    subscribe_client(&mut client2).await?;
-
-    // Give server time to set up both client sessions
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let msg1 = client1.send_message("hello").await?;
-    let mut done1 = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client1.read_event()).await??;
-        if matches!(event, ServerEvent::Done { id } if id == msg1) {
-            done1 = true;
-            break;
-        }
-    }
-    assert!(done1, "Did not receive Done for client1 message");
-
-    let msg2 = client2.send_message("hello").await?;
-    let mut done2 = false;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client2.read_event()).await??;
-        if matches!(event, ServerEvent::Done { id } if id == msg2) {
-            done2 = true;
-            break;
-        }
-    }
-    assert!(done2, "Did not receive Done for client2 message");
-
-    let model_id = client1.cycle_model(1).await?;
-    let mut saw_model = false;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client1.read_event()).await??;
-        if matches!(event, ServerEvent::ModelChanged { id, error: None, .. } if id == model_id) {
-            saw_model = true;
-            break;
-        }
-    }
-    assert!(saw_model, "Did not receive ModelChanged after cycle");
-
-    let msg3 = client2.send_message("after").await?;
-    let mut done3 = false;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        let event = tokio::time::timeout(Duration::from_secs(1), client2.read_event()).await??;
-        if matches!(event, ServerEvent::Done { id } if id == msg3) {
-            done3 = true;
-            break;
-        }
-    }
-    assert!(done3, "Did not receive Done for client2 after switch");
-
-    let models = provider.captured_models.lock().unwrap().clone();
-    assert!(models.len() >= 3, "Expected at least 3 model captures");
-    assert_eq!(models[2], "model-a");
 
     abort_server_and_cleanup(&server_handle, &socket_path, &debug_socket_path);
 

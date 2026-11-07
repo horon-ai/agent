@@ -54,7 +54,6 @@ pub fn prompt_to_trust_external_auth(provider_name: &str, source_name: &str, pat
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ExternalAuthReviewAction {
     SharedExternal(auth::external::ExternalAuthSource),
-    CodexLegacy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,11 +86,9 @@ impl ExternalAuthReviewCandidate {
     }
 
     /// Canonical provider ids this candidate activates on a successful import.
-    /// Unknown display labels are skipped; the legacy Codex action always
-    /// activates OpenAI.
+    /// Unknown display labels are skipped.
     pub fn activated_provider_ids(&self) -> Vec<&'static str> {
         match &self.action {
-            ExternalAuthReviewAction::CodexLegacy => vec!["openai"],
             ExternalAuthReviewAction::SharedExternal(_) => {
                 self.provider_ids().into_iter().filter(|id| *id != "cursor").collect()
             }
@@ -103,16 +100,16 @@ impl ExternalAuthReviewCandidate {
         &self.path
     }
 
-    /// Build a synthetic candidate for tests / UI fixtures. The resulting
-    /// candidate points at the legacy Codex action so it can be summarized and
-    /// rendered, but is not expected to actually import successfully.
+    /// Build a synthetic candidate for tests / UI fixtures. The candidate
+    /// points at a shared external source so it can be summarized and rendered,
+    /// but is not expected to actually import successfully.
     #[doc(hidden)]
     pub fn fixture(provider_summary: impl Into<String>, source_name: impl Into<String>) -> Self {
         Self {
             provider_summary: provider_summary.into(),
             source_name: source_name.into(),
             path: std::path::PathBuf::from("/dev/null"),
-            action: ExternalAuthReviewAction::CodexLegacy,
+            action: ExternalAuthReviewAction::SharedExternal(auth::external::ExternalAuthSource::OpenCode),
         }
     }
 }
@@ -232,15 +229,6 @@ pub fn detected_external_auth_review_candidates() -> Result<Vec<ExternalAuthRevi
         });
     }
 
-    if auth::codex::legacy_auth_source_exists() {
-        candidates.push(ExternalAuthReviewCandidate {
-            provider_summary: "Codex".to_string(),
-            source_name: "Codex auth.json".to_string(),
-            path: auth::codex::legacy_auth_file_path()?,
-            action: ExternalAuthReviewAction::CodexLegacy,
-        });
-    }
-
     Ok(candidates)
 }
 
@@ -313,7 +301,6 @@ fn prompt_to_review_external_auth_sources(candidates: &[ExternalAuthReviewCandid
 fn external_auth_review_candidate_trusted(candidate: &ExternalAuthReviewCandidate) -> bool {
     match candidate.action {
         ExternalAuthReviewAction::SharedExternal(source) => auth::external::source_allowed(source),
-        ExternalAuthReviewAction::CodexLegacy => auth::codex::legacy_auth_allowed(),
     }
 }
 
@@ -326,7 +313,6 @@ fn approve_external_auth_review_candidate(
     }
     match candidate.action {
         ExternalAuthReviewAction::SharedExternal(source) => auth::external::trust_external_auth_source(source)?,
-        ExternalAuthReviewAction::CodexLegacy => auth::codex::trust_legacy_auth_for_future_use()?,
     }
     Ok(())
 }
@@ -336,10 +322,6 @@ fn revoke_external_auth_review_candidate(candidate: &ExternalAuthReviewCandidate
         ExternalAuthReviewAction::SharedExternal(source) => {
             crate::config::Config::revoke_external_auth_source_for_path(source.source_id(), &candidate.path)?
         }
-        ExternalAuthReviewAction::CodexLegacy => crate::config::Config::revoke_external_auth_source_for_path(
-            auth::codex::LEGACY_CODEX_AUTH_SOURCE_ID,
-            &candidate.path,
-        )?,
     }
     Ok(())
 }
@@ -351,33 +333,6 @@ fn revoke_external_auth_review_candidate(candidate: &ExternalAuthReviewCandidate
 // then discard the rotated result, breaking both horon-agent and the original tool.
 // Expired tokens are still imported: they get refreshed lazily (and persisted)
 // at request time, or the user is prompted to /login.
-
-/// Render a human-friendly note about how soon a token-based credential
-/// expires, used to tell the user when a re-login is likely needed without
-/// failing the import.
-fn token_freshness_note(expires_at_ms: i64) -> String {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    if expires_at_ms <= now_ms {
-        " The access token is expired; horon-agent will refresh it on first use, or run /login if that fails."
-            .to_string()
-    } else {
-        String::new()
-    }
-}
-
-async fn validate_openai_import() -> Result<String> {
-    let creds = auth::codex::load_credentials()?;
-    if creds.refresh_token.trim().is_empty() {
-        if creds.access_token.trim().is_empty() {
-            anyhow::bail!("OpenAI source did not expose a usable token or API key.");
-        }
-        return Ok("Loaded OpenAI API key credentials.".to_string());
-    }
-    Ok(format!(
-        "Loaded OpenAI OAuth credentials.{}",
-        creds.expires_at.map(token_freshness_note).unwrap_or_default()
-    ))
-}
 
 fn validate_openrouter_like_import() -> Result<String> {
     for (env_key, env_file) in crate::provider_catalog::openrouter_like_api_key_sources() {
@@ -392,8 +347,7 @@ async fn validate_shared_external_import(source: auth::external::ExternalAuthSou
     let mut errors = Vec::new();
     for label in auth::external::source_provider_labels(source) {
         let result = match label {
-            "Codex" => validate_openai_import().await,
-            "OpenRouter/API-key providers" => validate_openrouter_like_import(),
+            "OpenAI-compatible API-key providers" => validate_openrouter_like_import(),
             _ => continue,
         };
         match result {
@@ -407,7 +361,6 @@ async fn validate_shared_external_import(source: auth::external::ExternalAuthSou
 async fn validate_external_auth_review_candidate(candidate: &ExternalAuthReviewCandidate) -> Result<String> {
     match candidate.action {
         ExternalAuthReviewAction::SharedExternal(source) => validate_shared_external_import(source).await,
-        ExternalAuthReviewAction::CodexLegacy => validate_openai_import().await,
     }
 }
 
@@ -490,14 +443,9 @@ pub async fn run_external_auth_auto_import_candidates(
 }
 
 /// Whether HoronAgent already has a usable login for a canonical provider id, as
-/// returned by [`ExternalAuthReviewCandidate::provider_ids`]. API keys do not
-/// count for the OAuth providers, since importing an OAuth login adds to them.
+/// returned by [`ExternalAuthReviewCandidate::provider_ids`].
 pub fn provider_connected_in_horon_agent(status: &auth::AuthStatus, provider_id: &str) -> bool {
-    use auth::AuthState::Available;
-    match provider_id {
-        "openai" => status.openai_has_oauth && status.openai_oauth_state == Available,
-        _ => false,
-    }
+    provider_id == "openai" && status.openai_compatible_any == auth::AuthState::Available
 }
 
 /// Like [`run_external_auth_auto_import_candidates`], but never lets an

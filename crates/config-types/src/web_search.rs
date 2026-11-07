@@ -1,4 +1,4 @@
-//! Search-engine configuration and native provider search defaults.
+//! Search-engine configuration for the local `websearch` tool.
 
 use super::*;
 
@@ -17,11 +17,9 @@ pub enum WebSearchEngine {
     Searxng,
     /// User-configured HTTP JSON endpoint.
     Custom,
-    /// Provider-native server-side search (Anthropic `web_search`, OpenAI
-    /// Responses `web_search`). Search runs on the model provider's side, so it
-    /// works on hosts where scraping is blocked and needs no extra API key.
-    /// When the active provider/model does not support it, the local
-    /// `websearch` tool is used with `fallback_engines` instead.
+    /// Provider-native server-side search as a selection value. This build has
+    /// no hosted search, so the engine yields no results of its own and the
+    /// local `fallback_engines` run instead.
     Native,
 }
 
@@ -125,26 +123,6 @@ pub struct WebSearchConfig {
     pub searxng_url: Option<String>,
     /// Environment variable containing the SearXNG base URL.
     pub searxng_url_env: String,
-    /// Prefer the model provider's own server-side search whenever the active
-    /// provider/model supports it (Anthropic first-party API, OpenAI
-    /// Responses). The local `websearch` tool is then replaced by the hosted
-    /// one. Providers without native search keep the local tool and `engine`.
-    /// Default true. `engine = "native"` also turns this on.
-    pub prefer_native: bool,
-    /// Maximum provider-native searches per request.
-    /// Anthropic bills roughly $10 per 1,000 searches on API keys, so this caps
-    /// spend. Anthropic only; OpenAI has no per-request cap.
-    pub native_max_uses: Option<u32>,
-    /// Restrict provider-native search to these domains. Mutually exclusive
-    /// with `native_blocked_domains` (Anthropic rejects both).
-    pub native_allowed_domains: Vec<String>,
-    /// Never return results from these domains (Anthropic only).
-    pub native_blocked_domains: Vec<String>,
-    /// Anthropic server tool version, e.g. "web_search_20250305" (default) or
-    /// "web_search_20260209". Newer versions are sent with
-    /// `allowed_callers = ["direct"]` so models without programmatic tool
-    /// calling are not rejected.
-    pub native_anthropic_tool_version: String,
 }
 
 impl Default for WebSearchConfig {
@@ -158,23 +136,6 @@ impl Default for WebSearchConfig {
             bing_market: "en-US".to_string(),
             searxng_url: None,
             searxng_url_env: "HORON_AGENT_SEARXNG_URL".to_string(),
-            prefer_native: true,
-            native_max_uses: Some(DEFAULT_NATIVE_WEB_SEARCH_MAX_USES),
-            native_allowed_domains: Vec::new(),
-            native_blocked_domains: Vec::new(),
-            native_anthropic_tool_version: DEFAULT_ANTHROPIC_WEB_SEARCH_TOOL.to_string(),
         }
-    }
-}
-
-/// Default cap on provider-native searches per request.
-pub const DEFAULT_NATIVE_WEB_SEARCH_MAX_USES: u32 = 5;
-/// Default Anthropic web search server tool version.
-pub const DEFAULT_ANTHROPIC_WEB_SEARCH_TOOL: &str = "web_search_20250305";
-
-impl WebSearchConfig {
-    /// True when provider-native search should be used where available.
-    pub fn native_enabled(&self) -> bool {
-        self.prefer_native || self.engine == WebSearchEngine::Native
     }
 }

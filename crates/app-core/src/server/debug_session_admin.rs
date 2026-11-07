@@ -12,37 +12,18 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 
-fn parse_create_session_command(cmd: &str) -> Option<(Option<String>, bool)> {
+fn parse_create_session_command(cmd: &str) -> Option<Option<String>> {
     if cmd == "create_session" {
-        return Some((None, false));
-    }
-
-    if let Some(rest) = cmd.strip_prefix("create_session:selfdev:") {
-        let working_dir = rest.trim();
-        return Some((
-            if working_dir.is_empty() {
-                None
-            } else {
-                Some(working_dir.to_string())
-            },
-            true,
-        ));
-    }
-
-    if cmd == "create_session:selfdev" {
-        return Some((None, true));
+        return Some(None);
     }
 
     if let Some(rest) = cmd.strip_prefix("create_session:") {
         let working_dir = rest.trim();
-        return Some((
-            if working_dir.is_empty() {
-                None
-            } else {
-                Some(working_dir.to_string())
-            },
-            false,
-        ));
+        return Some(if working_dir.is_empty() {
+            None
+        } else {
+            Some(working_dir.to_string())
+        });
     }
 
     None
@@ -67,7 +48,7 @@ pub(super) async fn maybe_handle_session_admin_command(
     soft_interrupt_queues: &SessionInterruptQueues,
     mcp_pool: Option<Arc<crate::mcp::SharedMcpPool>>,
 ) -> Result<Option<String>> {
-    if let Some((working_dir, selfdev_requested)) = parse_create_session_command(cmd) {
+    if let Some(working_dir) = parse_create_session_command(cmd) {
         let create_command = match working_dir {
             Some(dir) => format!("create_session:{dir}"),
             None => "create_session".to_string(),
@@ -82,7 +63,6 @@ pub(super) async fn maybe_handle_session_admin_command(
             swarm_coordinators,
             swarm_plans,
             soft_interrupt_queues,
-            selfdev_requested,
             None,
             None,
             None,

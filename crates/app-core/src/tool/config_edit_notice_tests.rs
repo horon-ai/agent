@@ -47,10 +47,10 @@ fn writing_an_unrelated_file_reports_nothing() {
     let (dir, prev) = temp_horon_agent_home();
 
     let other = dir.path().join("notes.toml");
-    std::fs::write(&other, "[display]\ncentered = true\n").expect("write");
+    std::fs::write(&other, "[display]\nemoji = true\n").expect("write");
 
     assert!(
-        config_edit_notice(&other, "", "[display]\ncentered = true\n").is_none(),
+        config_edit_notice(&other, "", "[display]\nemoji = true\n").is_none(),
         "only the active config file should get a change report"
     );
 
@@ -64,11 +64,11 @@ fn comment_only_config_edit_reports_nothing() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    let after = "# note\n[display]\ncentered = true\n";
+    let after = "# note\n[display]\nemoji = true\n";
     std::fs::write(&path, after).expect("write");
 
     assert!(
-        config_edit_notice(&path, "[display]\ncentered = true\n", after).is_none(),
+        config_edit_notice(&path, "[display]\nemoji = true\n", after).is_none(),
         "a comment-only edit must not claim a settings change"
     );
 
@@ -98,18 +98,18 @@ fn the_notice_leaves_the_config_cache_current() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    std::fs::write(&path, "[display]\ncentered = false\n").expect("write");
-    assert!(!crate::config::config().display.centered);
+    std::fs::write(&path, "[display]\nemoji = false\n").expect("write");
+    assert!(!crate::config::config().display.emoji);
 
     // Rewrite immediately: without the notice's explicit invalidation this can
     // land inside the config cache's staleness throttle.
-    let after = "[display]\ncentered = true\n";
+    let after = "[display]\nemoji = true\n";
     std::fs::write(&path, after).expect("rewrite");
-    let notice = config_edit_notice(&path, "[display]\ncentered = false\n", after).expect("report expected");
+    let notice = config_edit_notice(&path, "[display]\nemoji = false\n", after).expect("report expected");
 
     assert!(notice.contains("live now"), "{notice}");
     assert!(
-        crate::config::config().display.centered,
+        crate::config::config().display.emoji,
         "claiming 'live now' requires the config cache to already reflect the edit"
     );
 
@@ -123,10 +123,10 @@ fn a_config_write_that_breaks_toml_syntax_is_reported_loudly() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    let broken = "[display\ncentered = true\n";
+    let broken = "[display\nemoji = true\n";
     std::fs::write(&path, broken).expect("write");
 
-    let notice = config_edit_notice(&path, "[display]\ncentered = true\n", broken)
+    let notice = config_edit_notice(&path, "[display]\nemoji = true\n", broken)
         .expect("a config file that stopped parsing must never be silent");
     assert!(notice.contains("WARNING"), "{notice}");
     assert!(notice.contains("no longer parses"), "{notice}");
@@ -145,8 +145,8 @@ async fn the_write_tool_reports_config_changes_end_to_end() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    std::fs::write(&path, "[display]\ncentered = false\n\n[gateway]\nport = 7777\n").expect("seed config");
-    assert!(!crate::config::config().display.centered);
+    std::fs::write(&path, "[display]\nemoji = false\n\n[gateway]\nport = 7777\n").expect("seed config");
+    assert!(!crate::config::config().display.emoji);
 
     let ctx = ToolContext {
         session_id: "test".to_string(),
@@ -162,7 +162,7 @@ async fn the_write_tool_reports_config_changes_end_to_end() {
         .execute(
             serde_json::json!({
                 "file_path": path.to_string_lossy(),
-                "content": "[display]\ncentered = true\n\n[gateway]\nport = 8888\n",
+                "content": "[display]\nemoji = true\n\n[gateway]\nport = 8888\n",
             }),
             ctx,
         )
@@ -170,11 +170,11 @@ async fn the_write_tool_reports_config_changes_end_to_end() {
         .expect("write should succeed");
 
     let body = output.output;
-    assert!(body.contains("display.centered"), "{body}");
+    assert!(body.contains("display.emoji"), "{body}");
     assert!(body.contains("live now"), "{body}");
     assert!(body.contains("Restart required for: gateway.port"), "{body}");
     assert!(
-        crate::config::config().display.centered,
+        crate::config::config().display.emoji,
         "the display change should be live in-process immediately after the write"
     );
 
@@ -192,8 +192,8 @@ async fn apply_patch_reports_config_changes() {
 
     let path = crate::config::Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
-    std::fs::write(&path, "[display]\ncentered = false\n").expect("seed config");
-    assert!(!crate::config::config().display.centered);
+    std::fs::write(&path, "[display]\nemoji = false\n").expect("seed config");
+    assert!(!crate::config::config().display.emoji);
 
     let ctx = ToolContext {
         session_id: "test".to_string(),
@@ -206,7 +206,7 @@ async fn apply_patch_reports_config_changes() {
     };
 
     let patch_text = format!(
-        "*** Begin Patch\n*** Update File: {}\n@@\n-centered = false\n+centered = true\n*** End Patch\n",
+        "*** Begin Patch\n*** Update File: {}\n@@\n-emoji = false\n+emoji = true\n*** End Patch\n",
         path.display()
     );
     let output = crate::tool::apply_patch::ApplyPatchTool
@@ -215,10 +215,10 @@ async fn apply_patch_reports_config_changes() {
         .expect("patch should apply");
 
     let body = output.output;
-    assert!(body.contains("display.centered"), "{body}");
+    assert!(body.contains("display.emoji"), "{body}");
     assert!(body.contains("live now"), "{body}");
     assert!(
-        crate::config::config().display.centered,
+        crate::config::config().display.emoji,
         "the patched setting should be live immediately"
     );
 

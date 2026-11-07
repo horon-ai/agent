@@ -105,7 +105,7 @@ pub fn build_report(scan: ScanResult) -> ProductivityReport {
         tool("edit") + tool("write") + tool("multiedit") + tool("apply_patch") + tool("patch") + tool("replace");
     r.commands_run = tool("bash");
     r.searches = tool("grep") + tool("agentgrep") + tool("glob");
-    r.web_actions = tool("browser") + tool("websearch") + tool("webfetch");
+    r.web_actions = tool("websearch") + tool("webfetch");
 
     r.top_projects = top_n(projects, 8);
     r.top_tools = top_n(tools, 10);

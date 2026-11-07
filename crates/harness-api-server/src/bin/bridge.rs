@@ -14,7 +14,7 @@
 // its own glibc arena, which is how an idle bridge reached 34 threads and
 // ~94 MB. Bound the pool and let idle threads exit quickly.
 fn main() -> anyhow::Result<()> {
-    // Tooling (reload-bridge preflight) probes the binary with `--help`.
+    // Tooling probes the binary with `--help`.
     // Without this, the flag was taken as the API socket path and the probe
     // started a real bridge listening on `./--help` that never exited.
     if let Some(flag) = std::env::args().nth(1).filter(|arg| arg.starts_with('-')) {

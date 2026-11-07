@@ -14,120 +14,6 @@ impl Config {
             self.server.wake_mode = parsed;
         }
 
-        // Keybindings
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_UP_KEY") {
-            self.keybindings.scroll_up = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_DOWN_KEY") {
-            self.keybindings.scroll_down = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_PAGE_UP_KEY") {
-            self.keybindings.scroll_page_up = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_PAGE_DOWN_KEY") {
-            self.keybindings.scroll_page_down = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_MODEL_SWITCH_KEY") {
-            self.keybindings.model_switch_next = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_MODEL_SWITCH_PREV_KEY") {
-            self.keybindings.model_switch_prev = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_EFFORT_INCREASE_KEY") {
-            self.keybindings.effort_increase = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_EFFORT_DECREASE_KEY") {
-            self.keybindings.effort_decrease = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SPEED_INCREASE_KEY") {
-            self.keybindings.speed_increase = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SPEED_DECREASE_KEY") {
-            self.keybindings.speed_decrease = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_CENTERED_TOGGLE_KEY") {
-            self.keybindings.centered_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_PROMPT_UP_KEY") {
-            self.keybindings.scroll_prompt_up = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_PROMPT_DOWN_KEY") {
-            self.keybindings.scroll_prompt_down = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_BOOKMARK_KEY") {
-            self.keybindings.scroll_bookmark = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_UP_FALLBACK_KEY") {
-            self.keybindings.scroll_up_fallback = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SCROLL_DOWN_FALLBACK_KEY") {
-            self.keybindings.scroll_down_fallback = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WORKSPACE_LEFT_KEY") {
-            self.keybindings.workspace_left = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WORKSPACE_DOWN_KEY") {
-            self.keybindings.workspace_down = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WORKSPACE_UP_KEY") {
-            self.keybindings.workspace_up = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WORKSPACE_RIGHT_KEY") {
-            self.keybindings.workspace_right = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SIDE_PANEL_TOGGLE_KEY") {
-            self.keybindings.side_panel_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_COPY_SELECTION_TOGGLE_KEY") {
-            self.keybindings.copy_selection_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DIAGRAM_PANE_TOGGLE_KEY") {
-            self.keybindings.diagram_pane_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DIAGRAM_PANE_VISIBILITY_TOGGLE_KEY") {
-            self.keybindings.diagram_pane_visibility_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_TYPING_SCROLL_LOCK_TOGGLE_KEY") {
-            self.keybindings.typing_scroll_lock_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DIFF_MODE_CYCLE_KEY") {
-            self.keybindings.diff_mode_cycle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_COMMIT_LOG_KEY") {
-            self.keybindings.commit_log = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_INFO_WIDGET_TOGGLE_KEY") {
-            self.keybindings.info_widget_toggle = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_NEW_TERMINAL_KEY") {
-            self.keybindings.new_terminal = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_VOICE_INPUT_KEY") {
-            self.keybindings.voice_input = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DICTATION_RECORDER") {
-            self.dictation.recorder = v;
-        }
-
-        // Dictation
-        if let Ok(v) = std::env::var("HORON_AGENT_DICTATION_COMMAND") {
-            self.dictation.command = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DICTATION_MODE")
-            && let Ok(mode) =
-                toml::from_str::<crate::protocol::TranscriptMode>(&format!("\"{}\"", v.trim().to_ascii_lowercase()))
-        {
-            self.dictation.mode = mode;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DICTATION_KEY") {
-            self.dictation.key = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DICTATION_TIMEOUT_SECS")
-            && let Ok(parsed) = v.trim().parse::<u64>()
-        {
-            self.dictation.timeout_secs = parsed;
-        }
-
         // Tools
         if let Ok(v) = std::env::var("HORON_AGENT_TOOL_PROFILE") {
             self.tools.profile = v;
@@ -173,6 +59,11 @@ impl Config {
         {
             self.tools.tool_result_aging = parsed;
         }
+        if let Ok(v) = std::env::var("HORON_AGENT_IRC")
+            && let Some(parsed) = parse_env_bool(&v)
+        {
+            self.tools.irc = parsed;
+        }
 
         // ACP adapter
         if let Ok(v) = std::env::var("HORON_AGENT_ACP_PROFILE") {
@@ -194,75 +85,25 @@ impl Config {
         }
 
         // Display
-        if let Ok(v) = std::env::var("HORON_AGENT_DIFF_MODE") {
-            match v.to_lowercase().as_str() {
-                "off" | "none" | "0" | "false" => self.display.diff_mode = DiffDisplayMode::Off,
-                "inline" | "on" | "1" | "true" => self.display.diff_mode = DiffDisplayMode::Inline,
-                "full-inline" | "full_inline" | "fullinline" | "inline-full" | "inline_full" | "inlinefull"
-                | "full" => {
-                    self.display.diff_mode = DiffDisplayMode::FullInline;
-                }
-                "file" => self.display.diff_mode = DiffDisplayMode::File,
-                _ => {}
-            }
-        } else if let Ok(v) = std::env::var("HORON_AGENT_SHOW_DIFFS")
+        if let Ok(v) = std::env::var("HORON_AGENT_DEBUG_SOCKET")
             && let Some(parsed) = parse_env_bool(&v)
         {
-            self.display.diff_mode = if parsed {
-                DiffDisplayMode::Inline
-            } else {
-                DiffDisplayMode::Off
-            };
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_PIN_IMAGES")
-            && let Some(parsed) = parse_env_bool(&v)
-        {
-            self.display.pin_images = parsed;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_PIN_TODOS")
-            && let Some(parsed) = parse_env_bool(&v)
-        {
-            self.display.pin_todos = parsed;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DISPLAY_CENTERED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.centered = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_QUEUE_MODE") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.queue_mode = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_AUTO_SERVER_RELOAD") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.auto_server_reload = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_MOUSE_CAPTURE") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.mouse_capture = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DEBUG_SOCKET") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.debug_socket = parsed;
-            }
+            self.display.debug_socket = parsed;
         }
         if let Ok(v) = std::env::var("HORON_AGENT_NO_EMOJI")
             && let Some(parsed) = parse_env_bool(&v)
         {
             self.display.emoji = !parsed;
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_SHOW_THINKING") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.show_thinking = parsed;
-            }
+        if let Ok(v) = std::env::var("HORON_AGENT_SHOW_THINKING")
+            && let Some(parsed) = parse_env_bool(&v)
+        {
+            self.display.show_thinking = parsed;
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_REASONING_DISPLAY") {
-            if let Some(mode) = crate::config::ReasoningDisplayMode::parse(&v) {
-                self.display.set_reasoning_display(mode);
-            }
+        if let Ok(v) = std::env::var("HORON_AGENT_REASONING_DISPLAY")
+            && let Some(mode) = crate::config::ReasoningDisplayMode::parse(&v)
+        {
+            self.display.set_reasoning_display(mode);
         }
         // A front-end default, applied only when the user has not made an
         // explicit choice. The desktop uses this so its transcript shows live
@@ -272,97 +113,6 @@ impl Config {
             && let Some(mode) = crate::config::ReasoningDisplayMode::parse(&v)
         {
             self.display.set_reasoning_display(mode);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_MARKDOWN_SPACING") {
-            match v.trim().to_lowercase().as_str() {
-                "compact" => self.display.markdown_spacing = MarkdownSpacingMode::Compact,
-                "document" | "doc" => {
-                    self.display.markdown_spacing = MarkdownSpacingMode::Document;
-                }
-                _ => {}
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_IDLE_ANIMATION") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.idle_animation = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_PROMPT_ENTRY_ANIMATION") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.prompt_entry_animation = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DISABLED_ANIMATIONS") {
-            self.display.disabled_animations = parse_env_list(&v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_ACTIVE_SESSIONS_MANAGER") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.active_sessions_manager = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_EXTERNAL_SESSIONS") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.external_sessions = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_RESUME_PROJECT_SCOPE") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.resume_project_scope = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_PERFORMANCE") {
-            let trimmed = v.trim().to_lowercase();
-            if matches!(trimmed.as_str(), "auto" | "full" | "reduced" | "minimal") {
-                self.display.performance = trimmed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_ANIMATION_FPS") {
-            if let Ok(fps) = v.trim().parse::<u32>() {
-                self.display.animation_fps = fps.clamp(1, 120);
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_REDRAW_FPS") {
-            if let Ok(fps) = v.trim().parse::<u32>() {
-                self.display.redraw_fps = fps.clamp(1, 120);
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_COPY_BADGE_ALT_LABEL") {
-            self.display.copy_badge_alt_label = v;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_COMPACT_NOTIFICATIONS") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.compact_notifications = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SHOW_AGENTGREP_OUTPUT") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.show_agentgrep_output = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SHOW_BASH_OUTPUT") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.show_bash_output = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_TOOL_CALL_DETAILS") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.tool_call_details = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_LATEX_RENDERING")
-            && let Some(mode) = LatexRenderingMode::parse(&v)
-        {
-            self.display.latex_rendering = mode;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_CHAT_NATIVE_SCROLLBAR") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.native_scrollbars.chat = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_SIDE_PANEL_NATIVE_SCROLLBAR") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.display.native_scrollbars.side_panel = parsed;
-            }
         }
 
         // Features
@@ -374,11 +124,6 @@ impl Config {
         if let Ok(v) = std::env::var("HORON_AGENT_SWARM_ENABLED") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.features.swarm = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_ENABLE_MERMAID") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.features.mermaid = parsed;
             }
         }
         if let Ok(v) = std::env::var("HORON_AGENT_CHECK_UPDATES") {
@@ -446,11 +191,6 @@ impl Config {
                 self.agents.swarm_spawn_mode = parsed;
             }
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_SWARM_STRIP_LAYOUT") {
-            if let Some(parsed) = SwarmStripLayout::parse(&v) {
-                self.agents.swarm_strip_layout = parsed;
-            }
-        }
         if let Ok(v) = std::env::var("HORON_AGENT_SWARM_MAX_CONCURRENT_AGENTS") {
             if let Ok(parsed) = v.trim().parse::<usize>() {
                 self.agents.swarm_max_concurrent_agents = parsed;
@@ -510,26 +250,6 @@ impl Config {
             if let Ok(parsed) = v.trim().parse::<usize>() {
                 self.agents.memory_embedding_dim = Some(parsed);
             }
-        }
-
-        // Terminal spawning
-        if let Ok(v) = std::env::var("HORON_AGENT_SPAWN_HOOK") {
-            let trimmed = v.trim();
-            // An explicitly empty env value disables a config-file hook.
-            self.terminal.spawn_hook = if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            };
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_FOCUS_HOOK") {
-            let trimmed = v.trim();
-            // An explicitly empty env value disables a config-file hook.
-            self.terminal.focus_hook = if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            };
         }
 
         // Lifecycle hooks. Empty env values disable config-file hooks.
@@ -618,22 +338,6 @@ impl Config {
         {
             self.websearch.searxng_url = Some(v);
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_PREFER_NATIVE")
-            && let Some(parsed) = parse_env_bool(&v)
-        {
-            self.websearch.prefer_native = parsed;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_NATIVE_MAX_USES")
-            && let Ok(parsed) = v.trim().parse::<u32>()
-        {
-            self.websearch.native_max_uses = (parsed > 0).then_some(parsed);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_NATIVE_ALLOWED_DOMAINS") {
-            self.websearch.native_allowed_domains = parse_env_list(&v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_NATIVE_BLOCKED_DOMAINS") {
-            self.websearch.native_blocked_domains = parse_env_list(&v);
-        }
 
         if let Ok(v) = std::env::var("HORON_AGENT_TRUSTED_EXTERNAL_AUTH_SOURCES") {
             let mut source_ids = Vec::new();
@@ -718,91 +422,6 @@ impl Config {
         if let Ok(v) = std::env::var("HORON_AGENT_NTFY_SERVER") {
             self.safety.ntfy_server = v;
         }
-        if let Ok(v) = std::env::var("HORON_AGENT_SMTP_PASSWORD") {
-            self.safety.email_password = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_EMAIL_TO") {
-            self.safety.email_to = Some(v);
-            self.safety.email_enabled = true;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_IMAP_HOST") {
-            self.safety.email_imap_host = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_EMAIL_REPLY_ENABLED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.safety.email_reply_enabled = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_TELEGRAM_BOT_TOKEN") {
-            self.safety.telegram_bot_token = Some(v);
-            self.safety.telegram_enabled = true;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_TELEGRAM_CHAT_ID") {
-            self.safety.telegram_chat_id = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_TELEGRAM_REPLY_ENABLED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.safety.telegram_reply_enabled = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DISCORD_BOT_TOKEN") {
-            self.safety.discord_bot_token = Some(v);
-            self.safety.discord_enabled = true;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DISCORD_CHANNEL_ID") {
-            self.safety.discord_channel_id = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DISCORD_BOT_USER_ID") {
-            self.safety.discord_bot_user_id = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_DISCORD_REPLY_ENABLED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.safety.discord_reply_enabled = parsed;
-            }
-        }
-        // Jade cloud relay channel
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_API_BASE") {
-            self.safety.jade_relay_api_base = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_TOKEN") {
-            self.safety.jade_relay_token = Some(v);
-            self.safety.jade_relay_enabled = true;
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_TOKEN_ID") {
-            self.safety.jade_relay_token_id = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_USER_ID") {
-            self.safety.jade_relay_user_id = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_SESSION_ID") {
-            self.safety.jade_relay_session_id = Some(v);
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_ENABLED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.safety.jade_relay_enabled = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_REPLY_ENABLED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.safety.jade_relay_reply_enabled = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_LAUNCH_ENABLED") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.safety.jade_relay_launch_enabled = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_JADE_RELAY_LAUNCH_WORKING_DIR") {
-            let trimmed = v.trim();
-            if !trimmed.is_empty() {
-                self.safety.jade_relay_launch_working_dir = Some(trimmed.to_string());
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_AMBIENT_VISIBLE") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.ambient.visible = parsed;
-            }
-        }
 
         // Gateway (iOS/web)
         if let Ok(v) = std::env::var("HORON_AGENT_GATEWAY_ENABLED") {
@@ -826,11 +445,6 @@ impl Config {
         if let Ok(v) = std::env::var("HORON_AGENT_PREVENT_SLEEP_WHILE_STREAMING") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.power.prevent_sleep_while_streaming = parsed;
-            }
-        }
-        if let Ok(v) = std::env::var("HORON_AGENT_BLOCK_LID_CLOSE") {
-            if let Some(parsed) = parse_env_bool(&v) {
-                self.power.block_lid_close = parsed;
             }
         }
 
@@ -918,21 +532,6 @@ impl Config {
             && parsed > 0
         {
             self.provider.retry_backoff_cap_secs = parsed;
-        }
-
-        // Copilot premium mode: env var overrides config
-        // If set in config but not in env, propagate config -> env
-        if let Ok(v) = std::env::var("HORON_AGENT_COPILOT_PREMIUM") {
-            self.provider.copilot_premium = Some(v);
-        } else if let Some(ref mode) = self.provider.copilot_premium {
-            let env_val = match mode.as_str() {
-                "zero" | "0" => "0",
-                "one" | "1" => "1",
-                _ => "",
-            };
-            if !env_val.is_empty() {
-                crate::env::set_var("HORON_AGENT_COPILOT_PREMIUM", env_val);
-            }
         }
 
         // Explicit environment overrides win, but never export config values:

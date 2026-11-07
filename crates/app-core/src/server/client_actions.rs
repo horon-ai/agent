@@ -1,84 +1,22 @@
 #![cfg_attr(test, allow(clippy::items_after_test_module))]
 
 use super::client_disconnect_cleanup::blocking_session_io;
-use super::client_lifecycle::process_message_streaming_mpsc;
 use super::{
     ClientConnectionInfo, SessionInterruptQueues, SwarmEvent, SwarmMember, SwarmState, VersionedPlan,
     broadcast_swarm_status, fanout_session_event, persist_swarm_state_for, queue_soft_interrupt_for_session,
-    remove_session_channel_subscriptions, remove_session_from_swarm, swarm_id_for_session, truncate_detail,
-    update_member_status,
+    remove_session_channel_subscriptions, remove_session_from_swarm, swarm_id_for_session,
 };
 use crate::agent::Agent;
 use crate::protocol::{FeatureToggle, NotificationType, ServerEvent};
 use crate::session::Session;
-use crate::util::truncate_str;
-use horon_agent_agent_runtime::{SoftInterruptSource, StreamError};
+use horon_agent_agent_runtime::SoftInterruptSource;
 use std::collections::{HashMap, HashSet};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
-
-const INPUT_SHELL_MAX_OUTPUT_LEN: usize = 30_000;
-
-fn derive_subagent_description(prompt: &str) -> String {
-    let words: Vec<&str> = prompt.split_whitespace().take(4).collect();
-    if words.is_empty() {
-        "Manual subagent".to_string()
-    } else {
-        words.join(" ")
-    }
-}
-
-fn build_input_shell_command(command: &str) -> Command {
-    #[cfg(windows)]
-    {
-        let mut cmd = Command::new("cmd.exe");
-        cmd.arg("/C").arg(command);
-        cmd
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut cmd = Command::new("bash");
-        cmd.arg("-c").arg(command);
-        cmd
-    }
-}
-
-fn combine_input_shell_output(stdout: &[u8], stderr: &[u8]) -> (String, bool) {
-    let stdout = String::from_utf8_lossy(stdout);
-    let stderr = String::from_utf8_lossy(stderr);
-    let mut output = String::new();
-
-    if !stdout.is_empty() {
-        output.push_str(&stdout);
-    }
-    if !stderr.is_empty() {
-        if !output.is_empty() && !output.ends_with('\n') {
-            output.push('\n');
-        }
-        output.push_str("[stderr]\n");
-        output.push_str(&stderr);
-    }
-
-    let truncated = if output.len() > INPUT_SHELL_MAX_OUTPUT_LEN {
-        output = truncate_str(&output, INPUT_SHELL_MAX_OUTPUT_LEN).to_string();
-        if !output.ends_with('\n') {
-            output.push('\n');
-        }
-        output.push_str("… output truncated");
-        true
-    } else {
-        false
-    };
-
-    (output, truncated)
-}
 
 pub(super) struct NotifySessionContext<'a> {
     pub sessions: &'a SessionAgents,
@@ -168,315 +106,6 @@ pub(super) async fn handle_notify_session(id: u64, session_id: String, message: 
             retry_after_secs: None,
         });
     }
-}
-
-/// A user pressed something in an agent applet: store its state, publish, then
-/// resolve a waiting `applet` tool call or wake the agent like a notification.
-pub(super) async fn handle_applet_action(
-    id: u64,
-    session_id: String,
-    instance: String,
-    action: horon_agent_applet_types::Action,
-    state: serde_json::Value,
-    source_key: Option<String>,
-    ctx: NotifySessionContext<'_>,
-) {
-    let stored = match crate::applets::set_state(&session_id, &instance, state) {
-        Ok(stored) => stored,
-        Err(error) => {
-            let _ = ctx.client_event_tx.send(ServerEvent::Error {
-                id,
-                message: error.to_string(),
-                retry_after_secs: None,
-            });
-            return;
-        }
-    };
-    let (snapshot, inst) = stored;
-    crate::tool::applet::publish(&session_id, snapshot);
-    let message = crate::tool::applet::format_action_message(
-        &instance,
-        &inst.document.title,
-        &action,
-        &inst.document.state,
-        source_key.as_deref(),
-    );
-    if crate::tool::applet::deliver_to_waiter(&session_id, &instance, message.clone()) {
-        let _ = ctx.client_event_tx.send(ServerEvent::Done { id });
-        return;
-    }
-    handle_notify_session(id, session_id, message, ctx).await;
-}
-
-/// The user closed an agent applet. No agent wake.
-pub(super) fn handle_close_applet(
-    id: u64,
-    session_id: String,
-    instance: String,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    match crate::applets::close(&session_id, &instance) {
-        Ok((snapshot, _)) => {
-            crate::tool::applet::publish(&session_id, snapshot);
-            let _ = client_event_tx.send(ServerEvent::Done { id });
-        }
-        Err(error) => {
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: error.to_string(),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
-
-pub(super) fn handle_input_shell(
-    id: u64,
-    command: String,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let agent = Arc::clone(agent);
-    let tx = client_event_tx.clone();
-
-    tokio::spawn(async move {
-        let cwd = {
-            let agent_guard = agent.lock().await;
-            agent_guard.working_dir().map(|dir| dir.to_string())
-        };
-
-        let started = Instant::now();
-        let mut cmd = build_input_shell_command(&command);
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        if let Some(dir) = cwd.as_ref() {
-            cmd.current_dir(dir);
-        }
-
-        let result = match cmd.output().await {
-            Ok(output) => {
-                let (combined_output, truncated) = combine_input_shell_output(&output.stdout, &output.stderr);
-                crate::message::InputShellResult {
-                    command,
-                    cwd,
-                    output: combined_output,
-                    exit_code: output.status.code(),
-                    duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                    truncated,
-                    failed_to_start: false,
-                }
-            }
-            Err(error) => crate::message::InputShellResult {
-                command,
-                cwd,
-                output: format!("Failed to run command: {}", error),
-                exit_code: None,
-                duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                truncated: false,
-                failed_to_start: true,
-            },
-        };
-
-        let _ = tx.send(ServerEvent::InputShellResult { result });
-        let _ = tx.send(ServerEvent::Done { id });
-    });
-}
-
-/// Routing for future workers is metadata, so it can be updated during a turn.
-pub(super) async fn set_session_agent_model(
-    agent: &Arc<Mutex<Agent>>,
-    session_id: &str,
-    target: &str,
-    model: Option<String>,
-) -> anyhow::Result<crate::session::AgentModelOverrides> {
-    if let Ok(mut guard) = agent.try_lock() {
-        guard.set_agent_model_override(target, model)?;
-        Ok(guard.session_for_split().agent_model_overrides.clone())
-    } else {
-        let mut session = Session::load_startup_stub(session_id)?;
-        session.set_agent_model_override(target, model)?;
-        Ok(session.agent_model_overrides)
-    }
-}
-
-/// Save a worker-model default in the server's own configuration, so remote
-/// clients change the default that server-side workers actually use.
-pub(super) async fn set_global_agent_model(
-    agent: &Arc<Mutex<Agent>>,
-    session_id: &str,
-    target: &str,
-    model: Option<String>,
-) -> anyhow::Result<crate::session::AgentModelOverrides> {
-    crate::config::Config::set_agent_model_default(target, model.as_deref())?;
-    // Report the session's current overrides so the client view stays exact.
-    if let Ok(guard) = agent.try_lock() {
-        Ok(guard.session_for_split().agent_model_overrides.clone())
-    } else {
-        Ok(Session::load_startup_stub(session_id)?.agent_model_overrides)
-    }
-}
-
-pub(super) async fn handle_set_subagent_model(
-    id: u64,
-    model: Option<String>,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let mut agent_guard = agent.lock().await;
-    match agent_guard.set_subagent_model(model) {
-        Ok(()) => {
-            let _ = client_event_tx.send(ServerEvent::Done { id });
-        }
-        Err(error) => {
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: crate::util::format_error_chain(&error),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
-
-pub(super) fn handle_run_subagent(
-    id: u64,
-    prompt: String,
-    subagent_type: String,
-    model: Option<String>,
-    session_id: Option<String>,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let agent = Arc::clone(agent);
-    let tx = client_event_tx.clone();
-
-    tokio::spawn(async move {
-        let description = derive_subagent_description(&prompt);
-        let tool_call_id = crate::id::new_id("call");
-        let tool_name = "subagent".to_string();
-        let tool_input = serde_json::json!({
-            "description": description,
-            "prompt": prompt,
-            "subagent_type": subagent_type,
-            "model": model,
-            "session_id": session_id,
-            "command": "/subagent",
-        });
-
-        let message_id = {
-            let mut agent_guard = agent.lock().await;
-            // A manual tool run is real external work, so it lands an owed
-            // resume commit first, like every turn entry point.
-            if let Err(error) = blocking_session_io(|| agent_guard.finish_resume_persistence()) {
-                let _ = tx.send(ServerEvent::Error {
-                    id,
-                    message: crate::util::format_error_chain(&error),
-                    retry_after_secs: Some(1),
-                });
-                return;
-            }
-            match agent_guard.add_manual_tool_use(tool_call_id.clone(), tool_name.clone(), tool_input.clone()) {
-                Ok(message_id) => message_id,
-                Err(error) => {
-                    let _ = tx.send(ServerEvent::Error {
-                        id,
-                        message: crate::util::format_error_chain(&error),
-                        retry_after_secs: None,
-                    });
-                    return;
-                }
-            }
-        };
-
-        let _ = tx.send(ServerEvent::ToolStart {
-            id: tool_call_id.clone(),
-            name: tool_name.clone(),
-        });
-        let _ = tx.send(ServerEvent::ToolInput {
-            id: Some(tool_call_id.clone()),
-            delta: tool_input.to_string(),
-        });
-        let _ = tx.send(ServerEvent::ToolExec {
-            id: tool_call_id.clone(),
-            name: tool_name.clone(),
-        });
-
-        let (registry, session_id, working_dir) = {
-            let agent_guard = agent.lock().await;
-            (
-                // This tool runs by hand for the same session, so the overflow
-                // guard must read the session's budget, not a fresh clone's
-                // default budget against the 18k overhead floor.
-                agent_guard.registry_sharing_compaction(),
-                agent_guard.session_id().to_string(),
-                agent_guard.working_dir().map(std::path::PathBuf::from),
-            )
-        };
-
-        let ctx = crate::tool::ToolContext {
-            session_id,
-            message_id,
-            tool_call_id: tool_call_id.clone(),
-            working_dir,
-            stdin_request_tx: None,
-            graceful_shutdown_signal: None,
-            execution_mode: crate::tool::ToolExecutionMode::Direct,
-        };
-
-        let started = Instant::now();
-        let tool_name_for_exec = tool_name.clone();
-        let result =
-            match tokio::spawn(async move { registry.execute(&tool_name_for_exec, tool_input, ctx).await }).await {
-                Ok(result) => result,
-                Err(error) => Err(anyhow::anyhow!("Tool task panicked: {}", error)),
-            };
-        let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-
-        match result {
-            Ok(output) => {
-                let output_text = output.output.clone();
-                let _ = tx.send(ServerEvent::ToolDone {
-                    id: tool_call_id.clone(),
-                    name: tool_name,
-                    output: output_text,
-                    error: None,
-                });
-                let persist = {
-                    let mut agent_guard = agent.lock().await;
-                    agent_guard.add_manual_tool_result(tool_call_id, output, duration_ms)
-                };
-                if let Err(error) = persist {
-                    let _ = tx.send(ServerEvent::Error {
-                        id,
-                        message: crate::util::format_error_chain(&error),
-                        retry_after_secs: None,
-                    });
-                    return;
-                }
-                let _ = tx.send(ServerEvent::Done { id });
-            }
-            Err(error) => {
-                let error_msg = format!("Error: {}", error);
-                let _ = tx.send(ServerEvent::ToolDone {
-                    id: tool_call_id.clone(),
-                    name: tool_name,
-                    output: error_msg.clone(),
-                    error: Some(error_msg.clone()),
-                });
-                let persist = {
-                    let mut agent_guard = agent.lock().await;
-                    agent_guard.add_manual_tool_error(tool_call_id, error_msg, duration_ms)
-                };
-                if let Err(persist_error) = persist {
-                    let _ = tx.send(ServerEvent::Error {
-                        id,
-                        message: crate::util::format_error_chain(&persist_error),
-                        retry_after_secs: None,
-                    });
-                    return;
-                }
-                let _ = tx.send(ServerEvent::Done { id });
-            }
-        }
-    });
 }
 
 #[expect(
@@ -828,36 +457,6 @@ pub(super) async fn handle_rename_session(
     );
 }
 
-pub(super) async fn handle_trigger_memory_extraction(
-    id: u64,
-    agent: &Arc<Mutex<Agent>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let extraction = {
-        let agent_guard = agent.lock().await;
-        if !agent_guard.memory_enabled() {
-            None
-        } else {
-            let transcript = agent_guard.build_transcript_for_extraction();
-            if transcript.len() < 200 {
-                None
-            } else {
-                Some((
-                    transcript,
-                    agent_guard.session_id().to_string(),
-                    agent_guard.working_dir().map(|dir| dir.to_string()),
-                ))
-            }
-        }
-    };
-
-    if let Some((transcript, session_id, working_dir)) = extraction {
-        crate::memory_agent::trigger_final_extraction_with_dir(transcript, session_id, working_dir);
-    }
-
-    let _ = client_event_tx.send(ServerEvent::Done { id });
-}
-
 /// Land a resume commit the session still owes before a handler reads or
 /// writes it on disk outside the agent's own save path.
 ///
@@ -946,8 +545,6 @@ fn create_transfer_child_session(
     child.improve_mode = parent.improve_mode;
     child.autoreview_enabled = parent.autoreview_enabled;
     child.autojudge_enabled = parent.autojudge_enabled;
-    child.is_canary = parent.is_canary;
-    child.testing_build = parent.testing_build.clone();
     child.provider_session_id = None;
     child.status = crate::session::SessionStatus::Closed;
     child.save()?;
@@ -1228,7 +825,7 @@ pub(super) async fn handle_resume_all_sessions(
 
         let reminder = match super::reload_recovery::pending_directive_for_session(&session_id) {
             Ok(Some(directive)) => directive.continuation_message,
-            _ => crate::tool::selfdev::ReloadContext::interrupted_session_continuation_message(),
+            _ => crate::server::reload_recovery::ReloadContext::interrupted_session_continuation_message(),
         };
         let display_name = agent_guard
             .session_short_name()
@@ -1328,92 +925,4 @@ pub(super) fn handle_compact(id: u64, agent: &Arc<Mutex<Agent>>, client_event_tx
         let result = ServerEvent::CompactResult { id, message, success };
         let _ = tx.send(result);
     });
-}
-
-pub(super) async fn handle_stdin_response(
-    id: u64,
-    request_id: String,
-    input: String,
-    stdin_responses: &Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    if let Some(tx) = stdin_responses.lock().await.remove(&request_id) {
-        let _ = tx.send(input);
-    }
-    let _ = client_event_tx.send(ServerEvent::Done { id });
-}
-
-pub(super) struct AgentTaskContext<'a> {
-    pub(super) client_event_tx: &'a mpsc::UnboundedSender<ServerEvent>,
-    pub(super) swarm_members: &'a Arc<RwLock<HashMap<String, SwarmMember>>>,
-    pub(super) swarms_by_id: &'a Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    pub(super) event_history: &'a Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
-    pub(super) event_counter: &'a Arc<std::sync::atomic::AtomicU64>,
-    pub(super) swarm_event_tx: &'a broadcast::Sender<SwarmEvent>,
-}
-
-pub(super) async fn handle_agent_task(
-    id: u64,
-    task: String,
-    client_session_id: &str,
-    agent: &Arc<Mutex<Agent>>,
-    ctx: &AgentTaskContext<'_>,
-) {
-    update_member_status(
-        client_session_id,
-        "running",
-        Some(truncate_detail(&task, 120)),
-        ctx.swarm_members,
-        ctx.swarms_by_id,
-        Some(ctx.event_history),
-        Some(ctx.event_counter),
-        Some(ctx.swarm_event_tx),
-    )
-    .await;
-
-    // The task's own stream answers this connection, but its turn state is the
-    // session's: another v2 attachment must see the session running and idle.
-    let event_tx = super::state::session_foreground_sender_with_fallback(
-        client_session_id.to_string(),
-        Arc::clone(ctx.swarm_members),
-        ctx.client_event_tx.clone(),
-    );
-    let result = process_message_streaming_mpsc(Arc::clone(agent), &task, vec![], None, event_tx).await;
-    match result {
-        Ok(()) => {
-            update_member_status(
-                client_session_id,
-                "completed",
-                None,
-                ctx.swarm_members,
-                ctx.swarms_by_id,
-                Some(ctx.event_history),
-                Some(ctx.event_counter),
-                Some(ctx.swarm_event_tx),
-            )
-            .await;
-            let _ = ctx.client_event_tx.send(ServerEvent::Done { id });
-        }
-        Err(e) => {
-            update_member_status(
-                client_session_id,
-                "failed",
-                Some(truncate_detail(&e.to_string(), 120)),
-                ctx.swarm_members,
-                ctx.swarms_by_id,
-                Some(ctx.event_history),
-                Some(ctx.event_counter),
-                Some(ctx.swarm_event_tx),
-            )
-            .await;
-            let retry_after_secs = e
-                .downcast_ref::<StreamError>()
-                .and_then(|stream_error| stream_error.retry_after_secs);
-            let _ = ctx.client_event_tx.send(ServerEvent::Error {
-                id,
-                message: crate::util::format_error_chain(&e),
-                retry_after_secs,
-            });
-        }
-    }
 }

@@ -27,14 +27,6 @@ fn write_provider_settings(
     crate::config::Config::invalidate_cache();
 }
 
-fn save_account_pool(members: &[&str]) {
-    let pool = crate::auth::account_pool::AccountPool {
-        members: members.iter().map(|member| (*member).to_string()).collect(),
-        excluded: Vec::new(),
-    };
-    pool.save().expect("save account pool");
-}
-
 fn api_key_route(model: &str) -> ModelRoute {
     ModelRoute {
         model: model.to_string(),
@@ -183,7 +175,6 @@ fn eligible_setup(
 ) {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
     write_provider_settings(&sandbox, true, max_attempts, cap_secs, max_retries);
-    save_account_pool(&["openai-api"]);
     let (provider, agent) = failover_agent(behavior);
     let (tx, rx) = mpsc::unbounded_channel();
     crate::server::register_session_event_sink(&agent.session.id, tx);
@@ -203,10 +194,6 @@ fn failover_switches(events: &mut mpsc::UnboundedReceiver<ServerEvent>) -> Vec<S
 #[tokio::test]
 async fn blocking_turn_resends_once_on_another_route_without_a_client() {
     let (_home, provider, mut agent, mut events) = eligible_setup(Behavior::FailOnceThenSucceed, 3, 30, 8);
-    assert!(
-        crate::provider::MultiProvider::is_failover_route_pool_approved(TARGET_ROUTE),
-        "precondition: the pool approves the target route"
-    );
     assert_eq!(agent.provider_model(), START_MODEL);
 
     let text = agent.run_turn(false).await.expect("the resent turn completes");
@@ -286,7 +273,6 @@ async fn attached_client_keeps_the_original_error_and_never_switches() {
 async fn disabled_setting_returns_the_original_error_unchanged() {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
     write_provider_settings(&sandbox, false, 3, 30, 8);
-    save_account_pool(&["openai-api"]);
     let (provider, mut agent) = failover_agent(Behavior::AlwaysFail);
     let (tx, mut events) = mpsc::unbounded_channel();
     crate::server::register_session_event_sink(&agent.session.id, tx);
@@ -302,46 +288,6 @@ async fn disabled_setting_returns_the_original_error_unchanged() {
     assert!(provider.applied_routes().is_empty());
     assert!(failover_switches(&mut events).is_empty());
     assert_eq!(agent.failover_attempts(), 0);
-}
-
-#[tokio::test]
-async fn a_refused_switch_ends_the_unattended_turn_instead_of_looping() {
-    let sandbox = AuthTestSandbox::new().expect("isolated home");
-    write_provider_settings(&sandbox, true, 3, 30, 8);
-    // No pool membership: the target route fails the eligibility gate, so the
-    // switch is refused and the run must not resend on its own.
-    save_account_pool(&[]);
-    let (provider, mut agent) = failover_agent(Behavior::AlwaysFail);
-    let (tx, mut events) = mpsc::unbounded_channel();
-    crate::server::register_session_event_sink(&agent.session.id, tx);
-    assert!(
-        !crate::server::session_has_attached_client(&agent.session.id),
-        "precondition: nobody is attached, so the unattended path runs"
-    );
-    assert!(
-        !crate::provider::MultiProvider::is_failover_route_pool_approved(TARGET_ROUTE),
-        "precondition: only the target eligibility check stands between the prompt and a switch"
-    );
-
-    let error = agent
-        .run_turn(false)
-        .await
-        .expect_err("a refused switch must end the turn with the provider error");
-
-    assert_eq!(error.to_string(), failover_prompt().to_error_message());
-    assert_eq!(
-        provider.calls(),
-        1,
-        "the refused switch must not enter the turn loop again"
-    );
-    assert_eq!(agent.provider_model(), START_MODEL, "the route must not move");
-    assert!(provider.applied_routes().is_empty());
-    assert!(failover_switches(&mut events).is_empty(), "no switch is announced");
-    assert_eq!(
-        agent.failover_attempts(),
-        1,
-        "the attempt is spent before the switch is applied"
-    );
 }
 
 #[tokio::test]
@@ -371,7 +317,6 @@ async fn a_retry_after_above_the_cap_switches_routes_instead_of_waiting() {
 async fn a_retry_after_above_the_cap_waits_exactly_the_cap_without_failover() {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
     write_provider_settings(&sandbox, false, 3, 1, 8);
-    save_account_pool(&["openai-api"]);
     let (provider, mut agent) = failover_agent(Behavior::RateLimitedThenSucceed { retry_after_secs: 120 });
     let (tx, _events) = mpsc::unbounded_channel();
     crate::server::register_session_event_sink(&agent.session.id, tx);
@@ -395,7 +340,6 @@ async fn a_retry_after_above_the_cap_waits_exactly_the_cap_without_failover() {
 async fn a_rate_limit_without_a_header_keeps_the_existing_error_path() {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
     write_provider_settings(&sandbox, false, 3, 30, 8);
-    save_account_pool(&["openai-api"]);
     let (provider, mut agent) = failover_agent(Behavior::RateLimitedWithoutHeader);
     let (tx, _events) = mpsc::unbounded_channel();
     crate::server::register_session_event_sink(&agent.session.id, tx);

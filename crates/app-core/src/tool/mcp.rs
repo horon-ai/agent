@@ -4,7 +4,7 @@
 #[path = "mcp_remote_management_tests.rs"]
 mod remote_management_tests;
 
-use crate::mcp::{ContentBlock, McpManager, McpServerConfig, dispatch_name};
+use crate::mcp::{ContentBlock, McpManager, McpServerConfig, dispatch_name, render_resource_content};
 use crate::tool::{Tool, ToolContext, ToolOutput};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -421,21 +421,7 @@ impl Tool for McpCallTool {
                     output_parts.push(format!("[Image: {} ({} bytes)]", mime_type, data.len()));
                 }
                 ContentBlock::Resource { resource } => {
-                    if let Some(rendered) = crate::applets::mount_mcp_resource(
-                        &ctx.session_id,
-                        &ctx.tool_call_id,
-                        &resource.uri,
-                        resource.mime_type.as_deref(),
-                        resource.text.as_deref(),
-                    ) {
-                        output_parts.push(rendered);
-                    } else if let Some(text) = resource.text {
-                        output_parts.push(text);
-                    } else if let Some(blob) = resource.blob {
-                        output_parts.push(format!("[Resource: {} ({} bytes)]", resource.uri, blob.len()));
-                    } else {
-                        output_parts.push(format!("[Resource: {}]", resource.uri));
-                    }
+                    output_parts.push(render_resource_content(resource));
                 }
             }
         }

@@ -3,16 +3,13 @@
 
 use anyhow::{Result, bail};
 
-use super::args::{Args, Command};
+use super::args::Args;
 use super::provider_init::ProviderChoice;
 
 fn validate(args: &Args) -> Result<()> {
     match args.command {
-        None | Some(Command::SelfDev { build: false }) => {}
-        Some(Command::SelfDev { build: true }) => {
-            bail!("--ssh self-dev --build is not supported: run builds on the remote host, then reconnect")
-        }
-        _ => bail!("--ssh supports the interactive client and self-dev only"),
+        None => {}
+        _ => bail!("--ssh supports the interactive client only"),
     }
     if args
         .resume
@@ -34,9 +31,6 @@ fn validate(args: &Args) -> Result<()> {
         bail!(
             "provider/tool startup flags cannot configure an existing SSH server; use the remote /model command or configure the remote host"
         )
-    }
-    if args.onboarding_sim || args.update_sim {
-        bail!("local onboarding/update simulators cannot run in an SSH session")
     }
     Ok(())
 }
@@ -64,9 +58,6 @@ pub(crate) fn resume_hint(session_id: &str) -> Option<String> {
         }
     }
     args.extend(["--resume".to_string(), quote(session_id)]);
-    if super::selfdev::client_selfdev_requested() {
-        args.push("self-dev".to_string());
-    }
     Some(args.join(" "))
 }
 
@@ -79,14 +70,7 @@ mod tests {
     fn remote_modes_accept_explicit_remote_ids_without_local_lookup() {
         for argv in [
             vec!["horon-agent", "--ssh", "dev"],
-            vec![
-                "horon-agent",
-                "--ssh",
-                "dev",
-                "--resume",
-                "session_remote_123",
-                "self-dev",
-            ],
+            vec!["horon-agent", "--ssh", "dev", "--resume", "session_remote_123"],
         ] {
             validate(&Args::try_parse_from(argv).unwrap()).unwrap();
         }
@@ -96,10 +80,8 @@ mod tests {
     fn remote_modes_reject_local_only_operations_before_connecting() {
         for tail in [
             vec!["--resume"],
-            vec!["self-dev", "--build"],
             vec!["run", "test"],
             vec!["--model", "local-model"],
-            vec!["--onboarding-sim"],
             vec!["--tools", "bash"],
         ] {
             let mut argv = vec!["horon-agent", "--ssh", "dev"];
@@ -116,7 +98,6 @@ mod tests {
             "HORON_AGENT_SSH_BINARY",
             "HORON_AGENT_SSH_WORKING_DIR",
             "HORON_AGENT_SSH_SERVER_SOCKET",
-            super::super::selfdev::CLIENT_SELFDEV_ENV,
         ];
         let previous: Vec<_> = names.iter().map(std::env::var_os).collect();
         for name in names {

@@ -1,5 +1,5 @@
 use super::client_lifecycle::handle_client;
-use super::debug::{ClientConnectionInfo, ClientDebugState, handle_debug_client};
+use super::debug::{ClientConnectionInfo, handle_debug_client};
 use super::debug_jobs::DebugJob;
 use super::util::get_shared_mcp_pool;
 use super::{
@@ -101,8 +101,6 @@ pub(super) struct ServerRuntime {
     file_touch: FileTouchService,
     channel_subscriptions: ChannelSubscriptions,
     channel_subscriptions_by_session: ChannelSubscriptions,
-    client_debug_state: Arc<RwLock<ClientDebugState>>,
-    client_debug_response_tx: broadcast::Sender<(u64, String)>,
     debug_jobs: Arc<RwLock<HashMap<String, DebugJob>>>,
     event_history: Arc<RwLock<VecDeque<SwarmEvent>>>,
     event_counter: Arc<AtomicU64>,
@@ -135,8 +133,6 @@ impl ServerRuntime {
             file_touch: server.file_touch.clone(),
             channel_subscriptions: Arc::clone(&server.channel_subscriptions),
             channel_subscriptions_by_session: Arc::clone(&server.channel_subscriptions_by_session),
-            client_debug_state: Arc::clone(&server.client_debug_state),
-            client_debug_response_tx: server.client_debug_response_tx.clone(),
             debug_jobs: Arc::clone(&server.debug_jobs),
             event_history: Arc::clone(&server.event_history),
             event_counter: Arc::clone(&server.event_counter),
@@ -337,8 +333,6 @@ impl ServerRuntime {
                     self.file_touch.clone(),
                     Arc::clone(&self.channel_subscriptions),
                     Arc::clone(&self.channel_subscriptions_by_session),
-                    Arc::clone(&self.client_debug_state),
-                    self.client_debug_response_tx.clone(),
                     Arc::clone(&self.event_history),
                     Arc::clone(&self.event_counter),
                     self.swarm_event_tx.clone(),
@@ -389,8 +383,6 @@ impl ServerRuntime {
                 self.file_touch.clone(),
                 Arc::clone(&self.channel_subscriptions),
                 Arc::clone(&self.channel_subscriptions_by_session),
-                Arc::clone(&self.client_debug_state),
-                self.client_debug_response_tx.clone(),
                 Arc::clone(&self.debug_jobs),
                 Arc::clone(&self.event_history),
                 Arc::clone(&self.event_counter),

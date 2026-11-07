@@ -81,8 +81,6 @@ pub(crate) fn metadata(meta: &Map<String, Value>) -> Result<SessionMetadata, Sto
         "improve_mode",
         "autoreview_enabled",
         "autojudge_enabled",
-        "is_canary",
-        "testing_build",
         "working_dir",
         "short_name",
         "saved",

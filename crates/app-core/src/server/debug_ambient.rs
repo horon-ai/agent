@@ -303,7 +303,7 @@ mod tests {
     fn deny_reports_an_existing_approval_instead_of_claiming_denial() {
         let _guard = crate::storage::lock_test_env();
         let _home = TempHome::new();
-        record_permission_via_file("req_t14_approved", true, "telegram_reply", None)
+        record_permission_via_file("req_t14_approved", true, "api_client", None)
             .expect("external approval is recorded");
 
         let reply = run_command("ambient:deny:req_t14_approved").expect("command is handled");
@@ -313,6 +313,6 @@ mod tests {
             reply.contains("already approved"),
             "reports the recorded approval: {reply}"
         );
-        assert!(reply.contains("telegram_reply"), "names the writer: {reply}");
+        assert!(reply.contains("api_client"), "names the writer: {reply}");
     }
 }

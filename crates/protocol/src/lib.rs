@@ -17,13 +17,8 @@ pub use horon_agent_session_types::TurnStopReason;
 pub use notifications::{FeatureToggle, NotificationType};
 
 use horon_agent_batch_types::BatchProgress;
-use horon_agent_message_types::{InputShellResult, ToolCall};
+use horon_agent_message_types::ToolCall;
 use horon_agent_plan::{PlanItem, VersionedPlan, next_runnable_item_ids, summarize_plan_graph};
-use horon_agent_side_panel_types::{SidePanelSnapshot, snapshot_is_empty};
-
-fn applets_is_empty(applets: &horon_agent_applet_types::AgentApplets) -> bool {
-    applets.instances.is_empty()
-}
 use std::collections::BTreeMap;
 
 #[path = "protocol_memory.rs"]
@@ -33,16 +28,6 @@ pub use memory_snapshots::{
     MemoryActivitySnapshot, MemoryPipelineSnapshot, MemoryStateSnapshot, MemoryStepResultSnapshot,
     MemoryStepStatusSnapshot,
 };
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TranscriptMode {
-    Insert,
-    Append,
-    Replace,
-    #[default]
-    Send,
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -190,12 +175,20 @@ impl AuthChanged {
     }
 }
 
-pub type ReloadRecoverySnapshot = horon_agent_selfdev_types::ReloadRecoveryDirective;
+/// Server-owned instruction for resuming a session that was interrupted by a
+/// reload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReloadRecoveryDirective {
+    pub reconnect_notice: Option<String>,
+    pub continuation_message: String,
+}
+
+pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
 pub use wire::{
-    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BrowserMode, ClientRpcError, FileDiffWire,
-    PermissionDecision, PlanEntryWire, Request, ServerEvent, SessionMcpServer,
+    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, ClientRpcError, FileDiffWire, PermissionDecision,
+    PlanEntryWire, Request, ServerEvent, SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -626,44 +619,22 @@ impl Request {
             Request::Ping { id } => *id,
             Request::GetState { id } => *id,
             Request::DebugCommand { id, .. } => *id,
-            Request::ClientDebugCommand { id, .. } => *id,
-            Request::ClientDebugResponse { id, .. } => *id,
             Request::Subscribe { id, .. } | Request::PrepareDisconnect { id } => *id,
             Request::GetHistory { id } => *id,
             Request::GetModelCatalog { id, .. } => *id,
-            Request::GetCompactedHistory { id, .. } => *id,
             Request::Reload { id, .. } => *id,
             Request::ResumeSession { id, .. } => *id,
-            Request::ResumeAllSessions { id } => *id,
             Request::NotifySession { id, .. } => *id,
-            Request::SetBrowserMode { id, .. } => *id,
-            Request::AppletAction { id, .. } => *id,
-            Request::CloseApplet { id, .. } => *id,
-            Request::Transcript { id, .. } => *id,
-            Request::InputShell { id, .. } => *id,
-            Request::CycleModel { id, .. } => *id,
-            Request::RefreshModels { id } => *id,
             Request::SetModel { id, .. } => *id,
-            Request::SetRoute { id, .. } => *id,
-            Request::SetSubagentModel { id, .. } | Request::SetAgentModel { id, .. } => *id,
-            Request::RunSubagent { id, .. } => *id,
             Request::SetReasoningEffort { id, .. } => *id,
-            Request::SetServiceTier { id, .. } => *id,
-            Request::SetTransport { id, .. } => *id,
-            Request::SetPremiumMode { id, .. } => *id,
-            Request::SetFeature { id, .. } => *id,
-            Request::SetCompactionMode { id, .. } => *id,
             Request::RenameSession { id, .. } => *id,
             Request::ArchiveSession { id, .. } => *id,
             Request::SetSessionSaved { id, .. } => *id,
             Request::Split { id } => *id,
             Request::Transfer { id } => *id,
             Request::Compact { id } => *id,
-            Request::TriggerMemoryExtraction { id } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,
-            Request::SwitchOpenAiAccount { id, .. } => *id,
             Request::InvalidateOpenAiUsage { id, .. } => *id,
-            Request::StdinResponse { id, .. } => *id,
             Request::ApprovalAck { id, .. } | Request::FailoverAck { id, .. } => *id,
             Request::PermissionDecision { id, .. } | Request::AskResponse { id, .. } => *id,
             Request::ClientResponse { id, .. }
@@ -673,10 +644,6 @@ impl Request {
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
             | Request::GetSnapshot { id, .. } => *id,
-            Request::AgentRegister { id, .. } => *id,
-            Request::AgentTask { id, .. } => *id,
-            Request::AgentCapabilities { id } => *id,
-            Request::AgentContext { id } => *id,
             Request::CommShare { id, .. } => *id,
             Request::CommRead { id, .. } => *id,
             Request::CommMessage { id, .. } => *id,
@@ -719,11 +686,6 @@ impl Request {
                 // one-shot client can send it without subscribing to a session.
                 | Request::InvalidateOpenAiUsage { .. }
                 | Request::NotifySession { .. }
-                // The bridge pushes a session's browser driver mode here. It
-                // names the session explicitly and needs no subscription.
-                | Request::SetBrowserMode { .. }
-                | Request::AppletAction { .. }
-                | Request::CloseApplet { .. }
                 | Request::CommShare { .. }
                 | Request::CommRead { .. }
                 | Request::CommMessage { .. }
@@ -757,10 +719,6 @@ impl Request {
                 | Request::CommAwaitMembers { .. }
         )
     }
-}
-
-fn default_model_direction() -> i8 {
-    1
 }
 
 /// Encode an event as a newline-terminated JSON string
@@ -797,13 +755,12 @@ pub fn encode_event_stamped(event: &ServerEvent, seq: u64) -> String {
 ///
 /// Handles a legacy/desktop compatibility shape where a model switch was sent as
 /// `{"type":"set_route","model":"..."}` (a bare model string under the
-/// `set_route` tag). The current protocol reserves the `set_route` tag for the
-/// structured [`Request::SetRoute`] variant (which carries a `selection`
-/// object), so this older shape is normalized into [`Request::SetModel`] here
-/// instead of via a serde `alias`. Using an alias would make `SetModel` also
-/// claim the `set_route` tag and, because serde dispatches internally-tagged
-/// enums by tag rather than by fields, shadow the structured variant entirely
-/// (every real route switch would then fail with `missing field \`model\``).
+/// `set_route` tag). No variant claims the `set_route` tag, so this shape is
+/// normalized into [`Request::SetModel`] here instead of via a serde `alias`.
+/// Using an alias would make `SetModel` also claim the `set_route` tag, and
+/// because serde dispatches internally-tagged enums by tag rather than by
+/// fields, any other payload that named `set_route` would then fail with
+/// `missing field \`model\``.
 pub fn decode_request(line: &str) -> Result<Request, serde_json::Error> {
     match serde_json::from_str::<Request>(line) {
         Ok(request) => Ok(request),
@@ -819,15 +776,16 @@ pub fn decode_request(line: &str) -> Result<Request, serde_json::Error> {
 
 /// Recognize the legacy `{"type":"set_route","id":N,"model":"..."}` shape and
 /// translate it into [`Request::SetModel`]. Returns `None` for anything else
-/// (including the current structured `set_route` payload that carries a
-/// `selection` object) so the original decode error is surfaced unchanged.
+/// (including a `set_route` payload that carries a `selection` object) so the
+/// original decode error is surfaced unchanged.
 fn decode_legacy_set_route_model(line: &str) -> Option<Request> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     let obj = value.as_object()?;
     if obj.get("type")?.as_str()? != "set_route" {
         return None;
     }
-    // The structured route switch carries `selection`; never reinterpret it.
+    // A `selection` payload is a route switch, not a model switch; never
+    // reinterpret it as one.
     if obj.contains_key("selection") {
         return None;
     }

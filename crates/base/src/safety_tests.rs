@@ -48,8 +48,6 @@ fn test_classify_requires_permission() {
         assert_eq!(sys.classify("patch"), ActionTier::RequiresPermission);
         assert_eq!(sys.classify("apply_patch"), ActionTier::RequiresPermission);
         assert_eq!(sys.classify("communicate"), ActionTier::RequiresPermission);
-        assert_eq!(sys.classify("open"), ActionTier::RequiresPermission);
-        assert_eq!(sys.classify("launch"), ActionTier::RequiresPermission);
         assert_eq!(sys.classify("webfetch"), ActionTier::RequiresPermission);
         assert_eq!(sys.classify("websearch"), ActionTier::RequiresPermission);
         assert_eq!(sys.classify("unknown_tool"), ActionTier::RequiresPermission);
@@ -119,7 +117,7 @@ fn test_record_decision_removes_from_queue() {
         sys.request_permission(req);
         assert_eq!(sys.pending_requests().len(), baseline + 1);
 
-        sys.record_decision("req_test_2", true, "tui", Some("looks good".to_string()))
+        sys.record_decision("req_test_2", true, "api_client", Some("looks good".to_string()))
             .unwrap();
         assert_eq!(sys.pending_requests().len(), baseline);
     });
@@ -261,7 +259,7 @@ fn test_record_permission_via_file() {
         sys.request_permission(req);
         assert_eq!(sys.pending_requests().len(), baseline + 1);
 
-        record_permission_via_file("req_file_test", true, "email_reply", None).unwrap();
+        record_permission_via_file("req_file_test", true, "api_client", None).unwrap();
 
         let sys2 = SafetySystem::new();
         let still_pending = sys2.pending_requests().iter().any(|r| r.id == "req_file_test");
@@ -324,7 +322,7 @@ fn await_decision_returns_an_in_process_decision() {
         };
 
         std::thread::sleep(Duration::from_millis(20));
-        sys.record_decision("req_in_process", true, "tui", Some("looks good".to_string()))
+        sys.record_decision("req_in_process", true, "api_client", Some("looks good".to_string()))
             .unwrap();
 
         let result = waiter.join().expect("waiter thread");
@@ -354,7 +352,7 @@ fn await_decision_sees_a_decision_written_only_to_the_file() {
 
         let started = std::time::Instant::now();
         std::thread::sleep(Duration::from_millis(30));
-        record_permission_via_file("req_file_only", true, "email_reply", None).unwrap();
+        record_permission_via_file("req_file_only", true, "api_client", None).unwrap();
 
         let result = waiter.join().expect("waiter thread");
         assert!(
@@ -472,7 +470,7 @@ fn decision_for_reads_the_file_and_notifies_each_callback_once() {
 
         // The live instance never sees this write: it arrives through the
         // history file only.
-        record_permission_via_file("req_multi_subscriber", true, "email_reply", None).unwrap();
+        record_permission_via_file("req_multi_subscriber", true, "api_client", None).unwrap();
 
         let found = sys.decision_for("req_multi_subscriber");
         assert!(found.is_some(), "decision_for must read the file when memory misses");
@@ -501,7 +499,7 @@ fn decision_notification_survives_a_panicking_callback() {
             }));
         }
 
-        record_permission_via_file("req_panicking_callback", true, "email_reply", None).unwrap();
+        record_permission_via_file("req_panicking_callback", true, "api_client", None).unwrap();
         assert!(sys.decision_for("req_panicking_callback").is_some());
         assert_eq!(survived.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(read_history_decisions().len(), 1);
@@ -562,7 +560,7 @@ fn record_decision_keeps_the_first_decision() {
         sys.request_permission(pending_request("req_first_wins", ApprovalDefault::Deny));
 
         let first = sys
-            .record_decision("req_first_wins", true, "tui", None)
+            .record_decision("req_first_wins", true, "api_client", None)
             .expect("record the first decision");
         assert!(matches!(first, RecordDecisionOutcome::Recorded(_)));
 
@@ -581,7 +579,7 @@ fn record_decision_keeps_the_first_decision() {
             .collect();
         assert_eq!(matching.len(), 1, "exactly one decision per request id");
         assert!(matching[0].approved);
-        assert_eq!(matching[0].decided_via, "tui");
+        assert_eq!(matching[0].decided_via, "api_client");
     });
 }
 
@@ -592,10 +590,10 @@ fn concurrent_file_and_memory_records_keep_one_decision() {
         sys.request_permission(pending_request("req_race_writers", ApprovalDefault::Deny));
 
         let file_writer =
-            std::thread::spawn(|| record_permission_via_file("req_race_writers", true, "email_reply", None));
+            std::thread::spawn(|| record_permission_via_file("req_race_writers", true, "api_client", None));
         let memory_writer = {
             let sys = Arc::clone(&sys);
-            std::thread::spawn(move || sys.record_decision("req_race_writers", false, "tui", None))
+            std::thread::spawn(move || sys.record_decision("req_race_writers", false, "api_client", None))
         };
 
         file_writer.join().expect("file writer thread").unwrap();
@@ -607,7 +605,7 @@ fn concurrent_file_and_memory_records_keep_one_decision() {
             .filter(|decision| decision.request_id == "req_race_writers")
             .collect();
         assert_eq!(matching.len(), 1, "the decision lock must keep a single record");
-        assert!(matching[0].decided_via == "email_reply" || matching[0].decided_via == "tui");
+        assert!(matching[0].decided_via == "api_client" || matching[0].decided_via == "api_client");
     });
 }
 

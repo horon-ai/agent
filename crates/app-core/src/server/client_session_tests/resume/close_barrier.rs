@@ -83,8 +83,6 @@ async fn run_disconnect_cleanup(
         &FileTouchService::new(),
         &Arc::new(RwLock::new(HashMap::new())),
         &Arc::new(RwLock::new(HashMap::new())),
-        &Arc::new(RwLock::new(ClientDebugState::default())),
-        "debug_close",
         connections,
         "conn_old",
         &Arc::new(RwLock::new(HashMap::new())),
@@ -151,7 +149,6 @@ async fn cold_resume_with_agent(
     let registry = Registry::new(Arc::clone(provider)).await;
     let shutdown_signals = Arc::new(RwLock::new(HashMap::<String, InterruptSignal>::new()));
     let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
@@ -165,7 +162,6 @@ async fn cold_resume_with_agent(
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
-    let mut client_selfdev = false;
     let mut client_session_id = temporary_session_id.to_string();
 
     let agent = handle_resume_session(
@@ -175,7 +171,6 @@ async fn cold_resume_with_agent(
         None,
         true,
         true,
-        &mut client_selfdev,
         &mut client_session_id,
         connection_id,
         &mut Arc::clone(provisional_agent),
@@ -185,7 +180,6 @@ async fn cold_resume_with_agent(
         &shutdown_signals,
         &soft_interrupt_queues,
         client_connections,
-        &client_debug_state,
         members,
         &swarms_by_id,
         &file_touch,
@@ -202,8 +196,7 @@ async fn cold_resume_with_agent(
         &event_history,
         &event_counter,
         &swarm_event_tx,
-        false,
-        false,
+                false,
     )
     .await?;
 
@@ -234,7 +227,6 @@ fn connection(session_id: &str, processing: bool) -> ClientConnectionInfo {
         client_id: String::new(),
         session_id: session_id.to_string(),
         client_instance_id: None,
-        debug_client_id: None,
         connected_at: now,
         last_seen: now,
         is_processing: processing,
@@ -710,7 +702,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
             let mut agent = source_agent;
             let registry = Registry::new(Arc::clone(&provider)).await;
             let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
-            let debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
             let swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>> = Arc::new(RwLock::new(HashMap::new()));
             let file_touch = FileTouchService::new();
             let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
@@ -724,7 +715,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
             let event_history = Arc::new(RwLock::new(VecDeque::<SwarmEvent>::new()));
             let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
-            let mut client_selfdev = false;
             let mut connection_id = source_id.to_string();
             tokio::select! {
                 biased;
@@ -736,7 +726,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     None,
                     false,
                     false,
-                    &mut client_selfdev,
                     &mut connection_id,
                     "conn_cancel",
                     &mut agent,
@@ -746,7 +735,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     &shutdown_signals,
                     &soft_interrupt_queues,
                     &client_connections,
-                    &debug_state,
                     &members,
                     &swarms_by_id,
                     &file_touch,
@@ -763,8 +751,7 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     &event_history,
                     &event_counter,
                     &swarm_event_tx,
-                    false,
-                    false,
+                                        false,
                 ) => {}
             }
             // The handler owned the reference; a cancelled call leaves nothing.

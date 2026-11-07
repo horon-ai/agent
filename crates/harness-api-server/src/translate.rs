@@ -1,7 +1,6 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
-mod browser_mirror;
 mod credentials;
 mod search_artifacts;
 mod usage_report;
@@ -229,12 +228,6 @@ pub struct BridgeState {
     model_usage_updates: BTreeMap<(String, String, String), horon_agent_harness_api::ModelUsage>,
     /// Live usage figures the daemon pushed on this connection.
     usage: usage_report::Cache,
-    /// API ids of `usage_report` requests waiting on the subscription probe.
-    pending_usage_reports: Vec<(u64, Value)>,
-    /// Daemon socket this connection translates onto. `None` in tests, and in
-    /// any bridge started without a socket: a browser-mode push is then
-    /// skipped, which leaves the daemon on its permissive default.
-    pub legacy_socket: Option<std::path::PathBuf>,
     /// Bytes the client actually sent for the request being translated, set by
     /// the connection loop before each translation.
     ///
@@ -384,10 +377,7 @@ enum SimpleKind {
 /// read persisted session records or side-panel files. Everything else is
 /// pure in-memory translation and must not pay for `block_in_place`.
 pub fn legacy_event_may_block(event: &Value) -> bool {
-    matches!(
-        event["type"].as_str(),
-        Some("state" | "side_panel_state" | "split_response" | "history")
-    )
+    matches!(event["type"].as_str(), Some("state" | "split_response" | "history"))
 }
 
 impl BridgeState {
@@ -413,8 +403,6 @@ impl BridgeState {
                             | "clear"
                             | "prepare_disconnect"
                             | "notify_auth_changed"
-                            | "applet_action"
-                            | "close_applet"
                             | "invalidate_openai_usage"
                             | "invalidate_anthropic_usage"
                     )
@@ -439,7 +427,6 @@ impl BridgeState {
             self.pending_fork_id.is_some() as u64,
             self.pending_model_probe.is_some() as u64,
             self.pending_no_reply_message_id.is_some() as u64,
-            self.pending_usage_reports.len() as u64,
             self.pending_control_done_ids.len() as u64,
             self.pending_activity_snapshots.len() as u64,
         ];
@@ -659,18 +646,12 @@ impl BridgeState {
                 let mut subscribe = json!({
                     "type": "subscribe",
                     "id": id,
-                    "supports_pdf_panels": true,
                     "supports_user_response": self.supports_user_response,
                     "supports_ask_requests": self.supports_ask_requests,
                 });
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
                 }
-                // Sessions rooted inside a horon-agent checkout are self-dev
-                // sessions: the daemon only enables the self-dev tools and
-                // prompt when the subscribe says so, and a client that opens
-                // the repo without saying so gets an agent that cannot build
-                // the very app it is running in.
                 if req == "create_session" {
                     if let Some(prompt) = request["system_prompt"].as_str() {
                         subscribe["system_prompt"] = json!(prompt);
@@ -681,12 +662,6 @@ impl BridgeState {
                         .or_else(|| std::env::current_dir().ok().map(|d| d.display().to_string()));
                     subscribe["working_dir"] = json!(working_dir);
                     self.pending_create_dir = working_dir.clone();
-                    if working_dir
-                        .as_deref()
-                        .is_some_and(Self::path_is_inside_horon_agent_repo)
-                    {
-                        subscribe["selfdev"] = json!(true);
-                    }
                 } else if let Some(target) = request["session_id"].as_str() {
                     // The daemon owns both live and persisted session roots.
                     // Empty panels have no file yet, and a cached disk cwd may
@@ -1053,7 +1028,7 @@ impl BridgeState {
                     return Self::error_reply(
                         api_id,
                         ErrorCode::InvalidRequest,
-                        "unsupported API-key provider; supported: claude-api, openai-api, openrouter, cursor, gemini, horon-agent",
+                        "unsupported API-key provider; supported: anthropic-api, openai-api, openrouter, gemini-api",
                     );
                 };
                 let configured = req == "set_api_key";
@@ -1202,7 +1177,6 @@ impl BridgeState {
                 }
             }
             "search_sessions" | "list_artifacts" => search_artifacts::handle(req, api_id, request),
-            "browser_mirror" => browser_mirror::handle(api_id, request, self.legacy_socket.as_deref()),
             "set_model" => {
                 let model = request["model"].as_str().unwrap_or("");
                 if model.is_empty() {
@@ -1258,45 +1232,6 @@ impl BridgeState {
                     rename["title"] = json!(title);
                 }
                 vec![Outbound::Legacy(rename)]
-            }
-            "applet_action" | "close_applet" => {
-                let session_id = request["session_id"]
-                    .as_str()
-                    .filter(|sid| !sid.is_empty())
-                    .map(str::to_string)
-                    .or_else(|| self.session_id.clone());
-                let instance = request["instance"].as_str().unwrap_or_default();
-                let (Some(session_id), false) = (session_id, instance.is_empty()) else {
-                    return Self::error_reply(
-                        api_id,
-                        ErrorCode::InvalidRequest,
-                        "session_id and instance are required",
-                    );
-                };
-                let id = self.legacy_id();
-                self.pending_simple.push((id, api_id, SimpleKind::Ok));
-                let mut out = json!({
-                    "type": req,
-                    "id": id,
-                    "session_id": session_id,
-                    "instance": instance,
-                });
-                if req == "applet_action" {
-                    if !request["action"].is_object() {
-                        self.pending_simple.pop();
-                        return Self::error_reply(
-                            api_id,
-                            ErrorCode::InvalidRequest,
-                            "applet_action requires an action object",
-                        );
-                    }
-                    out["action"] = request["action"].clone();
-                    out["state"] = request.get("state").cloned().unwrap_or(json!({}));
-                    if let Some(key) = request["source_key"].as_str() {
-                        out["source_key"] = json!(key);
-                    }
-                }
-                vec![Outbound::Legacy(out)]
             }
             "set_session_saved" => {
                 let id = self.legacy_id();
@@ -1620,39 +1555,6 @@ impl BridgeState {
         }))
     }
 
-    fn applet_frame(session_id: &str, snapshot: &Value) -> Option<ServerFrame> {
-        if session_id.is_empty() {
-            return None;
-        }
-        // Missing means empty; malformed must not clear a valid snapshot.
-        let snapshot = if snapshot.is_null() {
-            horon_agent_harness_api::horon_agent_applet_types::AgentApplets::default()
-        } else {
-            serde_json::from_value(snapshot.clone()).ok()?
-        };
-        Some(ServerFrame::event(ApiEvent::AppletState {
-            session_id: session_id.to_string(),
-            snapshot,
-        }))
-    }
-
-    fn side_panel_frame(session_id: &str, snapshot: &Value) -> Option<ServerFrame> {
-        if session_id.is_empty() {
-            return None;
-        }
-        // Missing history state means empty: native history omits empty panels.
-        // Malformed snapshots must not clear a previously valid document.
-        let snapshot = if snapshot.is_null() {
-            horon_agent_harness_api::SidePanelSnapshot::default()
-        } else {
-            serde_json::from_value(snapshot.clone()).ok()?
-        };
-        Some(ServerFrame::event(ApiEvent::SidePanelState {
-            session_id: session_id.to_string(),
-            snapshot,
-        }))
-    }
-
     fn text_message_id(&mut self) -> String {
         if let Some(id) = &self.text_message_id {
             return id.clone();
@@ -1767,10 +1669,6 @@ impl BridgeState {
         let kind = event["type"].as_str().unwrap_or("");
         if kind == "runtime_command_result" {
             let legacy_id = event["id"].as_u64().unwrap_or(0);
-            let waiting = usage_report::finish(self, legacy_id, Some(&event["data"]));
-            if !waiting.is_empty() {
-                return waiting;
-            }
             let Some(api_id) = self.take_simple(legacy_id, SimpleKind::RuntimeCommand) else {
                 return vec![];
             };
@@ -1970,12 +1868,6 @@ impl BridgeState {
                             },
                         },
                     )];
-                    if let Some(snapshot) = event.get("side_panel") {
-                        frames.extend(Self::side_panel_frame(&session_id, snapshot));
-                    }
-                    if let Some(snapshot) = event.get("applets") {
-                        frames.extend(Self::applet_frame(&session_id, snapshot));
-                    }
                     if fresh_activity {
                         frames.push(ServerFrame::event(ApiEvent::SessionStatus {
                             session_id,
@@ -2072,24 +1964,6 @@ impl BridgeState {
                 output: event["output"].as_str().unwrap_or("").to_string(),
                 error: event["error"].as_str().map(str::to_string),
             })],
-            "side_panel_state" => {
-                let session_id = event["session_id"].as_str().or(self.session_id.as_deref());
-                match (session_id, event.get("snapshot")) {
-                    (Some(session_id), Some(snapshot)) if !snapshot.is_null() => {
-                        Self::side_panel_frame(session_id, snapshot).into_iter().collect()
-                    }
-                    _ => vec![],
-                }
-            }
-            "applet_state" => {
-                let session_id = event["session_id"].as_str().or(self.session_id.as_deref());
-                match (session_id, event.get("snapshot")) {
-                    (Some(session_id), Some(snapshot)) if !snapshot.is_null() => {
-                        Self::applet_frame(session_id, snapshot).into_iter().collect()
-                    }
-                    _ => vec![],
-                }
-            }
             "side_pane_images" => vec![ServerFrame::event(ApiEvent::SidePaneImages {
                 session_id: event["session_id"]
                     .as_str()
@@ -2274,15 +2148,7 @@ impl BridgeState {
                     })
                 {
                     self.pending_recovery_history = None;
-                    let mut frames: Vec<_> = Self::attachment_recovery(event).into_iter().collect();
-                    frames.extend(Self::side_panel_frame(
-                        event["session_id"].as_str().unwrap_or_default(),
-                        &event["side_panel"],
-                    ));
-                    frames.extend(Self::applet_frame(
-                        event["session_id"].as_str().unwrap_or_default(),
-                        &event["applets"],
-                    ));
+                    let frames: Vec<_> = Self::attachment_recovery(event).into_iter().collect();
                     return frames;
                 }
                 // The catalog probe rides the same `history` reply shape but
@@ -2355,15 +2221,6 @@ impl BridgeState {
                         status: if active { "running" } else { "idle" }.into(),
                         pending_soft_interrupts: None,
                     }));
-                }
-                // Correlation establishes ownership, but reject a conflicting
-                // explicit session id rather than hydrating the wrong panel.
-                if event["session_id"]
-                    .as_str()
-                    .is_none_or(|sid| Some(sid) == self.session_id.as_deref())
-                {
-                    frames.extend(Self::side_panel_frame(&session(self), &event["side_panel"]));
-                    frames.extend(Self::applet_frame(&session(self), &event["applets"]));
                 }
                 frames
             }
@@ -2681,10 +2538,6 @@ impl BridgeState {
                 // A rejected tool configuration/result is not a failed model
                 // turn. Preserve streaming state and correlate only its request.
                 let id = event["id"].as_u64().unwrap_or(0);
-                let waiting = usage_report::finish(self, id, None);
-                if !waiting.is_empty() {
-                    return waiting;
-                }
                 if let Some(index) = self.pending_simple.iter().position(|(pending_id, _, kind)| {
                     *pending_id == id && matches!(kind, SimpleKind::Tools | SimpleKind::ToolControl)
                 }) {
@@ -3035,21 +2888,6 @@ impl BridgeState {
                 .or_else(|| self.current_effort.clone()),
             auth_method: self.current_credential.clone(),
         }
-    }
-
-    /// True when `path`, or any ancestor, looks like a horon-agent source checkout.
-    ///
-    /// Matched by content (a workspace manifest next to the crates directory)
-    /// rather than by name, so a clone in any directory is recognised.
-    fn path_is_inside_horon_agent_repo(path: &str) -> bool {
-        let mut current = Some(std::path::Path::new(path));
-        while let Some(dir) = current {
-            if dir.join("Cargo.toml").is_file() && dir.join("crates/base").is_dir() {
-                return true;
-            }
-            current = dir.parent();
-        }
-        false
     }
 
     /// Path of a session's persisted record, or `None` if the id is not a
@@ -3904,6 +3742,10 @@ mod tests;
 #[cfg(test)]
 #[path = "translate/usage_report_tests.rs"]
 mod usage_report_tests;
+
+#[cfg(test)]
+#[path = "translate_tests/credential_profile_tests.rs"]
+mod credential_profile_tests;
 
 #[cfg(test)]
 #[path = "user_response_capability_tests.rs"]

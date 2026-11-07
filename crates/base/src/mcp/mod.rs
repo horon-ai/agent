@@ -24,5 +24,5 @@ pub use protocol::*;
 pub use schema_cache::{McpSchemaCache, fingerprint_config};
 pub use tool::{
     McpTool, create_mcp_tools, create_mcp_tools_from_cached, create_mcp_tools_from_cached_many, dispatch_name,
-    dispatch_names, take_accept_large_output,
+    dispatch_names, render_resource_content, take_accept_large_output,
 };

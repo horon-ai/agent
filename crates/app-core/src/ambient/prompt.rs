@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use super::{AmbientState, Priority, ScheduleTarget, ScheduledItem, take_pending_directives};
+use super::{AmbientState, Priority, ScheduleTarget, ScheduledItem};
 
 // ---------------------------------------------------------------------------
 // Ambient System Prompt Builder
@@ -408,24 +408,6 @@ pub fn build_ambient_system_prompt(
     prompt.push_str(&format!("- Budget for this cycle: {}\n", budget.cycle_budget_desc,));
     prompt.push('\n');
 
-    // --- User Directives (from email/Telegram replies) ---
-    let pending_directives = take_pending_directives();
-    if !pending_directives.is_empty() {
-        prompt.push_str("## User Directives (from replies)\n");
-        prompt.push_str(
-            "The user replied to ambient notifications with these instructions. \
-             Address them as your **top priority** this cycle.\n\n",
-        );
-        for dir in &pending_directives {
-            let ago = format_duration_rough(Utc::now() - dir.received_at);
-            prompt.push_str(&format!(
-                "- [reply to cycle {}] ({} ago): {}\n",
-                dir.in_reply_to_cycle, ago, dir.text,
-            ));
-        }
-        prompt.push('\n');
-    }
-
     // --- Instructions ---
     prompt.push_str(
         "## Instructions\n\n\
@@ -437,7 +419,6 @@ pub fn build_ambient_system_prompt(
          - `end_ambient_cycle` — REQUIRED to finish the cycle (see below).\n\
          - `schedule_ambient` — schedule your next wake time.\n\
          - `request_permission` — get approval before any code change.\n\
-         - `send_message` — keep the user informed.\n\
          Standard tools (`bash`, `read`, `write`, `edit`, `memory`, etc.) are \
          also available.\n\n\
          Start by using the `todo` tool to plan what you'll do this cycle.\n\n\
@@ -470,14 +451,7 @@ pub fn build_ambient_system_prompt(
          - Session history — patterns in what the user works on\n\n\
          When done, you MUST call end_ambient_cycle with a summary of \
          everything you did, including compaction count. Always schedule \
-         your next wake time with context for what you plan to do next.\n\n\
-         ## Messaging Check-ins\n\n\
-         You have a `send_message` tool. Use it to keep the user informed \
-         about what you're doing. Send a brief message when you start a cycle \
-         and when you finish significant work. Keep messages short and useful — \
-         the user should be able to glance at their messages and know what's happening \
-         without opening horon-agent. You can optionally target a specific channel \
-         (e.g. telegram, discord) or omit channel to send to all.\n",
+         your next wake time with context for what you plan to do next.\n",
     );
 
     prompt

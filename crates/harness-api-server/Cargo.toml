@@ -12,16 +12,8 @@ anyhow = "1"
 # app-core, whose search module is self-contained: it reads stored sessions
 # and never touches a provider or the daemon.
 horon-agent-app-core = { path = "../app-core" }
-# The mirror surface drives the same browser bridge CLI and the same
-# per-session browser daemon the `browser` tool uses, so it links the crate
-# those live in rather than growing a second browser path.
 horon-agent-base = { path = "../base", default-features = false }
 horon-agent-harness-api = { path = "../harness-api" }
-# Frames leave the mirror as JPEG: a screenshot arrives as PNG and a 512 KiB
-# base64 budget needs the smaller codec. Both decoders are already in the
-# workspace lock through `horon-agent-base`.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-base64 = "0.22"
 horon-agent-todo-policy = { path = "../todo-policy" }
 horon-agent-perf-counters = { path = "../perf-counters" }
 horon-agent-session-types = { path = "../session-types" }

@@ -207,7 +207,7 @@ fn grok_build_route_selection_is_a_first_class_runtime() {
 #[test]
 fn runtime_key_other_is_internally_tagged_wire_safe() {
     // Internally tagged newtype `Other(String)` cannot be serialized by
-    // serde. The struct variant is the wire form used by SetRoute.
+    // serde. The struct variant is the wire form persisted with route state.
     let key = RuntimeKey::Other {
         method: "custom-acp".to_string(),
     };

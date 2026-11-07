@@ -124,36 +124,6 @@ fn pi_shell_command_api_keys_are_not_executed() {
 }
 
 #[test]
-fn load_copilot_oauth_token_from_pi_auth() {
-    let _guard = crate::storage::lock_test_env();
-    let dir = TempDir::new().unwrap();
-    let prev = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    let path = ExternalAuthSource::Pi.path().unwrap();
-    write_auth_file(
-        &path,
-        serde_json::json!({
-            "github-copilot": {
-                "type": "oauth",
-                "access": "ghu_pi_token",
-                "refresh": "refresh",
-                "expires": chrono::Utc::now().timestamp_millis() + 60_000
-            }
-        }),
-    );
-
-    trust_external_auth_source(ExternalAuthSource::Pi).unwrap();
-    assert_eq!(load_copilot_oauth_token().as_deref(), Some("ghu_pi_token"));
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}
-
-#[test]
 fn unconsented_source_detects_supported_api_key_files() {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().unwrap();
@@ -172,45 +142,6 @@ fn unconsented_source_detects_supported_api_key_files() {
         preferred_unconsented_api_key_source_for_env("OPENCODE_API_KEY"),
         Some(ExternalAuthSource::OpenCode)
     );
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}
-
-#[test]
-fn source_provider_labels_reports_supported_oauth_and_api_key_imports() {
-    let _guard = crate::storage::lock_test_env();
-    let dir = TempDir::new().unwrap();
-    let prev = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    let path = ExternalAuthSource::OpenCode.path().unwrap();
-    write_auth_file(
-        &path,
-        serde_json::json!({
-            "openai": {
-                "type": "oauth",
-                "access": "sk-access",
-                "refresh": "refresh",
-                "expires": chrono::Utc::now().timestamp_millis() + 60_000
-            },
-            "anthropic": {
-                "type": "oauth",
-                "access": "claude-access",
-                "refresh": "refresh",
-                "expires": chrono::Utc::now().timestamp_millis() + 60_000
-            },
-            "openrouter": { "type": "api", "key": "sk-or-test" }
-        }),
-    );
-
-    let labels = source_provider_labels(ExternalAuthSource::OpenCode);
-    assert!(labels.contains(&"OpenAI/Codex"));
-    assert!(labels.contains(&"Claude"));
-    assert!(labels.contains(&"OpenRouter/API-key providers"));
 
     if let Some(prev) = prev {
         crate::env::set_var("HORON_AGENT_HOME", prev);
@@ -240,39 +171,6 @@ fn openclaw_api_key_imports_from_trusted_file() {
         load_api_key_for_env("ANTHROPIC_API_KEY").as_deref(),
         Some("sk-ant-openclaw")
     );
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}
-
-#[test]
-fn openclaw_oauth_tokens_import_like_pi() {
-    let _guard = crate::storage::lock_test_env();
-    let dir = TempDir::new().unwrap();
-    let prev = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    let path = ExternalAuthSource::OpenClaw.path().unwrap();
-    write_auth_file(
-        &path,
-        serde_json::json!({
-            "anthropic": {
-                "type": "oauth",
-                "access": "claude-access",
-                "refresh": "claude-refresh",
-                "expires": chrono::Utc::now().timestamp_millis() + 60_000
-            }
-        }),
-    );
-
-    assert!(load_anthropic_oauth_tokens().is_none());
-    trust_external_auth_source(ExternalAuthSource::OpenClaw).unwrap();
-    let tokens = load_anthropic_oauth_tokens().expect("oauth tokens imported");
-    assert_eq!(tokens.access_token, "claude-access");
-    assert_eq!(tokens.refresh_token, "claude-refresh");
 
     if let Some(prev) = prev {
         crate::env::set_var("HORON_AGENT_HOME", prev);
@@ -324,86 +222,6 @@ fn hermes_api_key_imports_from_credential_pool() {
 }
 
 #[test]
-fn hermes_oauth_tokens_import_from_credential_pool() {
-    let _guard = crate::storage::lock_test_env();
-    let dir = TempDir::new().unwrap();
-    let prev = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    let path = ExternalAuthSource::Hermes.path().unwrap();
-    write_auth_file(
-        &path,
-        serde_json::json!({
-            "version": 1,
-            "credential_pool": {
-                "openai-codex": [
-                    {
-                        "id": "def456",
-                        "label": "loopback_pkce",
-                        "auth_type": "oauth_external",
-                        "priority": 0,
-                        "source": "loopback_pkce",
-                        "access_token": "codex-access",
-                        "refresh_token": "codex-refresh",
-                        "expires_at_ms": chrono::Utc::now().timestamp_millis() + 60_000
-                    }
-                ]
-            }
-        }),
-    );
-
-    assert!(load_openai_oauth_tokens().is_none());
-    trust_external_auth_source(ExternalAuthSource::Hermes).unwrap();
-    let tokens = load_openai_oauth_tokens().expect("oauth tokens imported");
-    assert_eq!(tokens.access_token, "codex-access");
-    assert_eq!(tokens.refresh_token, "codex-refresh");
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}
-
-#[test]
-fn hermes_oauth_tokens_parse_rfc3339_expiry() {
-    let _guard = crate::storage::lock_test_env();
-    let dir = TempDir::new().unwrap();
-    let prev = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
-
-    let future = chrono::Utc::now() + chrono::Duration::minutes(5);
-    let path = ExternalAuthSource::Hermes.path().unwrap();
-    write_auth_file(
-        &path,
-        serde_json::json!({
-            "version": 1,
-            "credential_pool": {
-                "anthropic": [
-                    {
-                        "auth_type": "oauth_external",
-                        "access_token": "claude-access",
-                        "refresh_token": "claude-refresh",
-                        "expires_at": future.to_rfc3339()
-                    }
-                ]
-            }
-        }),
-    );
-
-    trust_external_auth_source(ExternalAuthSource::Hermes).unwrap();
-    let tokens = load_anthropic_oauth_tokens().expect("oauth tokens imported");
-    assert_eq!(tokens.access_token, "claude-access");
-    assert!(tokens.expires_at > chrono::Utc::now().timestamp_millis());
-
-    if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-}
-
-#[test]
 fn openclaw_auth_profiles_store_resolves_and_flattens() {
     let _guard = crate::storage::lock_test_env();
     let dir = TempDir::new().unwrap();
@@ -418,24 +236,15 @@ fn openclaw_auth_profiles_store_resolves_and_flattens() {
         serde_json::json!({
             "version": 1,
             "profiles": {
-                "openai:work": {
-                    "type": "oauth",
-                    "provider": "openai",
-                    "access": "work-access",
-                    "refresh": "work-refresh",
-                    "expires": chrono::Utc::now().timestamp_millis() + 60_000
-                },
-                "openai:default": {
-                    "type": "oauth",
-                    "provider": "openai",
-                    "access": "openclaw-access",
-                    "refresh": "openclaw-refresh",
-                    "expires": chrono::Utc::now().timestamp_millis() + 60_000
-                },
                 "openrouter:default": {
                     "type": "api_key",
                     "provider": "openrouter",
                     "key": "sk-or-openclaw"
+                },
+                "groq:work": {
+                    "type": "api_key",
+                    "provider": "groq",
+                    "key": "gsk-openclaw-work"
                 }
             }
         }),
@@ -444,12 +253,13 @@ fn openclaw_auth_profiles_store_resolves_and_flattens() {
     assert_eq!(ExternalAuthSource::OpenClaw.path().unwrap(), profiles_path);
     trust_external_auth_source(ExternalAuthSource::OpenClaw).unwrap();
 
-    // The `:default` profile wins over the sibling `openai:work` profile.
-    let tokens = load_openai_oauth_tokens().expect("oauth tokens imported");
-    assert_eq!(tokens.access_token, "openclaw-access");
     assert_eq!(
         load_api_key_for_env("OPENROUTER_API_KEY").as_deref(),
         Some("sk-or-openclaw")
+    );
+    assert_eq!(
+        load_api_key_for_env("GROQ_API_KEY").as_deref(),
+        Some("gsk-openclaw-work")
     );
 
     if let Some(prev) = prev {

@@ -26,88 +26,6 @@ fn test_comm_propose_plan_roundtrip() -> Result<()> {
 }
 
 #[test]
-fn test_stdin_response_roundtrip() -> Result<()> {
-    let req = Request::StdinResponse {
-        id: 99,
-        request_id: "stdin-call_abc-1".to_string(),
-        input: "my_password".to_string(),
-    };
-    let json = serde_json::to_string(&req)?;
-    assert!(json.contains("\"type\":\"stdin_response\""));
-    assert!(json.contains("\"request_id\":\"stdin-call_abc-1\""));
-    assert!(json.contains("\"input\":\"my_password\""));
-
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 99);
-    let Request::StdinResponse {
-        request_id, input, ..
-    } = decoded
-    else {
-        return Err(anyhow!("expected StdinResponse"));
-    };
-    assert_eq!(request_id, "stdin-call_abc-1");
-    assert_eq!(input, "my_password");
-    Ok(())
-}
-
-#[test]
-fn test_stdin_response_deserialize_from_json() -> Result<()> {
-    let json = r#"{"type":"stdin_response","id":5,"request_id":"req-42","input":"hello world"}"#;
-    let decoded = parse_request_json(json)?;
-    assert_eq!(decoded.id(), 5);
-    let Request::StdinResponse {
-        request_id, input, ..
-    } = decoded
-    else {
-        return Err(anyhow!("expected StdinResponse"));
-    };
-    assert_eq!(request_id, "req-42");
-    assert_eq!(input, "hello world");
-    Ok(())
-}
-
-#[test]
-fn test_stdin_request_event_roundtrip() -> Result<()> {
-    let event = ServerEvent::StdinRequest {
-        request_id: "stdin-xyz-1".to_string(),
-        prompt: "Password: ".to_string(),
-        is_password: true,
-        tool_call_id: "call_abc".to_string(),
-    };
-    let json = encode_event(&event);
-    assert!(json.contains("\"type\":\"stdin_request\""));
-    assert!(json.contains("\"is_password\":true"));
-
-    let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::StdinRequest {
-        request_id,
-        prompt,
-        is_password,
-        tool_call_id,
-    } = decoded
-    else {
-        return Err(anyhow!("expected StdinRequest"));
-    };
-    assert_eq!(request_id, "stdin-xyz-1");
-    assert_eq!(prompt, "Password: ");
-    assert!(is_password);
-    assert_eq!(tool_call_id, "call_abc");
-    Ok(())
-}
-
-#[test]
-fn test_stdin_request_event_defaults() -> Result<()> {
-    // is_password defaults to false when not present
-    let json = r#"{"type":"stdin_request","request_id":"r1","prompt":"","tool_call_id":"tc1"}"#;
-    let decoded = parse_event_json(json)?;
-    let ServerEvent::StdinRequest { is_password, .. } = decoded else {
-        return Err(anyhow!("expected StdinRequest"));
-    };
-    assert!(!is_password, "is_password should default to false");
-    Ok(())
-}
-
-#[test]
 fn test_comm_await_members_roundtrip() -> Result<()> {
     let req = Request::CommAwaitMembers {
         id: 55,
@@ -606,37 +524,6 @@ fn targeted_notification_does_not_require_subscription() -> Result<()> {
         matches!(decoded, Request::NotifySession { session_id, message, .. }
         if session_id == "existing-session" && message == "scheduled reminder")
     );
-    Ok(())
-}
-
-#[test]
-fn test_set_browser_mode_roundtrip() -> Result<()> {
-    for (mode, tag) in [(BrowserMode::User, "user"), (BrowserMode::Agent, "agent")] {
-        let request = Request::SetBrowserMode {
-            id: 71,
-            session_id: "sess_browser".to_string(),
-            mode,
-        };
-        let json = serde_json::to_string(&request)?;
-        assert!(json.contains("\"type\":\"browser_mode\""), "{json}");
-        assert!(json.contains(&format!("\"mode\":\"{tag}\"")), "{json}");
-        let decoded = parse_request_json(&json)?;
-        assert_eq!(decoded.id(), 71);
-        assert!(
-            decoded.is_lightweight_control_request(),
-            "a one-shot push must not need a subscription"
-        );
-        let Request::SetBrowserMode {
-            session_id,
-            mode: decoded_mode,
-            ..
-        } = decoded
-        else {
-            return Err(anyhow!("expected SetBrowserMode"));
-        };
-        assert_eq!(session_id, "sess_browser");
-        assert_eq!(decoded_mode, mode);
-    }
     Ok(())
 }
 

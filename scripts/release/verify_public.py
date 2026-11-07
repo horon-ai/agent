@@ -62,9 +62,8 @@ def verify_downloads(directory, names, tag, expected_sha):
                 raise ValueError(f"Checksum mismatch: {name}")
     provenance = json.loads((directory / "release-provenance.json").read_text())
     if (provenance.get("tag") != tag or provenance.get("tag_commit") != expected_sha
-            or provenance.get("repair") != "none"
             or provenance.get("eligibility_policy") != "exact-sha-main-ci"):
-        raise ValueError("Release provenance does not match the validated unpatched commit")
+        raise ValueError("Release provenance does not match the validated tagged commit")
 
 
 def main():

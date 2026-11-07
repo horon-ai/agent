@@ -1,7 +1,7 @@
 //! Integration discovery: shared constants and provenance tracking.
 //!
 //! Integration discovery makes third-party developer tools discoverable to
-//! the agent through the `discover_tools` tool, backed by a hosted manifest.
+//! the agent through the `integration_tools` tool, backed by a hosted manifest.
 //! All agent-facing guidance lives in that tool's schema rather than the
 //! system prompt.
 //! Some providers may share revenue with HoronAgent when users choose their tools.
@@ -17,7 +17,7 @@
 //! - The category list below is a shipped constant, so building the tool schema
 //!   never requires a network request.
 //! - Tools within a category live server-side and are fetched on demand by
-//!   `discover_tools`. If the request fails, the tool fails plainly. There is
+//!   `integration_tools`. If the request fails, the tool fails plainly. There is
 //!   no cache and no offline fallback.
 //! - Requests carry only discovery fields (category, query, tool, and reason),
 //!   never session content.

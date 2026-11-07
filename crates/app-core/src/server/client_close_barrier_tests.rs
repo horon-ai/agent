@@ -12,7 +12,6 @@ fn connection(name: &str, session_id: &str) -> ClientConnectionInfo {
         client_id: name.into(),
         session_id: session_id.into(),
         client_instance_id: None,
-        debug_client_id: None,
         connected_at: std::time::Instant::now(),
         last_seen: std::time::Instant::now(),
         is_processing: false,
@@ -397,7 +396,6 @@ async fn cleanup_without_a_removal_publishes_no_gate_and_keeps_other_sessions_in
     let file_touch = FileTouchService::new();
     let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
     let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
     let (events, _events_rx) = mpsc::unbounded_channel::<ServerEvent>();
     let (swarm_events, _) = broadcast::channel(8);
     let mut processing_task = None;
@@ -415,8 +413,6 @@ async fn cleanup_without_a_removal_publishes_no_gate_and_keeps_other_sessions_in
         &file_touch,
         &channel_subscriptions,
         &channel_subscriptions_by_session,
-        &client_debug_state,
-        "debug_gone",
         &connections,
         "conn_gone",
         &Arc::new(RwLock::new(HashMap::new())),

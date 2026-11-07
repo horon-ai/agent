@@ -47,7 +47,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
             client_id: "conn_restore".to_string(),
             session_id: temp_session_id.to_string(),
             client_instance_id: None,
-            debug_client_id: Some("debug_restore".to_string()),
             connected_at: now,
             last_seen: now,
             is_processing: false,
@@ -56,7 +55,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
             disconnect_tx: mpsc::unbounded_channel().0,
         },
     )])));
-    let client_debug_state = Arc::new(RwLock::new(ClientDebugState::default()));
     let (placeholder_event_tx, _placeholder_event_rx) = mpsc::unbounded_channel::<ServerEvent>();
     let swarm_members = Arc::new(RwLock::new(HashMap::from([(
         temp_session_id.to_string(),
@@ -103,7 +101,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
     let (swarm_event_tx, _swarm_event_rx) = broadcast::channel::<SwarmEvent>(8);
     let mcp_pool = Arc::new(crate::mcp::SharedMcpPool::from_default_config());
 
-    let mut client_selfdev = false;
     let mut client_session_id = temp_session_id.to_string();
     let writer_guard = writer.lock().await;
     let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
@@ -116,7 +113,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
         let shutdown_signals = Arc::clone(&shutdown_signals);
         let soft_interrupt_queues = Arc::clone(&soft_interrupt_queues);
         let client_connections = Arc::clone(&client_connections);
-        let client_debug_state = Arc::clone(&client_debug_state);
         let swarm_members = Arc::clone(&swarm_members);
         let swarms_by_id = Arc::clone(&swarms_by_id);
         let file_touch = file_touch.clone();
@@ -141,7 +137,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
                         None,
                         false,
                         false,
-                        &mut client_selfdev,
                         &mut client_session_id,
                         "conn_restore",
                         &mut agent,
@@ -151,7 +146,6 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
                         &shutdown_signals,
                         &soft_interrupt_queues,
                         &client_connections,
-                        &client_debug_state,
                         &swarm_members,
                         &swarms_by_id,
                         &file_touch,
@@ -168,8 +162,7 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
-                        false,
-                        false,
+                                                false,
                     )
                     .await
                 })

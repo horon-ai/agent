@@ -21,7 +21,7 @@
 //! This repository carries no price table, so there is nothing to multiply
 //! tokens by; a made-up rate would be worse than an honest gap.
 
-use horon_agent_harness_api::{ApiEvent, ErrorCode, UsageLimitInfo, UsageModel, UsageSession, UsageTotals};
+use horon_agent_harness_api::{ApiEvent, ErrorCode, UsageModel, UsageSession, UsageTotals};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,12 +45,6 @@ pub(crate) struct Cache {
     last_call: Option<LiveTotals>,
     /// Context window of the active route, from `model_changed`.
     context_window: Option<u64>,
-    /// Subscription limits from the deferred `subscription` probe.
-    limits: Vec<UsageLimitInfo>,
-    /// Legacy id of the in-flight `subscription` probe, if one was sent.
-    pending_probe: Option<u64>,
-    /// A reply to that probe landed: limits are known, even when empty.
-    limits_loaded: bool,
 }
 
 #[derive(Debug)]
@@ -114,54 +108,9 @@ impl Cache {
         });
     }
 
-    /// Parse the hosted subscription's spending window from a
-    /// `runtime_command subscription` reply.
-    ///
-    /// A zero budget is indistinguishable from an unset one on the wire, so it
-    /// is reported as no cap instead of as a zero limit.
-    pub(crate) fn note_subscription(&mut self, data: &Value) {
-        self.limits.clear();
-        if data["configured"].as_bool() != Some(true) {
-            return;
-        }
-        let usage = &data["account"]["usage"];
-        let used = usage["used_usd"].as_f64();
-        let limit = usage["budget_usd"].as_f64().filter(|limit| *limit > 0.0);
-        let resets_at = usage["resets_at"].as_str().map(str::to_string);
-        if used.is_none() && limit.is_none() && resets_at.is_none() {
-            return;
-        }
-        self.limits.push(UsageLimitInfo {
-            name: "subscription_spend".into(),
-            used,
-            limit,
-            unit: "usd".into(),
-            resets_at,
-        });
-    }
-
     /// A different session attached: the route window no longer describes it.
     pub(crate) fn reset_identity(&mut self) {
         self.context_window = None;
-    }
-
-    /// Claim the reply to the deferred `usage_report` subscription probe.
-    pub(crate) fn take_probe(&mut self, legacy_id: u64, data: Option<&Value>) -> bool {
-        if self.pending_probe != Some(legacy_id) {
-            return false;
-        }
-        self.pending_probe = None;
-        self.limits_loaded = true;
-        match data {
-            Some(data) => self.note_subscription(data),
-            None => self.limits.clear(),
-        }
-        true
-    }
-
-    /// Whether the account's limits have been asked for once already.
-    pub(crate) fn limits_loaded(&self) -> bool {
-        self.limits_loaded
     }
 }
 
@@ -224,27 +173,10 @@ struct Reading {
 
 /// Build the report for one request on this connection.
 ///
-/// A `usage_report` is answered locally from stored records, so it needs no
-/// daemon round trip for tokens. Subscription limits are the exception: they
-/// live behind a runtime command, so the first report defers to one and the
-/// rest are answered from the cache. An empty limit list with
-/// `limits_loaded()` false means "not asked yet", which is different from
-/// "asked, and this account has no limits".
+/// A `usage_report` is answered locally from stored records and the live
+/// figures the daemon pushed; it never sends a request of its own. This build
+/// carries no subscription, so the limit list is always empty.
 pub(crate) fn reply(state: &mut super::BridgeState, request: &Value, api_id: u64) -> Vec<super::Outbound> {
-    if state.runtime_commands_supported && !state.usage.limits_loaded() {
-        state.pending_usage_reports.push((api_id, request.clone()));
-        if state.usage.pending_probe.is_some() {
-            return vec![];
-        }
-        let id = state.legacy_id();
-        state.usage.pending_probe = Some(id);
-        return vec![super::Outbound::Legacy(serde_json::json!({
-            "type": "runtime_command",
-            "id": id,
-            "command": "subscription",
-            "args": ["status"],
-        }))];
-    }
     build_reply(state, request, api_id)
 }
 
@@ -258,38 +190,6 @@ fn build_reply(state: &super::BridgeState, request: &Value, api_id: u64) -> Vec<
         Ok(event) => vec![super::Outbound::Reply(super::ServerFrame::reply(api_id, event))],
         Err((code, message)) => super::BridgeState::error_reply(api_id, code, &message),
     }
-}
-
-/// Answer every `usage_report` that was waiting on the limits probe.
-///
-/// `data` is the probe's payload, or `None` when the daemon rejected the
-/// command: the reports still answer, with limits absent rather than wrong.
-pub(crate) fn finish(state: &mut super::BridgeState, legacy_id: u64, data: Option<&Value>) -> Vec<super::ServerFrame> {
-    if !state.usage.take_probe(legacy_id, data) {
-        return vec![];
-    }
-    let pending = std::mem::take(&mut state.pending_usage_reports);
-    pending
-        .into_iter()
-        .flat_map(|(api_id, request)| {
-            match build(
-                &request,
-                state.session_id.as_deref(),
-                &state.known_sessions,
-                &state.usage,
-            ) {
-                Ok(event) => vec![super::ServerFrame::reply(api_id, event)],
-                Err((code, message)) => vec![super::ServerFrame::reply(
-                    api_id,
-                    ApiEvent::Error {
-                        code,
-                        message,
-                        details: None,
-                    },
-                )],
-            }
-        })
-        .collect()
 }
 
 /// The `token_usage` event, after caching the call for `usage_report`.
@@ -388,7 +288,7 @@ fn build(
         },
         models,
         context_window,
-        limits: cache.limits.clone(),
+        limits: Vec::new(),
         pricing: PRICING_UNKNOWN.into(),
         estimated_cost: None,
     })

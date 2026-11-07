@@ -31,21 +31,13 @@ const DROP: &[&str] = &[
     "batch",
     "bg",
     "memory",
-    "browser",
-    "macos_computer_use",
     "selfdev",
     "desktop_selfdev",
     "compile_remote",
-    "panel",
-    "side_panel",
-    "applet",
-    "calendar",
-    "gmail",
     "schedule",
     "session_search",
     "conversation_search",
     "todo",
-    "open",
 ];
 
 #[test]

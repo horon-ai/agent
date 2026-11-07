@@ -900,7 +900,7 @@ fn pkce_pair() -> (String, String) {
     (verifier, challenge)
 }
 
-pub enum BrowserMode {
+pub enum BrowserPreference {
     Open,
     Print,
 }
@@ -1012,16 +1012,24 @@ async fn wait_for_callback(
     }
 }
 
+/// Bind the loopback callback listener used to receive the authorization
+/// redirect from the user's browser.
+fn bind_callback_listener(port: u16) -> Result<tokio::net::TcpListener> {
+    let std_listener = std::net::TcpListener::bind(format!("127.0.0.1:{port}"))?;
+    std_listener.set_nonblocking(true)?;
+    Ok(tokio::net::TcpListener::from_std(std_listener)?)
+}
+
 /// Explicit interactive login. `on_url` receives the authorization URL once it
 /// is ready, even in `Print` mode. Only this API can open a browser. The supplied
 /// URL contains state, so callers must show it intentionally, not log it.
-pub async fn login(mcp_url: &str, browser: BrowserMode, on_url: impl FnOnce(&str)) -> Result<()> {
+pub async fn login(mcp_url: &str, browser: BrowserPreference, on_url: impl FnOnce(&str)) -> Result<()> {
     validate_mcp_url(mcp_url)?;
     let path = store_path()?;
     let key = canonical_resource(mcp_url);
     let initial_generation = generation(&load_store_at(&path)?, &key);
     let discovery = discover(mcp_url).await?;
-    let listener = crate::auth::oauth::bind_callback_listener(0).context("could not bind OAuth loopback callback")?;
+    let listener = bind_callback_listener(0).context("could not bind OAuth loopback callback")?;
     let redirect_uri = format!("http://127.0.0.1:{}/callback", listener.local_addr()?.port());
     if discovery
         .auth_server
@@ -1071,7 +1079,7 @@ pub async fn login(mcp_url: &str, browser: BrowserMode, on_url: impl FnOnce(&str
     }
     let auth_url = auth_url.to_string();
     on_url(&auth_url);
-    if matches!(browser, BrowserMode::Open) && open::that(&auth_url).is_err() {
+    if matches!(browser, BrowserPreference::Open) && !crate::open_url::open_url(&auth_url) {
         // on_url already presented the URL, so manual opening still works.
         crate::logging::warn("Could not open OAuth browser; open the displayed authorization URL manually");
     }

@@ -2,15 +2,14 @@ mod paths;
 mod platform_support;
 mod source_state;
 mod storage_helpers;
+mod types;
 mod version_gc;
 
 pub use paths::{
-    SELFDEV_CARGO_PROFILE, binary_name, binary_stem, client_update_candidate, current_binary_build_time_string,
-    current_binary_built_at, find_dev_binary, find_repo_in_ancestors, get_repo_dir, is_horon_agent_repo,
-    launcher_binary_path, launcher_dir, preferred_reload_candidate, release_binary_path, resolve_binary_payload,
-    run_selfdev_build, selfdev_binary_path, selfdev_build_command, selfdev_build_command_for_target,
-    shared_server_update_candidate, update_launcher_symlink_to_current, update_launcher_symlink_to_stable,
-    version_matches_installed_channel,
+    binary_name, binary_stem, client_update_candidate, current_binary_build_time_string, current_binary_built_at,
+    find_repo_in_ancestors, get_repo_dir, is_horon_agent_repo, launcher_binary_path, launcher_dir,
+    preferred_reload_candidate, release_binary_path, resolve_binary_payload, shared_server_update_candidate,
+    update_launcher_symlink_to_current, update_launcher_symlink_to_stable, version_matches_installed_channel,
 };
 pub use source_state::{
     current_build_info, current_git_diff, current_git_hash, current_git_hash_full, current_source_state,
@@ -18,7 +17,7 @@ pub use source_state::{
     worktree_scope_key,
 };
 pub use storage_helpers::{
-    build_log_path, build_progress_path, builds_dir, canary_binary_path, clear_build_progress, clear_migration_context,
+    build_log_path, build_progress_path, builds_dir, clear_build_progress, clear_migration_context,
     current_binary_path, current_version_file, load_migration_context, manifest_path, migration_context_path,
     read_build_progress, read_current_version, read_shared_server_version, read_stable_version, save_migration_context,
     shared_server_binary_path, shared_server_version_file, stable_binary_path, stable_version_file,
@@ -29,7 +28,6 @@ pub use version_gc::{
 };
 
 use anyhow::Result;
-use chrono::Utc;
 use horon_agent_storage as storage;
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
@@ -39,9 +37,8 @@ use std::process::Command;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
-pub use horon_agent_selfdev_types::{
-    BinaryChoice, BinaryVersionReport, BuildInfo, CanaryStatus, CrashInfo, DevBinarySourceMetadata, MigrationContext,
-    PendingActivation, PublishedBuild, SelfDevBuildCommand, SelfDevBuildTarget, SourceState,
+pub use types::{
+    BinaryVersionReport, BuildInfo, DevBinarySourceMetadata, MigrationContext, PublishedBuild, SourceState,
 };
 
 /// Manifest tracking build versions and their status
@@ -49,21 +46,9 @@ pub use horon_agent_selfdev_types::{
 pub struct BuildManifest {
     /// Current stable build hash (known good)
     pub stable: Option<String>,
-    /// Current canary build hash (being tested)
-    pub canary: Option<String>,
-    /// Session ID testing the canary build
-    pub canary_session: Option<String>,
-    /// Status of canary testing
-    pub canary_status: Option<CanaryStatus>,
     /// History of recent builds
     #[serde(default)]
     pub history: Vec<BuildInfo>,
-    /// Last crash information (if canary crashed)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_crash: Option<CrashInfo>,
-    /// Pending activation being validated across reload/resume.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_activation: Option<PendingActivation>,
 }
 
 impl BuildManifest {
@@ -83,72 +68,6 @@ impl BuildManifest {
         storage::write_json(&path, self)
     }
 
-    /// Check if we should use stable or canary for a given session
-    pub fn binary_for_session(&self, session_id: &str) -> BinaryChoice {
-        // If this session is the canary tester, use canary
-        if let Some(ref canary_session) = self.canary_session
-            && canary_session == session_id
-            && let Some(ref canary) = self.canary
-        {
-            return BinaryChoice::Canary(canary.clone());
-        }
-        // Otherwise use stable
-        if let Some(ref stable) = self.stable {
-            BinaryChoice::Stable(stable.clone())
-        } else {
-            BinaryChoice::Current
-        }
-    }
-
-    /// Start canary testing for a session
-    pub fn start_canary(&mut self, hash: &str, session_id: &str) -> Result<()> {
-        self.canary = Some(hash.to_string());
-        self.canary_session = Some(session_id.to_string());
-        self.canary_status = Some(CanaryStatus::Testing);
-        self.save()
-    }
-
-    /// Mark canary as passed
-    pub fn mark_canary_passed(&mut self) -> Result<()> {
-        self.canary_status = Some(CanaryStatus::Passed);
-        self.save()
-    }
-
-    /// Mark canary as failed
-    pub fn mark_canary_failed(&mut self) -> Result<()> {
-        self.canary_status = Some(CanaryStatus::Failed);
-        self.save()
-    }
-
-    /// Record a crash
-    pub fn record_crash(&mut self, hash: &str, exit_code: i32, stderr: &str, diff: Option<String>) -> Result<()> {
-        self.last_crash = Some(CrashInfo {
-            build_hash: hash.to_string(),
-            exit_code,
-            stderr: stderr.chars().take(4096).collect(), // Truncate
-            crashed_at: Utc::now(),
-            diff,
-        });
-        self.canary_status = Some(CanaryStatus::Failed);
-        self.save()
-    }
-
-    /// Clear crash info after it's been handled
-    pub fn clear_crash(&mut self) -> Result<()> {
-        self.last_crash = None;
-        self.save()
-    }
-
-    pub fn set_pending_activation(&mut self, activation: PendingActivation) -> Result<()> {
-        self.pending_activation = Some(activation);
-        self.save()
-    }
-
-    pub fn clear_pending_activation(&mut self) -> Result<()> {
-        self.pending_activation = None;
-        self.save()
-    }
-
     /// Add build to history
     pub fn add_to_history(&mut self, info: BuildInfo) -> Result<()> {
         // Keep last 20 builds
@@ -156,46 +75,6 @@ impl BuildManifest {
         self.history.truncate(20);
         self.save()
     }
-}
-
-pub fn complete_pending_activation_for_session(session_id: &str) -> Result<Option<String>> {
-    let mut manifest = BuildManifest::load()?;
-    let Some(pending) = manifest.pending_activation.clone() else {
-        return Ok(None);
-    };
-    if pending.session_id != session_id {
-        return Ok(None);
-    }
-
-    manifest.canary = Some(pending.new_version.clone());
-    manifest.canary_session = Some(session_id.to_string());
-    manifest.canary_status = Some(CanaryStatus::Passed);
-    manifest.pending_activation = None;
-    manifest.last_crash = None;
-    manifest.save()?;
-    Ok(Some(pending.new_version))
-}
-
-pub fn rollback_pending_activation_for_session(session_id: &str) -> Result<Option<String>> {
-    let mut manifest = BuildManifest::load()?;
-    let Some(pending) = manifest.pending_activation.clone() else {
-        return Ok(None);
-    };
-    if pending.session_id != session_id {
-        return Ok(None);
-    }
-
-    if let Some(previous) = pending.previous_current_version.as_deref() {
-        update_current_symlink(previous)?;
-        update_launcher_symlink_to_current()?;
-    }
-    if let Some(previous) = pending.previous_shared_server_version.as_deref() {
-        update_shared_server_symlink(previous)?;
-    }
-    manifest.canary_status = Some(CanaryStatus::Failed);
-    manifest.pending_activation = None;
-    manifest.save()?;
-    Ok(Some(pending.new_version))
 }
 
 /// Install a binary at a specific immutable version path.
@@ -222,27 +101,6 @@ pub fn install_binary_at_version(source: &std::path::Path, version: &str) -> Res
     crate::platform_support::set_permissions_executable(&dest)?;
 
     Ok(dest)
-}
-
-fn binary_source_metadata_path(binary: &Path) -> PathBuf {
-    let file_name = binary
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| binary_stem().to_string());
-    binary.with_file_name(format!("{file_name}.source.json"))
-}
-
-pub fn write_dev_binary_source_metadata(binary: &Path, source: &SourceState) -> Result<PathBuf> {
-    let path = binary_source_metadata_path(binary);
-    storage::write_json(&path, &DevBinarySourceMetadata::from(source))?;
-    Ok(path)
-}
-
-pub fn write_current_dev_binary_source_metadata(repo_dir: &Path, source: &SourceState) -> Result<PathBuf> {
-    let binary = find_dev_binary(repo_dir)
-        .ok_or_else(|| anyhow::anyhow!("Binary not found in target/selfdev or target/release"))?;
-    write_dev_binary_source_metadata(&binary, source)
 }
 
 fn read_binary_version_report(binary: &Path) -> Result<BinaryVersionReport> {
@@ -280,160 +138,19 @@ pub fn smoke_test_binary(binary: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_binary_version_matches_source_report(
-    report: &BinaryVersionReport,
-    binary: &Path,
-    source: &SourceState,
-) -> Result<()> {
-    let git_hash = report.git_hash.as_deref().unwrap_or_default();
-    if git_hash.is_empty() {
-        anyhow::bail!(
-            "Binary {} version report did not include git_hash; rebuild before publishing {}",
-            binary.display(),
-            source.version_label
-        );
-    }
-    if git_hash != source.short_hash {
-        anyhow::bail!(
-            "Refusing to publish {} as {}: binary was built from git hash {}, but source state is {}",
-            binary.display(),
-            source.version_label,
-            git_hash,
-            source.short_hash
-        );
-    }
-    Ok(())
+fn binary_source_metadata_path(binary: &Path) -> PathBuf {
+    let file_name = binary
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| binary_stem().to_string());
+    binary.with_file_name(format!("{file_name}.source.json"))
 }
 
-fn dirty_status_paths(repo_dir: &Path) -> Result<Vec<(PathBuf, bool)>> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-        .current_dir(repo_dir)
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git status failed while validating dirty build freshness with status {:?}",
-            output.status.code()
-        );
-    }
-
-    let mut entries = output.stdout.split(|byte| *byte == 0).peekable();
-    let mut paths = Vec::new();
-    while let Some(entry) = entries.next() {
-        if entry.is_empty() || entry.len() < 4 {
-            continue;
-        }
-        let x = entry[0];
-        let y = entry[1];
-        let path = String::from_utf8_lossy(&entry[3..]).to_string();
-        let deleted = x == b'D' || y == b'D';
-        paths.push((PathBuf::from(path), deleted));
-
-        if matches!(x, b'R' | b'C') || matches!(y, b'R' | b'C') {
-            let _ = entries.next();
-        }
-    }
-
-    Ok(paths)
-}
-
-fn validate_dirty_binary_freshness_without_metadata(
-    repo_dir: &Path,
-    binary: &Path,
-    source: &SourceState,
-) -> Result<()> {
-    if !source.dirty {
-        return Ok(());
-    }
-
-    let binary_mtime = std::fs::metadata(binary)
-        .and_then(|metadata| metadata.modified())
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "Could not read binary modification time for {}: {}",
-                binary.display(),
-                err
-            )
-        })?;
-    let dirty_paths = dirty_status_paths(repo_dir)?;
-    let mut unverifiable = Vec::new();
-    let mut newer_than_binary = Vec::new();
-
-    for (relative, deleted) in dirty_paths {
-        if deleted {
-            unverifiable.push(relative.display().to_string());
-            continue;
-        }
-        let path = repo_dir.join(&relative);
-        let modified = match std::fs::metadata(&path).and_then(|metadata| metadata.modified()) {
-            Ok(modified) => modified,
-            Err(_) => {
-                unverifiable.push(relative.display().to_string());
-                continue;
-            }
-        };
-        if modified > binary_mtime {
-            newer_than_binary.push(relative.display().to_string());
-        }
-    }
-
-    if !unverifiable.is_empty() {
-        anyhow::bail!(
-            "Refusing to publish dirty build {} without source metadata: these changed paths cannot be checked against the binary timestamp: {}",
-            source.version_label,
-            unverifiable.join(", ")
-        );
-    }
-    if !newer_than_binary.is_empty() {
-        anyhow::bail!(
-            "Refusing to publish stale dirty build {}: changed paths are newer than {}: {}",
-            source.version_label,
-            binary.display(),
-            newer_than_binary.join(", ")
-        );
-    }
-
-    Ok(())
-}
-
-fn validate_dev_binary_source_metadata(binary: &Path, source: &SourceState) -> Result<bool> {
+pub fn write_dev_binary_source_metadata(binary: &Path, source: &SourceState) -> Result<PathBuf> {
     let path = binary_source_metadata_path(binary);
-    if !path.exists() {
-        return Ok(false);
-    }
-
-    let metadata: DevBinarySourceMetadata = storage::read_json(&path)?;
-    if metadata.source_fingerprint != source.fingerprint
-        || metadata.version_label != source.version_label
-        || metadata.short_hash != source.short_hash
-        || metadata.full_hash != source.full_hash
-        || metadata.dirty != source.dirty
-    {
-        anyhow::bail!(
-            "Refusing to publish {} as {}: source metadata at {} was for {} ({})",
-            binary.display(),
-            source.version_label,
-            path.display(),
-            metadata.version_label,
-            metadata.source_fingerprint
-        );
-    }
-    Ok(true)
-}
-
-fn validate_dev_binary_matches_source(repo_dir: &Path, binary: &Path, source: &SourceState) -> Result<()> {
-    let report = read_binary_version_report(binary)?;
-    if report.version.as_deref().unwrap_or_default().is_empty() {
-        anyhow::bail!(
-            "Binary smoke test for {} returned JSON without a version field",
-            binary.display()
-        );
-    }
-    validate_binary_version_matches_source_report(&report, binary, source)?;
-    if !validate_dev_binary_source_metadata(binary, source)? {
-        validate_dirty_binary_freshness_without_metadata(repo_dir, binary, source)?;
-    }
-    Ok(())
+    storage::write_json(&path, &DevBinarySourceMetadata::from(source))?;
+    Ok(path)
 }
 
 #[cfg(unix)]
@@ -656,44 +373,6 @@ pub fn update_shared_server_symlink(version: &str) -> Result<PathBuf> {
     Ok(shared_link)
 }
 
-pub fn publish_local_current_build_for_source(repo_dir: &Path, source: &SourceState) -> Result<PublishedBuild> {
-    let binary = find_dev_binary(repo_dir)
-        .ok_or_else(|| anyhow::anyhow!("Binary not found in target/selfdev or target/release"))?;
-    if !binary.exists() {
-        anyhow::bail!("Binary not found at {:?}", binary);
-    }
-
-    validate_dev_binary_matches_source(repo_dir, &binary, source)?;
-    let previous_current_version = read_current_version()?;
-    let versioned_path = install_binary_at_version(&binary, &source.version_label)?;
-    let installed_report = read_binary_version_report(&versioned_path)?;
-    if installed_report.version.as_deref().unwrap_or_default().is_empty() {
-        anyhow::bail!(
-            "Binary smoke test for {} returned JSON without a version field",
-            versioned_path.display()
-        );
-    }
-    validate_binary_version_matches_source_report(&installed_report, &versioned_path, source)?;
-    let current_link = update_current_symlink(&source.version_label)?;
-    let launcher_link = update_launcher_symlink_to_current()?;
-
-    Ok(PublishedBuild {
-        version: source.version_label.clone(),
-        source_fingerprint: source.fingerprint.clone(),
-        versioned_path,
-        current_link,
-        launcher_link,
-        previous_current_version,
-    })
-}
-
-/// Install the local release binary into immutable versions and make it the active `current`
-/// build + launcher, while keeping `stable` untouched.
-pub fn publish_local_current_build(repo_dir: &std::path::Path) -> Result<PathBuf> {
-    let source = current_source_state(repo_dir)?;
-    Ok(publish_local_current_build_for_source(repo_dir, &source)?.versioned_path)
-}
-
 /// Promote an already installed immutable version onto the shared server channel.
 pub fn promote_version_to_shared_server(version: &str) -> Result<Option<String>> {
     if version.is_empty()
@@ -892,12 +571,6 @@ pub fn install_local_release(repo_dir: &std::path::Path) -> Result<PathBuf> {
 pub fn install_version(repo_dir: &std::path::Path, hash: &str) -> Result<PathBuf> {
     let source = release_binary_path(repo_dir);
     install_binary_at_version(&source, hash)
-}
-
-/// Update canary symlink to point to a version
-pub fn update_canary_symlink(hash: &str) -> Result<()> {
-    let _ = update_channel_symlink("canary", hash)?;
-    Ok(())
 }
 
 #[cfg(test)]

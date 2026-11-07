@@ -51,19 +51,6 @@ pub struct SessionToolConfig {
     pub custom: Vec<SessionToolDefinition>,
 }
 
-/// Which side is driving a session's mirrored browser.
-///
-/// Pushed by the harness API bridge when its `browser_mirror` surface changes
-/// hands. The bridge stays the authority; the daemon only caches what it was
-/// last told, so a tool call never has to ask the bridge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BrowserMode {
-    #[serde(rename = "agent")]
-    Agent,
-    #[serde(rename = "user")]
-    User,
-}
-
 /// Client capabilities an ACP connection offers the daemon for one session.
 ///
 /// Each flag says the client can serve the matching ACP v1 method back to the
@@ -241,14 +228,6 @@ pub enum Request {
         session_id: Option<String>,
     },
 
-    /// Execute a client debug command (forwarded to TUI)
-    #[serde(rename = "client_debug_command")]
-    ClientDebugCommand { id: u64, command: String },
-
-    /// Response from TUI for client debug command
-    #[serde(rename = "client_debug_response")]
-    ClientDebugResponse { id: u64, output: String },
-
     /// Subscribe to events (for TUI clients)
     #[serde(rename = "subscribe")]
     Subscribe {
@@ -256,9 +235,6 @@ pub enum Request {
         /// Full system prompt override for a new session only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt: Option<String>,
-        /// Opt in to PDF panel payloads. Older clients only accept Markdown.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        supports_pdf_panels: bool,
         /// Desktop can render user_response tool calls as inline answers.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         supports_user_response: bool,
@@ -268,8 +244,6 @@ pub enum Request {
         supports_ask_requests: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_dir: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        selfdev: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_session_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,14 +294,6 @@ pub enum Request {
         subscribe_usage_updates: bool,
     },
 
-    /// Get a bounded view of compacted historical messages for lazy transcript expansion.
-    #[serde(rename = "get_compacted_history")]
-    GetCompactedHistory {
-        id: u64,
-        /// Number of leading compacted messages the client wants rendered before the live tail.
-        visible_messages: usize,
-    },
-
     /// Trigger server hot reload (build new version, restart)
     #[serde(rename = "reload")]
     Reload {
@@ -354,12 +320,6 @@ pub enum Request {
         allow_session_takeover: bool,
     },
 
-    /// Resume/continue every live session that was interrupted and would
-    /// auto-continue on a reload (e.g. crashed/errored mid-turn). This is the
-    /// on-demand equivalent of the automatic post-reload recovery sweep.
-    #[serde(rename = "resume_all_sessions")]
-    ResumeAllSessions { id: u64 },
-
     /// Deliver a scheduled task to a currently live session.
     #[serde(rename = "notify_session")]
     NotifySession {
@@ -368,68 +328,6 @@ pub enum Request {
         message: String,
     },
 
-    /// Announce which side is driving a session's mirrored browser.
-    ///
-    /// Sent by the API bridge on `browser_mirror` takeover and resume. A push,
-    /// not a query: the daemon caches it with a lease, so the browser tool never
-    /// waits on the bridge. A daemon that predates this request answers with an
-    /// error, which the bridge discards.
-    #[serde(rename = "browser_mode")]
-    SetBrowserMode {
-        id: u64,
-        session_id: String,
-        mode: BrowserMode,
-    },
-
-    /// The user pressed something in an agent-mounted applet instance. The
-    /// server stores `state`, then wakes the agent (or resolves a waiting
-    /// `applet` tool call).
-    #[serde(rename = "applet_action")]
-    AppletAction {
-        id: u64,
-        session_id: String,
-        instance: String,
-        action: horon_agent_applet_types::Action,
-        #[serde(default)]
-        state: serde_json::Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        source_key: Option<String>,
-    },
-
-    /// The user closed an agent-mounted applet instance. No agent wake.
-    #[serde(rename = "close_applet")]
-    CloseApplet {
-        id: u64,
-        session_id: String,
-        instance: String,
-    },
-
-    /// Inject externally transcribed text into a live TUI session.
-    #[serde(rename = "transcript")]
-    Transcript {
-        id: u64,
-        text: String,
-        #[serde(default)]
-        mode: TranscriptMode,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
-    },
-
-    /// Execute a shell command from `!cmd` in the active remote session.
-    #[serde(rename = "input_shell")]
-    InputShell { id: u64, command: String },
-
-    /// Cycle the active model (direction: 1 for next, -1 for previous)
-    #[serde(rename = "cycle_model")]
-    CycleModel {
-        id: u64,
-        #[serde(default = "default_model_direction")]
-        direction: i8,
-    },
-
-    #[serde(rename = "refresh_models")]
-    RefreshModels { id: u64 },
-
     /// Set the active model by name.
     ///
     /// A legacy/desktop compatibility shape (`{"type":"set_route","model":...}`)
@@ -437,54 +335,9 @@ pub enum Request {
     /// [`crate::decode_request`] rather than via a serde `alias`. A serde alias
     /// would make this variant *also* answer to the `set_route` tag, and serde's
     /// internally-tagged enums pick the first matching variant by tag (not by
-    /// fields), so it would shadow the structured [`Request::SetRoute`] variant
-    /// below and make every structured route switch fail with
-    /// `missing field \`model\``.
+    /// fields), so the bare-model shape would shadow a structured route switch.
     #[serde(rename = "set_model")]
     SetModel { id: u64, model: String },
-
-    /// Set the active model by structured route identity.
-    #[serde(rename = "set_route")]
-    SetRoute {
-        id: u64,
-        selection: horon_agent_provider_core::RouteSelection,
-        /// Automatic retries must revalidate the server's current account pool.
-        #[serde(default, skip_serializing_if = "is_false")]
-        automatic_failover: bool,
-    },
-
-    /// Set or clear the session-scoped subagent model preference.
-    #[serde(rename = "set_subagent_model")]
-    SetSubagentModel {
-        id: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-    },
-
-    /// Set routing for a worker role. None clears to the global default.
-    /// With `global`, the server updates its own configuration instead of the
-    /// session, so remote clients never write a default only they can see.
-    #[serde(rename = "set_agent_model")]
-    SetAgentModel {
-        id: u64,
-        target: String,
-        #[serde(default)]
-        model: Option<String>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        global: bool,
-    },
-
-    /// Launch a subagent immediately in the active session.
-    #[serde(rename = "run_subagent")]
-    RunSubagent {
-        id: u64,
-        prompt: String,
-        subagent_type: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        session_id: Option<String>,
-    },
 
     /// Set reasoning effort for providers that expose it (OpenAI: none|minimal|low|medium|high|xhigh|max; Anthropic: none|low|medium|high|xhigh|max; DeepSeek: none|low|medium|high|max)
     #[serde(rename = "set_reasoning_effort")]
@@ -495,14 +348,6 @@ pub enum Request {
         target_session_id: Option<String>,
     },
 
-    /// Set service tier for OpenAI models (priority|fast|flex|off)
-    #[serde(rename = "set_service_tier")]
-    SetServiceTier { id: u64, service_tier: String },
-
-    /// Set connection transport for OpenAI models (auto|https|websocket)
-    #[serde(rename = "set_transport")]
-    SetTransport { id: u64, transport: String },
-
     /// Non-presentation command executed against the attached live runtime.
     #[serde(rename = "runtime_command")]
     RuntimeCommand {
@@ -510,25 +355,6 @@ pub enum Request {
         command: String,
         #[serde(default)]
         args: Vec<String>,
-    },
-
-    /// Set Copilot premium request conservation mode (0=normal, 1=one-per-session, 2=zero)
-    #[serde(rename = "set_premium_mode")]
-    SetPremiumMode { id: u64, mode: u8 },
-
-    /// Toggle a runtime feature for this session
-    #[serde(rename = "set_feature")]
-    SetFeature {
-        id: u64,
-        feature: FeatureToggle,
-        enabled: bool,
-    },
-
-    /// Set the compaction mode for this session
-    #[serde(rename = "set_compaction_mode")]
-    SetCompactionMode {
-        id: u64,
-        mode: horon_agent_config_types::CompactionMode,
     },
 
     /// Set or clear the active session's custom display title.
@@ -573,10 +399,6 @@ pub enum Request {
     #[serde(rename = "compact")]
     Compact { id: u64 },
 
-    /// Trigger immediate memory extraction for the current session
-    #[serde(rename = "trigger_memory_extraction")]
-    TriggerMemoryExtraction { id: u64 },
-
     /// Notify server that auth credentials changed (e.g., after login)
     #[serde(rename = "notify_auth_changed")]
     NotifyAuthChanged {
@@ -599,25 +421,11 @@ pub enum Request {
     },
 
     /// Switch active OpenAI account label on the server session.
-    /// This keeps account overrides and provider credential caches in sync.
-    #[serde(rename = "switch_openai_account")]
-    SwitchOpenAiAccount { id: u64, label: String },
-
     /// Invalidate daemon-local usage and quota cooldown state after a banked reset.
     /// This never redeems a reset or switches accounts. `None` pins the default
     /// account scope, not whichever account is active when the request arrives.
     #[serde(rename = "invalidate_openai_usage")]
     InvalidateOpenAiUsage { id: u64, account_label: Option<String> },
-
-    /// Send stdin input to a running command that requested it
-    #[serde(rename = "stdin_response")]
-    StdinResponse {
-        id: u64,
-        /// Matches the request_id from StdinRequest
-        request_id: String,
-        /// The user's input (line of text)
-        input: String,
-    },
 
     /// Client acknowledgement of [`ServerEvent::ApprovalResolved`].
     ///
@@ -718,36 +526,6 @@ pub enum Request {
         #[serde(default)]
         mode: Option<String>,
     },
-
-    // === Agent-to-agent communication ===
-    /// Register as an external agent
-    #[serde(rename = "agent_register")]
-    AgentRegister {
-        id: u64,
-        agent_name: String,
-        capabilities: Vec<String>,
-    },
-
-    /// Send a task to horon-agent agent
-    #[serde(rename = "agent_task")]
-    AgentTask {
-        id: u64,
-        from_agent: String,
-        task: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        context: Option<serde_json::Value>,
-        /// Whether to wait for completion or return immediately
-        #[serde(default)]
-        async_: bool,
-    },
-
-    /// Query horon-agent agent's capabilities
-    #[serde(rename = "agent_capabilities")]
-    AgentCapabilities { id: u64 },
-
-    /// Get conversation context (for handoff between agents)
-    #[serde(rename = "agent_context")]
-    AgentContext { id: u64 },
 
     // === Agent communication ===
     /// Share context with other agents

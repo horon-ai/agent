@@ -61,26 +61,6 @@ fn detects_reload_skipped_tool_result() {
 }
 
 #[test]
-fn detects_selfdev_reload_tool_result_even_when_not_marked_error() {
-    let agent = test_agent(vec![crate::session::StoredMessage {
-        turn_start: false,
-        id: "msg_3b".to_string(),
-        role: crate::message::Role::User,
-        content: vec![ContentBlock::ToolResult {
-            tool_use_id: "tool_2b".to_string(),
-            content: "Reload initiated. Process restarting...".to_string(),
-            is_error: Some(false),
-        }],
-        display_role: None,
-        timestamp: None,
-        tool_duration_ms: None,
-        token_usage: None,
-    }]);
-
-    assert!(session_was_interrupted_by_reload(&agent));
-}
-
-#[test]
 fn ignores_normal_tool_errors() {
     let agent = test_agent(vec![crate::session::StoredMessage {
         turn_start: false,
@@ -292,7 +272,7 @@ fn mark_remote_reload_started_writes_starting_marker() -> Result<()> {
 }
 
 #[test]
-fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
+fn handle_reload_queues_signal_for_the_requesting_session() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().map_err(|e| anyhow!(e))?;
     let prev_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
@@ -303,8 +283,7 @@ fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
         let mut rx = crate::server::subscribe_reload_signal_for_tests();
         let provider: Arc<dyn Provider> = Arc::new(MockProvider);
         let registry = Registry::new(provider.clone()).await;
-        let mut agent = build_test_agent(provider, registry, Vec::new());
-        agent.set_canary("self-dev");
+        let agent = build_test_agent(provider, registry, Vec::new());
         let agent = Arc::new(Mutex::new(agent));
         let (tx, mut events) = mpsc::unbounded_channel::<ServerEvent>();
         let (peer_tx, mut peer_events) = mpsc::unbounded_channel::<ServerEvent>();
@@ -383,7 +362,6 @@ fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
             .clone()
             .ok_or_else(|| anyhow!("reload signal payload should exist"))?;
         assert_eq!(signal.triggering_session.as_deref(), Some("session_test_reload"));
-        assert!(signal.prefer_selfdev_binary);
         assert_eq!(signal.hash, horon_agent_build_meta::git_hash());
 
         let state = crate::server::recent_reload_state(std::time::Duration::from_secs(5))
@@ -439,10 +417,6 @@ async fn handle_reload_does_not_wait_for_busy_agent_lock() -> Result<()> {
         .clone()
         .ok_or_else(|| anyhow!("reload signal payload should exist"))?;
     assert_eq!(signal.triggering_session.as_deref(), Some("session_fallback_reload"));
-    assert!(
-        !signal.prefer_selfdev_binary,
-        "busy fallback must not wait for canary state"
-    );
 
     drop(busy_agent_lock);
     crate::server::clear_reload_marker();

@@ -1,7 +1,6 @@
 pub(crate) mod acp_session;
 mod agentgrep;
 pub mod ambient;
-pub mod applet;
 mod apply_patch;
 pub(crate) mod approval_override;
 mod arg_repair;
@@ -14,22 +13,13 @@ mod bash;
 mod bash_interceptor;
 mod batch;
 mod bg;
-#[cfg(unix)]
-pub(crate) mod bridge_reload;
-mod browser;
-mod calendar;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
 mod communicate;
-mod compile_remote;
-#[cfg(target_os = "macos")]
-mod computer;
 mod config_edit_notice;
 mod context_notes;
 mod conversation_search;
-mod debug_socket;
-mod desktop_selfdev;
 mod discover;
 mod discover_secrets;
 mod edit;
@@ -38,12 +28,12 @@ mod file_diff;
 pub(crate) mod file_lock;
 mod generated_guard;
 mod git_guard;
-mod gmail;
 mod goal;
 mod hashline_edit;
 mod horon_agent_docs;
 pub mod inflight;
 mod invalid;
+mod irc;
 mod ls;
 mod lsp;
 pub mod mcp;
@@ -52,8 +42,6 @@ mod minimizer;
 mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
-mod open;
-mod panel;
 mod patch;
 pub mod path_policy;
 mod path_suffix;
@@ -63,16 +51,17 @@ mod read_selector;
 pub(crate) mod read_state;
 mod replace;
 pub(crate) mod sdk;
-pub mod selfdev;
 pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
 mod session_search;
 pub(crate) mod session_search_index;
-mod side_panel;
 mod skill;
 mod submit_plan;
 mod todo;
 pub use todo::todo_call_plan;
+mod tool_names;
+use tool_names::is_fixed_mcp_tool;
+pub(crate) use tool_names::{tool_name_is_allowed, tool_name_is_disabled};
 mod toolbox;
 pub(crate) use self::toolbox::session_can_reach;
 mod undo;
@@ -125,23 +114,6 @@ pub(crate) fn forget_session_caches(session_id: &str) {
     yield_result::discard(session_id);
 }
 
-pub(crate) fn tool_name_is_allowed(allowed: &HashSet<String>, name: &str) -> bool {
-    allowed.contains(name)
-        || (allowed.contains("mcp") && is_mcp_tool_name(name))
-        || (is_fixed_mcp_tool(name) && allowed.iter().any(|tool| tool.starts_with("mcp__")))
-}
-
-pub(crate) fn tool_name_is_disabled(disabled: &HashSet<String>, name: &str) -> bool {
-    disabled.contains(name) || (disabled.contains("mcp") && is_mcp_tool_name(name))
-}
-
-fn is_fixed_mcp_tool(name: &str) -> bool {
-    matches!(name, "mcp_search" | "mcp_call")
-}
-
-fn is_mcp_tool_name(name: &str) -> bool {
-    name == "mcp" || name.starts_with("mcp__") || is_fixed_mcp_tool(name)
-}
 use std::sync::{LazyLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 
@@ -973,15 +945,6 @@ impl Registry {
         if build_allows("agentgrep") {
             Self::insert_tool_timed(&mut m, &mut timings, "agentgrep", agentgrep::AgentGrepTool::new);
         }
-        if build_allows("side_panel") {
-            Self::insert_tool_timed(&mut m, &mut timings, "side_panel", side_panel::SidePanelTool::new);
-        }
-        if build_allows("panel") {
-            Self::insert_tool_timed(&mut m, &mut timings, "panel", panel::PanelTool::new);
-        }
-        if build_allows("applet") {
-            Self::insert_tool_timed(&mut m, &mut timings, "applet", applet::AppletTool::new);
-        }
         if build_allows("edit") {
             Self::insert_tool_timed(&mut m, &mut timings, "edit", edit::EditTool::new);
         }
@@ -999,22 +962,6 @@ impl Registry {
         if build_allows("bash") {
             Self::insert_tool_timed(&mut m, &mut timings, "bash", bash::BashTool::new);
         }
-        Self::insert_tool_timed(
-            &mut m,
-            &mut timings,
-            "compile_remote",
-            compile_remote::CompileRemoteTool::new,
-        );
-        if build_allows("browser") {
-            Self::insert_tool_timed(&mut m, &mut timings, "browser", browser::BrowserTool::new);
-        }
-        if build_allows("open") {
-            Self::insert_tool_timed(&mut m, &mut timings, "open", open::OpenTool::new);
-        }
-        #[cfg(target_os = "macos")]
-        if build_allows("macos_computer_use") {
-            Self::insert_tool_timed(&mut m, &mut timings, "macos_computer_use", computer::ComputerTool::new);
-        }
         if build_allows("webfetch") {
             Self::insert_tool_timed(&mut m, &mut timings, "webfetch", webfetch::WebFetchTool::new);
         }
@@ -1023,6 +970,9 @@ impl Registry {
         }
         if build_allows("invalid") {
             Self::insert_tool_timed(&mut m, &mut timings, "invalid", invalid::InvalidTool::new);
+        }
+        if build_allows("irc") {
+            Self::insert_tool_timed(&mut m, &mut timings, "irc", irc::IrcTool::new);
         }
         Self::insert_tool_timed(
             &mut m,
@@ -1051,25 +1001,8 @@ impl Registry {
         if build_allows("memory") {
             Self::insert_tool_timed(&mut m, &mut timings, "memory", memory::MemoryTool::new);
         }
-        if build_allows("gmail") {
-            Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
-        }
-        if build_allows("calendar") {
-            Self::insert_tool_timed(&mut m, &mut timings, "calendar", calendar::CalendarTool::new);
-        }
         if build_allows("schedule") {
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
-        }
-        if build_allows("selfdev") {
-            Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
-        }
-        if build_allows("desktop_selfdev") {
-            Self::insert_tool_timed(
-                &mut m,
-                &mut timings,
-                "desktop_selfdev",
-                desktop_selfdev::DesktopSelfDevTool::new,
-            );
         }
         let nonzero: Vec<String> = timings
             .iter()
@@ -2107,34 +2040,6 @@ impl Registry {
                 resolved_name
             );
         }
-        // Enforce product separation here too: batch/subcalls dispatch through
-        // the registry without going through Agent::validate_tool_allowed.
-        if !is_custom
-            && matches!(
-                resolved_name,
-                "selfdev" | "debug_socket" | "desktop_selfdev" | "horon_agent_docs"
-            )
-        {
-            let desktop = ctx
-                .working_dir
-                .as_deref()
-                .and_then(horon_agent_selfdev_types::desktop_repo_root)
-                .is_some();
-            if desktop && resolved_name == "horon_agent_docs" {
-                anyhow::bail!(
-                    "Tool 'horon_agent_docs' is disabled in Desktop self-development mode. Read the working tree documentation instead."
-                );
-            }
-            if desktop && matches!(resolved_name, "selfdev" | "debug_socket") {
-                anyhow::bail!(
-                    "Tool '{}' targets HoronAgent CLI, not Desktop. Use 'desktop_selfdev'.",
-                    resolved_name
-                );
-            }
-            if !desktop && resolved_name == "desktop_selfdev" {
-                anyhow::bail!("Tool 'desktop_selfdev' requires a HoronAgent Desktop source checkout.");
-            }
-        }
         if !is_custom && let Some(policy) = session_tool_policy(&ctx.session_id) {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !self.tool_is_allowed(allowed, resolved_name)
@@ -3131,19 +3036,6 @@ impl Registry {
         }
     }
 
-    /// Register self-dev tools (only for canary/self-dev sessions)
-    pub async fn register_selfdev_tools(&self) {
-        // Self-dev management tool
-        let selfdev_tool = selfdev::SelfDevTool::new();
-        self.register("selfdev".to_string(), Arc::new(selfdev_tool) as Arc<dyn Tool>)
-            .await;
-
-        // Debug socket tool for direct debug socket access
-        let debug_socket_tool = debug_socket::DebugSocketTool::new();
-        self.register("debug_socket".to_string(), Arc::new(debug_socket_tool) as Arc<dyn Tool>)
-            .await;
-    }
-
     /// Register `request_permission` for runs that are not ambient sessions.
     ///
     /// Gated on `[ambient] approval_for_clientless_runs`: with the setting off,
@@ -3212,12 +3104,6 @@ impl Registry {
         self.register(
             "request_permission".to_string(),
             Arc::new(ambient::RequestPermissionTool::new()) as Arc<dyn Tool>,
-        )
-        .await;
-
-        self.register(
-            "send_message".to_string(),
-            Arc::new(ambient::SendChannelMessageTool::new()) as Arc<dyn Tool>,
         )
         .await;
     }

@@ -104,7 +104,6 @@ docker run --rm \
         ca-certificates \
         curl \
         git \
-        libssl-dev \
         perl \
         pkg-config
     elif command -v yum >/dev/null 2>&1; then
@@ -115,8 +114,6 @@ docker run --rm \
         gcc-c++ \
         git \
         make \
-        openssl-devel \
-        perl-core \
         pkgconfig \
         tar \
         gzip
@@ -125,11 +122,6 @@ docker run --rm \
       echo "Unsupported build image: expected apt-get or yum" >&2
       exit 1
     fi
-
-    # The OpenSSL 3 Configure script imports core modules that minimal
-    # manylinux2014 images split into separate RPMs. Installing perl-core keeps
-    # the build from failing one missing module at a time as OpenSSL evolves.
-    perl -MIPC::Cmd -MTime::Piece -e 1
 
     if [[ ! -x /root/.cargo/bin/cargo ]]; then
       curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
@@ -157,7 +149,7 @@ docker run --rm \
 	      build_command=(justrust build --local)
 	    fi
 	    "${build_command[@]}" --locked --profile "$HORON_AGENT_COMPAT_PROFILE" --target "$HORON_AGENT_COMPAT_TARGET" \
-	      -p horon-agent --bin horon-agent --features linux-compat-vendored-openssl
+	      -p horon-agent --bin horon-agent
 
 	    cp "$CARGO_TARGET_DIR/$HORON_AGENT_COMPAT_TARGET/$HORON_AGENT_COMPAT_PROFILE/horon-agent" "/out/'"$artifact"'.bin"
 	    chmod +x "/out/'"$artifact"'.bin"
@@ -184,38 +176,9 @@ exec "\$self_dir/'"$artifact"'.bin" "\$@"
 WRAPPER
 	    chmod +x "/out/'"$artifact"'"
 
-	    # Ship the OpenSSL runtime libraries used by the build image. Target
-	    # hosts can be older than the build host and either lack libssl entirely
-	    # or expose a different SONAME; the wrapper adds these siblings to
-	    # LD_LIBRARY_PATH.
-	    ldd "/out/'"$artifact"'.bin" \
-	      | awk "/lib(ssl|crypto)[.]so/ { print \$3 }" \
-	      | while read -r lib; do
-	          if [[ -n "$lib" && -f "$lib" ]]; then
-	            cp -L "$lib" /out/
-	          fi
-	        done
+	    (cd /out && tar czf '"$artifact"'.tar.gz '"$artifact"' '"$artifact"'.bin)
 
-		    extra_libs=()
-		    for pattern in libssl.so\* libcrypto.so\*; do
-		      for lib in $pattern; do
-		        [[ -e "$lib" ]] && extra_libs+=("$lib")
-		      done
-		    done
-
-		    if (( ${#extra_libs[@]} > 0 )); then
-		      (cd /out && tar czf '"$artifact"'.tar.gz '"$artifact"' '"$artifact"'.bin "${extra_libs[@]}")
-		    else
-		      (cd /out && tar czf '"$artifact"'.tar.gz '"$artifact"' '"$artifact"'.bin)
-		    fi
-
-		    chown_inputs=("/out/'"$artifact"'" "/out/'"$artifact"'.bin" "/out/'"$artifact"'.tar.gz")
-		    if (( ${#extra_libs[@]} > 0 )); then
-		      for lib in "${extra_libs[@]}"; do
-		        chown_inputs+=("/out/$lib")
-		      done
-		    fi
-		    chown "$HOST_UID:$HOST_GID" "${chown_inputs[@]}" 2>/dev/null || true
+	    chown "$HOST_UID:$HOST_GID" "/out/'"$artifact"'" "/out/'"$artifact"'.bin" "/out/'"$artifact"'.tar.gz" 2>/dev/null || true
 		  '
 
 # A failed docker run can leave a previous build's binary in out_dir, and
@@ -239,7 +202,7 @@ ls -lh "$out_dir/$artifact" "$out_dir/$artifact.tar.gz"
 if [[ -n "$git_hash" ]]; then
   # `version` prints e.g. "version\tv0.61.2 (268913473)", so take the whole
   # value rather than just the first whitespace-separated field.
-  embedded="$("$out_dir/$artifact.bin" --no-update --no-selfdev version 2>/dev/null \
+  embedded="$("$out_dir/$artifact.bin" --no-update version 2>/dev/null \
     | awk -F'\t' '$1 == "version" { print $2; exit }')"
   if [[ -n "$embedded" && "$embedded" != *"$git_hash"* ]]; then
     echo "error: embedded build metadata reports '$embedded' but the tree is at '$git_hash'" >&2

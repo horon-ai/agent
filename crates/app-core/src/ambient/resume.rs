@@ -55,9 +55,6 @@ impl AmbientRunnerHandle {
         let session = Session::load(session_id)?;
         let cycle_provider = provider.fork();
         let registry = tool::Registry::new(cycle_provider.clone()).await;
-        if session.is_canary {
-            registry.register_selfdev_tools().await;
-        }
 
         let mut agent = Agent::new(cycle_provider, registry);
         agent.set_debug(session.is_debug);

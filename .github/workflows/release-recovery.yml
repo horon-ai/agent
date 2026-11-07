@@ -5,7 +5,6 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-recovery.yml'
-      - '.github/workflows/windows-companion.yml'
       - 'scripts/release/**'
       - 'tests/*release*.py'
       - 'scripts/install/install.sh'
@@ -16,7 +15,6 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-recovery.yml'
-      - '.github/workflows/windows-companion.yml'
       - 'scripts/release/**'
       - 'tests/*release*.py'
       - 'scripts/install/install.sh'
@@ -38,9 +36,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Recovery regressions exercise historical tags in isolated clones.
+          # Preparation regressions exercise historical tags in isolated clones.
           fetch-depth: 0
-      - name: Test recovery, exact-commit authorization, public assets and watcher
+      - name: Test release source preparation, exact-commit authorization, public assets and watcher
         run: python3 -m unittest discover -s tests -p '*release*.py'
       - name: Test release preparation
         run: python3 -m unittest discover -s scripts/release -p 'test_*release*.py'

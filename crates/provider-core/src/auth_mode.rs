@@ -31,7 +31,7 @@ use crate::selection::ActiveProvider;
 /// API-key credential, and therefore needs an explicit OAuth-vs-API decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DualAuthProvider {
-    /// OpenAI (ChatGPT/Codex OAuth vs `OPENAI_API_KEY`).
+    /// OpenAI (subscription OAuth vs `OPENAI_API_KEY`).
     OpenAI,
 }
 
@@ -68,7 +68,7 @@ impl DualAuthProvider {
 /// Which credential a dual-auth provider will actually use for a request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AuthMode {
-    /// OAuth / subscription login (ChatGPT/Codex login).
+    /// OAuth / subscription login.
     Oauth,
     /// Direct provider API key (metered / cost-based billing).
     ApiKey,
@@ -128,7 +128,7 @@ impl AuthRoute {
     pub fn parse(token: &str) -> Option<Self> {
         let token = token.trim().strip_suffix(':').unwrap_or(token.trim());
         match token.trim().to_ascii_lowercase().as_str() {
-            // OpenAI -- OAuth / ChatGPT-Codex login.
+            // OpenAI -- subscription OAuth login.
             "openai" | "openai-oauth" => Some(Self::openai(AuthMode::Oauth)),
             // OpenAI -- direct API key.
             "openai-api" | "openai-api-key" | "openai-key" | "openai-apikey" | "openai-platform"

@@ -60,11 +60,6 @@ pub fn shared_server_binary_path() -> Result<PathBuf> {
     Ok(builds_dir()?.join("shared-server").join(binary_name()))
 }
 
-/// Get path to canary binary
-pub fn canary_binary_path() -> Result<PathBuf> {
-    Ok(builds_dir()?.join("canary").join(binary_name()))
-}
-
 /// Get path to migration context file
 pub fn migration_context_path(session_id: &str) -> Result<PathBuf> {
     Ok(builds_dir()?.join("migrations").join(format!("{}.json", session_id)))

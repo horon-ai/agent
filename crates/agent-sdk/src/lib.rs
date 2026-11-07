@@ -127,17 +127,11 @@
 //!
 //! # Web search
 //!
-//! The built-in `websearch` tool uses the provider's server-side search where
-//! supported (Anthropic first-party API, OpenAI API or ChatGPT login on
-//! non-codex models) and local scraping otherwise. Provider searches arrive as
-//! ordinary `ToolStart`/`ToolInputDelta`/`ToolExec`/`ToolDone` events named
-//! `web_search`, with no `ToolCall` to answer, and appear in history. The
-//! session tool policy governs them like any tool. A custom tool named
-//! `websearch` is always called through your application and never replaced by
-//! provider search. Set `HORON_AGENT_WEBSEARCH_PREFER_NATIVE=0` to always search
-//! locally.
+//! The built-in `websearch` tool searches locally with the engines configured
+//! under `[websearch]` in `config.toml`; it needs no SDK code. The session tool
+//! policy governs it like any tool. A custom tool named `websearch` replaces it
+//! and is always called through your application.
 
-mod auth;
 mod client;
 pub mod collections;
 mod diagnostics;
@@ -153,7 +147,6 @@ pub mod worktrees;
 #[path = "sdk_tests/parity.rs"]
 mod parity_tests;
 
-pub use auth::{AuthClient, AuthFlow, AuthInputKind, AuthOptions, AuthPrompt, AuthResult, LoginMethod, LoginProvider};
 pub use client::{
     AssistantTextMessage, ConnectOptions, CreateSessionOptions, EventStream, FileContent, FileStatus,
     GlobalEventStream, GlobalEventsOptions, HoronAgentClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall,
@@ -161,7 +154,6 @@ pub use client::{
 };
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
-pub use horon_agent_applet_types as applet;
 pub use horon_agent_harness_api::{
     RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary, RuntimeQueueSummary,
     RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary, SessionEditStats,
@@ -192,8 +184,7 @@ pub use horon_agent_harness_api::{
     ApiEvent, ApiRequest, AskSelection, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage, ModelRouteInfo,
     PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor, RenderedImageSource, ResponseStats,
     SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage, SessionImportResult,
-    SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, SidePanelPage, SidePanelPageFormat,
-    SidePanelPageSource, SidePanelSnapshot, StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason,
-    api_socket_path,
+    SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, StoreErrorDetail, TextMatch, ToolConfiguration,
+    TurnStopReason, api_socket_path,
 };
 pub use horon_agent_harness_api::{ModelUsage, RuntimeCommand, RuntimeCommandOutput, compare_model_usage};

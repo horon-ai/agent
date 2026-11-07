@@ -37,7 +37,6 @@ async fn assign_task_to_client_attached_session_skips_server_side_run() {
             client_id: "conn-1".to_string(),
             session_id: worker.to_string(),
             client_instance_id: None,
-            debug_client_id: None,
             connected_at: Instant::now(),
             last_seen: Instant::now(),
             is_processing: false,

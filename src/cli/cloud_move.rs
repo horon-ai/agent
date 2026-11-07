@@ -146,7 +146,7 @@ impl Target {
         let binary = shell_quote(&self.remote_binary());
         let quoted: Vec<String> = args.iter().map(|arg| shell_quote(arg)).collect();
         let remote_cmd = format!(
-            "PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"; export PATH; exec {binary} --no-update --no-selfdev {}",
+            "PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"; export PATH; exec {binary} --no-update {}",
             quoted.join(" ")
         );
         let mut command = match self.transport.as_deref() {
@@ -1097,7 +1097,6 @@ pub(crate) fn run_cli(command: super::args::CloudCommand) -> Result<()> {
             .filter(|s| !s.trim().is_empty()),
     };
     match command {
-        C::Sessions { .. } => unreachable!("handled by the cloud sessions dispatcher"),
         C::Move {
             session,
             target,

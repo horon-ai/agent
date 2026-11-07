@@ -81,7 +81,6 @@ pub fn start_overnight_run(options: OvernightStartOptions) -> Result<OvernightLa
     child.model = Some(options.provider.model());
     let coordinator_session_id = child.id.clone();
     let coordinator_session_name = child.display_name().to_string();
-    let child_is_canary = child.is_canary;
     if !options.use_current_session {
         child.status = SessionStatus::Closed;
     }
@@ -149,13 +148,7 @@ pub fn start_overnight_run(options: OvernightStartOptions) -> Result<OvernightLa
     let initial_prompt = if options.use_current_session {
         Some(build_visible_current_session_prompt(&manifest))
     } else {
-        spawn_supervisor(
-            manifest.clone(),
-            child,
-            options.provider,
-            options.registry,
-            child_is_canary,
-        );
+        spawn_supervisor(manifest.clone(), child, options.provider, options.registry);
         None
     };
 
@@ -181,22 +174,14 @@ fn create_coordinator_session(parent: &Session, mission: &Option<String>) -> Res
     child.improve_mode = parent.improve_mode;
     child.autoreview_enabled = Some(false);
     child.autojudge_enabled = Some(false);
-    child.is_canary = parent.is_canary;
-    child.testing_build = parent.testing_build.clone();
     child.working_dir = parent.working_dir.clone();
     child.provider_session_id = None;
     Ok(child)
 }
 
-fn spawn_supervisor(
-    manifest: OvernightManifest,
-    child: Session,
-    provider: Arc<dyn Provider>,
-    registry: Registry,
-    child_is_canary: bool,
-) {
+fn spawn_supervisor(manifest: OvernightManifest, child: Session, provider: Arc<dyn Provider>, registry: Registry) {
     let fut = async move {
-        if let Err(err) = run_supervisor(manifest.clone(), child, provider, registry, child_is_canary).await {
+        if let Err(err) = run_supervisor(manifest.clone(), child, provider, registry).await {
             let mut updated = load_manifest(&manifest.run_id).unwrap_or(manifest.clone());
             updated.status = OvernightRunStatus::Failed;
             updated.completed_at = Some(Utc::now());
@@ -227,7 +212,6 @@ async fn run_supervisor(
     child: Session,
     provider: Arc<dyn Provider>,
     registry: Registry,
-    child_is_canary: bool,
 ) -> Result<()> {
     record_event(
         &manifest,
@@ -246,10 +230,6 @@ async fn run_supervisor(
         true,
     )?;
     render_review_html(&manifest)?;
-
-    if child_is_canary {
-        registry.register_selfdev_tools().await;
-    }
 
     let mut agent = Agent::new_with_session(provider, registry, child, None);
     let mut next_prompt = build_coordinator_prompt(&manifest, &preflight);

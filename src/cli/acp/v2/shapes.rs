@@ -3,7 +3,7 @@
 //! Each function returns one JSON value and holds no connection state; the name
 //! follows the `$defs` entry `tests.rs` validates the value against.
 
-use super::super::auth::{AUTH_METHOD_CREDENTIALS, AUTH_METHOD_TERMINAL};
+use super::super::auth::AUTH_METHOD_CREDENTIALS;
 use super::super::rpc::{JSONRPC_INVALID_PARAMS, RpcError};
 use super::super::util::AcpProfile;
 use super::negotiate::ACP_V2_PROTOCOL_VERSION;
@@ -17,10 +17,10 @@ const PLAN_ID_TODO: &str = "todo";
 
 /// IS-2: the v2 `initialize` result for one client.
 ///
-/// `mcp_http` mirrors the `mcpCapabilities.http` the v1 adapter advertises, and
-/// the terminal auth method appears only for a client that sent
-/// `capabilities.auth.terminal` as an object (IS-15).
-pub(crate) fn initialize_response(profile: AcpProfile, client_capabilities: &Value, mcp_http: bool) -> Value {
+/// `mcp_http` mirrors the `mcpCapabilities.http` the v1 adapter advertises.
+/// No client capability adds a second auth method: this build has no
+/// terminal login for a client to launch.
+pub(crate) fn initialize_response(profile: AcpProfile, mcp_http: bool) -> Value {
     let mut mcp = json!({ "stdio": {} });
     if mcp_http {
         mcp["http"] = json!({});
@@ -40,7 +40,7 @@ pub(crate) fn initialize_response(profile: AcpProfile, client_capabilities: &Val
                 "additionalDirectories": {},
             },
         },
-        "authMethods": auth_methods(client_capabilities),
+        "authMethods": auth_methods(),
     });
     if profile.is_extended() {
         response["capabilities"]["_meta"] = json!({
@@ -50,29 +50,15 @@ pub(crate) fn initialize_response(profile: AcpProfile, client_capabilities: &Val
     response
 }
 
-/// IS-15: the `authMethods` entries; the terminal method needs the client's
-/// object capability marker, not v1's boolean.
-pub(crate) fn auth_methods(client_capabilities: &Value) -> Vec<Value> {
-    let mut methods = vec![json!({
+/// IS-15: the one `authMethods` entry; the credentials the daemon already
+/// resolves.
+pub(crate) fn auth_methods() -> Vec<Value> {
+    vec![json!({
         "methodId": AUTH_METHOD_CREDENTIALS,
         "type": "agent",
         "name": "Use HoronAgent login",
-        "description": "Uses the provider login stored by horon-agent. Run 'horon-agent login' first if none exists.",
-    })];
-    if client_capabilities
-        .pointer("/auth/terminal")
-        .is_some_and(Value::is_object)
-    {
-        methods.push(json!({
-            "methodId": AUTH_METHOD_TERMINAL,
-            "type": "terminal",
-            "name": "Log in from the terminal",
-            "description": "Runs 'horon-agent acp --login' in a terminal to log in.",
-            "args": ["--login"],
-            "env": [],
-        }));
-    }
-    methods
+        "description": "Uses the OpenAI-compatible provider profile configured in [providers.<name>]. Run 'horon-agent provider add' to create one.",
+    })]
 }
 
 /// IS-12: v1 config options renamed to `configId`, every select group renamed

@@ -1423,12 +1423,10 @@ impl RawClient {
         self.next_id += 1;
         self.send_request(Request::Subscribe {
             system_prompt: None,
-            supports_pdf_panels: false,
             supports_user_response: false,
             supports_ask_requests: false,
             id,
             working_dir: Some(working_dir.display().to_string()),
-            selfdev: None,
             target_session_id: None,
             client_instance_id: None,
             client_has_local_history: false,

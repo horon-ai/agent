@@ -218,35 +218,35 @@ async fn test_tool_definitions_are_sorted() {
 }
 
 #[tokio::test]
-async fn gmail_follows_tool_profile_only() {
-    // One registry holding just gmail, so the profile filters are the only thing
-    // that can change its visibility.
+async fn swarm_follows_tool_profile_only() {
+    // One registry holding just swarm, so the profile filters are the only switch.
     let registry = Registry::empty();
     registry
-        .register("gmail".to_string(), Arc::new(super::gmail::GmailTool::new()))
+        .register(
+            "swarm".to_string(),
+            Arc::new(super::communicate::CommunicateTool::new()),
+        )
         .await;
-
-    // The open profile lists every registered built-in, so gmail is visible.
+    // The open profile lists every registered built-in, so swarm is visible.
     let open = registry.definitions_filtered(None, &HashSet::new()).await;
-    assert_eq!(open.iter().filter(|def| def.name == "gmail").count(), 1);
+    assert_eq!(open.iter().filter(|def| def.name == "swarm").count(), 1);
 
-    // The `core` profile is a closed allow-list that omits gmail, so nothing lists it.
+    // The `core` profile is a closed allow-list that omits swarm, so nothing lists it.
     let core: HashSet<String> = crate::config::CORE_TOOLS
         .iter()
         .map(|name| (*name).to_string())
         .collect();
-    assert!(!core.contains("gmail"));
+    assert!(!core.contains("swarm"));
     let closed = registry.definitions_filtered(Some(&core), &HashSet::new()).await;
-    assert!(!closed.iter().any(|def| def.name == "gmail"));
-
+    assert!(!closed.iter().any(|def| def.name == "swarm"));
     // An explicit profile entry is the only other switch: allowing it lists it,
     // disabling it hides it, and no tool surface outside the profile reintroduces it.
-    let allow: HashSet<String> = HashSet::from(["gmail".to_string()]);
+    let allow: HashSet<String> = HashSet::from(["swarm".to_string()]);
     let listed = registry.definitions_filtered(Some(&allow), &HashSet::new()).await;
-    assert_eq!(listed.iter().filter(|def| def.name == "gmail").count(), 1);
-    let disabled: HashSet<String> = HashSet::from(["gmail".to_string()]);
+    assert_eq!(listed.iter().filter(|def| def.name == "swarm").count(), 1);
+    let disabled: HashSet<String> = HashSet::from(["swarm".to_string()]);
     let hidden = registry.definitions_filtered(None, &disabled).await;
-    assert!(!hidden.iter().any(|def| def.name == "gmail"));
+    assert!(!hidden.iter().any(|def| def.name == "swarm"));
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn test_resolve_skill_aliases_to_skill_manage() {
 }
 
 #[tokio::test]
-async fn test_discover_tools_not_registered_when_sponsors_disabled() {
+async fn test_integration_tools_not_registered_when_sponsors_disabled() {
     // sponsors.enabled is the legacy config key; when false, integration discovery must not exist.
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -375,7 +375,6 @@ async fn first_party_tool_definitions_require_intent_with_display_only_docs() {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
     registry.register_ambient_tools().await;
-    registry.register_selfdev_tools().await;
 
     let defs = registry.definitions(None).await;
     assert!(!defs.is_empty());
@@ -420,7 +419,6 @@ fn test_resolve_tool_name_oauth_aliases() {
     assert_eq!(Registry::resolve_tool_name("edit_file"), "edit");
     assert_eq!(Registry::resolve_tool_name("task_runner"), "subagent");
     assert_eq!(Registry::resolve_tool_name("task"), "subagent");
-    assert_eq!(Registry::resolve_tool_name("launch"), "open");
     assert_eq!(Registry::resolve_tool_name("grep"), "agentgrep");
     assert_eq!(Registry::resolve_tool_name("file_grep"), "agentgrep");
     assert_eq!(Registry::resolve_tool_name("todo_read"), "todo");
@@ -996,23 +994,10 @@ async fn tool_descriptions_stay_under_token_cap() {
     // swarm appends the user-tunable swarm-prompt.md by design.
     // batch carries a deliberate parallel-call example (2f4abae33, pinned by
     // batch_tests::description_includes_parallel_tool_call_example).
-    // browser carries the status-first and handoff-by-default routing policy
-    // (e1576e9e3 and earlier), pinned by browser_tests.
     // todo carries a deliberate "use it very often" directive requested by the
     // user, so planning happens proactively rather than only when prompted.
-    // applet carries the whole view-node vocabulary inline, since the model has
-    // no other way to learn which node types and props the host renders.
-    // codemode documents its sandbox API; compile_remote a credit/consent notice.
-    const EXEMPT: &[&str] = &[
-        "integration_tools",
-        "swarm",
-        "batch",
-        "browser",
-        "todo",
-        "applet",
-        "codemode",
-        "compile_remote",
-    ];
+    // codemode documents its sandbox API; irc states delivery, addressing, and reply etiquette inline.
+    const EXEMPT: &[&str] = &["integration_tools", "swarm", "batch", "todo", "codemode"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -1020,7 +1005,7 @@ async fn tool_descriptions_stay_under_token_cap() {
         .definitions(None)
         .await
         .into_iter()
-        .filter(|def| !EXEMPT.contains(&def.name.as_str()))
+        .filter(|def| !EXEMPT.contains(&def.name.as_str()) && def.name != "irc")
         .filter(|def| def.description_token_estimate() > DESCRIPTION_TOKEN_CAP)
         .map(|def| {
             format!(
@@ -1072,14 +1057,7 @@ async fn tool_parameter_descriptions_stay_under_token_cap() {
     // The feedback-loop relevance rubric defines every enum state inline
     // (abb0baabc, d21916db5) and todo::tests pins each concept, so it is
     // deliberately longer than the cap.
-    // applet placement lists every shorthand so the model can pick a surface
-    // without a round trip. desktop_selfdev action carries a safety warning:
-    // killing the harness bridge by hand strands the calling session.
-    const EXEMPT: &[(&str, &str)] = &[
-        ("todo", "$.properties.goals.items.properties.feedback_loop_relevance"),
-        ("applet", "$.properties.placement"),
-        ("desktop_selfdev", "$.properties.action"),
-    ];
+    const EXEMPT: &[(&str, &str)] = &[("todo", "$.properties.goals.items.properties.feedback_loop_relevance")];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
@@ -2202,10 +2180,9 @@ fn the_dialect_sweep_catches_the_issue_754_schema() {
 async fn only_the_known_open_world_tools_are_ineligible_for_openai_strict_mode() {
     /// Built-ins that legitimately cannot be strict. Verified against master
     /// before the #711/#713 eligibility changes, so this is pre-existing.
-    // applet's view is a recursive, open-ended node tree. goal's milestone
-    // steps are open maps (`additionalProperties: true`) so a caller can send
-    // step shapes the schema does not enumerate.
-    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["applet", "batch", "browser", "goal", "swarm"];
+    // goal's milestone steps are open maps (`additionalProperties: true`) so a
+    // caller can send step shapes the schema does not enumerate.
+    const KNOWN_OPEN_WORLD_TOOLS: &[&str] = &["batch", "goal", "swarm"];
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;

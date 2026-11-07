@@ -42,7 +42,6 @@ fn scheduled_live_delivery_reaches_subscribed_client() {
             let subscribe_id = attached
                 .subscribe_with_info(
                     Some(temp.path().display().to_string()),
-                    Some(false),
                     Some(session.id.clone()),
                     false,
                     false,

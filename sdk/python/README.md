@@ -220,7 +220,7 @@ Every method mirrors the Rust SDK's name exactly:
   `cancel_soft_interrupts`, `cancel_soft_interrupts_by_id`,
   `cancel_soft_interrupt`, `background_tool`, `background_tool_result`.
 - Interaction: `respond_to_permission`, `respond_to_ask`,
-  `respond_to_ask_with_id`, `applet_action`, `close_applet`.
+  `respond_to_ask_with_id`.
 - Reads: `get_history`, `get_history_with_images`, `peek_session`,
   `list_models`, `get_runtime_info`, `runtime_command`, `read_file`,
   `find_files`, `search_text`, `file_status`, `todo_state`,
@@ -298,7 +298,6 @@ the platform can still surface separately.
 | `too_many_requests` | `max_pending_requests` requests await replies. | Await replies or raise the limit deliberately; the refused request never reached the wire. |
 | `transport_backpressure` | The transport reported a full buffer and provides no drain signal. | Give it `on_drain`, or return `None` from `write` if it never blocks. |
 | `internal` | The bridge or daemon failed unexpectedly. | Preserve logs, retry once if safe, then report. |
-| `browser_unavailable` | `browser_mirror` found no browser bridge. | Install or start what the message names. |
 
 ### Streaming and structured-output errors
 

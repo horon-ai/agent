@@ -32,9 +32,7 @@ mod swarm_metadata;
 
 pub use client::{FrameError, HarnessClient, MAX_FRAME_BYTES, read_frame, write_frame};
 pub use events::*;
-pub use horon_agent_applet_types;
 pub use horon_agent_session_types::TurnStopReason;
-pub use horon_agent_side_panel_types::{SidePanelPage, SidePanelPageFormat, SidePanelPageSource, SidePanelSnapshot};
 pub use horon_agent_usage_types::{ModelUsage, compare_model_usage};
 pub use replication::*;
 pub use requests::*;
@@ -52,7 +50,7 @@ mod capability_coverage_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 14;
+pub const API_VERSION_MINOR: u32 = 15;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.

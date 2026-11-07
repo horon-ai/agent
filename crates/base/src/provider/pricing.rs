@@ -1,18 +1,5 @@
 use horon_agent_provider_core::pricing as core_pricing;
 use horon_agent_provider_core::{RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource};
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
-
-/// Route-catalog builds call the pricing helpers once per route, and the
-/// OpenAI ones re-read credential files (and re-parse config.toml for
-/// external-source trust checks) on every call. Across a 2000+ route catalog
-/// that dominated build time, so the auth-derived inputs are memoized here with
-/// a short TTL. Invalidated eagerly via
-/// [`invalidate_auth_pricing_memos`] whenever auth state changes.
-const AUTH_PRICING_MEMO_TTL: Duration = Duration::from_secs(5);
-
-static OPENAI_AUTH_MODE_MEMO: Mutex<Option<(Instant, &'static str)>> = Mutex::new(None);
-
 /// Monotonic generation bumped on every auth invalidation. Route-catalog memos
 /// snapshot this at build time so `AuthStatus::invalidate_cache()` immediately
 /// invalidates every provider's memoized catalog, not just the pricing inputs.
@@ -22,48 +9,11 @@ pub(crate) fn auth_pricing_generation() -> u64 {
     AUTH_PRICING_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Drop memoized auth-derived pricing inputs (effective OpenAI auth mode).
-/// Called from `AuthStatus::invalidate_cache()` so pricing labels update
-/// immediately after logins/logouts instead of after the TTL.
+/// Bump the generation so every catalog memo rebuilt its pricing inputs.
+/// Called from `AuthStatus::invalidate_cache()` so route labels update
+/// immediately after credentials change.
 pub(crate) fn invalidate_auth_pricing_memos() {
     AUTH_PRICING_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if let Ok(mut memo) = OPENAI_AUTH_MODE_MEMO.lock() {
-        *memo = None;
-    }
-}
-
-/// Memoization is skipped in test builds: test sandboxes swap `HORON_AGENT_HOME`
-/// and credential env vars between cases without going through
-/// `AuthStatus::invalidate_cache()`, so a TTL'd memo would leak state across
-/// tests. `test-support` covers downstream crates' test targets via feature
-/// unification.
-fn auth_pricing_memos_enabled() -> bool {
-    !cfg!(any(test, feature = "test-support"))
-}
-
-pub(crate) fn openai_effective_auth_mode() -> &'static str {
-    if auth_pricing_memos_enabled()
-        && let Ok(memo) = OPENAI_AUTH_MODE_MEMO.lock()
-        && let Some((cached_at, mode)) = memo.as_ref()
-        && cached_at.elapsed() < AUTH_PRICING_MEMO_TTL
-    {
-        return mode;
-    }
-    let mode = match crate::auth::codex::load_credentials() {
-        Ok(creds) if !creds.refresh_token.is_empty() || creds.id_token.is_some() => "oauth",
-        Ok(_) => "api-key",
-        Err(_) => {
-            if crate::provider_catalog::load_api_key_from_env_or_config("OPENAI_API_KEY", "openai.env").is_some() {
-                "api-key"
-            } else {
-                "oauth"
-            }
-        }
-    };
-    if let Ok(mut memo) = OPENAI_AUTH_MODE_MEMO.lock() {
-        *memo = Some((Instant::now(), mode));
-    }
-    mode
 }
 
 pub(crate) fn openai_oauth_pricing(model: &str) -> RouteCheapnessEstimate {
@@ -168,29 +118,14 @@ pub fn metered_usage_cost_usd(
 }
 
 pub(crate) fn cheapness_for_route(model: &str, _provider: &str, api_method: &str) -> Option<RouteCheapnessEstimate> {
-    use horon_agent_provider_core::{AuthMode, AuthRoute, DualAuthProvider};
+    use horon_agent_provider_core::{AuthRoute, DualAuthProvider};
 
-    // Dual-auth (OpenAI OAuth-vs-API) methods are recognized through the single
-    // shared parser so pricing never disagrees with the routing layer about
-    // whether a route is subscription (OAuth) or metered (API key).
-    if let Some(route) = AuthRoute::parse(api_method) {
-        return match (route.provider, route.mode) {
-            (DualAuthProvider::OpenAI, AuthMode::ApiKey) => {
-                Some(metered_pricing_for_source("openai:api-key", model).unwrap_or_else(|| openai_oauth_pricing(model)))
-            }
-            (DualAuthProvider::OpenAI, AuthMode::Oauth) => {
-                // An "OAuth" route still bills per token when only an API key is
-                // actually configured, so honor the live effective auth mode.
-                if openai_effective_auth_mode() == "api-key" {
-                    Some(
-                        metered_pricing_for_source("openai:api-key", model)
-                            .unwrap_or_else(|| openai_oauth_pricing(model)),
-                    )
-                } else {
-                    Some(openai_oauth_pricing(model))
-                }
-            }
-        };
+    // Every OpenAI route bills through the platform API key, so the metered
+    // price table applies to both legacy method spellings.
+    if AuthRoute::parse(api_method).is_some_and(|route| route.provider == DualAuthProvider::OpenAI) {
+        return Some(
+            metered_pricing_for_source("openai:api-key", model).unwrap_or_else(|| openai_oauth_pricing(model)),
+        );
     }
 
     if let Some(profile_id) = api_method.strip_prefix("openai-compatible:") {
@@ -217,13 +152,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let prev_home = std::env::var_os("HORON_AGENT_HOME");
         let prev_openai_api_key = std::env::var_os("OPENAI_API_KEY");
-        crate::auth::codex::set_active_account_override(None);
         env::set_var("HORON_AGENT_HOME", temp.path());
         env::remove_var("OPENAI_API_KEY");
 
         let result = f();
 
-        crate::auth::codex::set_active_account_override(None);
         if let Some(prev_home) = prev_home {
             env::set_var("HORON_AGENT_HOME", prev_home);
         } else {

@@ -1,68 +1,29 @@
 use anyhow::Result;
 use horon_agent_provider_core::{ActiveProvider, provider_key};
 
-/// Stable product/runtime identity selected by login or provider initialization.
+/// Stable product/runtime identity selected by provider initialization.
 ///
-/// This intentionally differs from the lower-level [`ActiveProvider`] execution slot.
-/// For example Azure OpenAI currently reuses the OpenAI-compatible/OpenRouter HTTP
-/// transport, but its runtime identity is still Azure OpenAI.
+/// This intentionally differs from the lower-level [`ActiveProvider`] execution
+/// slot. A direct OpenAI-compatible profile reuses the OpenAI-compatible HTTP
+/// transport, but its runtime identity is still that profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeProviderId {
-    HoronAgent,
-    Claude,
-    ClaudeApiKey,
-    OpenAi,
-    OpenAiApiKey,
     OpenRouter,
     OpenAiCompatible,
-    AzureOpenAi,
-    Bedrock,
-    Cursor,
-    GrokBuild,
-    Copilot,
-    Gemini,
-    Antigravity,
-    AutoImport,
 }
 
 impl RuntimeProviderId {
     pub const fn key(self) -> &'static str {
         match self {
-            Self::HoronAgent => "horon-agent",
-            Self::Claude => "claude",
-            Self::ClaudeApiKey => "claude-api",
-            Self::OpenAi => "openai",
-            Self::OpenAiApiKey => "openai-api",
             Self::OpenRouter => "openrouter",
             Self::OpenAiCompatible => "openai-compatible",
-            Self::AzureOpenAi => "azure-openai",
-            Self::Bedrock => "bedrock",
-            Self::Cursor => "cursor",
-            Self::GrokBuild => "grok-build",
-            Self::Copilot => "copilot",
-            Self::Gemini => "gemini",
-            Self::Antigravity => "antigravity",
-            Self::AutoImport => "auto-import",
         }
     }
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::HoronAgent => "HoronAgent Subscription",
-            Self::Claude => "Anthropic/Claude",
-            Self::ClaudeApiKey => "Anthropic API",
-            Self::OpenAi => "OpenAI",
-            Self::OpenAiApiKey => "OpenAI API",
             Self::OpenRouter => "OpenRouter",
             Self::OpenAiCompatible => "OpenAI-compatible",
-            Self::AzureOpenAi => "Azure OpenAI",
-            Self::Bedrock => "AWS Bedrock",
-            Self::Cursor => "Cursor",
-            Self::GrokBuild => "Grok Build",
-            Self::Copilot => "GitHub Copilot",
-            Self::Gemini => "Gemini",
-            Self::Antigravity => "Antigravity",
-            Self::AutoImport => "Auto Import",
         }
     }
 }
@@ -133,15 +94,6 @@ impl ProviderActivation {
         Self::new(runtime_id, RuntimeSelection::Unlocked { active_hint })
     }
 
-    pub fn azure_openai(model: Option<String>) -> Self {
-        let activation = Self::initial(RuntimeProviderId::AzureOpenAi, ActiveProvider::OpenAI);
-        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
-            activation.with_model_hint("HORON_AGENT_OPENROUTER_MODEL", model)
-        } else {
-            activation
-        }
-    }
-
     pub fn openai_compatible(model: Option<String>) -> Self {
         let activation = Self::initial(RuntimeProviderId::OpenAiCompatible, ActiveProvider::OpenAI);
         if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
@@ -151,30 +103,16 @@ impl ProviderActivation {
         }
     }
 
-    pub fn horon_agent_subscription(model: impl Into<String>) -> Self {
-        Self::initial(RuntimeProviderId::HoronAgent, ActiveProvider::OpenAI)
-            .with_model_hint("HORON_AGENT_OPENROUTER_MODEL", model)
-    }
-
     pub fn apply_env(&self) -> Result<()> {
         crate::env::set_var("HORON_AGENT_RUNTIME_PROVIDER", self.runtime_id.key());
         match self.runtime_id {
-            RuntimeProviderId::HoronAgent => {
-                crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "horon-agent-subscription")
-            }
             RuntimeProviderId::OpenRouter => {
                 crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "openrouter-api-key")
-            }
-            RuntimeProviderId::AzureOpenAi => {
-                crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "direct-api-key")
             }
             RuntimeProviderId::OpenAiCompatible => {
                 if std::env::var_os("HORON_AGENT_OPENROUTER_TRANSPORT_STATE").is_none() {
                     crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "direct-api-key");
                 }
-            }
-            _ => {
-                crate::env::remove_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE");
             }
         }
 
@@ -237,13 +175,6 @@ pub fn clear_initial_runtime_provider() {
         "runtime",
         &[("selection", "auto")],
     );
-}
-
-pub fn apply_azure_openai_runtime() -> Result<Option<String>> {
-    crate::auth::azure::apply_runtime_env()?;
-    let model = crate::auth::azure::load_model();
-    ProviderActivation::azure_openai(model.clone()).apply_env()?;
-    Ok(model)
 }
 
 pub fn apply_openai_compatible_runtime(default_model: Option<String>) -> Result<()> {

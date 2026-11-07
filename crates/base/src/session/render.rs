@@ -1,9 +1,12 @@
 mod response_stats;
 
+#[path = "render_markup.rs"]
+pub(crate) mod render_markup;
+pub use self::render_markup::{reasoning_line_content, reasoning_line_markup};
+
 use super::{Session, StoredDisplayRole};
 use crate::message::{ContentBlock, Role, ToolCall};
 use horon_agent_config_types::ReasoningDisplayMode;
-pub use horon_agent_render_core::{reasoning_line_content, reasoning_line_markup};
 pub use horon_agent_session_types::{
     RenderedCompactedHistoryInfo, RenderedImage, RenderedImageAnchor, RenderedImageSource, RenderedMessage,
 };
@@ -50,7 +53,7 @@ fn format_reasoning_markup(text: &str) -> String {
     }
     let mut out = String::new();
     for line in text.split('\n') {
-        out.push_str(&horon_agent_render_core::reasoning_line_markup(line));
+        out.push_str(&reasoning_line_markup(line));
     }
     // Blank line terminates the reasoning block.
     out.push('\n');
@@ -645,4 +648,15 @@ pub fn render_messages_and_images_with_compacted_history(
 
     response_stats::attach(&session.messages, &mut rendered);
     (rendered, images, compacted_info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_reasoning_markup;
+
+    #[test]
+    fn empty_reasoning_input_renders_empty_string() {
+        assert_eq!(format_reasoning_markup(""), "");
+        assert_eq!(format_reasoning_markup(" \n\t "), "");
+    }
 }

@@ -3,9 +3,9 @@
 use crate::*;
 
 #[test]
-fn api_version_minor_is_fourteen() {
+fn api_version_minor_is_fifteen() {
     assert_eq!(API_VERSION_MAJOR, 1);
-    assert_eq!(API_VERSION_MINOR, 14);
+    assert_eq!(API_VERSION_MINOR, 15);
 }
 
 /// The minor-14 surface is additive. Every request an older client sends keeps
@@ -1238,38 +1238,6 @@ fn hidden_system_reminder_wire_shape_and_legacy_default() {
             ..
         }
     ));
-}
-
-#[test]
-fn side_panel_state_shared_types_roundtrip() {
-    let snapshot = SidePanelSnapshot {
-        focus_revision: 0,
-        focused_page_id: Some("notes".into()),
-        pages: vec![SidePanelPage {
-            id: "notes".into(),
-            title: "Notes".into(),
-            file_path: "/notes.md".into(),
-            content: "# Hello\n```mermaid\ngraph LR; A-->B\n```".into(),
-            source: SidePanelPageSource::LinkedFile,
-            updated_at_ms: 42,
-            ..Default::default()
-        }],
-    };
-    let mut pdf_snapshot = snapshot.clone();
-    pdf_snapshot.focus_revision = 123;
-    pdf_snapshot.pages[0].format = horon_agent_side_panel_types::SidePanelPageFormat::Pdf;
-    pdf_snapshot.pages[0].pdf_data = Some("JVBERi0xLjQKJSVFT0Y=".into());
-    pdf_snapshot.pages[0].content = "PDF document fallback".into();
-    for snapshot in [snapshot, pdf_snapshot, SidePanelSnapshot::default()] {
-        let frame = ServerFrame::event(ApiEvent::SidePanelState {
-            session_id: "s1".into(),
-            snapshot,
-        });
-        let wire = serde_json::to_value(&frame).unwrap();
-        assert_eq!(wire["ev"], "side_panel_state");
-        assert_eq!(wire["session_id"], "s1");
-        assert_eq!(serde_json::from_value::<ServerFrame>(wire).unwrap(), frame);
-    }
 }
 
 #[test]

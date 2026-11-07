@@ -16,9 +16,9 @@ done, regardless of what else it fixes.
    presenter.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
-   both sides support. Current state: only v1 is implemented
-   (`src/cli/acp.rs`, `ACP_PROTOCOL_VERSION = 1`, the response pins to 1);
-   v2 is an open gap, not a waiver. Never drop or break v1 while adding v2.
+   both sides support. Current state: both are implemented — v2 negotiates in
+   `src/cli/acp/v2/negotiate.rs`, v1 answers from `src/cli/acp/util.rs` and
+   pins to `ACP_PROTOCOL_VERSION = 1`. Never drop or break v1 while adding v2.
    The stdio contract, editor setup, and the v2 differences are in
    `docs/protocol/ACP.md`.
 3. **No measured performance regression.** On the same machine, build profile,
@@ -56,15 +56,19 @@ done, regardless of what else it fixes.
 |`[tools] redo`, `hashline_edit`|`false`|`true`|
 |`[tools] ask_policy`|`recommended`|`error`|
 |`[tools] bash_pty`|`auto`|`off`, `always`|
+|`[tools] irc`|`false`|`true`; `HORON_AGENT_IRC` overrides it for one process|
+|`[irc] mailbox_cap`, `max_body_bytes`, `wait_max_secs`, `broadcast_concurrency`|`100`, `65536`, `300`, `16`|any value ≥ 1|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`|`false`|`true`|
-|`[features] mermaid`|`false`|`true`; `HORON_AGENT_ENABLE_MERMAID` for one process|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
-Tools outside the core set (swarm, memory, browser, computer use, selfdev,
-panels, calendar, gmail, session search, todo) stay in the tree but off. Under
-`full`, they load as deferred definitions behind `toolbox`
+Tools outside the core set (swarm, memory, session search, todo, irc) stay in
+the tree but off.
+`irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
+it to every non-empty allow list, and with the switch off it refuses to run
+even under `full` (`docs/runtime/IRC.md`). Under `full`, the optional tools
+load as deferred definitions behind `toolbox`
 (`docs/runtime/TOOLS.md`). `[tools.load_mode]` overrides one tool's tier
 (`essential`, `discoverable`, `off`). `ask = "essential"` sends a listed core
 tool eagerly again, and `toolbox = "off"` turns listing off so all 15 core

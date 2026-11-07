@@ -16,13 +16,6 @@ pub enum ExternalAuthSource {
     Hermes,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExternalOAuthTokens {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_at: i64,
-}
-
 impl ExternalAuthSource {
     pub fn source_id(self) -> &'static str {
         match self {
@@ -143,26 +136,11 @@ pub fn detected_sources() -> Vec<ExternalAuthSource> {
 }
 
 pub fn source_provider_labels(source: ExternalAuthSource) -> Vec<&'static str> {
-    let mut labels = Vec::new();
-    if source_contains_oauth_provider(source, &["openai-codex", "openai_codex", "openai"]).unwrap_or(false) {
-        labels.push("OpenAI/Codex");
-    }
-    if source_contains_oauth_provider(source, &["anthropic", "claude"]).unwrap_or(false) {
-        labels.push("Claude");
-    }
-    if source_contains_oauth_provider(source, &["google-gemini-cli", "gemini-cli", "gemini"]).unwrap_or(false) {
-        labels.push("Gemini");
-    }
-    if source_contains_oauth_provider(source, &["google-antigravity", "antigravity"]).unwrap_or(false) {
-        labels.push("Antigravity");
-    }
-    if source_contains_oauth_provider(source, &["github-copilot", "copilot"]).unwrap_or(false) {
-        labels.push("GitHub Copilot");
-    }
     if source_contains_supported_api_key(source).unwrap_or(false) {
-        labels.push("OpenRouter/API-key providers");
+        vec!["OpenAI-compatible API-key providers"]
+    } else {
+        Vec::new()
     }
-    labels
 }
 
 pub fn preferred_unconsented_api_key_source() -> Option<ExternalAuthSource> {
@@ -184,22 +162,6 @@ pub fn preferred_unconsented_api_key_source_for_env(env_key: &str) -> Option<Ext
         })
 }
 
-pub fn preferred_unconsented_openai_oauth_source() -> Option<ExternalAuthSource> {
-    preferred_unconsented_oauth_source_for_candidates(&["openai-codex", "openai_codex", "openai"])
-}
-
-pub fn preferred_unconsented_anthropic_oauth_source() -> Option<ExternalAuthSource> {
-    preferred_unconsented_oauth_source_for_candidates(&["anthropic", "claude"])
-}
-
-pub fn preferred_unconsented_gemini_oauth_source() -> Option<ExternalAuthSource> {
-    preferred_unconsented_oauth_source_for_candidates(&["google-gemini-cli", "gemini-cli", "gemini"])
-}
-
-pub fn preferred_unconsented_antigravity_oauth_source() -> Option<ExternalAuthSource> {
-    preferred_unconsented_oauth_source_for_candidates(&["google-antigravity", "antigravity"])
-}
-
 pub fn load_api_key_for_env(env_key: &str) -> Option<String> {
     for source in SOURCES {
         if !source_allowed(source) {
@@ -210,30 +172,6 @@ pub fn load_api_key_for_env(env_key: &str) -> Option<String> {
         }
     }
     None
-}
-
-pub fn load_openai_oauth_tokens() -> Option<ExternalOAuthTokens> {
-    load_oauth_tokens_for_candidates(&["openai-codex", "openai_codex", "openai"])
-}
-
-pub fn load_copilot_oauth_token() -> Option<String> {
-    load_oauth_tokens_for_candidates(&["github-copilot", "copilot"]).map(|tokens| tokens.access_token)
-}
-
-pub fn source_has_copilot_oauth(source: ExternalAuthSource) -> bool {
-    source_contains_oauth_provider(source, &["github-copilot", "copilot"]).unwrap_or(false)
-}
-
-pub fn load_gemini_oauth_tokens() -> Option<ExternalOAuthTokens> {
-    load_oauth_tokens_for_candidates(&["google-gemini-cli", "gemini-cli", "gemini"])
-}
-
-pub fn load_antigravity_oauth_tokens() -> Option<ExternalOAuthTokens> {
-    load_oauth_tokens_for_candidates(&["google-antigravity", "antigravity"])
-}
-
-pub fn load_anthropic_oauth_tokens() -> Option<ExternalOAuthTokens> {
-    load_oauth_tokens_for_candidates(&["anthropic", "claude"])
 }
 
 pub fn source_allowed(source: ExternalAuthSource) -> bool {
@@ -253,78 +191,13 @@ pub fn source_allowed(source: ExternalAuthSource) -> bool {
     }
 }
 
-fn load_oauth_tokens_for_candidates(provider_keys: &[&str]) -> Option<ExternalOAuthTokens> {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let mut expired: Option<ExternalOAuthTokens> = None;
-
-    for source in SOURCES {
-        if !source_allowed(source) {
-            continue;
-        }
-
-        let Ok(auth_map) = load_auth_map(source) else {
-            continue;
-        };
-        for key in provider_keys {
-            if let Some(entry) = auth_map.get(*key)
-                && let Some(tokens) = extract_oauth_tokens(source, entry)
-            {
-                if tokens.expires_at > now_ms {
-                    return Some(tokens);
-                }
-                if expired.is_none() {
-                    expired = Some(tokens);
-                }
-            }
-        }
-    }
-
-    expired
-}
-
-fn preferred_unconsented_oauth_source_for_candidates(provider_keys: &[&str]) -> Option<ExternalAuthSource> {
-    SOURCES
-        .into_iter()
-        .filter(|source| source.path().map(|path| path.exists()).unwrap_or(false))
-        .find(|source| {
-            !source_allowed(*source) && source_contains_oauth_provider(*source, provider_keys).unwrap_or(false)
-        })
-}
-
 fn source_has_supported_auth(source: ExternalAuthSource) -> bool {
     source_contains_supported_api_key(source).unwrap_or(false)
-        || source_contains_oauth_provider(
-            source,
-            &[
-                "openai-codex",
-                "openai_codex",
-                "openai",
-                "anthropic",
-                "claude",
-                "google-gemini-cli",
-                "gemini-cli",
-                "gemini",
-                "google-antigravity",
-                "antigravity",
-                "github-copilot",
-                "copilot",
-            ],
-        )
-        .unwrap_or(false)
 }
 
 fn source_contains_supported_api_key(source: ExternalAuthSource) -> Result<bool> {
     let auth = load_auth_map(source)?;
     Ok(auth.values().any(|entry| extract_api_key(source, entry).is_some()))
-}
-
-fn source_contains_oauth_provider(source: ExternalAuthSource, provider_keys: &[&str]) -> Result<bool> {
-    let auth = load_auth_map(source)?;
-    Ok(provider_keys.iter().any(|provider_key| {
-        auth.get(*provider_key)
-            .and_then(|entry| extract_oauth_tokens(source, entry))
-            .is_some()
-    }))
 }
 
 fn load_api_key_from_source(source: ExternalAuthSource, env_key: &str) -> Option<String> {
@@ -486,85 +359,6 @@ fn resolve_pi_api_key_value(raw: &str) -> Option<String> {
     }
 
     Some(raw.to_string())
-}
-
-fn extract_oauth_tokens(source: ExternalAuthSource, entry: &Value) -> Option<ExternalOAuthTokens> {
-    match source {
-        ExternalAuthSource::OpenCode | ExternalAuthSource::Pi | ExternalAuthSource::OpenClaw => {
-            extract_oauth_tokens_pi_style(entry)
-        }
-        ExternalAuthSource::Hermes => extract_oauth_tokens_hermes_style(entry),
-    }
-}
-
-/// OpenCode / pi / OpenClaw share the `{ type: "oauth", access, refresh,
-/// expires }` shape (epoch milliseconds in `expires`).
-fn extract_oauth_tokens_pi_style(entry: &Value) -> Option<ExternalOAuthTokens> {
-    let object = entry.as_object()?;
-    let token_type = object.get("type").and_then(Value::as_str);
-    if let Some(token_type) = token_type
-        && token_type != "oauth"
-    {
-        return None;
-    }
-
-    let access_token = object.get("access")?.as_str()?.trim().to_string();
-    let refresh_token = object.get("refresh")?.as_str()?.trim().to_string();
-    let expires_at = object.get("expires")?.as_i64()?;
-
-    if access_token.is_empty() || refresh_token.is_empty() {
-        return None;
-    }
-
-    Some(ExternalOAuthTokens {
-        access_token,
-        refresh_token,
-        expires_at,
-    })
-}
-
-/// Hermes credential-pool entries use `access_token` / `refresh_token` and
-/// store the expiry either as `expires_at_ms` (epoch milliseconds) or
-/// `expires_at` (RFC 3339 string). `auth_type` distinguishes OAuth entries
-/// (`oauth_device_code`, `oauth_external`, `oauth_minimax`) from API keys.
-fn extract_oauth_tokens_hermes_style(entry: &Value) -> Option<ExternalOAuthTokens> {
-    let object = entry.as_object()?;
-    if let Some(auth_type) = object.get("auth_type").and_then(Value::as_str)
-        && !auth_type.starts_with("oauth")
-    {
-        return None;
-    }
-
-    let access_token = object.get("access_token")?.as_str()?.trim().to_string();
-    let refresh_token = object
-        .get("refresh_token")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default()
-        .to_string();
-    let expires_at = hermes_expires_at_ms(object)?;
-
-    if access_token.is_empty() || refresh_token.is_empty() {
-        return None;
-    }
-
-    Some(ExternalOAuthTokens {
-        access_token,
-        refresh_token,
-        expires_at,
-    })
-}
-
-fn hermes_expires_at_ms(object: &serde_json::Map<String, Value>) -> Option<i64> {
-    if let Some(ms) = object.get("expires_at_ms").and_then(Value::as_i64) {
-        return Some(ms);
-    }
-    if let Some(text) = object.get("expires_at").and_then(Value::as_str)
-        && let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text.trim())
-    {
-        return Some(parsed.timestamp_millis());
-    }
-    None
 }
 
 fn provider_keys_for_env(env_key: &str) -> &'static [&'static str] {

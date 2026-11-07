@@ -1,9 +1,6 @@
-use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-mod directives;
 mod manager;
 mod paths;
 mod persistence;
@@ -15,7 +12,6 @@ pub mod scheduler;
 #[cfg(test)]
 #[path = "ambient/runner_resume_tests.rs"]
 mod resume_tests;
-pub use directives::{UserDirective, add_directive, has_pending_directives, load_directives, take_pending_directives};
 pub use manager::AmbientManager;
 pub use persistence::{AmbientLock, BlockedApproval, BlockedApprovalStore, ScheduledQueue, with_records_lock};
 #[cfg(test)]
@@ -25,42 +21,9 @@ pub use prompt::{
     format_scheduled_session_message, gather_feedback_memories, gather_memory_graph_health, gather_recent_sessions,
 };
 
-use crate::storage;
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/// Context passed from the ambient runner to a visible TUI cycle.
-/// Saved to `~/.horon-agent/ambient/visible_cycle.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VisibleCycleContext {
-    pub system_prompt: String,
-    pub initial_message: String,
-}
-
-impl VisibleCycleContext {
-    pub fn context_path() -> Result<PathBuf> {
-        Ok(storage::horon_agent_dir()?.join("ambient").join("visible_cycle.json"))
-    }
-
-    pub fn save(&self) -> Result<()> {
-        let path = Self::context_path()?;
-        if let Some(parent) = path.parent() {
-            storage::ensure_dir(parent)?;
-        }
-        storage::write_json(&path, self)
-    }
-
-    pub fn load() -> Result<Self> {
-        let path = Self::context_path()?;
-        storage::read_json(&path)
-    }
-
-    pub fn result_path() -> Result<PathBuf> {
-        Ok(storage::horon_agent_dir()?.join("ambient").join("cycle_result.json"))
-    }
-}
 
 /// Ambient mode status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -151,7 +114,7 @@ pub struct AmbientCycleResult {
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
     pub status: CycleStatus,
-    /// Full conversation transcript (markdown) for email notifications
+    /// Full conversation transcript (markdown) for cycle notifications
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<String>,
 }

@@ -1,5 +1,3 @@
-use crate::auth;
-
 #[path = "models_catalog.rs"]
 mod catalog;
 #[path = "model_catalog_service.rs"]
@@ -9,9 +7,8 @@ use anyhow::Result;
 pub use catalog::{ModelCatalogHttpStatus, OpenAIModelCatalog, fetch_openai_model_catalog};
 use catalog_service::{ModelCatalogService, RuntimeModelUnavailability};
 use horon_agent_provider_core::{
-    ALL_OPENAI_MODELS, CHATGPT_WEB_MODEL, ModelCapabilities, OPENAI_API_ONLY_PRO_MODELS,
-    context_limit_for_model_with_provider_and_cache, core_provider_for_model_with_hint, is_openai_api_only_pro_model,
-    provider_key_from_hint, shared_http_client,
+    ALL_OPENAI_MODELS, ModelCapabilities, OPENAI_API_ONLY_PRO_MODELS, context_limit_for_model_with_provider_and_cache,
+    core_provider_for_model_with_hint, is_openai_api_only_pro_model, provider_key_from_hint, shared_http_client,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -34,43 +31,6 @@ struct PersistedModelCatalogScope {
     #[serde(default)]
     reasoning_efforts: HashMap<String, Vec<String>>,
     observed_at_unix_secs: u64,
-}
-
-#[cfg(test)]
-pub(crate) fn filtered_display_models(models: impl IntoIterator<Item = String>) -> Vec<String> {
-    models
-        .into_iter()
-        .filter(|model| {
-            !crate::subscription_catalog::is_runtime_mode_enabled()
-                || crate::subscription_catalog::is_model_allowed_for_current_tier(model)
-        })
-        .collect()
-}
-
-pub(crate) fn ensure_model_allowed_for_subscription(model: &str) -> Result<()> {
-    if !crate::subscription_catalog::is_runtime_mode_enabled() {
-        return Ok(());
-    }
-    match crate::subscription_catalog::find_curated_model(model) {
-        None => {
-            anyhow::bail!(
-                "Model '{}' is not included in the current horon-agent subscription catalog",
-                model
-            );
-        }
-        Some(curated) => {
-            let tier = crate::subscription_catalog::effective_tier();
-            if !tier.allows(curated.min_tier) {
-                anyhow::bail!(
-                    "Model '{}' requires the {} tier (current tier: {}). Upgrade your horon-agent subscription to use it.",
-                    curated.display_name,
-                    curated.min_tier.display_name(),
-                    tier.display_name()
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Dynamic cache of model context window sizes, populated from API at startup.
@@ -159,37 +119,25 @@ fn normalize_provider_id(provider: &str) -> String {
     provider.trim().to_ascii_lowercase()
 }
 
-fn openai_account_scope_from_label(label: Option<String>) -> String {
-    label
-        .map(|label| label.trim().to_string())
-        .filter(|label| !label.is_empty())
-        .unwrap_or_else(|| "default".to_string())
+/// There is one OpenAI credential path (an API key), so catalog state has a
+/// single scope. The name stays `default` so existing on-disk snapshots keep
+/// loading.
+fn openai_account_scope_from_label(_label: Option<String>) -> String {
+    "default".to_string()
 }
 
-/// Catalog scope for the ChatGPT/Codex OAuth route of the active account.
-/// Kept as the bare account label for compatibility with existing on-disk
-/// snapshots.
 fn current_openai_account_scope() -> String {
-    openai_account_scope_from_label(auth::codex::active_account_label())
+    openai_account_scope_from_label(None)
 }
 
 const OPENAI_API_KEY_SCOPE_PREFIX: &str = "api-key::";
 
 /// Catalog scope for an OpenAI credential.
 ///
-/// The ChatGPT/Codex OAuth catalog (`backend-api/codex/models`) and the
-/// platform API-key catalog (`/v1/models`) list different models for the same
-/// person, so they must never share a scope. Sharing one let whichever refresh
-/// landed last overwrite the other, and switching to a model that only one
-/// route offers failed with "Unsupported OpenAI model" until the other route
-/// refreshed again. API keys are fingerprinted so changing keys cannot reuse
-/// another key's availability; the key itself never becomes a cache key.
-pub fn openai_catalog_scope_for_credential(is_chatgpt_mode: bool, access_token: &str) -> String {
-    if is_chatgpt_mode {
-        current_openai_account_scope()
-    } else {
-        openai_api_key_catalog_scope(access_token)
-    }
+/// API keys are fingerprinted so changing keys cannot reuse another key's
+/// availability; the key itself never becomes a cache key.
+pub fn openai_catalog_scope_for_credential(_is_chatgpt_mode: bool, access_token: &str) -> String {
+    openai_api_key_catalog_scope(access_token)
 }
 
 fn openai_api_key_catalog_scope(api_key: &str) -> String {
@@ -223,7 +171,7 @@ fn openai_api_profile_cached_model_ids() -> Option<Vec<String>> {
 
 /// Resolve a catalog scope for the credential route actually being used.
 /// API keys are fingerprinted so changing organizations cannot reuse access
-/// claims from a different key. OAuth refresh tokens never form cache keys.
+/// claims from a different key.
 fn provider_runtime_scope_key(provider: &str, account_label: Option<&str>) -> String {
     let normalized = normalize_provider_id(provider);
     match normalized.as_str() {
@@ -357,7 +305,7 @@ fn persist_scoped_model_catalog(
     }
 
     // Independently refreshed routes share one file. Serialize read-modify-write
-    // so simultaneous API/OAuth completions cannot discard the other's scope.
+    // so concurrent catalog refreshes cannot discard each other's scope.
     static STORE_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = STORE_WRITE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let mut store = load_persisted_model_catalog_store(file_name).unwrap_or_default();
@@ -459,7 +407,6 @@ pub fn cached_context_limit_for_model(model: &str) -> Option<usize> {
 }
 
 /// Populate the context limit cache from API-provided model data.
-/// Called once at startup when OpenAI OAuth credentials are available.
 pub fn populate_context_limits(models: HashMap<String, usize>) {
     if let Ok(mut cache) = CONTEXT_LIMIT_CACHE.write() {
         for (model, limit) in &models {
@@ -598,27 +545,13 @@ pub fn openai_platform_api_key_configured() -> bool {
         .unwrap_or(false)
 }
 
-/// Every OpenAI model reachable through any configured credential: the union of
-/// the ChatGPT/Codex OAuth catalog and the platform API-key catalog. Used where
-/// no specific credential is selected yet (route listing, runtime-less
+/// Every OpenAI model reachable through the configured platform API key. Used
+/// where no specific credential is selected yet (route listing, runtime-less
 /// validation). A runtime validating its own credential should use
 /// [`known_openai_model_ids_for_scope`].
 pub fn known_openai_model_ids() -> Vec<String> {
-    let oauth = cached_openai_model_ids();
     let api = configured_openai_api_key_catalog_scope().and_then(|scope| cached_openai_model_ids_for_scope(&scope));
-    let models = match (oauth, api) {
-        (None, None) => openai_static_model_ids(),
-        (oauth, api) => {
-            let mut models = oauth.unwrap_or_default();
-            for model in api.unwrap_or_default() {
-                if !models.contains(&model) {
-                    models.push(model);
-                }
-            }
-            models
-        }
-    };
-    finish_known_openai_model_ids(models)
+    finish_known_openai_model_ids(api.unwrap_or_else(openai_static_model_ids))
 }
 
 /// OpenAI models valid for one credential's catalog scope (see
@@ -628,12 +561,8 @@ pub fn known_openai_model_ids_for_scope(scope: &str) -> Vec<String> {
 }
 
 fn finish_known_openai_model_ids(mut models: Vec<String>) -> Vec<String> {
-    if !models.iter().any(|model| model == CHATGPT_WEB_MODEL) {
-        models.push(CHATGPT_WEB_MODEL.to_string());
-    }
-    // GPT Pro models never appear in the ChatGPT/Codex OAuth catalog (they are
-    // platform-API-only), so a live OAuth catalog must not hide them when the
-    // user has an OPENAI_API_KEY that can actually reach them.
+    // GPT Pro models are platform-API-only, so a cached catalog that lacks them
+    // must not hide them while an OPENAI_API_KEY can reach them.
     if openai_platform_api_key_configured() {
         for pro in OPENAI_API_ONLY_PRO_MODELS {
             if !models.iter().any(|model| model == pro) {
@@ -753,15 +682,6 @@ pub fn model_availability_for_account(model: &str) -> AccountModelAvailability {
 /// Availability of `model` within one credential's catalog scope (see
 /// [`openai_catalog_scope_for_credential`]).
 pub fn model_availability_for_scope(scope: &str, model: &str) -> AccountModelAvailability {
-    if model.trim() == CHATGPT_WEB_MODEL {
-        return AccountModelAvailability {
-            state: AccountModelAvailabilityState::Unknown,
-            reason: Some("requires a logged-in ChatGPT web session".to_string()),
-            source: "browser-session",
-            observed_at: None,
-        };
-    }
-
     if let Some(runtime) = runtime_model_unavailability(scope, model) {
         return AccountModelAvailability {
             state: AccountModelAvailabilityState::Unavailable,
@@ -771,10 +691,10 @@ pub fn model_availability_for_scope(scope: &str, model: &str) -> AccountModelAva
         };
     }
 
-    // GPT Pro models are platform-API-only: the ChatGPT/Codex OAuth account
-    // snapshot never contains them, so judging them against it would report
-    // "not available for your account" to every OAuth user who also has a
-    // perfectly working OPENAI_API_KEY. Key presence is the real signal.
+    // GPT Pro models are platform-API-only: the cached catalog never contains
+    // them, so judging them against it would report "not available for your
+    // account" to someone whose OPENAI_API_KEY works. Key presence is the real
+    // signal.
     if is_openai_api_only_pro_model(model) {
         return if openai_platform_api_key_configured() {
             AccountModelAvailability {
@@ -786,11 +706,7 @@ pub fn model_availability_for_scope(scope: &str, model: &str) -> AccountModelAva
         } else {
             AccountModelAvailability {
                 state: AccountModelAvailabilityState::Unavailable,
-                reason: Some(
-                    "requires an OpenAI platform API key (OPENAI_API_KEY); \
-                     not available via ChatGPT/Codex OAuth"
-                        .to_string(),
-                ),
+                reason: Some("requires an OpenAI platform API key (OPENAI_API_KEY)".to_string()),
                 source: "api-key",
                 observed_at: None,
             }
@@ -888,35 +804,6 @@ pub fn resolve_model_capabilities(model: &str, provider_hint: Option<&str>) -> M
         provider,
         context_window,
     }
-}
-
-/// Automatic agent failover is narrower than manual model selection. A model
-/// appearing in an account's catalog is not evidence that it can run an agent
-/// turn: platform catalogs also advertise video, audio and embedding models.
-/// Accept curated/frontier agent models, plus versioned GPT variants so an
-/// explicitly configured new release need not wait for the bundled order.
-/// Unrecognized catalogs remain available for manual selection, not failover.
-pub(super) fn is_agent_model_for_failover(model: &str, provider: &str) -> bool {
-    let normalized = normalize_model_id(model);
-    if !super::is_listable_model_name(&normalized) || normalized.contains("[web]") {
-        return false;
-    }
-    let base = horon_agent_provider_core::model_id::slash_base(&normalized);
-    // These GPT specializations do not implement the normal agent tool API.
-    if base
-        .split('-')
-        .any(|token| matches!(token, "instruct" | "search" | "research"))
-    {
-        return false;
-    }
-    if crate::auth::lifecycle::ranked_flagship_for_provider(provider, &[model]).is_some() {
-        return true;
-    }
-    matches!(provider, "openai" | "copilot" | "cursor" | "openrouter")
-        && base
-            .strip_prefix("gpt-")
-            .and_then(|version| version.chars().next())
-            .is_some_and(|first| first.is_ascii_digit())
 }
 
 /// Detect which provider a model belongs to

@@ -55,18 +55,24 @@ pub(super) async fn execute(agent: &mut Agent, command: RuntimeCommand, args: &[
         RuntimeCommand::Auth => {
             status_args(args)?;
             let status = tokio::task::spawn_blocking(crate::auth::AuthStatus::check_fast).await?;
-            let providers: Vec<_> = crate::provider_catalog::auth_status_login_providers()
-                .into_iter()
-                .map(|provider| {
-                    let assessment = status.assessment_for_provider(provider);
-                    json!({"id": provider.id, "display_name": provider.display_name,
-                    "state": assessment.state, "readiness": assessment.readiness,
-                    "credential_source": assessment.credential_source,
-                    "refresh_support": assessment.refresh_support})
+            let profiles: Vec<_> = crate::config::config()
+                .providers
+                .iter()
+                .map(|(name, profile)| {
+                    json!({
+                        "profile": name,
+                        "base_url": profile.base_url,
+                        "default_model": profile.default_model,
+                        "api_key_env": profile.api_key_env,
+                    })
                 })
                 .collect();
-            let data = json!({"scope": "runtime host", "providers": providers,
-                "note": "Credential readiness is not a live provider request. Secrets and raw credential files are never returned."});
+            let data = json!({
+                "scope": "runtime host",
+                "openai_compatible_credentials": status.openai_compatible_any,
+                "profiles": profiles,
+                "note": "Model requests go directly to the OpenAI-compatible profiles in config.toml. Secrets and raw credential files are never returned.",
+            });
             Ok((
                 data.clone(),
                 format!(
@@ -98,78 +104,66 @@ pub(super) async fn execute(agent: &mut Agent, command: RuntimeCommand, args: &[
 }
 
 fn logout(args: &[String]) -> Result<(Value, String)> {
-    use crate::provider_catalog::{LoginProviderTarget, resolve_login_provider};
     let (name, confirmed) = match args {
-        [] => return Ok((json!({"confirmation_required": true, "scope": "runtime host"}),
-            "Logout requires an explicit provider and confirmation. Use `/auth` to inspect runtime-host credentials, then `/logout <provider> confirm`. For `openai`, this removes all HoronAgent-managed OAuth accounts plus the saved API key for that provider. API-specific ids remove only that saved API key. No credential was removed.".into())),
+        [] => {
+            return Ok((
+                json!({"confirmation_required": true, "scope": "runtime host"}),
+                "Logout requires an explicit profile and confirmation. Use `/logout <profile> confirm`. Supported ids are the OpenAI-compatible profiles in `config.toml` and the built-in profile ids. No credential was removed."
+                    .into(),
+            ));
+        }
         [name] => (name.as_str(), false),
         [name, confirmation] if confirmation == "confirm" => (name.as_str(), true),
-        _ => bail!("Usage: `/logout <provider> confirm`. Nothing was removed."),
+        _ => bail!("Usage: `/logout <profile> confirm`. Nothing was removed."),
     };
-    let provider =
-        resolve_login_provider(name).with_context(|| format!("Unknown provider `{name}`. Nothing was removed."))?;
-    let supported = matches!(
-        provider.target,
-        LoginProviderTarget::OpenAi
-            | LoginProviderTarget::OpenAiApiKey
-            | LoginProviderTarget::Azure
-            | LoginProviderTarget::OpenAiCompatible(_)
-    );
-    if !supported {
+    let Some((display_name, api_key_env, env_file)) = logout_profile(name) else {
         bail!(
-            "Logout for {} is not supported by the shared runtime credential-removal API. Use that provider's owning account/login application. No credential was removed.",
-            provider.display_name
+            "Unknown provider profile `{name}`. Add it with `horon-agent provider add` or use a built-in OpenAI-compatible profile id. Nothing was removed."
         );
-    }
+    };
     if !confirmed {
         return Ok((
-            json!({"confirmation_required": true, "provider": provider.id, "scope": "runtime host"}),
+            json!({"confirmation_required": true, "provider": name, "scope": "runtime host"}),
             format!(
-                "To remove {} credentials stored by HoronAgent on the attached runtime host, run `/logout {} confirm`. For `openai` this removes every HoronAgent-managed OAuth account and the saved API key for that provider. Other apps' credentials and externally supplied environment keys are not revoked. No credential was removed.",
-                provider.display_name, provider.id
+                "To remove the saved API key for {display_name}, run `/logout {name} confirm`. External environment keys and other apps' credentials are not revoked. No credential was removed."
             ),
         ));
     }
-    let mut removed_oauth_accounts = 0;
-    let mut cleared_api_key = false;
-    let mut errors = Vec::new();
-    let mut clear_key = |env_key: &str, env_file: &str| match crate::provider_catalog::save_env_value_to_env_file(
-        env_key, env_file, None,
-    ) {
-        Ok(()) => cleared_api_key = true,
-        Err(error) => errors.push(format!("Saved API-key removal failed: {error}")),
+    let cleared = match (api_key_env.as_deref(), env_file.as_deref()) {
+        (Some(env_key), Some(env_file)) => {
+            crate::provider_catalog::save_env_value_to_env_file(env_key, env_file, None)?;
+            true
+        }
+        _ => false,
     };
-    match provider.target {
-        LoginProviderTarget::OpenAi => {
-            clear_key("OPENAI_API_KEY", "openai.env");
-            match crate::auth::codex::clear_accounts() {
-                Ok(count) => removed_oauth_accounts = count,
-                Err(error) => errors.push(format!("OAuth account removal failed: {error}")),
-            }
-        }
-        LoginProviderTarget::OpenAiApiKey => clear_key("OPENAI_API_KEY", "openai.env"),
-        LoginProviderTarget::Azure => clear_key(crate::auth::azure::API_KEY_ENV, crate::auth::azure::ENV_FILE),
-        LoginProviderTarget::OpenAiCompatible(profile) => {
-            let profile = crate::provider_catalog::resolve_openai_compatible_profile(profile);
-            clear_key(&profile.api_key_env, &profile.env_file);
-        }
-        _ => unreachable!("unsupported provider rejected before confirmation"),
-    }
-    crate::auth::AuthStatus::invalidate_cached_status();
-    let data = json!({"provider": provider.id, "scope": "runtime host", "removed_oauth_accounts": removed_oauth_accounts,
-        "saved_api_key_cleared": cleared_api_key, "errors": errors, "live_provider_reloaded": false,
-        "external_credentials_revoked": false});
-    let mut message = format!(
-        "{} stored credential cleanup: removed {removed_oauth_accounts} HoronAgent-managed OAuth account(s); saved API key cleared: {cleared_api_key}. Existing provider instances may still hold in-memory credentials until reconnect/reinitialization. External credentials and upstream tokens were not revoked.",
-        provider.display_name
-    );
-    if !errors.is_empty() {
-        message.push_str(&format!(
-            "\n\nCleanup was only partially successful:\n{}",
-            errors.join("\n")
-        ));
-    }
+    crate::auth::AuthStatus::invalidate_cache();
+    let data = json!({
+        "provider": name,
+        "scope": "runtime host",
+        "saved_api_key_cleared": cleared,
+        "external_credentials_revoked": false,
+    });
+    let message = if cleared {
+        format!(
+            "{display_name} stored API key cleared. Existing provider instances may still hold in-memory credentials until reconnect/reinitialization. External credentials and upstream tokens were not revoked."
+        )
+    } else {
+        format!("{display_name} has no saved API key in horon-agent's provider env files. Nothing was removed.")
+    };
     Ok((data, message))
+}
+
+fn logout_profile(name: &str) -> Option<(String, Option<String>, Option<String>)> {
+    if let Some(profile) = crate::config::config().providers.get(name) {
+        return Some((name.to_string(), profile.api_key_env.clone(), profile.env_file.clone()));
+    }
+    let profile = crate::provider_catalog::openai_compatible_profile_by_id(name)?;
+    let resolved = crate::provider_catalog::resolve_openai_compatible_profile(profile);
+    Some((
+        resolved.display_name.to_string(),
+        Some(resolved.api_key_env),
+        Some(resolved.env_file),
+    ))
 }
 
 fn remote(args: &[String]) -> Result<(Value, String)> {
@@ -337,10 +331,10 @@ mod tests {
     fn logout_requires_explicit_supported_provider_and_confirmation() {
         let (data, _) = logout(&[]).unwrap();
         assert_eq!(data["confirmation_required"], true);
-        let (data, message) = logout(&["openai".into()]).unwrap();
+        let (data, message) = logout(&["deepseek".into()]).unwrap();
         assert_eq!(data["confirmation_required"], true);
         assert!(message.contains("No credential was removed"));
-        assert!(logout(&["openai".into(), "yes".into()]).is_err());
+        assert!(logout(&["deepseek".into(), "yes".into()]).is_err());
         assert!(logout(&["invalid-provider".into(), "confirm".into()]).is_err());
         assert!(logout(&["copilot".into(), "confirm".into()]).is_err());
     }

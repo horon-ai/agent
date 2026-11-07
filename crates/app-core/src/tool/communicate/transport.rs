@@ -153,7 +153,6 @@ pub(super) async fn send_request_with_timeout(
             | "reloading"
             | "reload_progress"
             | "available_models_updated"
-            | "side_panel_state"
             | "transcript"
             | "interrupted" => continue,
             // Terminal responses and typed request responses with matching ids.

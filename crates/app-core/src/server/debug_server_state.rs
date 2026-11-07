@@ -1,6 +1,6 @@
 use super::{
-    ClientConnectionInfo, ClientDebugState, DebugJob, FileAccess, FileTouchService, ServerIdentity,
-    SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember, VersionedPlan,
+    ClientConnectionInfo, DebugJob, FileAccess, FileTouchService, ServerIdentity, SessionInterruptQueues,
+    SharedContext, SwarmEvent, SwarmMember, VersionedPlan,
 };
 use crate::agent::Agent;
 use anyhow::Result;
@@ -90,7 +90,6 @@ pub(super) async fn maybe_handle_server_state_command(
     sessions: &SessionAgents,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
-    client_debug_state: &Arc<RwLock<ClientDebugState>>,
     server_identity: &ServerIdentity,
     server_start_time: Instant,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
@@ -186,7 +185,6 @@ pub(super) async fn maybe_handle_server_state_command(
             sessions,
             client_connections,
             swarm_members,
-            client_debug_state,
             server_identity,
             server_start_time,
             swarms_by_id,
@@ -326,19 +324,6 @@ pub(super) async fn maybe_handle_server_state_command(
             serde_json::json!({
                 "count": out.len(),
                 "clients": out,
-            })
-            .to_string(),
-        ));
-    }
-
-    if cmd == "clients" {
-        let debug_state = client_debug_state.read().await;
-        let client_ids: Vec<&String> = debug_state.clients.keys().collect();
-        return Ok(Some(
-            serde_json::json!({
-                "count": debug_state.clients.len(),
-                "active_id": debug_state.active_id,
-                "client_ids": client_ids,
             })
             .to_string(),
         ));
@@ -642,7 +627,6 @@ async fn build_server_memory_payload(
     sessions: &SessionAgents,
     client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
-    client_debug_state: &Arc<RwLock<ClientDebugState>>,
     server_identity: &ServerIdentity,
     server_start_time: Instant,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
@@ -782,11 +766,6 @@ async fn build_server_memory_payload(
     let client_connection_estimate_bytes: usize = connections.values().map(estimate_client_connection_bytes).sum();
     let connected_client_count = connections.len();
     drop(connections);
-
-    let debug_state = client_debug_state.read().await;
-    let debug_clients_count = debug_state.clients.len();
-    let debug_client_id_bytes: usize = debug_state.clients.keys().map(|id| id.len()).sum();
-    drop(debug_state);
 
     let members = swarm_members.read().await;
     let swarm_member_estimate_bytes: usize = members.values().map(estimate_swarm_member_bytes).sum();
@@ -940,9 +919,7 @@ async fn build_server_memory_payload(
         "history": crate::process_memory::history(128),
         "clients": {
             "connected_clients": connected_client_count,
-            "debug_clients": debug_clients_count,
             "connection_estimate_bytes": client_connection_estimate_bytes,
-            "debug_client_id_bytes": debug_client_id_bytes,
         },
         "sessions": {
             "live_count": locked_session_count + contended_session_count,
@@ -1041,7 +1018,6 @@ fn estimate_client_connection_bytes(info: &ClientConnectionInfo) -> usize {
     info.client_id.len()
         + info.session_id.len()
         + info.client_instance_id.as_ref().map(|value| value.len()).unwrap_or(0)
-        + info.debug_client_id.as_ref().map(|value| value.len()).unwrap_or(0)
 }
 
 fn estimate_swarm_member_bytes(member: &SwarmMember) -> usize {

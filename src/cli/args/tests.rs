@@ -2,37 +2,6 @@ use super::*;
 use crate::cli::provider_init::ProviderChoice;
 
 #[test]
-fn credential_import_cli_requires_stdin_and_preserves_explicit_provider() {
-    for provider in ["openai", "openai"] {
-        let args = Args::try_parse_from([
-            "horon-agent",
-            "auth",
-            "import",
-            "--provider",
-            provider,
-            "--stdin",
-            "--json",
-        ])
-        .unwrap();
-        assert_eq!(args.provider.as_arg_value(), provider);
-        assert!(matches!(
-            args.command,
-            Some(Command::Auth(AuthCommand::Import {
-                stdin: true,
-                json: true
-            }))
-        ));
-    }
-    for args in [
-        vec!["horon-agent", "auth", "import", "--provider", "openai"],
-        vec!["horon-agent", "auth", "import", "--stdin", "--token", "secret"],
-        vec!["horon-agent", "auth", "import", "--stdin", "--overwrite"],
-    ] {
-        assert!(Args::try_parse_from(args).is_err());
-    }
-}
-
-#[test]
 fn native_ssh_attach_arguments_parse_and_do_not_steal_local_socket() {
     let args = Args::try_parse_from([
         "horon-agent",
@@ -44,7 +13,6 @@ fn native_ssh_attach_arguments_parse_and_do_not_steal_local_socket() {
         "/run/native/horon-agent.sock",
         "--remote-working-dir",
         "/srv/project",
-        "self-dev",
     ])
     .unwrap();
     assert_eq!(args.ssh.as_deref(), Some("dev"));
@@ -122,33 +90,19 @@ fn server_promote_parses_default_and_explicit_version() {
 }
 
 #[test]
-fn test_provider_choice_aliases_parse() {
-    let args = Args::try_parse_from(["horon-agent", "--provider", "z.ai", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::Zai);
-
-    let args = Args::try_parse_from(["horon-agent", "--provider", "kimi-for-coding", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::Kimi);
-
-    let args = Args::try_parse_from(["horon-agent", "--provider", "cerebrascode", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::Cerebras);
+fn test_provider_choice_accepts_auto_compatible_and_profiles() {
+    let args = Args::try_parse_from(["horon-agent", "--provider", "auto", "run", "smoke"]).unwrap();
+    assert_eq!(args.provider, ProviderChoice::Auto);
 
     let args = Args::try_parse_from(["horon-agent", "--provider", "compat", "run", "smoke"]).unwrap();
     assert_eq!(args.provider, ProviderChoice::OpenaiCompatible);
 
-    let args = Args::try_parse_from(["horon-agent", "--provider", "bailian", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::AlibabaCodingPlan);
+    let args = Args::try_parse_from(["horon-agent", "--provider", "deepseek", "run", "smoke"]).unwrap();
+    assert_eq!(args.provider, ProviderChoice::Profile("deepseek".to_string()));
 
-    let args = Args::try_parse_from(["horon-agent", "--provider", "together", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::TogetherAi);
-
-    let args = Args::try_parse_from(["horon-agent", "--provider", "grok", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::Xai);
-
-    let args = Args::try_parse_from(["horon-agent", "--provider", "grok-build"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::GrokBuild);
-
-    let args = Args::try_parse_from(["horon-agent", "--provider", "cgc", "run", "smoke"]).unwrap();
-    assert_eq!(args.provider, ProviderChoice::Comtegra);
+    let error = Args::try_parse_from(["horon-agent", "--provider", "claude", "run", "smoke"])
+        .expect_err("a removed vendor login is a usage error");
+    assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
 }
 
 #[test]
@@ -183,40 +137,6 @@ fn model_list_subcommand_parses() {
         Some(Command::Model(ModelCommand::List { json, verbose })) => {
             assert!(json);
             assert!(verbose);
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "cloud",
-        "sessions",
-        "dashboard",
-        "--limit",
-        "10",
-        "--open",
-        "--with-view",
-        "--user-id",
-        "operator",
-    ])
-    .unwrap();
-
-    match args.command {
-        Some(Command::Cloud(CloudCommand::Sessions {
-            action:
-                CloudSessionsCommand::Dashboard {
-                    limit,
-                    output,
-                    open,
-                    with_view,
-                    jade,
-                },
-        })) => {
-            assert_eq!(limit, 10);
-            assert!(output.is_none());
-            assert!(open);
-            assert!(with_view);
-            assert_eq!(jade.user_id, "operator");
         }
         other => panic!("unexpected command: {:?}", other),
     }
@@ -258,216 +178,6 @@ fn session_rename_subcommand_parses() {
 }
 
 #[test]
-fn cloud_sessions_subcommands_parse() {
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "cloud",
-        "sessions",
-        "configure",
-        "--api-base",
-        "https://jade.example",
-        "--api-token-env",
-        "JADE_TOKEN",
-        "--api-token-id",
-        "dev-admin",
-        "--user-id",
-        "operator",
-        "--helper",
-        "/tmp/jade_sessions.py",
-    ])
-    .unwrap();
-
-    match args.command {
-        Some(Command::Cloud(CloudCommand::Sessions {
-            action:
-                CloudSessionsCommand::Configure {
-                    api_base,
-                    api_token_env,
-                    api_token_id,
-                    user_id,
-                    helper,
-                    clear,
-                    ..
-                },
-        })) => {
-            assert_eq!(api_base.as_deref(), Some("https://jade.example"));
-            assert_eq!(api_token_env.as_deref(), Some("JADE_TOKEN"));
-            assert_eq!(api_token_id.as_deref(), Some("dev-admin"));
-            assert_eq!(user_id.as_deref(), Some("operator"));
-            assert_eq!(helper.as_deref(), Some("/tmp/jade_sessions.py"));
-            assert!(!clear);
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from(["horon-agent", "cloud", "sessions", "status", "--json"]).unwrap();
-    match args.command {
-        Some(Command::Cloud(CloudCommand::Sessions {
-            action: CloudSessionsCommand::Status { json },
-        })) => assert!(json),
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "cloud",
-        "sessions",
-        "upload-latest",
-        "--sessions-dir",
-        "/tmp/sessions",
-        "--user-id",
-        "operator",
-        "--profile",
-        "test-profile",
-        "--region",
-        "us-east-1",
-    ])
-    .unwrap();
-
-    match args.command {
-        Some(Command::Cloud(CloudCommand::Sessions {
-            action:
-                CloudSessionsCommand::UploadLatest {
-                    sessions_dir,
-                    raw,
-                    jade,
-                },
-        })) => {
-            assert_eq!(sessions_dir, "/tmp/sessions");
-            assert!(!raw);
-            assert_eq!(jade.user_id, "operator");
-            assert_eq!(jade.profile.as_deref(), Some("test-profile"));
-            assert_eq!(jade.region.as_deref(), Some("us-east-1"));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "cloud",
-        "sessions",
-        "view",
-        "session_123",
-        "--format",
-        "html",
-        "--open",
-    ])
-    .unwrap();
-
-    match args.command {
-        Some(Command::Cloud(CloudCommand::Sessions {
-            action:
-                CloudSessionsCommand::View {
-                    session_id,
-                    format,
-                    open,
-                    ..
-                },
-        })) => {
-            assert_eq!(session_id, "session_123");
-            assert!(matches!(format, CloudSessionViewFormat::Html));
-            assert!(open);
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "cloud",
-        "sessions",
-        "sync",
-        "--all",
-        "--max",
-        "5",
-        "--dry-run",
-        "--json",
-        "--user-id",
-        "operator",
-    ])
-    .unwrap();
-
-    match args.command {
-        Some(Command::Cloud(CloudCommand::Sessions {
-            action:
-                CloudSessionsCommand::Sync {
-                    sessions_dir,
-                    since_days,
-                    all,
-                    max,
-                    min_interval_mins,
-                    raw,
-                    dry_run,
-                    force,
-                    json,
-                    jade,
-                },
-        })) => {
-            assert!(sessions_dir.is_none());
-            assert!(since_days.is_none());
-            assert!(all);
-            assert_eq!(max, 5);
-            assert!(min_interval_mins.is_none());
-            assert!(!raw);
-            assert!(dry_run);
-            assert!(!force);
-            assert!(json);
-            assert_eq!(jade.user_id, "operator");
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn login_no_browser_flag_parses() {
-    let args = Args::try_parse_from(["horon-agent", "login", "--no-browser"]).unwrap();
-    match args.command {
-        Some(Command::Login {
-            provider,
-            account,
-            no_browser,
-            print_auth_url,
-            callback_url,
-            auth_code,
-            json,
-            complete,
-            google,
-            api_base,
-            api_key,
-            api_key_env,
-            no_validate,
-            flow_id,
-            cancel,
-        }) => {
-            assert!(provider.is_none());
-            assert!(account.is_none());
-            assert!(no_browser);
-            assert!(!print_auth_url);
-            assert!(callback_url.is_none());
-            assert!(auth_code.is_none());
-            assert!(!json);
-            assert!(!complete);
-            assert!(google.google_access_tier.is_none());
-            assert!(google.google_services.is_none());
-            assert!(!google.setup);
-            assert!(google.google_client_json.is_none());
-            assert!(api_base.is_none());
-            assert!(api_key.is_none());
-            assert!(api_key_env.is_none());
-            assert!(!no_validate);
-            assert!(flow_id.is_none());
-            assert!(!cancel);
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from(["horon-agent", "login", "--headless"]).unwrap();
-    match args.command {
-        Some(Command::Login { no_browser, .. }) => assert!(no_browser),
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
 fn trust_workspace_is_global_and_defaults_off() {
     let plain = Args::try_parse_from(["horon-agent", "run", "hi"]).unwrap();
     assert!(!plain.trust_workspace);
@@ -480,243 +190,6 @@ fn trust_workspace_is_global_and_defaults_off() {
 }
 
 #[test]
-fn login_accepts_provider_positional() {
-    let args = Args::try_parse_from(["horon-agent", "login", "google"]).unwrap();
-    match args.command {
-        Some(Command::Login { provider, .. }) => {
-            assert_eq!(provider, Some(ProviderChoice::Google));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn login_scoped_flow_flags_parse_and_reject_unsafe_ids() {
-    for action in ["--print-auth-url", "--complete", "--cancel"] {
-        let args = Args::try_parse_from([
-            "horon-agent",
-            "login",
-            "--provider",
-            "openai",
-            "--flow-id",
-            "aB_09-safe",
-            action,
-            "--json",
-        ])
-        .unwrap();
-        assert!(matches!(args.command, Some(Command::Login { flow_id: Some(id), .. }) if id == "aB_09-safe"));
-    }
-    for id in [
-        "", ".", "..", "../other", "a/b", "a\\b", "a b", "a\n", "é", "a.json", "%2f", "x;touch",
-    ] {
-        assert!(
-            Args::try_parse_from(["horon-agent", "login", "--flow-id", id, "--print-auth-url"]).is_err(),
-            "accepted {id:?}"
-        );
-    }
-    assert!(Args::try_parse_from(["horon-agent", "login", "--flow-id", &"a".repeat(65)]).is_err());
-    assert!(Args::try_parse_from(["horon-agent", "login", "--flow-id", &"a".repeat(64)]).is_ok());
-    assert!(Args::try_parse_from(["horon-agent", "login", "openai", "--cancel"]).is_err());
-    for action in ["--print-auth-url", "--complete"] {
-        assert!(
-            Args::try_parse_from([
-                "horon-agent",
-                "login",
-                "openai",
-                "--flow-id",
-                "safe",
-                "--cancel",
-                action
-            ])
-            .is_err()
-        );
-    }
-    for input in ["--callback-url", "--auth-code"] {
-        assert!(
-            Args::try_parse_from([
-                "horon-agent",
-                "login",
-                "openai",
-                "--flow-id",
-                "safe",
-                "--cancel",
-                input,
-                "-"
-            ])
-            .is_err()
-        );
-        assert!(Args::try_parse_from(["horon-agent", "login", "openai", "--flow-id", "safe", input, "-"]).is_ok());
-    }
-}
-
-#[test]
-fn login_openai_compatible_scriptable_flags_parse() {
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "--provider",
-        "openai-compatible",
-        "--model",
-        "deepseek-v4-flash",
-        "login",
-        "--api-base",
-        "https://api.deepseek.com",
-        "--api-key-env",
-        "DEEPSEEK_API_KEY",
-    ])
-    .unwrap();
-    assert_eq!(args.provider, ProviderChoice::OpenaiCompatible);
-    assert_eq!(args.model.as_deref(), Some("deepseek-v4-flash"));
-    match args.command {
-        Some(Command::Login {
-            api_base, api_key_env, ..
-        }) => {
-            assert_eq!(api_base.as_deref(), Some("https://api.deepseek.com"));
-            assert_eq!(api_key_env.as_deref(), Some("DEEPSEEK_API_KEY"));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn login_openai_compatible_accepts_global_provider_and_model_after_subcommand() {
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "login",
-        "--provider",
-        "openai-compatible",
-        "--api-base",
-        "https://api.deepseek.com",
-        "--model",
-        "deepseek-v4-flash",
-    ])
-    .unwrap();
-
-    assert_eq!(args.provider, ProviderChoice::OpenaiCompatible);
-    assert_eq!(args.model.as_deref(), Some("deepseek-v4-flash"));
-    match args.command {
-        Some(Command::Login { api_base, .. }) => {
-            assert_eq!(api_base.as_deref(), Some("https://api.deepseek.com"));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn login_scriptable_flags_parse() {
-    let args = Args::try_parse_from(["horon-agent", "login", "--print-auth-url", "--json"]).unwrap();
-    match args.command {
-        Some(Command::Login {
-            print_auth_url,
-            json,
-            callback_url,
-            auth_code,
-            complete,
-            google,
-            ..
-        }) => {
-            assert!(print_auth_url);
-            assert!(json);
-            assert!(callback_url.is_none());
-            assert!(auth_code.is_none());
-            assert!(!complete);
-            assert!(google.google_access_tier.is_none());
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "login",
-        "--callback-url",
-        "http://localhost:1455/auth/callback?code=x&state=y",
-    ])
-    .unwrap();
-    match args.command {
-        Some(Command::Login { callback_url, .. }) => {
-            assert_eq!(
-                callback_url.as_deref(),
-                Some("http://localhost:1455/auth/callback?code=x&state=y")
-            );
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from(["horon-agent", "login", "--auth-code", "abc123"]).unwrap();
-    match args.command {
-        Some(Command::Login { auth_code, .. }) => {
-            assert_eq!(auth_code.as_deref(), Some("abc123"));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args =
-        Args::try_parse_from(["horon-agent", "login", "--complete", "--google-access-tier", "readonly"]).unwrap();
-    match args.command {
-        Some(Command::Login { complete, google, .. }) => {
-            assert!(complete);
-            assert_eq!(google.google_access_tier, Some(GoogleAccessTierArg::Readonly));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-
-    let args = Args::try_parse_from([
-        "horon-agent",
-        "login",
-        "--provider",
-        "google",
-        "--google-services",
-        "gmail,calendar",
-        "--setup",
-        "--google-client-json",
-        "auto",
-    ])
-    .unwrap();
-    match args.command {
-        Some(Command::Login { google, .. }) => {
-            assert_eq!(google.google_services.as_deref(), Some("gmail,calendar"));
-            assert!(google.setup);
-            assert_eq!(google.google_client_json.as_deref(), Some("auto"));
-        }
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn account_subcommands_parse() {
-    let login = Args::try_parse_from(["horon-agent", "account", "login", "--no-browser"]).expect("account login");
-    assert!(matches!(
-        login.command,
-        Some(Command::Account {
-            action: AccountCommand::Login { no_browser: true }
-        })
-    ));
-
-    let status = Args::try_parse_from(["horon-agent", "account", "status", "--json"]).expect("account status");
-    assert!(matches!(
-        status.command,
-        Some(Command::Account {
-            action: AccountCommand::Status { json: true }
-        })
-    ));
-
-    let manage = Args::try_parse_from(["horon-agent", "account", "manage"]).expect("account manage");
-    assert!(matches!(
-        manage.command,
-        Some(Command::Account {
-            action: AccountCommand::Manage
-        })
-    ));
-
-    let logout = Args::try_parse_from(["horon-agent", "account", "logout"]).expect("account logout");
-    assert!(matches!(
-        logout.command,
-        Some(Command::Account {
-            action: AccountCommand::Logout
-        })
-    ));
-}
-
-#[test]
 fn quiet_global_flag_parses() {
     let args = Args::try_parse_from(["horon-agent", "--quiet", "model", "list"]).unwrap();
     assert!(args.quiet);
@@ -726,16 +199,7 @@ fn quiet_global_flag_parses() {
 fn acp_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "acp"]).unwrap();
     match args.command {
-        Some(Command::Acp { login: false }) => {}
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn acp_login_flag_parses() {
-    let args = Args::try_parse_from(["horon-agent", "acp", "--login"]).unwrap();
-    match args.command {
-        Some(Command::Acp { login: true }) => {}
+        Some(Command::Acp) => {}
         other => panic!("unexpected command: {:?}", other),
     }
 }
@@ -780,32 +244,6 @@ fn usage_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "usage", "--json"]).unwrap();
     match args.command {
         Some(Command::Usage { json }) => assert!(json),
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn auth_status_subcommand_parses() {
-    let args = Args::try_parse_from(["horon-agent", "auth", "status", "--json"]).unwrap();
-    match args.command {
-        Some(Command::Auth(AuthCommand::Status { json })) => assert!(json),
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn auth_doctor_subcommand_parses() {
-    let args = Args::try_parse_from(["horon-agent", "auth", "doctor", "openai", "--validate", "--json"]).unwrap();
-    match args.command {
-        Some(Command::Auth(AuthCommand::Doctor {
-            provider,
-            validate,
-            json,
-        })) => {
-            assert_eq!(provider.as_deref(), Some("openai"));
-            assert!(validate);
-            assert!(json);
-        }
         other => panic!("unexpected command: {:?}", other),
     }
 }
@@ -872,62 +310,6 @@ fn provider_add_subcommand_parses_agent_friendly_flags() {
         }
         other => panic!("unexpected command: {:?}", other),
     }
-}
-
-#[test]
-fn restart_save_subcommand_parses() {
-    let args = Args::try_parse_from(["horon-agent", "restart", "save"]).unwrap();
-    match args.command {
-        Some(Command::Restart {
-            action: RestartCommand::Save { auto_restore: false },
-        }) => {}
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-#[test]
-fn restart_save_auto_restore_flag_parses() {
-    let args = Args::try_parse_from(["horon-agent", "restart", "save", "--auto-restore"]).unwrap();
-    match args.command {
-        Some(Command::Restart {
-            action: RestartCommand::Save { auto_restore: true },
-        }) => {}
-        other => panic!("unexpected command: {:?}", other),
-    }
-}
-
-/// Contract test for the onboarding agent-repair brief (see
-/// `horon-agent-tui::tui::app::onboarding_repair::build_repair_brief`). The brief
-/// tells a coding agent to run these exact commands to diagnose and fix a
-/// failed login. If any flag here stops parsing, the brief would hand the agent
-/// a broken command, so this guards the agent-facing CLI contract.
-#[test]
-fn onboarding_repair_brief_commands_are_valid_cli() {
-    // Diagnose.
-    Args::try_parse_from(["horon-agent", "auth-test", "--provider", "openai", "--json"])
-        .expect("auth-test --provider --json must parse");
-    Args::try_parse_from(["horon-agent", "auth-test", "--all-configured", "--json"])
-        .expect("auth-test --all-configured --json must parse");
-    Args::try_parse_from(["horon-agent", "auth", "doctor"]).expect("auth doctor must parse");
-
-    // Fix: OAuth and API-key logins.
-    Args::try_parse_from(["horon-agent", "login", "--provider", "openai"]).expect("login --provider must parse");
-    Args::try_parse_from(["horon-agent", "login", "--provider", "openai", "--api-key", "k"])
-        .expect("login --provider --api-key must parse");
-
-    // Fix: custom OpenAI-compatible endpoint via provider add + key on stdin.
-    Args::try_parse_from([
-        "horon-agent",
-        "provider",
-        "add",
-        "my-endpoint",
-        "--base-url",
-        "https://api.example.com/v1",
-        "--model",
-        "some-model",
-        "--api-key-stdin",
-    ])
-    .expect("provider add --base-url --model --api-key-stdin must parse");
 }
 
 /// The bridge has two sockets and the global `--socket` already owns one of
