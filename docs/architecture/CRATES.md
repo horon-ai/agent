@@ -71,6 +71,8 @@ OS 기본 동작 때문에 core 크레이트에 `#[cfg(unix)]`, `#[cfg(windows)]
 
 허용 목록에 남는 줄은 기능 자체가 한 OS에만 있는 제품 코드다. Windows 콘솔 처리, macOS 알림, OpenSSH ControlMaster처럼 어댑터로 옮길 시스템 호출이 아니라 그 OS에만 존재하는 표면이다. 남길 때는 왜 어댑터의 기본 요소가 아닌지 사유에 적는다.
 
+지금 목록에 남은 자리는 이런 것들이다. Linux 전용 Claude Code 인수는 `crates/base/src/claude_live.rs`가 pidfd로 대상 프로세스를 지목하고 시그널을 보낸다. 자원 지표는 `crates/app-core/src/perf.rs`가 Linux `/proc`, macOS `sysctlbyname`·`getloadavg`, Windows `GlobalMemoryStatusEx`를 각각 읽고, `crates/app-core/src/overnight.rs`는 Linux의 `statvfs`와 프로세스·세션 훅을 쓴다. Windows 콘솔의 VT 처리(`crates/core/src/console.rs`)와 glibc 할당자 진단(`crates/base/src/process_memory.rs`, 어댑터 안으로 옮긴 `crates/platform-linux/src/allocator.rs`)도 같은 자리에 있다. 어댑터가 나르는 것은 공통 동작이고, 이 줄들은 한 OS에서만 존재하는 측정·진단 수단이므로 제품 `cfg`로 남기고 사유를 `scripts/ci/platform_cfg_allowlist.json`에 적는다.
+
 ### TLS 신뢰 집합
 
 HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루트의 합집합이고, 어느 OS에서도 이 합집합보다 좁지 않다.
