@@ -344,6 +344,10 @@ jobs:
       - name: Install competitor CLIs
         if: ${{ matrix.unit == 'compare' }}
         shell: bash
+        env:
+          # The jcode fallback calls the release API; a token avoids the shared
+          # anonymous rate limit of the runner's IP.
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/perf/install_competitors.sh "$RUNNER_TEMP/bench-tools" "$COMPETITORS" | tee "$RESULTS/competitors.txt"
 
       - name: "Suite: compare (horon vs other agents)"
@@ -361,9 +365,12 @@ jobs:
           else
             echo "baseline_ref not set: measuring one build only" | tee "$RESULTS/baseline-absent.txt"
           fi
+          install_failures=()
+          [[ -f "$RUNNER_TEMP/bench-tools/failures.txt" ]] && install_failures=(--install-failures "$RUNNER_TEMP/bench-tools/failures.txt")
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
             --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args \
+            ${install_failures[@]+"${install_failures[@]}"} \
             --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
