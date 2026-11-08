@@ -7,11 +7,29 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug, Default)]
+/// Observes the store's reads, appends and derived publications.
+///
+/// A probe made with `Default` keeps one receipt per I/O call so a caller can
+/// assert exactly what was read or written. That list only grows, so a probe
+/// held by a long-lived writer must be [`ReadProbe::unrecorded`]: it keeps the
+/// process-wide byte counters and stores no receipts.
+#[derive(Clone, Debug)]
 pub struct ReadProbe {
     reads: Arc<Mutex<Vec<ReadReceipt>>>,
     writes: Arc<Mutex<Vec<ReadReceipt>>>,
     publications: Arc<Mutex<Vec<ReadReceipt>>>,
+    record: bool,
+}
+
+impl Default for ReadProbe {
+    fn default() -> Self {
+        Self {
+            reads: Arc::default(),
+            writes: Arc::default(),
+            publications: Arc::default(),
+            record: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +40,14 @@ pub struct ReadReceipt {
 }
 
 impl ReadProbe {
+    /// A probe that counts bytes but keeps no receipts, for a writer that lives
+    /// as long as its session.
+    pub fn unrecorded() -> Self {
+        Self {
+            record: false,
+            ..Self::default()
+        }
+    }
     pub fn receipts(&self) -> Result<Vec<ReadReceipt>, StoreError> {
         self.reads
             .lock()
@@ -69,6 +95,9 @@ impl ReadProbe {
     /// the write only after the publication succeeded.
     pub(crate) fn note_write(&self, path: &Path, offset: u64, bytes: usize) -> Result<(), StoreError> {
         horon_agent_perf_counters::record_io(0, 0, bytes as u64);
+        if !self.record {
+            return Ok(());
+        }
         self.publications
             .lock()
             .map_err(|_| crate::recovery::corrupt("publication observation lock poisoned"))?
@@ -82,6 +111,9 @@ impl ReadProbe {
 
     fn record_write(&self, path: &Path, offset: u64, bytes: usize) -> Result<(), StoreError> {
         horon_agent_perf_counters::record_io(0, bytes as u64, 0);
+        if !self.record {
+            return Ok(());
+        }
         self.writes
             .lock()
             .map_err(|_| crate::recovery::corrupt("write observation lock poisoned"))?
@@ -131,15 +163,17 @@ impl Read for ObservedFile {
         let count = self.file.read(buffer)?;
         horon_agent_perf_counters::record_io(count as u64, 0, 0);
         horon_agent_perf_counters::record_store_bytes_read(count as u64);
-        self.probe
-            .reads
-            .lock()
-            .map_err(|_| std::io::Error::other("probe poisoned"))?
-            .push(ReadReceipt {
-                path: self.path.clone(),
-                offset: self.offset,
-                bytes: count,
-            });
+        if self.probe.record {
+            self.probe
+                .reads
+                .lock()
+                .map_err(|_| std::io::Error::other("probe poisoned"))?
+                .push(ReadReceipt {
+                    path: self.path.clone(),
+                    offset: self.offset,
+                    bytes: count,
+                });
+        }
         self.offset = self.offset.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
         Ok(count)
     }

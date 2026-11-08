@@ -95,6 +95,37 @@ impl Session {
         };
         let metadata = self.event_metadata()?;
         let mut head = self.event_state.head.clone();
+        // A save that adds no message, no auxiliary value and no metadata edit
+        // beyond its own clock has nothing for the log; the close at the end of a
+        // run is one. Only the local runtime binding (status, pid) can still move,
+        // so that alone is published and the event commit is skipped.
+        if incremental
+            && head.is_some()
+            && self.messages.len() == self.persist_state.messages_len
+            && self.event_state.metadata.as_ref().is_some_and(|committed| {
+                let mut unchanged = metadata.clone();
+                unchanged.updated_at = committed.updated_at;
+                &unchanged == committed
+            })
+            && Some(store::sha256_hex(
+                store::canonical_json(&self.auxiliary_value())?.as_bytes(),
+            )) == self.event_state.auxiliary_digest
+        {
+            if let Some(committed) = &self.event_state.metadata {
+                self.updated_at = committed.updated_at;
+            }
+            let runtime = super::event_wire::LocalRuntime::capture(self);
+            let (runtime_paths, runtime_id) = (paths.clone(), id.clone());
+            writer.call(move |_| {
+                if runtime.publish(&runtime_paths, &runtime_id)? {
+                    event_store::sync_local_state(&runtime_paths, &runtime_id)?;
+                }
+                Ok(())
+            })?;
+            self.event_state.local_binding = Some(super::event_wire::LocalRuntime::capture(self));
+            self.reset_persist_state(true);
+            return Ok(());
+        }
         let origin_paths = paths.clone();
         let origin = writer.call(move |_| super::event_origin::origin(&origin_paths))?;
         let old_graph = if !incremental && current_source.is_some() {

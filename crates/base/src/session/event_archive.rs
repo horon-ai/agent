@@ -50,7 +50,9 @@ impl Session {
         let selected_next = event_id.clone();
         writer.call(move |writer| {
             writer.append(&event)?;
-            event_store::select(&commit_paths, &commit_id, &selected_next, true)?;
+            if event_store::select(&commit_paths, &commit_id, &selected_next, true)? {
+                event_store::sync_local_state(&commit_paths, &commit_id)?;
+            }
             Ok(())
         })?;
         self.event_state.head = Some(event_id);

@@ -24,7 +24,7 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
-| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. |
+| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
 | `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`다. `compare`는 기준 빌드가 있으면 `horon-base` 줄로 같은 작업 안에서 번갈아 잰다. |
 | `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
 | `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
@@ -113,17 +113,21 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | --- | --- |
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
 | `oneshot_ms` | 헤드리스 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
-| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
+| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 | `skill_ms` | 헤드리스 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
 | `mcp_ms` | 헤드리스 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
 | `mcp_ready_ms` | 프로세스 시작부터 도구 목록에 `bench_echo`가 처음 보인 요청까지의 시간(MCP 서버 시작과 도구 등록). 가짜 모델이 그 요청을 본 시각으로 잰다 |
 | `tool_round_trip` | 스킬 본문의 센티널이나 MCP가 돌려준 nonce를 나중 요청에서 실제로 봤을 때만 `true` |
+| `request_offsets_ms` | 실행 기록(JSON)마다 남는, 프로세스 시작부터 각 모델 요청이 도착할 때까지의 시간. 간격으로 기동, 도구 왕복, 종료 구간을 OS마다 나눠 본다 |
+| `thread_names` | 데몬 세션 측정의 각 세션 수마다, 턴 직후 데몬 프로세스의 스레드를 이름별로 센 값(Linux `/proc/<pid>/task/*/comm`). 세션 수에 따라 어느 스레드가 느는지 본다. 다른 OS는 `null` |
+| `live_heap_bytes` | 데몬 세션 측정에서 idle과 턴 직후에 잰, malloc 영역이 실제로 쥐고 있는 바이트(macOS `heap(1)`의 "All zones" 합계). RSS 기울기와 나란히 보면 세션당 증가가 살아 있는 데이터인지 할당자가 붙든 메모리인지 갈린다. 턴 직후 값은 RSS를 잰 뒤에 재고, 다른 OS는 `null` |
+| `log_tail`, `exit_local_time` | horon 실행 기록마다 남는, 이번 실행이 쓴 로그 줄(턴 완료 줄부터 최대 40줄)과 프로세스가 끝난 현지 시각. 마지막 모델 요청부터 종료까지의 시간이 어느 단계에 쓰이는지 OS마다 본다. 다른 도구는 빈 목록 |
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
-세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`를 켠 실행의 시간은 느려지므로 시간 비교에 쓰지 않는다.
+세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세는 데만 쓴다.
 
 ### omp와 omo
 
@@ -287,6 +291,31 @@ gh workflow run loading-ab.yml --ref dev -f base_ref=23007c9b -f head_ref=dev
 ```
 
 `base_ref` 기본값 `23007c9b`는 로딩 카운터가 처음 들어간 커밋이다. 그보다 오래된 커밋은 리포트 `schema_version`이 달라 `--compare`가 비교를 거절하고 잡이 실패한다. `workflow_dispatch` 워크플로이므로 파일이 기본 브랜치(`main`)에 있어야 실행할 수 있다.
+
+## jcode를 이기는 것이 목표다
+
+성능 작업의 방향은 가장 가까운 경쟁 도구인 jcode를 모든 OS의 모든 비교 칸에서 이기는 것이다. AGENTS.md의 고정 요구 3(기준선보다 느려지지 않는다)이 바닥이고, 이 절은 그 위의 목표다.
+
+**재는 곳과 명령.** 측정은 GitHub Actions에서만 한다. 개발 기기는 다른 빌드가 함께 돌아 수치를 믿을 수 없다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=5 -f baseline_ref=dev
+```
+
+같은 잡이 dev 기준 빌드(`horon-base`)와 후보를 함께 빌드해 번갈아 재므로, 변경 전·후와 jcode가 한 러너를 공유한다.
+
+**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
+
+**원인은 측정으로 찾는다.** `request_offsets_ms`로 기동·도구 왕복·종료 구간을 나누고, `log_tail`로 종료 구간의 단계를, `thread_names`로 늘어나는 스레드를, `live_heap_bytes`로 살아 있는 데이터와 할당자 보유분을 가른다. 추측으로 코드를 바꾸지 않는다.
+
+**하지 않는 최적화.**
+
+- 원본(이벤트 로그, 블롭, 로컬 상태 파일, 런타임 저널)의 flush를 빼서 빨라지는 것. 예외는 충돌 뒤에도 잃는 것이 없음을 테스트로 증명한 경우뿐이다(`.catalog.dirty` 표식, [`../protocol/SESSION_STORE.md`](../protocol/SESSION_STORE.md)).
+- 검증 생략, 기본값 약화, 기능 제거로 얻는 속도.
+- 벤치를 알아채는 분기, horon에 유리하게 바꾼 픽스처나 가짜 모델.
+
+이런 이유로 jcode가 앞서는 칸이 남으면 고치지 않고, 그 이유(예: horon이 jcode가 하지 않는 원본 내구성 flush를 한다)와 함께 구조적 차이로 보고한다.
 
 ## 하지 않는 것
 

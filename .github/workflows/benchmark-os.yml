@@ -106,6 +106,13 @@ jobs:
       # only writes below $GITHUB_WORKSPACE. It is a sibling tree with its own
       # target directory, so neither build reuses the other's artifacts.
       BASELINE_DIR: .bench-baseline
+      # The measured binary is built the way release.yml builds the shipped one:
+      # the workspace's [profile.release] is tuned for fast local rebuilds
+      # (opt-level 1, incremental), and the competitors are measured from their
+      # own published release builds. Both horon builds here use these values.
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+      CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v7
         with:

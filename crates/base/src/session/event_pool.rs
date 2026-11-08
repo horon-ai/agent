@@ -185,7 +185,9 @@ fn serve(commands: mpsc::Receiver<Command>) {
                 ready,
             } => match catch_unwind(AssertUnwindSafe(open)) {
                 Ok(Ok(mut writer)) => {
-                    writer.enable_cache(store::ReadProbe::default());
+                    // The writer lives as long as its session, so its probe must
+                    // not keep a receipt per read and write: that list only grows.
+                    writer.enable_cache(store::ReadProbe::unrecorded());
                     sessions.insert(session, SessionWriter { writer, _lease: lease });
                     if let Err(error) = ready.send(Ok(())) {
                         // The opener went away before it could take the writer;

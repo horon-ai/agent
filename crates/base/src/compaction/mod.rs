@@ -390,8 +390,8 @@ impl CompactionManager {
             prior_saving_ratio: None,
             token_history: VecDeque::with_capacity(TOKEN_HISTORY_WINDOW + 1),
             turns_since_last_compact: 0,
-            embedding_history: VecDeque::with_capacity(EMBEDDING_HISTORY_WINDOW + 1),
-            semantic_embed_cache: HashMap::with_capacity(SEMANTIC_EMBED_CACHE_CAPACITY),
+            embedding_history: VecDeque::new(),
+            semantic_embed_cache: HashMap::new(),
             semantic_embed_cache_counter: 0,
         };
         manager.refresh_context_cap();

@@ -104,21 +104,17 @@ fn retry_is_idempotent_and_conflicting_identity_is_rejected() {
 #[test]
 fn injected_commit_failures_never_ack_and_retry_same_bytes() {
     // Given actual filesystem operations; when each durability stage fails; then retry commits once.
-    // Only the flush that actually confirms the marker runs: the directory
-    // entry on Unix, the file itself where a directory flush is a no-op.
-    let mut points = Vec::new();
-    if !horon_agent_platform::directory_sync_is_effective() {
-        points.push(IoPoint::DirtyFileSync);
-    }
-    points.extend([
-        IoPoint::DirtyDirectorySync,
+    // The marker is created before the originals and never flushed, so its
+    // create is the only marker stage a failure can hit.
+    let points = [
+        IoPoint::DirtyCreated,
         IoPoint::LogWrite,
         IoPoint::LogBodyWritten,
         IoPoint::LogDataSync,
         IoPoint::LogFileSync,
         IoPoint::LogDirectorySync,
         IoPoint::LogPublished,
-    ]);
+    ];
     for point in points {
         let (paths, id) = fixture();
         let first = event(None, 0);
@@ -159,12 +155,8 @@ fn oversized_blob_is_published_before_reference() {
     assert_eq!(u64::try_from(bytes.len()).unwrap(), reference.size);
     let trace = seen.lock().unwrap();
     let position = |point| trace.iter().position(|p| *p == point).unwrap();
-    let mut ordered = Vec::new();
-    if !horon_agent_platform::directory_sync_is_effective() {
-        ordered.push(IoPoint::DirtyFileSync);
-    }
-    ordered.extend([
-        IoPoint::DirtyDirectorySync,
+    let ordered = [
+        IoPoint::DirtyCreated,
         IoPoint::BlobWrite,
         IoPoint::BlobFileSync,
         IoPoint::BlobVerified,
@@ -177,7 +169,7 @@ fn oversized_blob_is_published_before_reference() {
         IoPoint::LogFileSync,
         IoPoint::LogDirectorySync,
         IoPoint::LogPublished,
-    ]);
+    ];
     assert!(ordered.windows(2).all(|pair| position(pair[0]) < position(pair[1])));
     println!("BLOB {} {} ORDER {trace:?}", reference.sha256, reference.size);
 }

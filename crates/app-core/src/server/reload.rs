@@ -13,6 +13,22 @@ type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 
 const RELOAD_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Set once this process listens for reload signals, which only a serving
+/// daemon does. A reload replaces this process's image, so only here can a
+/// running command outlive its turn by detaching; a one-shot `run` or any other
+/// client process exits instead of reloading and keeps its children attached.
+static RELOADS_IN_PLACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this process can be replaced by a reload while a turn runs.
+pub(crate) fn process_reloads_in_place() -> bool {
+    RELOADS_IN_PLACE.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Record that this process listens for reload signals.
+pub(crate) fn mark_process_reloads_in_place() {
+    RELOADS_IN_PLACE.store(true, std::sync::atomic::Ordering::Release);
+}
+
 fn prepare_server_exec(cmd: &mut std::process::Command, socket_path: &std::path::Path) {
     // The replacement daemon must own the published socket paths. Unlink them
     // before exec so we never inherit a stale on-disk endpoint through reload.
@@ -60,6 +76,7 @@ pub(super) async fn await_reload_signal(
 ) {
     use std::process::Command as ProcessCommand;
 
+    mark_process_reloads_in_place();
     let mut rx = super::reload_state::reload_signal().1.clone();
     // Treat any signal already sitting in the (process-global) reload channel as
     // already handled: a server should only react to reload signals issued after

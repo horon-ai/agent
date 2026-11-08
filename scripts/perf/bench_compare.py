@@ -49,6 +49,7 @@ A measurement that fails records null plus an error string instead of a zero.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -843,6 +844,7 @@ def _measure_oneshot(
         before = mock.stats()["request_count"]
     except Exception:  # noqa: BLE001
         before = 0
+    log_marks = _log_marks(env)
     started = time.perf_counter()
     started_wall = time.time()
     proc = subprocess.Popen(
@@ -867,12 +869,14 @@ def _measure_oneshot(
         except subprocess.TimeoutExpired:
             stdout, stderr = "", ""
     elapsed_ms = (time.perf_counter() - started) * 1000
+    exit_local_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     peak = sampler.stop()
     sentinel_seen = None
     mcp_ready_ms = None
     via = None
     tools_offered: list[str] = []
     result_excerpt = None
+    request_offsets_ms: list[float] = []
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -900,6 +904,10 @@ def _measure_oneshot(
         # sentinel is missing, this says why (a sandbox refusal, a shell error).
         excerpts = [r["result_excerpt"] for r in requests if r.get("result_excerpt")]
         result_excerpt = excerpts[-1] if excerpts else None
+        # When each model request arrived, in ms from process start. The gaps
+        # split a run into startup, tool round trip and shutdown without a
+        # profiler, on every OS the bench runs on.
+        request_offsets_ms = [round((r["ts"] - started_wall) * 1000, 2) for r in requests if "ts" in r]
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -917,6 +925,7 @@ def _measure_oneshot(
                 syscall_counts = parse_strace_summary(fh.read())
         except OSError:
             syscall_counts = None
+    log_tail = _log_tail_since(env, log_marks)
     return {
         "ms": None if timed_out else round(elapsed_ms, 2),
         "peak_rss_bytes": peak or None,
@@ -932,7 +941,47 @@ def _measure_oneshot(
         "via": via,
         "tools_offered": tools_offered,
         "result_excerpt": result_excerpt,
+        "request_offsets_ms": request_offsets_ms,
+        "log_tail": log_tail,
+        "exit_local_time": exit_local_time,
     }
+
+
+def _horon_log_dir(env: dict) -> Path | None:
+    home = env.get("HORON_AGENT_HOME")
+    return Path(home, "logs") if home else None
+
+
+def _log_marks(env: dict) -> dict[str, int]:
+    """Size of each horon log file before a run, so only its own lines are read."""
+    directory = _horon_log_dir(env)
+    if directory is None or not directory.is_dir():
+        return {}
+    return {entry.name: entry.stat().st_size for entry in directory.iterdir() if entry.is_file()}
+
+
+def _log_tail_since(env: dict, marks: dict[str, int], limit: int = 40) -> list[str]:
+    """horon's own log lines from the end of its turn to exit, for the phase split.
+
+    The lines carry the process's local timestamps; beside ``exit_local_time``
+    they show where the time between the last model request and exit goes, on
+    every OS, without a profiler.
+    """
+    directory = _horon_log_dir(env)
+    if directory is None or not directory.is_dir():
+        return []
+    lines: list[str] = []
+    for entry in sorted(directory.iterdir()):
+        if not entry.is_file():
+            continue
+        try:
+            with open(entry, "rb") as fh:
+                fh.seek(marks.get(entry.name, 0))
+                lines.extend(fh.read().decode("utf-8", "replace").splitlines())
+        except OSError:
+            continue
+    start = next((i for i, line in enumerate(lines) if "Turn complete" in line), max(0, len(lines) - limit))
+    return [line[:200] for line in lines[start:start + limit]]
 
 
 def measure_version(argv: list[str], env: dict, runs: int) -> dict:
@@ -1188,6 +1237,7 @@ def measure_daemon_sessions(
                 "phase": "idle",
                 "rss_bytes": idle_rss,
                 "pss_bytes": bc.process_tree_pss_bytes(daemon.proc.pid),
+                "live_heap_bytes": live_heap_bytes(daemon.proc.pid),
             }
         )
         turn_times: list[list[float]] = []
@@ -1216,6 +1266,8 @@ def measure_daemon_sessions(
         counters, counter_error = read_process_counters(probe)
         if samples:
             samples[-1].update(counters)
+            # Taken after the RSS sample above so the inspection cannot move it.
+            samples[-1]["live_heap_bytes"] = live_heap_bytes(daemon.proc.pid)
         return {
             "sessions": session_count,
             "samples": samples,
@@ -1224,12 +1276,52 @@ def measure_daemon_sessions(
             "sessions_created": len(sessions),
             "counters": counters,
             "counter_error": counter_error,
+            "thread_names": thread_name_counts(daemon.proc.pid),
         }
     finally:
         for session in sessions:
             del session
         if daemon is not None:
             daemon.close()
+
+
+_HEAP_TOTAL = re.compile(r"All zones: \d+ nodes \((\d+) bytes\)")
+
+
+def live_heap_bytes(pid: int) -> int | None:
+    """Bytes the process's malloc zones hold live, on macOS only.
+
+    Beside the RSS sample this separates live data from memory the allocator
+    keeps after it was freed. ``heap(1)`` ships with macOS; elsewhere, or when
+    the tool cannot inspect the process, the value is ``None``.
+    """
+    if sys.platform != "darwin" or shutil.which("heap") is None:
+        return None
+    try:
+        out = subprocess.run(["heap", str(pid)], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _HEAP_TOTAL.search(out)
+    return int(match.group(1)) if match else None
+
+
+def thread_name_counts(pid: int) -> dict[str, int] | None:
+    """Live threads of ``pid`` grouped by name, on Linux only.
+
+    A per-session thread count says that threads grow with sessions; the names
+    say which pool or worker grows, without a profiler on the runner.
+    """
+    task_dir = Path(f"/proc/{pid}/task")
+    if not task_dir.is_dir():
+        return None
+    counts: dict[str, int] = {}
+    for task in task_dir.iterdir():
+        try:
+            name = (task / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def horon_daemon_argv(binary: str, socket_path: str) -> list[str]:
@@ -2327,6 +2419,8 @@ def summarize_sessions(points: list[dict], turns: int) -> dict:
         "each_additional_post_turn_rss_bytes": slope_series(points, "post_turn_rss_bytes"),
         "first_session_idle_pss_bytes": plan_first_session(points, "idle_pss_bytes"),
         "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
+        "each_additional_idle_live_heap_bytes": slope_series(points, "idle_live_heap_bytes"),
+        "each_additional_post_turn_live_heap_bytes": slope_series(points, "post_turn_live_heap_bytes"),
         "first_session_threads": plan_first_session(points, "thread_count"),
         "each_additional_threads": slope_series(points, "thread_count"),
         "first_session_fds": plan_first_session(points, "fd_count"),
@@ -2335,19 +2429,24 @@ def summarize_sessions(points: list[dict], turns: int) -> dict:
     }
 
 
-def summarize_oneshot(runs: list[dict]) -> dict:
+def summarize_oneshot(runs: list[dict], syscall_runs: list[dict] | None = None) -> dict:
     """Collapse repeated one-shot runs into one comparable row.
 
     ``ms`` is the median so a single slow first process (page cache, JIT warm
     up) does not set the headline number; the individual runs stay in the JSON so
     a spread is visible rather than hidden behind one statistic.
+
+    ``syscall_runs`` are the separate strace-counted runs. Their times are not
+    used: a tracer stops the tool on every system call, so a traced run's wall
+    time grows with the tool's call count rather than with the work it does.
     """
     times = [run["ms"] for run in runs if run.get("ms") is not None]
     peaks = [run["peak_rss_bytes"] for run in runs if run.get("peak_rss_bytes")]
     summary = bc.summarize(times)
     errors = [run["error"] for run in runs if run.get("error")]
     roundtrips = [run.get("tool_roundtrip") for run in runs if run.get("tool_roundtrip") is not None]
-    syscall_totals = [run["fsync_calls"] for run in runs if run.get("fsync_calls") is not None]
+    counted = runs if syscall_runs is None else syscall_runs
+    syscall_totals = [run["fsync_calls"] for run in counted if run.get("fsync_calls") is not None]
     syscall_summary = bc.summarize(syscall_totals)
     return {
         "ms": summary["median"] if summary else None,
@@ -2361,6 +2460,7 @@ def summarize_oneshot(runs: list[dict]) -> dict:
         "errors": errors,
         "error": errors[0] if errors else None,
         "runs": runs,
+        "syscall_runs": syscall_runs or [],
     }
 
 
@@ -2483,6 +2583,8 @@ def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd:
         "idle_pss_bytes": (idle or {}).get("pss_bytes"),
         "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
         "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
+        "idle_live_heap_bytes": (idle or {}).get("live_heap_bytes"),
+        "post_turn_live_heap_bytes": (post or {}).get("live_heap_bytes"),
         "thread_count": (post or {}).get("thread_count"),
         "fd_count": (post or {}).get("fd_count"),
         "counter_error": measurement.get("counter_error"),
@@ -2490,6 +2592,7 @@ def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd:
         "turn_ms": measurement.get("turn_ms"),
         "errors": errors,
         "sessions_created": created,
+        "thread_names": measurement.get("thread_names"),
     }
 
 
@@ -2543,23 +2646,30 @@ def measure_tools(
 
         if "oneshot" in selected:
             oneshot_runs_by_row: list[list[dict]] = [[] for _ in runners]
-            for _ in range(max(1, oneshot_runs)):
-                for index, runner in enumerate(runners):
-                    if results[index]["error"]:
-                        continue
-                    root, cwd = roots[runner.name]
-                    try:
-                        oneshot_runs_by_row[index].append(
-                            runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls)
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        oneshot_runs_by_row[index].append(
-                            {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
-                             "error": str(exc)[:300]}
-                        )
+            syscall_runs_by_row: list[list[dict]] = [[] for _ in runners]
+            # The timed runs never carry a tracer; with ``syscalls`` the same
+            # number of extra runs is made under strace only to count fsync.
+            passes = [(oneshot_runs_by_row, False)]
+            if syscalls:
+                passes.append((syscall_runs_by_row, True))
+            for by_row, traced in passes:
+                for _ in range(max(1, oneshot_runs)):
+                    for index, runner in enumerate(runners):
+                        if results[index]["error"]:
+                            continue
+                        root, cwd = roots[runner.name]
+                        try:
+                            by_row[index].append(runner.oneshot(mock, root, cwd, timeout, syscalls=traced))
+                        except Exception as exc:  # noqa: BLE001
+                            by_row[index].append(
+                                {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
+                                 "error": str(exc)[:300]}
+                            )
             for index, result in enumerate(results):
                 if not result["error"]:
-                    result["oneshot"] = summarize_oneshot(oneshot_runs_by_row[index])
+                    result["oneshot"] = summarize_oneshot(
+                        oneshot_runs_by_row[index], syscall_runs_by_row[index] if syscalls else None
+                    )
 
         if "sessions" in selected:
             points_by_row: list[list[dict]] = [[] for _ in runners]

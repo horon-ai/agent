@@ -30,6 +30,9 @@ const DEFAULT_TIMEOUT_MS: u64 = 120000;
 const STDIN_POLL_INTERVAL_MS: u64 = 500;
 const STALE_CWD_CAPTURE_SECONDS: u64 = 300;
 const STDIN_INITIAL_DELAY_MS: u64 = 300;
+/// First and longest wait between exit checks of a detached foreground command.
+const DETACHED_POLL_MIN: Duration = Duration::from_millis(2);
+const DETACHED_POLL_MAX: Duration = Duration::from_millis(100);
 /// Longest accepted `name` for a named background service.
 const SERVICE_NAME_MAX_LEN: usize = 48;
 /// How much of a service's output file a readiness `log` check inspects.
@@ -1099,6 +1102,8 @@ mod utf8_truncation_tests {
 
     #[test]
     fn format_command_output_keeps_head_and_tail_of_long_output() {
+        // The minimizer test flips a process-wide override under this lock.
+        let _guard = crate::storage::lock_test_env();
         let input = format!("{}é", "a".repeat(29_999));
         let output = format_command_output("test-session", "cargo build", input, None);
         assert!(output.starts_with(&"a".repeat(12_000)), "the head keeps its 40% budget");
@@ -2086,9 +2091,12 @@ impl BashTool {
     /// it runs in this process; the detached path is for unattended turns, whose
     /// command outlives the reload that ends them. ACP sessions are checked
     /// separately because a v2 connection registers no session event sender. A
-    /// platform that cannot replace its image has no reload to survive.
+    /// platform that cannot replace its image has no reload to survive, and
+    /// neither has a process that never listens for one: a one-shot `run` exits
+    /// when its turn ends, so its command stays a child it can wait on and stop.
     fn supports_reload_persistence(&self, ctx: &ToolContext) -> bool {
         horon_agent_platform::process::supports_process_replacement()
+            && crate::server::reload::process_reloads_in_place()
             && matches!(ctx.execution_mode, crate::tool::ToolExecutionMode::AgentTurn)
             && ctx.stdin_request_tx.is_none()
             && !crate::server::session_has_attached_client(&ctx.session_id)
@@ -2127,6 +2135,11 @@ impl BashTool {
         let mut child = horon_agent_platform::spawn_detached(&mut cmd)?;
         let pid = child.id();
         let shutdown_signal = ctx.graceful_shutdown_signal.clone();
+        // The detached child is checked by polling, because its exit has to be
+        // seen without holding a handle a reload would lose. Most commands end
+        // within milliseconds, so the interval starts short and doubles up to
+        // the old fixed 100 ms instead of making every quick command wait it out.
+        let mut poll_interval = DETACHED_POLL_MIN;
 
         loop {
             if let Some(status) = child.try_wait()? {
@@ -2235,7 +2248,8 @@ impl BashTool {
                     })));
             }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(poll_interval).await;
+            poll_interval = (poll_interval * 2).min(DETACHED_POLL_MAX);
         }
     }
 
