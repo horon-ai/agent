@@ -34,7 +34,7 @@ enum Disposition {
     ClientInternal,
     /// A real gap. Worth exposing, not yet done. Every entry needs a reason
     /// that says what a client cannot build without it.
-    #[allow(dead_code)] // Empty today; the ledger keeps the slot for future gaps.
+    #[allow(dead_code)] // The reason is for reviewers; no code reads it.
     Gap(&'static str),
 }
 
@@ -50,7 +50,19 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("AskResponse", Covered),
     ("BackgroundTool", Covered),
     ("Cancel", Covered),
+    (
+        "CancelBackgroundTerminal",
+        Gap("stop one background shell without ending the session or its turn"),
+    ),
     ("CancelSoftInterrupts", Covered),
+    (
+        "CancelToolCall",
+        Gap("stop one running tool call while the turn continues"),
+    ),
+    (
+        "CancelTurn",
+        Gap("cancel only the run the client saw start, never a turn that replaced it"),
+    ),
     ("Clear", Covered),
     // The ACP adapter's own reply channel for questions it renders itself.
     ("ClientResponse", ClientInternal),
@@ -67,6 +79,10 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("GetSnapshot", Covered),
     // Create/attach session bootstrap requests state through the API bridge.
     ("GetState", Covered),
+    (
+        "ListBackgroundWork",
+        Gap("list the session's running background work after attaching"),
+    ),
     ("Message", Covered),
     ("NotifyAuthChanged", Covered),
     ("PermissionDecision", Covered),
