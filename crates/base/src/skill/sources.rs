@@ -21,7 +21,9 @@
 //! warning and contributes nothing, so one unreadable directory never hides the
 //! skills of every other source.
 
+use super::body::FileStamp;
 use super::frontmatter::ReadStats;
+use super::overlay_cache::Reused;
 use super::{Skill, SkillRegistry, collision};
 use std::path::{Path, PathBuf};
 
@@ -277,17 +279,50 @@ struct Scanned {
 /// depend on which directory happened to be read first.
 pub(crate) fn load_global(registry: &mut SkillRegistry) -> usize {
     log_disabled_sources_once();
-    load_level(registry, Level::User, None)
+    load_level(registry, Level::User, None, None).0
 }
 
 /// Load the project rows of [`SOURCES`] for `working_dir` into `registry`.
 pub(crate) fn load_project(registry: &mut SkillRegistry, working_dir: Option<&Path>) -> usize {
-    load_level(registry, Level::Project, working_dir)
+    load_level(registry, Level::Project, working_dir, None).0
+}
+
+/// Load the project rows like [`load_project`], taking an unchanged SKILL.md
+/// from `reuse` instead of reading it again.
+///
+/// Returns every skill the scan produced, before collision renaming, so the
+/// caller can offer them for reuse on the next rebuild.
+pub(super) fn load_project_reusing(
+    registry: &mut SkillRegistry,
+    working_dir: Option<&Path>,
+    reuse: &Reused,
+) -> Vec<Skill> {
+    load_level(registry, Level::Project, working_dir, Some(reuse)).1
+}
+
+/// The directories the project rows read for `working_dir`, in table order.
+pub(super) fn project_source_dirs(working_dir: Option<&Path>) -> Vec<PathBuf> {
+    let switches = Switches::current();
+    SOURCES
+        .iter()
+        .filter(|row| row.level == Level::Project && switches.is_on(row.enable))
+        .flat_map(|row| {
+            ResolvedSource::new(row, working_dir)
+                .entries
+                .into_iter()
+                .map(|(path, _)| path)
+        })
+        .collect()
 }
 
 /// Read the enabled rows of one level concurrently, then merge them in
 /// priority order.
-fn load_level(registry: &mut SkillRegistry, level: Level, working_dir: Option<&Path>) -> usize {
+fn load_level(
+    registry: &mut SkillRegistry,
+    level: Level,
+    working_dir: Option<&Path>,
+    reuse: Option<&Reused>,
+) -> (usize, Vec<Skill>) {
     let switches = Switches::current();
     let mut sources: Vec<ResolvedSource> = SOURCES
         .iter()
@@ -300,12 +335,15 @@ fn load_level(registry: &mut SkillRegistry, level: Level, working_dir: Option<&P
     // keeps a reordered table from silently changing which skill wins.
     sources.sort_by(|a, b| b.row.priority.cmp(&a.row.priority));
 
-    let scanned = read_in_parallel(&sources);
+    let scanned = read_in_parallel(&sources, reuse);
     // The sources are read on worker threads, so each thread's own count is not
     // the caller's: add what they report here, once, on the calling thread.
     #[cfg(test)]
-    for _ in 0..scanned.iter().map(|scanned| scanned.stats.dirs).sum::<u64>() {
-        super::test_support::record_dir_scan();
+    {
+        for _ in 0..scanned.iter().map(|scanned| scanned.stats.dirs).sum::<u64>() {
+            super::test_support::record_dir_scan();
+        }
+        super::test_support::record_file_reads(scanned.iter().map(|scanned| scanned.stats.files).sum());
     }
 
     // One entry per name per load: sources are read in priority order, so the
@@ -316,13 +354,17 @@ fn load_level(registry: &mut SkillRegistry, level: Level, working_dir: Option<&P
     // because a registry that already holds the name is a different level of the
     // same skill: the project overlay is composed over the globals and wins.
     let candidates: Vec<collision::Candidate> = scanned.into_iter().flat_map(|scanned| scanned.candidates).collect();
+    let parsed = match reuse {
+        Some(_) => candidates.iter().map(|candidate| candidate.skill.clone()).collect(),
+        None => Vec::new(),
+    };
     let resolved = collision::resolve(candidates);
     let added = resolved.skills.len();
     for skill in resolved.skills {
         registry.insert_skill(skill);
     }
     registry.record_collision_warnings(resolved.warnings);
-    added
+    (added, parsed)
 }
 
 /// Read every resolved source at the same time.
@@ -330,11 +372,11 @@ fn load_level(registry: &mut SkillRegistry, level: Level, working_dir: Option<&P
 /// A source that panics is dropped with a warning instead of taking the caller
 /// down with it; the remaining sources are still merged. Results come back in
 /// the same order as `sources`, so the merge order is the table order.
-fn read_in_parallel(sources: &[ResolvedSource]) -> Vec<Scanned> {
+fn read_in_parallel(sources: &[ResolvedSource], reuse: Option<&Reused>) -> Vec<Scanned> {
     std::thread::scope(|scope| {
         let handles: Vec<_> = sources
             .iter()
-            .map(|source| (source, scope.spawn(move || scan_source(source))))
+            .map(|source| (source, scope.spawn(move || scan_source(source, reuse))))
             .collect();
         handles
             .into_iter()
@@ -352,11 +394,11 @@ fn read_in_parallel(sources: &[ResolvedSource]) -> Vec<Scanned> {
     })
 }
 
-fn scan_source(source: &ResolvedSource) -> Scanned {
+fn scan_source(source: &ResolvedSource, reuse: Option<&Reused>) -> Scanned {
     let mut scanned = Scanned::default();
     for (path, kind) in &source.entries {
         let managed = *kind == EntryKind::Managed;
-        let (skills, stats) = scan_entry(path, *kind);
+        let (skills, stats) = scan_entry(path, *kind, reuse);
         for skill in skills {
             let namespace = collision::namespace_for(&skill.path, source.row.id);
             scanned.candidates.push(collision::Candidate {
@@ -374,9 +416,9 @@ fn scan_source(source: &ResolvedSource) -> Scanned {
     scanned
 }
 
-fn scan_entry(path: &Path, kind: EntryKind) -> (Vec<Skill>, ReadStats) {
+fn scan_entry(path: &Path, kind: EntryKind, reuse: Option<&Reused>) -> (Vec<Skill>, ReadStats) {
     match kind {
-        EntryKind::SkillsDir => scan_skills_dir(path),
+        EntryKind::SkillsDir => scan_skills_dir_reusing(path, reuse),
         EntryKind::ClaudePlugins => scan_plugins_root(path),
         EntryKind::Managed => scan_managed_dir(path),
     }
@@ -388,6 +430,12 @@ fn scan_entry(path: &Path, kind: EntryKind) -> (Vec<Skill>, ReadStats) {
 /// cannot be enumerated contributes nothing and says so once: one unreadable
 /// collection must not hide every other collection's skills.
 pub(super) fn scan_skills_dir(dir: &Path) -> (Vec<Skill>, ReadStats) {
+    scan_skills_dir_reusing(dir, None)
+}
+
+/// [`scan_skills_dir`], serving a SKILL.md whose stamp still matches `reuse`
+/// from that entry instead of reading the file again.
+fn scan_skills_dir_reusing(dir: &Path, reuse: Option<&Reused>) -> (Vec<Skill>, ReadStats) {
     let mut stats = ReadStats::default();
     if !dir.is_dir() {
         return (Vec::new(), stats);
@@ -416,6 +464,10 @@ pub(super) fn scan_skills_dir(dir: &Path) -> (Vec<Skill>, ReadStats) {
         if !skill_file.exists() {
             continue;
         }
+        if let Some(skill) = reuse.and_then(|reuse| reused_skill(reuse, &skill_file)) {
+            skills.push(skill);
+            continue;
+        }
         // The parse helper already logs the file it could not read.
         if let Ok((skill, read)) = SkillRegistry::parse_skill_with_stats(&skill_file) {
             stats.add(read);
@@ -423,6 +475,16 @@ pub(super) fn scan_skills_dir(dir: &Path) -> (Vec<Skill>, ReadStats) {
         }
     }
     (skills, stats)
+}
+
+/// The parsed skill `reuse` holds for `skill_file`, when the file still carries
+/// the stamp it was parsed under.
+fn reused_skill(reuse: &Reused, skill_file: &Path) -> Option<Skill> {
+    let (stamp, skill) = reuse.get(skill_file)?;
+    match FileStamp::capture(skill_file) {
+        Ok(current) if current == *stamp => Some(skill.clone()),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 /// Read the model-managed directory.

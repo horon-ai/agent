@@ -266,10 +266,11 @@ impl SkillTool {
     }
 
     async fn reload_all_skills(&self, working_dir: Option<&std::path::Path>) -> Result<ToolOutput> {
-        // Reload the shared GLOBAL registry only; the project-local overlay is
-        // session-scoped and re-read from disk on every access, so reloading
-        // it here would leak this session's project skills to other sessions
-        // (issue #457).
+        // Reload the shared GLOBAL registry; the project-local overlay is
+        // session-scoped, so it is only dropped from the per-workspace cache and
+        // rescanned for this session. Reloading it into the shared registry
+        // would leak this session's project skills to other sessions (#457).
+        SkillRegistry::forget_project_overlay(working_dir);
         let reloaded = {
             let mut registry = self.registry.write().await;
             registry.reload_global()
@@ -277,7 +278,12 @@ impl SkillTool {
 
         match reloaded {
             Ok(global_count) => {
-                let effective = self.effective_registry(working_dir).await;
+                // The request scope pinned the overlay from before the reload,
+                // so the effective count is composed from a fresh scan.
+                let effective = {
+                    let global = self.registry.read().await;
+                    SkillRegistry::compose_overlay(&global, SkillRegistry::load_project_overlay(working_dir)?)
+                };
                 let skills = effective.list();
                 let mut output = format!(
                     "Reloaded {} global skills ({} effective for this session)\n\n",

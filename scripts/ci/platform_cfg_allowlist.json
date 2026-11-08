@@ -201,8 +201,8 @@
       "reason": "the streaming guard's macOS test reads `pmset -g assertions` to observe the real IOKit assertion the macOS adapter creates."
     },
     "crates/base/src/skill.rs": {
-      "count": 1,
-      "reason": "the reload test repoints a skill directory symlink to prove the next load sees the new target, which needs std::os::unix::fs::symlink."
+      "count": 2,
+      "reason": "the reload test repoints a skill directory symlink to prove the next load sees the new target, which needs std::os::unix::fs::symlink; the request-freshness test restores a same-size file's mtime and relies on the unix ctime to see the edit, a field Windows metadata does not carry."
     },
     "crates/base/src/skill/body.rs": {
       "count": 11,
@@ -211,6 +211,10 @@
     "crates/base/src/skill/frontmatter_tests.rs": {
       "count": 1,
       "reason": "tests restore a file's mtime after a same-size body edit to prove ctime detects it, which needs the unix timestamp fields; the Windows limitation of that guarantee is documented in the plan."
+    },
+    "crates/base/src/skill/overlay_cache_tests.rs": {
+      "count": 2,
+      "reason": "the overlay cache tests restore a same-size SKILL.md's mtime and repoint a symlink, proving the unix ctime and inode catch both; Windows metadata has neither field and std::os::unix::fs::symlink is unix-only."
     },
     "crates/base/src/skill/sources_tests.rs": {
       "count": 1,

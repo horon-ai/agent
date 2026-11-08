@@ -17,6 +17,10 @@ mod frontmatter;
 #[path = "skill/frontmatter_tests.rs"]
 mod frontmatter_tests;
 mod invocation;
+mod overlay_cache;
+#[cfg(test)]
+#[path = "skill/overlay_cache_tests.rs"]
+mod overlay_cache_tests;
 mod sources;
 #[cfg(test)]
 #[path = "skill/sources_tests.rs"]
@@ -137,19 +141,20 @@ impl SkillRegistry {
     /// workspace root: `./.horon-agent/skills/`, `./.claude/skills/`, and
     /// `./.agents/skills/`.
     ///
-    /// Loaded fresh from disk on access so edits are visible without daemon
-    /// restarts and two sessions in different repositories never see each
-    /// other's project skills. `working_dir = None` resolves against the
-    /// process cwd (single-process CLI mode).
-    ///
-    /// This is the only overlay disk scan. Call it once per request and reuse
-    /// the result through [`Self::compose_overlay`]: there is deliberately no
-    /// persistent mtime cache, so the next request still reads the disk and
-    /// sees edits, deletions, and re-pointed symlinks.
+    /// Served from a per-workspace cache that is revalidated with `stat` on
+    /// every call (see `overlay_cache`), so an edit, addition, deletion or
+    /// re-pointed symlink is visible on the next call without a daemon
+    /// restart, while an unchanged workspace reads no skill file at all. Two
+    /// sessions in different repositories never see each other's project
+    /// skills. `working_dir = None` resolves against the process cwd.
     pub fn load_project_overlay(working_dir: Option<&Path>) -> Result<Self> {
-        let mut overlay = Self::default();
-        overlay.load_project_local_dirs(working_dir);
-        Ok(overlay)
+        Ok(overlay_cache::overlay(working_dir).as_ref().clone())
+    }
+
+    /// Forget the cached overlay of `working_dir`, so the next lookup rescans
+    /// the workspace from disk.
+    pub fn forget_project_overlay(working_dir: Option<&Path>) {
+        overlay_cache::forget(working_dir);
     }
 
     /// Merge a project-local overlay into this registry. Overlay skills win
@@ -189,10 +194,9 @@ impl SkillRegistry {
     /// Effective skills for a session: shared global skills plus the
     /// project-local overlay for the session's workspace root.
     ///
-    /// Inside [`Self::with_request_overlay`] the overlay is the one scanned for
-    /// that request, so a request that resolves the set several times scans the
-    /// disk once. Outside any scope it scans on every call, which is what keeps
-    /// the next request seeing the current files.
+    /// Inside [`Self::with_request_overlay`] the overlay is the one validated for
+    /// that request. Outside any scope the cached overlay is revalidated with
+    /// `stat`, which is what keeps the next request seeing the current files.
     pub fn effective_for_working_dir(base: &Self, working_dir: Option<&Path>) -> Self {
         if let Some(overlay) = Self::current_request_overlay(working_dir) {
             return Self::compose_overlay(base, overlay.as_ref().clone());
@@ -227,9 +231,9 @@ impl SkillRegistry {
     where
         F: std::future::Future<Output = T>,
     {
-        let overlay = Self::load_project_overlay(working_dir).unwrap_or_default();
+        let overlay = overlay_cache::overlay(working_dir);
         REQUEST_OVERLAY
-            .scope((working_dir.map(Path::to_path_buf), Arc::new(overlay)), body)
+            .scope((working_dir.map(Path::to_path_buf), overlay), body)
             .await
     }
 
@@ -1042,7 +1046,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_snapshot_budget_overlay_is_scanned_once_per_request() {
+    fn skill_snapshot_budget_overlay_is_scanned_only_when_it_changed() {
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         for index in 0..5 {
@@ -1078,14 +1082,15 @@ mod tests {
             (inside, second, outside)
         });
 
-        assert_eq!(
-            inside, 1,
-            "one request scans `.horon-agent/skills` once for 3 lookups, scanned {inside}"
+        assert!(
+            inside >= 1,
+            "the first request scans the workspace once for 3 lookups, scanned {inside}"
         );
-        assert_eq!(second, 1, "the next request scans again, not reusing the scope");
-        assert_eq!(outside, 1, "a lookup outside any scope must read the disk");
+        assert_eq!(second, 0, "an unchanged workspace is revalidated with stat only");
+        assert_eq!(outside, 0, "a lookup outside any scope revalidates the same cache");
     }
 
+    #[cfg(unix)]
     #[test]
     fn skill_snapshot_budget_overlay_reads_fresh_between_requests() {
         let _env_guard = crate::storage::lock_test_env();

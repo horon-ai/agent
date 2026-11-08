@@ -26,6 +26,9 @@ thread_local! {
     /// nothing else runs. Discovery also records each scan here, which gives a
     /// test its own measurement no sibling test can contaminate.
     static DIR_SCANS: Cell<u64> = const { Cell::new(0) };
+    /// SKILL.md files discovery read for this test thread, kept for the same
+    /// reason as [`DIR_SCANS`].
+    static FILE_READS: Cell<u64> = const { Cell::new(0) };
 }
 
 pub(crate) fn record_dir_scan() {
@@ -34,6 +37,14 @@ pub(crate) fn record_dir_scan() {
 
 pub(crate) fn dir_scans() -> u64 {
     DIR_SCANS.with(Cell::get)
+}
+
+pub(crate) fn record_file_reads(files: u64) {
+    FILE_READS.with(|reads| reads.set(reads.get() + files));
+}
+
+pub(crate) fn file_reads() -> u64 {
+    FILE_READS.with(Cell::get)
 }
 
 /// Root that keeps the skill files written by [`test_skill`] alive for the whole
