@@ -975,6 +975,9 @@ jobs:
 
       - name: Install pinned justrust
         shell: bash
+        env:
+          # Only for the release API fallback when the download URL fails.
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci/install_justrust.sh
 
       - name: Check full Windows ARM64 release configuration
