@@ -12,6 +12,7 @@
 //! [`ForegroundTracker`] that decides every `state_update`.
 
 use super::super::*;
+use super::background::{self, BackgroundSet, REMOVAL_DEFER};
 use super::foreground::ForegroundTracker;
 use super::mapper::V2Mapper;
 use super::replay::Position;
@@ -78,6 +79,9 @@ pub(crate) struct Resumed {
     /// Stream events the attach read after its `Done`, in daemon order. They
     /// are mapped after the snapshot, whose run they belong to or follow.
     pub(crate) leftovers: Vec<ServerEvent>,
+    /// IS-4: the background work the daemon reports running, listed before
+    /// the replay is written so the replay keeps listed calls open.
+    pub(crate) background: Vec<crate::protocol::BackgroundWorkItem>,
 }
 
 /// One `session/prompt` waiting for its insertion.
@@ -148,6 +152,8 @@ impl UserActions {
 /// the stream task that owns both.
 pub(crate) struct V2Session {
     pub(crate) tracker: StdMutex<ForegroundTracker>,
+    /// IS-4: the background work this session lists on every `state_update`.
+    background: StdMutex<BackgroundSet>,
     pending: StdMutex<HashMap<u64, PendingPrompt>>,
     /// `withdraw_message` requests by request id, answered by the stream task.
     withdraws: StdMutex<HashMap<u64, WithdrawWaiter>>,
@@ -188,6 +194,7 @@ impl V2Session {
         let (control, control_rx) = mpsc::unbounded_channel();
         Self {
             tracker: StdMutex::default(),
+            background: StdMutex::default(),
             pending: StdMutex::default(),
             withdraws: StdMutex::default(),
             submit_gate: Mutex::new(()),
@@ -204,6 +211,12 @@ impl V2Session {
 
     pub(crate) fn tracker(&self) -> std::sync::MutexGuard<'_, ForegroundTracker> {
         self.tracker.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn background(&self) -> std::sync::MutexGuard<'_, BackgroundSet> {
+        self.background
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn lock_pending(&self) -> std::sync::MutexGuard<'_, HashMap<u64, PendingPrompt>> {
@@ -400,6 +413,7 @@ impl AcpRuntime {
             session_id: session.session_id.clone(),
             run: None,
             outside: None,
+            removal_due: StdMutex::new(None),
         };
         let task = tokio::spawn(stream.run(control, events));
         *v2.task.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
@@ -423,11 +437,25 @@ struct V2Stream {
     /// The mapper of events outside any reported run, kept for the session so
     /// its compaction ids never repeat.
     outside: Option<V2Mapper>,
+    /// IS-4: a removal made while idle, not yet reported. Its snapshot goes
+    /// out at this deadline unless a state update (a follow-up turn's
+    /// `running`) carries the removal first.
+    removal_due: StdMutex<Option<tokio::time::Instant>>,
 }
 
 impl V2Stream {
     async fn run(mut self, mut control: mpsc::UnboundedReceiver<Control>, mut events: mpsc::UnboundedReceiver<Routed>) {
         loop {
+            let removal_due = *self
+                .removal_due
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let removal = async move {
+                match removal_due {
+                    Some(due) => tokio::time::sleep_until(due).await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 biased;
                 message = control.recv() => {
@@ -452,11 +480,28 @@ impl V2Stream {
                         return;
                     }
                 },
+                () = removal => {
+                    let state = self.v2.tracker().current_state();
+                    self.write_all(vec![state]).await;
+                }
             }
         }
     }
 
-    async fn write_all(&self, updates: Vec<Value>) {
+    /// Write `updates` in order. Every `state_update` carries the session's
+    /// current background list, and writing one reports any deferred removal.
+    async fn write_all(&self, mut updates: Vec<Value>) {
+        {
+            let set = self.v2.background();
+            for update in &mut updates {
+                if background::stamp(update, &set) {
+                    *self
+                        .removal_due
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
+            }
+        }
         for update in updates {
             if let Err(err) = self.runtime.write_v2_update(&self.session_id, update).await {
                 crate::logging::warn(&format!(
@@ -491,17 +536,29 @@ impl V2Stream {
         }
     }
 
-    /// IS-5: replay and session info, then one state taken from the attach
-    /// snapshot (or the tracker of a session already active here), then what
-    /// the attach read after its `Done`. A run attached part-way gets a mapper
-    /// whose ids continue the History's, so live and replayed ids match.
+    /// IS-5: replay and session info, the announcement of every background
+    /// item newly listed, then one state taken from the attach snapshot (or
+    /// the tracker of a session already active here), then what the attach
+    /// read after its `Done`. A run attached part-way gets a mapper whose ids
+    /// continue the History's, so live and replayed ids match. The list is
+    /// filled before the replay is written, so a listed call is replayed open.
     async fn resumed(&mut self, resumed: Resumed) {
         let Resumed {
-            updates,
+            mut updates,
             snapshot,
             position,
             leftovers,
+            background,
         } = resumed;
+        let announcements = {
+            let mut set = self.v2.background();
+            let announcements = set.hydrate(&background);
+            for update in &mut updates {
+                background::keep_listed_call_open(update, &set);
+            }
+            announcements
+        };
+        updates.extend(announcements);
         self.write_all(updates).await;
         let snapshot_run = snapshot
             .as_ref()
@@ -715,12 +772,21 @@ impl V2Stream {
                     crate::logging::warn(&format!("ACP: failed to write usage_update: {err:#}"));
                 }
             }
+            // IS-4: one background item started or ended.
+            ServerEvent::BackgroundWork(work) => self.background_work(&work).await,
+            // IS-5: live output of a terminal, whether its call still runs in
+            // the foreground or moved to the background.
+            ServerEvent::ToolOutputDelta { id, data } => {
+                self.write_all(vec![background::output_chunk(&id, &data)]).await;
+            }
             // Replies whose waiter is gone, and the selector the side channel owns.
             ServerEvent::Ack { .. }
             | ServerEvent::History { .. }
             | ServerEvent::State { .. }
             | ServerEvent::ModelChanged { .. }
-            | ServerEvent::ReasoningEffortChanged { .. } => {}
+            | ServerEvent::ReasoningEffortChanged { .. }
+            | ServerEvent::BackgroundWorkList { .. }
+            | ServerEvent::ToolCallCancelResult { .. } => {}
             other => {
                 if let ServerEvent::TurnStopped {
                     reason: TurnStopReason::Failure | TurnStopReason::Crash | TurnStopReason::Unknown,
@@ -747,6 +813,33 @@ impl V2Stream {
                 self.write_all(updates).await;
             }
         }
+    }
+
+    /// IS-4: announce or finalize the item first, then report the list. A
+    /// started tool call stays open in the run's mapper until its own end. A
+    /// removal while idle waits for a follow-up turn's `running` to carry it.
+    async fn background_work(&mut self, work: &crate::protocol::BackgroundWorkEvent) {
+        let transition = self.v2.background().apply(work);
+        if let Some(call_id) = &transition.hold_open
+            && let Some(mapper) = self.run.as_mut()
+        {
+            mapper.hold_open(call_id);
+        }
+        let mut updates = transition.updates;
+        if transition.list_changed {
+            let removal = work.state != "started";
+            if removal && !self.v2.tracker().is_active() {
+                self.write_all(updates).await;
+                *self
+                    .removal_due
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(tokio::time::Instant::now() + REMOVAL_DEFER);
+                return;
+            }
+            updates.push(self.v2.tracker().current_state());
+        }
+        self.write_all(updates).await;
     }
 
     async fn mapper_for(&self, start: &str) -> V2Mapper {

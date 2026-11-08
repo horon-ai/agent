@@ -7,9 +7,13 @@
 //! against the vendored `schema-v2.0.0-alpha.13` fixture. `prompt` and `state`
 //! run a v2 session's prompts and its ordered update stream, `foreground` holds
 //! the state rules those updates follow, `replay` rebuilds a stored
-//! conversation for `session/resume`, and `cancel` serves `tool_call/cancel`
-//! against the calls this connection advertises.
+//! conversation for `session/resume`, `cancel` serves `tool_call/cancel`
+//! against the calls this connection advertises, and `background` keeps the
+//! session's background work list and serves `terminal/cancel`.
 
+pub(super) mod background;
+#[cfg(test)]
+mod background_tests;
 pub(super) mod cancel;
 #[cfg(test)]
 mod cancel_tests;

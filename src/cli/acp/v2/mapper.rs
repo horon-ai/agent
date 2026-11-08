@@ -49,6 +49,9 @@ struct Tool {
     /// The `ToolDone` output of a bash call, kept for an exit that follows it.
     bash_output: Option<String>,
     done: bool,
+    /// IS-4: the call went on as listed background work. Its `ToolDone` only
+    /// adds content; its final status comes with the work's own end.
+    held: bool,
 }
 
 pub(crate) struct V2Mapper {
@@ -258,6 +261,11 @@ impl V2Mapper {
         &self.start
     }
 
+    /// IS-4: the call keeps running as background work after its `ToolDone`.
+    pub(crate) fn hold_open(&mut self, id: &str) {
+        self.tool(id).held = true;
+    }
+
     /// The run ended with `stop_reason`: a call known only from its diffs or
     /// exit is created now, and every call that never finished is reported
     /// cancelled when the run was cancelled, or failed when it errored. A
@@ -418,6 +426,19 @@ impl V2Mapper {
             }
         }
         self.tool(id).done = true;
+        if self.tool(id).held {
+            // Still running in the background: no final status yet, and no
+            // `tool_call/cancel` either, which only reaches a call the turn
+            // is waiting on.
+            updates.push(tool_call_update(
+                id,
+                &ToolCallPatch {
+                    capabilities: Some(Value::Null),
+                    ..ToolCallPatch::default()
+                },
+            ));
+            return updates;
+        }
         updates.push(tool_call_update(
             id,
             &ToolCallPatch::final_status(if error.is_some() { "failed" } else { "completed" }),

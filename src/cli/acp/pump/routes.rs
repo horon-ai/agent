@@ -38,12 +38,14 @@ pub(super) fn is_side_event(event: &ServerEvent) -> bool {
 
 /// The request id an event answers, if it answers one.
 ///
-/// `tool_call_cancel_result` is here so a `tool_call/cancel` handler waiting on
-/// the daemon gets its verdict directly instead of through the turn's stream,
-/// which never sees it.
+/// `tool_call_cancel_result` and `background_work_list` are here so a
+/// `tool_call/cancel`, `terminal/cancel` or `session/resume` handler waiting
+/// on the daemon gets its answer directly instead of through the turn's
+/// stream, which never sees it.
 pub(super) fn reply_id(event: &ServerEvent) -> Option<u64> {
     match event {
         ServerEvent::Ack { id }
+        | ServerEvent::BackgroundWorkList { id, .. }
         | ServerEvent::Done { id }
         | ServerEvent::Error { id, .. }
         | ServerEvent::History { id, .. }
