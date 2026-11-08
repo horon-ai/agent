@@ -29,6 +29,7 @@ pub mod claude_live;
 pub mod compaction;
 pub mod config;
 pub mod console;
+pub mod context_import;
 pub mod context_notes;
 pub mod copilot_usage;
 pub mod crash;

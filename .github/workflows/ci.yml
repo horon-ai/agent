@@ -576,6 +576,21 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- skill_delete --nocapture
 
+      - name: Run context_import cohort
+        shell: bash
+        # `horon-agent-base` lib tests are compiled by the step above but only
+        # executed by filtered cohorts, so the `@path` import expansion would
+        # compile without a single test running. The 14 `context_import_*`
+        # tests are platform-neutral (relative, absolute, `~/`, fenced-code and
+        # hop-limit cases over temp directories), so the floor is the full
+        # count rather than one: a filter that matches nothing would otherwise
+        # report a green `0 passed`.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 14 \
+            -- context_import --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the
