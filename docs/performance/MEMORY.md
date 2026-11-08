@@ -151,6 +151,85 @@ headless 전환 이전에는 TUI의 마크다운·다이어그램 렌더러가 �
 
 이 한도를 의도적으로 바꾸면 같은 PR에서 이 문서도 갱신해야 한다.
 
+## Idle session hibernation: 유휴 세션의 파생 캐시 해제
+
+상태: 활성 동작
+갱신: 2026-11-07
+
+데몬은 턴 사이에도 세션을 상주시키므로, 유휴 세션 하나가 들고 있는 파생 캐시가 세션 수만큼
+쌓인다. 이 절은 그중 원본에서 다시 만들 수 있는 부분만 언제, 무엇을, 어떤 조건에서 해제하는지
+정한다. 코드는 `crates/app-core/src/agent/idle_hibernation.rs`(해제)와
+`crates/app-core/src/server/idle_hibernation.rs`(10초 sweep)다.
+
+### 설정
+
+| 항목 | 기본값 | 다른 값 |
+|---|---:|---|
+| `[server] idle_hibernation_secs` | `1800` | `0`이면 sweep을 끈다. `HORON_AGENT_IDLE_HIBERNATION_SECS`가 프로세스 하나에 대해 덮어쓴다 |
+
+sweep은 10초마다 임계값을 다시 읽으므로 설정 파일을 고치면 재시작 없이 적용된다. 임계값을 넘은
+뒤 실제 해제는 최대 한 tick 늦고, 게이트에 걸려 거부된 세션은 매 tick이 아니라 온전한 임계값이
+지난 뒤에 다시 시도한다. `0`이면 세션별 유휴 창 상태도 함께 비운다.
+
+### 해제하는 것
+
+`hibernate_idle_caches`는 다음 두 가지만 버린다.
+
+- **provider projection**: `release_provider_messages_cache()`를 거쳐 `provider_messages_cache`,
+  접두부 해시 캐시, 캐시 길이와 그 메모리 프로필 카운터를 비운다. 캐시 모드를 `Full`로 되돌리므로
+  다음 `provider_messages()`는 빈 트랜스크립트를 보내지 않고 다시 만든다.
+- **도구 출력 인덱스**: `tool_call_ids`와 `tool_result_ids`를 `clear()`가 아니라 새 `HashSet`으로
+  바꿔 할당 자체를 놓고, `tool_output_scan_index`를 0으로 되돌린다.
+
+### 남기는 것
+
+해제는 파생 캐시에만 손대고 영속·정본 상태는 건드리지 않는다.
+
+- 정본 트랜스크립트와 이벤트 원본(`events.jsonl`, `blobs/`), 상주 active context
+- 얼린 시스템 프롬프트와 잠긴 도구 표면(`listed_tools_index`). 다음 턴이 도구 목록을 다시 협상하지
+  않는다.
+- `pruned_tool_results`(잘라내기 결정)와 `stream_rule_ledger`(스트림 규칙 원장), `event_state`의
+  원본 보조 상태
+- 되감기 undo 상태, provider 핸들, 대기 중인 알림과 재개 상태
+
+해제 경로는 저장·체크포인트를 하지 않는다. 그래서 마이그레이션 리스가 건너뛰었을 저장을 이 경로가
+가릴 수 없다.
+
+### 게이트
+
+sweep과 해제는 다음을 모두 만족할 때만 진행한다.
+
+- 세션 로스터의 상태가 `running`이 아니고, 그 세션에 진행 중인 턴이 없다
+  (`turn_cancel_registry`)
+- 마이그레이션 리스가 없고, `pending_alerts`·`pending_resume`이 비었고, 소프트 인터럽트 큐 깊이가 0
+- 압축 관리자를 `try_read`로 잡을 수 있고 압축 중이 아님
+- 실행 중인 도구가 없고(`running_tool_registry`), active context가 이름 대는 도구 중 인플라이트인
+  것이 없음. 백그라운드로 넘어간 도구가 남아 있으면 다음 턴의 복구가 결과를 중복 생성하므로 건드리지
+  않는다.
+- 마지막 활동(`session_metrics`)과 상태 변경 뒤 흐른 시간이 둘 다 임계값 이상. 기록된 활동이 없는
+  세션은 활동 조건을 통과한 것으로 본다. 한 번 해제한 세션은 상태가 바뀌기 전까지 다시 해제하지
+  않는다.
+
+로스터 락, 세션 락, Agent 락 가운데 하나라도 잡히지 않으면 기다리지 않고 그 tick을 건너뛴다. sweep이
+턴 앞에 큐로 서면 안 되기 때문이다. 해제가 하나라도 있으면 모든 락을 놓은 뒤
+`release_retained_heap`을 한 번 부르고, 그 한 줄 로그에 세션 목록, 해제한 provider 캐시 바이트,
+도구 인덱스 항목 수, 해제 전후 RSS를 남긴다.
+
+### 깨어날 때
+
+해제는 디스크 의존도, 수명 주기 훅도, 환경 재스냅샷도 만들지 않는다. 다음 턴이 상주 active
+context에서 두 캐시를 다시 만들 뿐이고, 그 턴의 요청 본문은 해제 전과 같은 도구 쌍을 담는다
+(`idle_hibernation_next_turn_sends_original_tool_pairs_without_duplicates`).
+
+### 실제로 줄어드는 양
+
+horon은 이미 요청 직전마다 provider projection을 놓는다(`turn_loops.rs`,
+`turn_streaming_mpsc.rs`). 그래서 턴 사이에 남는 것은 대개 도구 인덱스 할당이고, 유휴 세션이 다시
+들고 있던 projection(압축 점검이나 메모리 프로필 조회가 다시 구체화한 것)도 함께 사라진다. 즉
+hibernation의 몫은 도구 인덱스 + 다시 만들어진 projection이며, `server:memory`의
+`session_provider_cache_*`가 이미 0인 세션에서는 도구 인덱스 항목 수만 관찰된다. 두 값 모두 위 로그
+한 줄과 `server:memory`로 확인한다.
+
 ## HoronAgent 서버 메모리 인시던트 런북
 
 상태: 현재 운영 중인 런북

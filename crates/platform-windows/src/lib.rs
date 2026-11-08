@@ -51,6 +51,12 @@ impl PlatformAdapter for Adapter {
         Ok(())
     }
 
+    fn directory_sync_is_effective() -> bool {
+        // `sync_dir` above flushes nothing here, so a creation is only
+        // confirmed by flushing the file itself.
+        false
+    }
+
     fn tls_client_config() -> Arc<ClientConfig> {
         tls::client_config()
     }
@@ -616,6 +622,13 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         Adapter::sync_dir(directory.path(), SyncMode::Full).expect("directory sync");
         Adapter::sync_dir(directory.path(), SyncMode::Fast).expect("directory sync");
+    }
+
+    #[test]
+    fn directory_sync_is_not_effective_on_windows() {
+        // `sync_dir` flushes nothing here, so only the file's own flush can
+        // confirm a creation.
+        assert!(!Adapter::directory_sync_is_effective());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use super::*;
 use crate::transport::Listener;
+use clap::Parser;
 
 #[test]
 fn only_file_controlled_debug_clients_need_parent_lifetime_binding() {
@@ -30,6 +31,35 @@ fn headless_launch_defaults_to_the_core_tool_profile() {
     // Whitespace-only values are not a selection.
     assert_eq!(default_tool_profile_for_launch(Some("  "), None, "   "), Some("core"));
     assert_eq!(crate::config::CORE_TOOL_PROFILE, "core");
+}
+
+#[test]
+fn default_tool_profile_loads_config_once() {
+    let _home = TestHome::new();
+    let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
+    crate::env::remove_var("HORON_AGENT_TOOL_PROFILE");
+    let args = Args::parse_from(["horon-agent", "run", "hello"]);
+
+    let loads_before = crate::config::Config::config_load_count();
+    apply_default_tool_profile(args.tool_profile.as_deref());
+    let profile = crate::config::config().tools.profile.clone();
+    let loads = crate::config::Config::config_load_count() - loads_before;
+
+    assert_eq!(
+        std::env::var("HORON_AGENT_TOOL_PROFILE").as_deref(),
+        Ok("core"),
+        "the environment override must stay set for readers that use it directly"
+    );
+    assert_eq!(profile, "core");
+    assert_eq!(
+        loads, 1,
+        "a launch that selects no profile must load the config once, saw {loads}"
+    );
+
+    match previous_profile {
+        Some(value) => crate::env::set_var("HORON_AGENT_TOOL_PROFILE", value),
+        None => crate::env::remove_var("HORON_AGENT_TOOL_PROFILE"),
+    }
 }
 
 #[test]

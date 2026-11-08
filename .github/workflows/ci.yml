@@ -703,7 +703,8 @@ jobs:
               'pipe_name_falls_back_when_stem_is_empty',
               'busy_pipe_is_reported_as_a_live_socket_path',
               'stream_pair_round_trips_bytes',
-              'split_stream_supports_concurrent_read_and_write'
+              'split_stream_supports_concurrent_read_and_write',
+              'directory_sync_is_not_effective_on_windows'
             )
             'horon-agent-app-core' = @(
               'sibling_socket_path_roundtrip',

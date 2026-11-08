@@ -7,6 +7,10 @@ name: Benchmark
 #   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=all
 #   gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=tools
 #
+#   # Before/after on one runner: build `dev`'s merge base beside the branch.
+#   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
+#     -f sessions="1 10 100" -f baseline_ref=<merge-base sha>
+#
 # and `workflow_call` from benchmark-docs.yml, which runs every suite on every OS
 # for a `main` commit after its CI passed and writes the result into
 # docs/performance/RESULTS.md.
@@ -53,6 +57,15 @@ on:
         type: string
         required: false
         default: "3"
+      oneshot_runs:
+        type: string
+        required: false
+        default: "3"
+      baseline_ref:
+        description: "Optional ref built beside the measured commit and compared as a second horon row"
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       os:
@@ -68,13 +81,21 @@ on:
         required: false
         default: jcode,claude_code,codex,opencode,pi
       sessions:
-        description: "Concurrent session counts for the memory comparison (space-separated)"
+        description: "Concurrent session counts for the memory comparison (space-separated); wider spreads such as '1 10 100' make the per-session slope measurable"
         required: false
         default: "1 5 10"
       turns:
         description: "Turns per session for the memory comparison"
         required: false
         default: "3"
+      oneshot_runs:
+        description: "One-shot prompt repeats per build; raise it when a median must separate two builds"
+        required: false
+        default: "3"
+      baseline_ref:
+        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row; empty measures one build"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -124,3 +145,5 @@ jobs:
       competitors: ${{ inputs.competitors }}
       sessions: ${{ inputs.sessions }}
       turns: ${{ inputs.turns }}
+      oneshot_runs: ${{ inputs.oneshot_runs }}
+      baseline_ref: ${{ inputs.baseline_ref }}

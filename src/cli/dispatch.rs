@@ -129,14 +129,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         _ => false,
     };
     if launches_agent {
-        let env_profile = std::env::var("HORON_AGENT_TOOL_PROFILE").ok();
-        let config_profile = crate::config::config().tools.profile.clone();
-        if let Some(default_profile) =
-            default_tool_profile_for_launch(args.tool_profile.as_deref(), env_profile.as_deref(), &config_profile)
-        {
-            crate::env::set_var("HORON_AGENT_TOOL_PROFILE", default_profile);
-            crate::config::invalidate_config_cache();
-        }
+        apply_default_tool_profile(args.tool_profile.as_deref());
     }
 
     match args.command {
@@ -408,6 +401,23 @@ fn default_tool_profile_for_launch(
         None
     } else {
         Some(crate::config::CORE_TOOL_PROFILE)
+    }
+}
+
+/// Apply the default tool profile for a launch that selected none.
+///
+/// Sets `HORON_AGENT_TOOL_PROFILE` so later readers see the same value, then
+/// patches the already-loaded config. The launch has resolved the config by
+/// this point, and invalidating the cache here would make the next `config()`
+/// parse the file a second time for a value we just chose.
+fn apply_default_tool_profile(flag_profile: Option<&str>) {
+    let env_profile = std::env::var("HORON_AGENT_TOOL_PROFILE").ok();
+    let config_profile = crate::config::config().tools.profile.clone();
+    if let Some(default_profile) =
+        default_tool_profile_for_launch(flag_profile, env_profile.as_deref(), &config_profile)
+    {
+        crate::env::set_var("HORON_AGENT_TOOL_PROFILE", default_profile);
+        crate::config::Config::set_loaded_tool_profile(default_profile);
     }
 }
 

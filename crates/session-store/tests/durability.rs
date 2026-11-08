@@ -79,14 +79,13 @@ fn marker(paths: &SessionPaths, id: &SessionId) -> PathBuf {
     paths.root().join(".catalog.dirty").join(id.as_str())
 }
 
-/// Recreate a dirty marker exactly as the writer creates it: owner-only bytes.
+/// Recreate a dirty marker exactly as the writer creates it: an owner-only,
+/// empty file whose existence is the whole message.
 fn recreate_marker(path: &Path) -> std::io::Result<()> {
-    use std::io::Write;
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     horon_agent_platform::fs::request_owner_only_mode(&mut options);
-    let mut file = options.open(path)?;
-    file.write_all(b"dirty\n")
+    options.open(path).map(drop)
 }
 
 fn original_bytes(probe: &ReadProbe, paths: &SessionPaths, id: &SessionId) -> usize {

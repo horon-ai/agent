@@ -36,6 +36,15 @@ on:
       turns:
         type: string
         required: true
+      oneshot_runs:
+        type: string
+        required: false
+        default: "3"
+      baseline_ref:
+        description: "Optional ref built in the build job beside the measured commit; the compare unit measures it as a second horon row"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -84,13 +93,19 @@ jobs:
     name: Build
     needs: plan
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 90
+    # Two release builds when a baseline_ref is set: the candidate and the
+    # baseline tree, each in its own target directory.
+    timeout-minutes: 150
     concurrency:
       group: benchmark-${{ github.ref }}-${{ inputs.os }}-build
       cancel-in-progress: false
     env:
       RUSTUP_TOOLCHAIN: stable
       SUITES: ${{ inputs.suites }}
+      # The baseline checkout lives inside the workspace because actions/checkout
+      # only writes below $GITHUB_WORKSPACE. It is a sibling tree with its own
+      # target directory, so neither build reuses the other's artifacts.
+      BASELINE_DIR: .bench-baseline
     steps:
       - uses: actions/checkout@v7
         with:
@@ -104,6 +119,17 @@ jobs:
         if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' }}
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
+
+      - name: Free disk space (macOS)
+        # A hosted macOS runner has the least free space of the three, and this
+        # job can build two release trees when a baseline_ref is set. Skipped on
+        # any self-hosted machine: its caches and toolchains are its owner's.
+        if: ${{ !cancelled() && runner.os == 'macOS' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet \
+            "$HOME/Library/Caches/Homebrew"
+          df -h /
 
       - uses: ./.github/actions/msvc-dev-cmd
         if: ${{ runner.os == 'Windows' }}
@@ -136,6 +162,69 @@ jobs:
         shell: bash
         run: python3 scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
 
+      - name: Check out the baseline ref beside the measured commit
+        # After the rust-cache step on purpose: rust-cache hashes every
+        # .cargo/config.toml and rust-toolchain file under the workspace, and a
+        # second tree there would fold the baseline commit into the candidate's
+        # cache key. A before/after pair has to be measured on one machine in
+        # one job, so the second tree appears only once that key is settled.
+        if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.baseline_ref }}
+          path: .bench-baseline
+
+      - name: Hide the baseline tree from the candidate's git status
+        # build-meta marks a build dirty when `git status --porcelain` is not
+        # empty, so an untracked second checkout would label the measured
+        # candidate "dirty" in its own --version output. `.git/info/exclude` is
+        # local to this checkout, so no tracked file changes.
+        if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        shell: bash
+        run: |
+          printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+
+      - uses: Swatinem/rust-cache@v2
+        # The baseline tree gets its own cache entry and its own target
+        # directory. Adding it as a second workspace to the step above would
+        # fold its Cargo.lock into one key, so every baseline bump would
+        # invalidate the candidate's cached artifacts too. Two separate steps
+        # rather than two restores inside one: the action keeps its config in
+        # per-step state, so only the second step's post would save anything.
+        if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        with:
+          key: benchmark-baseline-${{ runner.os }}
+          workspaces: ".bench-baseline -> target"
+          # ~/.cargo is shared with the candidate build, and this step's post
+          # runs first. Trimming the registry to the baseline's dependency set
+          # would then leave the candidate's own cache entry incomplete.
+          cache-all-crates: "true"
+          cache-on-failure: "true"
+
+      - name: Build the baseline release binary
+        # The same profile as the candidate step below, from its own checkout
+        # and its own target directory, so neither build reuses the other's
+        # artifacts and the two rows stay comparable. Only the compare unit
+        # consumes this row, so nothing else pays for the second build. The
+        # binary travels to the compare job inside bench-bin.tar as baseline/.
+        if: ${{ !cancelled() && inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RESULTS"
+          git -C "$BASELINE_DIR" rev-parse HEAD > "$RESULTS/baseline-commit.txt"
+          (
+            cd "$BASELINE_DIR" || exit
+            cargo build --release --locked -p horon-agent
+          )
+          exe=""
+          [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
+          mkdir -p target/release/baseline
+          cp "$BASELINE_DIR/target/release/horon-agent$exe" "target/release/baseline/horon-agent$exe"
+          "./target/release/baseline/horon-agent$exe" --version | tee "$RESULTS/baseline-version.txt"
+
       - name: Build release binary and probes
         shell: bash
         run: |
@@ -148,6 +237,7 @@ jobs:
           [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
           files=("horon-agent$exe")
           [[ -f "target/release/examples/loading_probe$exe" ]] && files+=("examples/loading_probe$exe")
+          [[ -f "target/release/baseline/horon-agent$exe" ]] && files+=("baseline/horon-agent$exe")
           # A tar keeps the executable bit, which upload-artifact drops. The
           # archive path stays relative: Git Bash's tar reads `D:\...` as a
           # remote host (run 42387481942).
@@ -196,6 +286,7 @@ jobs:
       COMPETITORS: ${{ inputs.competitors }}
       SESSIONS: ${{ inputs.sessions }}
       TURNS: ${{ inputs.turns }}
+      ONESHOT_RUNS: ${{ inputs.oneshot_runs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -226,6 +317,9 @@ jobs:
           fi
           echo "HORON_BIN=$root/bench-bin/horon-agent$exe" >> "$GITHUB_ENV"
           echo "PROBE_BIN=$root/bench-bin/examples/loading_probe$exe" >> "$GITHUB_ENV"
+          if [[ -f "bench-bin/baseline/horon-agent$exe" ]]; then
+            echo "BASELINE_BIN=$root/bench-bin/baseline/horon-agent$exe" >> "$GITHUB_ENV"
+          fi
           mkdir -p "$RESULTS"
 
       - name: Install strace
@@ -258,10 +352,19 @@ jobs:
         run: |
           bins_args=""
           [[ -f "$RUNNER_TEMP/bench-tools/bins.args" ]] && bins_args=$(cat "$RUNNER_TEMP/bench-tools/bins.args")
+          # The baseline build is a second horon row, measured in this same job
+          # alternating with the candidate. --syscalls therefore counts fsync
+          # for both builds under one strace-capable runner.
+          baseline_args=()
+          if [[ -n "${BASELINE_BIN:-}" ]]; then
+            baseline_args=(--bin "horon-base=$BASELINE_BIN")
+          else
+            echo "baseline_ref not set: measuring one build only" | tee "$RESULTS/baseline-absent.txt"
+          fi
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
-            --bin "horon=$HORON_BIN" $bins_args \
-            --sessions $SESSIONS --turns "$TURNS" --syscalls \
+            --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args \
+            --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
       - name: "Suite: startup"
@@ -428,6 +531,9 @@ jobs:
             echo "## Benchmark (${{ inputs.os }})"
             echo
             echo "- commit: \`$(cat "$RESULTS/commit.txt" 2>/dev/null)\`, runner: \`${{ inputs.runner }}\`"
+            if [[ -s "$RESULTS/baseline-commit.txt" ]]; then
+              echo "- baseline commit: \`$(cat "$RESULTS/baseline-commit.txt")\` (measured beside the commit above)"
+            fi
             echo "- suites: \`$SUITES\`, status: \`$(cat "$RESULTS/status.txt")\`"
             echo
             for f in compare tools reload compile; do

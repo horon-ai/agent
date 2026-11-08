@@ -50,6 +50,7 @@ mod debug_swarm_write;
 mod durable_state;
 pub mod foreground_state;
 mod headless;
+mod idle_hibernation;
 mod irc;
 mod lifecycle;
 mod live_turn;
@@ -1339,9 +1340,8 @@ impl Server {
             .await;
         });
 
-        // On SIGTERM: log, unregister, let in-flight session saves finish, exit.
-        // Where the platform has no termination signal to deliver, the watcher
-        // never resolves and this handler simply never runs.
+        // On SIGTERM: log, unregister, let in-flight saves finish, exit. Where
+        // the platform has no termination signal, the watcher never resolves.
         {
             let sigterm_server_name = self.identity.name.clone();
             let sigterm_sessions = Arc::clone(&self.sessions);
@@ -1360,7 +1360,7 @@ impl Server {
             });
         }
 
-        Self::spawn_idle_compaction_monitor(Arc::clone(&self.sessions));
+        Self::spawn_idle_compaction_monitor(Arc::clone(&self.sessions), Arc::clone(&self.swarm_state.members));
 
         // Spawn the bus monitor for swarm coordination
         let monitor_file_touch = self.file_touch.clone();
@@ -1885,9 +1885,9 @@ impl Server {
     /// The daemon is the only runtime that resumes these sessions later, so it
     /// is the only one that pre-compacts them while nothing is streaming. Each
     /// agent decides for itself whether it qualifies (>=50% fill, no job in
-    /// flight, past the lead point); a busy agent is skipped rather than
-    /// blocked.
-    fn spawn_idle_compaction_monitor(sessions: SessionAgents) {
+    /// flight, past the lead point); a busy agent is skipped, never blocked.
+    fn spawn_idle_compaction_monitor(sessions: SessionAgents, members: idle_hibernation::SwarmMembers) {
+        idle_hibernation::spawn(Arc::clone(&sessions), members);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(crate::compaction::jobs::IDLE_SWEEP_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

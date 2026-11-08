@@ -95,6 +95,44 @@ class SessionAggregateTests(unittest.TestCase):
         self.assertIsNone(bench.plan_first_session(points, "idle_rss_bytes"))
         self.assertIsNone(bench.slope_series(points, "idle_rss_bytes"))
 
+    def test_session_population_slopes_include_threads_and_fds(self) -> None:
+        points = [
+            {"sessions": 1, "idle_rss_bytes": 40e6, "thread_count": 12, "fd_count": 20},
+            {"sessions": 10, "idle_rss_bytes": 50e6, "thread_count": 21, "fd_count": 38},
+            {"sessions": 100, "idle_rss_bytes": 140e6, "thread_count": 111, "fd_count": 218},
+        ]
+        summary = bench.summarize_sessions(points, 1)
+        self.assertEqual(summary["first_session_threads"], 12)
+        self.assertAlmostEqual(summary["each_additional_threads"], 1.0, delta=1e-6)
+        self.assertAlmostEqual(summary["each_additional_fds"], 2.0, delta=1e-6)
+        self.assertEqual(summary["skipped"], [])
+
+    def test_session_counters_stay_null_with_a_skip_reason(self) -> None:
+        # A tool without `server:memory` must still report the RSS slopes; the
+        # thread and fd slopes are None with the reason beside them.
+        reason = "server:memory unavailable: unknown command"
+        points = [
+            {"sessions": 1, "idle_rss_bytes": 40e6, "counter_error": reason},
+            {"sessions": 2, "idle_rss_bytes": 50e6, "counter_error": reason},
+        ]
+        summary = bench.summarize_sessions(points, 1)
+        self.assertIsNone(summary["each_additional_threads"])
+        self.assertIsNone(summary["each_additional_fds"])
+        self.assertIsNone(summary["first_session_threads"])
+        self.assertEqual(summary["skipped"], [reason])
+        self.assertIsNotNone(summary["each_additional_idle_rss_bytes"])
+
+    def test_process_counters_come_from_the_server_memory_payload(self) -> None:
+        payload = {"process": {"thread_count": 17, "fd_count": 42, "rss_bytes": 1}}
+        counters, reason = bench.read_process_counters(lambda: payload)
+        self.assertEqual(counters, {"thread_count": 17, "fd_count": 42})
+        self.assertIsNone(reason)
+
+    def test_process_counters_name_the_missing_field(self) -> None:
+        counters, reason = bench.read_process_counters(lambda: {"process": {"rss_bytes": 1}})
+        self.assertEqual(counters, {})
+        self.assertIn("thread_count", reason or "")
+
 
 class InstallSizeTests(unittest.TestCase):
     def test_package_directory_is_measured(self) -> None:
@@ -228,6 +266,268 @@ class StraceTests(unittest.TestCase):
         markdown = bench.render_markdown(report, [1], 1)
         self.assertIn("fsync calls", markdown)
         self.assertIn("| 41 |", markdown)
+
+
+class ExtraHoronRowTests(unittest.TestCase):
+    """A second build of horon is measured as its own row.
+
+    The before/after pair has to come from one run: two workflow runs on one
+    shared runner are two machines as far as wall-clock is concerned.
+    """
+
+    def test_horon_kind_covers_the_candidate_and_extra_builds(self) -> None:
+        self.assertTrue(bench.horon_kind("horon"))
+        self.assertTrue(bench.horon_kind("horon-base"))
+        self.assertFalse(bench.horon_kind("jcode"))
+        self.assertFalse(bench.horon_kind("horonx"))
+
+    def test_extra_build_uses_the_horon_runner(self) -> None:
+        self.assertIs(bench.runner_class("horon-base"), bench.HoronRunner)
+        self.assertIs(bench.runner_class("horon"), bench.HoronRunner)
+        self.assertIs(bench.runner_class("jcode"), bench.JcodeRunner)
+        self.assertIsNone(bench.runner_class("nope"))
+
+    def test_extra_build_is_measured_right_after_the_candidate(self) -> None:
+        overrides = {"horon": "/c", "horon-base": "/b", "jcode": "/j"}
+        ordered = bench.order_tools(["jcode", "horon"], overrides)
+        # The caller's order for the other tools is untouched.
+        self.assertEqual(ordered, ["jcode", "horon", "horon-base"])
+
+    def test_default_order_puts_the_baseline_build_second(self) -> None:
+        overrides = {"horon": "/c", "horon-base": "/b", "jcode": "/j"}
+        ordered = bench.order_tools(["horon", "jcode"], overrides)
+        self.assertEqual(ordered, ["horon", "horon-base", "jcode"])
+
+    def test_candidate_row_is_inserted_and_extras_follow_it(self) -> None:
+        ordered = bench.order_tools(["codex"], {"horon-base": "/b", "codex": "/c"})
+        self.assertEqual(ordered, ["horon", "horon-base", "codex"])
+
+    def test_extra_build_row_keeps_its_own_label(self) -> None:
+        self.assertEqual(bench.row_label("horon-base"), "horon-base")
+        self.assertIsNone(bench.row_label("horon"))
+        self.assertIsNone(bench.row_label("codex"))
+
+    def test_extra_build_keeps_name_label_and_binary(self) -> None:
+        runner = bench.HoronRunner("/b", name="horon-base", label=bench.row_label("horon-base"))
+        self.assertEqual(runner.name, "horon-base")
+        self.assertEqual(runner.label, "horon-base")
+        self.assertEqual(runner.binary, "/b")
+
+    def test_report_renders_both_horon_rows_with_threads_and_fsync(self) -> None:
+        def row(name: str, ms: float, threads: float, fsync: int) -> dict:
+            return {
+                "name": name,
+                "label": name,
+                "version": "v1",
+                "version_ms": {"summary": {"median": 10.0}},
+                "oneshot": {"ms": ms, "peak_rss_bytes": 40e6, "tool_roundtrip": True,
+                            "fsync_calls": fsync, "summary": {"samples": 1}},
+                "sessions_memory": {
+                    "points": [{"sessions": 1, "post_turn_rss_bytes": 45e6}],
+                    "first_session_idle_rss_bytes": 40e6,
+                    "each_additional_idle_rss_bytes": 3e6,
+                    "each_additional_threads": threads,
+                    "each_additional_fds": 0.5,
+                    "first_session_post_turn_rss_bytes": 45e6,
+                    "each_additional_post_turn_rss_bytes": 4e6,
+                    "skipped": [],
+                },
+                "install_size_bytes": 1024,
+            }
+
+        results = [row("horon", 100.0, 0.02, 20), row("horon-base", 200.0, 1.0, 40)]
+        report = bc.build_report("compare", results, [])
+        markdown = bench.render_markdown(report, [1], 1)
+        # Both rows are present and the baseline is the candidate, so the
+        # before/after ratio is exact rather than two runs apart.
+        self.assertIn("| horon |", markdown)
+        self.assertIn("| horon-base |", markdown)
+        self.assertIn("Extra horon builds (`horon-base`)", markdown)
+        self.assertIn("2.00× more", markdown)
+        self.assertIn("| 40 |", markdown)
+        self.assertIn("0.02", markdown)
+        self.assertIn("1.00", markdown)
+
+    def test_each_horon_row_carries_its_own_threads_fds_and_fsync(self) -> None:
+        # The report has to answer "did the candidate stop growing a thread per
+        # session, and did the fsync count drop" for both builds; a row that
+        # dropped either counter would silently read as a win.
+        class FakeRunner:
+            def __init__(self, name: str, threads: int, fsync: int):
+                self.name = name
+                self.label = name
+                self.binary = f"/{name}"
+                self.threads = threads
+                self.fsync = fsync
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root, cwd, timeout, syscalls=False) -> dict:
+                return {"ms": 1.0, "peak_rss_bytes": 1, "tool_roundtrip": True,
+                        "fsync_calls": self.fsync}
+
+            def sessions(self, mock, root, cwd, count, turns, timeout) -> dict:
+                return {"samples": [{"phase": "idle", "rss_bytes": 1},
+                                    {"phase": "turn1", "rss_bytes": 1,
+                                     "thread_count": self.threads * count,
+                                     "fd_count": 2 * count}],
+                        "errors": [], "sessions_created": count, "counter_error": None}
+
+        class FakeMock:
+            def reset(self) -> None:
+                pass
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        try:
+            results = bench.measure_tools(
+                [FakeRunner("horon", 3, 20), FakeRunner("horon-base", 1, 40)],
+                FakeMock(), [1, 10], 1, 1, 1, 30.0,
+            )
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+
+        candidate, baseline = results
+        self.assertEqual(candidate["oneshot"]["fsync_calls"], 20)
+        self.assertEqual(baseline["oneshot"]["fsync_calls"], 40)
+        self.assertAlmostEqual(candidate["sessions_memory"]["each_additional_threads"], 3.0)
+        self.assertAlmostEqual(baseline["sessions_memory"]["each_additional_threads"], 1.0)
+        self.assertAlmostEqual(candidate["sessions_memory"]["each_additional_fds"], 2.0)
+
+        report = bc.build_report("compare", results, [])
+        markdown = bench.render_markdown(report, [1, 10], 1)
+        self.assertIn("| 20 |", markdown)
+        self.assertIn("| 40 |", markdown)
+
+    def test_one_unpreparable_row_does_not_drop_the_other(self) -> None:
+        # A row whose version probe or temp root fails must record its error and
+        # stay out of the shared phases; the other row still reports numbers.
+        class BrokenRunner:
+            name = "horon-base"
+            label = "horon-base"
+            binary = "/broken"
+
+            def env_for_version(self, root: str) -> dict:
+                raise OSError("no such binary")
+
+        class GoodRunner:
+            name = "horon"
+            label = "horon"
+            binary = "/good"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root, cwd, timeout, syscalls=False) -> dict:
+                return {"ms": 2.0, "peak_rss_bytes": 1, "tool_roundtrip": True}
+
+            def sessions(self, mock, root, cwd, count, turns, timeout) -> dict:
+                return {"samples": [{"phase": "idle", "rss_bytes": 1},
+                                    {"phase": "turn1", "rss_bytes": 1}],
+                        "errors": [], "sessions_created": count, "counter_error": None}
+
+        class FakeMock:
+            def reset(self) -> None:
+                pass
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        try:
+            results = bench.measure_tools(
+                [GoodRunner(), BrokenRunner()], FakeMock(), [1], 1, 1, 1, 30.0,
+            )
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+
+        good, broken = results
+        self.assertIn("no such binary", broken["error"])
+        self.assertIsNone(broken["oneshot"])
+        self.assertEqual(good["oneshot"]["ms"], 2.0)
+
+    def test_bin_override_flags_place_the_baseline_row(self) -> None:
+        # The workflow passes `--bin horon=... --bin horon-base=...`; parsing and
+        # ordering have to agree on the row names or the second build is never
+        # measured.
+        args = bench.parse_args([
+            "--bin", "horon=/c",
+            "--bin", "horon-base=/b",
+            "--sessions", "1", "10", "100",
+        ])
+        overrides = bench.parse_bin_overrides(args.bin)
+        self.assertEqual(sorted(overrides), ["horon", "horon-base"])
+        self.assertEqual(bench.order_tools(args.tools, overrides)[:2], ["horon", "horon-base"])
+        self.assertEqual(args.sessions, [1, 10, 100])
+
+    def test_only_horon_builds_share_a_group(self) -> None:
+        runners = [
+            bench.HoronRunner("/c", name="horon"),
+            bench.HoronRunner("/b", name="horon-base"),
+            bench.JcodeRunner("/j"),
+        ]
+        groups = bench.row_groups(runners)
+        self.assertEqual([[r.name for r in group] for group in groups],
+                         [["horon", "horon-base"], ["jcode"]])
+
+    def test_a_single_horon_build_is_a_group_of_one(self) -> None:
+        groups = bench.row_groups([bench.HoronRunner("/c")])
+        self.assertEqual([[r.name for r in group] for group in groups], [["horon"]])
+
+    def test_two_builds_alternate_every_phase(self) -> None:
+        # A before/after pair is only comparable when both rows see the same
+        # machine state; alternating makes a load spike land on both sides
+        # instead of on whichever build happened to run second.
+        order: list[str] = []
+
+        class FakeRunner:
+            def __init__(self, name: str):
+                self.name = name
+                self.label = name
+                self.binary = f"/{name}"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root, cwd, timeout, syscalls=False) -> dict:
+                order.append(f"oneshot:{self.name}")
+                return {"ms": 1.0, "peak_rss_bytes": 1, "tool_roundtrip": True}
+
+            def sessions(self, mock, root, cwd, count, turns, timeout) -> dict:
+                order.append(f"sessions{count}:{self.name}")
+                return {"samples": [{"phase": "idle", "rss_bytes": 1},
+                                    {"phase": "turn1", "rss_bytes": 1}],
+                        "errors": [], "sessions_created": count, "counter_error": None}
+
+        class FakeMock:
+            def reset(self) -> None:
+                order.append("reset")
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        try:
+            results = bench.measure_tools(
+                [FakeRunner("horon"), FakeRunner("horon-base")],
+                FakeMock(), [1, 10], 1, 1, 2, 30.0,
+            )
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+
+        self.assertEqual([row["name"] for row in results], ["horon", "horon-base"])
+        self.assertEqual(order, [
+            "oneshot:horon", "oneshot:horon-base",
+            "oneshot:horon", "oneshot:horon-base",
+            "reset", "sessions1:horon", "reset", "sessions1:horon-base",
+            "reset", "sessions10:horon", "reset", "sessions10:horon-base",
+        ])
+        for row in results:
+            self.assertEqual(row["oneshot"]["ms"], 1.0)
+            self.assertIsNotNone(row["sessions_memory"])
 
 
 class ReportShapeTests(unittest.TestCase):

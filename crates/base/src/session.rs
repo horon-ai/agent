@@ -60,6 +60,7 @@ mod event_commit;
 mod event_compaction;
 mod event_load;
 mod event_origin;
+mod event_pool;
 mod event_replication;
 pub use event_replication::{SessionEventJob, SessionGeneration, event_store_api};
 mod event_save;
@@ -392,7 +393,6 @@ pub fn derive_session_provider_key(provider_name: &str) -> Option<String> {
     if normalized_name == "horon-agent" {
         return Some("horon-agent".to_string());
     }
-
     if let Ok(runtime_provider) = std::env::var("HORON_AGENT_RUNTIME_PROVIDER") {
         let runtime_provider = runtime_provider.trim().to_ascii_lowercase();
         if !runtime_provider.is_empty() && runtime_provider != "openai-compatible" {

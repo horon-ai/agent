@@ -3,7 +3,6 @@ use crate::blobs::{Disk, check_file, checked_file, io_error, log_file, new_file,
 use crate::recovery::{corrupt, quarantine};
 use crate::*;
 use std::fs::File;
-use std::io::Write;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,13 +155,20 @@ impl BlockingWriter {
             return Ok(());
         }
         self.disk.ensure_dir(&directory)?;
-        let mut file = match new_file(&path) {
+        let file = match new_file(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
             Err(error) => return Err(error.into()),
         };
-        file.write_all(b"dirty\n")?;
-        self.disk.sync_file(&file, IoPoint::DirtyFileSync)?;
+        // The marker is empty: readers test its existence, never its bytes, so
+        // the only thing a crash has to preserve is the directory entry naming
+        // it. Where flushing that entry is itself durable (Unix) the entry is
+        // the whole guarantee and the file's own flush is skipped, which saves
+        // one syscall per marker. Windows cannot flush a directory, so there the
+        // file's own flush stays the boundary.
+        if !horon_agent_platform::directory_sync_is_effective() {
+            self.disk.sync_file(&file, IoPoint::DirtyFileSync)?;
+        }
         self.disk.sync_dir(&directory, IoPoint::DirtyDirectorySync)?;
         if self.state.batch {
             self.state.batch_dirty = Some(crate::cache_io::Stamp::read(&path)?);
