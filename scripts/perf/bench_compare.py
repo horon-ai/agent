@@ -1230,12 +1230,32 @@ def measure_daemon_sessions(
             "sessions_created": len(sessions),
             "counters": counters,
             "counter_error": counter_error,
+            "thread_names": thread_name_counts(daemon.proc.pid),
         }
     finally:
         for session in sessions:
             del session
         if daemon is not None:
             daemon.close()
+
+
+def thread_name_counts(pid: int) -> dict[str, int] | None:
+    """Live threads of ``pid`` grouped by name, on Linux only.
+
+    A per-session thread count says that threads grow with sessions; the names
+    say which pool or worker grows, without a profiler on the runner.
+    """
+    task_dir = Path(f"/proc/{pid}/task")
+    if not task_dir.is_dir():
+        return None
+    counts: dict[str, int] = {}
+    for task in task_dir.iterdir():
+        try:
+            name = (task / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def horon_daemon_argv(binary: str, socket_path: str) -> list[str]:
@@ -2502,6 +2522,7 @@ def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd:
         "turn_ms": measurement.get("turn_ms"),
         "errors": errors,
         "sessions_created": created,
+        "thread_names": measurement.get("thread_names"),
     }
 
 
