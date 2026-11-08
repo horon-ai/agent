@@ -5,10 +5,12 @@
 use super::collision::{self, Candidate};
 use crate::skill::test_support::test_skill;
 
-fn candidate(skill: super::Skill, namespace: &str, managed: bool) -> Candidate {
+/// Test skills live under a dotted temporary root, so their namespace falls
+/// back to `source_id`.
+fn candidate(skill: super::Skill, source_id: &'static str, managed: bool) -> Candidate {
     Candidate {
         skill,
-        namespace: namespace.to_string(),
+        source_id,
         managed,
     }
 }

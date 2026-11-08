@@ -23,14 +23,15 @@
 
 use super::Skill;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// One skill offered by one source, with the address it would take on a
-/// collision.
+/// One skill offered by one source. The namespace it would take on a
+/// collision is derived from its path and `source_id` only when a collision
+/// actually happens, so a catalog without repeats pays nothing for it.
 pub(super) struct Candidate {
     pub(super) skill: Skill,
-    pub(super) namespace: String,
+    pub(super) source_id: &'static str,
     pub(super) managed: bool,
 }
 
@@ -40,25 +41,14 @@ pub(super) struct Resolution {
     pub(super) warnings: Vec<String>,
 }
 
-/// The frontmatter fields that identify a skill, apart from its name.
+/// Whether two skills declare the same frontmatter, apart from the name.
 ///
-/// The name is not part of this key: a collision renames the skill it accepts,
-/// so comparing `skill.name` would make a third copy of the same file look
-/// different from the renamed second one. Callers pair this key with the name
-/// the frontmatter declared (`Admitted::raw_name`).
-#[derive(PartialEq, Eq)]
-struct FrontmatterKey {
-    description: String,
-    allowed_tools: Option<Vec<String>>,
-}
-
-impl FrontmatterKey {
-    fn of(skill: &Skill) -> Self {
-        Self {
-            description: skill.description.clone(),
-            allowed_tools: skill.allowed_tools.clone(),
-        }
-    }
+/// The name is not compared: a collision renames the skill it accepts, so
+/// comparing `skill.name` would make a third copy of the same file look
+/// different from the renamed second one. Callers match on the name the
+/// frontmatter declared first.
+fn same_frontmatter(a: &Skill, b: &Skill) -> bool {
+    a.description == b.description && a.allowed_tools == b.allowed_tools
 }
 
 /// Size and digest of a whole file, read only to prove two candidates equal.
@@ -87,25 +77,18 @@ impl Identity {
     }
 }
 
-/// One accepted skill, under the name it took.
+/// One accepted skill, under the name it took. `resolve` files it under the
+/// frontmatter name even after a collision renames it, so a later copy
+/// collides with the original name, not with the `<namespace>/<name>` address
+/// this one already occupies.
 struct Admitted {
     skill: Skill,
-    raw_name: String,
-    frontmatter: FrontmatterKey,
     identity: Option<Identity>,
 }
 
 impl Admitted {
-    /// `raw_name` keeps the frontmatter name even after a collision renames the
-    /// skill, so a later copy collides with the original name, not with the
-    /// `<namespace>/<name>` address that one already occupies.
-    fn new(skill: Skill, raw_name: String) -> Self {
-        Self {
-            frontmatter: FrontmatterKey::of(&skill),
-            raw_name,
-            skill,
-            identity: None,
-        }
+    fn new(skill: Skill) -> Self {
+        Self { skill, identity: None }
     }
 
     /// Prove this skill and `path` hold the same bytes, reading lazily.
@@ -125,14 +108,17 @@ impl Admitted {
 /// Candidates must arrive highest priority first, and in path order inside one
 /// source, so the result never depends on how a directory was enumerated.
 pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
-    let mut admitted: Vec<Admitted> = Vec::new();
-    let mut taken: HashSet<String> = HashSet::new();
+    let mut admitted: Vec<Admitted> = Vec::with_capacity(candidates.len());
+    // Every accepted copy of a frontmatter name, first one first. A lookup here
+    // replaces a scan of `admitted`, which made a large catalog quadratic.
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::with_capacity(candidates.len());
+    let mut taken: HashSet<String> = HashSet::with_capacity(candidates.len());
     let mut warnings = Vec::new();
 
     for candidate in candidates {
         let Candidate {
             mut skill,
-            namespace,
+            source_id,
             managed,
         } = candidate;
         let raw_name = skill.name.clone();
@@ -144,16 +130,18 @@ pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
             continue;
         }
 
-        let Some(index) = admitted.iter().position(|entry| entry.raw_name == raw_name) else {
+        let Some(copies) = by_name.get(&raw_name) else {
             taken.insert(raw_name.clone());
-            admitted.push(Admitted::new(skill, raw_name));
+            by_name.insert(raw_name, vec![admitted.len()]);
+            admitted.push(Admitted::new(skill));
             continue;
         };
+        let index = copies[0];
 
         // Identical means byte-equal and frontmatter-equal to any copy of this
         // name already accepted, not just the bare one: a third source shipping
         // the same file as the second is still one skill, not a new slot.
-        if identical_to_any(&mut admitted, &raw_name, &skill) {
+        if identical_to_any(&mut admitted, copies, &skill) {
             continue;
         }
         let path = skill.path.display().to_string();
@@ -165,14 +153,17 @@ pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
             ));
             continue;
         }
-        let name = free_slot(&namespace, &raw_name, &taken);
+        let name = free_slot(&namespace_for(&skill.path, source_id), &raw_name, &taken);
         warnings.push(format!(
             "Skills: name collision: \"{raw_name}\" from {path} differs from {existing_path}; \
              available as \"{name}\""
         ));
         skill.name = name.clone();
         taken.insert(name);
-        admitted.push(Admitted::new(skill, raw_name));
+        if let Some(copies) = by_name.get_mut(&raw_name) {
+            copies.push(admitted.len());
+        }
+        admitted.push(Admitted::new(skill));
     }
 
     let mut skills: Vec<Skill> = admitted.into_iter().map(|entry| entry.skill).collect();
@@ -183,14 +174,13 @@ pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
     Resolution { skills, warnings }
 }
 
-/// Whether `candidate` repeats one of the already accepted skills with
-/// `raw_name`, compared by whole-file bytes and frontmatter.
-fn identical_to_any(admitted: &mut [Admitted], raw_name: &str, candidate: &Skill) -> bool {
-    let frontmatter = FrontmatterKey::of(candidate);
-    admitted
-        .iter_mut()
-        .filter(|entry| entry.raw_name == raw_name && entry.frontmatter == frontmatter)
-        .any(|entry| entry.same_file_as(&candidate.path))
+/// Whether `candidate` repeats one of the accepted `copies` of its name,
+/// compared by frontmatter and whole-file bytes.
+fn identical_to_any(admitted: &mut [Admitted], copies: &[usize], candidate: &Skill) -> bool {
+    copies.iter().any(|&index| {
+        let entry = &mut admitted[index];
+        same_frontmatter(&entry.skill, candidate) && entry.same_file_as(&candidate.path)
+    })
 }
 
 /// `<namespace>/<raw>`, or the first free `~2`, `~3` suffix for that address.

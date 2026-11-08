@@ -372,15 +372,22 @@ fn load_level(
 /// A source that panics is dropped with a warning instead of taking the caller
 /// down with it; the remaining sources are still merged. Results come back in
 /// the same order as `sources`, so the merge order is the table order.
+///
+/// The first source is read on the calling thread, which would otherwise only
+/// wait: a single source spawns nothing, and N sources spawn N - 1 threads.
 fn read_in_parallel(sources: &[ResolvedSource], reuse: Option<&Reused>) -> Vec<Scanned> {
+    let Some((first, rest)) = sources.split_first() else {
+        return Vec::new();
+    };
     std::thread::scope(|scope| {
-        let handles: Vec<_> = sources
+        let handles: Vec<_> = rest
             .iter()
             .map(|source| (source, scope.spawn(move || scan_source(source, reuse))))
             .collect();
-        handles
-            .into_iter()
-            .filter_map(|(source, handle)| match handle.join() {
+        let local = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scan_source(first, reuse)));
+        std::iter::once((first, local))
+            .chain(handles.into_iter().map(|(source, handle)| (source, handle.join())))
+            .filter_map(|(source, result)| match result {
                 Ok(scanned) => Some(scanned),
                 Err(_) => {
                     crate::logging::warn(&format!(
@@ -399,14 +406,13 @@ fn scan_source(source: &ResolvedSource, reuse: Option<&Reused>) -> Scanned {
     for (path, kind) in &source.entries {
         let managed = *kind == EntryKind::Managed;
         let (skills, stats) = scan_entry(path, *kind, reuse);
-        for skill in skills {
-            let namespace = collision::namespace_for(&skill.path, source.row.id);
-            scanned.candidates.push(collision::Candidate {
+        scanned
+            .candidates
+            .extend(skills.into_iter().map(|skill| collision::Candidate {
                 skill,
-                namespace,
+                source_id: source.row.id,
                 managed,
-            });
-        }
+            }));
         scanned.stats.add(stats);
     }
     // `read_dir` returns entries in filesystem order, which differs between
