@@ -49,6 +49,7 @@ A measurement that fails records null plus an error string instead of a zero.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -843,6 +844,7 @@ def _measure_oneshot(
         before = mock.stats()["request_count"]
     except Exception:  # noqa: BLE001
         before = 0
+    log_marks = _log_marks(env)
     started = time.perf_counter()
     started_wall = time.time()
     proc = subprocess.Popen(
@@ -867,6 +869,7 @@ def _measure_oneshot(
         except subprocess.TimeoutExpired:
             stdout, stderr = "", ""
     elapsed_ms = (time.perf_counter() - started) * 1000
+    exit_local_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     peak = sampler.stop()
     sentinel_seen = None
     mcp_ready_ms = None
@@ -922,6 +925,7 @@ def _measure_oneshot(
                 syscall_counts = parse_strace_summary(fh.read())
         except OSError:
             syscall_counts = None
+    log_tail = _log_tail_since(env, log_marks)
     return {
         "ms": None if timed_out else round(elapsed_ms, 2),
         "peak_rss_bytes": peak or None,
@@ -938,7 +942,46 @@ def _measure_oneshot(
         "tools_offered": tools_offered,
         "result_excerpt": result_excerpt,
         "request_offsets_ms": request_offsets_ms,
+        "log_tail": log_tail,
+        "exit_local_time": exit_local_time,
     }
+
+
+def _horon_log_dir(env: dict) -> Path | None:
+    home = env.get("HORON_AGENT_HOME")
+    return Path(home, "logs") if home else None
+
+
+def _log_marks(env: dict) -> dict[str, int]:
+    """Size of each horon log file before a run, so only its own lines are read."""
+    directory = _horon_log_dir(env)
+    if directory is None or not directory.is_dir():
+        return {}
+    return {entry.name: entry.stat().st_size for entry in directory.iterdir() if entry.is_file()}
+
+
+def _log_tail_since(env: dict, marks: dict[str, int], limit: int = 40) -> list[str]:
+    """horon's own log lines from the end of its turn to exit, for the phase split.
+
+    The lines carry the process's local timestamps; beside ``exit_local_time``
+    they show where the time between the last model request and exit goes, on
+    every OS, without a profiler.
+    """
+    directory = _horon_log_dir(env)
+    if directory is None or not directory.is_dir():
+        return []
+    lines: list[str] = []
+    for entry in sorted(directory.iterdir()):
+        if not entry.is_file():
+            continue
+        try:
+            with open(entry, "rb") as fh:
+                fh.seek(marks.get(entry.name, 0))
+                lines.extend(fh.read().decode("utf-8", "replace").splitlines())
+        except OSError:
+            continue
+    start = next((i for i, line in enumerate(lines) if "Turn complete" in line), max(0, len(lines) - limit))
+    return [line[:200] for line in lines[start:start + limit]]
 
 
 def measure_version(argv: list[str], env: dict, runs: int) -> dict:

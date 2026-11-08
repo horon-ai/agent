@@ -123,6 +123,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `request_offsets_ms` | 실행 기록(JSON)마다 남는, 프로세스 시작부터 각 모델 요청이 도착할 때까지의 시간. 간격으로 기동, 도구 왕복, 종료 구간을 OS마다 나눠 본다 |
 | `thread_names` | 데몬 세션 측정의 각 세션 수마다, 턴 직후 데몬 프로세스의 스레드를 이름별로 센 값(Linux `/proc/<pid>/task/*/comm`). 세션 수에 따라 어느 스레드가 느는지 본다. 다른 OS는 `null` |
 | `live_heap_bytes` | 데몬 세션 측정에서 idle과 턴 직후에 잰, malloc 영역이 실제로 쥐고 있는 바이트(macOS `heap(1)`의 "All zones" 합계). RSS 기울기와 나란히 보면 세션당 증가가 살아 있는 데이터인지 할당자가 붙든 메모리인지 갈린다. 턴 직후 값은 RSS를 잰 뒤에 재고, 다른 OS는 `null` |
+| `log_tail`, `exit_local_time` | horon 실행 기록마다 남는, 이번 실행이 쓴 로그 줄(턴 완료 줄부터 최대 40줄)과 프로세스가 끝난 현지 시각. 마지막 모델 요청부터 종료까지의 시간이 어느 단계에 쓰이는지 OS마다 본다. 다른 도구는 빈 목록 |
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
