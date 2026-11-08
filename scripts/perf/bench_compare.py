@@ -1897,16 +1897,22 @@ class ClaudeRunner(ToolRunner):
         return measure_oneshot(claude_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        # Every documented config surface was tried against this pinned build
-        # (`--mcp-config` as a file and as a JSON string, `--strict-mcp-config`
-        # on and off, project `.mcp.json`, `~/.claude.json`, and a settings file
-        # enabling project servers): the print-mode tool list stayed at its 12
-        # built-in tools, so the fixture's tool is never offered to the model.
-        return unsupported(
-            "Claude Code 2.1.317 -p did not expose a configured stdio MCP server in any of "
-            "the five config forms tried (--mcp-config file/string, project .mcp.json, "
-            "~/.claude.json, settings enableAllProjectMcpServers)"
-        )
+        # `--mcp-config` with `--strict-mcp-config` loads only the fixture
+        # server. Those servers connect in the background by default, so the
+        # first request would leave before the tool is known;
+        # `MCP_CONNECTION_NONBLOCKING=0` is the documented way to make startup
+        # wait for them (code.claude.com/docs/en/mcp, "Exempt a server from
+        # deferral"). Tool search stays at its default: the prompt lists
+        # `mcp__bench__bench_echo` as deferred and the model loads its schema
+        # with `ToolSearch` (`select:<name>`) before calling it, which is the
+        # route the mock takes, so the row includes that extra model request.
+        config = os.path.join(root, "mcp.json")
+        write_mcp_servers(config, mcp_servers(), wrapper="mcpServers")
+        env = claude_env(root, mock.base_url)
+        env["MCP_CONNECTION_NONBLOCKING"] = "0"
+        argv = claude_oneshot_argv(self.binary, mcp_prompt())
+        argv[1:1] = ["--mcp-config", config, "--strict-mcp-config"]
+        return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = claude_env(root, mock.base_url)

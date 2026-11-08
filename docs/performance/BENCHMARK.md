@@ -147,7 +147,8 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 `compare` 묶음은 `--scenarios`로 시나리오를 고른다. 기본값은 `oneshot,sessions,skill,mcp`이고, 부분집합을 주면 빠진 시나리오는 실제로 돌지 않으며 보고서에도 표가 나오지 않는다. 모르는 이름은 실행을 바로 실패시킨다.
 
 - `skill`: 프롬프트가 `[bench:skill]`로 시작한다. 가짜 모델은 그 마커를 보고 스킬 전용 도구(`Skill`, `skill`, `skills.read`, `skill_manage`)가 있으면 그것을 부르고, 없으면 설명에 `skill://`가 있는 읽기 도구에 `skill://bench-skill`을 넘기고, 그것도 없으면 읽기 도구나 셸 도구로 프롬프트가 준 `SKILL.md` 절대 경로를 연다. 어느 경로였는지는 요청 기록의 `via`와 보고서의 `Via` 열에 남는다.
-- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. omp처럼 도구를 함수로 내보내지 않고 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부른다(`mcp-route`).
+- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. 그 도구가 Responses 네임스페이스 안에 있으면 함수 이름은 `bench_echo`, 네임스페이스는 별도 `namespace` 필드로 보낸다(Codex가 받는 `function_call` 모양). 도구 목록에 서버 도구가 없을 때는 각 에이전트가 문서로 정한 경로를 따른다. 고정 도구 `mcp_call`(`mcp-call`), `action` 열거값에 `call`이 있는 관리 도구 `mcp`(`mcp-action`), 프롬프트가 지연 도구로 적은 `mcp__<서버>__bench_echo`를 `ToolSearch`의 `select:<이름>`으로 먼저 불러오는 경로(`tool-search`), omp처럼 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부르는 경로(`mcp-route`)다.
+- 도구를 불렀는데 센티널이나 nonce가 돌아오지 않으면 마지막 도구 결과의 끝 400자가 실행 기록의 `result_excerpt`에 남는다. 샌드박스 거부나 셸 오류를 다시 돌리지 않고 확인하기 위한 값이다.
 - 왕복은 가정하지 않는다. 스킬은 `SKILL.md` 본문의 `BENCH-SKILL-SENTINEL`을, MCP는 모델이 넘긴 nonce를 나중 요청에서 봐야 `tool_round_trip`이 `true`가 된다. 도구를 부르지 않고 `mock-ok`만 돌아온 실행은 `false`로 남는다.
 - 두 시나리오 모두 프로세스 시작부터 마지막 응답까지를 잰다. 그래서 스킬 탐색, MCP 서버 시작, 도구 등록이 숫자에 들어간다. `mcp_ready_ms`는 그중 서버 준비 구간만 따로 보여 준다.
 
@@ -161,11 +162,11 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | 도구 | 스킬 픽스처 위치와 호출 | MCP 설정 |
 | --- | --- | --- |
 | `horon` | 작업 폴더 `.horon-agent/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_AGENT_HOME>/mcp.json`의 `servers`. 도구 목록이 캐시 때문에 고정이라 서버 도구는 고정 도구 `mcp_call`(`server: bench`, `tool: bench_echo`)로 부른다(`mcp-call`). 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
-| `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`의 `mcpServers` |
-| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | 측정하지 않는다(`unsupported`). 고정 버전 2.1.317의 `-p`는 `--mcp-config`(파일, 문자열), 프로젝트 `.mcp.json`, `~/.claude.json`, 설정 파일 어느 방식으로도 stdio MCP 서버 도구를 모델에 보내지 않았다 |
-| `codex` | `$CODEX_HOME/skills`의 픽스처를 셸 도구로 `cat`(`file-read`) | 측정하지 않는다(`unsupported`). 고정 버전 0.166.0은 서버를 Responses 네임스페이스 도구 `mcp__bench`로만 내보내고, `mcp__bench.bench_echo` 호출은 실행되지 않은 채 같은 요청이 다시 와서 왕복을 증명할 수 없다 |
+| `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`과 작업 폴더 `.jcode/mcp.json`의 `mcpServers`. OpenAI 호환 제공자에는 MCP 도구를 목록에 넣지 않고(`[tools] mcp_tools = "auto"`의 기본 동작) `mcp` 도구의 `action: "call"`, `server: bench`, `tool: bench_echo`로 부른다(`mcp-action`) |
+| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | `--mcp-config <파일> --strict-mcp-config`. `--mcp-config` 서버는 기본으로 백그라운드에서 연결되어 첫 요청이 도구를 모른 채 나가므로, 문서가 안내하는 `MCP_CONNECTION_NONBLOCKING=0`으로 시작 때 서버를 기다린다. 도구 검색은 기본값 그대로라 프롬프트가 `mcp__bench__bench_echo`를 지연 도구로 적고, 가짜 모델은 `ToolSearch`(`select:mcp__bench__bench_echo`)로 스키마를 불러온 뒤 도구를 부른다. 그래서 모델 요청이 하나 더 든다 |
+| `codex` | `$CODEX_HOME/skills`의 픽스처를 셸 도구로 `cat`(`file-read`). Linux 러너는 샌드박스 bubblewrap이 동작하도록 Codex 문서의 Ubuntu 24.04 절차(bubblewrap 설치, AppArmor `bwrap-userns-restrict` 적재)를 먼저 밟는다. 샌드박스는 끄지 않는다 | `$CODEX_HOME/config.toml`의 `[mcp_servers.bench]`와 `tools.bench_echo.approval_mode = "approve"`. 서버는 네임스페이스 도구 `mcp__bench`로 보이고, `name: bench_echo`, `namespace: mcp__bench`로 부른다(`mcp-tool`) |
 | `opencode` | `XDG_CONFIG_HOME/opencode/skills`의 픽스처를 `skill` 도구로 호출(`skill-tool`) | `opencode.json`의 `mcp.bench`(`type: local`) |
-| `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | 없음. MCP 클라이언트가 없어 `skipped`와 사유를 남긴다 |
+| `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | `$PI_CODING_AGENT_DIR/mcp.json`의 `mcpServers`, `"exposure": "direct"`. `mcp__bench__bench_echo`를 바로 부른다(`mcp-tool`) |
 | `omp` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`. 프롬프트의 `xd://...bench_echo` 라우트를 `write`로 호출(`mcp-route`) |
 | `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`는 허용 목록이고 MCP 도구 이름이 빌드마다 달라질 수 있어 이 시나리오만 `--tools`를 주지 않고 기본 도구 집합(연결된 서버 도구 포함)을 쓴다 |
 

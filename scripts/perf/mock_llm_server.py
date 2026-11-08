@@ -89,6 +89,13 @@ DEFERRED_MCP_TOOL_NAMES = ("mcp_call", "mcp.call")
 DEFERRED_SERVER_RE = re.compile(r"server\s*=\s*\\?[\"']([^\"'\\]+)")
 # A nonce the mock handed out; finding it in a tool result is the MCP round trip.
 NONCE_RE = re.compile(NONCE_PREFIX + r"\d+")
+# Claude Code defers MCP tools: the prompt lists `mcp__<server>__<tool>` by name
+# and the model loads its schema with `ToolSearch` (`select:<name>`) before the
+# tool appears in the request's tool list. The pattern is matched against the
+# JSON-encoded body, where a name on its own line follows a literal `\n`, so it
+# has no leading word boundary.
+TOOL_SEARCH_NAMES = ("toolsearch", "tool_search")
+DEFERRED_LISTED_RE = re.compile(r"mcp__[A-Za-z0-9_-]+__" + MCP_TOOL_SUFFIX + r"\b")
 
 
 def _text_of(content) -> str:
@@ -378,10 +385,41 @@ def find_deferred_mcp_tool(tools) -> dict | None:
     return None
 
 
+def find_mcp_action_tool(tools) -> dict | None:
+    """A management tool that calls MCP tools through `action: "call"`.
+
+    jcode's documented route for providers without native deferred tools is
+    `mcp action=search/call`; its schema lists `call` in the `action` enum
+    beside `server`, `tool` and `arguments`.
+    """
+    for tool, _namespace in flatten_tools(tools):
+        props = _tool_schema_props(tool)
+        action = props.get("action") if isinstance(props, dict) else None
+        if not isinstance(action, dict) or "call" not in (action.get("enum") or []):
+            continue
+        if all(name in props for name in ("server", "tool", "arguments")):
+            return tool
+    return None
+
+
 def deferred_server_name(body: dict) -> str | None:
     """The server name the prompt or the transcript's announcement spells."""
     match = DEFERRED_SERVER_RE.search(json.dumps(body, ensure_ascii=False))
     return match.group(1) if match else None
+
+
+def find_tool_search(tools) -> dict | None:
+    """A tool that loads deferred tool schemas by name (`ToolSearch`)."""
+    for tool, _namespace in flatten_tools(tools):
+        if _tool_name(tool).strip().casefold() in TOOL_SEARCH_NAMES:
+            return tool
+    return None
+
+
+def deferred_listed_tool(body: dict) -> str | None:
+    """The fixture tool's full name when the prompt lists it as deferred."""
+    match = DEFERRED_LISTED_RE.search(json.dumps(body, ensure_ascii=False))
+    return match.group(0) if match else None
 
 
 def find_mcp_route(body: dict) -> str | None:
@@ -692,7 +730,10 @@ class Handler(BaseHTTPRequestHandler):
             mcp = find_mcp_tool(tools)
             route = find_mcp_route(body)
             deferred = find_deferred_mcp_tool(tools)
+            action_tool = find_mcp_action_tool(tools)
             server = deferred_server_name(body)
+            tool_search = find_tool_search(tools)
+            listed = deferred_listed_tool(body)
             if NONCE_RE.search(results):
                 pass
             elif mcp is not None:
@@ -712,6 +753,20 @@ class Handler(BaseHTTPRequestHandler):
                 via = "mcp-call"
                 arguments = {"server": server, "tool": MCP_TOOL_SUFFIX,
                              "arguments": {"text": nonce}}
+            elif action_tool is not None and server:
+                # jcode keeps MCP tools out of an OpenAI-compatible tool list
+                # and dispatches them through `mcp action=call`.
+                tool_name = _tool_name(action_tool)
+                via = "mcp-action"
+                arguments = {"action": "call", "server": server, "tool": MCP_TOOL_SUFFIX,
+                             "arguments": {"text": nonce}}
+            elif tool_search is not None and listed:
+                # Claude Code lists the server's tool as deferred; its schema
+                # is loaded first, and the next request offers the tool itself.
+                prop = _first_prop(_tool_schema_props(tool_search), ("query",)) or "query"
+                tool_name = _tool_name(tool_search)
+                via = "tool-search"
+                arguments = {prop: f"select:{listed}"}
             elif route and find_write_tool(tools) is not None:
                 write_tool = find_write_tool(tools)
                 assert write_tool is not None
@@ -760,6 +815,8 @@ class Handler(BaseHTTPRequestHandler):
                 find_mcp_tool(tools) is not None
                 or find_mcp_route(body)
                 or (find_deferred_mcp_tool(tools) is not None and deferred_server_name(body))
+                or (find_mcp_action_tool(tools) is not None and deferred_server_name(body))
+                or (find_tool_search(tools) is not None and deferred_listed_tool(body))
             ),
             "tool_count": len(tools or []),
             # Every tool name the request offered, so a missing MCP server can
