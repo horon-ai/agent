@@ -267,3 +267,31 @@ fn forget_rescans_the_workspace() {
     assert!(!Arc::ptr_eq(&first, &second), "a forgotten workspace is rebuilt");
     assert_eq!(description(&second, "kept").as_deref(), Some("Kept."));
 }
+
+#[test]
+fn structural_unchanged_request() {
+    let _guard = cold_cache();
+    let workspace = tempfile::tempdir().expect("tempdir");
+    for index in 0..50 {
+        write_skill(workspace.path(), ".horon-agent", &format!("gate-{index:02}"), "Gated.");
+    }
+
+    // Process-wide counters: the gate runs this test alone with
+    // `--test-threads=1`, so the deltas belong to it.
+    let cold = horon_agent_perf_counters::snapshot();
+    overlay_cache::overlay(Some(workspace.path()));
+    let warm = horon_agent_perf_counters::snapshot();
+    for _ in 0..9 {
+        overlay_cache::overlay(Some(workspace.path()));
+    }
+    let after = horon_agent_perf_counters::snapshot();
+    assert!(after.enabled, "the structural measurement needs the perf counters on");
+
+    println!(
+        "STRUCTURAL_PERF section=skill source=skill-overlay skill_warmup_file_reads={} \
+         skill_unchanged_request_file_reads={} skill_unchanged_request_dir_reads={}",
+        warm.skill_file_reads - cold.skill_file_reads,
+        after.skill_file_reads - warm.skill_file_reads,
+        after.skill_dir_reads - warm.skill_dir_reads,
+    );
+}

@@ -667,3 +667,31 @@ fn explicit_horon_agent_skill_wins_over_plugin_skill_with_same_name() {
         "the explicit horon-agent skill must override the plugin-provided one"
     );
 }
+
+#[test]
+fn structural_catalog_frontmatter_only() {
+    let _env_guard = crate::storage::lock_test_env();
+    let sandbox = Sandbox::with_config("");
+    let skills_dir = sandbox.agent("skills");
+    let body = "b".repeat(32 * 1024);
+    for index in 0..200 {
+        write_skill_with_body(&skills_dir, &format!("catalog-{index:03}"), &body);
+    }
+
+    // The counters are process-wide; the gate runs this test alone with
+    // `--test-threads=1`, and the lock keeps sibling counter tests out.
+    let _counter_guard = super::test_support::counter_lock();
+    let before = horon_agent_perf_counters::snapshot();
+    let registry = SkillRegistry::load_global().expect("load skills");
+    let skills = registry.list().len();
+    let after = horon_agent_perf_counters::snapshot();
+    assert_eq!(skills, 200, "every catalog skill is listed: {:?}", listing(&registry));
+    assert!(after.enabled, "the structural measurement needs the perf counters on");
+
+    println!(
+        "STRUCTURAL_PERF section=skill source=skill-catalog skills={skills} skill_catalog_file_reads={} \
+         skill_catalog_bytes={}",
+        after.skill_file_reads - before.skill_file_reads,
+        after.skill_bytes_read - before.skill_bytes_read,
+    );
+}
