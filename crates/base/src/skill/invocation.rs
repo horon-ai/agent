@@ -66,8 +66,26 @@ impl SkillRegistry {
     /// addressable name wins. Unknown names fall back to the identifier-shaped
     /// result from [`Self::parse_invocation`], which keeps a terminal file drop
     /// as ordinary input.
+    ///
+    /// `/skill:<name> prompt` names the same skill explicitly. It must resolve
+    /// to a registered name: there is no identifier fallback behind the prefix,
+    /// and a first token shaped like a file path is refused before any name is
+    /// matched, whatever happens to be registered.
     pub fn resolve_invocation<'a>(&self, input: &'a str) -> Option<SkillInvocation<'a>> {
         let invocation = input.trim().strip_prefix('/')?;
+        if let Some(named) = invocation.strip_prefix("skill:") {
+            let first = named.split(char::is_whitespace).next().unwrap_or(named);
+            if !is_addressable(first) {
+                return None;
+            }
+            return self.resolve_registered(named);
+        }
+        self.resolve_registered(invocation)
+            .or_else(|| Self::parse_invocation(input))
+    }
+
+    /// The longest registered, addressable name at the start of `invocation`.
+    fn resolve_registered<'a>(&self, invocation: &'a str) -> Option<SkillInvocation<'a>> {
         let boundaries = std::iter::once(invocation.len()).chain(
             invocation
                 .char_indices()
@@ -85,8 +103,7 @@ impl SkillRegistry {
                 prompt: split_prompt(&invocation[end..]),
             });
         }
-
-        Self::parse_invocation(input)
+        None
     }
 }
 
@@ -237,6 +254,46 @@ mod tests {
                 name: "claude/name~2",
                 prompt: Some("do the thing"),
             })
+        );
+    }
+
+    #[test]
+    fn skill_prefix_matches_same_skill() {
+        let registry = registry(&["frontend-design", "claude/My Skill"]);
+        let prefixed = registry.resolve_invocation("/skill:frontend-design build x");
+        assert_eq!(
+            prefixed,
+            Some(SkillInvocation {
+                name: "frontend-design",
+                prompt: Some("build x"),
+            })
+        );
+        assert_eq!(prefixed, registry.resolve_invocation("/frontend-design build x"));
+        assert_eq!(
+            registry.resolve_invocation("/skill:claude/My Skill now"),
+            registry.resolve_invocation("/claude/My Skill now"),
+            "a namespaced name with spaces resolves the same way behind the prefix"
+        );
+    }
+
+    #[test]
+    fn skill_prefix_unknown_is_none() {
+        let registry = registry(&["frontend-design"]);
+        // `/nope` falls back to an identifier-shaped invocation; the explicit
+        // prefix does not.
+        assert!(registry.resolve_invocation("/nope do it").is_some());
+        assert_eq!(registry.resolve_invocation("/skill:nope do it"), None);
+        assert_eq!(registry.resolve_invocation("/skill:"), None);
+        assert_eq!(registry.resolve_invocation("/skill: frontend-design"), None);
+    }
+
+    #[test]
+    fn skill_prefix_respects_file_drop_guard() {
+        assert_eq!(registry(&[]).resolve_invocation("/skill:tmp/x.png"), None);
+        assert_eq!(
+            registry(&["tmp/x.png"]).resolve_invocation("/skill:tmp/x.png describe it"),
+            None,
+            "a registered path-shaped name does not open the guard"
         );
     }
 }
