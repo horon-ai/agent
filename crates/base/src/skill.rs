@@ -8,6 +8,10 @@ use std::sync::OnceLock;
 use tokio::sync::RwLock;
 
 mod body;
+mod collision;
+#[cfg(test)]
+#[path = "skill/collision_tests.rs"]
+mod collision_tests;
 mod frontmatter;
 #[cfg(test)]
 #[path = "skill/frontmatter_tests.rs"]
@@ -60,6 +64,7 @@ pub struct Skill {
 #[derive(Debug, Default, Clone)]
 pub struct SkillRegistry {
     skills: Arc<HashMap<String, Skill>>,
+    collision_warnings: Arc<[String]>,
 }
 
 impl SkillRegistry {
@@ -155,6 +160,8 @@ impl SkillRegistry {
         for (name, skill) in overlay.skills.iter() {
             skills.insert(name.clone(), skill.clone());
         }
+        // Both loads' collisions apply to the composed set.
+        self.extend_collision_warnings(&overlay.collision_warnings);
     }
 
     /// Compose an effective registry from an already-scanned overlay without
@@ -325,14 +332,16 @@ impl SkillRegistry {
         skills
     }
 
-    /// Reload a specific skill by name
+    /// Reload one entry under the key it was asked for: a namespaced entry's
+    /// frontmatter still carries the bare name, so storing by the parsed name
+    /// would move it onto another source's key.
     pub fn reload(&mut self, name: &str) -> Result<bool> {
-        // Find the skill's path first
         let path = self.skills.get(name).map(|s| s.path.clone());
 
         if let Some(path) = path {
             if path.exists() {
-                let skill = Self::parse_skill(&path)?;
+                let mut skill = Self::parse_skill(&path)?;
+                skill.name = name.to_string();
                 self.insert_skill(skill);
                 Ok(true)
             } else {
@@ -367,39 +376,8 @@ impl SkillRegistry {
             "reloaded all skills; the skills list in the system prompt may have changed",
         );
         Arc::make_mut(&mut self.skills).clear();
+        self.clear_collision_warnings();
         Ok(sources::load_global(self))
-    }
-
-    /// Parse `/skill-name` and `/skill-name prompt...` invocations.
-    ///
-    /// The trailing prompt is kept verbatim apart from surrounding whitespace.
-    /// Quotes are intentionally not interpreted as shell syntax, so incomplete
-    /// or literal quotes can never put the input path into a continuation state.
-    /// Skill command tokens are limited to identifier-like names. In particular,
-    /// path separators and filename punctuation are rejected so a terminal file
-    /// drop such as `/tmp/screenshot.png` remains ordinary user input.
-    pub fn parse_invocation(input: &str) -> Option<SkillInvocation<'_>> {
-        let trimmed = input.trim();
-        let invocation = trimmed.strip_prefix('/')?;
-        let name_end = invocation.find(char::is_whitespace).unwrap_or(invocation.len());
-        let name = &invocation[..name_end];
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
-        {
-            return None;
-        }
-
-        let prompt = invocation[name_end..].trim();
-        let prompt = match prompt.as_bytes() {
-            [b'"', .., b'"'] | [b'\'', .., b'\''] if prompt.len() >= 2 => &prompt[1..prompt.len() - 1],
-            _ => prompt,
-        };
-        Some(SkillInvocation {
-            name,
-            prompt: (!prompt.is_empty()).then_some(prompt),
-        })
     }
 
     /// Return true if a skill with the given name is currently loaded.

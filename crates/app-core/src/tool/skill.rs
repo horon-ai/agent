@@ -221,6 +221,13 @@ impl SkillTool {
 
         append_endorsed_skills(&mut output, &installed);
 
+        // A skill that lost a name collision still exists under its namespaced
+        // address; the merge already wrote these lines to the log, and repeating
+        // them here is what tells the operator where the other one went.
+        for warning in registry.collision_warnings() {
+            output.push_str(&format!("\n{warning}\n"));
+        }
+
         Ok(ToolOutput::new(output).with_title("Skills: List"))
     }
 
@@ -728,6 +735,43 @@ mod tests {
             format!("---\nname: {name}\ndescription: Project skill {name}\n---\n\nBody."),
         )
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_shows_where_a_colliding_skill_moved() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mine = temp_dir.path().join(".horon-agent").join("skills").join("shared");
+        std::fs::create_dir_all(&mine).unwrap();
+        std::fs::write(
+            mine.join("SKILL.md"),
+            "---\nname: shared\ndescription: My skill shared\n---\n\nMy body.",
+        )
+        .unwrap();
+        let claude = temp_dir.path().join(".claude").join("skills").join("shared");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(
+            claude.join("SKILL.md"),
+            "---\nname: shared\ndescription: Claude skill shared\n---\n\nClaude body.",
+        )
+        .unwrap();
+
+        let tool = create_test_tool();
+        let result = tool
+            .execute(json!({"action": "list"}), context_with_working_dir(temp_dir.path()))
+            .await
+            .unwrap();
+
+        assert!(
+            result.output.contains("## /shared") && result.output.contains("## /claude/shared"),
+            "both skills must be listed under their addresses, got:\n{}",
+            result.output
+        );
+        assert!(
+            result.output.contains("Skills: name collision: \"shared\"")
+                && result.output.contains("available as \"claude/shared\""),
+            "the list must say where the colliding skill moved, got:\n{}",
+            result.output
+        );
     }
 
     #[tokio::test]

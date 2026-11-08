@@ -366,12 +366,152 @@ fn unreadable_source_skipped() {
     );
 }
 
+/// Write `SKILL.md` for `name` with a body of its own, so two sources can hold
+/// different skills under one name.
+fn write_skill_with_body(skills_dir: &Path, name: &str, body: &str) {
+    let dir = skills_dir.join(name);
+    std::fs::create_dir_all(&dir).expect("create skill dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: Skill {name}\n---\n\n{body}\n"),
+    )
+    .expect("write skill");
+}
+
+#[test]
+fn a_differing_skill_keeps_its_name_under_the_source_namespace() {
+    let _env_guard = crate::storage::lock_test_env();
+    let sandbox = Sandbox::with_config(CLAUDE_ON);
+
+    write_skill_with_body(&sandbox.agent("skills"), "shared", "Mine.");
+    write_skill_with_body(&sandbox.user(".claude/skills"), "shared", "Theirs.");
+    write_skill_with_body(&sandbox.user(".agents/skills"), "shared", "Third.");
+
+    let registry = SkillRegistry::load_global().expect("load global skills");
+    let mut names: Vec<&str> = registry.list().iter().map(|skill| skill.name.as_str()).collect();
+    names.sort();
+
+    // The priority table keeps the bare name on horon-agent's own collection
+    // and each later source keeps its skill under a namespaced address.
+    assert_eq!(names, vec!["agents/shared", "claude/shared", "shared"], "{names:?}");
+    assert_eq!(
+        registry.collision_warnings().len(),
+        2,
+        "{:?}",
+        registry.collision_warnings()
+    );
+    assert!(
+        registry.collision_warnings().iter().all(
+            |line| line.starts_with("Skills: name collision: \"shared\" from ") && line.contains("available as \"")
+        ),
+        "unexpected warnings: {:?}",
+        registry.collision_warnings()
+    );
+}
+
+#[test]
+fn reloading_a_namespaced_entry_keeps_its_own_path_and_body() {
+    let _env_guard = crate::storage::lock_test_env();
+    // Only isolates `HORON_AGENT_HOME`; the skills come from the workspace.
+    let _sandbox = Sandbox::with_config("");
+    let workspace = tempfile::tempdir().expect("workspace");
+
+    write_skill_with_body(&workspace.path().join(".horon-agent/skills"), "shared", "Mine.");
+    write_skill_with_body(&workspace.path().join(".claude/skills"), "shared", "Theirs.");
+
+    let mut registry = SkillRegistry::load_for_working_dir(Some(workspace.path())).expect("load skills");
+    assert_eq!(
+        registry.get("claude/shared").expect("namespaced entry").path,
+        workspace.path().join(".claude/skills/shared/SKILL.md")
+    );
+
+    // Each key must keep its own file: a reload must not re-key the namespaced
+    // entry onto the bare name and hand it the other source's path.
+    assert!(registry.reload("claude/shared").expect("reload namespaced"));
+    assert!(registry.reload("shared").expect("reload bare"));
+
+    let bare = registry.get("shared").expect("bare entry");
+    assert_eq!(bare.path, workspace.path().join(".horon-agent/skills/shared/SKILL.md"));
+    assert_eq!(bare.description, "Skill shared");
+    assert!(bare.body().expect("bare body").contains("Mine."));
+
+    let namespaced = registry.get("claude/shared").expect("namespaced entry");
+    assert_eq!(namespaced.path, workspace.path().join(".claude/skills/shared/SKILL.md"));
+    assert!(
+        namespaced.body().expect("namespaced body").contains("Theirs."),
+        "the namespaced entry must keep its own body"
+    );
+    assert_eq!(
+        registry.list().len(),
+        2,
+        "a reload must not add or move entries: {:?}",
+        listing(&registry)
+    );
+}
+
+#[test]
+fn a_project_load_keeps_the_global_load_s_collision_warnings() {
+    let _env_guard = crate::storage::lock_test_env();
+    let sandbox = Sandbox::with_config(CLAUDE_ON);
+    let workspace = tempfile::tempdir().expect("workspace");
+
+    write_skill_with_body(&sandbox.agent("skills"), "global-shared", "Mine.");
+    write_skill_with_body(&sandbox.user(".claude/skills"), "global-shared", "Theirs.");
+    write_skill_with_body(&workspace.path().join(".claude/skills"), "project-a", "A.");
+    write_skill_with_body(&workspace.path().join(".agents/skills"), "project-a", "B.");
+
+    let registry = SkillRegistry::load_for_working_dir(Some(workspace.path())).expect("load skills");
+
+    let warnings = registry.collision_warnings();
+    assert!(
+        warnings
+            .iter()
+            .any(|line| line.contains("\"global-shared\"") && line.contains("available as \"claude/global-shared\"")),
+        "the user-level collision must survive the project load: {warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|line| line.contains("\"project-a\"") && line.contains("available as \"agents/project-a\"")),
+        "the project-level collision must be reported too: {warnings:?}"
+    );
+}
+
+#[test]
+fn an_identical_copy_from_another_source_is_one_skill() {
+    let _env_guard = crate::storage::lock_test_env();
+    let sandbox = Sandbox::with_config(CLAUDE_ON);
+
+    write_skill(&sandbox.agent("skills"), "same");
+    write_skill(&sandbox.user(".claude/skills"), "same");
+
+    let registry = SkillRegistry::load_global().expect("load global skills");
+    assert_eq!(
+        registry
+            .list()
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["same"]
+    );
+    assert!(
+        registry.collision_warnings().is_empty(),
+        "an identical copy is not a collision: {:?}",
+        registry.collision_warnings()
+    );
+    assert_eq!(
+        registry.get("same").expect("skill").path,
+        sandbox.agent("skills/same/SKILL.md"),
+        "the copy that survives is the highest-priority one"
+    );
+}
+
 #[test]
 fn managed_skills_load_only_when_switched_on_and_never_replace_an_authored_skill() {
     let _env_guard = crate::storage::lock_test_env();
     let sandbox = Sandbox::with_config("");
     write_skill(&sandbox.agent("skills"), "authored");
-    write_skill(&sandbox.agent("managed-skills"), "authored");
+    write_skill_with_body(&sandbox.agent("managed-skills"), "authored", "A body the model wrote.");
     write_skill(&sandbox.agent("managed-skills"), "model-written");
 
     let off = SkillRegistry::load_global().expect("load global skills");
@@ -393,6 +533,24 @@ fn managed_skills_load_only_when_switched_on_and_never_replace_an_authored_skill
         on.get("authored").expect("authored skill").path,
         sandbox.agent("skills/authored/SKILL.md"),
         "a managed skill must never replace an authored one"
+    );
+    // A managed skill takes no namespace, so it cannot appear twice; the
+    // collision is reported instead.
+    assert!(
+        on.list().iter().all(|skill| skill.name != "managed/authored"),
+        "a managed skill must not receive a namespace: {:?}",
+        listing(&on)
+    );
+    let warnings: Vec<&String> = on
+        .collision_warnings()
+        .iter()
+        .filter(|line| line.contains("\"authored\""))
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "one collision line, got {:?}",
+        on.collision_warnings()
     );
 }
 

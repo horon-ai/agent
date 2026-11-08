@@ -22,7 +22,7 @@
 //! skills of every other source.
 
 use super::frontmatter::ReadStats;
-use super::{Skill, SkillRegistry};
+use super::{Skill, SkillRegistry, collision};
 use std::path::{Path, PathBuf};
 
 /// Maximum directory depth scanned under a Claude Code plugin root when
@@ -266,7 +266,7 @@ fn resolve_path(rule: PathRule, working_dir: Option<&Path>) -> Option<PathBuf> {
 /// Skills found in one source, with the cost of the discovery read.
 #[derive(Default)]
 struct Scanned {
-    skills: Vec<Skill>,
+    candidates: Vec<collision::Candidate>,
     stats: ReadStats,
 }
 
@@ -309,21 +309,19 @@ fn load_level(registry: &mut SkillRegistry, level: Level, working_dir: Option<&P
     }
 
     // One entry per name per load: sources are read in priority order, so the
-    // first source that offers a name is the one that should be believed. The
-    // set is claimed here rather than by the registry, because a registry that
-    // already holds the name is a different level of the same skill: the
-    // project overlay is composed over the globals and must win there.
-    let mut added = 0;
-    let mut claimed = std::collections::HashSet::new();
-    for scanned in &scanned {
-        for skill in &scanned.skills {
-            if !claimed.insert(skill.name.as_str()) {
-                continue;
-            }
-            registry.insert_skill(skill.clone());
-            added += 1;
-        }
+    // first source that offers a name is the one that should be believed. A
+    // later source with a different body keeps its skill under
+    // `<namespace>/<name>`, which is why the merge resolves collisions instead
+    // of dropping the loser. The claim is made here rather than by the registry
+    // because a registry that already holds the name is a different level of the
+    // same skill: the project overlay is composed over the globals and wins.
+    let candidates: Vec<collision::Candidate> = scanned.into_iter().flat_map(|scanned| scanned.candidates).collect();
+    let resolved = collision::resolve(candidates);
+    let added = resolved.skills.len();
+    for skill in resolved.skills {
+        registry.insert_skill(skill);
     }
+    registry.record_collision_warnings(resolved.warnings);
     added
 }
 
@@ -357,14 +355,22 @@ fn read_in_parallel(sources: &[ResolvedSource]) -> Vec<Scanned> {
 fn scan_source(source: &ResolvedSource) -> Scanned {
     let mut scanned = Scanned::default();
     for (path, kind) in &source.entries {
+        let managed = *kind == EntryKind::Managed;
         let (skills, stats) = scan_entry(path, *kind);
-        scanned.skills.extend(skills);
+        for skill in skills {
+            let namespace = collision::namespace_for(&skill.path, source.row.id);
+            scanned.candidates.push(collision::Candidate {
+                skill,
+                namespace,
+                managed,
+            });
+        }
         scanned.stats.add(stats);
     }
     // `read_dir` returns entries in filesystem order, which differs between
     // machines and between two runs on the same machine. Sorting here is what
     // makes the same directories always produce the same list.
-    scanned.skills.sort_by(|a, b| a.path.cmp(&b.path));
+    scanned.candidates.sort_by(|a, b| a.skill.path.cmp(&b.skill.path));
     scanned
 }
 

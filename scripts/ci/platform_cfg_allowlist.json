@@ -202,7 +202,7 @@
     },
     "crates/base/src/skill.rs": {
       "count": 1,
-      "reason": "tests chmod a skill to 0755 and relink a skills directory with symlink; same POSIX premise."
+      "reason": "the reload test repoints a skill directory symlink to prove the next load sees the new target, which needs std::os::unix::fs::symlink."
     },
     "crates/base/src/skill/body.rs": {
       "count": 11,
