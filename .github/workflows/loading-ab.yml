@@ -1,0 +1,215 @@
+name: Loading A/B
+
+# Skill catalog, workspace skill overlay and MCP config loading, measured for a
+# baseline and a candidate commit inside one job on one runner, so both sides
+# share the CPU, the disk and the load. Run it by hand:
+#
+#   gh workflow run loading-ab.yml --ref dev -f base_ref=<commit> -f head_ref=dev
+#
+# Both sides are measured with the candidate's scripts/perf/bench_loading.py and
+# bench_tools.py, so a script change never looks like a code change. The
+# comparison refuses reports of a different schema_version, which is what a
+# baseline without the loading counters produces; the job then fails.
+#
+# The counters decide, not the clock: a candidate that reads more skill bytes,
+# rereads a workspace skill, or rereads a user MCP config than the baseline fails
+# the "Check counters" step. Times are reported for the record
+# (docs/performance/BENCHMARK.md, "스킬·MCP 설정 로딩 A/B").
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "Baseline commit or branch (default: wave 1 of skill-mcp-loading-omp, the first commit with the loading counters)"
+        required: false
+        default: 23007c9b
+      head_ref:
+        description: "Candidate commit or branch"
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loading-ab-${{ inputs.base_ref }}-${{ inputs.head_ref }}
+  cancel-in-progress: false
+
+env:
+  HORON_AGENT_CI: "1"
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: stable
+  RESULTS: ${{ github.workspace }}/loading-ab-results
+
+jobs:
+  loading-ab:
+    name: Loading A/B (${{ inputs.base_ref }} -> ${{ inputs.head_ref }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.head_ref }}
+          path: head
+          # Full history, so a short baseline SHA resolves in the worktree below.
+          fetch-depth: 0
+
+      - name: Check out the baseline beside the candidate
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          git -C head worktree add --detach "$GITHUB_WORKSPACE/base" "$BASE_REF"
+          mkdir -p "$RESULTS"
+          git -C base rev-parse HEAD | tee "$RESULTS/base-commit.txt"
+          git -C head rev-parse HEAD | tee "$RESULTS/head-commit.txt"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: loading-ab
+          workspaces: |
+            head -> target
+            base -> target
+          cache-on-failure: "true"
+
+      - name: Build both sides (release)
+        shell: bash
+        run: |
+          rustc --version | tee "$RESULTS/rustc.txt"
+          for side in base head; do
+            (
+              cd "$side"
+              cargo build --release --locked -p horon-agent
+              cargo build --release --locked -p horon-agent-base --example loading_probe
+            )
+          done
+
+      - name: Measure loading (warm, both sides, alternating)
+        shell: bash
+        run: |
+          bench="head/scripts/perf/bench_loading.py"
+          for condition in large small; do
+            if [[ "$condition" == large ]]; then
+              sizes=(--skill-body-bytes 8192 --mcp-config-bytes 300000)
+              suffix=""
+            else
+              sizes=(--skill-body-bytes 0 --mcp-config-bytes 0)
+              suffix="-small"
+            fi
+            for side in base head; do
+              python "$bench" --binary "$side/target/release/examples/loading_probe" \
+                --mode warm --events 0 --skills 0,200,1000 "${sizes[@]}" \
+                --warmup 3 --iterations 30 --work-id "loading-ab-$side$suffix" \
+                --emit "$RESULTS/$side-warm$suffix.json" | tee "$RESULTS/$side-warm$suffix.txt"
+            done
+          done
+
+      - name: Compare loading reports
+        shell: bash
+        run: |
+          for suffix in "" "-small"; do
+            echo "### warm$suffix"
+            python head/scripts/perf/bench_loading.py \
+              --compare "$RESULTS/base-warm$suffix.json" "$RESULTS/head-warm$suffix.json" \
+              | tee "$RESULTS/compare-warm$suffix.txt"
+          done
+
+      - name: Check counters
+        shell: bash
+        run: |
+          python - "$RESULTS" <<'PY' | tee "$RESULTS/counters.txt"
+          import json, sys
+          from pathlib import Path
+
+          results = Path(sys.argv[1])
+
+          def fixtures(path):
+              report = json.loads(path.read_text(encoding="utf-8"))
+              return {
+                  (f["fixture"]["events"], f["fixture"]["skills"], f["fixture"].get("skill_body_bytes", 0),
+                   f["fixture"].get("mcp_config_bytes", 0)): f
+                  for f in report.get("fixtures") or []
+              }
+
+          def values(fixture, stage, counter):
+              found = fixture["stages"][stage].get("counters", {}).get("a", {}).get(counter)
+              if not found:
+                  raise SystemExit("missing counter %s/%s" % (stage, counter))
+              return found
+
+          failures = []
+          for suffix in ("", "-small"):
+              base = fixtures(results / ("base-warm%s.json" % suffix))
+              head = fixtures(results / ("head-warm%s.json" % suffix))
+              for key in sorted(set(base) & set(head)):
+                  events, skills, body, mcp = key
+                  left, right = base[key], head[key]
+                  if left.get("status") != "measured" or right.get("status") != "measured":
+                      failures.append("%r: not measured on both sides" % (key,))
+                      continue
+                  label = "skills=%d body=%d mcp=%d" % (skills, body, mcp)
+                  checks = []
+                  b, c = max(values(left, "skill_catalog", "skill_bytes_read")), max(values(right, "skill_catalog", "skill_bytes_read"))
+                  checks.append(("skill_catalog skill_bytes_read", b, c, c < b if skills and body else c <= b))
+                  c = max(values(right, "skill_request_overlay", "skill_file_reads"))
+                  checks.append(("skill_request_overlay skill_file_reads", 0, c, c == 0))
+                  b, c = max(values(left, "mcp_config_load", "mcp_config_reads")), max(values(right, "mcp_config_load", "mcp_config_reads"))
+                  checks.append(("mcp_config_load mcp_config_reads", b, c, c < b if mcp else c <= b))
+                  for name, before, after, ok in checks:
+                      print("%-24s %-40s baseline %-8s candidate %-8s %s" % (label, name, before, after, "ok" if ok else "FAIL"))
+                      if not ok:
+                          failures.append("%s %s: %s -> %s" % (label, name, before, after))
+          if failures:
+              print("counter conditions failed:\n  " + "\n  ".join(failures))
+              sys.exit(1)
+          print("every counter condition holds")
+          PY
+
+      - name: Measure tools (both sides)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          for side in base head; do
+            python head/scripts/perf/bench_tools.py --binary "$side/target/release/horon-agent" \
+              --json-out "$RESULTS/$side-tools.json" --markdown-out "$RESULTS/$side-tools.md"
+          done
+
+      - name: Write job summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          {
+            echo "## Loading A/B"
+            echo
+            echo "- baseline: \`$(cat "$RESULTS/base-commit.txt" 2>/dev/null)\`, candidate: \`$(cat "$RESULTS/head-commit.txt" 2>/dev/null)\`"
+            echo "- toolchain: \`$(cat "$RESULTS/rustc.txt" 2>/dev/null)\`, runner: \`ubuntu-24.04\`"
+            for f in compare-warm compare-warm-small counters; do
+              if [[ -f "$RESULTS/$f.txt" ]]; then
+                echo; echo "### $f"; echo; echo '```'; cat "$RESULTS/$f.txt"; echo '```'
+              fi
+            done
+            for side in base head; do
+              if [[ -f "$RESULTS/$side-tools.md" ]]; then echo; echo "### tools ($side)"; echo; cat "$RESULTS/$side-tools.md"; fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: loading-ab-${{ github.run_id }}
+          path: loading-ab-results/
+          retention-days: 30
