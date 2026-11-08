@@ -849,6 +849,7 @@ def _measure_oneshot(
     sentinel_seen = None
     mcp_ready_ms = None
     via = None
+    tools_offered: list[str] = []
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -867,6 +868,11 @@ def _measure_oneshot(
             mcp_ready_ms = round((min(exposed) - started_wall) * 1000, 2)
         vias = [r.get("via") for r in requests if r.get("via")]
         via = vias[-1] if vias else None
+        # The first request's tool list is the evidence for "the server never
+        # connected" versus "its tool had another name"; keeping it in the
+        # report means a skipped row can be checked without a re-run.
+        if requests:
+            tools_offered = list(requests[0].get("tool_names") or [])
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -897,6 +903,7 @@ def _measure_oneshot(
         "sentinel_seen": sentinel_seen,
         "mcp_ready_ms": mcp_ready_ms,
         "via": via,
+        "tools_offered": tools_offered,
     }
 
 
