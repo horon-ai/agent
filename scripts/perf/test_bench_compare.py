@@ -965,11 +965,6 @@ class ScenarioSelectionTests(unittest.TestCase):
 
 
 class ScenarioRouteTests(unittest.TestCase):
-    def test_pi_mcp_is_unsupported_with_a_reason(self) -> None:
-        result = bench.PiRunner("/pi").mcp(FakeMockServer(), "/tmp/root", "/tmp/root/ws", 1.0)
-        self.assertIn("skipped", result)
-        self.assertIn("MCP", result["skipped"])
-
     def test_horon_argv_allow_the_tool_each_scenario_needs(self) -> None:
         skill = bench.horon_turn_argv("/h", bench.skill_prompt("/w/SKILL.md"), "read")
         self.assertEqual(skill[skill.index("--tools") + 1], "read")
@@ -1043,7 +1038,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
                         # A tool without an addressable MCP client says so and
                         # never builds an env for that scenario.
                         self.assertEqual(scenario, "mcp")
-                        self.assertIn(runner_cls, (bench.PiRunner, bench.ClaudeRunner, bench.CodexRunner))
+                        self.assertIn(runner_cls, (bench.ClaudeRunner, bench.CodexRunner))
                         self.assertTrue(result["skipped"])
                         self.assertEqual(captured, [])
                         continue
@@ -1094,6 +1089,22 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
             )
         self.assertEqual(captured[0]["env"]["HORON_AGENT_RUN_MCP"], "1")
 
+    def test_pi_declares_the_fixture_server_directly_and_only_for_mcp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.realpath(tmp)
+            result, captured = self._capture(bench.PiRunner("/bin/pi"), "mcp", root)
+            path = os.path.join(captured[0]["env"]["PI_CODING_AGENT_DIR"], "mcp.json")
+            with open(path, encoding="utf-8") as fh:
+                config = json.load(fh)
+        self.assertNotIn("skipped", result)
+        server = config["mcpServers"]["bench"]
+        # `codemode`, pi's default, would never declare the tool to the mock model.
+        self.assertEqual(server["exposure"], "direct")
+        self.assertTrue(server["args"][0].endswith("bench_mcp_server.py"))
+        self.assertNotIn("--no-mcp", captured[0]["argv"])
+        self.assertIn("--no-mcp", bench.pi_oneshot_argv("/bin/pi"))
+        self.assertIn("--no-mcp", bench.pi_session_argv("/bin/pi"))
+
 
 class ScenarioReportTests(unittest.TestCase):
     def _result(self, name: str, label: str, skill=None, mcp=None, error=None) -> dict:
@@ -1128,7 +1139,7 @@ class ScenarioReportTests(unittest.TestCase):
             self._result("pi", "pi",
                          skill={"ms": 250.0, "peak_rss_bytes": 60e6, "tool_round_trip": True,
                                 "via": "file-read", "summary": {"samples": 1}},
-                         mcp={"skipped": "pi has no MCP client"}),
+                         mcp={"skipped": "MCP tool never exposed"}),
         ]
         report = bc.build_report("compare", results, [])
         report["parameters"] = {"scenarios": ["oneshot", "sessions", "skill", "mcp"]}
@@ -1139,7 +1150,7 @@ class ScenarioReportTests(unittest.TestCase):
         self.assertIn("file-read", markdown)
         self.assertIn("mcp-tool", markdown)
         self.assertIn("2.50× more", markdown)
-        self.assertIn("skipped: pi has no MCP client", markdown)
+        self.assertIn("skipped: MCP tool never exposed", markdown)
         self.assertIn("80.0 ms", markdown)
 
     def test_a_not_selected_scenario_renders_no_table(self) -> None:

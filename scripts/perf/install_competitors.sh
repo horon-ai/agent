@@ -53,7 +53,9 @@ JCODE_VERSION="${JCODE_VERSION:-v0.99.1}"
 CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.317}"
 CODEX_VERSION="${CODEX_VERSION:-0.166.0}"
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.19.5}"
-PI_VERSION="${PI_VERSION:-0.73.1}"
+# pi moved to the @earendil-works scope at 1.x; 1.x ships a built-in MCP client
+# (@earendil-works/pi-mcp) and needs Node 22.19 or later.
+PI_VERSION="${PI_VERSION:-1.5.0}"
 # @oh-my-pi/pi-coding-agent ships its CLI as a Bun script (engines bun>=1.4.4),
 # so the compare job installs Bun before running it.
 OMP_VERSION="${OMP_VERSION:-18.18.0}"
@@ -354,7 +356,7 @@ install_opencode() {
 }
 
 install_pi() {
-  install_node_tool pi "@mariozechner/pi-coding-agent@${PI_VERSION}" "pi"
+  install_node_tool pi "@earendil-works/pi-coding-agent@${PI_VERSION}" "pi"
 }
 
 install_omp() {
