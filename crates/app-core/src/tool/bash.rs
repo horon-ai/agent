@@ -1102,6 +1102,8 @@ mod utf8_truncation_tests {
 
     #[test]
     fn format_command_output_keeps_head_and_tail_of_long_output() {
+        // The minimizer test flips a process-wide override under this lock.
+        let _guard = crate::storage::lock_test_env();
         let input = format!("{}é", "a".repeat(29_999));
         let output = format_command_output("test-session", "cargo build", input, None);
         assert!(output.starts_with(&"a".repeat(12_000)), "the head keeps its 40% budget");
