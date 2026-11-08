@@ -612,6 +612,7 @@ class ReportTemplateTest(unittest.TestCase):
             "not-adopted-no-measurable-change",
             "reject-regression",
             "control-no-change",
+            "control-drift",
             "blocked",
         }
         placeholder = document["adoption_decision"]

@@ -141,6 +141,6 @@
     "exit_code": 0
   },
   "interpretation": "<what the numbers mean, in one paragraph, including what they do not support>",
-  "adoption_decision": "<adopt-pending-correctness|not-adopted-no-measurable-change|reject-regression|control-no-change|blocked>",
+  "adoption_decision": "<adopt-pending-correctness|not-adopted-no-measurable-change|reject-regression|control-no-change|control-drift|blocked>",
   "rollback_commit": "<sha to revert to if the change is withdrawn>"
 }

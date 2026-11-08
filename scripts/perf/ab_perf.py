@@ -662,6 +662,18 @@ def interpret(delta_ms, delta_pct, band_ms, within_band, same_binary, counts, sa
             "no change is claimable at this sample count." % (delta_ms, delta_pct or 0.0, band_ms or 0.0),
             "not-adopted-no-measurable-change",
         )
+    if same_binary:
+        # The same bytes ran on both sides, so a delta beyond the band is the
+        # runner's spread, never a property of the binary. Six spawn timings on a
+        # shared host can land outside a six-sample MAD band in either direction.
+        return (
+            "Control run: the same binary on both sides. The median delta "
+            "%.2f ms (%.2f%%) is outside the noise band of +/-%.2f ms over %d "
+            "measured runs per side. The binaries are identical, so this is runner "
+            "noise and reports no improvement and no regression."
+            % (delta_ms, delta_pct or 0.0, band_ms or 0.0, samples_per_side),
+            "control-drift",
+        )
     if delta_ms < 0:
         return (
             "The candidate median is %.2f ms (%.2f%%) lower, beyond the noise band of "
