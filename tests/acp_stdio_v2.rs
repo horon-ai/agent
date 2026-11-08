@@ -24,6 +24,8 @@
 
 #[path = "support/acp_client.rs"]
 mod acp_client;
+#[path = "support/acp_credentials.rs"]
+mod acp_credentials;
 #[path = "support/acp_daemon.rs"]
 mod acp_daemon;
 #[path = "support/acp_schema.rs"]
@@ -32,11 +34,11 @@ mod acp_schema;
 mod lifecycle;
 
 use acp_client::{AcpClient, AcpClientError, AcpClientOptions, ClientCapabilities, Frame, PermissionOutcome};
+use acp_credentials::{credential_files, daemon_credentials};
 use acp_daemon::AcpDaemon;
 use acp_schema::{Direction, FrameValidator, Violation};
 use lifecycle::Script;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -684,122 +686,6 @@ impl Peer {
             }
         }
     }
-}
-
-/// `CREDENTIAL_FILES` of crates/agent-sdk/src/launch.rs: the stores the
-/// product keeps directly under HORON_AGENT_HOME. The list is private there, so
-/// it is copied and `credential_lists_match_the_shipped_code` fails the moment
-/// the two drift apart.
-const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 5] = [
-    "auth.json",
-    "openai-auth.json",
-    "antigravity_oauth.json",
-    "gemini_oauth.json",
-    "config.toml",
-];
-
-/// Further stores under HORON_AGENT_HOME that are not in launch.rs: the MCP
-/// OAuth store (`STORE_FILE` of crates/base/src/mcp/oauth.rs).
-const EXTRA_HOME_CREDENTIAL_FILES: [&str; 1] = ["mcp-oauth.json"];
-
-/// `EXTERNAL_CREDENTIAL_FILES` of crates/agent-sdk/src/launch.rs, rooted at
-/// HOME (the scratch root), copied for the same reason.
-const SHIPPED_EXTERNAL_CREDENTIAL_FILES: [&str; 20] = [
-    ".claude/.credentials.json",
-    ".codex/auth.json",
-    ".gemini/oauth_creds.json",
-    ".cursor/auth.json",
-    ".config/cursor/auth.json",
-    "AppData/Roaming/Cursor/auth.json",
-    ".config/Cursor/User/globalStorage/state.vscdb",
-    ".config/cursor/User/globalStorage/state.vscdb",
-    "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
-    "Library/Application Support/cursor/User/globalStorage/state.vscdb",
-    "AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
-    "AppData/Roaming/cursor/User/globalStorage/state.vscdb",
-    ".config/github-copilot/hosts.json",
-    ".config/github-copilot/apps.json",
-    ".copilot/config.json",
-    ".hermes/auth.json",
-    ".pi/agent/auth.json",
-    ".openclaw/agent/auth.json",
-    ".openclaw/credentials/oauth.json",
-    ".local/share/opencode/auth.json",
-];
-
-/// The per-agent OpenClaw store names launch.rs reads one agent-id level deep:
-/// `$HOME/.openclaw/agents/<id>/agent/<name>`.
-const OPENCLAW_AGENT_CREDENTIAL_FILES: [&str; 2] = ["auth-profiles.json", "auth.json"];
-
-/// Every credential location the product reads or writes for a daemon whose
-/// HORON_AGENT_HOME is `home`, HOME is `user_home` and XDG_CONFIG_HOME is
-/// `xdg_config`, with its bytes or `None` when absent, so a credential that
-/// appears, disappears or changes alters the snapshot. Two copies of each
-/// external store and each provider env file are watched:
-/// - where the daemon itself resolves them under HORON_AGENT_HOME, which the
-///   test daemon always sets: `crate::storage::user_home_path(rel)` is
-///   `$HORON_AGENT_HOME/external/<rel>` and `app_config_dir()` is
-///   `$HORON_AGENT_HOME/config/horon-agent` (crates/storage/src/lib.rs), which
-///   are also the instance paths launch.rs links the stores to;
-/// - where launch.rs reads them from the user's HOME: `$HOME/<rel>`, and
-///   `user_app_config_dir()`, which is `$HOME/Library/Application Support/horon-agent`
-///   on macOS and `$XDG_CONFIG_HOME/horon-agent` on other unix systems.
-///
-/// For each root: the 20 external stores, the per-agent OpenClaw stores one
-/// agent-id level deep, and every `*.env` provider key file. Under `home`
-/// also: the launch.rs `CREDENTIAL_FILES`, the MCP OAuth store and every
-/// `*.env` provider key file.
-///
-/// The set is closed: runtime state such as `active_pids/`, session files or
-/// the model catalog caches in the config dir never enters it, whatever its name.
-fn credential_files(home: &Path, user_home: &Path, xdg_config: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
-    fn external_stores(root: &Path, out: &mut Vec<PathBuf>) {
-        out.extend(SHIPPED_EXTERNAL_CREDENTIAL_FILES.iter().map(|name| root.join(name)));
-        for agent in std::fs::read_dir(root.join(".openclaw/agents"))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            if agent.path().is_dir() {
-                for name in OPENCLAW_AGENT_CREDENTIAL_FILES {
-                    out.push(agent.path().join("agent").join(name));
-                }
-            }
-        }
-    }
-    fn env_files(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            if entry.file_name().to_string_lossy().ends_with(".env") {
-                out.push(entry.path());
-            }
-        }
-    }
-    let mut paths: Vec<PathBuf> = SHIPPED_HOME_CREDENTIAL_FILES
-        .iter()
-        .chain(EXTRA_HOME_CREDENTIAL_FILES.iter())
-        .map(|name| home.join(name))
-        .collect();
-    external_stores(&home.join("external"), &mut paths);
-    env_files(&home.join("config").join("horon-agent"), &mut paths);
-    external_stores(user_home, &mut paths);
-    let user_app_config = if cfg!(target_os = "macos") {
-        user_home.join("Library/Application Support/horon-agent")
-    } else {
-        xdg_config.join("horon-agent")
-    };
-    env_files(&user_app_config, &mut paths);
-    paths
-        .into_iter()
-        .map(|path| {
-            let bytes = std::fs::read(&path).ok();
-            (path, bytes)
-        })
-        .collect()
-}
-
-/// [`credential_files`] for one test daemon.
-fn daemon_credentials(daemon: &AcpDaemon) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
-    credential_files(&daemon.home, &daemon.root, &daemon.root.join("config"))
 }
 
 /// IS-1: per-request negotiation. 2 selects v2, 1 the v1 surface, 0 is
@@ -1957,6 +1843,86 @@ fn is15_auth() {
     conn.assert_schema_clean();
 }
 
+/// IS-16: `tool_call/cancel` stops one running tool call and nothing else. A
+/// `bash sleep 30` call advertises `capabilities.cancel` while it runs, the
+/// cancel is answered `{}`, the call's final update is `cancelled` with
+/// `capabilities: null`, and the same turn goes on to finish with `end_turn`.
+#[test]
+fn is16_tool_call_cancel() {
+    let daemon = AcpDaemon::start("acp");
+    let _dump = LogDump(&daemon);
+    let work = work_dir(&daemon);
+    daemon.provider.script(
+        "IS16_CANCEL",
+        tool_turn(
+            "bash",
+            json!({"command": "sleep 30", "intent": "is16 cancellation fixture"}),
+            "is16 turn continued",
+        ),
+    );
+    let mut conn = Conn::v2(&daemon, "is16");
+    conn.initialize();
+    let session = conn.new_session(&work);
+    conn.take_notes();
+    let cursor = conn.cursor(&session);
+    let prompt = conn.send_prompt(&session, "IS16_CANCEL run it");
+    conn.wait("session/prompt", &prompt)
+        .unwrap_or_else(|error| panic!("the prompt is inserted: {error}\n{}", daemon.logs()));
+
+    // The running call advertises the control; only it may be cancelled.
+    let advertised = conn.await_update(&session, "a call advertising its cancel control", |update| {
+        update["sessionUpdate"] == "tool_call_update"
+            && update["status"] == "in_progress"
+            && update["capabilities"]["cancel"].is_object()
+    });
+    let tool_call_id = advertised["toolCallId"].as_str().expect("a toolCallId").to_string();
+    assert_eq!(
+        conn.ok(
+            "tool_call/cancel",
+            json!({"sessionId": session, "toolCallId": tool_call_id})
+        ),
+        json!({}),
+        "an advertised cancel is accepted"
+    );
+
+    // A second cancel of the same call is refused: it is already stopping.
+    let again = conn.err(
+        "tool_call/cancel",
+        json!({"sessionId": session, "toolCallId": tool_call_id}),
+    );
+    assert_eq!(again["code"], -32602, "{again}");
+
+    let stop = conn.await_idle_after(&session, cursor);
+    assert_eq!(
+        stop,
+        "end_turn",
+        "the turn continues after the call stops: {}",
+        daemon.logs()
+    );
+    let updates = updates_of(&conn.take_notes(), &session);
+    let finals: Vec<&Value> = of_kind(&updates, "tool_call_update")
+        .into_iter()
+        .filter(|update| update["toolCallId"] == tool_call_id.as_str())
+        .filter(|update| matches!(update["status"].as_str(), Some("completed" | "failed" | "cancelled")))
+        .collect();
+    assert_eq!(finals.len(), 1, "one final update for the call: {updates:?}");
+    assert_eq!(finals[0]["status"], "cancelled", "{:?}", finals[0]);
+    assert!(
+        finals[0].get("capabilities").is_some_and(Value::is_null),
+        "a final call clears its capabilities: {:?}",
+        finals[0]
+    );
+    assert!(
+        chunk_text(&updates, "agent_message_chunk").contains("is16 turn continued"),
+        "the same turn finished after the cancelled call: {updates:?}"
+    );
+    assert!(
+        mentions(&updates, "sleep 30") && mentions(&updates, &tool_call_id),
+        "the call stays in the transcript: {updates:?}"
+    );
+    conn.assert_schema_clean();
+}
+
 /// Dual-stack 1: one daemon, a v1 and a v2 client; each gets its own
 /// surface for initialize, session setup and a prompt.
 #[test]
@@ -2331,57 +2297,4 @@ fn credential_snapshot_ignores_runtime_state() {
         );
         assert_eq!(after.get(path), Some(&Some(b"{}".to_vec())), "{}", path.display());
     }
-}
-
-/// The copied credential lists equal the private stores the shipped code reads.
-#[test]
-fn credential_lists_match_the_shipped_code() {
-    fn literals(source: &str, start: &str) -> Vec<String> {
-        let begin = source.find(start).unwrap_or_else(|| panic!("{start} is in launch.rs")) + start.len();
-        let end = begin + source[begin..].find("];").expect("the list ends");
-        source[begin..end]
-            .split('"')
-            .skip(1)
-            .step_by(2)
-            .map(str::to_string)
-            .collect()
-    }
-    let launch = include_str!("../crates/agent-sdk/src/launch.rs");
-    assert_eq!(
-        literals(launch, "const CREDENTIAL_FILES: &[&str] = &["),
-        SHIPPED_HOME_CREDENTIAL_FILES
-    );
-    assert_eq!(
-        literals(launch, "const EXTERNAL_CREDENTIAL_FILES: &[&str] = &["),
-        SHIPPED_EXTERNAL_CREDENTIAL_FILES
-    );
-    assert!(
-        launch.contains(r#"for name in ["auth-profiles.json", "auth.json"] {"#)
-            && launch.contains(r#".join("agents")"#),
-        "the per-agent OpenClaw store names"
-    );
-    assert!(
-        include_str!("../crates/platform-macos/src/lib.rs").contains(r#".join("Library/Application Support")"#)
-            && include_str!("../crates/platform/src/paths.rs").contains("home.join(app)")
-            && launch.contains(r#"user_config_dir("horon-agent")"#)
-            && launch.contains(r#"ends_with(".env")"#),
-        "the provider env files of user_app_config_dir()"
-    );
-    assert!(
-        launch.contains(r#"PathBuf::from("external").join(relative)"#)
-            && launch.contains(r#"PathBuf::from("external").join(&relative)"#)
-            && launch.contains(r#"PathBuf::from("config").join("horon-agent").join(&name)"#),
-        "launch.rs links the stores to <instance>/external/<rel> and <instance>/config/horon-agent/<name>.env"
-    );
-    let storage = include_str!("../crates/storage/src/lib.rs");
-    assert!(
-        storage.contains(r#"return Ok(PathBuf::from(path).join("external").join(relative));"#)
-            && storage.contains(r#"return Ok(PathBuf::from(path).join("config").join("horon-agent"));"#),
-        "under HORON_AGENT_HOME the daemon resolves user_home_path to $HORON_AGENT_HOME/external/<rel> and app_config_dir to $HORON_AGENT_HOME/config/horon-agent"
-    );
-    let oauth = include_str!("../crates/base/src/mcp/oauth.rs");
-    assert!(
-        oauth.contains(r#"const STORE_FILE: &str = "mcp-oauth.json";"#),
-        "the MCP OAuth store name"
-    );
 }

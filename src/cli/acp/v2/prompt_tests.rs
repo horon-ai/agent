@@ -421,7 +421,7 @@ async fn stream_maps_v2_updates_and_cancels_open_tools() {
     assert_eq!(updates[2]["status"], "pending");
     assert_eq!(
         updates[3],
-        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled"})
+        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled","capabilities":null})
     );
     assert_eq!(updates[4]["stopReason"], "cancelled");
     client.close_stdin().await;
@@ -458,7 +458,7 @@ async fn snapshot_attached_run_maps_with_its_start_id() {
     assert_eq!(updates[0]["messageId"], "peer-1:a1");
     assert_eq!(
         updates[2],
-        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled"})
+        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled","capabilities":null})
     );
     assert_eq!(updates[3]["stopReason"], "cancelled");
     client.close_stdin().await;
@@ -1026,7 +1026,7 @@ async fn close_give_up_ends_open_tool_calls_before_idle() {
     let updates = updates(&before);
     assert_eq!(
         updates[0],
-        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled"})
+        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled","capabilities":null})
     );
     assert_eq!(updates[1]["stopReason"], "cancelled");
     client.close_stdin().await;

@@ -701,6 +701,7 @@ impl AcpRuntime {
             "session/list" => self.handle_session_list(request).await,
             "session/delete" => self.handle_session_delete(request).await,
             "session/set_config_option" => self.handle_set_config_option(request).await,
+            "tool_call/cancel" => self.handle_tool_call_cancel(request).await,
             // Every other method, removed or unknown, is not part of the v2
             // surface: `session/load`, `session/set_mode`, `authenticate`,
             // `logout`, `session/set_model`, `session/set_reasoning_effort`
