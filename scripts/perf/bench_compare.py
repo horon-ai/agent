@@ -1710,6 +1710,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "recorded as skipped elsewhere)")
     parser.add_argument("--json-out")
     parser.add_argument("--markdown-out")
+    parser.add_argument("--install-failures", metavar="PATH",
+                        help="failures.txt from install_competitors.sh (`name<TAB>reason` lines); a tool "
+                             "without a binary is skipped with that reason")
     return parser.parse_args(argv)
 
 
@@ -1721,6 +1724,27 @@ def parse_bin_overrides(values: list[str]) -> dict[str, str]:
         name, path = value.split("=", 1)
         overrides[name.strip()] = os.path.abspath(os.path.expanduser(path.strip()))
     return overrides
+
+
+def read_install_failures(path: str | None) -> dict[str, str]:
+    """Map each tool to the reason install_competitors.sh gave for not installing it."""
+    if not path or not os.path.isfile(path):
+        return {}
+    reasons: dict[str, list[str]] = {}
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            name, sep, reason = line.rstrip("\r\n").partition("\t")
+            name, reason = name.strip(), reason.strip()
+            if sep and name and reason:
+                reasons.setdefault(name, []).append(reason)
+    return {name: "; ".join(items) for name, items in reasons.items()}
+
+
+def missing_binary_reason(name: str, install_failures: dict[str, str]) -> str:
+    reason = install_failures.get(name)
+    if reason:
+        return f"install failed: {reason}"
+    return "binary not found (pass --bin name=path)"
 
 
 def plan_first_session(points: list[dict], key: str) -> float | None:
@@ -2154,6 +2178,7 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     overrides = parse_bin_overrides(args.bin)
+    install_failures = read_install_failures(args.install_failures)
     started_at = bc.utc_now_iso()
     results: list[dict] = []
     skipped: list[dict] = []
@@ -2174,7 +2199,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         binary = resolve_bin(name, overrides.get(name), os.environ)
         if not binary:
-            skipped.append({"name": name, "reason": "binary not found (pass --bin name=path)"})
+            skipped.append({"name": name, "reason": missing_binary_reason(name, install_failures)})
             continue
         runners.append(runner_cls(binary, name=name, label=row_label(name)))
 
