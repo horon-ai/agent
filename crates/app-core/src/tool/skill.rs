@@ -9,6 +9,12 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// `skill_manage delete` (issue #62): the managed directory is the only one the
+/// action reaches, and plan mode never reaches it at all.
+#[cfg(test)]
+#[path = "skill_delete_tests.rs"]
+mod skill_delete_tests;
+
 pub struct SkillTool {
     registry: Arc<RwLock<SkillRegistry>>,
 }
@@ -36,11 +42,11 @@ impl SkillTool {
 #[derive(Deserialize)]
 struct SkillInput {
     /// Action to perform: load (default), list, reload, reload_all, read,
-    /// create, update.
+    /// create, update, delete.
     /// `list` shows both loaded skills and the horon-agent-endorsed catalog.
     #[serde(default = "default_action")]
     action: String,
-    /// Skill name (required for load, reload, read, create, update)
+    /// Skill name (required for load, reload, read, create, update, delete)
     #[serde(alias = "skill")]
     #[serde(default)]
     name: Option<String>,
@@ -82,7 +88,7 @@ impl Tool for SkillTool {
                 "intent": super::intent_schema_property(),
                 "action": {
                     "type": "string",
-                    "enum": ["load", "list", "reload", "reload_all", "read", "create", "update"],
+                    "enum": ["load", "list", "reload", "reload_all", "read", "create", "update", "delete"],
                     "description": "Action."
                 },
                 "name": {
@@ -127,8 +133,9 @@ impl Tool for SkillTool {
                     self.update_managed_skill(params.name, params.description, params.body)
                         .await
                 }
+                "delete" => self.delete_managed_skill(working_dir.as_deref(), params.name).await,
                 _ => Ok(ToolOutput::new(format!(
-                    "Unknown action: {}. Use 'load', 'list', 'reload', 'reload_all', 'read', 'create', or 'update'.",
+                    "Unknown action: {}. Use 'load', 'list', 'reload', 'reload_all', 'read', 'create', 'update', or 'delete'.",
                     params.action
                 ))),
             }
@@ -349,6 +356,60 @@ impl SkillTool {
         self.write_managed_skill(&name, description, body, "Updated").await
     }
 
+    /// `delete`: removes a skill the agent wrote itself.
+    ///
+    /// Only the managed directory is touched. A name this session resolves to
+    /// an authored skill is refused together with its source, because removing
+    /// instructions a person wrote is not what this action is for. The
+    /// `[tools] managed_skills` switch is deliberately not consulted: authoring
+    /// can be off while a stale managed skill still needs cleaning up, and the
+    /// guards inside `managed_skills::remove` are what keep the removal inside
+    /// the managed directory.
+    async fn delete_managed_skill(
+        &self,
+        working_dir: Option<&std::path::Path>,
+        name: Option<String>,
+    ) -> Result<ToolOutput> {
+        let name = crate::managed_skills::validate_name(name.as_deref().unwrap_or(""))?;
+        if let Some(skill) = self.effective_registry(working_dir).await.get(&name)
+            && !crate::managed_skills::contains_path(&skill.path)
+        {
+            let source = crate::skill::describe_source(&skill.path, working_dir)
+                .unwrap_or_else(|| format!("a skill at {}", skill.path.display()));
+            anyhow::bail!(
+                "Skill '{name}' is {source}, so skill_manage cannot delete it. Only skills in {} can be deleted, and nothing was removed.",
+                crate::managed_skills::dir()?.display()
+            );
+        }
+        let path = crate::managed_skills::remove(&name)?;
+        let reload_note = self.reload_after_managed_change(&name).await;
+        Ok(ToolOutput::new(format!(
+            "Deleted managed skill '{name}'\n\nPath: {}{reload_note}",
+            path.display()
+        ))
+        .with_title(format!("Skills: Deleted {name}")))
+    }
+
+    /// Reload the shared registry after a managed skill changed on disk.
+    ///
+    /// The skills list is part of the system prompt and the late-install
+    /// reminder reads the shared registry, so the next turn only sees a
+    /// created, updated, or deleted skill once this runs. A failed reload is
+    /// reported in the tool output instead of failing the change: the file
+    /// operation already happened.
+    async fn reload_after_managed_change(&self, name: &str) -> String {
+        let mut registry = self.registry.write().await;
+        match registry.reload_global() {
+            Ok(_) => String::new(),
+            Err(err) => {
+                crate::logging::warn(&format!(
+                    "[tool:skill_manage] managed skill reload failed name={name} error={err}"
+                ));
+                format!("\n\nThe skills registry reload failed: {err}. Run skill_manage reload_all.")
+            }
+        }
+    }
+
     async fn write_managed_skill(
         &self,
         name: &str,
@@ -358,20 +419,7 @@ impl SkillTool {
     ) -> Result<ToolOutput> {
         let description = description.unwrap_or_default();
         let path = crate::managed_skills::write(name, &description, body.as_deref().unwrap_or_default())?;
-        // A new skill reaches the prompt through the late-install reminder,
-        // which reads the shared registry; reload it so the next turn sees it.
-        let reload_note = {
-            let mut registry = self.registry.write().await;
-            match registry.reload_global() {
-                Ok(_) => String::new(),
-                Err(err) => {
-                    crate::logging::warn(&format!(
-                        "[tool:skill_manage] managed skill reload failed name={name} error={err}"
-                    ));
-                    format!("\n\nThe skills registry reload failed: {err}. Run skill_manage reload_all.")
-                }
-            }
-        };
+        let reload_note = self.reload_after_managed_change(name).await;
         let description = crate::managed_skills::sanitize_description(&description);
         Ok(ToolOutput::new(format!(
             "{verb} managed skill '{name}'\n\nPath: {}\nDescription: {description}{reload_note}",

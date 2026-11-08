@@ -128,6 +128,10 @@
       "count": 1,
       "reason": "one test points a skill file symlink outside the skill directory to prove the skill:// reader refuses it, which needs std::os::unix::fs::symlink."
     },
+    "crates/app-core/src/tool/skill_delete_tests.rs": {
+      "count": 2,
+      "reason": "one test points a managed skill entry at a directory outside the managed tree to prove delete unlinks the link and keeps the target, which needs std::os::unix::fs::symlink; the inner async body carries the second cfg line so it is not compiled on Windows."
+    },
     "crates/app-core/src/tool/session_mcp_tests.rs": {
       "count": 2,
       "reason": "FIFO-based stub fixtures (mkfifo); Windows has no FIFO."

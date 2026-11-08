@@ -30,7 +30,7 @@ mod sources_tests;
 #[path = "skill/tests/support.rs"]
 mod test_support;
 pub use invocation::SkillInvocation;
-pub use sources::project_skill_paths;
+pub use sources::{describe_source, project_skill_paths};
 
 use frontmatter::{AllowedTools, SkillFrontmatter};
 
