@@ -256,7 +256,7 @@ v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `ses
 
 ### 에디터에 보이는 것 (v2)
 
-**prompt 확인.** `session/prompt`는 데몬이 사용자 메시지를 저장했다고 알리는 즉시 `{messageId}`로 답한다. 턴이 끝나기를 기다리지 않는다. `messageId`는 데몬이 저장한 메시지 id다. 저장 전에 거절되면 그 제출에는 업데이트가 없다. 알 수 없는 세션은 `-32002`, 잘못된 내용은 `-32602`, 쓸 수 있는 모델이 없거나 로그아웃 상태면 `-32000`이다. 데몬이 이미 바쁜 경우는 `-32602`, 데몬이 설정을 다시 읽는 중이면 `-32603`이다. 저장 전에 `$/cancel_request`를 보내면 `-32800`이고 대기 중이던 메시지는 거둔다. 저장된 뒤에 실패하면 응답이 아니라 `stopReason: "error"`와 `error: {code, message}`를 담은 idle `state_update`로 알린다.
+**prompt 확인.** `session/prompt`는 데몬이 사용자 메시지를 저장했다고 알리는 즉시 `{messageId}`로 답한다. 턴이 끝나기를 기다리지 않는다. `messageId`는 데몬이 저장한 메시지 id다. 저장 전에 거절되면 그 제출에는 업데이트가 없다. 알 수 없는 세션은 `-32002`, 잘못된 내용은 `-32602`, 쓸 수 있는 모델이 없거나 로그아웃 상태면 `-32000`이고, 데몬이 설정을 다시 읽는 중이면 `-32603`이다. 턴이 진행 중일 때 보낸 prompt는 거절하지 않는다. 이 연결의 앞 prompt가 아직 처리 중이면 어댑터가 받은 순서대로 보류했다가 세션이 다음 prompt를 받을 수 있을 때 데몬에 보내고, 다른 화면의 턴이 진행 중이면 데몬이 그 턴 뒤에 저장한다. 어느 쪽이든 응답은 저장된 뒤에 온다. 저장 전에 `$/cancel_request`, `session/cancel`, `session/close`가 오면 `-32800`이고 보류하거나 대기 중이던 메시지는 거둔다. 저장된 뒤에 실패하면 응답이 아니라 `stopReason: "error"`와 `error: {code, message}`를 담은 idle `state_update`로 알린다.
 
 **상태 업데이트.** 세션의 포그라운드 턴은 이 에디터가 시작했든 다른 화면이 시작했든 에이전트가 스스로 시작했든 `state_update`로 보고한다. 순서는 시작할 때 `running`, 권한이나 질문 답을 기다리는 동안 `requires_action`, 답을 받은 뒤 첫 이벤트 전에 다시 `running`, 끝나면 `idle`이다. `idle`에는 `stopReason`(`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`, `error`)이 붙고, 원인을 모르면 생략한다. `idle`은 그 턴의 다른 업데이트가 모두 나간 뒤에 한 번만 온다. `session/cancel`은 남은 업데이트를 보낸 뒤 `idle`(`cancelled`)로 끝난다. `session/close`는 진행 중인 prompt를 취소하고, 마지막 업데이트와 `idle`(`cancelled`)을 닫기 응답보다 먼저 보낸다. 접수했지만 아직 `running`을 보고하지 않은 prompt를 닫을 때도 같은 순서다.
 

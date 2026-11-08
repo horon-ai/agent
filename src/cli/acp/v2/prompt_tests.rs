@@ -217,19 +217,33 @@ async fn pre_insert_errors_have_no_updates() {
     assert_eq!(response["error"]["code"], ACP_AUTH_REQUIRED, "{response}");
     offer_models(&session, 1).await;
 
-    // Another prompt of this editor is still waiting for insertion.
+    // Another prompt of this editor is still waiting for insertion: IS-12
+    // holds the second one instead of refusing it, and sends it once the
+    // first is answered.
     client.send(prompt(json!("first"), SID)).await;
     let first = next_message(&mut daemon).await;
     client.send(prompt(json!("second"), SID)).await;
-    let (before, response) = client.recv_response(json!("second")).await;
-    assert!(before.is_empty(), "{before:?}");
-    assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), daemon.recv())
+            .await
+            .is_err(),
+        "the second prompt is held while the first waits for insertion"
+    );
 
     // Any other daemon error for the prompt.
     daemon
         .emit(json!({"type":"error","id":first,"message":"Skill 'x' is not installed on the server"}))
         .await;
     let (before, response) = client.recv_response(json!("first")).await;
+    assert!(before.is_empty(), "{before:?}");
+    assert_eq!(response["error"]["code"], JSONRPC_INTERNAL_ERROR, "{response}");
+
+    // The held prompt goes now; refuse it too so nothing is inserted.
+    let second = next_message(&mut daemon).await;
+    daemon
+        .emit(json!({"type":"error","id":second,"message":"Skill 'x' is not installed on the server"}))
+        .await;
+    let (before, response) = client.recv_response(json!("second")).await;
     assert!(before.is_empty(), "{before:?}");
     assert_eq!(response["error"]["code"], JSONRPC_INTERNAL_ERROR, "{response}");
 

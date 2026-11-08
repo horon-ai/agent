@@ -18,6 +18,9 @@ pub(super) mod cancel;
 #[cfg(test)]
 mod cancel_tests;
 pub(super) mod foreground;
+pub(super) mod held;
+#[cfg(test)]
+mod held_tests;
 #[cfg(test)]
 mod interaction_tests;
 pub(super) mod mapper;

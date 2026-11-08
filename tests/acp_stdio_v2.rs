@@ -898,21 +898,21 @@ fn is4_prompt_lifecycle() {
         .provider
         .wait_for_hold_open_opened(WAIT)
         .unwrap_or_else(|error| panic!("{error}\n{}", daemon.logs()));
-    let busy = conn.err(
-        "session/prompt",
-        json!({"sessionId": session, "prompt": [{"type": "text", "text": "IS4_BUSY_CONTENT second"}]}),
-    );
-    assert_eq!(
-        busy["code"], -32602,
-        "a busy prompt is refused before insertion: {busy}"
-    );
+    // IS-12: a prompt sent while the turn runs is held, not refused; the
+    // session cancel takes it back with the turn, so it answers -32800 and
+    // never reaches the daemon.
+    let busy = conn.send_prompt(&session, "IS4_BUSY_CONTENT second");
     let cursor = conn.cursor(&session);
     conn.notify("session/cancel", json!({"sessionId": session}));
     assert_eq!(conn.await_idle_after(&session, cursor), "cancelled");
+    let busy = conn
+        .wait("session/prompt", &busy)
+        .expect_err("a held prompt cancelled before insertion is not inserted");
+    assert_eq!(busy["code"], -32800, "{busy}");
     conn.barrier();
     assert!(
         conn.stdout().iter().all(|line| !line.contains("IS4_BUSY_CONTENT")),
-        "a refused prompt writes no update"
+        "a held prompt taken back writes no update"
     );
     conn.assert_schema_clean();
 }
@@ -1922,6 +1922,58 @@ fn is16_tool_call_cancel() {
         mentions(&updates, "sleep 30") && mentions(&updates, &tool_call_id),
         "the call stays in the transcript: {updates:?}"
     );
+    conn.assert_schema_clean();
+}
+
+/// IS-21: a prompt sent while this editor's previous prompt still runs is
+/// held, not refused: it is answered with its own `messageId` only after the
+/// first turn reported idle, and then runs a turn of its own.
+#[test]
+fn is21_prompt_during_active_work() {
+    let daemon = AcpDaemon::start("acp");
+    let _dump = LogDump(&daemon);
+    let work = work_dir(&daemon);
+    daemon.provider.script(
+        "IS21_FIRST",
+        tool_turn(
+            "bash",
+            json!({"command": "sleep 2", "intent": "is21 hold fixture"}),
+            "is21 first done",
+        ),
+    );
+    let mut conn = Conn::v2(&daemon, "is21");
+    conn.initialize();
+    let session = conn.new_session(&work);
+    conn.take_notes();
+    let cursor = conn.cursor(&session);
+    let first = conn.send_prompt(&session, "IS21_FIRST go");
+    let first_id = conn
+        .wait("session/prompt", &first)
+        .expect("the first prompt is inserted");
+    conn.await_update(&session, "the first turn's running call", |update| {
+        update["sessionUpdate"] == "tool_call_update" && update["status"] == "in_progress"
+    });
+    let second = conn.send_prompt(&session, "IS21_SECOND go");
+    let second_id = conn
+        .wait("session/prompt", &second)
+        .unwrap_or_else(|error| panic!("the held prompt is not refused: {error}\n{}", daemon.logs()));
+    assert_ne!(first_id["messageId"], second_id["messageId"], "{first_id} {second_id}");
+    let transitions = conn.states_since(&session, cursor);
+    assert!(
+        transitions.starts_with(&["running".to_string(), "idle:end_turn".to_string()]),
+        "the second prompt is inserted only after the first turn ended: {transitions:?}"
+    );
+    conn.await_idle_after(&session, cursor + 2);
+    assert_eq!(
+        conn.states_since(&session, cursor),
+        ["running", "idle:end_turn", "running", "idle:end_turn"],
+        "the held prompt runs a turn of its own"
+    );
+    let updates = updates_of(&conn.take_notes(), &session);
+    let users: Vec<&Value> = of_kind(&updates, "user_message");
+    assert_eq!(users.len(), 2, "{updates:?}");
+    assert_eq!(users[1]["messageId"], second_id["messageId"], "{updates:?}");
+    assert!(mentions(&[users[1].clone()], "IS21_SECOND go"), "{updates:?}");
     conn.assert_schema_clean();
 }
 
