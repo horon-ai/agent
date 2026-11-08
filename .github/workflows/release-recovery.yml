@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-recovery.yml'
+      - '.github/workflows/release-tag.yml'
       - 'scripts/release/**'
       - 'tests/*release*.py'
       - 'scripts/install/install.sh'
@@ -15,6 +16,7 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-recovery.yml'
+      - '.github/workflows/release-tag.yml'
       - 'scripts/release/**'
       - 'tests/*release*.py'
       - 'scripts/install/install.sh'
