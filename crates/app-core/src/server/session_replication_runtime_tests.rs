@@ -34,7 +34,10 @@ fn session_replication_local_publication_is_private_and_catalog_readable() {
     // both absent every reader already resolves "no explicit selection", so
     // writing them would cost flushes for a value the absence states.
     for name in ["local-head.json", "local-head-explicit.json"] {
-        assert!(!directory.join(name).exists(), "an implicit commit must not write {name}");
+        assert!(
+            !directory.join(name).exists(),
+            "an implicit commit must not write {name}"
+        );
     }
 }
 
