@@ -259,6 +259,16 @@ class StraceTests(unittest.TestCase):
         self.assertIsNone(summary["fsync_calls"])
         self.assertEqual(summary["fsync_calls_runs"], [])
 
+    def test_summarize_oneshot_times_only_the_untraced_runs(self) -> None:
+        # A traced run is slower by its call count, so its time must never set
+        # the headline; its fsync count is what it is for.
+        timed = [{"ms": 100.0, "fsync_calls": None}, {"ms": 110.0, "fsync_calls": None}, {"ms": 120.0}]
+        traced = [{"ms": 900.0, "fsync_calls": 7}, {"ms": 950.0, "fsync_calls": 9}, {"ms": 990.0, "fsync_calls": 8}]
+        summary = bench.summarize_oneshot(timed, traced)
+        self.assertEqual(summary["ms"], 110.0)
+        self.assertEqual(summary["fsync_calls"], 8)
+        self.assertEqual(summary["fsync_calls_runs"], [7, 9, 8])
+
     def test_markdown_shows_the_fsync_column_when_measured(self) -> None:
         result = {
             "name": "horon",

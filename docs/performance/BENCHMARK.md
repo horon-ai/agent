@@ -24,7 +24,7 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
-| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. |
+| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
 | `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`다. `compare`는 기준 빌드가 있으면 `horon-base` 줄로 같은 작업 안에서 번갈아 잰다. |
 | `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
 | `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
@@ -113,7 +113,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | --- | --- |
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
 | `oneshot_ms` | 헤드리스 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
-| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
+| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 | `skill_ms` | 헤드리스 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
@@ -123,7 +123,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
-세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`를 켠 실행의 시간은 느려지므로 시간 비교에 쓰지 않는다.
+세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세는 데만 쓴다.
 
 ### omp와 omo
 

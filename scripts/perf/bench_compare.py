@@ -2335,19 +2335,24 @@ def summarize_sessions(points: list[dict], turns: int) -> dict:
     }
 
 
-def summarize_oneshot(runs: list[dict]) -> dict:
+def summarize_oneshot(runs: list[dict], syscall_runs: list[dict] | None = None) -> dict:
     """Collapse repeated one-shot runs into one comparable row.
 
     ``ms`` is the median so a single slow first process (page cache, JIT warm
     up) does not set the headline number; the individual runs stay in the JSON so
     a spread is visible rather than hidden behind one statistic.
+
+    ``syscall_runs`` are the separate strace-counted runs. Their times are not
+    used: a tracer stops the tool on every system call, so a traced run's wall
+    time grows with the tool's call count rather than with the work it does.
     """
     times = [run["ms"] for run in runs if run.get("ms") is not None]
     peaks = [run["peak_rss_bytes"] for run in runs if run.get("peak_rss_bytes")]
     summary = bc.summarize(times)
     errors = [run["error"] for run in runs if run.get("error")]
     roundtrips = [run.get("tool_roundtrip") for run in runs if run.get("tool_roundtrip") is not None]
-    syscall_totals = [run["fsync_calls"] for run in runs if run.get("fsync_calls") is not None]
+    counted = runs if syscall_runs is None else syscall_runs
+    syscall_totals = [run["fsync_calls"] for run in counted if run.get("fsync_calls") is not None]
     syscall_summary = bc.summarize(syscall_totals)
     return {
         "ms": summary["median"] if summary else None,
@@ -2361,6 +2366,7 @@ def summarize_oneshot(runs: list[dict]) -> dict:
         "errors": errors,
         "error": errors[0] if errors else None,
         "runs": runs,
+        "syscall_runs": syscall_runs or [],
     }
 
 
@@ -2543,23 +2549,30 @@ def measure_tools(
 
         if "oneshot" in selected:
             oneshot_runs_by_row: list[list[dict]] = [[] for _ in runners]
-            for _ in range(max(1, oneshot_runs)):
-                for index, runner in enumerate(runners):
-                    if results[index]["error"]:
-                        continue
-                    root, cwd = roots[runner.name]
-                    try:
-                        oneshot_runs_by_row[index].append(
-                            runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls)
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        oneshot_runs_by_row[index].append(
-                            {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
-                             "error": str(exc)[:300]}
-                        )
+            syscall_runs_by_row: list[list[dict]] = [[] for _ in runners]
+            # The timed runs never carry a tracer; with ``syscalls`` the same
+            # number of extra runs is made under strace only to count fsync.
+            passes = [(oneshot_runs_by_row, False)]
+            if syscalls:
+                passes.append((syscall_runs_by_row, True))
+            for by_row, traced in passes:
+                for _ in range(max(1, oneshot_runs)):
+                    for index, runner in enumerate(runners):
+                        if results[index]["error"]:
+                            continue
+                        root, cwd = roots[runner.name]
+                        try:
+                            by_row[index].append(runner.oneshot(mock, root, cwd, timeout, syscalls=traced))
+                        except Exception as exc:  # noqa: BLE001
+                            by_row[index].append(
+                                {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
+                                 "error": str(exc)[:300]}
+                            )
             for index, result in enumerate(results):
                 if not result["error"]:
-                    result["oneshot"] = summarize_oneshot(oneshot_runs_by_row[index])
+                    result["oneshot"] = summarize_oneshot(
+                        oneshot_runs_by_row[index], syscall_runs_by_row[index] if syscalls else None
+                    )
 
         if "sessions" in selected:
             points_by_row: list[list[dict]] = [[] for _ in runners]
