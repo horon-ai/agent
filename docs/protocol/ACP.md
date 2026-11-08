@@ -1,6 +1,6 @@
 # ACP 지원 (v1과 v2)
 
-horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent Client Protocol(ACP) v1과 v2를 한 엔드포인트에서 함께 지원한다. `horon-agent acp`를 실행하면 표준 입출력으로 JSON-RPC 메시지를 주고받는 ACP 에이전트가 된다. v1은 안정판이고 메시지는 공식 `schema-v1.26.0`에 맞춘다. v2는 `schema-v2.0.0-alpha.10`의 안정(stable) 부분에 맞춘다. 이 문서의 v1 절은 v1 연결의 동작을 설명하고, v2 연결의 차이는 [ACP v2](#acp-v2) 절에 모았다.
+horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent Client Protocol(ACP) v1과 v2를 한 엔드포인트에서 함께 지원한다. `horon-agent acp`를 실행하면 표준 입출력으로 JSON-RPC 메시지를 주고받는 ACP 에이전트가 된다. v1은 안정판이고 메시지는 공식 `schema-v1.26.0`에 맞춘다. v2는 `schema-v2.0.0-alpha.13`의 안정(stable) 부분에 맞춘다. 이 문서의 v1 절은 v1 연결의 동작을 설명하고, v2 연결의 차이는 [ACP v2](#acp-v2) 절에 모았다.
 
 ## 실행
 
@@ -245,28 +245,32 @@ v2 `initialize` 응답은 `protocolVersion: 2`, `info`(`name: "horon-agent"`, `t
 
 | 항목 | 값 |
 |---|---|
-| `capabilities.session.prompt` | `image: {}`, `embeddedContext: {}`. `audio`는 없다 |
+| `capabilities.session.prompt` | `image: {}`, `audio: {}`, `embeddedContext: {}` |
 | `capabilities.session.mcp` | `stdio: {}`. `http: {}`는 v1 어댑터가 `mcpCapabilities.http`를 광고할 때만 붙는다 |
 | `capabilities.session` | `delete: {}`, `additionalDirectories: {}` |
 | `capabilities._meta["horon-agent"]` | `profile`과 `extensions`. `extended`나 `full` 프로필에서만 나온다 |
 
 v1과 달리 `true`/`false` 표시나 `loadSession`은 없고, `list`/`resume`/`close`도 광고 항목으로 두지 않는다. 클라이언트가 보낸 `info`와 `capabilities`는 연결마다 저장한다.
 
-v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/prompt`, `session/cancel`, `session/set_config_option`, `session/delete`, `$/cancel_request`다. `session/load`, `session/set_mode`, `authenticate`, `logout`, `session/set_model`, `session/set_reasoning_effort`와 그 밖의 `_`가 아닌 메서드는 `-32601`이다. `_`로 시작하는 요청도 `-32601`이고 알림에는 답하지 않는다. `id: null` 요청은 `id: null`과 함께 `-32600`이다. v2로 협상한 연결에서 JSON 배열 프레임은 JSON-RPC 배치로 처리하며, 항목마다 일반 요청 경로를 탄다.
+v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `session/new`, `session/list`, `session/resume`, `session/close`, `session/prompt`, `session/cancel`, `session/set_config_option`, `session/delete`, `tool_call/cancel`, `terminal/cancel`, `$/cancel_request`다. `session/load`, `session/set_mode`, `authenticate`, `logout`, `session/set_model`, `session/set_reasoning_effort`와 그 밖의 `_`가 아닌 메서드는 `-32601`이다. `_`로 시작하는 요청도 `-32601`이고 알림에는 답하지 않는다. `id: null` 요청은 `id: null`과 함께 `-32600`이다. v2로 협상한 연결에서 JSON 배열 프레임은 JSON-RPC 배치로 처리하며, 항목마다 일반 요청 경로를 탄다.
 
 ### 에디터에 보이는 것 (v2)
 
 **prompt 확인.** `session/prompt`는 데몬이 사용자 메시지를 저장했다고 알리는 즉시 `{messageId}`로 답한다. 턴이 끝나기를 기다리지 않는다. `messageId`는 데몬이 저장한 메시지 id다. 저장 전에 거절되면 그 제출에는 업데이트가 없다. 알 수 없는 세션은 `-32002`, 잘못된 내용은 `-32602`, 쓸 수 있는 모델이 없거나 로그아웃 상태면 `-32000`이고, 데몬이 설정을 다시 읽는 중이면 `-32603`이다. 턴이 진행 중일 때 보낸 prompt는 거절하지 않는다. 이 연결의 앞 prompt가 아직 처리 중이면 어댑터가 받은 순서대로 보류했다가 세션이 다음 prompt를 받을 수 있을 때 데몬에 보내고, 다른 화면의 턴이 진행 중이면 데몬이 그 턴 뒤에 저장한다. 어느 쪽이든 응답은 저장된 뒤에 온다. 저장 전에 `$/cancel_request`, `session/cancel`, `session/close`가 오면 `-32800`이고 보류하거나 대기 중이던 메시지는 거둔다. 저장된 뒤에 실패하면 응답이 아니라 `stopReason: "error"`와 `error: {code, message}`를 담은 idle `state_update`로 알린다.
 
-**상태 업데이트.** 세션의 포그라운드 턴은 이 에디터가 시작했든 다른 화면이 시작했든 에이전트가 스스로 시작했든 `state_update`로 보고한다. 순서는 시작할 때 `running`, 권한이나 질문 답을 기다리는 동안 `requires_action`, 답을 받은 뒤 첫 이벤트 전에 다시 `running`, 끝나면 `idle`이다. `idle`에는 `stopReason`(`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`, `error`)이 붙고, 원인을 모르면 생략한다. `idle`은 그 턴의 다른 업데이트가 모두 나간 뒤에 한 번만 온다. `session/cancel`은 남은 업데이트를 보낸 뒤 `idle`(`cancelled`)로 끝난다. `session/close`는 진행 중인 prompt를 취소하고, 마지막 업데이트와 `idle`(`cancelled`)을 닫기 응답보다 먼저 보낸다. 접수했지만 아직 `running`을 보고하지 않은 prompt를 닫을 때도 같은 순서다.
+**입력.** prompt에는 `text`, `image`, `audio`, `resource`, `resource_link` 블록을 쓸 수 있다. `audio`는 `mimeType`이 `audio/wav`, `audio/mpeg`, `audio/mp3` 중 하나여야 하고, 모델 요청에는 `input_audio` 파트로 들어간다. 그 밖의 오디오 형식은 데몬에 보내기 전에 `-32602`다. v1 연결은 `audio`를 광고하지 않으며 지금처럼 거절한다. v2에서 빈 `prompt` 배열은 `-32602`이고, v1은 빈 배열을 지금처럼 받는다.
 
-**메시지 id.** 모든 `*_message_chunk`와 통째 메시지 업데이트에 `messageId`가 있다. 에디터가 보낸 prompt의 사용자 메시지는 `user_message` 하나로 한 번 보고하며, id는 prompt 응답의 `messageId`와 같다. 다른 화면이 시작한 턴의 사용자 메시지도 보고한다. 단, 표시 역할 없이 저장된 행만 대상이고 `[auto]` 시스템 알림은 사용자 메시지가 아니다. 답변과 추론 id는 턴을 시작한 메시지의 저장 id에서 `<id>:a<n>`, `<id>:t<n>` 형태로 만든다. `n`은 도구 실행 라운드마다 늘어난다. 기록을 재생해도 같은 규칙으로 계산하므로 실시간 id와 재생 id가 같다.
+**상태 업데이트.** 세션의 포그라운드 턴은 이 에디터가 시작했든 다른 화면이 시작했든 에이전트가 스스로 시작했든 `state_update`로 보고한다. 순서는 시작할 때 `running`, 권한이나 질문 답을 기다리는 동안 `requires_action`, 답을 받은 뒤 첫 이벤트 전에 다시 `running`, 끝나면 `idle`이다. `idle`에는 `stopReason`(`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`, `error`)이 붙고, 원인을 모르면 생략한다. `idle`은 그 턴의 다른 업데이트가 모두 나간 뒤에 한 번만 온다. `session/cancel`은 남은 업데이트를 보낸 뒤 `idle`(`cancelled`)로 끝난다. 어댑터가 보고 있는 턴의 run id를 알면 데몬에 `cancel_turn{run_id}`를 보내므로, 그 사이 다른 화면이 새로 시작한 턴은 멈추지 않는다. run id를 아직 모르면(이 에디터의 prompt가 `running`을 보고하기 전) 기존 `cancel`을 보낸다. `session/close`는 진행 중인 prompt를 같은 방식으로 취소하고, 마지막 업데이트와 `idle`(`cancelled`)을 닫기 응답보다 먼저 보낸다. 접수했지만 아직 `running`을 보고하지 않은 prompt를 닫을 때도 같은 순서다. `usage_update`는 데몬이 사용량을 알린 자리에 다른 업데이트와 섞이지 않게 나간다.
 
-**도구 호출.** v2에는 `tool_call` 업데이트가 없다. 한 `toolCallId`의 첫 `tool_call_update`가 호출을 만들고, 그때 `title`, `name`, `kind`, `status: "pending"`을 담는다. 입력이 완성되면 `rawInput`, 절대 경로 `locations`, bash 명령이 이후 업데이트로 채워진다. 내용은 `tool_call_content_chunk`로 오고, 값을 생략한 필드는 바뀌지 않는다. 턴이 취소될 때 실행 중이던 도구는 `status: "cancelled"`로 끝난다. `session/close`가 제한 시간 안에 턴을 멈추지 못해도 열린 도구는 `cancelled`로 끝나고, 데몬 연결이 끊기면 `failed`로 끝난 뒤 idle `error`가 온다.
+**메시지 id.** 모든 `*_message_chunk`와 통째 메시지 업데이트에 `messageId`가 있다. 에디터가 보낸 prompt의 사용자 메시지는 `user_message` 하나로 한 번 보고하며, id는 prompt 응답의 `messageId`와 같다. 다른 화면이 시작한 턴의 사용자 메시지도 보고한다. 단, 표시 역할 없이 저장된 행만 대상이고 `[auto]` 시스템 알림은 사용자 메시지가 아니다. 턴 도중에 끼어든 소프트 인터럽트는 데몬이 행을 저장하는 즉시 그 행 id를 `messageId`로 한 `user_message`로 온다. 답변과 추론 id는 턴을 시작한 메시지의 저장 id에서 `<id>:a<n>`, `<id>:t<n>` 형태로 만든다. `n`은 도구 실행 라운드마다 늘어난다. 기록을 재생해도 같은 규칙으로 계산하므로 실시간 id와 재생 id가 같다.
+
+**도구 호출.** v2에는 `tool_call` 업데이트가 없다. 한 `toolCallId`의 첫 `tool_call_update`가 호출을 만들고, 그때 `title`, `name`, `kind`, `status: "pending"`을 담는다. 입력이 완성되면 `rawInput`, 절대 경로 `locations`, bash 명령이 이후 업데이트로 채워진다. 내용은 `tool_call_content_chunk`로 오고, 값을 생략한 필드는 바뀌지 않는다. 실행을 시작한 호출은 `capabilities: {cancel: {}}`를 광고하고, 최종 상태가 되면 `capabilities: null`로 거둔다. `tool_call/cancel {sessionId, toolCallId}`는 광고 중인 그 호출 하나만 멈추고, 데몬이 취소를 시작했다고 답하면 바로 `{}`로 답한다. 그 호출은 `status: "cancelled"`로 끝나고 턴은 계속된다. 모르는 호출, 이미 끝난 호출, 광고하지 않은 호출은 데몬에 보내지 않고 `-32602`다. 턴이 취소될 때 실행 중이던 도구는 `status: "cancelled"`로 끝난다. `session/close`가 제한 시간 안에 턴을 멈추지 못해도 열린 도구는 `cancelled`로 끝나고, 데몬 연결이 끊기면 `failed`로 끝난 뒤 idle `error`가 온다.
 
 **구조화된 diff.** 파일 편집은 `{type: "diff", changes: [{operation, path, oldPath, fileType: "text"}], patch: {format: "git_patch", text}}`로 간다. `operation`은 `add`, `modify`, `delete`, `move`이고 `oldPath`는 `move`에만 붙는다. `apply_patch`의 `Add File`처럼 호출 전에 없던 파일은 `add`이고, 패치에 `new file mode`와 `--- /dev/null`이 들어간다. 경로는 절대 경로이며 `a/`, `b/` 접두어가 없고, 없는 쪽은 `/dev/null`이다. v1과 달리 `oldText`/`newText`는 보내지 않는다.
 
-**표시용 터미널.** 포그라운드 `bash`는 에이전트가 소유한 표시 전용 터미널로 보인다. 내용에 `{type: "terminal", terminalId}`가 들어가고, 명령이 정해지면 `terminal_update {terminalId, command, cwd}`가 오며, 끝나면 `terminal_update {terminalId, output: {data}, exitStatus: {exitCode, signal}}`가 온다. `data`는 전체 출력을 base64로 인코딩한 값이다. 백그라운드로 넘어간 호출은 `exitStatus` 없이 그 시점의 출력만 받는다. 에디터에 터미널을 만들라고 요청하는 일은 없다.
+**표시용 터미널.** 포그라운드 `bash`는 에이전트가 소유한 표시 전용 터미널로 보인다. 내용에 `{type: "terminal", terminalId}`가 들어가고, 명령이 정해지면 `terminal_update {terminalId, command, cwd}`가 오며, 실행 중 출력은 `terminal_output_chunk {terminalId, data}`로 실시간으로 온다. 끝나면 `terminal_update {terminalId, output: {data}, exitStatus: {exitCode, signal}}`가 온다. `data`는 base64로 인코딩한 값이다. 에디터에 터미널을 만들라고 요청하는 일은 없다.
+
+**백그라운드 작업.** 도구 호출이 모델에 제어를 돌려준 뒤에도 세션에서 계속 도는 작업은 그 세션의 모든 `state_update`(`running`, `requires_action`, `idle`, `session/resume`의 현재 상태)에 `background` 목록으로 붙는다. 없으면 `background: []`다. 백그라운드로 넘어간 `bash`는 터미널(`{type: "terminal", terminalId}`)로, 다른 도구는 그 호출(`{type: "tool_call", toolCallId}`)로 넣는다. 데몬의 백그라운드 작업 관리자가 맡은 작업만 넣고, monitor, 예약된 ambient 실행, swarm 대기처럼 세션을 관리하는 작업은 넣지 않는다. 항목은 목록에 넣기 전에 `terminal_update`나 `tool_call_update`로 먼저 알리고, 빼기 전에 최종 상태(`exitStatus` 또는 `completed`·`failed`·`cancelled`)를 보낸다. 목록이 바뀌면 같은 상태를 바뀐 목록과 함께 다시 보내며 새 `stopReason`은 붙이지 않는다. 세션이 `idle`일 때 항목을 빼는 갱신은 최대 250 ms 미룬다. 그 사이 새 턴이 시작하면 항목을 뺀 `running` 하나로 보내고, 아니면 항목을 뺀 `idle`을 보낸다. 백그라운드 터미널은 `capabilities: {cancel: {}}`를 광고하고, `terminal/cancel {sessionId, terminalId}`는 그 프로세스를 멈춘 뒤 `{}`로 답한다. 목록에 없거나 이미 끝난 터미널은 데몬에 보내지 않고 `-32602`다.
 
 **권한 요청.** 승인이 필요한 도구는 `session/request_permission {sessionId, title, description, subject, options}`로 묻는다. `subject`는 `bash`면 `{type: "command", command, cwd, toolCallId}`, 다른 도구면 `{type: "tool_call", toolCall}`이다. 선택지와 항상 허용·항상 거절의 기억 방식은 v1과 같고, 취소와 모르는 결과나 optionId는 승인으로 치지 않는다.
 
@@ -278,7 +282,7 @@ v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `ses
 
 **요청 id.** 아직 답하지 않은 요청과 같은 id로 다시 요청하면 그 요청은 `-32600`이다. batch 안에서 id가 겹쳐도 같고, batch 응답 배열은 항목마다 답을 하나씩 담아 항상 나간다. `session/close`가 시작된 뒤 도착한 `session/prompt`는 데몬에 전달하지 않고 `-32603`으로 답한다.
 
-**질문.** `ask` 질문은 클라이언트가 `capabilities.elicitation.form`을 객체로 알렸을 때만 `elicitation/create`(form 방식, `sessionId` 포함)로 나가고, 기다리는 동안 `requires_action`을 보고한다. `accept`는 답이 되고 `decline`, `cancel`, 알 수 없는 action은 v1처럼 `[tools] ask_policy`를 따른다.
+**질문.** `ask` 질문은 클라이언트가 `capabilities.elicitation.form`을 객체로 알렸을 때만 `elicitation/create`(form 방식, `sessionId` 포함)로 나가고, 기다리는 동안 `requires_action`을 보고한다. 데몬이 질문을 낸 `ask` 호출을 먼저 알려 주면 `toolCallId`도 싣는다. `accept`는 답이 되고 `decline`, `cancel`, 알 수 없는 action은 v1처럼 `[tools] ask_policy`를 따른다.
 
 ### 연결 단위 `auth/logout`
 
@@ -288,17 +292,16 @@ v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `ses
 
 ### v2에서 하지 않는 것
 
-- 클라이언트에 `fs/*` 요청을 보내지 않는다. 에디터의 파일을 읽고 쓰려면 에디터가 제공하는 MCP 서버를 `mcpServers`로 붙인다.
-- 클라이언트에 `terminal/create`를 비롯한 `terminal/*` 요청을 보내지 않는다. 터미널은 위의 표시용 터미널로만 보인다.
-- 초안(draft) 단계에만 있는 메서드와 기능, 예를 들어 `session/fork`나 `providers/*`는 지원하지 않는다. 광고하지 않으므로 `-32601`이다.
-- `audio` 입력은 광고하지 않는다. SSE 방식 MCP 서버는 `-32602`로 거절한다.
+- 클라이언트에 `fs/*`나 `terminal/create`를 비롯한 `terminal/*` 요청을 보내지 않는다. v2 안정판에서 에이전트가 클라이언트에 보내는 메서드는 `session/request_permission`, `session/update`, `elicitation/create`, `elicitation/complete` 넷뿐이다. 에디터의 파일을 읽고 쓰려면 에디터가 제공하는 MCP 서버를 `mcpServers`로 붙이고, 터미널은 위의 표시용 터미널로만 보인다.
+- 초안(draft)이나 unstable 단계에만 있는 메서드와 기능, 예를 들어 `session/fork`나 `providers/*`는 지원하지 않는다. 광고하지 않으므로 `-32601`이다.
+- URL 방식 질문(`elicitation.url`)은 보내지 않는다. 데몬의 `ask` 질문은 선택지를 고르는 form 질문뿐이라 URL로 보낼 질문이 없다. 그래서 URL 질문이 끝났다고 알리는 `elicitation/complete`도 보내지 않는다.
+- 도구 상태 `paused`는 보내지 않는다. 데몬에는 시작한 도구를 멈춰 두는 상태가 없다.
+- 빈 `prompt` 배열은 v2에서만 `-32602`다. v1은 이전과 같이 받는다.
+- SSE 방식 MCP 서버는 `-32602`로 거절한다.
 
 ### v2의 알려진 한계
 
-- 데몬의 취소 요청에는 대상 턴이 없다. 한 턴이 끝나는 순간에 v2 `session/cancel`이 결정되면, 막 시작한 다른 화면의 턴을 멈출 수 있다. 이 틈은 v1보다 크지 않다.
 - horon-agent를 이전 빌드로 내렸다가 다시 올리면, 세션 캐시가 다시 만들어질 때까지 `session/resume`의 재생이 모든 사용자 행을 턴의 시작으로 취급한다. 이전 빌드가 저장한 턴은 재생에서 만든 `messageId`가 실시간으로 본 id와 다를 수 있다.
-- 턴 도중에 끼어든 소프트 인터럽트는 다시 열 때의 재생에는 `user_message`로 나타나지만, 실시간으로는 스트리밍하지 않는다.
-- `elicitation/create`에는 `toolCallId`가 없다. 데몬이 보내는 질문 이벤트에 그 값이 없기 때문이다.
 - 모델 엔드포인트가 스트리밍을 지원하지 않으면 응답이 끝나기 전에 부분 텍스트가 오지 않는다. 그래서 응답이 한꺼번에 도착한 것처럼 보일 수 있다.
 - 공식 acp-tck의 v2 조건부 항목(패치, 권한, 터미널, 계획 경로)은 TCK가 항상 `"hi"`만 보내기 때문에 건너뛴다. 이 경로는 `tests/acp_stdio_v2.rs`가 대신 검증한다.
 
@@ -310,7 +313,7 @@ bash scripts/test/acp_tck.sh --protocol-version 2               # 공식 acp-tck
 cargo test --locked -p horon-agent --test acp_tck -- --ignored --test-threads=1   # v1과 v2 TCK
 ```
 
-`tests/acp_stdio_v2.rs`는 v2 시나리오 IS-1부터 IS-15까지와 v1·v2 병행 시나리오를 돌리고, 프레임을 `tests/fixtures/acp/schema-v2.0.0-alpha.10.json`으로 검증한다. `scripts/test/acp_tck.sh`는 `--protocol-version 1|2`를 받고 기본값은 v1이다. 통합 브랜치에서 TCK 테스트 두 개(v1, v2)가 모두 통과했고 판정은 둘 다 적합(conformant)이다. v2 필수 항목은 24건 통과, 기능 항목은 49건 통과에 16건 건너뜀이며 실패는 없다. v1 필수 항목은 31건 통과다.
+`tests/acp_stdio_v2.rs`는 v2 시나리오 IS-1부터 IS-21까지와 v1·v2 병행 시나리오를 돌리고, 프레임을 `tests/fixtures/acp/schema-v2.0.0-alpha.13.json`으로 검증한다. IS-16은 `tool_call/cancel`, IS-17은 `terminal/cancel`과 `background` 목록, IS-18은 `terminal_output_chunk`, IS-19는 오디오 prompt, IS-20은 실시간 소프트 인터럽트, IS-21은 작업 중 prompt 보류를 실제 데몬으로 확인한다. `scripts/test/acp_tck.sh`는 `--protocol-version 1|2`를 받고 기본값은 v1이다. 공식 acp-tck는 자체 v2 스키마 사본(alpha.9, unstable)으로 판정하므로 TCK 결과는 alpha.13 적합성의 근거가 아니다. alpha.13으로 바꾸기 전 통합 브랜치에서 TCK 테스트 두 개(v1, v2)가 모두 통과했고 판정은 둘 다 적합(conformant)이었다. 그때 v2 필수 항목은 24건 통과, 기능 항목은 49건 통과에 16건 건너뜀이며 실패는 없었다. v1 필수 항목은 31건 통과였다.
 
 ## 설정
 
@@ -330,7 +333,7 @@ protocol_v2 = true     # false면 모든 클라이언트에 v1로만 답한다
 ## 알려진 한계
 
 - v1 연결은 `logout`을 지원하지 않는다. v2 연결의 `auth/logout`은 [연결 단위 `auth/logout`](#연결-단위-authlogout)을 본다.
-- `audio` 입력과 `systemPrompt` 세션 기능은 광고하지 않는다.
+- v1 연결은 `audio` 입력을 광고하지 않는다. `systemPrompt` 세션 기능은 v1과 v2 모두 광고하지 않는다.
 - v2의 한계는 [v2의 알려진 한계](#v2의-알려진-한계)에 따로 적었다.
 - URL 방식 elicitation은 쓰지 않는다.
 - 터미널 위임은 포그라운드, 비PTY, 비백그라운드 `bash` 호출에만 적용한다.
