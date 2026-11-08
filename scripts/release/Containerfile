@@ -1,0 +1,31 @@
+# Container image for ghcr.io/horon-ai/agent, built by .github/workflows/release-tag.yml.
+#
+# The image packages the already published Linux release archives (verified
+# against the release's SHA256SUMS before the build) instead of compiling
+# again, so the image and the release assets are the same bytes. Debian 13 is
+# the base the CI bare-runtime guard already runs these binaries on
+# (scripts/ci/check_linux_bare_runtime.sh): the x86_64 archive targets glibc
+# 2.17, the aarch64 one is built on ubuntu-24.04-arm. bash and git stay in the
+# image because the agent's bash tool and repository work need them.
+#
+# Build context layout: bin/<TARGETARCH>/ holds the extracted archive with its
+# entry point renamed to `horon-agent` (x86_64 keeps its `.bin` next to the
+# wrapper, which finds it through its own resolved path).
+FROM debian:13-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 horon
+
+COPY --chmod=0755 bin/${TARGETARCH}/ /opt/horon-agent/
+RUN ln -s /opt/horon-agent/horon-agent /usr/local/bin/horon-agent
+
+USER horon
+WORKDIR /home/horon
+ENV HORON_AGENT_HOME=/home/horon/.horon-agent
+
+ENTRYPOINT ["horon-agent"]
+CMD ["--help"]

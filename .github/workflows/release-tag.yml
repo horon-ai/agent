@@ -1,0 +1,226 @@
+name: Release Tag
+
+# Automatic patch releases. When a push to main passes CI, tag that exact
+# commit with the next patch version (scripts/release/next_version.py), run the
+# existing release pipeline for it, and publish the Linux binaries of the
+# finished release to GitHub Packages as ghcr.io/horon-ai/agent.
+#
+# No commit is written: Cargo.toml keeps MAJOR.MINOR and the lowest patch of
+# the line, and tags number the patches. A release can therefore never start
+# another CI run or another release.
+#
+# workflow_run always runs this file from the default branch (main), so the
+# automation only acts once it is merged there. Set the repository variable
+# RELEASE_AUTO to `false` to stop tagging without editing this file.
+# A manual dispatch only reports the tag it would create.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full main commit SHA to evaluate (default the main tip). Dry run only; no tag is created.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One release decision at a time. A newer queued run replaces an older pending
+# one; the newer main commit contains the older one, so nothing is lost.
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Choose release tag
+    if: >-
+      github.repository == 'horon-ai/agent' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.choose.outputs.tag }}
+      sha: ${{ steps.choose.outputs.sha }}
+    steps:
+      # workflow_run checks out the main tip; a dispatch checks out the
+      # dispatched ref, which lets the dry run be tried before a merge.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Choose the release tag
+        id: choose
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+          RELEASE_AUTO: ${{ vars.RELEASE_AUTO }}
+        run: |
+          set -euo pipefail
+          sha="${RUN_SHA:-${INPUT_SHA:-$(git rev-parse HEAD)}}"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Not a full commit SHA: $sha" >&2; exit 1; }
+          # Only commits that reached main may be released. A dry run may
+          # evaluate any commit, for example a dev commit before its merge.
+          if [ "$EVENT_NAME" != workflow_dispatch ]; then
+            git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main" >&2; exit 1; }
+          fi
+          decision="$(python3 scripts/release/next_version.py "$sha")"
+          echo "$decision"
+          {
+            echo "### Release tag decision"
+            echo
+            echo "- commit: \`$sha\`"
+            echo "- decision: \`$decision\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$decision" in
+            tag=*) ;;
+            *) exit 0 ;;
+          esac
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo "::notice::Dry run: would create ${decision#tag=} at $sha"
+            exit 0
+          fi
+          if [ "$RELEASE_AUTO" = false ]; then
+            echo "::notice::RELEASE_AUTO is false; not creating ${decision#tag=}"
+            exit 0
+          fi
+          echo "$decision" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  tag:
+    name: Create release tag
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create ${{ needs.plan.outputs.tag }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Creating a ref that already exists fails, so a tag is never moved.
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${TAG}" -f "sha=${SHA}" >/dev/null
+          echo "Created ${TAG} at ${SHA}"
+
+  release:
+    name: Release
+    needs: [plan, tag]
+    # The called workflow's jobs cannot exceed these grants; they are the union
+    # of what release.yml's own jobs request.
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+    secrets: inherit
+
+  container:
+    name: Publish container image
+    needs: [plan, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download and verify published Linux binaries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Publish an image only for a public release; a partial release
+          # stays a draft and fails the release job before this point.
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false ] || {
+            echo "::error::$TAG is still a draft" >&2; exit 1; }
+          mkdir -p assets image/bin/amd64 image/bin/arm64
+          gh release download "$TAG" --dir assets \
+            --pattern SHA256SUMS \
+            --pattern horon-agent-linux-x86_64.tar.gz \
+            --pattern horon-agent-linux-aarch64.tar.gz
+          cd assets
+          for archive in horon-agent-linux-x86_64.tar.gz horon-agent-linux-aarch64.tar.gz; do
+            grep -q "  ${archive}\$" SHA256SUMS || { echo "::error::$archive is missing from SHA256SUMS" >&2; exit 1; }
+          done
+          sha256sum --check --ignore-missing --strict SHA256SUMS
+          # x86_64 ships a wrapper plus `<artifact>.bin`; aarch64 ships one
+          # binary. Keep every member and name the entry point `horon-agent`.
+          tar -xzf horon-agent-linux-x86_64.tar.gz -C ../image/bin/amd64
+          tar -xzf horon-agent-linux-aarch64.tar.gz -C ../image/bin/arm64
+          mv ../image/bin/amd64/horon-agent-linux-x86_64 ../image/bin/amd64/horon-agent
+          mv ../image/bin/arm64/horon-agent-linux-aarch64 ../image/bin/arm64/horon-agent
+          ls -l ../image/bin/amd64 ../image/bin/arm64
+          cp ../scripts/release/Containerfile ../image/Containerfile
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          {
+            echo "list<<EOF"
+            echo "${IMAGE}:${version}"
+            echo "${IMAGE}:${version%.*}"
+            echo "${IMAGE}:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: image
+          file: image/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.tag }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.sha }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.description=horon-agent headless agent backend
+
+      - name: Smoke test the published image
+        shell: bash
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            reported="$(docker run --rm --platform "$platform" "${IMAGE}:${TAG#v}" --version)"
+            printf '%s: %s\n' "$platform" "$reported"
+            [[ "$reported" == "horon-agent $TAG "* ]] || { echo "::error::$platform image reports $reported" >&2; exit 1; }
+          done

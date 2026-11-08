@@ -30,6 +30,15 @@ on:
         description: Existing release tag (vMAJOR.MINOR.PATCH)
         required: true
         type: string
+  # release-tag.yml calls this workflow after it tags a main commit whose CI
+  # push run succeeded. A tag pushed with GITHUB_TOKEN cannot trigger the
+  # `push` event below, so the automatic patch release enters here.
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag that release-tag.yml just created (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
   push:
     tags:
       - 'v*'
