@@ -57,17 +57,27 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.head_ref }}
           path: head
-          # Full history, so a short baseline SHA resolves in the worktree below.
+          # Full history, so both inputs resolve below whether they name a
+          # branch, a tag, or a short or full commit. actions/checkout itself
+          # accepts only a branch, a tag, or a full SHA.
           fetch-depth: 0
 
-      - name: Check out the baseline beside the candidate
+      - name: Check out the candidate and the baseline
         shell: bash
         env:
           BASE_REF: ${{ inputs.base_ref }}
+          HEAD_REF: ${{ inputs.head_ref }}
         run: |
-          git -C head worktree add --detach "$GITHUB_WORKSPACE/base" "$BASE_REF"
+          resolve() {
+            git -C head rev-parse --verify --quiet "origin/$1^{commit}" \
+              || git -C head rev-parse --verify --quiet "$1^{commit}" \
+              || { echo "::error::cannot resolve '$1' to a commit"; exit 1; }
+          }
+          head_sha=$(resolve "$HEAD_REF")
+          base_sha=$(resolve "$BASE_REF")
+          git -C head checkout --quiet --detach "$head_sha"
+          git -C head worktree add --detach "$GITHUB_WORKSPACE/base" "$base_sha"
           mkdir -p "$RESULTS"
           git -C base rev-parse HEAD | tee "$RESULTS/base-commit.txt"
           git -C head rev-parse HEAD | tee "$RESULTS/head-commit.txt"
