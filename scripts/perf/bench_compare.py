@@ -464,7 +464,19 @@ CODEX_PROVIDER_ARGS = [
 
 
 def codex_provider_args(base_url: str) -> list[str]:
-    return [part.replace("__BASE__", f"{base_url}/v1") for part in CODEX_PROVIDER_ARGS]
+    return [part.replace("__BASE__", f"{base_url}/v1") for part in CODEX_PROVIDER_ARGS] + codex_sandbox_args()
+
+
+def codex_sandbox_args() -> list[str]:
+    """Pick a Windows sandbox Codex can start on a fresh machine.
+
+    With no `windows.sandbox` set, a GitHub Windows runner has none provisioned
+    and every shell command under `-s read-only` comes back `rejected: blocked
+    by policy`. `unelevated` is the implementation Codex documents for hosts
+    without administrator-approved setup
+    (developers.openai.com/codex/windows); the sandbox stays on.
+    """
+    return ["-c", 'windows.sandbox="unelevated"'] if bc.IS_WINDOWS else []
 
 
 def codex_oneshot_argv(binary: str, base_url: str, prompt: str = TURN_PROMPT) -> list[str]:
