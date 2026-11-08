@@ -5,7 +5,9 @@
     "Raising a bound is a deliberate commit, the scripts/ci/check_code_size.py ratchet in the same shape. A regression cannot raise its own ceiling.",
     "Each bound is enforced by scripts/perf/check_structural.py against the STRUCTURAL_PERF lines the repo's own tests print.",
     "context condensation: one generic budget (48 KiB), a one-line notice for an unchanged re-read, and exactly one aging batch per pressure crossing.",
-    "irc mailbox: a 100-message cap that drops the oldest, one body allocation per broadcast, no waiter left parked after timeout/cancel churn, and a 16-leg broadcast concurrency ceiling."
+    "irc mailbox: a 100-message cap that drops the oldest, one body allocation per broadcast, no waiter left parked after timeout/cancel churn, and a 16-leg broadcast concurrency ceiling.",
+    "skill loading: listing the catalog reads at most one frontmatter prefix per skill (8 KiB each, so a 32 KiB body read whole fails), and a request against an unchanged workspace reads no SKILL.md and lists no skill directory.",
+    "mcp config: once warmed, a session start against unchanged user-level MCP config files (horon-agent, Claude, Codex) reads none of them again."
   ],
   "bounds": {
     "queue_depth_high_water": 64,
@@ -31,6 +33,11 @@
     "irc_mailbox_cap": 100,
     "irc_broadcast_body_allocations": 1,
     "irc_waiters_live_after_churn": 0,
-    "irc_broadcast_concurrency": 16
+    "irc_broadcast_concurrency": 16,
+    "skill_catalog_bytes_per_skill_max": 8192,
+    "skill_catalog_file_reads_per_skill_max": 1,
+    "skill_unchanged_request_file_reads_max": 0,
+    "skill_unchanged_request_dir_reads_max": 0,
+    "mcp_config_user_rereads_max": 0
   }
 }

@@ -22,11 +22,19 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertIn('--locked', line)
                 checked += 1
         # Lowered from 15 because the browser liveness cohort, which held two of
-        # these cargo test steps, no longer exists, and again from 14 when the
-        # provider matrix stage went with the vendor provider logins; the
-        # cohorts added since keep the real count above this floor.
-        self.assertGreaterEqual(checked, 13)
+        # these cargo test steps, no longer exists, again from 14 when the
+        # provider matrix stage went with the vendor provider logins, and again
+        # to 8 when the Build & Test cohort and e2e-compile `cargo test` steps
+        # became one compile call plus `scripts/ci/run_lib_tests.py` (#19).
+        # `run_lib_tests.py` executes the already built test executables and
+        # never invokes cargo, so no unlocked build can hide behind the lower
+        # floor; the assertion below pins that.
+        self.assertGreaterEqual(checked, 8)
         self.assertIn('git diff --exit-code -- Cargo.lock', workflow)
+        helper = (ROOT / 'scripts/ci/run_lib_tests.py').read_text()
+        for invocation in ('cargo build', 'cargo test', 'cargo check', 'cargo clippy'):
+            with self.subTest(invocation=invocation):
+                self.assertNotIn(invocation, helper)
 
     def test_arm64_release_graph_is_a_mandatory_native_windows_check(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
@@ -144,18 +152,34 @@ class WorkflowGuardTests(unittest.TestCase):
     def test_linux_rust_jobs_free_disk_before_building(self):
         # A hosted ubuntu runner has ~14 GB on `/`; the workspace's cold builds do
         # not fit while the pre-installed toolchains are there.
-        for name in ('ci.yml', 'structural-perf.yml'):
-            text = (ROOT / f'.github/workflows/{name}').read_text()
-            with self.subTest(workflow=name):
-                self.assertIn('sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc',
-                              text)
-                self.assertIn('/opt/hostedtoolcache/CodeQL', text)
-                self.assertIn('df -h /', text)
+        text = (ROOT / '.github/workflows/structural-perf.yml').read_text()
+        self.assertIn('sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc',
+                      text)
+        self.assertIn('/opt/hostedtoolcache/CodeQL', text)
+        self.assertIn('df -h /', text)
+
+        # ci.yml delegates to one script so the four steps cannot drift apart
+        # (#21). Every Linux cleanup step must call it and stay off a
+        # persistent self-hosted machine.
+        script = (ROOT / 'scripts/ci/free_disk_space.sh').read_text()
+        for path in ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc',
+                     '/opt/hostedtoolcache/CodeQL', '/usr/local/share/boost'):
+            with self.subTest(path=path):
+                self.assertIn(path, script)
+        self.assertIn('df -h /', script)
+        self.assertIn('--wait', script)
+
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        # Cleanup must never run on a persistent self-hosted machine.
-        marker = workflow.index('sudo rm -rf /usr/share/dotnet')
-        step_start = workflow.rindex('      - name: ', 0, marker)
-        self.assertIn("runner.environment == 'github-hosted'", workflow[step_start:marker])
+        steps = re.split(r'^      - name: ', workflow, flags=re.MULTILINE)
+        cleanup = [step for step in steps if step.startswith('Free disk space')]
+        linux = [step for step in cleanup if '(macOS)' not in step.splitlines()[0]]
+        self.assertEqual(len(linux), 3, 'quality, build, and windows-cross-check')
+        for step in linux:
+            with self.subTest(step=step.splitlines()[0]):
+                self.assertIn('run: bash scripts/ci/free_disk_space.sh', step)
+                self.assertIn("runner.environment == 'github-hosted'", step)
+        # The macOS step is out of scope and keeps its own body.
+        self.assertIn('sudo rm -rf /Users/runner', workflow)
         marker = workflow.index('sudo rm -rf /Users/runner')
         step_start = workflow.rindex('      - name: ', 0, marker)
         self.assertIn("runner.environment == 'github-hosted'", workflow[step_start:marker])

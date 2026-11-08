@@ -14,10 +14,14 @@ esac
 binary=justrust
 [[ "$target" != *windows* ]] || binary=justrust.exe
 base="https://github.com/1jehuang/justrust/releases/download/$version"
+# The same release through the REST API. github.com's download redirect has
+# answered 504 for hours while this endpoint served the same assets (#31).
+api="https://api.github.com/repos/1jehuang/justrust/releases"
 # Explicit opt-in for trusted, isolated fixture tests only. Never set in CI.
 if [[ -n "${JUSTRUST_TEST_BASE_URL:-}" ]]; then
     [[ "${JUSTRUST_ALLOW_TEST_URL:-}" == 1 ]] || fail 'test URL requires JUSTRUST_ALLOW_TEST_URL=1'
     base=${JUSTRUST_TEST_BASE_URL%/}
+    api=${JUSTRUST_TEST_API_URL:-}
 fi
 install_dir=${JUSTRUST_INSTALL_DIR:-"$HOME/.local/bin"}
 [[ "$install_dir" != *$'\n'* && "$install_dir" != *$'\r'* ]] || fail 'invalid install directory'
@@ -26,10 +30,36 @@ work=$(mktemp -d)
 staged=''
 cleanup() { rm -rf -- "$work"; [[ -z "$staged" ]] || rm -f -- "$staged"; }
 trap cleanup EXIT
-curl --fail --location --silent --show-error --retry 5 --retry-delay 2 \
-    --output "$work/$archive" "$base/$archive"
-curl --fail --location --silent --show-error --retry 5 --retry-delay 2 \
-    --output "$work/checksum" "$base/$archive.sha256"
+curl_get() {
+    curl --fail --location --silent --show-error --retry 5 --retry-delay 2 "$@"
+}
+api_auth=()
+token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+[[ -z "$token" ]] || api_auth=(--header "Authorization: Bearer $token")
+# Fetch one release asset: the download URL first, then the same asset by its
+# API id. Both copies are checked against the one digest below, so the second
+# path changes where the bytes come from, never what is accepted.
+fetch() {
+    local name=$1 out=$2 id
+    curl_get --output "$out" "$base/$name" && return 0
+    [[ -n "$api" ]] || return 1
+    printf 'install_justrust: %s failed, trying the release API\n' "$name" >&2
+    curl_get ${api_auth[@]+"${api_auth[@]}"} --header 'Accept: application/vnd.github+json' \
+        --output "$work/release.json" "$api/tags/$version" || return 1
+    # Each asset object lists its "url" before its "name". Tokenize so the JSON
+    # layout does not matter, take the id of the exact name only, and accept
+    # nothing but a numeric asset id of this repository.
+    id=$(grep -oE '"(url|name)"[[:space:]]*:[[:space:]]*"[^"]*"' "$work/release.json" | awk -F'"' -v want="$name" '
+        $2 == "url" { last = "" }
+        $2 == "url" && $4 ~ /^https:\/\/api\.github\.com\/repos\/1jehuang\/justrust\/releases\/assets\/[0-9]+$/ {
+            last = $4; sub(/.*\//, "", last) }
+        $2 == "name" && $4 == want && last != "" { print last; exit }')
+    [[ "$id" =~ ^[0-9]+$ ]] || fail "no release asset named $name"
+    curl_get ${api_auth[@]+"${api_auth[@]}"} --header 'Accept: application/octet-stream' \
+        --output "$out" "$api/assets/$id"
+}
+fetch "$archive" "$work/$archive" || fail "could not download $archive"
+fetch "$archive.sha256" "$work/checksum" || fail "could not download $archive.sha256"
 # Parse only a single digest. Do not let a downloaded manifest select filesystem paths.
 expected=$(awk 'NR == 1 {print $1} END {if (NR != 1) exit 1}' "$work/checksum") || fail 'invalid checksum manifest'
 [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || fail 'invalid SHA256 digest'

@@ -56,21 +56,22 @@ jobs:
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     steps:
-      - name: Free disk space
-        # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
-        # all-targets/all-features build does not fit. The pre-installed
-        # toolchains below are unused here. Skipped on the self-hosted machine,
-        # whose toolchains belong to its owner.
-        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
+      # Run after checkout because the cleanup lives in the repository now: the
+      # shared script is not on disk until the workspace exists. It renames the
+      # unused toolchains and returns before the deletion, which continues in
+      # the background while the toolchain installs (#21).
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Free disk space
+        # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
+        # all-targets/all-features build does not fit. The pre-installed
+        # toolchains are unused here. Skipped on the self-hosted machine, whose
+        # toolchains belong to its owner.
+        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -88,6 +89,49 @@ jobs:
         # failed to resolve mod", which reads like a formatting problem and hides
         # every gate behind it. Naming the real cause first (221159294).
         run: python3 scripts/ci/check_module_files.py
+
+      # sccache is enabled once for the whole job and never for a single step:
+      # a run that wrapped only one cargo invocation produced
+      # `<unknown rustc version>` artifacts that the next unwrapped invocation
+      # rejected with E0514 ("compiled by an incompatible version of rustc",
+      # run 42373575639). One wrapper for every cargo call keeps the
+      # fingerprints equal.
+      #
+      # CARGO_INCREMENTAL=0 is required, not an optimization: sccache cannot
+      # cache incremental units, and the profiles this job builds
+      # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
+      # true, so with incremental on nothing is ever cached.
+      #
+      # Hosted runners only: the self-hosted runner is a persistent machine
+      # whose toolchains and caches belong to its owner, and a pull request
+      # from a fork must not install or start a cache there. This step is one
+      # of the quality gates, so it must keep reporting failures: no
+      # continue-on-error below.
+      - name: Setup sccache
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
+
+      - name: Enable sccache
+        # Only a successful `sccache --start-server` writes the wrapper, so a
+        # runner without a usable sccache builds the whole job unwrapped instead
+        # of mixing wrapped and unwrapped cargo calls.
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          if ! command -v sccache >/dev/null 2>&1; then
+            echo "sccache is not available; this job builds without a wrapper"
+            exit 0
+          fi
+          if sccache --start-server; then
+            {
+              echo "RUSTC_WRAPPER=sccache"
+              echo "CARGO_INCREMENTAL=0"
+            } >> "$GITHUB_ENV"
+          else
+            echo "sccache failed to start; this job builds without a wrapper"
+          fi
 
       - name: Check formatting
         # These gates are independent. Report every failure in one run instead
@@ -187,6 +231,16 @@ jobs:
         shell: bash
         run: cargo machete
 
+      - name: sccache stats
+        # Printed only when the wrapper was actually enabled, so a run that
+        # built without sccache does not report misleading numbers. The
+        # condition starts with `!cancelled()` like every other quality step:
+        # a cancelled run should stop, and this is diagnostic output, not a
+        # gate.
+        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
+        shell: bash
+        run: sccache --show-stats
+
   release-automation:
     name: Release Automation
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
@@ -241,17 +295,21 @@ jobs:
         include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]') }}
 
     steps:
+      # The Linux cleanup runs after checkout because it is the shared script in
+      # the repository; it renames the unused toolchains and deletes them in the
+      # background (#21).
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
       - name: Free disk space (Linux)
         # Hosted ubuntu starts with about 14 GB on `/`. One job holds the release
         # build, both test harnesses, and the e2e binaries in a single target
-        # dir, so the pre-installed toolchains this job never uses are removed
-        # first. A self-hosted runner is macOS, so this never touches it.
+        # dir, so the pre-installed toolchains this job never uses are removed.
+        # A self-hosted runner is macOS, so this never touches it.
         if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
+        run: bash scripts/ci/free_disk_space.sh
 
       - name: Free disk space (macOS)
         # The macOS hosted image has the least free space of the three. Skip on
@@ -262,10 +320,6 @@ jobs:
           sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet \
             "$HOME/Library/Caches/Homebrew"
           df -h /
-
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -283,6 +337,48 @@ jobs:
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
+
+      # The wrapper is set once for the whole job, before the first cargo call,
+      # so every compile in this job (release build, test compile, e2e, the
+      # SDK parity test and the macOS warning budget) shares one fingerprint.
+      # A run that wrapped only one step emitted `<unknown rustc version>`
+      # artifacts that the next unwrapped compile rejected with E0514,
+      # "compiled by an incompatible version of rustc" (run 42373575639).
+      #
+      # CARGO_INCREMENTAL=0 is required: sccache cannot cache incremental
+      # units and both profiles this job builds ([profile.dev] and
+      # [profile.release]) set incremental = true in Cargo.toml, so leaving
+      # incremental on would mean zero cache hits.
+      #
+      # Hosted runners only. The self-hosted runner is a persistent machine
+      # whose caches belong to its owner, and a fork pull request must not
+      # install or start a cache on it.
+      - name: Setup sccache
+        if: runner.environment == 'github-hosted'
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          disable_annotations: true
+        continue-on-error: true
+
+      - name: Enable sccache
+        # Nothing is written unless `sccache --start-server` succeeds, so a
+        # runner without a working sccache builds the entire job without a
+        # wrapper rather than mixing wrapped and unwrapped cargo calls.
+        if: runner.environment == 'github-hosted'
+        shell: bash
+        run: |
+          if ! command -v sccache >/dev/null 2>&1; then
+            echo "sccache is not available; this job builds without a wrapper"
+            exit 0
+          fi
+          if sccache --start-server; then
+            {
+              echo "RUSTC_WRAPPER=sccache"
+              echo "CARGO_INCREMENTAL=0"
+            } >> "$GITHUB_ENV"
+          else
+            echo "sccache failed to start; this job builds without a wrapper"
+          fi
 
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
@@ -304,13 +400,9 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=mold"]
           EOF
           fi
-          # NOTE: intentionally NOT exporting RUSTC_WRAPPER=sccache here. Only this
-          # step used sccache while the later `cargo test --no-run` steps did not,
-          # so sccache emitted rlibs/rmetas stamped `<unknown rustc version>` that
-          # the non-sccache test compile then rejected with E0514
-          # ("compiled by an incompatible version of rustc"). rust-cache already
-          # caches target/ across runs, so a clean, wrapper-consistent build is
-          # both correct and fast enough.
+          # The sccache wrapper is not set here: the job-wide `Enable sccache`
+          # step above sets it for every cargo call, which is what keeps the
+          # artifacts of this build and the later test compiles consistent.
           RUSTC="$(rustup which rustc)"
           export RUSTC
           CARGO_BIN="$(rustup which cargo)"
@@ -329,19 +421,40 @@ jobs:
 
       - name: Compile library and binary tests
         shell: bash
+        # One call compiles the lib and bin tests of every package the cohorts
+        # below use. Selecting a different `-p` set per cohort unifies features
+        # differently, so each of those calls recompiled dozens of workspace
+        # crates (#19). `--message-format=json-render-diagnostics` keeps rendered
+        # diagnostics on stderr and writes only JSON messages to stdout, which
+        # records each test executable for the cohort steps. The cohort steps
+        # run those executables instead of invoking cargo again (#19): a
+        # per-cohort `cargo test -p <crate>` unifies features over only that
+        # crate, so every workspace crate recompiles with a different
+        # fingerprint. The artifacts file lives in `$RUNNER_TEMP`; the JSON is
+        # build output, not a test result.
         run: |
-          python3 .github/scripts/run_with_timeout.py 900 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --lib --bins --no-run
+          set -euo pipefail
+          TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
+          echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            packages+=(-p horon-agent-embedding)
+          fi
+          python3 .github/scripts/run_with_timeout.py 1800 \
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            "${packages[@]}" --lib --bins --test e2e --no-run \
+            --message-format=json-render-diagnostics \
+            > "$TEST_ARTIFACTS"
 
       - name: Run deterministic retention-readiness cohort
         shell: bash
+        # The helper runs the already compiled lib test executable, so this
+        # cohort cannot recompile anything; its budget only covers execution.
         run: |
-          # A cold horon-agent-app-core test harness compiles heavy optional provider
-          # dependencies and can exceed three minutes on hosted runners. The
-          # cohort itself runs in under a second once the lib test is built.
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-app-core --lib retention_readiness -- --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 \
+            -- retention_readiness --nocapture
 
       - name: Run secret-input pty cohort (all platforms with a pty)
         if: runner.os != 'Windows'
@@ -353,14 +466,11 @@ jobs:
         # looks-green-but-never-ran shape as the warning budget and the stdin
         # detector (#651). These tests fork a pty, so they cannot run on the
         # Windows runner; everywhere else they take about a second.
-        #
-        # 600s, not 300s: the budget is dominated by cold-compiling the
-        # horon-agent-base lib test harness, which exceeded 300s on a hosted macOS
-        # runner (run 30591536707) while the cohort itself runs in a second.
         run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-base --lib secret_input -- --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 \
+            -- secret_input --nocapture
 
       - name: Run IRC cohorts
         shell: bash
@@ -370,30 +480,20 @@ jobs:
         # uses. A filter that matches nothing makes libtest report "0 passed"
         # and exit 0, the looks-green-but-never-ran shape the warning budget and
         # the stdin detector both had, so each cohort must report at least one
-        # pass.
+        # pass (`--min-passed 1`).
         run: |
-          set -euo pipefail
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-irc-core --lib -- --nocapture | tee /tmp/irc-1.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-1.log || {
-            echo "::error::IRC cohort 1 ran no tests"
-            exit 1
-          }
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-base --lib irc -- --nocapture | tee /tmp/irc-2.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-2.log || {
-            echo "::error::IRC cohort 2 ran no tests"
-            exit 1
-          }
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-app-core --lib irc -- --nocapture | tee /tmp/irc-3.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed' /tmp/irc-3.log || {
-            echo "::error::IRC cohort 3 ran no tests"
-            exit 1
-          }
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-irc-core \
+            --timeout 600 --min-passed 1 \
+            -- --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- irc --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- irc --nocapture
 
       - name: Run embedding numeric-stability cohort (Linux only)
         if: runner.os == 'Linux'
@@ -419,10 +519,10 @@ jobs:
           # degrade back into a silent skip.
           test -s "$model_dir/model.onnx"
           test -s "$model_dir/tokenizer.json"
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-embedding --lib -- --nocapture \
-            | tee /tmp/embedding-cohort.log
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-embedding \
+            --timeout 600 --log /tmp/embedding-cohort.log \
+            -- --nocapture
           # The test is present and the harness ran it (rather than the binary
           # failing to build).
           grep -q "minilm_embedding_is_numerically_stable_across_inference_engines ... ok" \
@@ -451,29 +551,27 @@ jobs:
         # because these tests drive `head -n1`, which stock Windows does not
         # provide; the Windows detector still has no test coverage.
         run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            -p horon-agent-app-core --lib tool::bash::tests::test_stdin_forwarding -- --nocapture
-
-      - name: Compile integration test binaries
-        shell: bash
-        # Build the integration-test binaries up front (not counted against the
-        # run steps' execution budgets). The e2e suite in particular is heavy
-        # (burst-spawn concurrency), and folding compilation into its 900s run
-        # budget was pushing slower hosted ubuntu/macos runners over the limit.
-        run: |
-          python3 .github/scripts/run_with_timeout.py 900 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            --test e2e --no-run
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 \
+            -- tool::bash::tests::test_stdin_forwarding --nocapture
 
       - name: Run e2e tests
         shell: bash
+        # Same `-p` set and target as the compile step so cargo reuses the
+        # already built e2e binary instead of rebuilding the selection set.
         run: |
           # e2e is fast (~1-2 min of execution); the generous budget only guards
           # against an occasional slow hosted runner. Compilation is already done
           # in the dedicated compile step above.
+          set -euo pipefail
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            packages+=(-p horon-agent-embedding)
+          fi
           python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} --test e2e
+            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
+            "${packages[@]}" --test e2e
 
       # macOS only: the quality job already runs the same gate on Linux, and a
       # second whole-workspace `cargo check` on the ubuntu matrix entry is a
@@ -498,6 +596,13 @@ jobs:
         shell: bash
         run: |
           scripts/ci/check_security.sh --strict
+
+      - name: sccache stats
+        # Runs even after a failed gate so the cache state is visible in the
+        # log, but only when the wrapper was really enabled.
+        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
+        shell: bash
+        run: sccache --show-stats
 
   windows-build-test:
     name: Build & Test (windows-latest)
@@ -524,11 +629,43 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      # Job-wide, before the first cargo call: a wrapper applied to one step
+      # only left `<unknown rustc version>` artifacts that the next unwrapped
+      # compile rejected with E0514 ("compiled by an incompatible version of
+      # rustc", run 42373575639). Every cargo call in this job must share the
+      # same wrapper.
+      #
+      # CARGO_INCREMENTAL=0 is required, not a speed tweak: sccache cannot
+      # cache incremental units, and both [profile.dev] and [profile.release]
+      # in Cargo.toml set incremental = true, so nothing would be cached.
+      #
+      # This job runs on a GitHub-hosted Windows image only; the guard keeps
+      # the step out of any other environment.
       - name: Setup sccache
+        if: runner.environment == 'github-hosted'
         uses: mozilla-actions/sccache-action@v0.0.11
         with:
           disable_annotations: true
         continue-on-error: true
+
+      - name: Enable sccache
+        # The wrapper is written only when the server actually starts, so a
+        # runner without a working sccache runs every cargo call unwrapped
+        # instead of mixing wrapped and unwrapped builds.
+        if: runner.environment == 'github-hosted'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
+            Write-Host 'sccache is not available; this job builds without a wrapper'
+            exit 0
+          }
+          sccache --start-server
+          if ($LASTEXITCODE -eq 0) {
+            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CARGO_INCREMENTAL=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            Write-Host 'sccache failed to start; this job builds without a wrapper'
+          }
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -538,13 +675,6 @@ jobs:
       - name: Build release binary
         shell: pwsh
         run: |
-          if (Get-Command sccache -ErrorAction SilentlyContinue) {
-            sccache --start-server *> $null
-            if ($LASTEXITCODE -eq 0) {
-              $env:RUSTC_WRAPPER = 'sccache'
-            }
-          }
-
           & cargo build --locked --release --target x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) {
             throw 'Windows release build failed'
@@ -668,6 +798,13 @@ jobs:
         run: |
           & ./scripts/install/test_install_windows_launcher.ps1
           & ./scripts/install/test_windows_setup.ps1
+
+      - name: sccache stats
+        # Runs even after a failed test so the cache state is in the log, and
+        # only when the wrapper was enabled for this job.
+        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
+        shell: pwsh
+        run: sccache --show-stats
 
   fmt:
     name: Format
@@ -838,6 +975,9 @@ jobs:
 
       - name: Install pinned justrust
         shell: bash
+        env:
+          # Only for the release API fallback when the download URL fails.
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/ci/install_justrust.sh
 
       - name: Check full Windows ARM64 release configuration
@@ -858,20 +998,19 @@ jobs:
       # `cargo xwin` resolve that toolchain instead of rust-toolchain.toml's.
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - name: Free disk space
-        # cargo-xwin unpacks the Windows SDK and CRT into the target dir on top
-        # of a workspace build; the hosted image's 14 GB is not enough with the
-        # pre-installed toolchains still there.
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Free disk space
+        # cargo-xwin unpacks the Windows SDK and CRT into the target dir on top
+        # of a workspace build; the hosted image's 14 GB is not enough with the
+        # pre-installed toolchains still there. The shared script sits in the
+        # repository, so it runs after checkout and deletes in the background
+        # (#21).
+        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -892,8 +1031,38 @@ jobs:
         # minutes on every run.
         uses: taiki-e/install-action@cargo-xwin
 
+      - name: Resolve cargo-xwin version and cache directory
+        # XWIN_CACHE_DIR is the environment form of `--xwin-cache-dir`, "xwin
+        # cache directory to put CRT and SDK files" (cargo-xwin README, option
+        # table). The download is the bulk of this job's 14.5 minutes in run
+        # 42373575639. The directory sits outside the checkout and `target/`, so
+        # Swatinem/rust-cache does not store it, and it is resolved to an
+        # absolute path without `..` here: actions/cache rejects `..` in `path`
+        # and skipped the save in run 42387478682.
+        id: xwin
+        shell: bash
+        run: |
+          version=$(cargo xwin --version | head -n1 | tr -d '\n' | tr -c 'A-Za-z0-9._-' '-')
+          dir="$HOME/.cache/cargo-xwin"
+          mkdir -p "$dir"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "XWIN_CACHE_DIR=$dir" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v6
+        # The CRT and SDK archives are the 14.5 minutes of run 42373575639. The
+        # key carries the cargo-xwin version and both cross targets because the
+        # cached files are version-pinned and target-pinned.
+        with:
+          path: ${{ steps.xwin.outputs.dir }}
+          key: cargo-xwin-${{ runner.os }}-${{ steps.xwin.outputs.version }}-x86_64-pc-windows-msvc-aarch64-pc-windows-msvc
+
       - name: Check Windows x64 target
-        run: cargo xwin check --locked --target x86_64-pc-windows-msvc
+        shell: bash
+        run: |
+          cargo xwin check --locked --target x86_64-pc-windows-msvc
+          # Shows the CRT and SDK landed in the cached directory.
+          du -sh "$XWIN_CACHE_DIR"
 
       # cargo-xwin currently feeds clang-style ring builds MSVC /imsvc flags for
       # aarch64-pc-windows-msvc on Linux. Keep this advisory until upstream

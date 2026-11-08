@@ -163,6 +163,39 @@ cp "$FIXTURES/${url##*/}" "$out"
         self.assertIn("/releases/download/v0.1.0-alpha.17/", log)
         self.assertNotIn("/latest/", log)
 
+    def test_download_failure_falls_back_to_release_api(self):
+        # The download URL answers 504; the same assets come from the API by id,
+        # and an asset of another repository or name is never picked.
+        self.fixture()
+        name = "justrust-x86_64-unknown-linux-musl.tar.gz"
+        (self.root / "release.json").write_text(
+            '{"assets": [\n'
+            '{"url": "https://api.github.com/repos/other/repo/releases/assets/9", "name": "%s"},\n'
+            '{"url": "https://api.github.com/repos/1jehuang/justrust/releases/assets/11", "name": "%s"},\n'
+            '{"url": "https://api.github.com/repos/1jehuang/justrust/releases/assets/12", "name": "%s.sha256"}]}'
+            % (name, name, name))
+        (self.root / "11").write_bytes((self.root / name).read_bytes())
+        (self.root / "12").write_bytes((self.root / f"{name}.sha256").read_bytes())
+        self.env["JUSTRUST_TEST_API_URL"] = "https://api.invalid/releases"
+        self.stub("curl", '''#!/bin/bash
+printf '%s\\n' "$*" >> "$CURL_LOG"
+while [[ $# -gt 0 ]]; do
+    case "$1" in --output) out=$2; shift 2;; --header) shift 2;; *) url=$1; shift;; esac
+done
+case "$url" in
+    https://trusted.invalid/*) echo "curl: (22) The requested URL returned error: 504" >&2; exit 22;;
+    */tags/*) cp "$FIXTURES/release.json" "$out";;
+    *) cp "$FIXTURES/${url##*/}" "$out";;
+esac
+''')
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("justrust-fixture", result.stdout)
+        log = (self.root / "curl_log").read_text()
+        self.assertIn("https://api.invalid/releases/assets/11", log)
+        self.assertIn("https://api.invalid/releases/assets/12", log)
+        self.assertNotIn("assets/9", log)
+
 
 if __name__ == "__main__":
     unittest.main()

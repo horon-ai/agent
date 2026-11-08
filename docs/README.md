@@ -24,18 +24,18 @@
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
-| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, 보조 호출 |
+| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://` 읽기와 MCP 설정 출처, 보조 호출 |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.md`](runtime/TURNS.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
-| | [`PROMPT.md`](runtime/PROMPT.md) | 시스템 프롬프트 구성과 토큰 추정 |
+| | [`PROMPT.md`](runtime/PROMPT.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.md`](runtime/HOOKS.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
 | `provider/` | [`MODEL.md`](provider/MODEL.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 사용 메타데이터 |
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.md`](safety/SECURITY.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
-| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정 |
+| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
 | | [`RESULTS.md`](performance/RESULTS.md) | 측정 결과와 한계 |
 | | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
 | `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |

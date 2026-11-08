@@ -164,9 +164,42 @@ MEASUREMENTS = (
             "perf_tests::irc_bus_stays_bounded",
         ],
     },
+    # Two shapes of one promise, so two sources: listing the catalog reads a
+    # frontmatter prefix per skill, never a body, and a request against an
+    # unchanged workspace reads no skill file or directory at all.
+    {
+        "section": "skill",
+        "source": "skill-catalog",
+        "args": [
+            "-p",
+            "horon-agent-base",
+            "--lib",
+            "skill::sources_tests::structural_catalog_frontmatter_only",
+        ],
+    },
+    {
+        "section": "skill",
+        "source": "skill-overlay",
+        "args": [
+            "-p",
+            "horon-agent-base",
+            "--lib",
+            "skill::overlay_cache_tests::structural_unchanged_request",
+        ],
+    },
+    {
+        "section": "mcp_config",
+        "source": "mcp-config",
+        "args": [
+            "-p",
+            "horon-agent-base",
+            "--lib",
+            "mcp::sources::tests::structural_user_config_rereads",
+        ],
+    },
 )
 
-REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context", "irc")
+REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context", "irc", "skill", "mcp_config")
 
 
 class GateError(Exception):
@@ -532,6 +565,78 @@ def check_irc(report: Report, records: list[dict[str, str]], bounds: dict[str, i
         report.at_most(section, "broadcast_inflight_high_water", inflight, bounds["irc_broadcast_concurrency"])
 
 
+def per_item(total: int, items: int) -> int:
+    """`total / items` rounded up, so a fraction over the bound still fails."""
+    return -(-total // items)
+
+
+def check_skill(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The skill catalog reads frontmatter only, and an unchanged workspace reads nothing.
+
+    The floors carry as much weight as the ceilings: with the counters off
+    every read reports 0, which would pass every ceiling. A catalog that read
+    fewer files than it listed skills, or a cold request that read nothing,
+    measured nothing.
+    """
+    for record in records:
+        source = record.get("source", "?")
+        section = f"skill/{source}"
+        if source == "skill-catalog":
+            skills = as_int(record, "skills", section)
+            reads = as_int(record, "skill_catalog_file_reads", section)
+            read_bytes = as_int(record, "skill_catalog_bytes", section)
+            report.at_least(section, "skills", skills, 1)
+            report.at_least(section, "skill_catalog_file_reads", reads, skills)
+            report.at_least(section, "skill_catalog_bytes", read_bytes, 1)
+            report.at_most(
+                section,
+                "skill_catalog_file_reads_per_skill",
+                per_item(reads, max(skills, 1)),
+                bounds["skill_catalog_file_reads_per_skill_max"],
+            )
+            report.at_most(
+                section,
+                "skill_catalog_bytes_per_skill",
+                per_item(read_bytes, max(skills, 1)),
+                bounds["skill_catalog_bytes_per_skill_max"],
+            )
+        elif source == "skill-overlay":
+            report.at_least(
+                section, "skill_warmup_file_reads", as_int(record, "skill_warmup_file_reads", section), 1
+            )
+            report.at_most(
+                section,
+                "skill_unchanged_request_file_reads",
+                as_int(record, "skill_unchanged_request_file_reads", section),
+                bounds["skill_unchanged_request_file_reads_max"],
+            )
+            report.at_most(
+                section,
+                "skill_unchanged_request_dir_reads",
+                as_int(record, "skill_unchanged_request_dir_reads", section),
+                bounds["skill_unchanged_request_dir_reads_max"],
+            )
+        else:
+            raise GateError(f"section skill: unknown source {source}")
+
+
+def check_mcp_config(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """A session start against unchanged user MCP configs reads no file.
+
+    The warm-up floor keeps a run with the counters off from passing: it would
+    report zero re-reads because it measured no read at all.
+    """
+    for record in records:
+        section = "mcp_config"
+        report.at_least(section, "mcp_config_warmup_reads", as_int(record, "mcp_config_warmup_reads", section), 1)
+        report.at_most(
+            section,
+            "mcp_config_user_rereads",
+            as_int(record, "mcp_config_user_rereads", section),
+            bounds["mcp_config_user_rereads_max"],
+        )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -541,6 +646,8 @@ CHECKS = {
     "soak": check_soak,
     "context": check_context,
     "irc": check_irc,
+    "skill": check_skill,
+    "mcp_config": check_mcp_config,
 }
 
 

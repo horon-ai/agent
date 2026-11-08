@@ -20,7 +20,16 @@ horon의 성능은 세 가지 장치로 본다. 무엇을 묻는지가 서로 �
 | `macos` | `macos-latest` | RSS | |
 | `windows` | `windows-latest` | Working Set | 데몬 연결은 Named Pipe, 하네스 브리지 기동은 측정 안 함(`api-bridge`는 Unix 전용) |
 
-OS마다 작업 하나가 모든 묶음을 한 기계에서 돌린다. 그래서 같은 OS 안의 비교 행은 CPU·디스크·부하를 공유한다. OS끼리는 기계가 달라 절대값을 비교하지 않는다. 작업 하나가 실패해도 다른 OS는 계속 돈다.
+OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안에서 작업을 다음처럼 나눠 돌린다. OS마다 따로 부르므로 한 OS의 측정은 그 OS의 빌드가 끝나자마자 시작하고, 가장 느린 OS의 빌드를 기다리지 않는다.
+
+| 작업 | 수 | 하는 일 |
+| --- | --- | --- |
+| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. |
+| `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`다. `compare`는 기준 빌드가 있으면 `horon-base` 줄로 같은 작업 안에서 번갈아 잰다. |
+| `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
+| `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
+
+한 묶음의 표에 들어가는 비교 행(horon과 각 경쟁 도구, 각 이벤트 수)은 한 기계에서 함께 잰다. 그래서 그 행들은 CPU·디스크·부하를 공유한다. 서로 다른 묶음끼리, 그리고 OS끼리는 기계가 달라 절대값을 비교하지 않는다. 단위 하나가 실패해도 다른 단위와 다른 OS는 계속 돈다. 그 OS의 `status.txt`는 `success`가 아니게 기록되고, 이미 잰 결과는 아티팩트에 남는다.
 
 ### 실행하기
 
@@ -33,7 +42,7 @@ gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
-| `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 작업이 하나씩 뜬다. |
+| `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. |
 | `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `compile` 중 쉼표로 고른다. |
 | `competitors` | `jcode,claude_code,codex,opencode,pi` | horon과 비교할 도구. 설치에 실패한 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
@@ -41,7 +50,7 @@ gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 | `oneshot_runs` | `3` | one-shot 프롬프트를 빌드마다 몇 번 잴지. 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
 | `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 `horon-base` 줄로 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
 
-모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다.
+모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 `merge` 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다. 중간 아티팩트 이름은 `benchmark-`로 시작하지 않으므로 `benchmark-docs.yml`의 다운로드에 섞이지 않는다.
 
 시크릿과 API 요금은 없다. 모델이 필요한 측정은 모두 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙는다.
 
@@ -136,12 +145,14 @@ python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent $
 | NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 상한은 예산 값과 같고, 수용은 상한 이하, 거절은 상한 초과 |
 | 자원 반납 | `fd_retention`, `thread_retention`, `non_returning` | 20사이클 소크 뒤 예산 이하, 반납 실패 0 |
 | IRC 메일박스 | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | 상한 100 이하, 1000건 유입에 드롭 900, 브로드캐스트당 본문 할당 1회, 정리 뒤 대기자 0, 동시 브로드캐스트 16 이하 |
+| 스킬 목록과 작업 폴더 스킬 | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | 스킬 200개 목록에서 스킬당 파일 읽기 1회 이하·8 KiB 이하(본문 32 KiB를 통째로 읽으면 실패), 바뀌지 않은 작업 폴더 요청 9회의 파일·폴더 읽기 0, 예열 읽기 1 이상 |
+| MCP 사용자 설정 | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 예열 읽기 1 이상, 예열 뒤 바뀌지 않은 사용자 설정을 다시 읽는 횟수 0 |
 
 각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # 전체
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config
 python3 scripts/perf/check_structural.py --print-plan    # 실행할 cargo 명령만 보기
 python3 -m unittest -v scripts/perf/test_check_structural.py   # 게이트의 계약 테스트
 ```
@@ -194,6 +205,31 @@ python3 scripts/perf/ab_perf.py \
 | 판단 | `correctness.result`, `interpretation`, `adoption_decision` |
 
 `allocated_peak_bytes`와 `task_high_water`는 실행기가 아니라 소크 리포트에서 채운다. 측정 JSON은 `.omo/` 아래에 두고 커밋하지 않는다. 판단에 필요한 수치는 PR 본문과 `RESULTS.md`에 옮긴다.
+
+### 스킬·MCP 설정 로딩 A/B
+
+로딩 경로는 `loading_probe` 예제와 `scripts/perf/bench_loading.py`로 잰다. 픽스처의 `config.toml`이 `[mcp] claude_user = true`를 켜므로 두 바이너리가 같은 `~/.claude.json`을 읽는 조건에서 비교한다. `warm` 모드가 A/B용이고, `--compare`는 `cold` 리포트나 모드가 섞인 쌍을 거절한다.
+
+```bash
+cargo build --release --locked -p horon-agent-base --example loading_probe
+python3 scripts/perf/bench_loading.py --binary target/release/examples/loading_probe --mode warm \
+  --events 0 --skills 0,200,1000 --skill-body-bytes 8192 --mcp-config-bytes 300000 \
+  --warmup 3 --iterations 30 --emit candidate-warm.json
+python3 scripts/perf/bench_loading.py --binary target/release/examples/loading_probe --mode warm \
+  --events 0 --skills 0,200,1000 --skill-body-bytes 0 --mcp-config-bytes 0 \
+  --warmup 3 --iterations 30 --emit candidate-warm-small.json
+python3 scripts/perf/bench_loading.py --compare baseline-warm.json candidate-warm.json
+```
+
+기준선은 같은 명령을 기준 커밋의 워크트리에서 빌드한 `loading_probe`로 돌린 결과다. 판정은 카운터가 먼저다. `skill_catalog`의 `skill_bytes_read`, `skill_request_overlay`의 `skill_file_reads`, `mcp_config_load`의 `mcp_config_reads`가 기준선보다 늘면 실패다. 시간은 같은 쌍을 번갈아 다시 재도 기준선의 p95 범위를 넘을 때만 후퇴로 본다.
+
+판정용 측정은 개발 기기가 아니라 `.github/workflows/loading-ab.yml`에서 한다. 이 워크플로는 `ubuntu-24.04` 잡 하나 안에서 기준 커밋과 후보 커밋을 각각 체크아웃해 릴리스로 빌드하고, 위 두 조건(본문 8 KiB와 `~/.claude.json` 300 KB, 둘 다 0)을 후보 쪽 `bench_loading.py`로 번갈아 잰 뒤 `--compare`한다. 이어 "Check counters" 단계가 세 카운터 조건을 확인한다. 본문이 있는 스킬 목록은 기준선보다 적게 읽고, 작업 폴더 스킬은 반복 요청에서 다시 읽지 않고, `~/.claude.json`이 있는 조건의 MCP 설정은 기준선보다 적게 읽어야 한다. 하나라도 어기면 잡이 실패한다. `bench_tools.py`도 두 바이너리로 돌리고, 결과는 `loading-ab-<run_id>` 아티팩트로 30일 남는다.
+
+```bash
+gh workflow run loading-ab.yml --ref dev -f base_ref=23007c9b -f head_ref=dev
+```
+
+`base_ref` 기본값 `23007c9b`는 로딩 카운터가 처음 들어간 커밋이다. 그보다 오래된 커밋은 리포트 `schema_version`이 달라 `--compare`가 비교를 거절하고 잡이 실패한다. `workflow_dispatch` 워크플로이므로 파일이 기본 브랜치(`main`)에 있어야 실행할 수 있다.
 
 ## 하지 않는 것
 
