@@ -27,6 +27,34 @@ done, regardless of what else it fixes.
    measure: `docs/performance/BENCHMARK.md`; recorded numbers and their limits:
    `docs/performance/RESULTS.md`, which is the recorded baseline.
 
+## Performance target: beat jcode
+
+Performance work aims to beat jcode, the closest competitor, on every OS and
+every cell of the comparison benchmark, by as wide a margin as the code allows.
+Requirement 3 is the floor (never slower than our own baseline); this is the
+direction (faster and smaller than jcode).
+
+- **Measure** with the `compare` suite in GitHub Actions only, never on a
+  developer machine: `gh workflow run benchmark.yml --ref <branch> -f os=all
+  -f suites=compare -f competitors=jcode -f oneshot_runs=5 -f baseline_ref=dev`.
+  The same job builds the dev baseline (`horon-base`) beside the candidate, so
+  before, after and jcode share one runner.
+- **Compare** per OS (Linux, macOS, Windows): one-shot time and peak RSS,
+  skill and MCP call time, `--version`, install size, first-session and
+  each-additional-session memory (idle and post-turn), and Linux fsync count.
+  Use the median of at least 5 runs; a difference inside the min–max overlap
+  is a tie, not a win.
+- **Find the cause before changing code**: split a run with
+  `request_offsets_ms`, `log_tail`, `thread_names` and `live_heap_bytes`
+  (`docs/performance/BENCHMARK.md`), not by guessing.
+- **Never** buy speed with durability or correctness: no dropped flush of an
+  original (event log, blob, local state, runtime journal), no skipped
+  validation, no weaker default, no benchmark-detecting branch, no change to
+  the fixture or mock to favour horon. A flush may go only when a test proves
+  a crash still loses nothing (precedent: the catalog dirty marker,
+  `docs/protocol/SESSION_STORE.md`). A cell jcode keeps for such a reason is
+  reported as a structural difference with that reason.
+
 ## What this build is
 
 - One headless binary, `horon-agent`. Working subcommands: `serve` (agent

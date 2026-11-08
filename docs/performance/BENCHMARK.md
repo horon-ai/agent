@@ -292,6 +292,31 @@ gh workflow run loading-ab.yml --ref dev -f base_ref=23007c9b -f head_ref=dev
 
 `base_ref` 기본값 `23007c9b`는 로딩 카운터가 처음 들어간 커밋이다. 그보다 오래된 커밋은 리포트 `schema_version`이 달라 `--compare`가 비교를 거절하고 잡이 실패한다. `workflow_dispatch` 워크플로이므로 파일이 기본 브랜치(`main`)에 있어야 실행할 수 있다.
 
+## jcode를 이기는 것이 목표다
+
+성능 작업의 방향은 가장 가까운 경쟁 도구인 jcode를 모든 OS의 모든 비교 칸에서 이기는 것이다. AGENTS.md의 고정 요구 3(기준선보다 느려지지 않는다)이 바닥이고, 이 절은 그 위의 목표다.
+
+**재는 곳과 명령.** 측정은 GitHub Actions에서만 한다. 개발 기기는 다른 빌드가 함께 돌아 수치를 믿을 수 없다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=5 -f baseline_ref=dev
+```
+
+같은 잡이 dev 기준 빌드(`horon-base`)와 후보를 함께 빌드해 번갈아 재므로, 변경 전·후와 jcode가 한 러너를 공유한다.
+
+**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
+
+**원인은 측정으로 찾는다.** `request_offsets_ms`로 기동·도구 왕복·종료 구간을 나누고, `log_tail`로 종료 구간의 단계를, `thread_names`로 늘어나는 스레드를, `live_heap_bytes`로 살아 있는 데이터와 할당자 보유분을 가른다. 추측으로 코드를 바꾸지 않는다.
+
+**하지 않는 최적화.**
+
+- 원본(이벤트 로그, 블롭, 로컬 상태 파일, 런타임 저널)의 flush를 빼서 빨라지는 것. 예외는 충돌 뒤에도 잃는 것이 없음을 테스트로 증명한 경우뿐이다(`.catalog.dirty` 표식, [`../protocol/SESSION_STORE.md`](../protocol/SESSION_STORE.md)).
+- 검증 생략, 기본값 약화, 기능 제거로 얻는 속도.
+- 벤치를 알아채는 분기, horon에 유리하게 바꾼 픽스처나 가짜 모델.
+
+이런 이유로 jcode가 앞서는 칸이 남으면 고치지 않고, 그 이유(예: horon이 jcode가 하지 않는 원본 내구성 flush를 한다)와 함께 구조적 차이로 보고한다.
+
 ## 하지 않는 것
 
 - 지연이나 메모리에 수치 임계값을 두지 않는다. B0 분포가 고정된 뒤에 따로 정한다.
