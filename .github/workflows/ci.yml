@@ -456,21 +456,27 @@ jobs:
             --timeout 600 \
             -- retention_readiness --nocapture
 
-      - name: Run secret-input pty cohort (all platforms with a pty)
+      - name: Run secrets cohort
         if: runner.os != 'Windows'
         shell: bash
-        # `horon-agent-base --lib` is never executed on Linux CI: no other step
-        # in this workflow runs a horon-agent-base lib test (the Windows power
-        # tests now live in horon-agent-platform-windows). So the masking fix for #660 had
-        # a test that was compiled and never run, which is the same
-        # looks-green-but-never-ran shape as the warning budget and the stdin
-        # detector (#651). These tests fork a pty, so they cannot run on the
-        # Windows runner; everywhere else they take about a second.
+        # The credential-masking tests live in `crates/base/src/secrets.rs`
+        # `mod tests` (11 tests): placeholder shapes, restore, owner-only key
+        # files, vault persistence across restarts, and the block/off modes.
+        # Nothing else in this workflow runs them on Linux or macOS: the build
+        # step compiles `horon-agent-base` lib tests but every other filtered
+        # step only selects its own prefix, so a real credential reaching the
+        # model or session history had no CI check. The step previously ran a
+        # filter inherited from upstream CI that matched nothing in this tree,
+        # the looks-green-but-never-ran shape the warning budget and the stdin
+        # detector had (#651), so it now requires at least one pass
+        # (`--min-passed 1`), which fails the step when a filter selects no
+        # test instead of reporting a green `0 passed`. The Windows groups stay
+        # out of scope: this step keeps `runner.os != 'Windows'`.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 \
-            -- secret_input --nocapture
+            --timeout 600 --min-passed 1 \
+            -- secrets:: --nocapture
 
       - name: Run IRC cohorts
         shell: bash
