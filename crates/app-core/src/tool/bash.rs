@@ -2094,7 +2094,7 @@ impl BashTool {
     /// when its turn ends, so its command stays a child it can wait on and stop.
     fn supports_reload_persistence(&self, ctx: &ToolContext) -> bool {
         horon_agent_platform::process::supports_process_replacement()
-            && crate::server::process_reloads_in_place()
+            && crate::server::reload::process_reloads_in_place()
             && matches!(ctx.execution_mode, crate::tool::ToolExecutionMode::AgentTurn)
             && ctx.stdin_request_tx.is_none()
             && !crate::server::session_has_attached_client(&ctx.session_id)

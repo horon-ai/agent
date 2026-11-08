@@ -55,7 +55,7 @@ mod irc;
 mod lifecycle;
 mod live_turn;
 mod provider_control;
-mod reload;
+pub(crate) mod reload;
 pub(crate) mod reload_recovery;
 mod reload_state;
 mod reload_trace;
@@ -614,9 +614,6 @@ pub use self::reload_state::{
 use self::reload_state::{clear_reload_marker_if_stale_for_pid, publish_reload_socket_ready};
 
 pub use self::lifecycle::configure_temporary_server;
-#[cfg(test)]
-pub(crate) use self::reload::mark_process_reloads_in_place;
-pub(crate) use self::reload::process_reloads_in_place;
 use self::socket::acquire_daemon_lock_for;
 pub use self::socket::spawn_server_notify;
 pub use self::socket::{
