@@ -189,7 +189,7 @@ python3 scripts/perf/ab_perf.py \
   --rollback-commit <baseline-commit> --emit .omo/evidence/ab-report.json
 ```
 
-- 같은 바이너리를 양쪽에 넣으면 대조 실행(A/A)이 된다. 차이가 잡음 대역 안이면 `control-no-change`로 기록한다. 이것이 "거짓 개선 없음"의 증거다.
+- 같은 바이너리를 양쪽에 넣으면 대조 실행(A/A)이 된다. 차이가 잡음 대역 안이면 `control-no-change`, 밖이면 `control-drift`로 기록한다. 두 바이너리가 같으므로 대역 밖 차이는 실행기 잡음이고, 대조 실행은 어느 쪽이든 `adopt-pending-correctness`나 `reject-regression`을 내지 않는다. 이것이 "거짓 개선 없음"의 증거다.
 - p99는 표본 20개 이상일 때만 낸다. 모자라면 키를 남기고 `null`과 이유를 적는다.
 - 워크로드가 보고하지 않은 지표는 0이 아니라 `null`이 되고 `counts.missing`에 오른다.
 
