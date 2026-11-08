@@ -136,6 +136,10 @@
       "count": 5,
       "reason": "hook-gate tests write chmod'd POSIX shell scripts."
     },
+    "crates/base/src/background/tests/finalize.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(unix)]` test that makes the status directory read-only through Unix mode bits (`PermissionsExt`) to prove a failed status write still finalizes the task once; a Windows read-only attribute does not stop files being created in a directory, so the failure cannot be produced there."
+    },
     "crates/base/src/claude_live.rs": {
       "count": 13,
       "reason": "live Claude Code takeover reads /proc/<pid>/stat start time and signals through pidfd_open/pidfd_send_signal; both interfaces are Linux-only and every other platform answers not supported."
