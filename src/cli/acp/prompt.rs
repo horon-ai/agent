@@ -115,6 +115,26 @@ pub(super) fn prompt_response(stop_reason: &str, usage: &TurnUsage) -> Value {
 }
 
 pub(super) fn prompt_from_params(params: &Value) -> std::result::Result<(String, Vec<(String, String)>), String> {
+    parse_prompt(params, false)
+}
+
+/// The daemon mime an ACP `audio` block's `mimeType` maps to. The daemon turns
+/// `audio/wav` and `audio/mpeg` attachments into `input_audio` parts, the two
+/// formats an OpenAI-compatible endpoint accepts.
+fn audio_mime(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "audio/wav" => Some("audio/wav"),
+        "audio/mpeg" | "audio/mp3" => Some("audio/mpeg"),
+        _ => None,
+    }
+}
+
+/// IS-6: `allow_audio` is the v2 connection's advertised `prompt.audio`; v1
+/// never advertises it and keeps refusing the block.
+pub(super) fn parse_prompt(
+    params: &Value,
+    allow_audio: bool,
+) -> std::result::Result<(String, Vec<(String, String)>), String> {
     let prompt = params
         .get("prompt")
         .and_then(Value::as_array)
@@ -143,7 +163,20 @@ pub(super) fn prompt_from_params(params: &Value) -> std::result::Result<(String,
                     .ok_or_else(|| "Image content block missing data".to_string())?;
                 images.push((mime_type.to_string(), data.to_string()));
             }
-            Some("audio") => return Err("audio not supported".to_string()),
+            Some("audio") if !allow_audio => return Err("audio not supported".to_string()),
+            Some("audio") => {
+                let mime_type = block
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "Audio content block missing mimeType".to_string())?;
+                let mime = audio_mime(mime_type)
+                    .ok_or_else(|| format!("Unsupported audio mimeType {mime_type}: use audio/wav or audio/mpeg"))?;
+                let data = block
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "Audio content block missing data".to_string())?;
+                images.push((mime.to_string(), data.to_string()));
+            }
             Some("resource") => {
                 let resource = block
                     .get("resource")

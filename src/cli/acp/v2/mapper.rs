@@ -252,6 +252,12 @@ impl V2Mapper {
             // The extended profile already gets it as `_horon_agent/server_event`;
             // v2 has no update for MCP server status.
             ServerEvent::McpStatus { .. } => Vec::new(),
+            // IS-6: a soft interrupt stored mid-turn is a user message of its
+            // own, keyed by the row id a `session/resume` replay uses too.
+            ServerEvent::SoftInterruptStored { message_id, content } => vec![shapes::user_message(
+                &message_id,
+                &[json!({ "type": "text", "text": content })],
+            )],
             _ => Vec::new(),
         }
     }

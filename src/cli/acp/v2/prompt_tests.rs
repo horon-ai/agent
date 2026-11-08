@@ -356,8 +356,9 @@ async fn cancel_request_before_insert_withdraws_32800_after_insert_ignored() {
     assert_eq!(response["result"], json!({}), "{response}");
     let next = daemon.recv().await;
     assert_eq!(
-        next["type"], "cancel",
-        "$/cancel_request of an inserted prompt reaches no daemon: {next}"
+        (&next["type"], &next["run_id"]),
+        (&json!("cancel_turn"), &json!("r2")),
+        "$/cancel_request of an inserted prompt reaches no daemon; the session cancel names the run: {next}"
     );
     client.close_stdin().await;
 }
@@ -830,7 +831,11 @@ async fn close_writes_idle_cancelled_before_response() {
         .send(json!({"jsonrpc":"2.0","id":"close","method":"session/close","params":{"sessionId":SID}}))
         .await;
     let cancel = daemon.recv().await;
-    assert_eq!(cancel["type"], "cancel", "{cancel}");
+    assert_eq!(cancel["type"], "cancel_turn", "{cancel}");
+    assert_eq!(
+        cancel["run_id"], "r1",
+        "the close cancels only the run it saw: {cancel}"
+    );
     daemon.emit(text("last words")).await;
     daemon.emit(json!({"type":"interrupted"})).await;
     daemon.emit(json!({"type":"done","id":id})).await;
@@ -857,7 +862,12 @@ async fn close_bound_synthesizes_idle_and_drops_late_events() {
     client
         .send(json!({"jsonrpc":"2.0","id":"close","method":"session/close","params":{"sessionId":SID}}))
         .await;
-    assert_eq!(daemon.recv().await["type"], "cancel");
+    let cancel = daemon.recv().await;
+    assert_eq!(
+        (&cancel["type"], &cancel["run_id"]),
+        (&json!("cancel_turn"), &json!("r1")),
+        "{cancel}"
+    );
     let (before, response) = client.recv_response(json!("close")).await;
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
@@ -1029,7 +1039,12 @@ async fn close_give_up_ends_open_tool_calls_before_idle() {
     );
 
     send_close(&mut client).await;
-    assert_eq!(daemon.recv().await["type"], "cancel");
+    let cancel = daemon.recv().await;
+    assert_eq!(
+        (&cancel["type"], &cancel["run_id"]),
+        (&json!("cancel_turn"), &json!("r1")),
+        "{cancel}"
+    );
     let (before, response) = client.recv_response(json!("close")).await;
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(

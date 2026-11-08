@@ -182,7 +182,7 @@ fn initialize_response_matches_schema() {
     assert!(!response["info"]["version"].as_str().unwrap().is_empty());
     assert_eq!(
         response["capabilities"]["session"]["prompt"],
-        json!({ "image": {}, "embeddedContext": {} })
+        json!({ "image": {}, "audio": {}, "embeddedContext": {} })
     );
     assert_eq!(
         response["capabilities"]["session"]["mcp"],

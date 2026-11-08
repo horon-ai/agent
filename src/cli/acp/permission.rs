@@ -300,6 +300,15 @@ impl SideChannel for AcpSideChannel {
                 this.route_client_request(request_id, tool_call_id, method, params)
                     .await;
             }),
+            ServerEvent::AskToolCall {
+                request_id,
+                tool_call_id,
+            } => {
+                if let Some(user_actions) = &this.user_actions {
+                    user_actions.note_ask_tool_call(request_id, tool_call_id);
+                }
+                Box::pin(async {})
+            }
             ServerEvent::AskRequested { request_id, questions } => {
                 let questions = questions_from_wire(&questions);
                 Box::pin(async move { this.elicit(request_id, questions).await })

@@ -34,7 +34,7 @@ pub(crate) fn initialize_response(profile: AcpProfile, mcp_http: bool) -> Value 
         },
         "capabilities": {
             "session": {
-                "prompt": { "image": {}, "embeddedContext": {} },
+                "prompt": { "image": {}, "audio": {}, "embeddedContext": {} },
                 "mcp": mcp,
                 "delete": {},
                 "additionalDirectories": {},

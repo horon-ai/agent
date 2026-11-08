@@ -30,6 +30,8 @@ mod acp_client;
 mod acp_credentials;
 #[path = "support/acp_daemon.rs"]
 mod acp_daemon;
+#[path = "support/acp_input_scenarios.rs"]
+mod acp_input_scenarios;
 #[path = "support/acp_schema.rs"]
 mod acp_schema;
 #[path = "support/lifecycle.rs"]
