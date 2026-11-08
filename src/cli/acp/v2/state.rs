@@ -14,6 +14,7 @@
 use super::super::*;
 use super::background::{self, BackgroundSet, REMOVAL_DEFER};
 use super::foreground::ForegroundTracker;
+use super::held::HeldQueue;
 use super::mapper::V2Mapper;
 use super::replay::Position;
 use super::shapes::{self, ChunkKind, message_chunk, message_ids, state_idle, state_running};
@@ -154,6 +155,8 @@ pub(crate) struct V2Session {
     pub(crate) tracker: StdMutex<ForegroundTracker>,
     /// IS-4: the background work this session lists on every `state_update`.
     background: StdMutex<BackgroundSet>,
+    /// IS-12: prompts of this connection waiting for the session's next prompt.
+    held: StdMutex<HeldQueue>,
     pending: StdMutex<HashMap<u64, PendingPrompt>>,
     /// `withdraw_message` requests by request id, answered by the stream task.
     withdraws: StdMutex<HashMap<u64, WithdrawWaiter>>,
@@ -195,6 +198,7 @@ impl V2Session {
         Self {
             tracker: StdMutex::default(),
             background: StdMutex::default(),
+            held: StdMutex::default(),
             pending: StdMutex::default(),
             withdraws: StdMutex::default(),
             submit_gate: Mutex::new(()),
@@ -237,8 +241,16 @@ impl V2Session {
         self.closed.load(Ordering::SeqCst)
     }
 
-    fn changed(&self) {
+    pub(crate) fn changed(&self) {
         self.changes.send_modify(|epoch| *epoch += 1);
+    }
+
+    pub(crate) fn subscribe_changes(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    pub(crate) fn held(&self) -> std::sync::MutexGuard<'_, HeldQueue> {
+        self.held.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Observe the moment between opening an inserted prompt's turn and taking
@@ -898,10 +910,10 @@ impl V2Stream {
     }
 
     /// The session takes its next prompt: cleared before the answer that
-    /// tells the client so is written.
+    /// tells the client so is written, and a held prompt may go.
     fn release_prompt(&self) {
         if let Some(session) = self.session.upgrade() {
-            session.prompt_running.store(false, Ordering::SeqCst);
+            self.v2.prompt_released(&session);
         }
     }
 

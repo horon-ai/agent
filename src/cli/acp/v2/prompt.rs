@@ -11,8 +11,18 @@
 
 use super::super::prompt::{PromptRunGuard, prompt_from_params};
 use super::super::*;
+use super::held::Hold;
 use super::state::{Control, PendingPrompt, V2Session, Withdrawal};
 use tokio::sync::oneshot;
+
+/// A parsed prompt that owns the session's `prompt_running`.
+struct TakenPrompt {
+    id: Value,
+    cancel: Arc<CancelSignal>,
+    text: String,
+    images: Vec<(String, String)>,
+    content: Vec<Value>,
+}
 
 /// A request the session's stream ended before answering. The stream task is
 /// the only writer of a v2 prompt's or command's response, so one that resolves
@@ -67,24 +77,46 @@ impl AcpRuntime {
         }) else {
             return self.write_rpc_error(id, RpcError::session_not_found(&session_id)).await;
         };
-        if session
-            .prompt_running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return self
-                .write_error_value(
-                    id,
-                    JSONRPC_INVALID_PARAMS,
-                    format!("Session {session_id} is already processing a prompt"),
-                )
-                .await;
+        // IS-12: a prompt sent while this connection's previous one is still
+        // processing waits for it instead of being refused. Cancelled or
+        // closed while it waits, it never reached the daemon: -32800.
+        match v2.take_prompt(&session, &message.cancel).await {
+            Hold::Taken => {}
+            Hold::Cancelled | Hold::Closed => return self.write_rpc_error(id, RpcError::cancelled()).await,
         }
-        let mut guard = PromptRunGuard::new(&session);
+        let taken = TakenPrompt {
+            id,
+            cancel: message.cancel,
+            text,
+            images,
+            content,
+        };
+        let result = self.run_taken_prompt_v2(taken, &session, &v2).await;
+        // Whichever way the prompt ended, the next held one re-checks whether
+        // the session is free.
+        v2.changed();
+        result
+    }
+
+    /// The rest of a prompt once it owns the session's `prompt_running`.
+    async fn run_taken_prompt_v2(
+        &self,
+        prompt: TakenPrompt,
+        session: &Arc<DaemonSession>,
+        v2: &Arc<V2Session>,
+    ) -> Result<()> {
+        let TakenPrompt {
+            id,
+            cancel,
+            text,
+            images,
+            content,
+        } = prompt;
+        let mut guard = PromptRunGuard::new(session);
 
         if let Some(command) = parse_acp_slash_command(&text) {
             let output = match command {
-                Ok(command) => self.run_session_command(&session, command).await,
+                Ok(command) => self.run_session_command(session, command).await,
                 Err(err) => Err(err),
             };
             let text = match output {
@@ -140,7 +172,7 @@ impl AcpRuntime {
         };
         {
             let _gate = v2.submit_gate.lock().await;
-            if message.cancel.is_recorded() {
+            if cancel.is_recorded() {
                 guard.release();
                 return self.write_rpc_error(id, RpcError::cancelled()).await;
             }
