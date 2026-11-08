@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use tokio::sync::RwLock;
 
 mod body;
+pub(crate) use body::FileStamp;
 mod collision;
 #[cfg(test)]
 #[path = "skill/collision_tests.rs"]

@@ -332,6 +332,21 @@ claude_user = false
 # ~/.codex/skills.
 codex_user = false
 
+[mcp]
+# MCP server configs beside horon-agent's own that are read too. horon-agent
+# always reads ~/.horon-agent/mcp.json and, in a trusted workspace,
+# .horon-agent/mcp.json, .mcp.json and .claude/mcp.json. When two sources name
+# the same server the higher one wins: project, then horon-agent, then Claude
+# Code, then Codex. A local stdio entry is kept over a remote one of the same
+# name. The switches below start off, because loading another host's servers
+# starts processes it reviewed, not this agent.
+#
+# ~/.claude.json (global servers and this project's entry) and ~/.claude/mcp.json.
+# HORON_AGENT_DISABLE_CLAUDE_MCP turns this off even when it is true.
+claude_user = false
+# [mcp_servers.*] in ~/.codex/config.toml, read live and never copied.
+codex_user = false
+
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.
 # standard emits only spec-compatible ACP messages.

@@ -67,6 +67,7 @@ HEALTHY_LINES = [
     "skill_catalog_bytes=40000",
     "STRUCTURAL_PERF section=skill source=skill-overlay skill_warmup_file_reads=50 "
     "skill_unchanged_request_file_reads=0 skill_unchanged_request_dir_reads=0",
+    "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
 ]
 
 
@@ -335,6 +336,22 @@ class ViolationTest(unittest.TestCase):
             {"skill_catalog_file_reads", "skill_catalog_bytes", "skill_warmup_file_reads"} <= failed, failed
         )
 
+    def test_an_mcp_config_reread_on_every_session_fails(self):
+        # The user config was parsed again for an unchanged file: the parse
+        # cache is gone and every session start pays for ~/.claude.json again.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=mcp_config",
+            "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=27",
+        )
+        self.assert_fails_naming(lines, "mcp_config_user_rereads")
+
+    def test_mcp_config_counters_that_read_zero_fail(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=mcp_config",
+            "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=0 mcp_config_user_rereads=0",
+        )
+        self.assert_fails_naming(lines, "mcp_config_warmup_reads")
+
     def test_a_reader_that_accepts_a_frame_above_the_cap_fails(self):
         # The reader buffered past its own cap instead of refusing: one byte
         # over, and the next frame after it would be read as the tail of this
@@ -478,6 +495,7 @@ class BudgetTest(unittest.TestCase):
             "skill_catalog_file_reads_per_skill_max",
             "skill_unchanged_request_file_reads_max",
             "skill_unchanged_request_dir_reads_max",
+            "mcp_config_user_rereads_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

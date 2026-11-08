@@ -187,9 +187,19 @@ MEASUREMENTS = (
             "skill::overlay_cache_tests::structural_unchanged_request",
         ],
     },
+    {
+        "section": "mcp_config",
+        "source": "mcp-config",
+        "args": [
+            "-p",
+            "horon-agent-base",
+            "--lib",
+            "mcp::sources::tests::structural_user_config_rereads",
+        ],
+    },
 )
 
-REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context", "irc", "skill")
+REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context", "irc", "skill", "mcp_config")
 
 
 class GateError(Exception):
@@ -610,6 +620,23 @@ def check_skill(report: Report, records: list[dict[str, str]], bounds: dict[str,
             raise GateError(f"section skill: unknown source {source}")
 
 
+def check_mcp_config(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """A session start against unchanged user MCP configs reads no file.
+
+    The warm-up floor keeps a run with the counters off from passing: it would
+    report zero re-reads because it measured no read at all.
+    """
+    for record in records:
+        section = "mcp_config"
+        report.at_least(section, "mcp_config_warmup_reads", as_int(record, "mcp_config_warmup_reads", section), 1)
+        report.at_most(
+            section,
+            "mcp_config_user_rereads",
+            as_int(record, "mcp_config_user_rereads", section),
+            bounds["mcp_config_user_rereads_max"],
+        )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -620,6 +647,7 @@ CHECKS = {
     "context": check_context,
     "irc": check_irc,
     "skill": check_skill,
+    "mcp_config": check_mcp_config,
 }
 
 

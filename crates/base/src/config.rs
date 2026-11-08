@@ -13,6 +13,7 @@ pub use horon_agent_config_types::{
     StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
+pub use mcp::McpSourcesConfig;
 use serde::{Deserialize, Serialize};
 pub use skills::SkillsConfig;
 use std::collections::{BTreeMap, HashSet};
@@ -411,6 +412,9 @@ pub struct Config {
 
     /// `[skills]`: which collections beside horon-agent's own are read.
     pub skills: SkillsConfig,
+
+    /// `[mcp]`: which MCP configs beside horon-agent's own are read.
+    pub mcp: McpSourcesConfig,
 }
 
 /// Warned once per process, so a typo costs one line rather than one per write.
@@ -1152,7 +1156,10 @@ pub mod change_report;
 mod config_file;
 mod default_file;
 mod env_overrides;
+mod mcp;
 mod skills;
+mod sponsors_default;
+use sponsors_default::sponsors_is_default;
 mod tool_selection;
 
 #[cfg(test)]
@@ -1178,22 +1185,3 @@ mod display_tests;
 #[cfg(test)]
 #[path = "config/storage_tests.rs"]
 mod storage_tests;
-
-/// Whether integration discovery settings carry no information beyond the shipped
-/// default, so `[sponsors]` can be left out of written config files.
-///
-/// Discovery originally shipped opt-in with `enabled = false`, and because
-/// config saves serialize the whole struct, any save during that window froze
-/// the old default into the user's file and permanently disabled discovery even
-/// after the default flipped. Omitting default sections prevents a repeat.
-fn sponsors_is_default(sponsors: &SponsorsConfig) -> bool {
-    sponsors.enabled && is_default_discovery_endpoint(&sponsors.endpoint)
-}
-
-/// Endpoints used by shipped defaults. These may also be explicit user choices.
-fn is_default_discovery_endpoint(endpoint: &str) -> bool {
-    matches!(
-        endpoint.trim_end_matches('/'),
-        "https://api.horon-agent.sh/v1/discovery" | "https://api.solosystems.dev/v1/discovery"
-    )
-}
