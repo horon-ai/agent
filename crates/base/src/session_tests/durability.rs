@@ -142,6 +142,46 @@ fn local_runtime_skips_status_only_commits() -> Result<()> {
     Ok(())
 }
 
+/// The close that ends a one-shot run changes only the runtime binding, so it
+/// must publish that binding without appending to the event log; a real edit
+/// after it must still commit.
+#[test]
+fn a_close_with_nothing_new_writes_only_the_runtime_binding() -> Result<()> {
+    let _lock = tests::lock_env();
+    let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-noop-close-")?;
+    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+
+    // Given a session the turn has already saved.
+    let mut session = Session::create_with_id("noop_close".into(), None, None);
+    session.add_message(Role::User, text("the turn"));
+    session.save()?;
+    assert_ne!(session.status, SessionStatus::Closed);
+    let log = session.event_log_path()?;
+    let before = std::fs::read(&log)?;
+    let binding = session_dir(&session)?.join("local-runtime.json");
+
+    // When it is closed and saved with nothing else changed.
+    session.mark_closed();
+    session.save()?;
+    // Then the log is byte for byte the same and the binding says Closed.
+    assert_eq!(std::fs::read(&log)?, before, "a no-op close must not append to the log");
+    let stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;
+    assert_eq!(stored["status"], serde_json::json!("Closed"));
+    drop(session);
+    let reopened = Session::load("noop_close")?;
+    assert_eq!(reopened.status, SessionStatus::Closed);
+    assert_eq!(reopened.history_messages()?.len(), 1);
+    drop(reopened);
+
+    // And a metadata edit after the close is still committed.
+    let mut edited = Session::load("noop_close")?;
+    edited.rename_title(Some("Renamed".into()));
+    edited.save()?;
+    assert!(std::fs::read(&log)?.len() > before.len(), "a real edit must append");
+    assert_eq!(Session::load("noop_close")?.custom_title.as_deref(), Some("Renamed"));
+    Ok(())
+}
+
 /// A process that holds a session active skips the binding for the batches of a
 /// long turn, so the clock on disk is the activation, not the last batch. The
 /// listing and the crash hint must still report the work, and a restart must
