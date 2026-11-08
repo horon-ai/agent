@@ -223,7 +223,9 @@ impl Session {
         let selected_paths = paths.clone();
         let selected_id = id.clone();
         writer.call(move |writer| {
-            event_store::select(&selected_paths, &selected_id, &head, true)?;
+            if event_store::select(&selected_paths, &selected_id, &head, true)? {
+                event_store::sync_local_state(&selected_paths, &selected_id)?;
+            }
             writer.refresh_cache(Some(&head), store::ReadProbe::default())?;
             Ok(())
         })?;

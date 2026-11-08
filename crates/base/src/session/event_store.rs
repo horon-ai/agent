@@ -75,6 +75,10 @@ fn sync_local_directory(path: &Path, mode: horon_agent_platform::SyncMode) -> Re
 }
 
 /// Flush the session directory once for every local original a commit published.
+///
+/// Every caller that published a local file ([`publish_local_file`], [`select`],
+/// the runtime binding) calls this once after the last of them, so one step
+/// pays one directory flush however many of its files changed.
 pub(super) fn sync_local_state(paths: &store::SessionPaths, id: &store::SessionId) -> Result<()> {
     horon_agent_platform::sync_dir(&paths.session_dir(id)?, paths.sync_mode())?;
     Ok(())
@@ -250,6 +254,9 @@ pub(super) fn explicit_selection(paths: &store::SessionPaths, id: &store::Sessio
 }
 
 /// Record the selected head and its intent, reporting whether a file changed.
+///
+/// The files are flushed but their directory entry is not: a caller that sees
+/// `true` must call [`sync_local_state`] before it reports the selection.
 pub(super) fn select(
     paths: &store::SessionPaths,
     id: &store::SessionId,
@@ -270,9 +277,6 @@ pub(super) fn select(
         &explicit,
         paths.sync_mode(),
     )?;
-    if changed {
-        sync_local_directory(&directory.join("local-head.json"), paths.sync_mode())?;
-    }
     Ok(changed)
 }
 
