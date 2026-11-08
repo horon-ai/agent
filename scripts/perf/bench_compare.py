@@ -873,6 +873,7 @@ def _measure_oneshot(
     via = None
     tools_offered: list[str] = []
     result_excerpt = None
+    request_offsets_ms: list[float] = []
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -900,6 +901,10 @@ def _measure_oneshot(
         # sentinel is missing, this says why (a sandbox refusal, a shell error).
         excerpts = [r["result_excerpt"] for r in requests if r.get("result_excerpt")]
         result_excerpt = excerpts[-1] if excerpts else None
+        # When each model request arrived, in ms from process start. The gaps
+        # split a run into startup, tool round trip and shutdown without a
+        # profiler, on every OS the bench runs on.
+        request_offsets_ms = [round((r["ts"] - started_wall) * 1000, 2) for r in requests if "ts" in r]
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -932,6 +937,7 @@ def _measure_oneshot(
         "via": via,
         "tools_offered": tools_offered,
         "result_excerpt": result_excerpt,
+        "request_offsets_ms": request_offsets_ms,
     }
 
 
