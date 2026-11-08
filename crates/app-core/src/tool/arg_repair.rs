@@ -14,6 +14,8 @@
 //! authority — a half-repaired payload is worse than an honest refusal.
 
 use serde_json::{Map, Value};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// Bounded passes: each pass fixes what the previous one exposed (for example
 /// wrapping a scalar in an array turns its item type into the next error).
@@ -22,10 +24,42 @@ const MAX_PASSES: usize = 5;
 /// Largest array index accepted when reconstructing a flattened `a[0].b` key.
 const MAX_BRACKET_INDEX: usize = 100_000;
 
-/// Repair `input` against `schema`, returning the repaired value and one note
-/// per change. No notes means the input was already valid or could not be
-/// improved.
-pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
+/// Distinct schemas whose prepared form is kept; the map is cleared when full.
+/// Built-in tools have a handful of fixed schemas, MCP servers add theirs.
+const PREPARED_CAP: usize = 256;
+
+/// A tool schema in the shape repair works on, with its compiled validator.
+/// `validator` is `None` when the schema is not object-shaped or does not
+/// compile, in which case input passes through untouched.
+struct Prepared {
+    schema: Value,
+    validator: Option<jsonschema::Validator>,
+}
+
+/// Compiling a validator walks and allocates the whole schema, and a tool's
+/// schema does not change between calls, so each one is prepared once.
+static PREPARED: LazyLock<Mutex<HashMap<String, Arc<Prepared>>>> = LazyLock::new(Mutex::default);
+
+fn prepared(schema: &Value) -> Arc<Prepared> {
+    let key = schema.to_string();
+    let cached = PREPARED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+        .cloned();
+    if let Some(hit) = cached {
+        return hit;
+    }
+    let built = Arc::new(prepare(schema));
+    let mut map = PREPARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if map.len() >= PREPARED_CAP {
+        map.clear();
+    }
+    map.insert(key, Arc::clone(&built));
+    built
+}
+
+fn prepare(schema: &Value) -> Prepared {
     let mut schema = horon_agent_tool_core::ensure_intent_in_schema(schema.clone());
     // `ensure_intent_in_schema` advertises `intent` as required because the
     // prompt wants it. Repair must treat it as optional: an unrelated repair
@@ -41,30 +75,45 @@ pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
             .map(|kind| kind == "object")
             .unwrap_or_else(|| object.contains_key("properties"))
     });
-    if !object_shaped {
-        return (input, Vec::new());
-    }
-    let Ok(validator) = jsonschema::validator_for(&schema) else {
+    let validator = if object_shaped {
+        jsonschema::validator_for(&schema).ok()
+    } else {
+        None
+    };
+    Prepared { schema, validator }
+}
+
+/// Repair `input` against `schema`, returning the repaired value and one note
+/// per change. No notes means the input was already valid or could not be
+/// improved.
+pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
+    let prepared = prepared(schema);
+    let Some(validator) = prepared.validator.as_ref() else {
         return (input, Vec::new());
     };
+    // The common case: valid input needs no copy and no error walk.
+    if validator.is_valid(&input) {
+        return (input, Vec::new());
+    }
+    let schema = &prepared.schema;
 
     let original = input.clone();
     let mut current = input;
     let mut changes = Vec::new();
     for _ in 0..MAX_PASSES {
-        let problems = collect_problems(&validator, &current);
+        let problems = collect_problems(validator, &current);
         if problems.is_empty() {
             break;
         }
         let mut changed = false;
-        if unquote_root_keys(&schema, &mut current, &mut changes) {
+        if unquote_root_keys(schema, &mut current, &mut changes) {
             changed = true;
         }
-        if rebuild_bracketed_keys(&schema, &mut current, &mut changes) {
+        if rebuild_bracketed_keys(schema, &mut current, &mut changes) {
             changed = true;
         }
         for problem in &problems {
-            if let Some(note) = repair_problem(&schema, &mut current, problem) {
+            if let Some(note) = repair_problem(schema, &mut current, problem) {
                 changes.push(note);
                 changed = true;
             }
