@@ -7,8 +7,11 @@
 # <comma-list> defaults to "jcode,claude_code,codex,opencode,pi"; "horon" is
 # supplied by the caller as a locally built binary and is never installed here.
 # "omp" (@oh-my-pi/pi-coding-agent) and "omo" (omo-ai) install the same way as
-# the other npm tools but need Bun (omp) or Node 24+ / Bun (omo) on the runner;
-# a missing runtime leaves them out of bins.args with a reason to stderr.
+# the other npm tools but need Bun (omp) or Node 24+ / Bun (omo) on the runner.
+# When `bun` is not on PATH they fall back to the npm package `bun`, which the
+# workflow's setup-bun step cannot always deliver (a GitHub release download
+# answered 504 in run 42469553718 and omp was skipped). A runtime that neither
+# path can provide leaves the tool out of bins.args with a reason to stderr.
 # Every tool lands in <dest_dir> and <dest_dir>/bins.args receives one line:
 #
 #   --bin jcode=/path --bin codex=/path ...
@@ -28,7 +31,7 @@
 #
 # Versions are pinned so a workflow rerun measures the same tools:
 #   JCODE_VERSION, CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION,
-#   OMP_VERSION, OMO_VERSION
+#   OMP_VERSION, OMO_VERSION, BUN_VERSION
 # Override any of them through the environment.
 set -uo pipefail
 
@@ -56,6 +59,9 @@ PI_VERSION="${PI_VERSION:-0.73.1}"
 OMP_VERSION="${OMP_VERSION:-18.18.0}"
 # omo-ai runs on Node 24+ (or Bun); the job has both.
 OMO_VERSION="${OMO_VERSION:-5.1.64}"
+# Bun delivered by the npm registry when the runner has none; `bun@1.4.4`
+# satisfies the engines constraint @oh-my-pi/pi-coding-agent declares.
+BUN_VERSION="${BUN_VERSION:-1.4.4}"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -192,6 +198,68 @@ jcode_fetch_verified() {
   fi
 }
 
+BUN_BIN_DIR=""
+BUN_ATTEMPTED=0
+
+find_bun_bin() {
+  # find_bun_bin <npm prefix>: echo the directory that holds a bun executable.
+  local prefix="$1" dir
+  dir="$prefix/node_modules/.bin"
+  if [ -f "$dir/bun" ] || { [ "$WINDOWS" = 1 ] && [ -f "$dir/bun.cmd" ]; }; then
+    echo "$dir"
+    return 0
+  fi
+  # The platform binary the npm package unpacks; `.bin` only holds a shim.
+  for dir in "$prefix/node_modules/bun/bin" "$prefix"/node_modules/@oven/*/bin; do
+    if [ -f "$dir/bun" ] || [ -f "$dir/bun.exe" ]; then
+      echo "$dir"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_bun() {
+  # ensure_bun <tool-name>: make `bun` reachable, installing bun@BUN_VERSION
+  # from the npm registry when the runner has none. Returns non-zero with the
+  # reason already reported when neither the runner nor npm can supply Bun.
+  local name="$1" prefix="$DEST/bun"
+  if have bun; then
+    return 0
+  fi
+  if [ "$BUN_ATTEMPTED" = 1 ]; then
+    note_fail "$name" "bun is required and the earlier npm install of bun@${BUN_VERSION} did not provide it"
+    return 1
+  fi
+  BUN_ATTEMPTED=1
+  if ! have npm; then
+    note_fail "$name" "bun is required and npm is not available to install bun@${BUN_VERSION}"
+    return 1
+  fi
+  mkdir -p "$prefix"
+  if ! npm_install_into "bun@${BUN_VERSION}" "$prefix"; then
+    note_fail "$name" "bun is required and npm install bun@${BUN_VERSION} failed"
+    return 1
+  fi
+  if ! BUN_BIN_DIR="$(find_bun_bin "$prefix")"; then
+    note_fail "$name" "bun is required and npm package bun@${BUN_VERSION} contained no bun executable"
+    return 1
+  fi
+  PATH="$BUN_BIN_DIR:$PATH"
+  export PATH
+  echo "install_competitors: bun -> $BUN_BIN_DIR (npm bun@${BUN_VERSION})" >&2
+  # Later workflow steps inherit PATH from GITHUB_PATH, not from this process,
+  # so record the directory there as well (Windows expects a native path).
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    if [ "$WINDOWS" = 1 ] && have cygpath; then
+      cygpath -w "$BUN_BIN_DIR" >>"$GITHUB_PATH"
+    else
+      printf '%s\n' "$BUN_BIN_DIR" >>"$GITHUB_PATH"
+    fi
+  fi
+  return 0
+}
+
 install_jcode_windows() {
   local asset
   case "$ARCH" in
@@ -291,17 +359,16 @@ install_pi() {
 
 install_omp() {
   # The package's bin is a Bun script; npm does not enforce engines, so the
-  # runtime is checked here and reported as a skip instead of a hard failure.
-  if ! have bun; then
-    note_fail omp "bun is required to run @oh-my-pi/pi-coding-agent and was not found"
+  # runtime is provided here (from npm when setup-bun lost its download).
+  if ! ensure_bun omp; then
     return 1
   fi
   install_node_tool omp "@oh-my-pi/pi-coding-agent@${OMP_VERSION}" "omp"
 }
 
 install_omo() {
-  if ! have bun && ! have node; then
-    note_fail omo "node 24+ or bun is required to run omo-ai and neither was found"
+  # omo-ai runs on Node 24+; Bun is only a fallback when Node is missing.
+  if ! have node && ! have bun && ! ensure_bun omo; then
     return 1
   fi
   install_node_tool omo "omo-ai@${OMO_VERSION}" "omo"
