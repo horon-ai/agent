@@ -2,7 +2,6 @@ use super::Agent;
 use super::turn_recovery_wiring::AutoContinuation;
 use crate::logging;
 use crate::message::{ContentBlock, Role};
-use crate::protocol::ServerEvent;
 use crate::session::StoredDisplayRole;
 use anyhow::Result;
 use horon_agent_agent_runtime::{InterruptSignal, SoftInterruptMessage, SoftInterruptQueue, SoftInterruptSource};
@@ -93,13 +92,7 @@ fn soft_interrupt_session_display_role(source: SoftInterruptSource) -> Option<St
     }
 }
 
-fn soft_interrupt_protocol_display_role(source: SoftInterruptSource) -> Option<String> {
-    match source {
-        SoftInterruptSource::User => None,
-        SoftInterruptSource::System => Some("system".to_string()),
-        SoftInterruptSource::BackgroundTask => Some("background_task".to_string()),
-    }
-}
+mod events;
 
 #[derive(Debug, Clone)]
 pub(super) struct InjectedSoftInterrupt {
@@ -717,10 +710,7 @@ impl Agent {
             }
             let content = parts.join("\n\n");
             parts.clear();
-            let mut blocks: Vec<ContentBlock> = std::mem::take(images)
-                .into_iter()
-                .map(|(media_type, data)| ContentBlock::Image { media_type, data })
-                .collect();
+            let mut blocks = super::turn_execution::audio::attachment_blocks(std::mem::take(images));
             if !content.is_empty() {
                 blocks.push(ContentBlock::Text {
                     text: content.clone(),
@@ -730,6 +720,15 @@ impl Agent {
             agent.add_message_with_display_role(Role::User, blocks, soft_interrupt_session_display_role(source));
             let message_id = agent.session.active_context().last().map(|message| message.id.clone());
             if let Some(message_id) = message_id {
+                // A v2 editor learns about this injection as it lands, under the
+                // id the row was stored with, so its live view and a later replay
+                // name the same row. An injection with a display role is an
+                // internal note the editor already receives through the turn's
+                // events, and a turn-start injection is reported as that turn's
+                // own prompt instead, so neither is announced here.
+                if soft_interrupt_session_display_role(source).is_none() {
+                    events::send_stored(agent.session_id(), &message_id, &content);
+                }
                 appended_ids.push(message_id);
             }
             injected.push(InjectedSoftInterrupt {
@@ -832,30 +831,5 @@ impl Agent {
         } else {
             PostToolInterruptOutcome::NoInterrupt
         }
-    }
-
-    pub(super) fn build_soft_interrupt_events(
-        injected: Vec<InjectedSoftInterrupt>,
-        point: &'static str,
-        tools_skipped: Option<usize>,
-    ) -> Vec<ServerEvent> {
-        logging::info(&format!(
-            "AGENT_SOFT_INTERRUPT_EVENTS_BUILD groups={} point={} tools_skipped={:?} total_content_bytes={}",
-            injected.len(),
-            point,
-            tools_skipped,
-            injected.iter().map(|interrupt| interrupt.content.len()).sum::<usize>()
-        ));
-        injected
-            .into_iter()
-            .enumerate()
-            .map(|(idx, interrupt)| ServerEvent::SoftInterruptInjected {
-                content: interrupt.content,
-                display_role: soft_interrupt_protocol_display_role(interrupt.source),
-                point: point.to_string(),
-                tools_skipped: if idx == 0 { tools_skipped } else { None },
-                client_ids: interrupt.client_ids,
-            })
-            .collect()
     }
 }

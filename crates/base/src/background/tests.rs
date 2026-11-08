@@ -4,6 +4,10 @@ use anyhow::anyhow;
 use tempfile::tempdir;
 use tokio::time::{Duration, sleep};
 
+mod finalize;
+
+use finalize::{running_status_fixture, write_status_fixture};
+
 #[tokio::test]
 async fn adopted_task_output_exists_while_running_and_is_replaced_on_completion() -> Result<()> {
     let tmp = tempdir()?;
@@ -423,36 +427,6 @@ async fn wait_returns_on_timeout() -> Result<()> {
     Ok(())
 }
 
-fn running_status_fixture(task_id: &str, session_id: &str) -> TaskStatusFile {
-    TaskStatusFile {
-        task_id: task_id.to_string(),
-        tool_name: "swarm".to_string(),
-        display_name: None,
-        session_id: session_id.to_string(),
-        status: BackgroundTaskStatus::Running,
-        exit_code: None,
-        error: None,
-        started_at: Utc::now().to_rfc3339(),
-        completed_at: None,
-        duration_secs: None,
-        pid: None,
-        owner_pid: None,
-        owner_instance: None,
-        detached: false,
-        notify: false,
-        wake: false,
-        progress: None,
-        event_history: Vec::new(),
-        stall_wake_seconds: None,
-    }
-}
-
-async fn write_status_fixture(manager: &BackgroundTaskManager, status: &TaskStatusFile) {
-    let path = manager.status_path_for(&status.task_id);
-    let json = serde_json::to_string_pretty(status).expect("serialize status fixture");
-    tokio::fs::write(&path, json).await.expect("write fixture");
-}
-
 #[tokio::test]
 async fn tasks_map_prunes_entry_after_natural_completion() -> Result<()> {
     let tmp = tempdir()?;
@@ -860,6 +834,9 @@ fn terminal_status_fixture(task_id: &str, started_at: &str) -> TaskStatusFile {
         progress: None,
         event_history: Vec::new(),
         stall_wake_seconds: None,
+        tool_call_id: None,
+        command: None,
+        cwd: None,
     }
 }
 

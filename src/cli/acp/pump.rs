@@ -8,11 +8,14 @@
 
 use super::*;
 use crate::protocol::TurnStopReason;
+use routes::*;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+mod routes;
 
 pub(super) const DAEMON_DISCONNECTED: &str = "HoronAgent daemon disconnected";
 
@@ -198,86 +201,6 @@ impl SideChannel for DefaultSideChannel {
             }
             _ => Box::pin(async {}),
         }
-    }
-}
-
-/// Events that wait on the client and therefore each run in their own task.
-fn needs_client_round_trip(event: &ServerEvent) -> bool {
-    matches!(
-        event,
-        ServerEvent::AskRequested { .. }
-            | ServerEvent::ClientRequest { .. }
-            | ServerEvent::ToolPermissionRequested { .. }
-    )
-}
-
-/// Events that always go to the side channel, never to a prompt stream: the
-/// client round trips, and permission withdrawals, which close a client call
-/// the side channel owns.
-fn bypasses_prompt_stream(event: &ServerEvent) -> bool {
-    needs_client_round_trip(event) || matches!(event, ServerEvent::ToolPermissionResolved { .. })
-}
-
-/// Events the side channel receives when no prompt is running. While a prompt
-/// runs they stay on its ordered foreground stream instead.
-fn is_side_event(event: &ServerEvent) -> bool {
-    matches!(
-        event,
-        ServerEvent::SessionRenamed { .. }
-            | ServerEvent::ModelChanged { .. }
-            | ServerEvent::PlanUpdated { .. }
-            | ServerEvent::ToolDiff { .. }
-    )
-}
-
-fn reply_id(event: &ServerEvent) -> Option<u64> {
-    match event {
-        ServerEvent::Ack { id }
-        | ServerEvent::Done { id }
-        | ServerEvent::Error { id, .. }
-        | ServerEvent::History { id, .. }
-        | ServerEvent::ModelChanged { id, .. }
-        | ServerEvent::ReasoningEffortChanged { id, .. }
-        | ServerEvent::State { id, .. }
-        | ServerEvent::UserMessageInserted { id, .. } => Some(*id),
-        _ => None,
-    }
-}
-
-/// A reply to a request that is not a turn terminal. The daemon writes these
-/// straight to the socket (`GetState` in
-/// crates/app-core/src/server/client_state.rs:130-153), so they can overtake
-/// turn events still queued on its ordered event channel and say nothing
-/// about where a turn's stream stands.
-fn is_request_reply(event: &ServerEvent) -> bool {
-    reply_id(event).is_some() && !matches!(event, ServerEvent::Done { .. } | ServerEvent::Error { .. })
-}
-
-/// An event only a running turn produces: what the prompt maps into
-/// `session/update` content (crates/protocol/src/wire/events.rs), plus a
-/// non-interrupt stop. After a turn's terminal the daemon still sends
-/// bookkeeping for it - the swarm member status of a cancel
-/// (client_lifecycle.rs:4118-4130, :4193-4203), queue counts - before the
-/// cancel's `Interrupted`, so only an event like these proves the next turn
-/// has started.
-fn is_turn_content(event: &ServerEvent) -> bool {
-    match event {
-        ServerEvent::TextDelta { .. }
-        | ServerEvent::TextReplace { .. }
-        | ServerEvent::TextSuffixReplace { .. }
-        | ServerEvent::ReasoningDelta { .. }
-        | ServerEvent::ToolStart { .. }
-        | ServerEvent::ToolInput { .. }
-        | ServerEvent::ToolExec { .. }
-        | ServerEvent::ToolDone { .. }
-        | ServerEvent::ToolDiff { .. }
-        | ServerEvent::PlanUpdated { .. }
-        | ServerEvent::GeneratedImage { .. }
-        | ServerEvent::Compaction { .. }
-        | ServerEvent::ProviderGuardrail { .. }
-        | ServerEvent::TokenUsage { .. } => true,
-        ServerEvent::TurnStopped { reason, .. } => !matches!(reason, TurnStopReason::Interrupted),
-        _ => false,
     }
 }
 
@@ -537,6 +460,8 @@ pub(super) struct DaemonSession {
     pub(super) cwd: Arc<Mutex<Option<PathBuf>>>,
     /// Prompt and foreground state of an ACP v2 session; unset on v1.
     pub(super) v2: std::sync::OnceLock<Arc<v2::state::V2Session>>,
+    /// The tool calls this connection advertises `capabilities.cancel` for.
+    cancelable: Arc<v2::cancel::CancelRegistry>,
     tasks: [JoinHandle<()>; 2],
     #[cfg(test)]
     send_log: StdMutex<Vec<SendRecord>>,
@@ -566,10 +491,16 @@ impl DaemonSession {
             next_request_id: AtomicU64::new(next_request_id),
             next_message_id: AtomicU64::new(v2_message_id_start()),
         });
+        let cancelable = Arc::new(v2::cancel::CancelRegistry::default());
         let routes: SharedRoutes = Arc::default();
         let side_channel: SharedSideChannel = Arc::new(StdMutex::new(Arc::new(DefaultSideChannel)));
         let (side_tx, side_rx) = mpsc::unbounded_channel();
-        let pump = tokio::spawn(pump_events(reader, Arc::clone(&routes), side_tx));
+        let pump = tokio::spawn(pump_events(
+            reader,
+            Arc::clone(&routes),
+            side_tx,
+            Arc::clone(&cancelable),
+        ));
         let side = tokio::spawn(run_side_channel(side_rx, Arc::clone(&side_channel), Arc::clone(&link)));
         Self {
             session_id,
@@ -583,6 +514,7 @@ impl DaemonSession {
             permissions: Arc::default(),
             client_calls: Arc::default(),
             cwd: Arc::default(),
+            cancelable,
             v2: std::sync::OnceLock::new(),
             tasks: [pump, side],
             #[cfg(test)]
@@ -592,6 +524,11 @@ impl DaemonSession {
 
     pub(super) fn next_id(&self) -> u64 {
         self.link.next_id()
+    }
+
+    /// The tool calls this connection advertises `capabilities.cancel` for.
+    pub(super) fn cancel_registry(&self) -> Arc<v2::cancel::CancelRegistry> {
+        Arc::clone(&self.cancelable)
     }
 
     /// The id of the next v2 `message` request (see [`V2_MESSAGE_ID_BASE`]).
@@ -969,7 +906,12 @@ impl Drop for EventStream {
     }
 }
 
-async fn pump_events(reader: ReadHalf, routes: SharedRoutes, side: mpsc::UnboundedSender<ServerEvent>) {
+async fn pump_events(
+    reader: ReadHalf,
+    routes: SharedRoutes,
+    side: mpsc::UnboundedSender<ServerEvent>,
+    cancelable: Arc<v2::cancel::CancelRegistry>,
+) {
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
     loop {
@@ -983,7 +925,7 @@ async fn pump_events(reader: ReadHalf, routes: SharedRoutes, side: mpsc::Unbound
             }
         }
         match serde_json::from_str::<ServerEvent>(&line) {
-            Ok(event) => route_event(&routes, &side, event),
+            Ok(event) => route_event(&routes, &side, &cancelable, event),
             Err(err) => crate::logging::warn(&format!(
                 "ACP: skipping undecodable HoronAgent daemon event ({err}): {}",
                 crate::logging::truncate_for_log(line.trim_end(), 200)
@@ -1003,7 +945,13 @@ async fn pump_events(reader: ReadHalf, routes: SharedRoutes, side: mpsc::Unbound
     routes.tail_done.notify_waiters();
 }
 
-fn route_event(routes: &StdMutex<Routes>, side: &mpsc::UnboundedSender<ServerEvent>, event: ServerEvent) {
+fn route_event(
+    routes: &StdMutex<Routes>,
+    side: &mpsc::UnboundedSender<ServerEvent>,
+    cancelable: &v2::cancel::CancelRegistry,
+    event: ServerEvent,
+) {
+    track_cancelable(cancelable, &event);
     if bypasses_prompt_stream(&event) {
         let _ = side.send(event);
         return;
@@ -1036,7 +984,7 @@ fn route_event(routes: &StdMutex<Routes>, side: &mpsc::UnboundedSender<ServerEve
     // A v2 session reports every turn, so its stream events reach the v2
     // stream rather than being dropped. A model change made outside any request
     // stays with the side channel, which owns the selector update.
-    if !matches!(event, ServerEvent::ModelChanged { .. })
+    if belongs_to_v2_stream(&event)
         && let Some(stream) = &routes.v2_stream
     {
         match stream.send(Routed::Daemon(Box::new(event))) {
@@ -1058,6 +1006,26 @@ fn unrouted(routed: Routed) -> ServerEvent {
     match routed {
         Routed::Daemon(event) => *event,
         Routed::Local(_) => unreachable!("the pump only routes daemon events"),
+    }
+}
+
+/// Move the connection's advertised cancellable calls with `event`.
+///
+/// The mapper writes the update that advertises `capabilities.cancel` for a
+/// call at its `ToolExec`, and a final update for it at its `ToolDone` or
+/// `ToolCancelled`, so the registry follows the same events. A turn reporting
+/// its end clears the rest: nothing of a finished turn is cancellable.
+fn track_cancelable(cancelable: &v2::cancel::CancelRegistry, event: &ServerEvent) {
+    match event {
+        ServerEvent::ToolExec { id, .. } => cancelable.advertise(id),
+        ServerEvent::ToolDone { id, .. } | ServerEvent::ToolCancelled { id } => cancelable.withdraw(id),
+        ServerEvent::ForegroundState {
+            running: true, run_id, ..
+        } => cancelable.run_started(run_id),
+        ServerEvent::ForegroundState {
+            running: false, run_id, ..
+        } => cancelable.run_ended(run_id),
+        _ => {}
     }
 }
 

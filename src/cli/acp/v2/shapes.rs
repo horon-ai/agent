@@ -34,7 +34,7 @@ pub(crate) fn initialize_response(profile: AcpProfile, mcp_http: bool) -> Value 
         },
         "capabilities": {
             "session": {
-                "prompt": { "image": {}, "embeddedContext": {} },
+                "prompt": { "image": {}, "audio": {}, "embeddedContext": {} },
                 "mcp": mcp,
                 "delete": {},
                 "additionalDirectories": {},
@@ -63,6 +63,10 @@ pub(crate) fn auth_methods() -> Vec<Value> {
 
 /// IS-12: v1 config options renamed to `configId`, every select group renamed
 /// to `groupId`, order kept, select options only.
+///
+/// alpha.13 requires every select to keep at least one value
+/// (`SessionConfigSelectOptions` is `minItems: 1`), so a select that would
+/// publish none is dropped rather than sent as a frame the schema refuses.
 pub(crate) fn config_options(v1_options: &[Value]) -> Vec<Value> {
     v1_options
         .iter()
@@ -81,6 +85,9 @@ pub(crate) fn config_options(v1_options: &[Value]) -> Vec<Value> {
                     renamed.insert(key.clone(), value.clone());
                 }
             }
+            if is_empty_values(renamed.get("options")) {
+                return None;
+            }
             Some(Value::Object(renamed))
         })
         .collect()
@@ -95,22 +102,32 @@ fn select_groups(options: &Value) -> Value {
     Value::Array(
         options
             .iter()
-            .map(|option| {
+            .filter_map(|option| {
                 let Some(option) = option.as_object() else {
-                    return option.clone();
+                    return Some(option.clone());
                 };
                 if !option.contains_key("group") {
-                    return Value::Object(option.clone());
+                    return Some(Value::Object(option.clone()));
+                }
+                // A group whose own value list is empty is refused by the
+                // alpha.13 `SessionConfigSelectGroup` (`minItems: 1`): drop it.
+                if is_empty_values(option.get("options")) {
+                    return None;
                 }
                 let mut renamed = serde_json::Map::new();
                 for (key, value) in option {
                     let key = if key == "group" { "groupId" } else { key.as_str() };
                     renamed.insert(key.to_string(), value.clone());
                 }
-                Value::Object(renamed)
+                Some(Value::Object(renamed))
             })
             .collect(),
     )
+}
+
+/// A select value list with no entries, or none at all.
+fn is_empty_values(options: Option<&Value>) -> bool {
+    options.and_then(Value::as_array).is_none_or(Vec::is_empty)
 }
 
 /// The value of one `session/set_config_option` request.
@@ -555,6 +572,12 @@ pub(crate) fn user_message(message_id: &str, content: &[Value]) -> Value {
     whole_message(MessageKind::UserMessage, message_id, content)
 }
 
+/// IS-2: the client control a running tool call advertises while it can be
+/// stopped with `tool_call/cancel`.
+pub(crate) fn cancel_capabilities() -> Value {
+    json!({ "cancel": {} })
+}
+
 /// The fields one `tool_call_update` patches; `None` leaves the field unchanged.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ToolCallPatch {
@@ -566,6 +589,9 @@ pub(crate) struct ToolCallPatch {
     pub(crate) locations: Option<Vec<Value>>,
     pub(crate) raw_input: Option<Value>,
     pub(crate) raw_output: Option<Value>,
+    /// The client controls the call currently supports. `Some(Value::Null)`
+    /// clears them, which every final status does.
+    pub(crate) capabilities: Option<Value>,
 }
 
 impl ToolCallPatch {
@@ -576,6 +602,17 @@ impl ToolCallPatch {
             title: Some(title.to_string()),
             kind: Some(kind.to_string()),
             status: Some("pending".to_string()),
+            ..Self::default()
+        }
+    }
+
+    /// A final status of a tool call. The call stops advertising
+    /// `capabilities.cancel` the moment it is no longer cancellable, so every
+    /// final update carries `capabilities: null`.
+    pub(crate) fn final_status(status: &str) -> Self {
+        Self {
+            status: Some(status.to_string()),
+            capabilities: Some(Value::Null),
             ..Self::default()
         }
     }
@@ -607,6 +644,9 @@ pub(crate) fn tool_call_update(tool_call_id: &str, patch: &ToolCallPatch) -> Val
     }
     if let Some(raw_output) = &patch.raw_output {
         update["rawOutput"] = raw_output.clone();
+    }
+    if let Some(capabilities) = &patch.capabilities {
+        update["capabilities"] = capabilities.clone();
     }
     update
 }

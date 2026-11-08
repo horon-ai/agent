@@ -141,6 +141,9 @@ impl Agent {
                     ContentBlock::Image { .. } => {
                         md.push_str("[Image]\n\n");
                     }
+                    ContentBlock::Audio { .. } => {
+                        md.push_str("[audio]\n\n");
+                    }
                     ContentBlock::OpenAICompaction { .. } => {
                         md.push_str("[OpenAI native compaction]\n\n");
                     }

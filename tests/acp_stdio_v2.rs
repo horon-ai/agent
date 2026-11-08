@@ -7,14 +7,14 @@
 //! profile and a provider profile pointed at the scripted upstream) and drives the
 //! shipped `horon-agent acp` binary over stdio through the mock client in its
 //! v2 mode. The client validates every frame it reads against the vendored
-//! `schema-v2.0.0-alpha.10.json` as it arrives, and each test re-validates
+//! `schema-v2.0.0-alpha.13.json` as it arrives, and each test re-validates
 //! every frame of the connection in both directions at the end and asserts
 //! zero violations. Every wait is for an exact frame with a bounded timeout.
 //!
 //! Two kinds of frame are accounted for by name rather than validated:
 //! requests this suite writes on purpose with params the schema refuses (the
 //! v1-only methods on a v2 connection, a `null` id, an `sse` MCP server), and
-//! the agent's `id: null` error answer to the `null`-id probe. The alpha.10
+//! the agent's `id: null` error answer to the `null`-id probe. The alpha.13
 //! `Error` response branch documents `null` as the id "only when the request's
 //! id could not be determined, such as for a parse error or an invalid
 //! request", but its `anyOf` lists only the integer and string forms, so the
@@ -22,21 +22,27 @@
 //! frame's `/id` finding is counted as `null_id_error_answers` and every
 //! other check still runs on it.
 
+#[path = "support/acp_background_scenarios.rs"]
+mod acp_background_scenarios;
 #[path = "support/acp_client.rs"]
 mod acp_client;
+#[path = "support/acp_credentials.rs"]
+mod acp_credentials;
 #[path = "support/acp_daemon.rs"]
 mod acp_daemon;
+#[path = "support/acp_input_scenarios.rs"]
+mod acp_input_scenarios;
 #[path = "support/acp_schema.rs"]
 mod acp_schema;
 #[path = "support/lifecycle.rs"]
 mod lifecycle;
 
 use acp_client::{AcpClient, AcpClientError, AcpClientOptions, ClientCapabilities, Frame, PermissionOutcome};
+use acp_credentials::{credential_files, daemon_credentials};
 use acp_daemon::AcpDaemon;
 use acp_schema::{Direction, FrameValidator, Violation};
 use lifecycle::Script;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -280,7 +286,7 @@ impl Conn {
     }
 
     /// The agent's answer to the `id: null` probe. The reader refuses it
-    /// (alpha.10's `RequestId` has no `null` form), so the refusal is checked
+    /// (alpha.13's `RequestId` has no `null` form), so the refusal is checked
     /// to be about `/id` and nothing else, and the error object is returned.
     fn read_null_id_error(&mut self) -> Value {
         let end = Instant::now() + WAIT;
@@ -686,122 +692,6 @@ impl Peer {
     }
 }
 
-/// `CREDENTIAL_FILES` of crates/agent-sdk/src/launch.rs: the stores the
-/// product keeps directly under HORON_AGENT_HOME. The list is private there, so
-/// it is copied and `credential_lists_match_the_shipped_code` fails the moment
-/// the two drift apart.
-const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 5] = [
-    "auth.json",
-    "openai-auth.json",
-    "antigravity_oauth.json",
-    "gemini_oauth.json",
-    "config.toml",
-];
-
-/// Further stores under HORON_AGENT_HOME that are not in launch.rs: the MCP
-/// OAuth store (`STORE_FILE` of crates/base/src/mcp/oauth.rs).
-const EXTRA_HOME_CREDENTIAL_FILES: [&str; 1] = ["mcp-oauth.json"];
-
-/// `EXTERNAL_CREDENTIAL_FILES` of crates/agent-sdk/src/launch.rs, rooted at
-/// HOME (the scratch root), copied for the same reason.
-const SHIPPED_EXTERNAL_CREDENTIAL_FILES: [&str; 20] = [
-    ".claude/.credentials.json",
-    ".codex/auth.json",
-    ".gemini/oauth_creds.json",
-    ".cursor/auth.json",
-    ".config/cursor/auth.json",
-    "AppData/Roaming/Cursor/auth.json",
-    ".config/Cursor/User/globalStorage/state.vscdb",
-    ".config/cursor/User/globalStorage/state.vscdb",
-    "Library/Application Support/Cursor/User/globalStorage/state.vscdb",
-    "Library/Application Support/cursor/User/globalStorage/state.vscdb",
-    "AppData/Roaming/Cursor/User/globalStorage/state.vscdb",
-    "AppData/Roaming/cursor/User/globalStorage/state.vscdb",
-    ".config/github-copilot/hosts.json",
-    ".config/github-copilot/apps.json",
-    ".copilot/config.json",
-    ".hermes/auth.json",
-    ".pi/agent/auth.json",
-    ".openclaw/agent/auth.json",
-    ".openclaw/credentials/oauth.json",
-    ".local/share/opencode/auth.json",
-];
-
-/// The per-agent OpenClaw store names launch.rs reads one agent-id level deep:
-/// `$HOME/.openclaw/agents/<id>/agent/<name>`.
-const OPENCLAW_AGENT_CREDENTIAL_FILES: [&str; 2] = ["auth-profiles.json", "auth.json"];
-
-/// Every credential location the product reads or writes for a daemon whose
-/// HORON_AGENT_HOME is `home`, HOME is `user_home` and XDG_CONFIG_HOME is
-/// `xdg_config`, with its bytes or `None` when absent, so a credential that
-/// appears, disappears or changes alters the snapshot. Two copies of each
-/// external store and each provider env file are watched:
-/// - where the daemon itself resolves them under HORON_AGENT_HOME, which the
-///   test daemon always sets: `crate::storage::user_home_path(rel)` is
-///   `$HORON_AGENT_HOME/external/<rel>` and `app_config_dir()` is
-///   `$HORON_AGENT_HOME/config/horon-agent` (crates/storage/src/lib.rs), which
-///   are also the instance paths launch.rs links the stores to;
-/// - where launch.rs reads them from the user's HOME: `$HOME/<rel>`, and
-///   `user_app_config_dir()`, which is `$HOME/Library/Application Support/horon-agent`
-///   on macOS and `$XDG_CONFIG_HOME/horon-agent` on other unix systems.
-///
-/// For each root: the 20 external stores, the per-agent OpenClaw stores one
-/// agent-id level deep, and every `*.env` provider key file. Under `home`
-/// also: the launch.rs `CREDENTIAL_FILES`, the MCP OAuth store and every
-/// `*.env` provider key file.
-///
-/// The set is closed: runtime state such as `active_pids/`, session files or
-/// the model catalog caches in the config dir never enters it, whatever its name.
-fn credential_files(home: &Path, user_home: &Path, xdg_config: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
-    fn external_stores(root: &Path, out: &mut Vec<PathBuf>) {
-        out.extend(SHIPPED_EXTERNAL_CREDENTIAL_FILES.iter().map(|name| root.join(name)));
-        for agent in std::fs::read_dir(root.join(".openclaw/agents"))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            if agent.path().is_dir() {
-                for name in OPENCLAW_AGENT_CREDENTIAL_FILES {
-                    out.push(agent.path().join("agent").join(name));
-                }
-            }
-        }
-    }
-    fn env_files(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-            if entry.file_name().to_string_lossy().ends_with(".env") {
-                out.push(entry.path());
-            }
-        }
-    }
-    let mut paths: Vec<PathBuf> = SHIPPED_HOME_CREDENTIAL_FILES
-        .iter()
-        .chain(EXTRA_HOME_CREDENTIAL_FILES.iter())
-        .map(|name| home.join(name))
-        .collect();
-    external_stores(&home.join("external"), &mut paths);
-    env_files(&home.join("config").join("horon-agent"), &mut paths);
-    external_stores(user_home, &mut paths);
-    let user_app_config = if cfg!(target_os = "macos") {
-        user_home.join("Library/Application Support/horon-agent")
-    } else {
-        xdg_config.join("horon-agent")
-    };
-    env_files(&user_app_config, &mut paths);
-    paths
-        .into_iter()
-        .map(|path| {
-            let bytes = std::fs::read(&path).ok();
-            (path, bytes)
-        })
-        .collect()
-}
-
-/// [`credential_files`] for one test daemon.
-fn daemon_credentials(daemon: &AcpDaemon) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
-    credential_files(&daemon.home, &daemon.root, &daemon.root.join("config"))
-}
-
 /// IS-1: per-request negotiation. 2 selects v2, 1 the v1 surface, 0 is
 /// -32022 naming both supported versions and leaves the connection
 /// uninitialized, a missing protocolVersion is -32602, and a repeated
@@ -1010,21 +900,21 @@ fn is4_prompt_lifecycle() {
         .provider
         .wait_for_hold_open_opened(WAIT)
         .unwrap_or_else(|error| panic!("{error}\n{}", daemon.logs()));
-    let busy = conn.err(
-        "session/prompt",
-        json!({"sessionId": session, "prompt": [{"type": "text", "text": "IS4_BUSY_CONTENT second"}]}),
-    );
-    assert_eq!(
-        busy["code"], -32602,
-        "a busy prompt is refused before insertion: {busy}"
-    );
+    // IS-12: a prompt sent while the turn runs is held, not refused; the
+    // session cancel takes it back with the turn, so it answers -32800 and
+    // never reaches the daemon.
+    let busy = conn.send_prompt(&session, "IS4_BUSY_CONTENT second");
     let cursor = conn.cursor(&session);
     conn.notify("session/cancel", json!({"sessionId": session}));
     assert_eq!(conn.await_idle_after(&session, cursor), "cancelled");
+    let busy = conn
+        .wait("session/prompt", &busy)
+        .expect_err("a held prompt cancelled before insertion is not inserted");
+    assert_eq!(busy["code"], -32800, "{busy}");
     conn.barrier();
     assert!(
         conn.stdout().iter().all(|line| !line.contains("IS4_BUSY_CONTENT")),
-        "a refused prompt writes no update"
+        "a held prompt taken back writes no update"
     );
     conn.assert_schema_clean();
 }
@@ -1137,7 +1027,7 @@ fn is5_foreground_state() {
     let idle = line_index(&lines, "the idle cancelled update", |frame| {
         frame["params"]["sessionId"] == session.as_str()
             && frame["params"]["update"]
-                == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled"})
+                == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled", "background": []})
     });
     let closed = line_index(&lines, "the close response", |frame| is_response_to(frame, &close));
     assert!(
@@ -1307,7 +1197,7 @@ fn is5_cancelled_turn_idles_before_the_queued_peer_turn() {
     let cancelled = updates
         .iter()
         .position(|update| {
-            *update == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled"})
+            *update == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled", "background": []})
         })
         .unwrap_or_else(|| panic!("no idle cancelled in {updates:?}"));
     let peer_running = updates
@@ -1957,6 +1847,138 @@ fn is15_auth() {
     conn.assert_schema_clean();
 }
 
+/// IS-16: `tool_call/cancel` stops one running tool call and nothing else. A
+/// `bash sleep 30` call advertises `capabilities.cancel` while it runs, the
+/// cancel is answered `{}`, the call's final update is `cancelled` with
+/// `capabilities: null`, and the same turn goes on to finish with `end_turn`.
+#[test]
+fn is16_tool_call_cancel() {
+    let daemon = AcpDaemon::start("acp");
+    let _dump = LogDump(&daemon);
+    let work = work_dir(&daemon);
+    daemon.provider.script(
+        "IS16_CANCEL",
+        tool_turn(
+            "bash",
+            json!({"command": "sleep 30", "intent": "is16 cancellation fixture"}),
+            "is16 turn continued",
+        ),
+    );
+    let mut conn = Conn::v2(&daemon, "is16");
+    conn.initialize();
+    let session = conn.new_session(&work);
+    conn.take_notes();
+    let cursor = conn.cursor(&session);
+    let prompt = conn.send_prompt(&session, "IS16_CANCEL run it");
+    conn.wait("session/prompt", &prompt)
+        .unwrap_or_else(|error| panic!("the prompt is inserted: {error}\n{}", daemon.logs()));
+
+    // The running call advertises the control; only it may be cancelled.
+    let advertised = conn.await_update(&session, "a call advertising its cancel control", |update| {
+        update["sessionUpdate"] == "tool_call_update"
+            && update["status"] == "in_progress"
+            && update["capabilities"]["cancel"].is_object()
+    });
+    let tool_call_id = advertised["toolCallId"].as_str().expect("a toolCallId").to_string();
+    assert_eq!(
+        conn.ok(
+            "tool_call/cancel",
+            json!({"sessionId": session, "toolCallId": tool_call_id})
+        ),
+        json!({}),
+        "an advertised cancel is accepted"
+    );
+
+    // A second cancel of the same call is refused: it is already stopping.
+    let again = conn.err(
+        "tool_call/cancel",
+        json!({"sessionId": session, "toolCallId": tool_call_id}),
+    );
+    assert_eq!(again["code"], -32602, "{again}");
+
+    let stop = conn.await_idle_after(&session, cursor);
+    assert_eq!(
+        stop,
+        "end_turn",
+        "the turn continues after the call stops: {}",
+        daemon.logs()
+    );
+    let updates = updates_of(&conn.take_notes(), &session);
+    let finals: Vec<&Value> = of_kind(&updates, "tool_call_update")
+        .into_iter()
+        .filter(|update| update["toolCallId"] == tool_call_id.as_str())
+        .filter(|update| matches!(update["status"].as_str(), Some("completed" | "failed" | "cancelled")))
+        .collect();
+    assert_eq!(finals.len(), 1, "one final update for the call: {updates:?}");
+    assert_eq!(finals[0]["status"], "cancelled", "{:?}", finals[0]);
+    assert!(
+        finals[0].get("capabilities").is_some_and(Value::is_null),
+        "a final call clears its capabilities: {:?}",
+        finals[0]
+    );
+    assert!(
+        chunk_text(&updates, "agent_message_chunk").contains("is16 turn continued"),
+        "the same turn finished after the cancelled call: {updates:?}"
+    );
+    assert!(
+        mentions(&updates, "sleep 30") && mentions(&updates, &tool_call_id),
+        "the call stays in the transcript: {updates:?}"
+    );
+    conn.assert_schema_clean();
+}
+
+/// IS-21: a prompt sent while this editor's previous prompt still runs is
+/// held, not refused: it is answered with its own `messageId` only after the
+/// first turn reported idle, and then runs a turn of its own.
+#[test]
+fn is21_prompt_during_active_work() {
+    let daemon = AcpDaemon::start("acp");
+    let _dump = LogDump(&daemon);
+    let work = work_dir(&daemon);
+    daemon.provider.script(
+        "IS21_FIRST",
+        tool_turn(
+            "bash",
+            json!({"command": "sleep 2", "intent": "is21 hold fixture"}),
+            "is21 first done",
+        ),
+    );
+    let mut conn = Conn::v2(&daemon, "is21");
+    conn.initialize();
+    let session = conn.new_session(&work);
+    conn.take_notes();
+    let cursor = conn.cursor(&session);
+    let first = conn.send_prompt(&session, "IS21_FIRST go");
+    let first_id = conn
+        .wait("session/prompt", &first)
+        .expect("the first prompt is inserted");
+    conn.await_update(&session, "the first turn's running call", |update| {
+        update["sessionUpdate"] == "tool_call_update" && update["status"] == "in_progress"
+    });
+    let second = conn.send_prompt(&session, "IS21_SECOND go");
+    let second_id = conn
+        .wait("session/prompt", &second)
+        .unwrap_or_else(|error| panic!("the held prompt is not refused: {error}\n{}", daemon.logs()));
+    assert_ne!(first_id["messageId"], second_id["messageId"], "{first_id} {second_id}");
+    let transitions = conn.states_since(&session, cursor);
+    assert!(
+        transitions.starts_with(&["running".to_string(), "idle:end_turn".to_string()]),
+        "the second prompt is inserted only after the first turn ended: {transitions:?}"
+    );
+    conn.await_idle_after(&session, cursor + 2);
+    assert_eq!(
+        conn.states_since(&session, cursor),
+        ["running", "idle:end_turn", "running", "idle:end_turn"],
+        "the held prompt runs a turn of its own"
+    );
+    let updates = updates_of(&conn.take_notes(), &session);
+    let users: Vec<&Value> = of_kind(&updates, "user_message");
+    assert_eq!(users.len(), 2, "{updates:?}");
+    assert_eq!(users[1]["messageId"], second_id["messageId"], "{updates:?}");
+    assert!(mentions(&[users[1].clone()], "IS21_SECOND go"), "{updates:?}");
+    conn.assert_schema_clean();
+}
+
 /// Dual-stack 1: one daemon, a v1 and a v2 client; each gets its own
 /// surface for initialize, session setup and a prompt.
 #[test]
@@ -2331,57 +2353,4 @@ fn credential_snapshot_ignores_runtime_state() {
         );
         assert_eq!(after.get(path), Some(&Some(b"{}".to_vec())), "{}", path.display());
     }
-}
-
-/// The copied credential lists equal the private stores the shipped code reads.
-#[test]
-fn credential_lists_match_the_shipped_code() {
-    fn literals(source: &str, start: &str) -> Vec<String> {
-        let begin = source.find(start).unwrap_or_else(|| panic!("{start} is in launch.rs")) + start.len();
-        let end = begin + source[begin..].find("];").expect("the list ends");
-        source[begin..end]
-            .split('"')
-            .skip(1)
-            .step_by(2)
-            .map(str::to_string)
-            .collect()
-    }
-    let launch = include_str!("../crates/agent-sdk/src/launch.rs");
-    assert_eq!(
-        literals(launch, "const CREDENTIAL_FILES: &[&str] = &["),
-        SHIPPED_HOME_CREDENTIAL_FILES
-    );
-    assert_eq!(
-        literals(launch, "const EXTERNAL_CREDENTIAL_FILES: &[&str] = &["),
-        SHIPPED_EXTERNAL_CREDENTIAL_FILES
-    );
-    assert!(
-        launch.contains(r#"for name in ["auth-profiles.json", "auth.json"] {"#)
-            && launch.contains(r#".join("agents")"#),
-        "the per-agent OpenClaw store names"
-    );
-    assert!(
-        include_str!("../crates/platform-macos/src/lib.rs").contains(r#".join("Library/Application Support")"#)
-            && include_str!("../crates/platform/src/paths.rs").contains("home.join(app)")
-            && launch.contains(r#"user_config_dir("horon-agent")"#)
-            && launch.contains(r#"ends_with(".env")"#),
-        "the provider env files of user_app_config_dir()"
-    );
-    assert!(
-        launch.contains(r#"PathBuf::from("external").join(relative)"#)
-            && launch.contains(r#"PathBuf::from("external").join(&relative)"#)
-            && launch.contains(r#"PathBuf::from("config").join("horon-agent").join(&name)"#),
-        "launch.rs links the stores to <instance>/external/<rel> and <instance>/config/horon-agent/<name>.env"
-    );
-    let storage = include_str!("../crates/storage/src/lib.rs");
-    assert!(
-        storage.contains(r#"return Ok(PathBuf::from(path).join("external").join(relative));"#)
-            && storage.contains(r#"return Ok(PathBuf::from(path).join("config").join("horon-agent"));"#),
-        "under HORON_AGENT_HOME the daemon resolves user_home_path to $HORON_AGENT_HOME/external/<rel> and app_config_dir to $HORON_AGENT_HOME/config/horon-agent"
-    );
-    let oauth = include_str!("../crates/base/src/mcp/oauth.rs");
-    assert!(
-        oauth.contains(r#"const STORE_FILE: &str = "mcp-oauth.json";"#),
-        "the MCP OAuth store name"
-    );
 }

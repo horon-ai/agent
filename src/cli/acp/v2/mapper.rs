@@ -13,9 +13,9 @@ use super::super::mapper::{notice, tool_location, turn_stopped_severity};
 use super::super::util::{parse_json_object, tool_kind, tool_title};
 use super::replay::Position;
 use super::shapes::{
-    self, ChunkKind, MessageIds, MessageKind, ToolCallPatch, diff_content, message_chunk, message_ids,
-    terminal_content, terminal_finished, terminal_output, terminal_started, tool_call_content_chunk, tool_call_update,
-    whole_message,
+    self, ChunkKind, MessageIds, MessageKind, ToolCallPatch, cancel_capabilities, diff_content, message_chunk,
+    message_ids, terminal_content, terminal_finished, terminal_output, terminal_started, tool_call_content_chunk,
+    tool_call_update, whole_message,
 };
 use crate::protocol::{FileDiffWire, ServerEvent};
 use serde_json::{Value, json};
@@ -49,6 +49,9 @@ struct Tool {
     /// The `ToolDone` output of a bash call, kept for an exit that follows it.
     bash_output: Option<String>,
     done: bool,
+    /// IS-4: the call went on as listed background work. Its `ToolDone` only
+    /// adds content; its final status comes with the work's own end.
+    held: bool,
 }
 
 pub(crate) struct V2Mapper {
@@ -177,6 +180,20 @@ impl V2Mapper {
                     None => Vec::new(),
                 }
             }
+            // IS-2: the daemon stopped this one call. Its final update is
+            // `cancelled`, and the `ToolDone` that follows with the result the
+            // model sees produces no second one.
+            ServerEvent::ToolCancelled { id } => {
+                self.round_pending = true;
+                let name = self.tool(&id).name.clone().unwrap_or_else(|| "tool".to_string());
+                let mut updates = self.ensure_created(&id, &name);
+                if self.tool(&id).done {
+                    return updates;
+                }
+                self.tool(&id).done = true;
+                updates.push(tool_call_update(&id, &ToolCallPatch::final_status("cancelled")));
+                updates
+            }
             ServerEvent::ToolDone {
                 id,
                 name,
@@ -208,7 +225,7 @@ impl V2Mapper {
                 updates.push(text_chunk(&id, text));
                 if !self.tool(&id).done {
                     self.tool(&id).done = true;
-                    updates.push(tool_call_update(&id, &status("completed")));
+                    updates.push(tool_call_update(&id, &ToolCallPatch::final_status("completed")));
                 }
                 updates
             }
@@ -235,6 +252,12 @@ impl V2Mapper {
             // The extended profile already gets it as `_horon_agent/server_event`;
             // v2 has no update for MCP server status.
             ServerEvent::McpStatus { .. } => Vec::new(),
+            // IS-6: a soft interrupt stored mid-turn is a user message of its
+            // own, keyed by the row id a `session/resume` replay uses too.
+            ServerEvent::SoftInterruptStored { message_id, content } => vec![shapes::user_message(
+                &message_id,
+                &[json!({ "type": "text", "text": content })],
+            )],
             _ => Vec::new(),
         }
     }
@@ -242,6 +265,11 @@ impl V2Mapper {
     /// The run's start id, which keys its message ids.
     pub(crate) fn start(&self) -> &str {
         &self.start
+    }
+
+    /// IS-4: the call keeps running as background work after its `ToolDone`.
+    pub(crate) fn hold_open(&mut self, id: &str) {
+        self.tool(id).held = true;
     }
 
     /// The run ended with `stop_reason`: a call known only from its diffs or
@@ -274,7 +302,7 @@ impl V2Mapper {
                 && !tool.done
             {
                 tool.done = true;
-                updates.push(tool_call_update(&id, &status(end_status)));
+                updates.push(tool_call_update(&id, &ToolCallPatch::final_status(end_status)));
             }
         }
         updates
@@ -329,7 +357,8 @@ impl V2Mapper {
     }
 
     /// The input is complete: patch it in with the call's absolute location,
-    /// and show a bash call's terminal once its command is known.
+    /// advertise `capabilities.cancel` for the call while it runs, and show a
+    /// bash call's terminal once its command is known.
     fn input_complete(&mut self, id: &str) -> Vec<Value> {
         let raw_input = parse_json_object(&self.tool(id).input);
         let locations = raw_input
@@ -340,6 +369,7 @@ impl V2Mapper {
             status: Some("in_progress".to_string()),
             raw_input: raw_input.clone(),
             locations,
+            capabilities: Some(cancel_capabilities()),
             ..ToolCallPatch::default()
         };
         let mut updates = vec![tool_call_update(id, &patch)];
@@ -402,9 +432,22 @@ impl V2Mapper {
             }
         }
         self.tool(id).done = true;
+        if self.tool(id).held {
+            // Still running in the background: no final status yet, and no
+            // `tool_call/cancel` either, which only reaches a call the turn
+            // is waiting on.
+            updates.push(tool_call_update(
+                id,
+                &ToolCallPatch {
+                    capabilities: Some(Value::Null),
+                    ..ToolCallPatch::default()
+                },
+            ));
+            return updates;
+        }
         updates.push(tool_call_update(
             id,
-            &status(if error.is_some() { "failed" } else { "completed" }),
+            &ToolCallPatch::final_status(if error.is_some() { "failed" } else { "completed" }),
         ));
         updates
     }
@@ -415,13 +458,6 @@ fn text_chunk(id: &str, text: String) -> Value {
         id,
         json!({ "type": "content", "content": { "type": "text", "text": text } }),
     )
-}
-
-fn status(status: &str) -> ToolCallPatch {
-    ToolCallPatch {
-        status: Some(status.to_string()),
-        ..ToolCallPatch::default()
-    }
 }
 
 /// IS-12: the selector update after a model change, in v2 option shapes.

@@ -12,332 +12,26 @@
 //! [`ForegroundTracker`] that decides every `state_update`.
 
 use super::super::*;
+use super::background::{self, BackgroundSet, REMOVAL_DEFER};
+use super::foreground::ForegroundTracker;
+use super::held::HeldQueue;
 use super::mapper::V2Mapper;
 use super::replay::Position;
-use super::shapes::{self, ChunkKind, message_chunk, message_ids, state_idle, state_requires_action, state_running};
+use super::shapes::{self, ChunkKind, message_chunk, message_ids, state_idle, state_running};
 use crate::protocol::TurnStopReason;
-use std::collections::HashSet;
 use std::sync::Mutex as StdMutex;
 use std::sync::Weak;
 use tokio::sync::{mpsc, oneshot, watch};
-
-/// The stop reasons a v2 idle `state_update` may carry; anything else the
-/// daemon reports is omitted.
-const STOP_REASONS: [&str; 6] = [
-    "end_turn",
-    "max_tokens",
-    "max_turn_requests",
-    "refusal",
-    "cancelled",
-    "error",
-];
-
-/// What a failed turn's idle update says when no daemon `Error` named a cause.
-const TURN_FAILED: &str = "The turn failed";
 
 /// The daemon's refusal of a `withdraw_message` whose turn already claimed the
 /// message (crates/app-core/src/server/client_lifecycle.rs, `WithdrawMessage`).
 /// It is also the answer once that turn has ended.
 const WITHDRAW_ALREADY_INSERTED: &str = "already inserted";
 
-/// The state this connection last reported for the session.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Reported {
-    #[default]
-    Idle,
-    Running,
-    RequiresAction,
-}
-
-/// IS-5 bookkeeping of one v2 session. Every method returns the updates to
-/// write, in order; the stream task writes them before it reads the next event.
-#[derive(Debug, Default)]
-pub(crate) struct ForegroundTracker {
-    pub(crate) reported: Reported,
-    /// Permission and elicitation requests of the running turn this editor has
-    /// not answered yet.
-    pub(crate) pending_user_actions: usize,
-    pub(crate) run_id: Option<String>,
-    /// The start message id of the run reported as running, when it named one.
-    run_start: Option<String>,
-    /// Message ids of the prompts this editor inserted. Their `user_message`
-    /// was written with the response, so a turn they start writes none.
-    pub(crate) own_start_ids: HashSet<String>,
-    /// Every request of a blocked turn was answered: the next mapped event
-    /// reports `running` first.
-    pub(crate) resume_running_before_next_event: bool,
-    /// Own prompts inserted whose turn has not reported idle yet.
-    open_own_starts: HashSet<String>,
-    /// Daemon `message` id -> stored message id of those open own prompts.
-    own_message_ids: HashMap<u64, String>,
-    /// The last failure the daemon reported for the current turn.
-    last_error: Option<String>,
-}
-
-impl ForegroundTracker {
-    pub(crate) fn is_active(&self) -> bool {
-        self.reported != Reported::Idle
-    }
-
-    /// One of this editor's prompts, daemon `message` `daemon_id`, was
-    /// inserted as `message_id`.
-    pub(crate) fn own_prompt_inserted(&mut self, daemon_id: u64, message_id: &str) {
-        self.own_start_ids.insert(message_id.to_string());
-        self.open_own_starts.insert(message_id.to_string());
-        self.own_message_ids.insert(daemon_id, message_id.to_string());
-    }
-
-    /// The turn daemon `message` `daemon_id` started has not reported idle.
-    pub(crate) fn own_turn_open(&self, daemon_id: u64) -> bool {
-        self.own_message_ids
-            .get(&daemon_id)
-            .is_some_and(|message_id| self.open_own_starts.contains(message_id))
-    }
-
-    fn forget_ended_own_turns(&mut self) {
-        let open = &self.open_own_starts;
-        self.own_message_ids.retain(|_, message_id| open.contains(message_id));
-    }
-
-    /// The turn this editor's prompt `message_id` started has reported idle
-    /// (or never will, because the stream ended).
-    pub(crate) fn own_run_ended(&self, message_id: &str) -> bool {
-        !self.open_own_starts.contains(message_id)
-    }
-
-    /// Foreground work a `session/cancel` must stop: a turn reported running,
-    /// or one this editor's inserted prompt started that has not reported yet.
-    pub(crate) fn has_cancellable_turn(&self) -> bool {
-        self.is_active() || !self.open_own_starts.is_empty()
-    }
-
-    /// Whether a non-snapshot `ForegroundState { running: false }` of `run_id`
-    /// ends the run this tracker reports. An idle state of any other run is
-    /// stale: that run was already ended by [`Self::supersede`] when the run
-    /// after it started, or it never reported running while this one runs.
-    pub(crate) fn ends_current_run(&self, run_id: &str) -> bool {
-        self.run_id.as_deref().is_none_or(|current| current == run_id)
-    }
-
-    /// A run other than the one reported started. A session runs one
-    /// foreground turn at a time, so the reported run is over and its own idle
-    /// state is still on its way: report its end now, with no stop reason
-    /// (unknown here), and let [`Self::ends_current_run`] drop the late one.
-    /// `None` when `run_id` is the run reported, or none is reported; else the
-    /// updates and whether the ended run was one this editor's prompt started.
-    pub(crate) fn supersede(&mut self, run_id: &str) -> Option<(Vec<Value>, bool)> {
-        let current = self.run_id.as_deref()?;
-        if !self.is_active() || current == run_id {
-            return None;
-        }
-        let start = self.run_start.clone();
-        let own = start.as_deref().is_some_and(|start| !self.own_run_ended(start));
-        Some((self.turn_ended(start.as_deref(), None), own))
-    }
-
-    /// The late idle state of a run [`Self::ends_current_run`] rejected: the
-    /// run reported now goes on. True when it ended a turn this editor's
-    /// prompt started, which no longer waits for its end.
-    pub(crate) fn stale_run_ended(&mut self, start_message_id: Option<&str>) -> bool {
-        let own = start_message_id.is_some_and(|start| self.open_own_starts.remove(start));
-        self.forget_ended_own_turns();
-        own
-    }
-
-    /// A non-snapshot `ForegroundState { running: true }`.
-    pub(crate) fn turn_started(
-        &mut self,
-        run_id: &str,
-        start_message_id: Option<&str>,
-        user_content: Option<&str>,
-    ) -> Vec<Value> {
-        let mut updates = Vec::new();
-        if self.reported == Reported::Idle {
-            self.reported = Reported::Running;
-            updates.push(state_running());
-        }
-        self.run_id = Some(run_id.to_string());
-        self.run_start = start_message_id.map(str::to_string);
-        self.last_error = None;
-        if let (Some(start), Some(text)) = (start_message_id, user_content)
-            && !self.own_start_ids.contains(start)
-        {
-            updates.push(shapes::user_message(start, &[json!({ "type": "text", "text": text })]));
-        }
-        updates
-    }
-
-    /// A non-snapshot `ForegroundState { running: false }`: idle once per run.
-    /// A repeat for a session already idle writes nothing, except when it ends
-    /// a turn this editor's prompt started, which always reports its end.
-    pub(crate) fn turn_ended(&mut self, start_message_id: Option<&str>, stop_reason: Option<&str>) -> Vec<Value> {
-        let own = start_message_id.is_some_and(|start| self.open_own_starts.remove(start));
-        self.forget_ended_own_turns();
-        if self.reported == Reported::Idle && !own {
-            return Vec::new();
-        }
-        let stop_reason = stop_reason.filter(|reason| STOP_REASONS.contains(reason));
-        let error = (stop_reason == Some("error")).then(|| {
-            let message = self.last_error.take().unwrap_or_else(|| TURN_FAILED.to_string());
-            (error_code(&message), message)
-        });
-        self.settle_idle();
-        vec![state_idle(stop_reason, error)]
-    }
-
-    /// The attach or resume snapshot: the tracker follows it and writes
-    /// nothing; `session/resume` then reports [`Self::current_state`]. A turn
-    /// waiting on an answer this connection never saw reports `running` again
-    /// before its next mapped event, which only an answered wait produces.
-    pub(crate) fn snapshot(&mut self, running: bool, awaiting_user: bool, run_id: &str) {
-        if !running {
-            self.settle_idle();
-            return;
-        }
-        self.reported = if awaiting_user {
-            Reported::RequiresAction
-        } else {
-            Reported::Running
-        };
-        self.resume_running_before_next_event = awaiting_user;
-        self.run_id = (!run_id.is_empty()).then(|| run_id.to_string());
-        self.run_start = None;
-    }
-
-    /// IS-5: the one `state_update` a `session/resume` writes, the state last
-    /// reported. An idle snapshot carries no stop reason: it reports no
-    /// completion.
-    pub(crate) fn current_state(&self) -> Value {
-        match self.reported {
-            Reported::Idle => state_idle(None, None),
-            Reported::Running => state_running(),
-            Reported::RequiresAction => state_requires_action(),
-        }
-    }
-
-    /// A daemon `Error` (or failing `TurnStopped`) seen while a turn runs.
-    pub(crate) fn record_error(&mut self, message: &str) {
-        self.last_error = Some(message.to_string());
-    }
-
-    /// A failing `TurnStopped` names the cause only when no `Error` did.
-    pub(crate) fn record_failure_note(&mut self, message: &str) {
-        self.last_error.get_or_insert_with(|| message.to_string());
-    }
-
-    /// A permission or elicitation request went to this editor.
-    pub(crate) fn user_action_started(&mut self) -> Vec<Value> {
-        match self.reported {
-            // A request outside foreground work leaves the session idle.
-            Reported::Idle => Vec::new(),
-            Reported::RequiresAction => {
-                self.pending_user_actions += 1;
-                Vec::new()
-            }
-            Reported::Running => {
-                self.pending_user_actions += 1;
-                self.resume_running_before_next_event = false;
-                self.reported = Reported::RequiresAction;
-                vec![state_requires_action()]
-            }
-        }
-    }
-
-    /// This editor answered one of those requests. Nothing is written: the
-    /// turn reports `running` once its progress shows, before its next event.
-    pub(crate) fn user_action_finished(&mut self) {
-        if self.pending_user_actions == 0 {
-            return;
-        }
-        self.pending_user_actions -= 1;
-        if self.pending_user_actions == 0 && self.reported == Reported::RequiresAction {
-            self.resume_running_before_next_event = true;
-        }
-    }
-
-    /// Before the updates one stream event maps to.
-    pub(crate) fn before_mapped_event(&mut self) -> Vec<Value> {
-        if !self.resume_running_before_next_event || self.pending_user_actions > 0 {
-            return Vec::new();
-        }
-        self.resume_running_before_next_event = false;
-        self.reported = Reported::Running;
-        vec![state_running()]
-    }
-
-    /// `session/close` gave up waiting for the turn: report it cancelled here.
-    /// A turn this editor's inserted prompt started reports its end even when
-    /// it never reported `running`.
-    pub(crate) fn synthesize_cancelled_idle(&mut self) -> Vec<Value> {
-        let own_open = !self.open_own_starts.is_empty();
-        self.open_own_starts.clear();
-        self.own_message_ids.clear();
-        if self.reported == Reported::Idle && !own_open {
-            return Vec::new();
-        }
-        self.settle_idle();
-        vec![state_idle(Some("cancelled"), None)]
-    }
-
-    /// The daemon went away while a turn was reported.
-    pub(crate) fn disconnected(&mut self) -> Vec<Value> {
-        self.open_own_starts.clear();
-        self.own_message_ids.clear();
-        if self.reported == Reported::Idle {
-            return Vec::new();
-        }
-        self.settle_idle();
-        vec![state_idle(
-            Some("error"),
-            Some((JSONRPC_INTERNAL_ERROR, DAEMON_DISCONNECTED.to_string())),
-        )]
-    }
-
-    fn settle_idle(&mut self) {
-        self.reported = Reported::Idle;
-        self.pending_user_actions = 0;
-        self.resume_running_before_next_event = false;
-        self.run_id = None;
-        self.run_start = None;
-        self.last_error = None;
-    }
-}
-
 /// A test's observation of [`V2Stream::inserted`]: the prompt's daemon id and
 /// whether the prompt was still pending at that moment.
 #[cfg(test)]
 pub(crate) type InsertedProbe = Box<dyn Fn(u64, bool) + Send + Sync>;
-
-/// -32000 for a failure the provider login caused, -32603 for every other.
-pub(crate) fn error_code(message: &str) -> i64 {
-    if is_auth_failure(message) {
-        ACP_AUTH_REQUIRED
-    } else {
-        JSONRPC_INTERNAL_ERROR
-    }
-}
-
-/// The daemon `Error` carries only text, so the provider login failures are
-/// recognized by whole words: `request 4011 failed` is no HTTP 401.
-fn is_auth_failure(message: &str) -> bool {
-    const MARKERS: [&[&str]; 7] = [
-        &["401"],
-        &["unauthorized"],
-        &["not", "logged", "in"],
-        &["login", "required"],
-        &["invalid", "api", "key"],
-        &["no", "credentials"],
-        &["authentication", "failed"],
-    ];
-    let message = message.to_ascii_lowercase();
-    let words: Vec<&str> = message
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .collect();
-    MARKERS
-        .iter()
-        .any(|marker| words.windows(marker.len()).any(|window| window == *marker))
-}
 
 /// A message to the stream task from outside the daemon stream.
 pub(crate) enum Control {
@@ -386,6 +80,9 @@ pub(crate) struct Resumed {
     /// Stream events the attach read after its `Done`, in daemon order. They
     /// are mapped after the snapshot, whose run they belong to or follow.
     pub(crate) leftovers: Vec<ServerEvent>,
+    /// IS-4: the background work the daemon reports running, listed before
+    /// the replay is written so the replay keeps listed calls open.
+    pub(crate) background: Vec<crate::protocol::BackgroundWorkItem>,
 }
 
 /// One `session/prompt` waiting for its insertion.
@@ -440,6 +137,7 @@ impl Drop for UserActionGuard {
 #[derive(Clone)]
 pub(crate) struct UserActions {
     control: mpsc::UnboundedSender<Control>,
+    ask_tool_calls: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 impl UserActions {
@@ -450,12 +148,36 @@ impl UserActions {
             control: self.control.clone(),
         }
     }
+
+    /// IS-6: the `ask` tool call that asks question `request_id`. The daemon
+    /// sends it just before the question on the same ordered channel.
+    pub(crate) fn note_ask_tool_call(&self, request_id: String, tool_call_id: String) {
+        self.ask_tool_calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(request_id, tool_call_id);
+    }
+
+    /// The tool call id noted for question `request_id`, taken once; `None`
+    /// when the daemon named none before asking.
+    pub(crate) fn take_ask_tool_call(&self, request_id: &str) -> Option<String> {
+        self.ask_tool_calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(request_id)
+    }
 }
 
 /// The v2 state of one session: its tracker, the prompts not inserted yet, and
 /// the stream task that owns both.
 pub(crate) struct V2Session {
     pub(crate) tracker: StdMutex<ForegroundTracker>,
+    /// IS-4: the background work this session lists on every `state_update`.
+    background: StdMutex<BackgroundSet>,
+    /// IS-12: prompts of this connection waiting for the session's next prompt.
+    held: StdMutex<HeldQueue>,
+    /// IS-6: question request id to the `ask` tool call asking it.
+    ask_tool_calls: Arc<StdMutex<HashMap<String, String>>>,
     pending: StdMutex<HashMap<u64, PendingPrompt>>,
     /// `withdraw_message` requests by request id, answered by the stream task.
     withdraws: StdMutex<HashMap<u64, WithdrawWaiter>>,
@@ -496,6 +218,9 @@ impl V2Session {
         let (control, control_rx) = mpsc::unbounded_channel();
         Self {
             tracker: StdMutex::default(),
+            background: StdMutex::default(),
+            held: StdMutex::default(),
+            ask_tool_calls: Arc::default(),
             pending: StdMutex::default(),
             withdraws: StdMutex::default(),
             submit_gate: Mutex::new(()),
@@ -514,6 +239,12 @@ impl V2Session {
         self.tracker.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    pub(crate) fn background(&self) -> std::sync::MutexGuard<'_, BackgroundSet> {
+        self.background
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn lock_pending(&self) -> std::sync::MutexGuard<'_, HashMap<u64, PendingPrompt>> {
         self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -521,6 +252,7 @@ impl V2Session {
     pub(crate) fn user_actions(&self) -> UserActions {
         UserActions {
             control: self.control.clone(),
+            ask_tool_calls: Arc::clone(&self.ask_tool_calls),
         }
     }
 
@@ -532,8 +264,16 @@ impl V2Session {
         self.closed.load(Ordering::SeqCst)
     }
 
-    fn changed(&self) {
+    pub(crate) fn changed(&self) {
         self.changes.send_modify(|epoch| *epoch += 1);
+    }
+
+    pub(crate) fn subscribe_changes(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    pub(crate) fn held(&self) -> std::sync::MutexGuard<'_, HeldQueue> {
+        self.held.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Observe the moment between opening an inserted prompt's turn and taking
@@ -708,6 +448,7 @@ impl AcpRuntime {
             session_id: session.session_id.clone(),
             run: None,
             outside: None,
+            removal_due: StdMutex::new(None),
         };
         let task = tokio::spawn(stream.run(control, events));
         *v2.task.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
@@ -731,11 +472,25 @@ struct V2Stream {
     /// The mapper of events outside any reported run, kept for the session so
     /// its compaction ids never repeat.
     outside: Option<V2Mapper>,
+    /// IS-4: a removal made while idle, not yet reported. Its snapshot goes
+    /// out at this deadline unless a state update (a follow-up turn's
+    /// `running`) carries the removal first.
+    removal_due: StdMutex<Option<tokio::time::Instant>>,
 }
 
 impl V2Stream {
     async fn run(mut self, mut control: mpsc::UnboundedReceiver<Control>, mut events: mpsc::UnboundedReceiver<Routed>) {
         loop {
+            let removal_due = *self
+                .removal_due
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let removal = async move {
+                match removal_due {
+                    Some(due) => tokio::time::sleep_until(due).await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 biased;
                 message = control.recv() => {
@@ -760,11 +515,28 @@ impl V2Stream {
                         return;
                     }
                 },
+                () = removal => {
+                    let state = self.v2.tracker().current_state();
+                    self.write_all(vec![state]).await;
+                }
             }
         }
     }
 
-    async fn write_all(&self, updates: Vec<Value>) {
+    /// Write `updates` in order. Every `state_update` carries the session's
+    /// current background list, and writing one reports any deferred removal.
+    async fn write_all(&self, mut updates: Vec<Value>) {
+        {
+            let set = self.v2.background();
+            for update in &mut updates {
+                if background::stamp(update, &set) {
+                    *self
+                        .removal_due
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
+            }
+        }
         for update in updates {
             if let Err(err) = self.runtime.write_v2_update(&self.session_id, update).await {
                 crate::logging::warn(&format!(
@@ -799,17 +571,29 @@ impl V2Stream {
         }
     }
 
-    /// IS-5: replay and session info, then one state taken from the attach
-    /// snapshot (or the tracker of a session already active here), then what
-    /// the attach read after its `Done`. A run attached part-way gets a mapper
-    /// whose ids continue the History's, so live and replayed ids match.
+    /// IS-5: replay and session info, the announcement of every background
+    /// item newly listed, then one state taken from the attach snapshot (or
+    /// the tracker of a session already active here), then what the attach
+    /// read after its `Done`. A run attached part-way gets a mapper whose ids
+    /// continue the History's, so live and replayed ids match. The list is
+    /// filled before the replay is written, so a listed call is replayed open.
     async fn resumed(&mut self, resumed: Resumed) {
         let Resumed {
-            updates,
+            mut updates,
             snapshot,
             position,
             leftovers,
+            background,
         } = resumed;
+        let announcements = {
+            let mut set = self.v2.background();
+            let announcements = set.hydrate(&background);
+            for update in &mut updates {
+                background::keep_listed_call_open(update, &set);
+            }
+            announcements
+        };
+        updates.extend(announcements);
         self.write_all(updates).await;
         let snapshot_run = snapshot
             .as_ref()
@@ -1023,12 +807,21 @@ impl V2Stream {
                     crate::logging::warn(&format!("ACP: failed to write usage_update: {err:#}"));
                 }
             }
+            // IS-4: one background item started or ended.
+            ServerEvent::BackgroundWork(work) => self.background_work(&work).await,
+            // IS-5: live output of a terminal, whether its call still runs in
+            // the foreground or moved to the background.
+            ServerEvent::ToolOutputDelta { id, data } => {
+                self.write_all(vec![background::output_chunk(&id, &data)]).await;
+            }
             // Replies whose waiter is gone, and the selector the side channel owns.
             ServerEvent::Ack { .. }
             | ServerEvent::History { .. }
             | ServerEvent::State { .. }
             | ServerEvent::ModelChanged { .. }
-            | ServerEvent::ReasoningEffortChanged { .. } => {}
+            | ServerEvent::ReasoningEffortChanged { .. }
+            | ServerEvent::BackgroundWorkList { .. }
+            | ServerEvent::ToolCallCancelResult { .. } => {}
             other => {
                 if let ServerEvent::TurnStopped {
                     reason: TurnStopReason::Failure | TurnStopReason::Crash | TurnStopReason::Unknown,
@@ -1055,6 +848,33 @@ impl V2Stream {
                 self.write_all(updates).await;
             }
         }
+    }
+
+    /// IS-4: announce or finalize the item first, then report the list. A
+    /// started tool call stays open in the run's mapper until its own end. A
+    /// removal while idle waits for a follow-up turn's `running` to carry it.
+    async fn background_work(&mut self, work: &crate::protocol::BackgroundWorkEvent) {
+        let transition = self.v2.background().apply(work);
+        if let Some(call_id) = &transition.hold_open
+            && let Some(mapper) = self.run.as_mut()
+        {
+            mapper.hold_open(call_id);
+        }
+        let mut updates = transition.updates;
+        if transition.list_changed {
+            let removal = work.state != "started";
+            if removal && !self.v2.tracker().is_active() {
+                self.write_all(updates).await;
+                *self
+                    .removal_due
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(tokio::time::Instant::now() + REMOVAL_DEFER);
+                return;
+            }
+            updates.push(self.v2.tracker().current_state());
+        }
+        self.write_all(updates).await;
     }
 
     async fn mapper_for(&self, start: &str) -> V2Mapper {
@@ -1113,10 +933,10 @@ impl V2Stream {
     }
 
     /// The session takes its next prompt: cleared before the answer that
-    /// tells the client so is written.
+    /// tells the client so is written, and a held prompt may go.
     fn release_prompt(&self) {
         if let Some(session) = self.session.upgrade() {
-            session.prompt_running.store(false, Ordering::SeqCst);
+            self.v2.prompt_released(&session);
         }
     }
 

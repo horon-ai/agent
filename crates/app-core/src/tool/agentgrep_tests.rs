@@ -52,6 +52,9 @@ async fn foreground_budget_returns_fast_search_result_directly() {
         std::time::Duration::from_secs(1),
         "fast search".to_string(),
         "agentgrep-fast-test".to_string(),
+        "call-fast".to_string(),
+        None,
+        None,
     )
     .await
     .expect("fast search should complete in foreground");
@@ -71,6 +74,9 @@ async fn foreground_budget_promotes_slow_search_without_cancelling_it() {
         std::time::Duration::from_millis(1),
         "slow search".to_string(),
         "agentgrep-slow-test".to_string(),
+        "call-slow".to_string(),
+        None,
+        None,
     )
     .await
     .expect("slow search should be promoted");

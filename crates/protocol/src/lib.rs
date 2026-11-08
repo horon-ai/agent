@@ -187,8 +187,8 @@ pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
 pub use wire::{
-    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, ClientRpcError, FileDiffWire, PermissionDecision,
-    PlanEntryWire, Request, ServerEvent, SessionMcpServer,
+    AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
+    FileDiffWire, PermissionDecision, PlanEntryWire, Request, ServerEvent, SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -610,6 +610,10 @@ impl Request {
             Request::Message { id, .. } => *id,
             Request::WithdrawMessage { id, .. } => *id,
             Request::Cancel { id } => *id,
+            Request::CancelTurn { id, .. }
+            | Request::CancelToolCall { id, .. }
+            | Request::CancelBackgroundTerminal { id, .. }
+            | Request::ListBackgroundWork { id } => *id,
             Request::BackgroundTool { id } => *id,
             Request::SoftInterrupt { id, .. } => *id,
             Request::CancelSoftInterrupts { id, .. } => *id,

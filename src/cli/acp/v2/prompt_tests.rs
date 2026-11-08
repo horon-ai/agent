@@ -150,6 +150,34 @@ async fn prompt_answers_message_id_on_insert_not_on_done() {
     client.close_stdin().await;
 }
 
+/// alpha.13 `PromptRequest.prompt` is `minItems: 1`: the adapter refuses an
+/// empty array with `-32602` before the daemon sees a `message`, so no turn
+/// starts and no empty `user_message` is ever written.
+#[tokio::test]
+async fn empty_prompt_is_invalid_params_and_never_reaches_the_daemon() {
+    let mut client = v2_client().await;
+    let (_session, mut daemon) = attach_v2(&client, PROMPT_CANCEL_BOUND).await;
+    client
+        .send(json!({"jsonrpc":"2.0","id":"empty","method":"session/prompt",
+            "params":{"sessionId":SID,"prompt":[]}}))
+        .await;
+    let (before, response) = client.recv_response(json!("empty")).await;
+    assert!(before.is_empty(), "{before:?}");
+    assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+    assert!(
+        response["error"].get("data").is_none(),
+        "an empty prompt is a plain invalid-params error: {response}"
+    );
+    super::tests::assert_matches("Error", &response["error"]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), daemon.recv())
+            .await
+            .is_err(),
+        "an empty prompt writes no daemon message"
+    );
+    client.close_stdin().await;
+}
+
 #[tokio::test]
 async fn pre_insert_errors_have_no_updates() {
     let mut client = v2_client().await;
@@ -189,19 +217,33 @@ async fn pre_insert_errors_have_no_updates() {
     assert_eq!(response["error"]["code"], ACP_AUTH_REQUIRED, "{response}");
     offer_models(&session, 1).await;
 
-    // Another prompt of this editor is still waiting for insertion.
+    // Another prompt of this editor is still waiting for insertion: IS-12
+    // holds the second one instead of refusing it, and sends it once the
+    // first is answered.
     client.send(prompt(json!("first"), SID)).await;
     let first = next_message(&mut daemon).await;
     client.send(prompt(json!("second"), SID)).await;
-    let (before, response) = client.recv_response(json!("second")).await;
-    assert!(before.is_empty(), "{before:?}");
-    assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), daemon.recv())
+            .await
+            .is_err(),
+        "the second prompt is held while the first waits for insertion"
+    );
 
     // Any other daemon error for the prompt.
     daemon
         .emit(json!({"type":"error","id":first,"message":"Skill 'x' is not installed on the server"}))
         .await;
     let (before, response) = client.recv_response(json!("first")).await;
+    assert!(before.is_empty(), "{before:?}");
+    assert_eq!(response["error"]["code"], JSONRPC_INTERNAL_ERROR, "{response}");
+
+    // The held prompt goes now; refuse it too so nothing is inserted.
+    let second = next_message(&mut daemon).await;
+    daemon
+        .emit(json!({"type":"error","id":second,"message":"Skill 'x' is not installed on the server"}))
+        .await;
+    let (before, response) = client.recv_response(json!("second")).await;
     assert!(before.is_empty(), "{before:?}");
     assert_eq!(response["error"]["code"], JSONRPC_INTERNAL_ERROR, "{response}");
 
@@ -266,7 +308,7 @@ async fn post_insert_failure_is_idle_error() {
         assert_eq!(
             last,
             &json!({"sessionUpdate":"state_update","state":"idle","stopReason":"error",
-                "error":{"code":code,"message":failure}})
+                "error":{"code":code,"message":failure},"background":[]})
         );
     }
     client.close_stdin().await;
@@ -314,8 +356,9 @@ async fn cancel_request_before_insert_withdraws_32800_after_insert_ignored() {
     assert_eq!(response["result"], json!({}), "{response}");
     let next = daemon.recv().await;
     assert_eq!(
-        next["type"], "cancel",
-        "$/cancel_request of an inserted prompt reaches no daemon: {next}"
+        (&next["type"], &next["run_id"]),
+        (&json!("cancel_turn"), &json!("r2")),
+        "$/cancel_request of an inserted prompt reaches no daemon; the session cancel names the run: {next}"
     );
     client.close_stdin().await;
 }
@@ -393,7 +436,7 @@ async fn stream_maps_v2_updates_and_cancels_open_tools() {
     assert_eq!(updates[2]["status"], "pending");
     assert_eq!(
         updates[3],
-        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled"})
+        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled","capabilities":null})
     );
     assert_eq!(updates[4]["stopReason"], "cancelled");
     client.close_stdin().await;
@@ -430,7 +473,7 @@ async fn snapshot_attached_run_maps_with_its_start_id() {
     assert_eq!(updates[0]["messageId"], "peer-1:a1");
     assert_eq!(
         updates[2],
-        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled"})
+        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled","capabilities":null})
     );
     assert_eq!(updates[3]["stopReason"], "cancelled");
     client.close_stdin().await;
@@ -592,7 +635,7 @@ fn auth_failure_matches_whole_tokens() {
         "no credentials found",
         "Authentication failed",
     ] {
-        assert_eq!(super::state::error_code(message), ACP_AUTH_REQUIRED, "{message}");
+        assert_eq!(super::foreground::error_code(message), ACP_AUTH_REQUIRED, "{message}");
     }
     for message in [
         "request 4011 failed",
@@ -600,7 +643,11 @@ fn auth_failure_matches_whole_tokens() {
         "authentication of the tool server failed",
         "nologgedin",
     ] {
-        assert_eq!(super::state::error_code(message), JSONRPC_INTERNAL_ERROR, "{message}");
+        assert_eq!(
+            super::foreground::error_code(message),
+            JSONRPC_INTERNAL_ERROR,
+            "{message}"
+        );
     }
 }
 
@@ -754,7 +801,7 @@ async fn late_peer_idle_does_not_end_the_own_run() {
     let own = updates(&lines);
     assert_eq!(
         own[1],
-        &json!({"sessionUpdate":"state_update","state":"idle"}),
+        &json!({"sessionUpdate":"state_update","state":"idle","background":[]}),
         "the superseded peer run ends without a stop reason it does not know"
     );
     let own_agent = super::shapes::message_ids("m1").agent();
@@ -784,7 +831,11 @@ async fn close_writes_idle_cancelled_before_response() {
         .send(json!({"jsonrpc":"2.0","id":"close","method":"session/close","params":{"sessionId":SID}}))
         .await;
     let cancel = daemon.recv().await;
-    assert_eq!(cancel["type"], "cancel", "{cancel}");
+    assert_eq!(cancel["type"], "cancel_turn", "{cancel}");
+    assert_eq!(
+        cancel["run_id"], "r1",
+        "the close cancels only the run it saw: {cancel}"
+    );
     daemon.emit(text("last words")).await;
     daemon.emit(json!({"type":"interrupted"})).await;
     daemon.emit(json!({"type":"done","id":id})).await;
@@ -811,12 +862,17 @@ async fn close_bound_synthesizes_idle_and_drops_late_events() {
     client
         .send(json!({"jsonrpc":"2.0","id":"close","method":"session/close","params":{"sessionId":SID}}))
         .await;
-    assert_eq!(daemon.recv().await["type"], "cancel");
+    let cancel = daemon.recv().await;
+    assert_eq!(
+        (&cancel["type"], &cancel["run_id"]),
+        (&json!("cancel_turn"), &json!("r1")),
+        "{cancel}"
+    );
     let (before, response) = client.recv_response(json!("close")).await;
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
         updates(&before),
-        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"})],
+        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled","background":[]})],
         "{before:?}"
     );
 
@@ -899,7 +955,7 @@ async fn close_cancels_prompt_accepted_before_running() {
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
         updates(&before),
-        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"})],
+        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled","background":[]})],
         "the accepted turn reports its end before the close answer: {before:?}"
     );
 
@@ -931,7 +987,7 @@ async fn close_waits_for_daemon_idle_of_prompt_accepted_before_running() {
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
         updates(&before),
-        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"})],
+        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled","background":[]})],
         "{before:?}"
     );
     client.close_stdin().await;
@@ -983,7 +1039,12 @@ async fn close_give_up_ends_open_tool_calls_before_idle() {
     );
 
     send_close(&mut client).await;
-    assert_eq!(daemon.recv().await["type"], "cancel");
+    let cancel = daemon.recv().await;
+    assert_eq!(
+        (&cancel["type"], &cancel["run_id"]),
+        (&json!("cancel_turn"), &json!("r1")),
+        "{cancel}"
+    );
     let (before, response) = client.recv_response(json!("close")).await;
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
@@ -994,7 +1055,7 @@ async fn close_give_up_ends_open_tool_calls_before_idle() {
     let updates = updates(&before);
     assert_eq!(
         updates[0],
-        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled"})
+        &json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"cancelled","capabilities":null})
     );
     assert_eq!(updates[1]["stopReason"], "cancelled");
     client.close_stdin().await;

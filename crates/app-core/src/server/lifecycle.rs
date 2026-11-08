@@ -11,6 +11,14 @@ const TEMP_IDLE_SECS_ENV: &str = "HORON_AGENT_TEMP_SERVER_IDLE_SECS";
 const DEFAULT_TEMP_IDLE_SECS: u64 = 30 * 60;
 const TEMP_SERVER_EXIT_CODE: i32 = super::EXIT_IDLE_TIMEOUT;
 
+/// Whether the idle monitor may start counting idle time.
+///
+/// A live headless worker keeps the server up even with no client attached: it
+/// has work of its own and no surface to reconnect from.
+pub(crate) fn idle_monitor_should_start(client_count: usize, has_live_headless_worker: bool) -> bool {
+    client_count == 0 && !has_live_headless_worker
+}
+
 /// Wait (bounded) for an in-flight session save before the process exits.
 /// Exiting between a checkpoint's snapshot write and journal delete used to
 /// duplicate history on the next load (#1632).
@@ -174,7 +182,7 @@ pub(crate) fn spawn_temporary_lifecycle_monitor(
 
             let count = *client_count.read().await;
             let has_live_headless_worker = super::has_live_headless_worker(&sessions, &swarm_state).await;
-            if super::idle_monitor_should_start(count, has_live_headless_worker) {
+            if idle_monitor_should_start(count, has_live_headless_worker) {
                 if idle_since.is_none() {
                     idle_since = Some(Instant::now());
                     crate::logging::info(&format!(

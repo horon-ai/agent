@@ -1,5 +1,5 @@
 //! IS-6 to IS-11 for the v2 session update mapper. Every frame a test maps is
-//! validated against the vendored `schema-v2.0.0-alpha.10` and checked for v1-only
+//! validated against the vendored `schema-v2.0.0-alpha.13` and checked for v1-only
 //! shapes.
 
 use super::mapper::{V2Mapper, config_option_update};
@@ -219,7 +219,8 @@ fn first_tool_update_is_minimal_then_input_patch() {
         patched,
         [
             json!({"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"in_progress",
-            "rawInput":args,"locations":[{"path":"/work/src/lib.rs"}]})
+            "rawInput":args,"locations":[{"path":"/work/src/lib.rs"}],
+            "capabilities":{"cancel":{}}})
         ]
     );
 }
@@ -434,7 +435,10 @@ fn open_tool_cancelled_on_cancel() {
     let frames = end(&mut mapper, "cancelled");
     assert_eq!(
         frames,
-        [json!({"sessionUpdate":"tool_call_update","toolCallId":"open","status":"cancelled"})]
+        [
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"open","status":"cancelled",
+            "capabilities":null})
+        ]
     );
 
     let mut mapper = super::mapper::V2Mapper::new("m2", Some(PathBuf::from(CWD)));
@@ -461,7 +465,10 @@ fn open_tool_failed_on_error() {
     );
     assert_eq!(
         end(&mut mapper, "error"),
-        [json!({"sessionUpdate":"tool_call_update","toolCallId":"open","status":"failed"})],
+        [
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"open","status":"failed",
+            "capabilities":null})
+        ],
         "a completed call keeps its result"
     );
 }
@@ -532,4 +539,69 @@ fn no_v1_only_variants() {
     );
     check(std::slice::from_ref(&update));
     assert_eq!(update["configOptions"][0]["configId"], "mode");
+}
+
+/// IS-2: only a call in its execution phase advertises `capabilities.cancel`,
+/// and every final status clears it, so a client knows exactly when the control
+/// applies.
+#[test]
+fn cancel_capability_follows_the_call_status() {
+    let mut mapper = mapper();
+    let created = map(&mut mapper, start("c1", "read"));
+    assert!(
+        created[0].get("capabilities").is_none(),
+        "a pending call advertises nothing: {created:?}"
+    );
+    let executing = map(&mut mapper, exec("c1", "read"));
+    assert_eq!(executing[0]["status"], "in_progress", "{executing:?}");
+    assert_eq!(executing[0]["capabilities"], json!({"cancel":{}}), "{executing:?}");
+    let completed = map(&mut mapper, done("c1", "read", "text"));
+    let last = completed.last().expect("a final update");
+    assert_eq!(last["status"], "completed", "{completed:?}");
+    assert!(last.get("capabilities").is_some_and(Value::is_null), "{last}");
+}
+
+/// IS-2: a `tool_cancelled` is the call's final update, and the `tool_done`
+/// that follows it with the result the model reads produces no second one.
+#[test]
+fn tool_cancelled_is_final_and_tool_done_adds_nothing() {
+    let mut mapper = mapper();
+    map_all(
+        &mut mapper,
+        &[
+            start("c1", "bash"),
+            input("c1", &json!({"command":"sleep 30"})),
+            exec("c1", "bash"),
+        ],
+    );
+    let frames = map(&mut mapper, json!({"type":"tool_cancelled","id":"c1"}));
+    let final_frame = frames.last().expect("the cancelled update");
+    assert_eq!(final_frame["status"], "cancelled", "{frames:?}");
+    assert!(
+        final_frame.get("capabilities").is_some_and(Value::is_null),
+        "{final_frame}"
+    );
+
+    let after = map(
+        &mut mapper,
+        json!({"type":"tool_done","id":"c1","name":"bash",
+            "output":"[Cancelled by user]","error":"[Cancelled by user]"}),
+    );
+    assert!(
+        after.is_empty(),
+        "the cancelled call's result adds no update: {after:?}"
+    );
+    assert!(
+        end(&mut mapper, "end_turn").is_empty(),
+        "the run's end does not report the call again"
+    );
+}
+
+/// A `tool_cancelled` for a call already reported final changes nothing.
+#[test]
+fn tool_cancelled_after_a_final_status_is_ignored() {
+    let mut mapper = mapper();
+    map_all(&mut mapper, &round("c1", "read", &json!({"path":"a"}), "A"));
+    let frames = map(&mut mapper, json!({"type":"tool_cancelled","id":"c1"}));
+    assert!(frames.is_empty(), "a finished call is not cancelled again: {frames:?}");
 }

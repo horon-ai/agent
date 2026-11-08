@@ -9,15 +9,44 @@
 //! -32800. After insertion it is never answered with an error; how its turn
 //! ends is the idle `state_update`.
 
-use super::super::prompt::{PromptRunGuard, prompt_from_params};
+use super::super::prompt::{PromptRunGuard, parse_prompt};
 use super::super::*;
+use super::held::Hold;
 use super::state::{Control, PendingPrompt, V2Session, Withdrawal};
 use tokio::sync::oneshot;
+
+/// A parsed prompt that owns the session's `prompt_running`.
+struct TakenPrompt {
+    id: Value,
+    cancel: Arc<CancelSignal>,
+    text: String,
+    images: Vec<(String, String)>,
+    content: Vec<Value>,
+}
 
 /// A request the session's stream ended before answering. The stream task is
 /// the only writer of a v2 prompt's or command's response, so one that resolves
 /// its hand-off with an error is answered here instead of left unanswered.
 pub(super) const SESSION_CLOSED: &str = "The session closed before the request was answered";
+
+/// The answer to a v2 `session/prompt` whose `prompt` array is empty.
+///
+/// The alpha.13 `PromptRequest.prompt` is `minItems: 1`, and the empty
+/// `user_message` an empty array would insert is not a turn, so the adapter
+/// refuses it before the daemon ever sees it. v1 keeps accepting an empty
+/// array: its `PromptRequest` sets no `minItems`, and its surface must not
+/// change.
+const EMPTY_PROMPT: &str = "session/prompt requires at least one prompt content block";
+
+/// Whether the request's `prompt` array is present and empty. A missing or
+/// non-array `prompt` never reaches this check: `prompt_from_params` refuses it
+/// first.
+fn is_empty_prompt(params: &Value) -> bool {
+    params
+        .get("prompt")
+        .and_then(Value::as_array)
+        .is_some_and(|prompt| prompt.is_empty())
+}
 
 impl AcpRuntime {
     pub(in super::super) async fn handle_session_prompt_v2(&self, message: IncomingRequest) -> Result<()> {
@@ -26,10 +55,15 @@ impl AcpRuntime {
             Ok(session_id) => session_id,
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
-        let (text, images) = match prompt_from_params(&message.params) {
+        let (text, images) = match parse_prompt(&message.params, true) {
             Ok(prompt) => prompt,
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
+        if is_empty_prompt(&message.params) {
+            return self
+                .write_error_value(id, JSONRPC_INVALID_PARAMS, EMPTY_PROMPT.to_string())
+                .await;
+        }
         let content = message
             .params
             .get("prompt")
@@ -43,24 +77,46 @@ impl AcpRuntime {
         }) else {
             return self.write_rpc_error(id, RpcError::session_not_found(&session_id)).await;
         };
-        if session
-            .prompt_running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return self
-                .write_error_value(
-                    id,
-                    JSONRPC_INVALID_PARAMS,
-                    format!("Session {session_id} is already processing a prompt"),
-                )
-                .await;
+        // IS-12: a prompt sent while this connection's previous one is still
+        // processing waits for it instead of being refused. Cancelled or
+        // closed while it waits, it never reached the daemon: -32800.
+        match v2.take_prompt(&session, &message.cancel).await {
+            Hold::Taken => {}
+            Hold::Cancelled | Hold::Closed => return self.write_rpc_error(id, RpcError::cancelled()).await,
         }
-        let mut guard = PromptRunGuard::new(&session);
+        let taken = TakenPrompt {
+            id,
+            cancel: message.cancel,
+            text,
+            images,
+            content,
+        };
+        let result = self.run_taken_prompt_v2(taken, &session, &v2).await;
+        // Whichever way the prompt ended, the next held one re-checks whether
+        // the session is free.
+        v2.changed();
+        result
+    }
+
+    /// The rest of a prompt once it owns the session's `prompt_running`.
+    async fn run_taken_prompt_v2(
+        &self,
+        prompt: TakenPrompt,
+        session: &Arc<DaemonSession>,
+        v2: &Arc<V2Session>,
+    ) -> Result<()> {
+        let TakenPrompt {
+            id,
+            cancel,
+            text,
+            images,
+            content,
+        } = prompt;
+        let mut guard = PromptRunGuard::new(session);
 
         if let Some(command) = parse_acp_slash_command(&text) {
             let output = match command {
-                Ok(command) => self.run_session_command(&session, command).await,
+                Ok(command) => self.run_session_command(session, command).await,
                 Err(err) => Err(err),
             };
             let text = match output {
@@ -116,7 +172,7 @@ impl AcpRuntime {
         };
         {
             let _gate = v2.submit_gate.lock().await;
-            if message.cancel.is_recorded() {
+            if cancel.is_recorded() {
                 guard.release();
                 return self.write_rpc_error(id, RpcError::cancelled()).await;
             }
@@ -167,15 +223,17 @@ impl AcpRuntime {
     }
 
     /// `session/cancel` on v2: withdraw the session's prompts that are not
-    /// inserted yet, then send one daemon `Cancel` when foreground work is
-    /// reported, an inserted prompt of this editor has not reported its end,
-    /// or a withdrawal found its prompt already inserted while that prompt's
-    /// turn was still open in daemon order. A prompt that is still queued is
-    /// only ever withdrawn. The idle `cancelled` comes from the daemon.
+    /// inserted yet, then cancel the turn when foreground work is reported, an
+    /// inserted prompt of this editor has not reported its end, or a withdrawal
+    /// found its prompt already inserted while that prompt's turn was still
+    /// open in daemon order. A prompt that is still queued is only ever
+    /// withdrawn. The idle `cancelled` comes from the daemon.
     ///
-    /// Known limit: the daemon `Cancel` names no turn, so a turn of ours that
-    /// ends, followed by a peer turn that starts, between that decision and
-    /// the `Cancel` reaching the daemon makes it stop the peer's turn.
+    /// When the tracker names the running run, the daemon gets
+    /// `cancel_turn{run_id}`, which stops only that run: a peer's turn that
+    /// starts after this decision is left alone. Without a run id (this
+    /// editor's prompt has not reported running yet) it gets the plain
+    /// `cancel`.
     ///
     /// What to cancel is settled here, before the caller reads its next
     /// message; the daemon round trips run on the returned task, so the read
@@ -189,16 +247,31 @@ impl AcpRuntime {
             }
             v2.pending_ids()
         };
-        let mut cancel_turn = v2.tracker().has_cancellable_turn();
+        let (mut cancel_turn, run_id) = {
+            let tracker = v2.tracker();
+            let active = tracker.is_active();
+            (
+                tracker.has_cancellable_turn(),
+                active.then(|| tracker.run_id.clone()).flatten(),
+            )
+        };
         let runtime = self.clone();
         Some(tokio::spawn(async move {
+            let mut untargeted = false;
             for daemon_id in pending {
                 let withdrawn = runtime.withdraw_v2_prompt(&session, &v2, daemon_id).await;
-                cancel_turn |= withdrawn == Withdrawal::AlreadyInserted { open: true };
+                untargeted |= withdrawn == Withdrawal::AlreadyInserted { open: true };
             }
+            cancel_turn |= untargeted;
             if cancel_turn {
                 let cancel_id = session.next_id();
-                let _ = session.send(&Request::Cancel { id: cancel_id }).await;
+                let request = match run_id {
+                    // A withdrawal raced its own insertion: that turn may not
+                    // be the tracked run, so cancel whatever runs.
+                    Some(run_id) if !untargeted => Request::CancelTurn { id: cancel_id, run_id },
+                    _ => Request::Cancel { id: cancel_id },
+                };
+                let _ = session.send(&request).await;
                 runtime.withdraw_session_calls(&session.session_id).await;
             }
         }))

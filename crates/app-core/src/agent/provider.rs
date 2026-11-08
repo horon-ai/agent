@@ -71,7 +71,7 @@ impl Agent {
                     && message.content.iter().any(|block| {
                         matches!(block, ContentBlock::Text { text, .. }
                     if !text.trim().is_empty() && !text.starts_with("[System reminder:"))
-                            || matches!(block, ContentBlock::Image { .. })
+                            || matches!(block, ContentBlock::Image { .. } | ContentBlock::Audio { .. })
                     })
             })
             .map(|message| message.id.clone())

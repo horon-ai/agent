@@ -42,6 +42,7 @@ fn format_content_block_for_relevance(block: &crate::message::ContentBlock) -> O
         | crate::message::ContentBlock::ToolReference { .. }
         | crate::message::ContentBlock::ProviderNative { .. } => None,
         crate::message::ContentBlock::Image { .. } => Some("[Image]".to_string()),
+        crate::message::ContentBlock::Audio { .. } => Some("[audio]".to_string()),
         crate::message::ContentBlock::OpenAICompaction { .. } => Some("[OpenAI native compaction]".to_string()),
     }
 }
@@ -77,6 +78,7 @@ fn format_content_block_for_extraction(block: &crate::message::ContentBlock) -> 
         | crate::message::ContentBlock::ToolReference { .. }
         | crate::message::ContentBlock::ProviderNative { .. } => None,
         crate::message::ContentBlock::Image { .. } => Some("[Image]".to_string()),
+        crate::message::ContentBlock::Audio { .. } => Some("[audio]".to_string()),
         crate::message::ContentBlock::OpenAICompaction { .. } => Some("[OpenAI native compaction]".to_string()),
     }
 }
@@ -196,6 +198,7 @@ pub fn focus_query_text(raw: &str) -> String {
             || trimmed.starts_with("[Tool error:")
             || trimmed.starts_with("[Result:")
             || trimmed.starts_with("[Image]")
+            || trimmed.starts_with("[audio]")
             || trimmed.starts_with("[OpenAI native compaction]")
         {
             continue;
