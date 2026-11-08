@@ -756,5 +756,54 @@ class ToolListTests(unittest.TestCase):
         self.assertEqual(bench.normalize_tools(["jcode", "horon"]), ["horon", "jcode"])
 
 
+class MissingToolWarningTests(unittest.TestCase):
+    REPORT = {
+        "results": [],
+        "skipped": [
+            {"name": "syscalls", "reason": "strace not available"},
+            {"name": "omp", "reason": "install failed: bun is required"},
+        ],
+    }
+
+    def test_feature_skip_is_not_a_missing_tool(self) -> None:
+        self.assertEqual([s["name"] for s in bench.missing_tools(self.REPORT)], ["omp"])
+        self.assertEqual(bench.missing_tools({"skipped": [{"name": "syscalls", "reason": "x"}]}), [])
+
+    def test_markdown_warns_before_the_tables(self) -> None:
+        markdown = bench.render_markdown(bc.build_report("compare", [], self.REPORT["skipped"], "t"), [1], 1)
+        warning = next(line for line in markdown.splitlines() if line.startswith("> **Warning"))
+        self.assertIn("1 tool(s) were not measured", warning)
+        self.assertIn("omp (install failed: bun is required)", warning)
+        self.assertNotIn("syscalls", warning)
+
+    def test_ci_run_gets_an_annotation_and_a_summary_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                bench.announce_missing_tools(
+                    bench.missing_tools(self.REPORT),
+                    {"GITHUB_ACTIONS": "true", "GITHUB_STEP_SUMMARY": str(summary)},
+                )
+            self.assertEqual(
+                out.getvalue().strip(),
+                "::warning title=compare: omp not measured::omp: install failed: bun is required",
+            )
+            self.assertIn("`omp`: install failed: bun is required", summary.read_text())
+
+    def test_nothing_is_announced_outside_ci_or_without_missing_tools(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bench.announce_missing_tools(bench.missing_tools(self.REPORT), {})
+            bench.announce_missing_tools([], {"GITHUB_ACTIONS": "true"})
+        self.assertEqual(out.getvalue(), "")
+
+    def test_annotation_text_cannot_start_a_new_command(self) -> None:
+        line = bench.github_warnings([{"name": "x", "reason": "a\n::error::b 100%"}])[0]
+        self.assertNotIn("\n", line)
+        self.assertIn("a%0A::error::b 100%25", line)
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2258,6 +2258,13 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
         lines.append("")
 
     skipped = report.get("skipped") or []
+    missing = missing_tools(report)
+    if missing:
+        lines.append(
+            f"> **Warning: {len(missing)} tool(s) were not measured**, so this report is "
+            "missing rows: " + ", ".join(f"{s['name']} ({s['reason']})" for s in missing)
+        )
+        lines.append("")
     if skipped:
         lines.append("Skipped: " + ", ".join(f"{s['name']} ({s['reason']})" for s in skipped))
         lines.append("")
@@ -2397,6 +2404,47 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     return "\n".join(lines)
 
 
+# Skip entries that name a measurement feature rather than a tool row.
+NON_TOOL_SKIPS = frozenset({"syscalls"})
+
+
+def missing_tools(report: dict) -> list[dict]:
+    """Skipped entries that are tools, in report order."""
+    return [s for s in report.get("skipped") or [] if s.get("name") not in NON_TOOL_SKIPS]
+
+
+def _annotation_escape(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def github_warnings(missing: list[dict]) -> list[str]:
+    """One GitHub Actions `::warning::` command per tool that was not measured."""
+    return [
+        f"::warning title=compare: {_annotation_escape(s['name'])} not measured::"
+        f"{_annotation_escape(s['name'])}: {_annotation_escape(s['reason'])}"
+        for s in missing
+    ]
+
+
+def announce_missing_tools(missing: list[dict], env: dict) -> None:
+    """Make a missing tool loud on a CI run: an annotation and a step-summary line.
+
+    The report already names the reason, but a report nobody opens hides a
+    dropped competitor; the run page shows annotations without a download.
+    """
+    if not missing or env.get("GITHUB_ACTIONS") != "true":
+        return
+    for line in github_warnings(missing):
+        print(line, flush=True)
+    summary = env.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(f"### compare: {len(missing)} tool(s) not measured\n\n")
+            for s in missing:
+                handle.write(f"- `{s['name']}`: {s['reason']}\n")
+            handle.write("\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     overrides = parse_bin_overrides(args.bin)
@@ -2466,6 +2514,7 @@ def main(argv: list[str] | None = None) -> int:
         bc.eprint(f"[bench_compare] wrote {args.markdown_out}")
     if not args.json_out and not args.markdown_out:
         print(markdown)
+    announce_missing_tools(missing_tools(report), os.environ)
     return 0
 
 
