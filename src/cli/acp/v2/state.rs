@@ -137,6 +137,7 @@ impl Drop for UserActionGuard {
 #[derive(Clone)]
 pub(crate) struct UserActions {
     control: mpsc::UnboundedSender<Control>,
+    ask_tool_calls: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 impl UserActions {
@@ -146,6 +147,24 @@ impl UserActions {
         UserActionGuard {
             control: self.control.clone(),
         }
+    }
+
+    /// IS-6: the `ask` tool call that asks question `request_id`. The daemon
+    /// sends it just before the question on the same ordered channel.
+    pub(crate) fn note_ask_tool_call(&self, request_id: String, tool_call_id: String) {
+        self.ask_tool_calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(request_id, tool_call_id);
+    }
+
+    /// The tool call id noted for question `request_id`, taken once; `None`
+    /// when the daemon named none before asking.
+    pub(crate) fn take_ask_tool_call(&self, request_id: &str) -> Option<String> {
+        self.ask_tool_calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(request_id)
     }
 }
 
@@ -157,6 +176,8 @@ pub(crate) struct V2Session {
     background: StdMutex<BackgroundSet>,
     /// IS-12: prompts of this connection waiting for the session's next prompt.
     held: StdMutex<HeldQueue>,
+    /// IS-6: question request id to the `ask` tool call asking it.
+    ask_tool_calls: Arc<StdMutex<HashMap<String, String>>>,
     pending: StdMutex<HashMap<u64, PendingPrompt>>,
     /// `withdraw_message` requests by request id, answered by the stream task.
     withdraws: StdMutex<HashMap<u64, WithdrawWaiter>>,
@@ -199,6 +220,7 @@ impl V2Session {
             tracker: StdMutex::default(),
             background: StdMutex::default(),
             held: StdMutex::default(),
+            ask_tool_calls: Arc::default(),
             pending: StdMutex::default(),
             withdraws: StdMutex::default(),
             submit_gate: Mutex::new(()),
@@ -230,6 +252,7 @@ impl V2Session {
     pub(crate) fn user_actions(&self) -> UserActions {
         UserActions {
             control: self.control.clone(),
+            ask_tool_calls: Arc::clone(&self.ask_tool_calls),
         }
     }
 

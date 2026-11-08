@@ -18,10 +18,16 @@ pub(super) fn needs_client_round_trip(event: &ServerEvent) -> bool {
 }
 
 /// Events that always go to the side channel, never to a prompt stream: the
-/// client round trips, and permission withdrawals, which close a client call
-/// the side channel owns.
+/// client round trips, permission withdrawals, which close a client call the
+/// side channel owns, and the tool call id of a coming question, which the
+/// side channel must hold before that question's `ask_requested` arrives on
+/// the same ordered channel.
 pub(super) fn bypasses_prompt_stream(event: &ServerEvent) -> bool {
-    needs_client_round_trip(event) || matches!(event, ServerEvent::ToolPermissionResolved { .. })
+    needs_client_round_trip(event)
+        || matches!(
+            event,
+            ServerEvent::ToolPermissionResolved { .. } | ServerEvent::AskToolCall { .. }
+        )
 }
 
 /// Events the side channel receives when no prompt is running. While a prompt

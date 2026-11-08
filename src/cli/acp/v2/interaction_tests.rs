@@ -609,3 +609,190 @@ async fn auth_login_and_logout_flow() {
     assert_eq!(response["result"], json!({"messageId":"m1"}), "{response}");
     client.close_stdin().await;
 }
+
+fn prompt_with(id: Value, blocks: Value) -> Value {
+    request(id, "session/prompt", json!({"sessionId": SID, "prompt": blocks}))
+}
+
+/// IS-6: v2 advertises `audio`, takes a wav block as a daemon audio attachment
+/// and refuses an audio format the endpoint cannot take before insertion.
+#[tokio::test]
+async fn audio_prompt_v2_reaches_daemon_and_other_formats_are_invalid() {
+    let (mut client, initialized) = v2_client_with(json!({})).await;
+    assert_eq!(
+        initialized["capabilities"]["session"]["prompt"]["audio"],
+        json!({}),
+        "{initialized}"
+    );
+    let (_session, mut daemon) = attach_v2(&client).await;
+
+    client
+        .send(prompt_with(
+            json!(1),
+            json!([{"type":"audio","mimeType":"audio/wav","data":"AAAA"},{"type":"text","text":"hi"}]),
+        ))
+        .await;
+    let message = daemon.recv_type("message").await;
+    assert_eq!(message["images"], json!([["audio/wav", "AAAA"]]), "{message}");
+    assert_eq!(message["content"], "hi", "{message}");
+    daemon
+        .emit(json!({"type":"user_message_inserted","id":message["id"],"message_id":"m1"}))
+        .await;
+    let (_, response) = client.recv_response(json!(1)).await;
+    assert_eq!(response["result"], json!({"messageId":"m1"}), "{response}");
+    // The turn ends, so the next prompt is not held behind it.
+    for running in [true, false] {
+        daemon
+            .emit(
+                json!({"type":"foreground_state","session_id":SID,"running":running,"run_id":"r1",
+                "start_message_id":"m1","stop_reason":"end_turn"}),
+            )
+            .await;
+    }
+
+    client
+        .send(prompt_with(
+            json!(2),
+            json!([{"type":"audio","mimeType":"audio/mp3","data":"BBBB"}]),
+        ))
+        .await;
+    let message = daemon.recv_type("message").await;
+    assert_eq!(message["images"], json!([["audio/mpeg", "BBBB"]]), "{message}");
+    daemon
+        .emit(json!({"type":"user_message_inserted","id":message["id"],"message_id":"m2"}))
+        .await;
+    client.recv_response(json!(2)).await;
+
+    client
+        .send(prompt_with(
+            json!(3),
+            json!([{"type":"audio","mimeType":"audio/ogg","data":"CCCC"}]),
+        ))
+        .await;
+    let (_, response) = client.recv_response(json!(3)).await;
+    assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), daemon.recv_type("message"))
+            .await
+            .is_err(),
+        "an unsupported audio format never reaches the daemon"
+    );
+    client.close_stdin().await;
+}
+
+/// IS-6: the daemon's `ask_tool_call` ties the following question to its `ask`
+/// call; a question the daemon named no call for goes without `toolCallId`.
+#[tokio::test]
+async fn elicitation_v2_names_the_ask_tool_call() {
+    let (mut client, _) = v2_client_with(json!({"elicitation":{"form":{}}})).await;
+    let (_session, mut daemon) = attach_v2(&client).await;
+    for (request_id, tool_call_id) in [("ask-1", Some("call-q")), ("ask-2", None)] {
+        if let Some(tool_call_id) = tool_call_id {
+            daemon
+                .emit(json!({"type":"ask_tool_call","request_id":request_id,"tool_call_id":tool_call_id}))
+                .await;
+        }
+        daemon.emit(ask_requested(request_id)).await;
+        let request = loop {
+            let line = client.recv().await;
+            if line["method"] == "elicitation/create" {
+                break line;
+            }
+        };
+        assert_matches("CreateElicitationRequest", &request["params"]);
+        assert_eq!(
+            request["params"].get("toolCallId"),
+            tool_call_id.map(|id| json!(id)).as_ref(),
+            "{request}"
+        );
+        client.send(answered(&request["id"], json!({"action":"cancel"}))).await;
+        let answer = daemon.recv_type("ask_response").await;
+        assert_eq!(answer["request_id"], request_id, "{answer}");
+        daemon.emit(json!({"type":"ack","id":answer["id"]})).await;
+    }
+    client.close_stdin().await;
+}
+
+/// IS-6: a soft interrupt the daemon stored mid-turn is reported as its own
+/// `user_message` under the stored row id.
+#[tokio::test]
+async fn soft_interrupt_v2_is_a_user_message() {
+    let mut client = v2_client().await;
+    let (_session, mut daemon) = attach_v2(&client).await;
+    daemon
+        .emit(
+            json!({"type":"foreground_state","session_id":SID,"running":true,"run_id":"r1",
+            "start_message_id":"peer-1"}),
+        )
+        .await;
+    daemon
+        .emit(json!({"type":"soft_interrupt_stored","message_id":"row-7","content":"also check tests"}))
+        .await;
+    let lines = daemon_barrier(&mut client, &mut daemon, "interrupt").await;
+    let user = lines
+        .iter()
+        .map(|line| &line["params"]["update"])
+        .find(|update| update["sessionUpdate"] == "user_message")
+        .unwrap_or_else(|| panic!("no user_message: {lines:?}"));
+    assert_update_matches(user);
+    assert_eq!(
+        user,
+        &json!({"sessionUpdate":"user_message","messageId":"row-7",
+            "content":[{"type":"text","text":"also check tests"}]}),
+    );
+    client.close_stdin().await;
+}
+
+/// IS-6: `session/cancel` names the run it saw, so a peer turn that starts
+/// before the daemon reads it is not stopped.
+#[tokio::test]
+async fn session_cancel_v2_targets_the_tracked_run() {
+    let mut client = v2_client().await;
+    let (_session, mut daemon) = attach_v2(&client).await;
+    daemon
+        .emit(
+            json!({"type":"foreground_state","session_id":SID,"running":true,"run_id":"run-9",
+            "start_message_id":"peer-1"}),
+        )
+        .await;
+    daemon_barrier(&mut client, &mut daemon, "running").await;
+    client
+        .send(json!({"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":SID}}))
+        .await;
+    let cancel = daemon.recv().await;
+    assert_eq!(cancel["type"], "cancel_turn", "{cancel}");
+    assert_eq!(cancel["run_id"], "run-9", "{cancel}");
+    client.close_stdin().await;
+}
+
+/// IS-6: `usage_update` keeps its place among the turn's updates: written
+/// where the daemon reported it, between the chunks around it and before the
+/// idle state.
+#[tokio::test]
+async fn usage_update_keeps_daemon_order() {
+    let mut client = v2_client().await;
+    let (_session, mut daemon) = attach_v2(&client).await;
+    for event in [
+        json!({"type":"foreground_state","session_id":SID,"running":true,"run_id":"r1","start_message_id":"peer-1"}),
+        json!({"type":"text_delta","text":"before "}),
+        json!({"type":"tokens","input":120,"output":4}),
+        json!({"type":"text_delta","text":"after"}),
+        json!({"type":"foreground_state","session_id":SID,"running":false,"run_id":"r1",
+            "start_message_id":"peer-1","stop_reason":"end_turn"}),
+    ] {
+        daemon.emit(event).await;
+    }
+    let lines = daemon_barrier(&mut client, &mut daemon, "usage").await;
+    assert_eq!(
+        kinds(&lines),
+        [
+            "state_update:running",
+            "agent_message_chunk",
+            "usage_update",
+            "agent_message_chunk",
+            "state_update:idle"
+        ],
+        "{lines:?}"
+    );
+    client.close_stdin().await;
+}

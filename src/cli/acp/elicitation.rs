@@ -135,8 +135,17 @@ pub(super) fn answers_from_elicitation(
 
 impl AcpSideChannel {
     pub(super) async fn elicit(&self, request_id: String, questions: Vec<AskQuestion>) {
+        // IS-6: a v2 question names the `ask` tool call that asks it when the
+        // daemon reported one first; v1 parameters never change.
+        let tool_call_id = self
+            .user_actions
+            .as_ref()
+            .and_then(|user_actions| user_actions.take_ask_tool_call(&request_id));
         let answers = if !questions.is_empty() && supports_elicitation_form(&self.client_capabilities()) {
-            let params = elicitation_params(&self.session_id, &questions);
+            let mut params = elicitation_params(&self.session_id, &questions);
+            if let Some(tool_call_id) = tool_call_id {
+                params["toolCallId"] = json!(tool_call_id);
+            }
             let waiting = self.user_actions.as_ref().map(v2::state::UserActions::begin);
             let result = self.call_tracked(&request_id, "elicitation/create", params).await;
             drop(waiting);

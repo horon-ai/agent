@@ -9,7 +9,7 @@
 //! -32800. After insertion it is never answered with an error; how its turn
 //! ends is the idle `state_update`.
 
-use super::super::prompt::{PromptRunGuard, prompt_from_params};
+use super::super::prompt::{PromptRunGuard, parse_prompt};
 use super::super::*;
 use super::held::Hold;
 use super::state::{Control, PendingPrompt, V2Session, Withdrawal};
@@ -55,7 +55,7 @@ impl AcpRuntime {
             Ok(session_id) => session_id,
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
-        let (text, images) = match prompt_from_params(&message.params) {
+        let (text, images) = match parse_prompt(&message.params, true) {
             Ok(prompt) => prompt,
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
@@ -223,15 +223,17 @@ impl AcpRuntime {
     }
 
     /// `session/cancel` on v2: withdraw the session's prompts that are not
-    /// inserted yet, then send one daemon `Cancel` when foreground work is
-    /// reported, an inserted prompt of this editor has not reported its end,
-    /// or a withdrawal found its prompt already inserted while that prompt's
-    /// turn was still open in daemon order. A prompt that is still queued is
-    /// only ever withdrawn. The idle `cancelled` comes from the daemon.
+    /// inserted yet, then cancel the turn when foreground work is reported, an
+    /// inserted prompt of this editor has not reported its end, or a withdrawal
+    /// found its prompt already inserted while that prompt's turn was still
+    /// open in daemon order. A prompt that is still queued is only ever
+    /// withdrawn. The idle `cancelled` comes from the daemon.
     ///
-    /// Known limit: the daemon `Cancel` names no turn, so a turn of ours that
-    /// ends, followed by a peer turn that starts, between that decision and
-    /// the `Cancel` reaching the daemon makes it stop the peer's turn.
+    /// When the tracker names the running run, the daemon gets
+    /// `cancel_turn{run_id}`, which stops only that run: a peer's turn that
+    /// starts after this decision is left alone. Without a run id (this
+    /// editor's prompt has not reported running yet) it gets the plain
+    /// `cancel`.
     ///
     /// What to cancel is settled here, before the caller reads its next
     /// message; the daemon round trips run on the returned task, so the read
@@ -245,16 +247,31 @@ impl AcpRuntime {
             }
             v2.pending_ids()
         };
-        let mut cancel_turn = v2.tracker().has_cancellable_turn();
+        let (mut cancel_turn, run_id) = {
+            let tracker = v2.tracker();
+            let active = tracker.is_active();
+            (
+                tracker.has_cancellable_turn(),
+                active.then(|| tracker.run_id.clone()).flatten(),
+            )
+        };
         let runtime = self.clone();
         Some(tokio::spawn(async move {
+            let mut untargeted = false;
             for daemon_id in pending {
                 let withdrawn = runtime.withdraw_v2_prompt(&session, &v2, daemon_id).await;
-                cancel_turn |= withdrawn == Withdrawal::AlreadyInserted { open: true };
+                untargeted |= withdrawn == Withdrawal::AlreadyInserted { open: true };
             }
+            cancel_turn |= untargeted;
             if cancel_turn {
                 let cancel_id = session.next_id();
-                let _ = session.send(&Request::Cancel { id: cancel_id }).await;
+                let request = match run_id {
+                    // A withdrawal raced its own insertion: that turn may not
+                    // be the tracked run, so cancel whatever runs.
+                    Some(run_id) if !untargeted => Request::CancelTurn { id: cancel_id, run_id },
+                    _ => Request::Cancel { id: cancel_id },
+                };
+                let _ = session.send(&request).await;
                 runtime.withdraw_session_calls(&session.session_id).await;
             }
         }))
