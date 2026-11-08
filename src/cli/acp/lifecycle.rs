@@ -493,11 +493,13 @@ impl AcpRuntime {
             Vec::new()
         };
         updates.extend(self.session_info_update(&session_id).await);
+        let background = self.background_work(&session).await;
         let resumed = Resumed {
             updates,
             snapshot: attached.snapshot,
             position: v2::replay::resume_position(&attached.messages),
             leftovers: attached.leftovers,
+            background,
         };
         self.synchronize_resumed(&session, resumed).await;
         let mut result = json!({});

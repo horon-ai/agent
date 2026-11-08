@@ -225,6 +225,8 @@ fn tool_update(call: &crate::message::ToolCall, output: &str, cwd: &Path) -> Val
         locations,
         raw_input,
         raw_output: None,
+        // A stored call is already over: it advertises no client controls.
+        capabilities: None,
     };
     tool_call_update(&call.id, &patch)
 }
