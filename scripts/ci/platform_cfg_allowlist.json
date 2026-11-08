@@ -144,6 +144,10 @@
       "count": 5,
       "reason": "hook-gate tests write chmod'd POSIX shell scripts."
     },
+    "crates/app-core/src/tool/write_shebang.rs": {
+      "count": 6,
+      "reason": "the execute bit `write` grants a newly created shebang file: mode arithmetic and `PermissionsExt` exist only on Unix, and Windows keeps the file exactly as written, so the Unix implementation, its no-op counterpart and their test modules are the whole OS split."
+    },
     "crates/base/src/background/tests/finalize.rs": {
       "count": 1,
       "reason": "one `#[cfg(unix)]` test that makes the status directory read-only through Unix mode bits (`PermissionsExt`) to prove a failed status write still finalizes the task once; a Windows read-only attribute does not stop files being created in a directory, so the failure cannot be produced there."
