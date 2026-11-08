@@ -124,6 +124,10 @@
       "count": 15,
       "reason": "hook tests write and execute POSIX shell scripts; hook execution is script-based by design, not an adapter primitive."
     },
+    "crates/app-core/src/tool/read_skill_tests.rs": {
+      "count": 1,
+      "reason": "one test points a skill file symlink outside the skill directory to prove the skill:// reader refuses it, which needs std::os::unix::fs::symlink."
+    },
     "crates/app-core/src/tool/session_mcp_tests.rs": {
       "count": 2,
       "reason": "FIFO-based stub fixtures (mkfifo); Windows has no FIFO."
