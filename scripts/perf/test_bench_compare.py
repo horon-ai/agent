@@ -659,6 +659,9 @@ class ToolEnvIsolationTests(unittest.TestCase):
         "OMO_CODING_AGENT_DIR": "/leak",
         "OMO_PACKAGE_DIR": "/leak",
         "OMO_PLUGIN_ROOT": "/leak",
+        "OMO_DEBUG": "1",
+        # Without this scrub omo opts back into telemetry even under automation.
+        "OMO_TELEMETRY_ALLOW_AUTOMATION": "1",
         "SENPI_CODING_AGENT_DIR": "/leak",
         "PI_CODING_AGENT_DIR": "/leak",
         "PI_CONFIG_DIR": "/leak",
