@@ -148,8 +148,8 @@ impl AcpRuntime {
     }
 }
 
-/// The daemon's verdict on a `cancel_tool_call`.
-async fn wait_for_cancel_result(reply: &mut EventStream, request_id: u64) -> Result<bool> {
+/// The daemon's verdict on a `cancel_tool_call` or `cancel_background_terminal`.
+pub(super) async fn wait_for_cancel_result(reply: &mut EventStream, request_id: u64) -> Result<bool> {
     loop {
         match reply.next().await? {
             ServerEvent::ToolCallCancelResult { id, accepted, .. } if id == request_id => return Ok(accepted),

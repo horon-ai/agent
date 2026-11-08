@@ -22,6 +22,8 @@
 //! frame's `/id` finding is counted as `null_id_error_answers` and every
 //! other check still runs on it.
 
+#[path = "support/acp_background_scenarios.rs"]
+mod acp_background_scenarios;
 #[path = "support/acp_client.rs"]
 mod acp_client;
 #[path = "support/acp_credentials.rs"]
@@ -1023,7 +1025,7 @@ fn is5_foreground_state() {
     let idle = line_index(&lines, "the idle cancelled update", |frame| {
         frame["params"]["sessionId"] == session.as_str()
             && frame["params"]["update"]
-                == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled"})
+                == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled", "background": []})
     });
     let closed = line_index(&lines, "the close response", |frame| is_response_to(frame, &close));
     assert!(
@@ -1193,7 +1195,7 @@ fn is5_cancelled_turn_idles_before_the_queued_peer_turn() {
     let cancelled = updates
         .iter()
         .position(|update| {
-            *update == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled"})
+            *update == json!({"sessionUpdate": "state_update", "state": "idle", "stopReason": "cancelled", "background": []})
         })
         .unwrap_or_else(|| panic!("no idle cancelled in {updates:?}"));
     let peer_running = updates

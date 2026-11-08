@@ -294,7 +294,7 @@ async fn post_insert_failure_is_idle_error() {
         assert_eq!(
             last,
             &json!({"sessionUpdate":"state_update","state":"idle","stopReason":"error",
-                "error":{"code":code,"message":failure}})
+                "error":{"code":code,"message":failure},"background":[]})
         );
     }
     client.close_stdin().await;
@@ -786,7 +786,7 @@ async fn late_peer_idle_does_not_end_the_own_run() {
     let own = updates(&lines);
     assert_eq!(
         own[1],
-        &json!({"sessionUpdate":"state_update","state":"idle"}),
+        &json!({"sessionUpdate":"state_update","state":"idle","background":[]}),
         "the superseded peer run ends without a stop reason it does not know"
     );
     let own_agent = super::shapes::message_ids("m1").agent();
@@ -848,7 +848,7 @@ async fn close_bound_synthesizes_idle_and_drops_late_events() {
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
         updates(&before),
-        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"})],
+        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled","background":[]})],
         "{before:?}"
     );
 
@@ -931,7 +931,7 @@ async fn close_cancels_prompt_accepted_before_running() {
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
         updates(&before),
-        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"})],
+        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled","background":[]})],
         "the accepted turn reports its end before the close answer: {before:?}"
     );
 
@@ -963,7 +963,7 @@ async fn close_waits_for_daemon_idle_of_prompt_accepted_before_running() {
     assert_eq!(response["result"], json!({}), "{response}");
     assert_eq!(
         updates(&before),
-        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"})],
+        [&json!({"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled","background":[]})],
         "{before:?}"
     );
     client.close_stdin().await;
