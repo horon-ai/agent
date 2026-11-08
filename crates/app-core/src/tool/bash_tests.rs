@@ -362,7 +362,10 @@ fn make_ctx(stdin_tx: Option<mpsc::UnboundedSender<StdinInputRequest>>) -> ToolC
     }
 }
 
+/// A context for an unattended turn in a serving daemon, the only process
+/// whose bash commands take the detached reload-persistable path.
 fn make_agent_ctx(signal: horon_agent_agent_runtime::InterruptSignal) -> ToolContext {
+    crate::server::mark_process_reloads_in_place();
     ToolContext {
         session_id: "test-session".to_string(),
         message_id: "test-msg".to_string(),

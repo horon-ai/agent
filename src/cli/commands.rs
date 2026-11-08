@@ -1066,7 +1066,10 @@ async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
             );
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // A registry lookup is cheap, and a server usually registers within tens
+        // of milliseconds, so a short interval keeps the turn from starting up to
+        // a full interval after the tools are already there.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
 
