@@ -14,6 +14,12 @@ Measured:
                     sessions x K turns, plus the server's own thread and
                     descriptor counts after the turns; "first session" and
                     "each additional session" (least-squares slope)
+  skill             one headless prompt that loads and uses the fixture skill
+                    (``fixtures/bench_skill``), with the route each agent takes
+                    and whether the fixture sentinel came back
+  mcp               one headless prompt that starts the fixture stdio MCP server
+                    (``fixtures/bench_mcp_server.py``) and calls ``bench_echo``
+                    once, with the time to the first request that lists the tool
   fsync_calls       fsync + fdatasync calls made by one one-shot run, counted
                     with strace (``--syscalls``; Linux only, recorded as
                     skipped when strace is missing)
@@ -25,10 +31,16 @@ A second build of horon is a row too: `--bin horon-base=<path>` measures it with
 the same runner right after the candidate, so a before/after pair is produced on
 one machine, one mock server, and one load level instead of two runs.
 
+``--scenarios`` picks the phases (default ``oneshot,sessions,skill,mcp``); a
+subset really does skip the rest, which is how a skill-only or MCP-only run is
+measured.
+
 Usage:
     python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent \
         --bin horon-base=./baseline/target/release/horon-agent \
         --sessions 1 10 100 --turns 3 --json-out out.json --markdown-out out.md
+    python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent \
+        --scenarios skill,mcp --json-out skill-mcp.json
 
 Missing tools are listed under "skipped" with a reason and do not fail the run.
 A measurement that fails records null plus an error string instead of a zero.
@@ -56,6 +68,8 @@ import bench_common as bc  # noqa: E402
 
 SUITE = "compare"
 DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi", "omp", "omo"]
+DEFAULT_SCENARIOS = ["oneshot", "sessions", "skill", "mcp"]
+SCENARIO_NAMES = ("oneshot", "sessions", "skill", "mcp")
 TURN_PROMPT = "List the files in the current directory, then reply with mock-ok."
 SESSION_TURNS = [
     "List the files in the current directory.",
@@ -64,6 +78,69 @@ SESSION_TURNS = [
     "Show the directory listing.",
     "Run ls again.",
 ]
+
+# Scenario prompts. The mock model picks its plan from the leading marker, so the
+# scenario never depends on the agent's wording. The skill prompt names the
+# fixture's absolute path because the agents that have no skill tool (pi, omp,
+# omo, codex) open the file with their own read or shell tool.
+SKILL_MARKER = "[bench:skill]"
+MCP_MARKER = "[bench:mcp]"
+SKILL_NAME = "bench-skill"
+MCP_SERVER_NAME = "bench"
+MCP_TOOL_NAME = "bench_echo"
+FIXTURES = Path(__file__).resolve().with_name("fixtures")
+SKILL_FIXTURE = FIXTURES / "bench_skill" / "SKILL.md"
+MCP_FIXTURE = FIXTURES / "bench_mcp_server.py"
+
+
+def skill_prompt(skill_md_path: str) -> str:
+    return f"{SKILL_MARKER} Use the {SKILL_NAME} skill from {skill_md_path} and then reply with mock-ok."
+
+
+def mcp_prompt() -> str:
+    return f"{MCP_MARKER} Call the {MCP_TOOL_NAME} tool once, then reply with mock-ok."
+
+
+def install_skill(skill_root: str) -> str:
+    """Copy the fixture skill under ``skill_root`` and return the SKILL.md path."""
+    target_dir = os.path.join(skill_root, SKILL_NAME)
+    os.makedirs(target_dir, exist_ok=True)
+    target = os.path.join(target_dir, "SKILL.md")
+    shutil.copyfile(SKILL_FIXTURE, target)
+    return target
+
+
+def mcp_server_entry() -> dict:
+    """One stdio server entry every agent's config format can hold.
+
+    The interpreter running this script is used instead of a bare ``python3``:
+    it is the same interpreter on every OS, including the Windows runners.
+    """
+    return {"command": sys.executable, "args": [str(MCP_FIXTURE)]}
+
+
+def write_mcp_servers(path: str, servers: dict, wrapper: str = "servers") -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({wrapper: servers}, fh, indent=2)
+
+
+def mcp_servers() -> dict:
+    return {MCP_SERVER_NAME: mcp_server_entry()}
+
+
+def write_codex_mcp_config(path: str, servers: dict) -> None:
+    """Codex reads stdio servers from ``[mcp_servers.<name>]`` in config.toml."""
+    lines: list[str] = []
+    for name, entry in servers.items():
+        lines.append(f"[mcp_servers.{name}]")
+        lines.append(f"command = {json.dumps(entry['command'])}")
+        args = ", ".join(json.dumps(arg) for arg in entry.get("args") or [])
+        lines.append(f"args = [{args}]")
+        lines.append("")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -247,8 +324,7 @@ context_window = 128000
 
 
 def horon_env(root: str, binary: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "HORON_AGENT"))
+    env = isolated_tool_env(root, "HORON_AGENT")
     env["HORON_AGENT_SOCKET"] = os.path.join(root, "run", "horon-agent.sock")
     env["HORON_AGENT_RUN_MCP"] = "0"
     env["HORON_AGENT_RUN_AUTO_POKE"] = "0"
@@ -260,7 +336,7 @@ def horon_env(root: str, binary: str) -> dict:
     return env
 
 
-def horon_oneshot_argv(binary: str) -> list[str]:
+def horon_turn_argv(binary: str, prompt: str, tools: str = "bash") -> list[str]:
     return [
         binary,
         "--no-update",
@@ -271,14 +347,17 @@ def horon_oneshot_argv(binary: str) -> list[str]:
         "--model",
         "mock-model",
         "--tools",
-        "bash",
-        TURN_PROMPT,
+        tools,
+        prompt,
     ]
 
 
+def horon_oneshot_argv(binary: str) -> list[str]:
+    return horon_turn_argv(binary, TURN_PROMPT)
+
+
 def jcode_env(root: str, binary: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "JCODE"))
+    env = isolated_tool_env(root, "JCODE")
     env["JCODE_NO_TELEMETRY"] = "1"
     env["JCODE_DEBUG_CONTROL"] = "1"
     env["JCODE_TEMP_SERVER"] = "1"
@@ -312,8 +391,8 @@ context_window = 128000
         fh.write(config)
 
 
-def jcode_oneshot_argv(binary: str) -> list[str]:
-    return [
+def jcode_oneshot_argv(binary: str, prompt: str = TURN_PROMPT, tools: str | None = "bash") -> list[str]:
+    argv = [
         binary,
         "--no-update",
         "--no-selfdev",
@@ -322,15 +401,15 @@ def jcode_oneshot_argv(binary: str) -> list[str]:
         "mock",
         "--model",
         "mock-model",
-        "--tools",
-        "bash",
-        TURN_PROMPT,
     ]
+    if tools:
+        argv += ["--tools", tools]
+    return argv + [prompt]
 
 
 def claude_env(root: str, base_url: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "CLAUDE"))
+    env = isolated_tool_env(root, "CLAUDE")
+    env["CLAUDE_CONFIG_DIR"] = os.path.join(root, "home", ".claude")
     env["ANTHROPIC_BASE_URL"] = base_url
     env["ANTHROPIC_AUTH_TOKEN"] = "mock-token"
     env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
@@ -343,8 +422,10 @@ def claude_env(root: str, base_url: str) -> dict:
     return env
 
 
-def claude_oneshot_argv(binary: str) -> list[str]:
-    return [
+def claude_oneshot_argv(
+    binary: str, prompt: str = TURN_PROMPT, mcp_config: str | None = None
+) -> list[str]:
+    argv = [
         binary,
         "-p",
         "--model",
@@ -353,8 +434,12 @@ def claude_oneshot_argv(binary: str) -> list[str]:
         "bypassPermissions",
         "--output-format",
         "text",
-        TURN_PROMPT,
     ]
+    if mcp_config:
+        # Only the fixture server: a strict config keeps the user's own servers
+        # out of the measurement and out of the run.
+        argv += ["--mcp-config", mcp_config, "--strict-mcp-config"]
+    return argv + [prompt]
 
 
 def claude_session_argv(binary: str) -> list[str]:
@@ -374,8 +459,7 @@ def claude_session_argv(binary: str) -> list[str]:
 
 
 def codex_env(root: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "CODEX"))
+    env = isolated_tool_env(root, "CODEX")
     env["CODEX_HOME"] = os.path.join(root, "home")
     env["MOCK_PROVIDER_KEY"] = "mock-key"
     env["DISABLE_TELEMETRY"] = "1"
@@ -396,7 +480,7 @@ def codex_provider_args(base_url: str) -> list[str]:
     return [part.replace("__BASE__", f"{base_url}/v1") for part in CODEX_PROVIDER_ARGS]
 
 
-def codex_oneshot_argv(binary: str, base_url: str) -> list[str]:
+def codex_oneshot_argv(binary: str, base_url: str, prompt: str = TURN_PROMPT) -> list[str]:
     return [
         binary,
         "exec",
@@ -408,13 +492,12 @@ def codex_oneshot_argv(binary: str, base_url: str) -> list[str]:
         "-c",
         'approval_policy="never"',
         "--skip-git-repo-check",
-        TURN_PROMPT,
+        prompt,
     ]
 
 
-def opencode_env(root: str, base_url: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "OPENCODE"))
+def opencode_env(root: str, base_url: str, mcp: dict | None = None) -> dict:
+    env = isolated_tool_env(root, "OPENCODE")
     config_dir = os.path.join(root, "config", "opencode")
     os.makedirs(config_dir, exist_ok=True)
     # The built-in `openai` provider accepts a baseURL override, so opencode does
@@ -431,6 +514,8 @@ def opencode_env(root: str, base_url: str) -> dict:
         },
         "model": "openai/mock-model",
     }
+    if mcp:
+        config["mcp"] = mcp
     with open(os.path.join(config_dir, "opencode.json"), "w", encoding="utf-8") as fh:
         json.dump(config, fh, indent=2)
     env["XDG_CONFIG_HOME"] = os.path.join(root, "config")
@@ -443,8 +528,8 @@ def opencode_env(root: str, base_url: str) -> dict:
     return env
 
 
-def opencode_oneshot_argv(binary: str) -> list[str]:
-    return [binary, "run", "-m", "openai/mock-model", TURN_PROMPT]
+def opencode_oneshot_argv(binary: str, prompt: str = TURN_PROMPT) -> list[str]:
+    return [binary, "run", "-m", "openai/mock-model", prompt]
 
 
 def mock_models_config(base_url: str) -> dict:
@@ -478,8 +563,7 @@ def _write_models_json(agent_dir: str, base_url: str) -> None:
 
 
 def pi_env(root: str, base_url: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "PI"))
+    env = isolated_tool_env(root, "PI")
     agent_dir = os.path.join(root, "pi")
     _write_models_json(agent_dir, base_url)
     env["PI_CODING_AGENT_DIR"] = agent_dir
@@ -556,8 +640,8 @@ def omo_env(root: str, base_url: str) -> dict:
     return pi_family_telemetry_env(env)
 
 
-def pi_oneshot_argv(binary: str) -> list[str]:
-    return [binary, "-p", "--no-session", "--provider", "mock", "--model", "mock-model", TURN_PROMPT]
+def pi_oneshot_argv(binary: str, prompt: str = TURN_PROMPT) -> list[str]:
+    return [binary, "-p", "--no-session", "--provider", "mock", "--model", "mock-model", prompt]
 
 
 def pi_session_argv(binary: str) -> list[str]:
@@ -573,7 +657,7 @@ def pi_session_argv(binary: str) -> list[str]:
     ]
 
 
-def omp_oneshot_argv(binary: str) -> list[str]:
+def omp_oneshot_argv(binary: str, prompt: str = TURN_PROMPT) -> list[str]:
     # --no-title keeps a session-title request (one extra model call) out of the
     # measurement, and --no-lsp stops a language-server download attempt.
     return [
@@ -584,7 +668,7 @@ def omp_oneshot_argv(binary: str) -> list[str]:
         "--model",
         "mock/mock-model",
         "--no-lsp",
-        TURN_PROMPT,
+        prompt,
     ]
 
 
@@ -601,7 +685,7 @@ def omp_session_argv(binary: str) -> list[str]:
     ]
 
 
-def omo_oneshot_argv(binary: str) -> list[str]:
+def omo_oneshot_argv(binary: str, prompt: str = TURN_PROMPT, tools: str = "bash,read") -> list[str]:
     # omo's default tool set has no plain shell tool and --tools is a strict
     # allowlist, so `bash` has to be named for the mock model to find it.
     return [
@@ -611,8 +695,8 @@ def omo_oneshot_argv(binary: str) -> list[str]:
         "--model",
         "mock/mock-model",
         "--tools",
-        "bash,read",
-        TURN_PROMPT,
+        tools,
+        prompt,
     ]
 
 
@@ -739,6 +823,7 @@ def _measure_oneshot(
     except Exception:  # noqa: BLE001
         before = 0
     started = time.perf_counter()
+    started_wall = time.time()
     proc = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -762,6 +847,9 @@ def _measure_oneshot(
             stdout, stderr = "", ""
     elapsed_ms = (time.perf_counter() - started) * 1000
     peak = sampler.stop()
+    sentinel_seen = None
+    mcp_ready_ms = None
+    via = None
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -769,6 +857,17 @@ def _measure_oneshot(
             r.get("has_tool_result") for r in requests
         )
         saw_requests = len(requests)
+        # A skill or MCP scenario counts only when the fixture's sentinel came
+        # back; the plain issued/result pair is not enough to prove the body or
+        # the echo reached the model.
+        sentinel_seen = any(r.get("sentinel_seen") for r in requests)
+        exposed = [r["ts"] for r in requests if r.get("bench_echo_exposed")]
+        if exposed and not timed_out:
+            # Seconds from process start to the first request that lists the MCP
+            # tool: server start plus registration, as the model sees it.
+            mcp_ready_ms = round((min(exposed) - started_wall) * 1000, 2)
+        vias = [r.get("via") for r in requests if r.get("via")]
+        via = vias[-1] if vias else None
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -796,6 +895,9 @@ def _measure_oneshot(
         "stdout_tail": (stdout or "").strip()[-300:],
         "fsync_calls": (syscall_counts or {}).get("total"),
         "fsync_breakdown": syscall_counts,
+        "sentinel_seen": sentinel_seen,
+        "mcp_ready_ms": mcp_ready_ms,
+        "via": via,
     }
 
 
@@ -1645,6 +1747,14 @@ class ToolRunner:
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         raise NotImplementedError
 
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        """One headless prompt that loads and uses the fixture skill."""
+        return unsupported(f"{self.label} has no skill-invocation route the harness knows")
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        """One headless prompt that starts the fixture MCP server and calls it."""
+        return unsupported(f"{self.label} has no local stdio MCP support")
+
     def env_for_version(self, root: str) -> dict:
         raise NotImplementedError
 
@@ -1656,10 +1766,14 @@ class HoronRunner(ToolRunner):
     def env_for_version(self, root: str) -> dict:
         return horon_env(root, self.binary)
 
-    def _root(self, root: str, mock: MockServer) -> dict:
+    def _root(self, root: str, mock: MockServer, run_mcp: bool = False) -> dict:
         home = write_horon_config(root, mock.base_url)
         env = horon_env(root, self.binary)
         env["HORON_AGENT_HOME"] = home
+        # The one-shot and session rows keep MCP off so their numbers stay
+        # comparable with docs/performance/RESULTS.md; only the MCP scenario
+        # turns server startup into part of the measurement.
+        env["HORON_AGENT_RUN_MCP"] = "1" if run_mcp else "0"
         return env
 
     def oneshot(
@@ -1667,6 +1781,21 @@ class HoronRunner(ToolRunner):
     ) -> dict:
         env = self._root(root, mock)
         return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
+
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        path = install_skill(os.path.join(cwd, ".horon-agent", "skills"))
+        # MCP is on for both new scenarios; with no server configured it costs
+        # nothing, and the flag is what a real skill turn runs with.
+        env = self._root(root, mock, run_mcp=True)
+        argv = horon_turn_argv(self.binary, skill_prompt(path), "read")
+        return measure_oneshot(argv, cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = self._root(root, mock, run_mcp=True)
+        write_mcp_servers(os.path.join(env["HORON_AGENT_HOME"], "mcp.json"), mcp_servers())
+        tools = f"mcp__{MCP_SERVER_NAME}__{MCP_TOOL_NAME}"
+        argv = horon_turn_argv(self.binary, mcp_prompt(), tools)
+        return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         self._root(root, mock)
@@ -1699,6 +1828,18 @@ class JcodeRunner(ToolRunner):
         env = self._root(root, mock)
         return measure_oneshot(jcode_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        path = install_skill(os.path.join(root, "home", "skills"))
+        env = self._root(root, mock)
+        argv = jcode_oneshot_argv(self.binary, skill_prompt(path), tools=None)
+        return measure_oneshot(argv, cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = self._root(root, mock)
+        write_mcp_servers(os.path.join(root, "home", "mcp.json"), mcp_servers(), wrapper="mcpServers")
+        argv = jcode_oneshot_argv(self.binary, mcp_prompt(), tools=None)
+        return measure_oneshot(argv, cwd, env, mock, timeout)
+
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         self._root(root, mock)
         return measure_daemon_sessions(
@@ -1725,6 +1866,18 @@ class ClaudeRunner(ToolRunner):
         env = claude_env(root, mock.base_url)
         return measure_oneshot(claude_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        path = install_skill(os.path.join(root, "home", ".claude", "skills"))
+        env = claude_env(root, mock.base_url)
+        return measure_oneshot(claude_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = claude_env(root, mock.base_url)
+        config = os.path.join(root, "mcp.json")
+        write_mcp_servers(config, mcp_servers(), wrapper="mcpServers")
+        argv = claude_oneshot_argv(self.binary, mcp_prompt(), mcp_config=config)
+        return measure_oneshot(argv, cwd, env, mock, timeout)
+
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = claude_env(root, mock.base_url)
         return measure_proc_sessions(lambda: ClaudeSession(self.binary, cwd, env), count, turns, timeout)
@@ -1744,6 +1897,20 @@ class CodexRunner(ToolRunner):
         return measure_oneshot(
             codex_oneshot_argv(self.binary, mock.base_url), cwd, env, mock, timeout, syscalls=syscalls
         )
+
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        # This Codex build has no file-read tool: it lists the skill in the
+        # prompt and expects the shell tool to open the SKILL.md.
+        path = install_skill(os.path.join(root, "home", "skills"))
+        env = codex_env(root)
+        argv = codex_oneshot_argv(self.binary, mock.base_url or "", skill_prompt(path))
+        return measure_oneshot(argv, cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = codex_env(root)
+        write_codex_mcp_config(os.path.join(env["CODEX_HOME"], "config.toml"), mcp_servers())
+        argv = codex_oneshot_argv(self.binary, mock.base_url or "", mcp_prompt())
+        return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = codex_env(root)
@@ -1766,6 +1933,20 @@ class OpencodeRunner(ToolRunner):
         env = opencode_env(root, mock.base_url or "")
         return measure_oneshot(opencode_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        path = install_skill(os.path.join(root, "config", "opencode", "skills"))
+        env = opencode_env(root, mock.base_url or "")
+        return measure_oneshot(opencode_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        entry = {
+            "type": "local",
+            "command": [sys.executable, str(MCP_FIXTURE)],
+            "enabled": True,
+        }
+        env = opencode_env(root, mock.base_url or "", mcp={MCP_SERVER_NAME: entry})
+        return measure_oneshot(opencode_oneshot_argv(self.binary, mcp_prompt()), cwd, env, mock, timeout)
+
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         return measure_opencode_sessions(
             self.binary, root, cwd, count, turns, timeout, mock.base_url or ""
@@ -1784,6 +1965,14 @@ class PiRunner(ToolRunner):
     ) -> dict:
         env = pi_env(root, mock.base_url or "")
         return measure_oneshot(pi_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
+
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        path = install_skill(os.path.join(root, "pi", "skills"))
+        env = pi_env(root, mock.base_url or "")
+        return measure_oneshot(pi_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        return unsupported("pi has no MCP client; its README points at a user extension")
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = pi_env(root, mock.base_url or "")
@@ -1804,6 +1993,20 @@ class OmpRunner(ToolRunner):
     ) -> dict:
         env = omp_env(root, mock.base_url or "")
         return measure_oneshot(omp_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
+
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = omp_env(root, mock.base_url or "")
+        path = install_skill(os.path.join(env["PI_CODING_AGENT_DIR"], "skills"))
+        return measure_oneshot(omp_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = omp_env(root, mock.base_url or "")
+        # omp prints the MCP tool as an `xd://` route in the prompt instead of
+        # exposing a function; the mock model reaches it with the write tool.
+        write_mcp_servers(
+            os.path.join(env["PI_CODING_AGENT_DIR"], "mcp.json"), mcp_servers(), wrapper="mcpServers"
+        )
+        return measure_oneshot(omp_oneshot_argv(self.binary, mcp_prompt()), cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         base_url = mock.base_url or ""
@@ -1832,6 +2035,23 @@ class OmoRunner(ToolRunner):
     ) -> dict:
         env = omo_env(root, mock.base_url or "")
         return measure_oneshot(omo_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
+
+    def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = omo_env(root, mock.base_url or "")
+        path = install_skill(os.path.join(env["PI_CODING_AGENT_DIR"], "skills"))
+        argv = omo_oneshot_argv(self.binary, skill_prompt(path), tools="read")
+        return measure_oneshot(argv, cwd, env, mock, timeout)
+
+    def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = omo_env(root, mock.base_url or "")
+        write_mcp_servers(
+            os.path.join(env["PI_CODING_AGENT_DIR"], "mcp.json"), mcp_servers(), wrapper="mcpServers"
+        )
+        # `--tools` is a strict allowlist and the MCP tool is named
+        # `mcp_<server>_<tool>` here, so it has to be named.
+        tools = f"read,mcp_{MCP_SERVER_NAME}_{MCP_TOOL_NAME}"
+        argv = omo_oneshot_argv(self.binary, mcp_prompt(), tools=tools)
+        return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         base_url = mock.base_url or ""
@@ -1910,6 +2130,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tools", nargs="+", default=DEFAULT_TOOLS, metavar="TOOL",
                         help=f"tools to measure (default: {' '.join(DEFAULT_TOOLS)}); "
                              f"accepted names: {' '.join(RUNNERS)}")
+    parser.add_argument("--scenarios", nargs="+", default=DEFAULT_SCENARIOS, metavar="SCENARIO",
+                        help=f"scenarios to measure, comma or space separated "
+                             f"(default: {','.join(DEFAULT_SCENARIOS)}); "
+                             f"accepted names: {','.join(SCENARIO_NAMES)}")
     parser.add_argument("--timeout", type=float, default=180.0, help="per-turn/oneshot timeout seconds")
     parser.add_argument("--syscalls", action="store_true",
                         help="count fsync/fdatasync calls per one-shot with strace (Linux only; "
@@ -1920,6 +2144,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="failures.txt from install_competitors.sh (`name<TAB>reason` lines); a tool "
                              "without a binary is skipped with that reason")
     return parser.parse_args(argv)
+
+
+def parse_scenarios(values: list[str]) -> list[str]:
+    """Normalize ``--scenarios`` and reject a name the harness cannot run.
+
+    A typo silently measuring fewer scenarios would make a report look complete
+    while missing a table, so an unknown name ends the run instead.
+    """
+    chosen: list[str] = []
+    for value in values:
+        for part in str(value).split(","):
+            name = part.strip()
+            if not name:
+                continue
+            if name not in SCENARIO_NAMES:
+                raise SystemExit(
+                    f"--scenarios expects a subset of {','.join(SCENARIO_NAMES)}, got {name!r}"
+                )
+            if name not in chosen:
+                chosen.append(name)
+    if not chosen:
+        raise SystemExit(f"--scenarios needs at least one of {','.join(SCENARIO_NAMES)}")
+    return chosen
 
 
 def parse_bin_overrides(values: list[str]) -> dict[str, str]:
@@ -2055,6 +2302,40 @@ def summarize_oneshot(runs: list[dict]) -> dict:
     }
 
 
+def summarize_scenario(runs: list[dict]) -> dict:
+    """Collapse the repeats of a skill or MCP scenario into one row.
+
+    ``tool_round_trip`` is true only when every run saw the fixture sentinel:
+    an agent that answers ``mock-ok`` without the body, or whose tool call the
+    agent silently drops, must not be reported as a successful round trip.
+    """
+    times = [run["ms"] for run in runs if run.get("ms") is not None]
+    peaks = [run["peak_rss_bytes"] for run in runs if run.get("peak_rss_bytes")]
+    summary = bc.summarize(times)
+    errors = [run["error"] for run in runs if run.get("error")]
+    ready = [run["mcp_ready_ms"] for run in runs if run.get("mcp_ready_ms") is not None]
+    ready_summary = bc.summarize(ready)
+    vias = [run.get("via") for run in runs if run.get("via")]
+    return {
+        "ms": summary["median"] if summary else None,
+        "summary": summary,
+        "peak_rss_bytes": max(peaks) if peaks else None,
+        "tool_round_trip": bool(runs) and all(run.get("sentinel_seen") for run in runs),
+        "mcp_ready_ms": ready_summary["median"] if ready_summary else None,
+        "mcp_ready_summary": ready_summary,
+        "via": vias[-1] if vias else None,
+        "mock_requests": [run.get("mock_requests") for run in runs],
+        "errors": errors,
+        "error": errors[0] if errors else None,
+        "runs": runs,
+    }
+
+
+def unsupported(reason: str) -> dict:
+    """A scenario this tool cannot run, with the reason kept in the report."""
+    return {"skipped": reason}
+
+
 def _prepare_measure_root(runner: ToolRunner) -> tuple[str, str]:
     # Unix socket paths are length-limited, so the prefix stays short and the
     # row name contributes only its alphanumerics.
@@ -2067,6 +2348,18 @@ def _prepare_measure_root(runner: ToolRunner) -> tuple[str, str]:
     return root, cwd
 
 
+def _prepare_scenario_root(tool_root: str, scenario: str, index: int) -> tuple[str, str]:
+    """A fresh home and workspace for one scenario run.
+
+    A reused home would let an MCP schema cache or a compressed skill hint from
+    an earlier run skip the startup work the scenario is meant to measure.
+    """
+    root = os.path.join(tool_root, scenario, f"run{index + 1}")
+    cwd = os.path.join(root, "ws")
+    os.makedirs(cwd, exist_ok=True)
+    return root, cwd
+
+
 def _empty_result(runner: ToolRunner) -> dict:
     return {
         "name": runner.name,
@@ -2076,6 +2369,8 @@ def _empty_result(runner: ToolRunner) -> dict:
         "version_ms": None,
         "oneshot": None,
         "sessions_memory": None,
+        "skill": None,
+        "mcp": None,
         "install_size_bytes": None,
         "error": None,
     }
@@ -2144,6 +2439,7 @@ def measure_tools(
     oneshot_runs: int,
     timeout: float,
     syscalls: bool = False,
+    scenarios: list[str] | None = None,
 ) -> list[dict]:
     """Measure one or more rows, alternating them phase by phase.
 
@@ -2151,7 +2447,11 @@ def measure_tools(
     one-shot repeat and every session count visits both rows before moving on,
     so a load change on the shared runner lands on both sides of the pair
     instead of on whichever row ran second.
+
+    ``scenarios`` selects which phases run; a phase that is not selected is left
+    as ``None`` on every row, so a subset run really does skip it.
     """
+    selected = set(scenarios if scenarios is not None else SCENARIO_NAMES)
     results = [_empty_result(runner) for runner in runners]
     roots: dict[str, tuple[str, str]] = {}
     try:
@@ -2165,37 +2465,68 @@ def measure_tools(
                 # left out of the phases below, instead of failing the run.
                 result["error"] = str(exc)[:400]
 
-        oneshot_runs_by_row: list[list[dict]] = [[] for _ in runners]
-        for _ in range(max(1, oneshot_runs)):
-            for index, runner in enumerate(runners):
-                if results[index]["error"]:
-                    continue
-                root, cwd = roots[runner.name]
-                try:
-                    oneshot_runs_by_row[index].append(
-                        runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    oneshot_runs_by_row[index].append(
-                        {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
-                         "error": str(exc)[:300]}
-                    )
-        for index, result in enumerate(results):
-            if not result["error"]:
-                result["oneshot"] = summarize_oneshot(oneshot_runs_by_row[index])
+        if "oneshot" in selected:
+            oneshot_runs_by_row: list[list[dict]] = [[] for _ in runners]
+            for _ in range(max(1, oneshot_runs)):
+                for index, runner in enumerate(runners):
+                    if results[index]["error"]:
+                        continue
+                    root, cwd = roots[runner.name]
+                    try:
+                        oneshot_runs_by_row[index].append(
+                            runner.oneshot(mock, root, cwd, timeout, syscalls=syscalls)
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        oneshot_runs_by_row[index].append(
+                            {"ms": None, "peak_rss_bytes": None, "tool_roundtrip": None,
+                             "error": str(exc)[:300]}
+                        )
+            for index, result in enumerate(results):
+                if not result["error"]:
+                    result["oneshot"] = summarize_oneshot(oneshot_runs_by_row[index])
 
-        points_by_row: list[list[dict]] = [[] for _ in runners]
-        for count in session_counts:
-            for index, runner in enumerate(runners):
-                if results[index]["error"]:
+        if "sessions" in selected:
+            points_by_row: list[list[dict]] = [[] for _ in runners]
+            for count in session_counts:
+                for index, runner in enumerate(runners):
+                    if results[index]["error"]:
+                        continue
+                    root, cwd = roots[runner.name]
+                    points_by_row[index].append(
+                        _measure_session_point(runner, mock, root, cwd, count, turns, timeout)
+                    )
+            for index, result in enumerate(results):
+                if not result["error"]:
+                    result["sessions_memory"] = summarize_sessions(points_by_row[index], turns)
+
+        for scenario in ("skill", "mcp"):
+            if scenario not in selected:
+                continue
+            runs_by_row: list[list[dict]] = [[] for _ in runners]
+            for repeat in range(max(1, oneshot_runs)):
+                for index, runner in enumerate(runners):
+                    result = results[index]
+                    if result["error"] or result.get(scenario) is not None:
+                        # A broken row has nothing to measure, and a scenario
+                        # the tool cannot run is decided on its first attempt.
+                        continue
+                    tool_root, _tool_cwd = roots[runner.name]
+                    scenario_root, scenario_cwd = _prepare_scenario_root(
+                        tool_root, scenario, repeat
+                    )
+                    try:
+                        run = getattr(runner, scenario)(mock, scenario_root, scenario_cwd, timeout)
+                    except Exception as exc:  # noqa: BLE001
+                        run = {"ms": None, "peak_rss_bytes": None, "sentinel_seen": False,
+                               "error": str(exc)[:300]}
+                    if "skipped" in run:
+                        result[scenario] = dict(run)
+                        continue
+                    runs_by_row[index].append(run)
+            for index, result in enumerate(results):
+                if result["error"] or result.get(scenario) is not None:
                     continue
-                root, cwd = roots[runner.name]
-                points_by_row[index].append(
-                    _measure_session_point(runner, mock, root, cwd, count, turns, timeout)
-                )
-        for index, result in enumerate(results):
-            if not result["error"]:
-                result["sessions_memory"] = summarize_sessions(points_by_row[index], turns)
+                result[scenario] = summarize_scenario(runs_by_row[index])
     finally:
         for root, _cwd in roots.values():
             shutil.rmtree(root, ignore_errors=True)
@@ -2237,8 +2568,64 @@ def fmt_slope(value) -> str:
     return f"{value:.2f}" if isinstance(value, (int, float)) else "—"
 
 
-def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
+def scenario_cell(text: str, limit: int = 90) -> str:
+    """One markdown cell: no pipe breaks a table row, and reasons stay short."""
+    cleaned = " ".join(str(text).split()).replace("|", "/")
+    return cleaned[:limit]
+
+
+def scenario_row(result: dict, scenario: str, results: list[dict], with_ready: bool = False) -> list[str]:
+    """One row of the skill or MCP table: a time, or the reason it has none."""
+    data = result.get(scenario)
+    label = result["label"]
+    if data is None:
+        reason = result.get("error") or "not measured in this run"
+        cells = [label, "—", "", "—", "—", "—", "—", "—"]
+        if with_ready:
+            cells.append("—")
+        return cells + [scenario_cell(reason)]
+    if "skipped" in data:
+        cells = [label, "—", "", "—", "—", "—", "—", "—"]
+        if with_ready:
+            cells.append("—")
+        return cells + [scenario_cell(f"skipped: {data['skipped']}")]
+    ms = data.get("ms")
+    summary = data.get("summary") or {}
+    spread = ""
+    if summary.get("samples", 0) > 1:
+        spread = f"{bc.fmt_ms(summary['min'])}–{bc.fmt_ms(summary['max'])}"
+    rss = data.get("peak_rss_bytes")
+    roundtrip = data.get("tool_round_trip")
+    notes = data.get("errors") or ([data["error"]] if data.get("error") else [])
+    note = scenario_cell(notes[0]) if notes else ""
+    cells = [
+        label,
+        bc.fmt_ms(ms),
+        spread,
+        relative(ms, baseline_value(results, (scenario, "ms")))
+        if result["name"] != "horon"
+        else "baseline",
+        bc.fmt_bytes(rss),
+        relative(rss, baseline_value(results, (scenario, "peak_rss_bytes")))
+        if result["name"] != "horon"
+        else "baseline",
+        data.get("via") or "—",
+        "yes" if roundtrip else ("no" if roundtrip is False else "—"),
+    ]
+    if with_ready:
+        cells.append(bc.fmt_ms(data.get("mcp_ready_ms")))
+    return cells + [note]
+
+
+def render_markdown(
+    report: dict, session_counts: list[int], turns: int, scenarios: list[str] | None = None
+) -> str:
     results = report["results"]
+    if scenarios is None:
+        selected = (report.get("parameters") or {}).get("scenarios")
+        # A hand-built report (or one from before --scenarios existed) shows
+        # every table; only an explicit selection hides a phase.
+        scenarios = list(selected) if selected is not None else list(SCENARIO_NAMES)
     lines = ["# Coding agent comparison (headless, mock model)", ""]
     host = report["host"]
     lines.append(
@@ -2286,108 +2673,142 @@ def render_markdown(report: dict, session_counts: list[int], turns: int) -> str:
     lines.append(bc.markdown_table(["Tool", "Version", "`--version` (median)", "Install size"], rows))
     lines.append("")
 
-    # One-shot
-    base_ms = baseline_value(results, ("oneshot", "ms"))
-    base_rss = baseline_value(results, ("oneshot", "peak_rss_bytes"))
-    show_syscalls = any((r.get("oneshot") or {}).get("fsync_calls") is not None for r in results)
-    rows = []
-    for result in results:
-        oneshot = result.get("oneshot") or {}
-        ms = oneshot.get("ms")
-        rss = oneshot.get("peak_rss_bytes")
-        roundtrip = oneshot.get("tool_roundtrip")
-        notes = oneshot.get("errors") or ([oneshot["error"]] if oneshot.get("error") else [])
-        note = notes[0] if notes else ""
-        summary = oneshot.get("summary") or {}
-        spread = ""
-        if summary.get("samples", 0) > 1:
-            spread = f"{bc.fmt_ms(summary['min'])}–{bc.fmt_ms(summary['max'])}"
-        row = [
-            result["label"],
-            bc.fmt_ms(ms),
-            spread,
-            relative(ms, base_ms) if result["name"] != "horon" else "baseline",
-            bc.fmt_bytes(rss),
-            relative(rss, base_rss) if result["name"] != "horon" else "baseline",
-            "yes" if roundtrip else ("no" if roundtrip is False else "—"),
-        ]
-        if show_syscalls:
-            row.append(fmt_calls(oneshot.get("fsync_calls")))
-        row.append(note[:60])
-        rows.append(row)
-    lines.append("**One-shot headless prompt** (includes startup, one `ls` tool call, final answer)")
-    lines.append("")
-    lines.append(
-        bc.markdown_table(
-            ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
-             "Tool round-trip"]
-            + (["fsync calls"] if show_syscalls else [])
-            + ["Note"],
-            rows,
-        )
-    )
-    lines.append("")
-
-    # Sessions
-    base_additional = baseline_value(results, ("sessions_memory", "each_additional_idle_rss_bytes"))
-    rows = []
-    for result in results:
-        memory = result.get("sessions_memory") or {}
-        first = memory.get("first_session_idle_rss_bytes")
-        additional = memory.get("each_additional_idle_rss_bytes")
-        post_first = memory.get("first_session_post_turn_rss_bytes")
-        post_additional = memory.get("each_additional_post_turn_rss_bytes")
-        rows.append(
-            [
+    if "oneshot" in scenarios:
+        # One-shot
+        base_ms = baseline_value(results, ("oneshot", "ms"))
+        base_rss = baseline_value(results, ("oneshot", "peak_rss_bytes"))
+        show_syscalls = any((r.get("oneshot") or {}).get("fsync_calls") is not None for r in results)
+        rows = []
+        for result in results:
+            oneshot = result.get("oneshot") or {}
+            ms = oneshot.get("ms")
+            rss = oneshot.get("peak_rss_bytes")
+            roundtrip = oneshot.get("tool_roundtrip")
+            notes = oneshot.get("errors") or ([oneshot["error"]] if oneshot.get("error") else [])
+            note = notes[0] if notes else ""
+            summary = oneshot.get("summary") or {}
+            spread = ""
+            if summary.get("samples", 0) > 1:
+                spread = f"{bc.fmt_ms(summary['min'])}–{bc.fmt_ms(summary['max'])}"
+            row = [
                 result["label"],
-                bc.fmt_bytes(first),
-                bc.fmt_bytes(additional),
-                relative(additional, base_additional) if result["name"] != "horon" else "baseline",
-                fmt_slope(memory.get("each_additional_threads")),
-                fmt_slope(memory.get("each_additional_fds")),
-                bc.fmt_bytes(post_first),
-                bc.fmt_bytes(post_additional),
+                bc.fmt_ms(ms),
+                spread,
+                relative(ms, base_ms) if result["name"] != "horon" else "baseline",
+                bc.fmt_bytes(rss),
+                relative(rss, base_rss) if result["name"] != "horon" else "baseline",
+                "yes" if roundtrip else ("no" if roundtrip is False else "—"),
             ]
+            if show_syscalls:
+                row.append(fmt_calls(oneshot.get("fsync_calls")))
+            row.append(note[:60])
+            rows.append(row)
+        lines.append("**One-shot headless prompt** (includes startup, one `ls` tool call, final answer)")
+        lines.append("")
+        lines.append(
+            bc.markdown_table(
+                ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
+                 "Tool round-trip"]
+                + (["fsync calls"] if show_syscalls else [])
+                + ["Note"],
+                rows,
+            )
         )
-    lines.append(
-        f"**Session memory** (idle after {turns} turn(s) per session; sizes are process-tree sums, "
-        f"RSS; PSS also recorded on Linux). \"Each additional\" is the least-squares slope across the "
-        f"measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and "
-        f"descriptors come from the daemon's own `server:memory` after the turns."
-    )
-    lines.append("")
-    lines.append(
-        bc.markdown_table(
-            ["Tool", "First session", "Each additional", "vs horon (additional)", "Threads/session",
-             "FDs/session", "First (post-turn)", "Each additional (post-turn)"],
-            rows,
-        )
-    )
-    lines.append("")
-    counter_skips = []
-    for result in results:
-        reasons = (result.get("sessions_memory") or {}).get("skipped") or []
-        if reasons:
-            counter_skips.append(f"{result['label']} ({'; '.join(reasons)})")
-    if counter_skips:
-        lines.append("Threads/descriptors unavailable: " + ", ".join(counter_skips))
         lines.append("")
 
-    # Per-count detail
-    rows = []
-    for result in results:
-        memory = result.get("sessions_memory") or {}
-        by_count = {p["sessions"]: p for p in memory.get("points") or []}
-        row = [result["label"]]
-        for count in session_counts:
-            point = by_count.get(count) or {}
-            value = point.get("post_turn_rss_bytes")
-            row.append(bc.fmt_bytes(value))
-        rows.append(row)
-    lines.append("**Post-turn tree RSS per session count**")
-    lines.append("")
-    lines.append(bc.markdown_table(["Tool"] + [f"{n} session(s)" for n in session_counts], rows))
-    lines.append("")
+    # Skill invocation
+    if "skill" in scenarios:
+        lines.append(
+            "**Skill invocation** (process start to final answer, including skill discovery and "
+            "one load of the fixture skill)"
+        )
+        lines.append("")
+        lines.append(
+            bc.markdown_table(
+                ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
+                 "Via", "Tool round-trip", "Note"],
+                [scenario_row(result, "skill", results) for result in results],
+            )
+        )
+        lines.append("")
+
+    # MCP tool call
+    if "mcp" in scenarios:
+        lines.append(
+            "**MCP tool call** (process start to final answer, including starting the fixture "
+            "stdio MCP server and one `bench_echo` call)"
+        )
+        lines.append("")
+        lines.append(
+            bc.markdown_table(
+                ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
+                 "Via", "Tool round-trip", "MCP ready", "Note"],
+                [scenario_row(result, "mcp", results, with_ready=True) for result in results],
+            )
+        )
+        lines.append("")
+
+    if "sessions" in scenarios:
+        # Sessions
+        base_additional = baseline_value(results, ("sessions_memory", "each_additional_idle_rss_bytes"))
+        rows = []
+        for result in results:
+            memory = result.get("sessions_memory") or {}
+            first = memory.get("first_session_idle_rss_bytes")
+            additional = memory.get("each_additional_idle_rss_bytes")
+            post_first = memory.get("first_session_post_turn_rss_bytes")
+            post_additional = memory.get("each_additional_post_turn_rss_bytes")
+            rows.append(
+                [
+                    result["label"],
+                    bc.fmt_bytes(first),
+                    bc.fmt_bytes(additional),
+                    relative(additional, base_additional) if result["name"] != "horon" else "baseline",
+                    fmt_slope(memory.get("each_additional_threads")),
+                    fmt_slope(memory.get("each_additional_fds")),
+                    bc.fmt_bytes(post_first),
+                    bc.fmt_bytes(post_additional),
+                ]
+            )
+        lines.append(
+            f"**Session memory** (idle after {turns} turn(s) per session; sizes are process-tree sums, "
+            f"RSS; PSS also recorded on Linux). \"Each additional\" is the least-squares slope across the "
+            f"measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and "
+            f"descriptors come from the daemon's own `server:memory` after the turns."
+        )
+        lines.append("")
+        lines.append(
+            bc.markdown_table(
+                ["Tool", "First session", "Each additional", "vs horon (additional)", "Threads/session",
+                 "FDs/session", "First (post-turn)", "Each additional (post-turn)"],
+                rows,
+            )
+        )
+        lines.append("")
+        counter_skips = []
+        for result in results:
+            reasons = (result.get("sessions_memory") or {}).get("skipped") or []
+            if reasons:
+                counter_skips.append(f"{result['label']} ({'; '.join(reasons)})")
+        if counter_skips:
+            lines.append("Threads/descriptors unavailable: " + ", ".join(counter_skips))
+            lines.append("")
+
+        # Per-count detail
+        rows = []
+        for result in results:
+            memory = result.get("sessions_memory") or {}
+            by_count = {p["sessions"]: p for p in memory.get("points") or []}
+            row = [result["label"]]
+            for count in session_counts:
+                point = by_count.get(count) or {}
+                value = point.get("post_turn_rss_bytes")
+                row.append(bc.fmt_bytes(value))
+            rows.append(row)
+        lines.append("**Post-turn tree RSS per session count**")
+        lines.append("")
+        lines.append(bc.markdown_table(["Tool"] + [f"{n} session(s)" for n in session_counts], rows))
+        lines.append("")
 
     errors = []
     for result in results:
@@ -2447,6 +2868,7 @@ def announce_missing_tools(missing: list[dict], env: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    scenarios = parse_scenarios(args.scenarios)
     overrides = parse_bin_overrides(args.bin)
     install_failures = read_install_failures(args.install_failures)
     started_at = bc.utc_now_iso()
@@ -2486,6 +2908,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.oneshot_runs,
                 args.timeout,
                 syscalls=syscalls,
+                scenarios=scenarios,
             ):
                 by_name[result["name"]] = result
             bc.eprint(f"[bench_compare] finished {names}")
@@ -2501,11 +2924,12 @@ def main(argv: list[str] | None = None) -> int:
         "oneshot_runs": args.oneshot_runs,
         "timeout_s": args.timeout,
         "syscalls": syscalls,
+        "scenarios": scenarios,
         # Which rows this report contains and where each binary came from, so a
         # before/after pair can be traced back to its two commits.
         "rows": [{"name": result["name"], "binary": result["binary"]} for result in results],
     }
-    markdown = render_markdown(report, args.sessions, args.turns)
+    markdown = render_markdown(report, args.sessions, args.turns, scenarios)
     if args.json_out:
         bc.write_json(args.json_out, report)
         bc.eprint(f"[bench_compare] wrote {args.json_out}")

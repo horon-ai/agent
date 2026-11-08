@@ -59,7 +59,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 
 | 묶음 | 스크립트 | 재는 것 |
 | --- | --- | --- |
-| `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리, 동시 세션 수에 따른 메모리, 설치 크기. Linux는 `fsync` 호출 수도 잰다. |
+| `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리, 동시 세션 수에 따른 메모리, 설치 크기, 스킬 호출 시간, MCP 도구 호출 시간과 도구 왕복. Linux는 `fsync` 호출 수도 잰다. |
 | `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, 하네스 브리지 단계별 준비 시간 |
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연 |
@@ -114,6 +114,10 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
+| `skill_ms` | 헤드리스 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
+| `mcp_ms` | 헤드리스 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
+| `mcp_ready_ms` | 프로세스 시작부터 도구 목록에 `bench_echo`가 처음 보인 요청까지의 시간(MCP 서버 시작과 도구 등록). 가짜 모델이 그 요청을 본 시각으로 잰다 |
+| `tool_round_trip` | 스킬 본문의 센티널이나 MCP가 돌려준 nonce를 나중 요청에서 실제로 봤을 때만 `true` |
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
@@ -129,11 +133,41 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `omo` | `oh-my-openagent (omo)` | `omo-ai` | `5.1.64` (`OMO_VERSION`) | Node 24 이상 또는 Bun | 같은 `models.json`, `-p --no-session --model mock/mock-model --tools bash,read` |
 
 - `omp`는 npm CLI를 Bun 스크립트로 배포하므로 compare 작업이 `oven-sh/setup-bun`으로 Bun을 먼저 설치한다. Bun이 없으면 `omp`를, Node도 Bun도 없으면 `omo`를 installer가 `skipped`로 남기고 작업은 계속된다.
+- Bun을 GitHub 릴리스에서 받지 못하면 installer가 npm 레지스트리의 `bun`(`BUN_VERSION`, 기본 1.4.4)으로 대신 설치한다.
 - `omo`의 기본 도구 목록에는 셸 도구(`bash`)가 없고 `--tools`는 허용 목록이라, `bash`와 `read`를 명시해야 mock 모델이 도구를 부를 수 있다.
 - `omp`는 `--no-title` 없이 실행하면 제목 생성용 모델 요청이 한 번 더 나가 원샷 요청 수가 달라진다. `--no-lsp`는 언어 서버 내려받기를 막는다.
 - 두 도구 모두 agent 디렉터리에 모델 목록과 base URL을 캐시하므로(omp는 `agent.db`, `models.db`) 측정마다 새 agent 디렉터리를 만든다. 세션 측정에서는 세션마다 따로 만든다.
 - 텔레메트리, 버전 확인, mock 서버 밖 네트워크는 `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`, `DISABLE_TELEMETRY=1`, `DO_NOT_TRACK=1`로 끈다. 부모 환경의 `OMP_*`, `OMO_*`, `SENPI_*`, `PI_CONFIG_DIR`, API 키는 지우고 홈·설정 경로는 임시 디렉터리 아래만 가리킨다.
 - 두 도구는 기본 비교 목록(`benchmark.yml`의 `competitors` 기본값과 `bench_compare.py`의 `DEFAULT_TOOLS`)에 들어 있다. Linux, macOS, Windows에서 `version_ms`·`oneshot`·`sessions_memory`가 모두 측정된 뒤에 넣었다. 측정 대상은 `benchmark-os.yml`이 입력 목록을 `--tools`로 넘겨 정하므로 `-f competitors=jcode,pi`처럼 빼는 것도 된다.
+
+### 스킬 호출과 MCP 도구 호출
+
+`compare` 묶음은 `--scenarios`로 시나리오를 고른다. 기본값은 `oneshot,sessions,skill,mcp`이고, 부분집합을 주면 빠진 시나리오는 실제로 돌지 않으며 보고서에도 표가 나오지 않는다. 모르는 이름은 실행을 바로 실패시킨다.
+
+- `skill`: 프롬프트가 `[bench:skill]`로 시작한다. 가짜 모델은 그 마커를 보고 스킬 전용 도구(`Skill`, `skill`, `skills.read`, `skill_manage`)가 있으면 그것을 부르고, 없으면 설명에 `skill://`가 있는 읽기 도구에 `skill://bench-skill`을 넘기고, 그것도 없으면 읽기 도구나 셸 도구로 프롬프트가 준 `SKILL.md` 절대 경로를 연다. 어느 경로였는지는 요청 기록의 `via`와 보고서의 `Via` 열에 남는다.
+- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. omp처럼 도구를 함수로 내보내지 않고 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부른다(`mcp-route`).
+- 왕복은 가정하지 않는다. 스킬은 `SKILL.md` 본문의 `BENCH-SKILL-SENTINEL`을, MCP는 모델이 넘긴 nonce를 나중 요청에서 봐야 `tool_round_trip`이 `true`가 된다. 도구를 부르지 않고 `mock-ok`만 돌아온 실행은 `false`로 남는다.
+- 두 시나리오 모두 프로세스 시작부터 마지막 응답까지를 잰다. 그래서 스킬 탐색, MCP 서버 시작, 도구 등록이 숫자에 들어간다. `mcp_ready_ms`는 그중 서버 준비 구간만 따로 보여 준다.
+
+픽스처는 저장소에 들어 있다.
+
+- `scripts/perf/fixtures/bench_skill/SKILL.md`: frontmatter `name: bench-skill`과 본문 센티널 한 줄.
+- `scripts/perf/fixtures/bench_mcp_server.py`: 의존성 없는 stdio JSON-RPC 서버. `initialize`, `tools/list`(도구 `bench_echo`), `tools/call`(받은 `text`를 그대로 돌려줌)에 답하고, 모르는 메서드는 `-32601`, 알 수 없는 도구는 `-32602`로 거절하며, 표준 입력이 닫히면 종료 코드 0으로 끝난다. 각 에이전트가 자기 설정으로 직접 띄우며 하네스가 대신 띄우지 않는다.
+
+도구마다 설정 표면이 달라 하네스가 다음처럼 배치한다. 실제로 어떤 경로를 탔는지는 보고서의 `Via` 열이 말한다.
+
+| 도구 | 스킬 픽스처 위치와 호출 | MCP 설정 |
+| --- | --- | --- |
+| `horon` | 작업 폴더 `.horon-agent/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_AGENT_HOME>/mcp.json`의 `servers`, 도구 이름 `mcp__bench__bench_echo`. 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
+| `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`의 `mcpServers` |
+| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | `--mcp-config <파일> --strict-mcp-config`, 도구 이름 `mcp__bench__bench_echo` |
+| `codex` | `$CODEX_HOME/skills`의 픽스처를 셸 도구로 `cat`(`file-read`) | `$CODEX_HOME/config.toml`의 `[mcp_servers.bench]`. 이 빌드는 MCP 도구를 네임스페이스 도구 `mcp__bench` 안의 `bench_echo`로 내보낸다 |
+| `opencode` | `XDG_CONFIG_HOME/opencode/skills`의 픽스처를 `skill` 도구로 호출(`skill-tool`) | `opencode.json`의 `mcp.bench`(`type: local`) |
+| `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | 없음. MCP 클라이언트가 없어 `skipped`와 사유를 남긴다 |
+| `omp` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`. 프롬프트의 `xd://...bench_echo` 라우트를 `write`로 호출(`mcp-route`) |
+| `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`가 허용 목록이라 그 이름을 넣는다 |
+
+시나리오마다 도구 루트 아래 `<시나리오>/run<N>`에 별도 홈과 작업 폴더를 만든다. 같은 홈을 다시 쓰면 앞 실행이 남긴 MCP 스키마 캐시나 스킬 힌트가 준비 비용을 건너뛰게 된다. 스킬과 MCP 픽스처도 해당 시나리오의 홈에만 두므로 다른 시나리오의 숫자에 섞이지 않는다. 실행이 끝나면 그 루트는 통째로 지운다.
 
 ### 측정의 한계
 

@@ -386,6 +386,8 @@ jobs:
             [ "$tool" = "horon" ] && continue
             tools="$tools $tool"
           done
+          # This step also measures the skill and MCP scenarios: the script's
+          # default --scenarios is oneshot,sessions,skill,mcp.
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
             --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args --tools $tools \
