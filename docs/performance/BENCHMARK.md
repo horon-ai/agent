@@ -143,12 +143,14 @@ python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent $
 | NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 상한은 예산 값과 같고, 수용은 상한 이하, 거절은 상한 초과 |
 | 자원 반납 | `fd_retention`, `thread_retention`, `non_returning` | 20사이클 소크 뒤 예산 이하, 반납 실패 0 |
 | IRC 메일박스 | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | 상한 100 이하, 1000건 유입에 드롭 900, 브로드캐스트당 본문 할당 1회, 정리 뒤 대기자 0, 동시 브로드캐스트 16 이하 |
+| 스킬 목록과 작업 폴더 스킬 | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | 스킬 200개 목록에서 스킬당 파일 읽기 1회 이하·8 KiB 이하(본문 32 KiB를 통째로 읽으면 실패), 바뀌지 않은 작업 폴더 요청 9회의 파일·폴더 읽기 0, 예열 읽기 1 이상 |
+| MCP 사용자 설정 | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 예열 읽기 1 이상, 예열 뒤 바뀌지 않은 사용자 설정을 다시 읽는 횟수 0 |
 
 각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # 전체
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config
 python3 scripts/perf/check_structural.py --print-plan    # 실행할 cargo 명령만 보기
 python3 -m unittest -v scripts/perf/test_check_structural.py   # 게이트의 계약 테스트
 ```
@@ -201,6 +203,31 @@ python3 scripts/perf/ab_perf.py \
 | 판단 | `correctness.result`, `interpretation`, `adoption_decision` |
 
 `allocated_peak_bytes`와 `task_high_water`는 실행기가 아니라 소크 리포트에서 채운다. 측정 JSON은 `.omo/` 아래에 두고 커밋하지 않는다. 판단에 필요한 수치는 PR 본문과 `RESULTS.md`에 옮긴다.
+
+### 스킬·MCP 설정 로딩 A/B
+
+로딩 경로는 `loading_probe` 예제와 `scripts/perf/bench_loading.py`로 잰다. 픽스처의 `config.toml`이 `[mcp] claude_user = true`를 켜므로 두 바이너리가 같은 `~/.claude.json`을 읽는 조건에서 비교한다. `warm` 모드가 A/B용이고, `--compare`는 `cold` 리포트나 모드가 섞인 쌍을 거절한다.
+
+```bash
+cargo build --release --locked -p horon-agent-base --example loading_probe
+python3 scripts/perf/bench_loading.py --binary target/release/examples/loading_probe --mode warm \
+  --events 0 --skills 0,200,1000 --skill-body-bytes 8192 --mcp-config-bytes 300000 \
+  --warmup 3 --iterations 30 --emit candidate-warm.json
+python3 scripts/perf/bench_loading.py --binary target/release/examples/loading_probe --mode warm \
+  --events 0 --skills 0,200,1000 --skill-body-bytes 0 --mcp-config-bytes 0 \
+  --warmup 3 --iterations 30 --emit candidate-warm-small.json
+python3 scripts/perf/bench_loading.py --compare baseline-warm.json candidate-warm.json
+```
+
+기준선은 같은 명령을 기준 커밋의 워크트리에서 빌드한 `loading_probe`로 돌린 결과다. 판정은 카운터가 먼저다. `skill_catalog`의 `skill_bytes_read`, `skill_request_overlay`의 `skill_file_reads`, `mcp_config_load`의 `mcp_config_reads`가 기준선보다 늘면 실패다. 시간은 같은 쌍을 번갈아 다시 재도 기준선의 p95 범위를 넘을 때만 후퇴로 본다.
+
+판정용 측정은 개발 기기가 아니라 `.github/workflows/loading-ab.yml`에서 한다. 이 워크플로는 `ubuntu-24.04` 잡 하나 안에서 기준 커밋과 후보 커밋을 각각 체크아웃해 릴리스로 빌드하고, 위 두 조건(본문 8 KiB와 `~/.claude.json` 300 KB, 둘 다 0)을 후보 쪽 `bench_loading.py`로 번갈아 잰 뒤 `--compare`한다. 이어 "Check counters" 단계가 세 카운터 조건을 확인한다. 본문이 있는 스킬 목록은 기준선보다 적게 읽고, 작업 폴더 스킬은 반복 요청에서 다시 읽지 않고, `~/.claude.json`이 있는 조건의 MCP 설정은 기준선보다 적게 읽어야 한다. 하나라도 어기면 잡이 실패한다. `bench_tools.py`도 두 바이너리로 돌리고, 결과는 `loading-ab-<run_id>` 아티팩트로 30일 남는다.
+
+```bash
+gh workflow run loading-ab.yml --ref dev -f base_ref=23007c9b -f head_ref=dev
+```
+
+`base_ref` 기본값 `23007c9b`는 로딩 카운터가 처음 들어간 커밋이다. 그보다 오래된 커밋은 리포트 `schema_version`이 달라 `--compare`가 비교를 거절하고 잡이 실패한다. `workflow_dispatch` 워크플로이므로 파일이 기본 브랜치(`main`)에 있어야 실행할 수 있다.
 
 ## 하지 않는 것
 

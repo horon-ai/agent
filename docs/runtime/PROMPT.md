@@ -9,20 +9,20 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 
 ### 계층 (순서대로)
 
-1. **기본 시스템 프롬프트** — 내장 `crates/base/src/prompt/system_prompt.md`이며
+1. **기본 시스템 프롬프트**: 내장 `crates/base/src/prompt/system_prompt.md`이며
    파일로 재정의할 수 있다(아래 참고).
 2. 기능 모듈(예: `[[stream_rules]]` 안내, 아래 참고).
-3. `AGENTS.md` — 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.md`](TOOLS.md)).
-4. 프롬프트 오버레이 — `./.horon-agent/prompt-overlay.md`와 `~/.horon-agent/prompt-overlay.md`.
-5. 선호 도구 — `./.horon-agent/preferred-tools.md`와 `~/.horon-agent/preferred-tools.md`.
-6. 메모리와 활성 스킬 프롬프트(동적이며 캐시하지 않는다).
+3. `AGENTS.md`: 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.md`](TOOLS.md)).
+4. 프롬프트 오버레이: `./.horon-agent/prompt-overlay.md`와 `~/.horon-agent/prompt-overlay.md`.
+5. 선호 도구: `./.horon-agent/preferred-tools.md`와 `~/.horon-agent/preferred-tools.md`.
+6. 메모리와 활성 스킬 프롬프트(동적이며 캐시하지 않는다). 스킬 목록이 어디서 오는지는 아래 "스킬" 절에 있다.
 
 ### 안내 추가 (가장 흔한 작업)
 
 기본 프롬프트를 건드리지 않고 지시를 덧붙인다.
 
-- `~/.horon-agent/prompt-overlay.md` — 모든 곳에 적용된다.
-- `./.horon-agent/prompt-overlay.md` — 프로젝트 하나에 적용된다.
+- `~/.horon-agent/prompt-overlay.md`: 모든 곳에 적용된다.
+- `./.horon-agent/prompt-overlay.md`: 프로젝트 하나에 적용된다.
 
 둘 다 있으면 함께 포함된다. 4~6 계층에서 프로젝트 경로와 전역 경로가 같은 정규 경로로
 해석되면(예: `$HOME`에서 작업하거나 심링크 별칭을 쓰는 경우) 파일은 프로젝트 제목 아래에
@@ -129,6 +129,50 @@ Rust 호출자는 `create_session_with_options(CreateSessionOptions { working_di
 프롬프트를 명시적으로 고른다. 재정의는 그 세션에 속하고 재개를 위해 영속되며 포크에
 상속된다. 기존 세션에 붙는 것은 그 프롬프트를 바꾸지 않는다. 이 기능은 `system_prompt`
 세션 생성 필드를 지원하는 데몬 버전을 요구한다.
+
+## 스킬
+
+스킬은 `SKILL.md` 하나와 그 폴더의 파일로 이루어진다. 시스템 프롬프트의 "Available Skills" 절에는 이름과 한 줄 설명만 들어가고, 본문은 쓸 때 읽는다.
+
+### 출처와 우선순위
+
+출처는 `crates/base/src/skill/sources.rs`의 표 하나에 있다. 작업 폴더 출처가 모든 사용자 출처보다 먼저이고, 같은 수준 안에서는 우선순위가 높은 쪽이 이름을 가진다.
+
+| 수준 | 출처 id | 폴더 | 우선순위 | 켜는 조건 |
+| --- | --- | --- | --- | --- |
+| 작업 폴더 | `horon-agent` | `./.horon-agent/skills` | 100 | 항상 |
+| 작업 폴더 | `claude` | `./.claude/skills` | 80 | 항상 |
+| 작업 폴더 | `agents` | `./.agents/skills` | 70 | 항상 |
+| 사용자 | `horon-agent` | `~/.horon-agent/skills` | 100 | 항상 |
+| 사용자 | `claude` | `~/.claude/skills`, 설치된 Claude Code 플러그인의 스킬 | 80 | `[skills] claude_user = true` |
+| 사용자 | `agents` | `~/.agents/skills` | 70 | 항상 |
+| 사용자 | `codex` | `~/.codex/skills` | 70 | `[skills] codex_user = true` |
+| 사용자 | `managed` | `~/.horon-agent/managed-skills` (모델이 만든 스킬) | 5 | `[tools] managed_skills = true` |
+
+다른 도구가 소유한 사용자 폴더는 기본으로 읽지 않는다. 그 폴더를 읽으면 다른 에이전트의 지시가 이 에이전트 앞에 놓이기 때문이다. 스위치가 꺼진 폴더에 스킬이 있으면 시작할 때 몇 개가 기다리는지 로그 한 줄로 알린다. 예전처럼 첫 실행 때 다른 도구의 스킬을 `~/.horon-agent/skills`로 복사하는 일은 없다. 출처들은 동시에 읽고, 합치는 순서만 표를 따른다.
+
+### 앞머리만 읽기와 지연 본문
+
+목록을 만들 때는 `SKILL.md`의 앞머리(`---`로 둘러싼 YAML)만 읽는다. 4 KiB씩 읽다가 닫는 줄을 찾으면 멈추고, 16 KiB 안에서 못 찾을 때만 파일 전체를 읽는다. 본문은 그 스킬을 처음 쓸 때 읽고, 파일이 같은 `FileStamp`를 유지하는 동안 다시 읽지 않는다.
+
+### 작업 폴더 스킬과 `stat` 재확인
+
+작업 폴더 스킬은 세션마다 그 작업 폴더에서 따로 합치고, 공유 사용자 목록에는 넣지 않는다. 다른 저장소의 세션은 서로의 프로젝트 스킬을 보지 못한다. 합친 결과는 작업 폴더별 캐시(최대 64개)에 두고, 요청마다 출처 폴더와 각 `SKILL.md`의 `metadata`만 확인한다. 바뀐 것이 없으면 파일을 하나도 읽지 않고, 바뀐 파일만 다시 읽는다. 수정, 추가, 삭제, 심링크 대상 변경은 다음 요청에 보인다. `skill_manage`의 `reload_all`은 그 작업 폴더의 캐시를 지운다.
+
+`FileStamp`는 Unix에서 길이, 나노초 단위 수정 시각, 변경 시각(ctime), inode, 장치 번호를 본다. 그래서 같은 크기로 고친 뒤 수정 시각을 되돌린 파일도 ctime으로 잡는다. Windows에는 ctime과 inode가 없어 길이, 수정 시각, 생성 시각만 본다. 같은 크기로 고치고 수정 시각까지 되돌린 파일은 Windows에서 다음 요청에 보이지 않을 수 있다. 이때는 `skill_manage` `reload_all`로 다시 읽는다.
+
+### 이름 충돌
+
+- 내용과 앞머리가 바이트까지 같은 두 파일은 한 스킬로 보고 뒤의 것을 조용히 뺀다.
+- 내용이 다르면 둘 다 남긴다. 먼저 온 출처가 원래 이름을 가지고, 뒤의 것은 `<출처 id>/<이름>`이 된다. 그 자리도 차 있으면 `<출처 id>/<이름>~2`, `~3` 순서로 붙는다.
+- 앞머리 이름에 `/`나 `\`가 있으면 그 스킬은 건너뛴다. `/`는 namespace와 `skill://` 경로에 쓰이기 때문이다.
+- managed 스킬은 namespace를 받지 않는다. 사람이 쓴 스킬과 이름이 겹치면 목록에 넣지 않고 충돌을 로그에 남긴다.
+
+### 스킬 읽기와 호출
+
+- 모델은 `read`로 `skill://<이름>`을 읽어 본문을 받는다. 결과 맨 위에 `## Skill: <이름>`과 스킬 폴더(`Base directory`)가 붙는다. `skill://<이름>/<경로>`는 그 폴더 안의 파일을 읽는다. 자세한 규칙은 [`TOOLS.md`](TOOLS.md)의 "스킬 읽기" 절에 있다.
+- 사용자는 `/<이름> 할 일`이나 `/skill:<이름> 할 일`로 스킬을 부른다. `/skill:` 뒤에는 등록된 이름만 맞고, 첫 토큰이 파일 경로처럼 생겼으면(점이나 역슬래시가 있으면) 등록된 이름과 같아도 호출로 보지 않는다. 터미널에 끌어다 놓은 `/tmp/x.png` 같은 입력을 지키려는 것이다.
+- 목록이 48 KiB를 넘으면 설명을 먼저 빼고, 그래도 넘치면 이름 목록을 자르고 빠진 개수를 적는다. 빠진 스킬도 `skill://`과 `/skill:`로 그대로 쓸 수 있다.
 
 ## 토큰 추정
 

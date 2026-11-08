@@ -181,11 +181,13 @@ impl SkillTool {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| ".".to_string());
 
+        let prompt = skill
+            .get_prompt()
+            .map_err(|error| anyhow::anyhow!("Failed to read skill '{}': {error}", skill.name))?;
+
         Ok(ToolOutput::new(format!(
             "## Skill: {}\n\n**Base directory**: {}\n\n{}",
-            skill.name,
-            base_dir,
-            skill.get_prompt()
+            skill.name, base_dir, prompt
         ))
         .with_title(format!("skill: {}", skill.name)))
     }
@@ -198,19 +200,11 @@ impl SkillTool {
         let installed: std::collections::HashSet<&str> = skills.iter().map(|s| s.name.as_str()).collect();
 
         let mut output = if skills.is_empty() {
-            "No skills loaded.\n\n\
-            Skills are loaded from:\n\
-            - ~/.horon-agent/skills/<skill-name>/SKILL.md (global)\n\
-            - ./.horon-agent/skills/<skill-name>/SKILL.md (project-local)\n\
-            - ./.claude/skills/<skill-name>/SKILL.md (compatibility)\n\n\
-            Create a SKILL.md file with YAML frontmatter:\n\
-            ---\n\
-            name: my-skill\n\
-            description: What this skill does\n\
-            allowed-tools: bash, read, write\n\
-            ---\n\n\
-            # Skill content here\n"
-                .to_string()
+            format!(
+                "No skills loaded.\n\n{}Create a SKILL.md file with YAML frontmatter:\n---\nname: my-skill\n\
+                 description: What this skill does\nallowed-tools: bash, read, write\n---\n\n# Skill content here\n",
+                skill_source_help()
+            )
         } else {
             let mut output = format!("Loaded skills: {}\n\n", skills.len());
             for skill in &skills {
@@ -226,6 +220,13 @@ impl SkillTool {
         };
 
         append_endorsed_skills(&mut output, &installed);
+
+        // A skill that lost a name collision still exists under its namespaced
+        // address; the merge already wrote these lines to the log, and repeating
+        // them here is what tells the operator where the other one went.
+        for warning in registry.collision_warnings() {
+            output.push_str(&format!("\n{warning}\n"));
+        }
 
         Ok(ToolOutput::new(output).with_title("Skills: List"))
     }
@@ -265,10 +266,11 @@ impl SkillTool {
     }
 
     async fn reload_all_skills(&self, working_dir: Option<&std::path::Path>) -> Result<ToolOutput> {
-        // Reload the shared GLOBAL registry only; the project-local overlay is
-        // session-scoped and re-read from disk on every access, so reloading
-        // it here would leak this session's project skills to other sessions
-        // (issue #457).
+        // Reload the shared GLOBAL registry; the project-local overlay is
+        // session-scoped, so it is only dropped from the per-workspace cache and
+        // rescanned for this session. Reloading it into the shared registry
+        // would leak this session's project skills to other sessions (#457).
+        SkillRegistry::forget_project_overlay(working_dir);
         let reloaded = {
             let mut registry = self.registry.write().await;
             registry.reload_global()
@@ -276,7 +278,12 @@ impl SkillTool {
 
         match reloaded {
             Ok(global_count) => {
-                let effective = self.effective_registry(working_dir).await;
+                // The request scope pinned the overlay from before the reload,
+                // so the effective count is composed from a fresh scan.
+                let effective = {
+                    let global = self.registry.read().await;
+                    SkillRegistry::compose_overlay(&global, SkillRegistry::load_project_overlay(working_dir)?)
+                };
                 let skills = effective.list();
                 let mut output = format!(
                     "Reloaded {} global skills ({} effective for this session)\n\n",
@@ -386,7 +393,10 @@ impl SkillTool {
                 output.push_str(&format!("**Allowed tools:** {}\n", tools.join(", ")));
             }
             output.push_str("\n---\n\n");
-            output.push_str(&skill.content);
+            let body = skill
+                .body()
+                .map_err(|error| anyhow::anyhow!("Failed to read skill '{}': {error}", skill.name))?;
+            output.push_str(&body);
 
             Ok(ToolOutput::new(output).with_title(format!("Skills: {}", name)))
         } else {
@@ -397,6 +407,27 @@ impl SkillTool {
             .with_title("Skills: Not found"))
         }
     }
+}
+
+/// Where skills are read from, highest priority first.
+///
+/// The workspace paths come from the source table itself
+/// (`skill::project_skill_paths`), so this text cannot list a directory the
+/// loader no longer reads. The user rows are spelled out with their switches,
+/// because a switch that is off is exactly why a skill the operator installed
+/// elsewhere does not appear here.
+fn skill_source_help() -> String {
+    let mut help = String::from("Skills are loaded from, highest priority first:\n");
+    for path in crate::skill::project_skill_paths() {
+        help.push_str(&format!("- ./{path}/<skill-name>/SKILL.md (workspace)\n"));
+    }
+    help.push_str("- ~/.horon-agent/skills/<skill-name>/SKILL.md (user)\n");
+    help.push_str("- ~/.claude/skills and installed Claude Code plugins ([skills] claude_user, off by default)\n");
+    help.push_str("- ~/.agents/skills (user)\n");
+    help.push_str("- ~/.codex/skills ([skills] codex_user, off by default)\n");
+    help.push_str("- ~/.horon-agent/managed-skills ([tools] managed_skills, off by default)\n\n");
+    help.push_str("A workspace skill wins over a user skill of the same name.\n\n");
+    help
 }
 
 /// Append the curated horon-agent-endorsed skill catalog to `output`, grouped by
@@ -528,6 +559,24 @@ mod tests {
 
         let result = tool.execute(input, ctx).await.unwrap();
         assert!(result.output.contains("No skills loaded"));
+        // The help text names every switch that gates a source, so a skill the
+        // operator installed elsewhere is explained rather than missing.
+        for expected in [
+            "./.horon-agent/skills/<skill-name>/SKILL.md (workspace)",
+            "./.claude/skills/<skill-name>/SKILL.md (workspace)",
+            "./.agents/skills/<skill-name>/SKILL.md (workspace)",
+            "~/.horon-agent/skills/<skill-name>/SKILL.md (user)",
+            "[skills] claude_user, off by default",
+            "[skills] codex_user, off by default",
+            "[tools] managed_skills, off by default",
+        ] {
+            assert!(
+                result.output.contains(expected),
+                "the help text must mention {expected}; got:\n{}",
+                result.output
+            );
+        }
+        assert!(result.output.contains("A workspace skill wins over a user skill"));
         // Even with no skills loaded, the endorsed catalog should be listed.
         assert!(result.output.contains("Endorsed skills"));
     }
@@ -572,6 +621,36 @@ mod tests {
         let result = tool.execute(input, ctx).await.unwrap();
         assert!(result.output.contains("## Skill: optimization"));
         assert_eq!(result.title.as_deref(), Some("skill: optimization"));
+    }
+
+    /// A skill whose body is not valid UTF-8 still lists, and the read that
+    /// needs the bytes reports the encoding failure as a tool error instead of
+    /// panicking or returning truncated text.
+    #[tokio::test]
+    async fn test_load_reports_an_unreadable_body_as_a_tool_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let skill_dir = temp_dir.path().join(".horon-agent").join("skills").join("bad-utf8");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let mut bytes = b"---\nname: bad-utf8\ndescription: Bad UTF-8 body\n---\n\n".to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+        std::fs::write(skill_dir.join("SKILL.md"), bytes).unwrap();
+
+        let registry = SkillRegistry::load_for_working_dir(Some(temp_dir.path())).unwrap();
+        let tool = SkillTool::new(Arc::new(RwLock::new(registry)));
+
+        let error = tool
+            .execute(json!({"action": "load", "name": "bad-utf8"}), create_test_context())
+            .await
+            .expect_err("an unreadable body must surface as a tool error");
+        let message = error.to_string();
+        assert!(
+            message.contains("Failed to read skill 'bad-utf8'"),
+            "expected the tool error to name the skill, got: {message}"
+        );
+        assert!(
+            message.contains("UTF-8") || message.contains("utf-8"),
+            "expected the tool error to carry the encoding failure, got: {message}"
+        );
     }
 
     #[tokio::test]
@@ -662,6 +741,43 @@ mod tests {
             format!("---\nname: {name}\ndescription: Project skill {name}\n---\n\nBody."),
         )
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_shows_where_a_colliding_skill_moved() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mine = temp_dir.path().join(".horon-agent").join("skills").join("shared");
+        std::fs::create_dir_all(&mine).unwrap();
+        std::fs::write(
+            mine.join("SKILL.md"),
+            "---\nname: shared\ndescription: My skill shared\n---\n\nMy body.",
+        )
+        .unwrap();
+        let claude = temp_dir.path().join(".claude").join("skills").join("shared");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(
+            claude.join("SKILL.md"),
+            "---\nname: shared\ndescription: Claude skill shared\n---\n\nClaude body.",
+        )
+        .unwrap();
+
+        let tool = create_test_tool();
+        let result = tool
+            .execute(json!({"action": "list"}), context_with_working_dir(temp_dir.path()))
+            .await
+            .unwrap();
+
+        assert!(
+            result.output.contains("## /shared") && result.output.contains("## /claude/shared"),
+            "both skills must be listed under their addresses, got:\n{}",
+            result.output
+        );
+        assert!(
+            result.output.contains("Skills: name collision: \"shared\"")
+                && result.output.contains("available as \"claude/shared\""),
+            "the list must say where the colliding skill moved, got:\n{}",
+            result.output
+        );
     }
 
     #[tokio::test]

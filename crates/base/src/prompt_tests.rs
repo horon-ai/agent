@@ -112,7 +112,8 @@ fn skill_snapshot_budget_small_list_is_byte_identical_to_the_previous_format() {
     ];
     let expected = concat!(
         "# Available Skills\n\n",
-        "You have access to the following skills that the user can invoke with `/skillname`:\n",
+        "You can read a skill with the read tool at `skill://<name>`, or the user can invoke it with \
+         `/skill:<name>` or `/<name>`:\n",
         "\n- `/alpha ` - First skill",
         "\n- `/beta ` - Second skill",
         "\n\nWhen a user asks about available skills or capabilities, mention these skills."
@@ -192,7 +193,7 @@ fn skill_snapshot_budget_one_thousand_skills_drop_descriptions_then_truncate_nam
         section.len()
     );
     assert!(section.contains("Descriptions are omitted"));
-    assert!(section.contains("skill_manage"));
+    assert!(section.contains("skill://<name>"));
 
     let omitted = omitted_skill_count(&infos);
     assert!(omitted > 0, "1,000 padded names must exceed the name-only budget");

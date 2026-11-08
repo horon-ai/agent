@@ -181,10 +181,21 @@ impl Agent {
         }
 
         let skills = self.current_skills_snapshot();
-        let skill_prompt = self
-            .active_skill
-            .as_ref()
-            .and_then(|name| skills.get(name).map(|skill| skill.get_prompt().to_string()));
+        // A skill whose file is unreadable drops out of this request's active
+        // section instead of failing the whole prompt: the transcript keeps
+        // going and one log line names the skill and error.
+        let skill_prompt = self.active_skill.as_ref().and_then(|name| {
+            let skill = skills.get(name)?;
+            match skill.get_prompt() {
+                Ok(prompt) => Some(prompt),
+                Err(error) => {
+                    logging::warn(&format!(
+                        "Active skill '{name}' could not be read; omitting it from this request: {error}"
+                    ));
+                    None
+                }
+            }
+        });
 
         // Frozen per session so skill installs never rewrite the cached
         // system prefix. Later installs are announced in the transcript.
