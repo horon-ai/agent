@@ -103,7 +103,7 @@ impl Tool for MemoryTool {
                 "intent": super::intent_schema_property(),
                 "action": {
                     "type": "string",
-                    "enum": ["remember", "recall", "search", "list", "forget", "tag", "link", "related"],
+                    "enum": ["remember", "recall", "search", "list", "forget", "update", "tag", "link", "related"],
                     "description": "Action."
                 },
                 "content": { "type": "string" },
@@ -332,6 +332,42 @@ impl Tool for MemoryTool {
                     Ok(ToolOutput::new(format!("Not found: {}", id)))
                 }
             }
+            "update" => {
+                let id = input.id.ok_or_else(|| anyhow::anyhow!("id required"))?;
+                let category = input.category.as_deref().map(crate::memory_inspect::parse_category);
+                let update = crate::memory_inspect::MemoryUpdate {
+                    content: input.content,
+                    category,
+                    tags: input.tags,
+                };
+                if update.is_empty() {
+                    Err(anyhow::anyhow!(
+                        "update requires at least one of content, category, or tags"
+                    ))
+                } else {
+                    memory::set_state(MemoryState::ToolAction {
+                        action: "update".into(),
+                        detail: truncate_for_widget(&id, 30),
+                    });
+                    let updated = crate::memory_inspect::update_memory(&manager, &id, update);
+                    memory::set_state(MemoryState::Idle);
+                    match updated? {
+                        Some(entry) => {
+                            memory::add_event(MemoryEventKind::ToolUpdated { id: id.clone() });
+                            let tags_str = if entry.tags.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" [{}]", entry.tags.join(", "))
+                            };
+                            Ok(ToolOutput::new(format!(
+                                "Updated {}: [{}] {}{}\n  id: {}",
+                                id, entry.category, entry.content, tags_str, entry.id
+                            )))
+                        }
+                        None => Ok(ToolOutput::new(format!("Not found: {}", id))),
+                    }
+                }
+            }
             "tag" => {
                 let id = input.id.ok_or_else(|| anyhow::anyhow!("id required"))?;
                 let tags = input.tags.ok_or_else(|| anyhow::anyhow!("tags required"))?;
@@ -432,6 +468,10 @@ fn truncate_for_widget(s: &str, max: usize) -> String {
 }
 
 #[cfg(test)]
+#[path = "memory_update_tests.rs"]
+mod memory_update_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -455,6 +495,14 @@ mod tests {
         assert!(!props.contains_key("weight"));
         assert!(!props.contains_key("depth"));
         assert!(!props.contains_key("mode"));
+
+        let actions: Vec<&str> = props["action"]["enum"]
+            .as_array()
+            .expect("action should be an enum")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert!(actions.contains(&"update"), "{actions:?}");
     }
 
     fn test_ctx(working_dir: Option<std::path::PathBuf>) -> ToolContext {

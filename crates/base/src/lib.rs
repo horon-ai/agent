@@ -61,6 +61,7 @@ pub mod mcp;
 pub mod memory;
 pub mod memory_agent;
 pub mod memory_graph;
+pub mod memory_inspect;
 pub mod memory_jev;
 pub mod memory_judge_metrics;
 pub mod memory_log;

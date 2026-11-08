@@ -192,6 +192,8 @@ pub enum MemoryEventKind {
     ToolRecalled { query: String, count: usize },
     /// Agent forgot a memory via tool.
     ToolForgot { id: String },
+    /// Agent updated a memory in place via tool.
+    ToolUpdated { id: String },
     /// Agent tagged a memory via tool.
     ToolTagged { id: String, tags: String },
     /// Agent linked memories via tool.

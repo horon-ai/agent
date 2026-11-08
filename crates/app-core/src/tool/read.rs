@@ -151,7 +151,7 @@ impl Tool for ReadTool {
                 "intent": super::intent_schema_property(),
                 "file_path": {
                     "type": "string",
-                    "description": "Path to a file; a line selector like `path:10-40` reads part. Also artifact:// ids."
+                    "description": "Path to a file; a line selector like `path:10-40` reads part. Also artifact:// ids and memory:// references."
                 },
                 "start_line": {
                     "type": "integer",
@@ -189,6 +189,9 @@ impl Tool for ReadTool {
 
         if is_history_url(&params.file_path) {
             return read_history_url(&params, &ctx);
+        }
+        if read_memory_url::is_memory_url(&params.file_path) {
+            return read_memory_url::read_memory_url(&params, &ctx);
         }
 
         let cwd = ctx
@@ -605,6 +608,8 @@ fn remember_read(
 
 #[cfg(test)]
 mod agent_url_tests;
+#[path = "read_memory_url.rs"]
+mod read_memory_url;
 #[path = "read_skill.rs"]
 mod read_skill;
 #[cfg(test)]
@@ -618,6 +623,7 @@ fn is_remote_path(path: &str) -> bool {
     if starts_with_ignore_ascii_case(path, "artifact://")
         || starts_with_ignore_ascii_case(path, "history://")
         || starts_with_ignore_ascii_case(path, read_skill::SCHEME)
+        || read_memory_url::is_memory_url(path)
     {
         return false;
     }

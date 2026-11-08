@@ -24,7 +24,7 @@
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
-| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://` 읽기와 MCP 설정 출처, 보조 호출 |
+| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.md`](runtime/TURNS.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |

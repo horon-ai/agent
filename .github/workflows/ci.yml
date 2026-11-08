@@ -671,6 +671,34 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- agent::post_tool_feedback_replace_tests --nocapture
 
+      - name: Run memory record cohort
+        shell: bash
+        # `memory` update and `read memory://` both live in the
+        # `horon-agent-app-core` lib suite, which this workflow only ever runs
+        # through filtered cohorts. Without a step naming their prefixes the
+        # tests would compile and never execute, so each filter must report at
+        # least one pass (`--min-passed 1`): `memory_update` covers the in-place
+        # update (id, links and created_at kept, secret redaction, unknown id,
+        # empty update refused) and `memory_url` covers the full-record read,
+        # the newest-first listing, not-found and out-of-scope refusal.
+        # `run_lib_tests.py` forwards its arguments to libtest, which accepts a
+        # single filter, so each filter needs its own call. The store-side
+        # helpers (tag normalization, the one-line preview) sit in the
+        # `horon-agent-base` suite.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- memory_update --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- memory_url --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- memory_update --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the
