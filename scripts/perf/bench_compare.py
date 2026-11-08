@@ -134,20 +134,6 @@ def mcp_servers() -> dict:
     return {MCP_SERVER_NAME: mcp_server_entry()}
 
 
-def write_codex_mcp_config(path: str, servers: dict) -> None:
-    """Codex reads stdio servers from ``[mcp_servers.<name>]`` in config.toml."""
-    lines: list[str] = []
-    for name, entry in servers.items():
-        lines.append(f"[mcp_servers.{name}]")
-        lines.append(f"command = {json.dumps(entry['command'])}")
-        args = ", ".join(json.dumps(arg) for arg in entry.get("args") or [])
-        lines.append(f"args = [{args}]")
-        lines.append("")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
-
-
 # ---------------------------------------------------------------------------
 # Mock model server
 # ---------------------------------------------------------------------------
@@ -428,7 +414,7 @@ def claude_env(root: str, base_url: str) -> dict:
 
 
 def claude_oneshot_argv(
-    binary: str, prompt: str = TURN_PROMPT, mcp_config: str | None = None
+    binary: str, prompt: str = TURN_PROMPT
 ) -> list[str]:
     argv = [
         binary,
@@ -440,10 +426,6 @@ def claude_oneshot_argv(
         "--output-format",
         "text",
     ]
-    if mcp_config:
-        # Only the fixture server: a strict config keeps the user's own servers
-        # out of the measurement and out of the run.
-        argv += ["--mcp-config", mcp_config, "--strict-mcp-config"]
     return argv + [prompt]
 
 

@@ -204,6 +204,38 @@ def has_tool_result(kind: str, body: dict) -> bool:
     return False
 
 
+# A skill or MCP plan calls again only while the fixture's proof is missing.
+# An agent whose tool keeps failing would otherwise loop until the harness
+# timeout, so the plan stops after this many calls and answers plainly; the
+# run then reports a failed round trip with its reason instead of a timeout.
+MAX_SCENARIO_TOOL_CALLS = 4
+
+
+def tool_call_count(kind: str, body: dict) -> int:
+    """Tool calls the model already made anywhere in this transcript."""
+    if kind == "anthropic":
+        return sum(
+            1
+            for message in body.get("messages") or []
+            if isinstance(message, dict) and message.get("role") == "assistant"
+            and isinstance(message.get("content"), list)
+            for block in message["content"]
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        )
+    if kind == "responses":
+        return sum(
+            1
+            for item in body.get("input") or []
+            if isinstance(item, dict)
+            and item.get("type") in ("function_call", "custom_tool_call", "local_shell_call")
+        )
+    return sum(
+        len(message.get("tool_calls") or [])
+        for message in body.get("messages") or []
+        if isinstance(message, dict) and message.get("role") == "assistant"
+    )
+
+
 def tool_result_text(kind: str, body: dict) -> str:
     """Flatten the tool results of the current (last) user turn.
 
@@ -700,6 +732,9 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = shell[0]
                 arguments = {shell[1]: "ls"}
 
+        capped = plan_name in ("skill", "mcp") and tool_call_count(kind, body) >= MAX_SCENARIO_TOOL_CALLS
+        if capped:
+            tool_name, arguments, namespace, via = None, {}, None, None
         calls_tool = tool_name is not None
         if plan_name == "skill":
             sentinel_seen = SKILL_SENTINEL in transcript
@@ -719,6 +754,7 @@ class Handler(BaseHTTPRequestHandler):
             "tool_choice_prop": next(iter(arguments), None),
             "via": via,
             "sentinel_seen": sentinel_seen,
+            "capped": capped,
             "bench_echo_exposed": plan_name == "mcp"
             and bool(
                 find_mcp_tool(tools) is not None

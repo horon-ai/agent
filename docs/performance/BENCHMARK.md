@@ -158,14 +158,14 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 | 도구 | 스킬 픽스처 위치와 호출 | MCP 설정 |
 | --- | --- | --- |
-| `horon` | 작업 폴더 `.horon-agent/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_AGENT_HOME>/mcp.json`의 `servers`, 도구 이름 `mcp__bench__bench_echo`. 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
+| `horon` | 작업 폴더 `.horon-agent/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_AGENT_HOME>/mcp.json`의 `servers`. 도구 목록이 캐시 때문에 고정이라 서버 도구는 고정 도구 `mcp_call`(`server: bench`, `tool: bench_echo`)로 부른다(`mcp-call`). 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
 | `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`의 `mcpServers` |
-| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | `--mcp-config <파일> --strict-mcp-config`, 도구 이름 `mcp__bench__bench_echo` |
-| `codex` | `$CODEX_HOME/skills`의 픽스처를 셸 도구로 `cat`(`file-read`) | `$CODEX_HOME/config.toml`의 `[mcp_servers.bench]`. 이 빌드는 MCP 도구를 네임스페이스 도구 `mcp__bench` 안의 `bench_echo`로 내보낸다 |
+| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | 측정하지 않는다(`unsupported`). 고정 버전 2.1.317의 `-p`는 `--mcp-config`(파일, 문자열), 프로젝트 `.mcp.json`, `~/.claude.json`, 설정 파일 어느 방식으로도 stdio MCP 서버 도구를 모델에 보내지 않았다 |
+| `codex` | `$CODEX_HOME/skills`의 픽스처를 셸 도구로 `cat`(`file-read`) | 측정하지 않는다(`unsupported`). 고정 버전 0.166.0은 서버를 Responses 네임스페이스 도구 `mcp__bench`로만 내보내고, `mcp__bench.bench_echo` 호출은 실행되지 않은 채 같은 요청이 다시 와서 왕복을 증명할 수 없다 |
 | `opencode` | `XDG_CONFIG_HOME/opencode/skills`의 픽스처를 `skill` 도구로 호출(`skill-tool`) | `opencode.json`의 `mcp.bench`(`type: local`) |
 | `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | 없음. MCP 클라이언트가 없어 `skipped`와 사유를 남긴다 |
 | `omp` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`. 프롬프트의 `xd://...bench_echo` 라우트를 `write`로 호출(`mcp-route`) |
-| `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`가 허용 목록이라 그 이름을 넣는다 |
+| `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`는 허용 목록이고 MCP 도구 이름이 빌드마다 달라질 수 있어 이 시나리오만 `--tools`를 주지 않고 기본 도구 집합(연결된 서버 도구 포함)을 쓴다 |
 
 시나리오마다 도구 루트 아래 `<시나리오>/run<N>`에 별도 홈과 작업 폴더를 만든다. 같은 홈을 다시 쓰면 앞 실행이 남긴 MCP 스키마 캐시나 스킬 힌트가 준비 비용을 건너뛰게 된다. 스킬과 MCP 픽스처도 해당 시나리오의 홈에만 두므로 다른 시나리오의 숫자에 섞이지 않는다. 실행이 끝나면 그 루트는 통째로 지운다.
 

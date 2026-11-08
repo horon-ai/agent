@@ -500,6 +500,27 @@ class ScenarioPlanTests(ServerCase):
         self.assertFalse(entry["issued_tool_call"])
         self.assertFalse(entry["bench_echo_exposed"])
 
+    def test_mcp_plan_stops_calling_after_the_cap_without_a_nonce(self) -> None:
+        # A tool that keeps failing must end the run with a failed round trip,
+        # not loop until the harness timeout.
+        messages = [{"role": "user", "content": self.MCP_PROMPT}]
+        for index in range(4):
+            messages += [
+                {"role": "assistant", "content": None,
+                 "tool_calls": [{"id": f"call_mock_{index}", "type": "function",
+                                  "function": {"name": "mcp__bench__bench_echo",
+                                               "arguments": '{"text": "x"}'}}]},
+                {"role": "tool", "tool_call_id": f"call_mock_{index}", "content": "error"},
+            ]
+        raw = self.chat(self.MCP_PROMPT, MCP_TOOL, messages[:-2])
+        self.assertIsNotNone(tool_call_of(raw)[0], "three earlier calls still allow a retry")
+        raw = self.chat(self.MCP_PROMPT, MCP_TOOL, messages)
+        self.assertEqual(final_text_of(raw), "mock-ok")
+        entry = self.requests()[-1]
+        self.assertFalse(entry["issued_tool_call"])
+        self.assertTrue(entry["capped"])
+        self.assertFalse(entry["sentinel_seen"])
+
     def test_deferred_surface_calls_bench_echo_through_mcp_call(self) -> None:
         # horon keeps its tool list cache-stable: a late server's tool is only
         # announced in the transcript and reached through the fixed mcp_call.

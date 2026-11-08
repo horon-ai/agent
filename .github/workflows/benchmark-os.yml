@@ -384,6 +384,8 @@ jobs:
             tool="$(echo "$tool" | tr -d '[:space:]')"
             [ -z "$tool" ] && continue
             [ "$tool" = "horon" ] && continue
+            # The installer also accepts `claude`; the harness names that row claude_code.
+            [ "$tool" = "claude" ] && tool=claude_code
             tools="$tools $tool"
           done
           # This step also measures the skill and MCP scenarios: the script's
