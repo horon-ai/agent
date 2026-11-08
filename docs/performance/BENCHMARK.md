@@ -101,7 +101,9 @@ python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent $
   --sessions 1 5 10 --turns 3 --json-out compare.json --markdown-out compare.md
 ```
 
-`install_competitors.sh`는 버전을 고정해 설치한다. jcode는 GitHub 릴리스 `v0.99.1`(Windows는 `.exe`), 나머지는 `npm install --prefix`로 `@anthropic-ai/claude-code@2.1.317`, `@openai/codex@0.166.0`, `opencode-ai@1.19.5`, `@mariozechner/pi-coding-agent@0.73.1`, `@oh-my-pi/pi-coding-agent@18.18.0`, `omo-ai@5.1.64`이다. 버전은 `JCODE_VERSION`, `CLAUDE_VERSION`, `CODEX_VERSION`, `OPENCODE_VERSION`, `PI_VERSION`, `OMP_VERSION`, `OMO_VERSION`으로 바꾼다. Windows에서는 Git Bash로 돌리고, npm 도구는 `.cmd` 실행 파일로 기록한다.
+`install_competitors.sh`는 버전을 고정해 설치한다. jcode는 GitHub 릴리스 `v0.99.1`(Windows는 `.exe`), 나머지는 `npm install --prefix`로 `@anthropic-ai/claude-code@2.1.317`, `@openai/codex@0.166.0`, `opencode-ai@1.19.5`, `@earendil-works/pi-coding-agent@1.5.0`, `@oh-my-pi/pi-coding-agent@18.18.0`, `omo-ai@5.1.64`이다. 버전은 `JCODE_VERSION`, `CLAUDE_VERSION`, `CODEX_VERSION`, `OPENCODE_VERSION`, `PI_VERSION`, `OMP_VERSION`, `OMO_VERSION`으로 바꾼다. Windows에서는 Git Bash로 돌리고, npm 도구는 `.cmd` 실행 파일로 기록한다.
+
+pi는 1.x부터 `@earendil-works` 이름으로 배포되고 MCP 클라이언트를 내장한다(Node 22.19 이상). 0.73.1(`@mariozechner/pi-coding-agent`)에는 MCP 클라이언트가 없어 MCP 행을 잴 수 없었으므로 1.5.0으로 올렸고, 그래서 이 버전부터 pi의 모든 행이 이전 결과와 다른 버전을 잰다. MCP 측정은 `$PI_CODING_AGENT_DIR/mcp.json`에 픽스처 서버를 `"exposure": "direct"`로 넣는다. 기본값 `codemode`는 도구를 모델에 직접 알리지 않아 가짜 모델이 `mcp__bench__bench_echo`를 부를 수 없기 때문이다. 원샷, 스킬, 세션 측정은 `--no-mcp`로 MCP를 끄고 다른 도구와 같은 조건을 맞춘다.
 
 jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운로드 주소를 5번까지 다시 시도하고, 그래도 실패하면 같은 파일을 GitHub 릴리스 API의 자산 id로 받는다. 어느 쪽으로 받든 릴리스의 `SHA256SUMS`에 적힌 값과 같을 때만 쓴다. 설치에 실패한 도구는 `<dest>/failures.txt`에 `이름<TAB>이유` 한 줄로 남고, `bench_compare.py --install-failures`가 이 파일을 읽어 `compare.md`의 `Skipped:` 줄에 `install failed: <이유>`로 적는다. 측정하지 못한 도구가 하나라도 있으면 `compare.md` 맨 앞에 `> **Warning: N tool(s) were not measured**` 줄이 붙고, GitHub Actions에서는 도구마다 `::warning` 주석과 실행 요약(step summary) 줄이 남아 run 화면에서 바로 보인다. `syscalls`처럼 측정 기능이 빠진 항목은 도구가 아니므로 경고하지 않는다.
 
