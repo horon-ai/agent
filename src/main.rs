@@ -56,14 +56,5 @@ fn run_main() -> Result<()> {
 
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
-    let result = runtime.block_on(async { horon_agent::run().await });
-    // Where a short command's exit time goes is not otherwise visible: the
-    // runtime drop waits for any blocking task still running.
-    let finished = std::time::Instant::now();
-    drop(runtime);
-    horon_agent::logging::info(&format!(
-        "[TIMING] runtime_shutdown: {}ms",
-        finished.elapsed().as_millis()
-    ));
-    result
+    runtime.block_on(async { horon_agent::run().await })
 }
