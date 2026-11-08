@@ -584,6 +584,13 @@ immune_turns = 3
 # the tool result the model sees, so linters can report findings inline.
 # post_tool_feedback = "~/bin/horon-agent-vale"
 # post_tool_feedback_timeout_ms = 10000
+#
+# Synchronous hook before each turn's model request. It receives
+# {"session_id","turn","model","messages"} on stdin; printing {"messages":[...]}
+# replaces the messages for that request only, and the stored transcript is
+# never touched. Any failure keeps the request unchanged.
+# pre_request = "~/bin/horon-agent-request-policy"
+# pre_request_timeout_ms = 5000
 
 [ambient]
 # Ambient mode: background agent that maintains your codebase

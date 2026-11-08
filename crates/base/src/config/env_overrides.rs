@@ -309,6 +309,12 @@ impl Config {
                 self.hooks.pre_tool_timeout_ms = parsed;
             }
         }
+        hook_env_override(&mut self.hooks.pre_request, "HORON_AGENT_HOOK_PRE_REQUEST");
+        if let Ok(v) = std::env::var("HORON_AGENT_HOOK_PRE_REQUEST_TIMEOUT_MS")
+            && let Ok(parsed) = v.trim().parse::<u64>()
+        {
+            self.hooks.pre_request_timeout_ms = parsed;
+        }
 
         // Web search
         if let Ok(v) = std::env::var("HORON_AGENT_WEBSEARCH_ENGINE")

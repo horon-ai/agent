@@ -930,6 +930,14 @@ pub struct HooksConfig {
     /// Max milliseconds to wait for the pre_tool gate before failing open
     /// (default: 5000). Env override: HORON_AGENT_HOOK_PRE_TOOL_TIMEOUT_MS.
     pub pre_tool_timeout_ms: u64,
+    /// Synchronous hook before each provider request. Receives
+    /// `{session_id, turn, model, messages}` JSON on stdin and may print
+    /// `{"messages": [...]}` to replace the messages for that request only.
+    /// Env override: HORON_AGENT_HOOK_PRE_REQUEST.
+    pub pre_request: Option<HookCommands>,
+    /// Max milliseconds to wait for each pre_request hook before failing open
+    /// (default: 5000). Env override: HORON_AGENT_HOOK_PRE_REQUEST_TIMEOUT_MS.
+    pub pre_request_timeout_ms: u64,
 }
 
 impl Default for HooksConfig {
@@ -946,6 +954,8 @@ impl Default for HooksConfig {
             post_tool_feedback: None,
             post_tool_feedback_timeout_ms: 10_000,
             pre_tool_timeout_ms: 5000,
+            pre_request: None,
+            pre_request_timeout_ms: 5000,
         }
     }
 }

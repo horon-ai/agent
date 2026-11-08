@@ -46,6 +46,7 @@ mod patch;
 pub mod path_policy;
 mod path_suffix;
 pub(crate) mod permission_bridge;
+pub(crate) mod post_tool_feedback;
 mod read;
 mod read_selector;
 pub(crate) mod read_state;
@@ -1916,7 +1917,7 @@ impl Registry {
     }
 
     /// Run the synchronous `post_tool_feedback` hooks after a successful tool
-    /// call and append whatever they print to the tool result, so linters and
+    /// call and apply what they print to the tool result, so linters and
     /// checkers can feed findings straight back to the model.
     ///
     /// One of the three awaited hooks serialized by `HOOK_SERIAL`; the input
@@ -1935,15 +1936,9 @@ impl Registry {
         let input_json = input.to_string();
         let feedback = {
             let _serial = HOOK_SERIAL.lock().await;
-            crate::hooks::run_post_tool_feedback(&event, &input_json).await
+            crate::hooks::post_tool_feedback::run(&event, &input_json, &output.output).await
         };
-        if let Some(feedback) = feedback {
-            if !output.output.is_empty() && !output.output.ends_with('\n') {
-                output.output.push('\n');
-            }
-            output.output.push_str("\n[post_tool_feedback]\n");
-            output.output.push_str(&feedback);
-        }
+        post_tool_feedback::apply(output, &feedback);
     }
 
     /// Maximum fraction of context budget a single tool output may occupy.

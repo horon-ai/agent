@@ -632,6 +632,45 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- todo_blocked --nocapture
 
+      - name: Run hooks cohort
+        shell: bash
+        # The `horon-agent-base` and `horon-agent-app-core` lib suites only run
+        # through filtered cohorts here, so a lifecycle hook that compiles is
+        # not a hook that was tested. `hooks::pre_request::tests` covers the
+        # request rewrite (replacement, empty stdout, fail-open, system-prompt
+        # refusal, chained commands, stdin payload, recursion guard) and
+        # `hooks::post_tool_feedback::tests` covers the feedback envelope and
+        # the text it appends. The hook cases write small /bin/sh scripts, so
+        # each filter carries `--min-passed 1` while still reporting a pass on
+        # Windows, where only the platform-neutral cases run.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- hooks::pre_request::tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- hooks::post_tool_feedback::tests --nocapture
+
+      - name: Run hooks cohort (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        # The end-to-end hook cases run a real hook script, which these tests
+        # write with /bin/sh, so they are Unix-only: a turn whose request the
+        # hook rewrote while the stored transcript stayed put, the same request
+        # left byte-identical by an empty or failing hook, and the structural
+        # probe behind the `hooks` section of the perf gate.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::request_messages::tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::post_tool_feedback_replace_tests --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the

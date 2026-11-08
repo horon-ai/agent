@@ -19,10 +19,20 @@
 //! - **Feedback** (`post_tool_feedback`): horon-agent waits (with a timeout) after a
 //!   successful tool call. Anything the hook prints to stdout is appended to
 //!   the tool result the model sees (e.g. linter findings for an edited file).
-//!   Timeouts and spawn failures add nothing.
+//!   Timeouts and spawn failures add nothing. A hook that prints a JSON object
+//!   with `content`, `is_error` or `note` instead replaces the result text,
+//!   marks it as an error, or adds a system reminder; see
+//!   [`post_tool_feedback`].
+//! - **Request** (`pre_request`): horon-agent waits (with a timeout) before each
+//!   provider request. The hook receives `{session_id, turn, model, messages}`
+//!   and may print `{"messages": [...]}` to rewrite the messages for that
+//!   request only; see [`pre_request`].
 //!
 //! Hook processes get `HORON_AGENT_HOOKS_DISABLED=1` in their environment so a
 //! hook that itself invokes horon-agent does not recursively trigger hooks.
+
+pub mod post_tool_feedback;
+pub mod pre_request;
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -40,9 +50,6 @@ const PAYLOAD_ENV_LIMIT: usize = 16 * 1024;
 const TOOL_INPUT_ENV_LIMIT: usize = 16 * 1024;
 /// Maximum chars of hook stderr used as a block reason.
 const BLOCK_REASON_LIMIT: usize = 2000;
-/// Maximum bytes of `post_tool_feedback` stdout appended to a tool result,
-/// per hook command.
-const FEEDBACK_LIMIT: usize = 8 * 1024;
 
 /// Decision returned by the `pre_tool` gate hook.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +122,7 @@ pub fn hook_commands(event: &str) -> Vec<String> {
         "pre_tool" => hooks.pre_tool.as_ref(),
         "post_tool" => hooks.post_tool.as_ref(),
         "post_tool_feedback" => hooks.post_tool_feedback.as_ref(),
+        "pre_request" => hooks.pre_request.as_ref(),
         _ => None,
     };
     raw.into_iter()
@@ -192,6 +200,7 @@ pub async fn transform_tool_input(session_id: &str, working_dir: Option<&str>, t
                 continue;
             }
         };
+        horon_agent_perf_counters::record_hook_spawn();
         // A child that never reads stdin can block `write_all` once the pipe
         // fills. Keep that write under the same deadline as process completion
         // so a transformer always fails open within its configured timeout.
@@ -328,6 +337,7 @@ pub fn dispatch_observer(event: HookEvent) {
                     .stderr(std::process::Stdio::null());
                 match horon_agent_platform::spawn_detached_without_console_window(&mut cmd) {
                     Ok(child) => {
+                        horon_agent_perf_counters::record_hook_spawn();
                         horon_agent_platform::reap_detached(child);
                         crate::logging::debug(&format!(
                             "Hook '{event_name}' dispatched to '{command_line}' (session={:?})",
@@ -415,6 +425,7 @@ async fn run_pre_tool_command(
             return GateDecision::Allow;
         }
     };
+    horon_agent_perf_counters::record_hook_spawn();
 
     let timeout = std::time::Duration::from_millis(crate::config::config().hooks.pre_tool_timeout_ms.max(1));
     // One deadline covers the whole exchange, exactly like the transformer
@@ -473,97 +484,6 @@ async fn run_pre_tool_command(
             GateDecision::Allow
         }
     }
-}
-
-/// Run the `post_tool_feedback` hooks for a completed tool call, in
-/// declaration order, and collect what they print to stdout.
-///
-/// Each hook receives the event env vars plus the full tool input JSON on
-/// stdin. Trimmed stdout (capped at 8 KB per hook) is returned regardless of
-/// exit code, because linters conventionally exit non-zero when they report
-/// findings. Timeouts, spawn failures, and empty stdout contribute nothing.
-pub async fn run_post_tool_feedback(event: &HookEvent, tool_input_json: &str) -> Option<String> {
-    let command_lines = hook_commands("post_tool_feedback");
-    if command_lines.is_empty() {
-        return None;
-    }
-    let timeout = std::time::Duration::from_millis(crate::config::config().hooks.post_tool_feedback_timeout_ms.max(1));
-    let mut sections = Vec::new();
-    for command_line in command_lines {
-        if let Some(text) = run_post_tool_feedback_command(&command_line, event, tool_input_json, timeout).await {
-            sections.push(text);
-        }
-    }
-    (!sections.is_empty()).then(|| sections.join("\n\n"))
-}
-
-async fn run_post_tool_feedback_command(
-    command_line: &str,
-    event: &HookEvent,
-    tool_input_json: &str,
-    timeout: std::time::Duration,
-) -> Option<String> {
-    let std_cmd = match build_hook_process(command_line, event) {
-        Ok(cmd) => cmd,
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "Hook 'post_tool_feedback' command '{command_line}' is invalid: {error}"
-            ));
-            return None;
-        }
-    };
-    let mut cmd = tokio::process::Command::from(std_cmd);
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "Hook 'post_tool_feedback' command '{command_line}' failed to start: {error}"
-            ));
-            return None;
-        }
-    };
-    // Keep the stdin write under the deadline too: a hook that never reads
-    // stdin could otherwise block once the pipe fills.
-    let output = match tokio::time::timeout(timeout, async {
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            // A hook that exits without reading stdin closes the pipe; that
-            // is fine, its stdout still counts.
-            let _ = stdin.write_all(tool_input_json.as_bytes()).await;
-        }
-        child.wait_with_output().await
-    })
-    .await
-    {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => {
-            crate::logging::warn(&format!(
-                "Hook 'post_tool_feedback' command '{command_line}' failed: {error}"
-            ));
-            return None;
-        }
-        Err(_elapsed) => {
-            crate::logging::warn(&format!(
-                "Hook 'post_tool_feedback' command '{command_line}' timed out after {}ms",
-                timeout.as_millis()
-            ));
-            return None;
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let text = stdout.trim();
-    if text.is_empty() {
-        return None;
-    }
-    let mut text = truncate_bytes(text, FEEDBACK_LIMIT).to_string();
-    if text.len() < stdout.trim().len() {
-        text.push_str("\n[feedback truncated]");
-    }
-    Some(text)
 }
 
 #[cfg(test)]
