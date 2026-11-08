@@ -128,7 +128,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `omp` | `oh-my-pi (omp)` | `@oh-my-pi/pi-coding-agent` | `18.18.0` (`OMP_VERSION`) | Bun 1.4.4 이상 (`engines`) | 임시 HOME 아래 `models.json`의 `providers.mock`, `-p --no-session --no-title --model mock/mock-model --no-lsp` |
 | `omo` | `oh-my-openagent (omo)` | `omo-ai` | `5.1.64` (`OMO_VERSION`) | Node 24 이상 또는 Bun | 같은 `models.json`, `-p --no-session --model mock/mock-model --tools bash,read` |
 
-- `omp`는 npm CLI를 Bun 스크립트로 배포하므로 compare 작업이 `oven-sh/setup-bun`으로 Bun을 먼저 설치한다. Bun이 없으면 installer가 두 도구를 `skipped`로 남기고 작업은 계속된다.
+- `omp`는 npm CLI를 Bun 스크립트로 배포하므로 compare 작업이 `oven-sh/setup-bun`으로 Bun을 먼저 설치한다. Bun이 없으면 `omp`를, Node도 Bun도 없으면 `omo`를 installer가 `skipped`로 남기고 작업은 계속된다.
 - `omo`의 기본 도구 목록에는 셸 도구(`bash`)가 없고 `--tools`는 허용 목록이라, `bash`와 `read`를 명시해야 mock 모델이 도구를 부를 수 있다.
 - `omp`는 `--no-title` 없이 실행하면 제목 생성용 모델 요청이 한 번 더 나가 원샷 요청 수가 달라진다. `--no-lsp`는 언어 서버 내려받기를 막는다.
 - 두 도구 모두 agent 디렉터리에 모델 목록과 base URL을 캐시하므로(omp는 `agent.db`, `models.db`) 측정마다 새 agent 디렉터리를 만든다. 세션 측정에서는 세션마다 따로 만든다.
