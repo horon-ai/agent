@@ -271,6 +271,7 @@ mod tests {
             completion_confidence: None,
             confidence_history: Vec::new(),
             blocked_by: Vec::new(),
+            blocker: None,
             assigned_to: None,
         }
     }

@@ -24,12 +24,19 @@ mod loop_guard_tests;
 mod messages;
 #[cfg(test)]
 mod model_usage_tests;
+#[cfg(test)]
+#[path = "agent/post_tool_feedback_replace_tests.rs"]
+mod post_tool_feedback_replace_tests;
 mod prompting;
 mod provider;
 mod provisional_init;
 #[cfg(test)]
 #[path = "agent/pruning_tests.rs"]
 mod pruning_tests;
+mod request_messages;
+#[cfg(test)]
+pub(crate) use request_messages::request_extra_clone_counters;
+pub(crate) use request_messages::{join_request_messages, record_request_extra_clone};
 mod response_recovery;
 mod resume_commit;
 mod round_budget;
@@ -227,43 +234,6 @@ where
         ephemeral_message_count: ephemeral_messages.len(),
     }
 }
-
-/// Append an owned suffix to a borrowed transcript prefix.
-///
-/// Called only when a request actually grows beyond its snapshot (memory
-/// injection, plan-limit reminder, batch nudge). An unmodified request keeps
-/// borrowing the snapshot and never reaches this.
-fn join_request_messages(prefix: &[Message], suffix: &[Message]) -> Vec<Message> {
-    let mut joined = Vec::with_capacity(prefix.len() + suffix.len());
-    joined.extend_from_slice(prefix);
-    joined.extend(suffix.iter().cloned());
-    joined
-}
-
-/// Full-transcript copies made beyond the turn's one owned snapshot; test-only.
-#[cfg(test)]
-static REQUEST_EXTRA_CLONES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-#[cfg(test)]
-static REQUEST_EXTRA_CLONE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-#[cfg(test)]
-pub(super) fn request_extra_clone_counters() -> (u64, u64) {
-    (
-        REQUEST_EXTRA_CLONES.load(std::sync::atomic::Ordering::Relaxed),
-        REQUEST_EXTRA_CLONE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
-    )
-}
-
-#[cfg(test)]
-fn record_request_extra_clone(copied: &[Message]) {
-    REQUEST_EXTRA_CLONES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let bytes = u64::try_from(stable_json_len(copied)).unwrap_or(u64::MAX);
-    REQUEST_EXTRA_CLONE_BYTES.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-}
-
-#[cfg(not(test))]
-#[inline]
-fn record_request_extra_clone(_copied: &[Message]) {}
 
 impl Agent {
     /// Provider identity used for cache retention lookups. Generic OpenAI is

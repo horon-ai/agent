@@ -770,3 +770,63 @@ pub fn project_skill_paths() -> Vec<&'static str> {
         })
         .collect()
 }
+
+/// Sentence fragment naming where the skill file `path` comes from, such as
+/// `a project skill from the agents source (/repo/.agents/skills)`.
+///
+/// `skill_manage delete` reports this when it refuses to remove a skill the
+/// agent did not write, so the refusal says which source owns the name rather
+/// than repeating the file path alone. The row is found by directory, and the
+/// deepest matching directory wins, because a plugin store nests the
+/// `skills/` folder it actually read below the root it registers.
+///
+/// `None` means no enabled row covers the path: either the path belongs to a
+/// source whose switch is off or it is not a skill source at all.
+pub fn describe_source(path: &Path, working_dir: Option<&Path>) -> Option<String> {
+    let switches = Switches::current();
+    let target = absolute(path)?;
+    let mut best: Option<(&'static str, Level, usize, PathBuf)> = None;
+    for row in SOURCES.iter().filter(|row| switches.is_on(row.enable)) {
+        for (dir, _) in ResolvedSource::new(row, working_dir).entries {
+            let Some(dir) = absolute(&dir) else {
+                continue;
+            };
+            if !target.starts_with(&dir) {
+                continue;
+            }
+            let depth = dir.components().count();
+            if best.as_ref().is_none_or(|(_, _, best_depth, _)| depth > *best_depth) {
+                best = Some((row.id, row.level, depth, dir));
+            }
+        }
+    }
+    best.map(|(id, level, _, dir)| {
+        let level = match level {
+            Level::Project => "project",
+            Level::User => "user",
+        };
+        format!("a {level} skill from the {id} source ({})", display_path(&dir))
+    })
+}
+
+/// `path` as an absolute path, canonicalized when it exists.
+///
+/// Canonicalizing makes a symlinked home or workspace compare equal to the
+/// directory an entry was read from; a path that does not exist (a skill file
+/// deleted a moment ago) is joined to the current directory instead, so the
+/// comparison is still lexical.
+fn absolute(path: &Path) -> Option<PathBuf> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Some(canonical);
+    }
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => Some(cwd.join(path)),
+        // A relative path with no readable working directory cannot be
+        // compared against any source directory, so the caller reports the
+        // skill as unattributed rather than guessing.
+        Err(_) => None,
+    }
+}

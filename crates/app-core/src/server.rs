@@ -55,7 +55,7 @@ mod irc;
 mod lifecycle;
 mod live_turn;
 mod provider_control;
-mod reload;
+pub(crate) mod reload;
 pub(crate) mod reload_recovery;
 mod reload_state;
 mod reload_trace;

@@ -1066,7 +1066,7 @@ async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
             );
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
 

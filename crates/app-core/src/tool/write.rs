@@ -23,6 +23,9 @@ static HASHLINE_PREFIX_RE: LazyLock<Regex> =
 const FILE_TOUCH_PREVIEW_MAX_LINES: usize = 6;
 const FILE_TOUCH_PREVIEW_MAX_BYTES: usize = 240;
 
+#[path = "write_shebang.rs"]
+mod write_shebang;
+
 pub struct WriteTool;
 
 impl WriteTool {
@@ -100,6 +103,9 @@ impl Tool for WriteTool {
         }
 
         let wrote_to_client = super::client_fs::write_text(&path, content, &ctx).await?;
+        // Only a local create can change a mode, and only its own: an overwrite
+        // keeps the mode the file already had.
+        let mut made_executable = false;
         if !wrote_to_client {
             // Create parent directories if needed
             if let Some(parent) = path.parent()
@@ -118,6 +124,7 @@ impl Tool for WriteTool {
                     after: super::undo::bytes(content.as_bytes()),
                 }],
             );
+            made_executable = !existed && write_shebang::make_executable(&path, content).await?;
         }
         super::edit_stats::record(
             &ctx,
@@ -166,6 +173,9 @@ impl Tool for WriteTool {
             body.push_str(&format!(
                 "\n(Stripped read-output line prefixes from {stripped_prefix_lines} lines before writing.)"
             ));
+        }
+        if made_executable {
+            body.push_str("\n(Made the file executable: it starts with a shebang.)");
         }
 
         // A write that lands on the active config.toml states exactly which

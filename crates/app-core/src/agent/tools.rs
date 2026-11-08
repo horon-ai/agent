@@ -98,10 +98,14 @@ pub(crate) fn tool_output_references(output: &ToolOutput) -> Vec<String> {
 
 pub(super) fn tool_output_to_content_blocks(tool_use_id: String, output: ToolOutput) -> Vec<ContentBlock> {
     let references = tool_output_references(&output);
+    // A `post_tool_feedback` hook may have rewritten the text and asked for an
+    // error flag or a reminder; the round reads all three from the output.
+    let is_error = crate::tool::post_tool_feedback::is_error(&output).then_some(true);
+    let note = crate::tool::post_tool_feedback::note(&output);
     let mut blocks = vec![ContentBlock::ToolResult {
         tool_use_id: tool_use_id.clone(),
         content: output.output,
-        is_error: None,
+        is_error,
     }];
     for img in output.images {
         blocks.push(ContentBlock::Image {
@@ -122,6 +126,14 @@ pub(super) fn tool_output_to_content_blocks(tool_use_id: String, output: ToolOut
         tool_use_id: tool_use_id.clone(),
         tool_name,
     }));
+    // The reminder comes last so it reads after the result and its images,
+    // without disturbing the image that must stay right after its tool_result.
+    if let Some(note) = note {
+        blocks.push(ContentBlock::Text {
+            text: format!("<system-reminder>\n{note}\n</system-reminder>"),
+            cache_control: None,
+        });
+    }
     blocks
 }
 

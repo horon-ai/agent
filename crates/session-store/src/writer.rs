@@ -143,7 +143,7 @@ impl BlockingWriter {
     pub(crate) fn dirty(&mut self) -> Result<(), StoreError> {
         let directory = self.paths.root().join(".catalog.dirty");
         let path = directory.join(self.id.as_str());
-        // One unchanged, already-durable marker covers every original in this
+        // One unchanged marker covers every original in this
         // batch. Recheck its identity and safety: publication may have removed it
         // or a path change may have replaced it since the previous append. This
         // check runs before the marker directory is touched, so a batch pays the
@@ -155,21 +155,22 @@ impl BlockingWriter {
             return Ok(());
         }
         self.disk.ensure_dir(&directory)?;
-        let file = match new_file(&path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => checked_file(&path, true)?,
+        // Opened without following a link, so a replaced marker can never
+        // redirect this write into another file.
+        match new_file(&path) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                checked_file(&path, true)?;
+            }
             Err(error) => return Err(error.into()),
-        };
-        // The marker is empty: readers test its existence, never its bytes, so
-        // the only thing a crash has to preserve is the directory entry naming
-        // it. Where flushing that entry is itself durable (Unix) the entry is
-        // the whole guarantee and the file's own flush is skipped, which saves
-        // one syscall per marker. Windows cannot flush a directory, so there the
-        // file's own flush stays the boundary.
-        if !horon_agent_platform::directory_sync_is_effective() {
-            self.disk.sync_file(&file, IoPoint::DirtyFileSync)?;
         }
-        self.disk.sync_dir(&directory, IoPoint::DirtyDirectorySync)?;
+        // The marker is created before the originals it covers, and a failed
+        // create still refuses the append. It is not flushed: it only tells a
+        // reader to rebuild sooner, and every derived file is checked against
+        // the original log's stamp anyway, so a crash that loses the unflushed
+        // entry costs one rebuild, never a stale cache. See
+        // docs/protocol/SESSION_STORE.md.
+        self.disk.hit(IoPoint::DirtyCreated)?;
         if self.state.batch {
             self.state.batch_dirty = Some(crate::cache_io::Stamp::read(&path)?);
         }

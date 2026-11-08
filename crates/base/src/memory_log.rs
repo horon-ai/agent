@@ -233,6 +233,8 @@ pub fn log_event(kind: &MemoryEventKind) {
 
         MemoryEventKind::ToolForgot { id } => ("tool_forgot", Some(serde_json::json!({ "id": id }))),
 
+        MemoryEventKind::ToolUpdated { id } => ("tool_updated", Some(serde_json::json!({ "id": id }))),
+
         MemoryEventKind::ToolTagged { id, tags } => (
             "tool_tagged",
             Some(serde_json::json!({

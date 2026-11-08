@@ -24,7 +24,7 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
-| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. |
+| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
 | `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`다. `compare`는 기준 빌드가 있으면 `horon-base` 줄로 같은 작업 안에서 번갈아 잰다. |
 | `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
 | `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
@@ -113,17 +113,21 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | --- | --- |
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
 | `oneshot_ms` | 헤드리스 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
-| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
+| `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 | `skill_ms` | 헤드리스 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
 | `mcp_ms` | 헤드리스 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
 | `mcp_ready_ms` | 프로세스 시작부터 도구 목록에 `bench_echo`가 처음 보인 요청까지의 시간(MCP 서버 시작과 도구 등록). 가짜 모델이 그 요청을 본 시각으로 잰다 |
 | `tool_round_trip` | 스킬 본문의 센티널이나 MCP가 돌려준 nonce를 나중 요청에서 실제로 봤을 때만 `true` |
+| `request_offsets_ms` | 실행 기록(JSON)마다 남는, 프로세스 시작부터 각 모델 요청이 도착할 때까지의 시간. 간격으로 기동, 도구 왕복, 종료 구간을 OS마다 나눠 본다 |
+| `thread_names` | 데몬 세션 측정의 각 세션 수마다, 턴 직후 데몬 프로세스의 스레드를 이름별로 센 값(Linux `/proc/<pid>/task/*/comm`). 세션 수에 따라 어느 스레드가 느는지 본다. 다른 OS는 `null` |
+| `live_heap_bytes` | 데몬 세션 측정에서 idle과 턴 직후에 잰, malloc 영역이 실제로 쥐고 있는 바이트(macOS `heap(1)`의 "All zones" 합계). RSS 기울기와 나란히 보면 세션당 증가가 살아 있는 데이터인지 할당자가 붙든 메모리인지 갈린다. 턴 직후 값은 RSS를 잰 뒤에 재고, 다른 OS는 `null` |
+| `log_tail`, `exit_local_time` | horon 실행 기록마다 남는, 이번 실행이 쓴 로그 줄(턴 완료 줄부터 최대 40줄)과 프로세스가 끝난 현지 시각. 마지막 모델 요청부터 종료까지의 시간이 어느 단계에 쓰이는지 OS마다 본다. 다른 도구는 빈 목록 |
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
-세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`를 켠 실행의 시간은 느려지므로 시간 비교에 쓰지 않는다.
+세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세는 데만 쓴다.
 
 ### omp와 omo
 
@@ -147,7 +151,8 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 `compare` 묶음은 `--scenarios`로 시나리오를 고른다. 기본값은 `oneshot,sessions,skill,mcp`이고, 부분집합을 주면 빠진 시나리오는 실제로 돌지 않으며 보고서에도 표가 나오지 않는다. 모르는 이름은 실행을 바로 실패시킨다.
 
 - `skill`: 프롬프트가 `[bench:skill]`로 시작한다. 가짜 모델은 그 마커를 보고 스킬 전용 도구(`Skill`, `skill`, `skills.read`, `skill_manage`)가 있으면 그것을 부르고, 없으면 설명에 `skill://`가 있는 읽기 도구에 `skill://bench-skill`을 넘기고, 그것도 없으면 읽기 도구나 셸 도구로 프롬프트가 준 `SKILL.md` 절대 경로를 연다. 어느 경로였는지는 요청 기록의 `via`와 보고서의 `Via` 열에 남는다.
-- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. omp처럼 도구를 함수로 내보내지 않고 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부른다(`mcp-route`).
+- `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. 그 도구가 Responses 네임스페이스 안에 있으면 함수 이름은 `bench_echo`, 네임스페이스는 별도 `namespace` 필드로 보낸다(Codex가 받는 `function_call` 모양). 도구 목록에 서버 도구가 없을 때는 각 에이전트가 문서로 정한 경로를 따른다. 고정 도구 `mcp_call`(`mcp-call`), `action` 열거값에 `call`이 있는 관리 도구 `mcp`(`mcp-action`), 프롬프트가 지연 도구로 적은 `mcp__<서버>__bench_echo`를 `ToolSearch`의 `select:<이름>`으로 먼저 불러오는 경로(`tool-search`), omp처럼 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부르는 경로(`mcp-route`)다.
+- 도구를 불렀는데 센티널이나 nonce가 돌아오지 않으면 마지막 도구 결과의 끝 400자가 실행 기록의 `result_excerpt`에 남는다. 샌드박스 거부나 셸 오류를 다시 돌리지 않고 확인하기 위한 값이다.
 - 왕복은 가정하지 않는다. 스킬은 `SKILL.md` 본문의 `BENCH-SKILL-SENTINEL`을, MCP는 모델이 넘긴 nonce를 나중 요청에서 봐야 `tool_round_trip`이 `true`가 된다. 도구를 부르지 않고 `mock-ok`만 돌아온 실행은 `false`로 남는다.
 - 두 시나리오 모두 프로세스 시작부터 마지막 응답까지를 잰다. 그래서 스킬 탐색, MCP 서버 시작, 도구 등록이 숫자에 들어간다. `mcp_ready_ms`는 그중 서버 준비 구간만 따로 보여 준다.
 
@@ -161,11 +166,11 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | 도구 | 스킬 픽스처 위치와 호출 | MCP 설정 |
 | --- | --- | --- |
 | `horon` | 작업 폴더 `.horon-agent/skills/bench-skill/SKILL.md`를 `read` 도구로 읽음(`file-read`) | `<HORON_AGENT_HOME>/mcp.json`의 `servers`. 도구 목록이 캐시 때문에 고정이라 서버 도구는 고정 도구 `mcp_call`(`server: bench`, `tool: bench_echo`)로 부른다(`mcp-call`). 이 시나리오만 `HORON_AGENT_RUN_MCP=1` |
-| `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`의 `mcpServers` |
-| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | 측정하지 않는다(`unsupported`). 고정 버전 2.1.317의 `-p`는 `--mcp-config`(파일, 문자열), 프로젝트 `.mcp.json`, `~/.claude.json`, 설정 파일 어느 방식으로도 stdio MCP 서버 도구를 모델에 보내지 않았다 |
-| `codex` | `$CODEX_HOME/skills`의 픽스처를 셸 도구로 `cat`(`file-read`) | 측정하지 않는다(`unsupported`). 고정 버전 0.166.0은 서버를 Responses 네임스페이스 도구 `mcp__bench`로만 내보내고, `mcp__bench.bench_echo` 호출은 실행되지 않은 채 같은 요청이 다시 와서 왕복을 증명할 수 없다 |
+| `jcode` | `<JCODE_HOME>/skills`의 픽스처를 `skill_manage`로 호출(`skill-tool`) | `<JCODE_HOME>/mcp.json`과 작업 폴더 `.jcode/mcp.json`의 `mcpServers`. OpenAI 호환 제공자에는 MCP 도구를 목록에 넣지 않고(`[tools] mcp_tools = "auto"`의 기본 동작) `mcp` 도구의 `action: "call"`, `server: bench`, `tool: bench_echo`로 부른다(`mcp-action`) |
+| `claude_code` | `CLAUDE_CONFIG_DIR/skills`의 픽스처를 `Skill` 도구로 호출(`skill-tool`) | `--mcp-config <파일> --strict-mcp-config`. `--mcp-config` 서버는 기본으로 백그라운드에서 연결되어 첫 요청이 도구를 모른 채 나가므로, 문서가 안내하는 `MCP_CONNECTION_NONBLOCKING=0`으로 시작 때 서버를 기다린다. 도구 검색은 기본값 그대로라 프롬프트가 `mcp__bench__bench_echo`를 지연 도구로 적고, 가짜 모델은 `ToolSearch`(`select:mcp__bench__bench_echo`)로 스키마를 불러온 뒤 도구를 부른다. 그래서 모델 요청이 하나 더 든다 |
+| `codex` | 작업 폴더 `.agents/skills`의 픽스처를 셸 도구로 `cat`(`file-read`). Codex는 이 위치를 프로젝트 스킬로 찾아 프롬프트에 올린다. 샌드박스는 끄지 않고 러너에서 동작하게 맞춘다. Linux 러너는 Codex 문서의 Ubuntu 24.04 절차(bubblewrap 설치, AppArmor `bwrap-userns-restrict` 적재)를 먼저 밟는다. 그러지 않으면 명령마다 `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`로 실패한다. Windows는 모든 Codex 실행에 `-c windows.sandbox="unelevated"`를 준다. 지정이 없으면 새 러너에는 준비된 샌드박스가 없어 `-s read-only` 명령이 `rejected: blocked by policy`로 거부되고, `unelevated`는 관리자 설정 없이 쓰도록 문서가 안내하는 방식이다. 또 Windows의 측정 폴더는 `tempfile.mkdtemp`가 아니라 `os.mkdir`로 만들어 `%TEMP%`의 ACL을 물려받는다. `mkdtemp`의 0o700은 CPython 3.12.4 이상에서 SYSTEM, Administrators, 소유자만 허용하는 보호 ACL이 되고, 관리자 러너에서는 소유자가 Administrators 그룹이라 관리자 권한을 뺀 샌드박스 토큰이 그 아래를 `Access to the path ... is denied`로 읽지 못한다 | `$CODEX_HOME/config.toml`의 `[mcp_servers.bench]`와 `tools.bench_echo.approval_mode = "approve"`. 서버는 네임스페이스 도구 `mcp__bench`로 보이고, `name: bench_echo`, `namespace: mcp__bench`로 부른다(`mcp-tool`) |
 | `opencode` | `XDG_CONFIG_HOME/opencode/skills`의 픽스처를 `skill` 도구로 호출(`skill-tool`) | `opencode.json`의 `mcp.bench`(`type: local`) |
-| `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | 없음. MCP 클라이언트가 없어 `skipped`와 사유를 남긴다 |
+| `pi` | 프롬프트의 스킬 목록과 `read` 도구로 `SKILL.md`를 읽음(`file-read`) | `$PI_CODING_AGENT_DIR/mcp.json`의 `mcpServers`, `"exposure": "direct"`. `mcp__bench__bench_echo`를 바로 부른다(`mcp-tool`) |
 | `omp` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`. 프롬프트의 `xd://...bench_echo` 라우트를 `write`로 호출(`mcp-route`) |
 | `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`는 허용 목록이고 MCP 도구 이름이 빌드마다 달라질 수 있어 이 시나리오만 `--tools`를 주지 않고 기본 도구 집합(연결된 서버 도구 포함)을 쓴다 |
 
@@ -286,6 +291,31 @@ gh workflow run loading-ab.yml --ref dev -f base_ref=23007c9b -f head_ref=dev
 ```
 
 `base_ref` 기본값 `23007c9b`는 로딩 카운터가 처음 들어간 커밋이다. 그보다 오래된 커밋은 리포트 `schema_version`이 달라 `--compare`가 비교를 거절하고 잡이 실패한다. `workflow_dispatch` 워크플로이므로 파일이 기본 브랜치(`main`)에 있어야 실행할 수 있다.
+
+## jcode를 이기는 것이 목표다
+
+성능 작업의 방향은 가장 가까운 경쟁 도구인 jcode를 모든 OS의 모든 비교 칸에서 이기는 것이다. AGENTS.md의 고정 요구 3(기준선보다 느려지지 않는다)이 바닥이고, 이 절은 그 위의 목표다.
+
+**재는 곳과 명령.** 측정은 GitHub Actions에서만 한다. 개발 기기는 다른 빌드가 함께 돌아 수치를 믿을 수 없다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=5 -f baseline_ref=dev
+```
+
+같은 잡이 dev 기준 빌드(`horon-base`)와 후보를 함께 빌드해 번갈아 재므로, 변경 전·후와 jcode가 한 러너를 공유한다.
+
+**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
+
+**원인은 측정으로 찾는다.** `request_offsets_ms`로 기동·도구 왕복·종료 구간을 나누고, `log_tail`로 종료 구간의 단계를, `thread_names`로 늘어나는 스레드를, `live_heap_bytes`로 살아 있는 데이터와 할당자 보유분을 가른다. 추측으로 코드를 바꾸지 않는다.
+
+**하지 않는 최적화.**
+
+- 원본(이벤트 로그, 블롭, 로컬 상태 파일, 런타임 저널)의 flush를 빼서 빨라지는 것. 예외는 충돌 뒤에도 잃는 것이 없음을 테스트로 증명한 경우뿐이다(`.catalog.dirty` 표식, [`../protocol/SESSION_STORE.md`](../protocol/SESSION_STORE.md)).
+- 검증 생략, 기본값 약화, 기능 제거로 얻는 속도.
+- 벤치를 알아채는 분기, horon에 유리하게 바꾼 픽스처나 가짜 모델.
+
+이런 이유로 jcode가 앞서는 칸이 남으면 고치지 않고, 그 이유(예: horon이 jcode가 하지 않는 원본 내구성 flush를 한다)와 함께 구조적 차이로 보고한다.
 
 ## 하지 않는 것
 

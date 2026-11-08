@@ -21,6 +21,22 @@ def git(*args):
     return subprocess.check_output(["git", *args]).decode().strip()
 
 
+def tag_fits_version(tag, version):
+    """True when `tag` may release the source whose Cargo version is `version`.
+
+    The Cargo version names the release line and its lowest patch; later
+    patches on the same MAJOR.MINOR line are numbered by tags (see
+    next_version.py), so the tag must share MAJOR.MINOR and not go below the
+    Cargo patch.
+    """
+    parts = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", version)
+    if parts is None:
+        return False
+    wanted = tuple(map(int, tag[1:].split(".")))
+    have = tuple(map(int, parts.groups()))
+    return wanted[:2] == have[:2] and wanted[2] >= have[2]
+
+
 def prepare(tag, workflow_sha):
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
         raise ValueError("Release tag must be vMAJOR.MINOR.PATCH")
@@ -34,8 +50,8 @@ def prepare(tag, workflow_sha):
     manifest = subprocess.check_output(["git", "show", "HEAD:Cargo.toml"]).decode()
     package = manifest.split("[package]", 1)[1].split("[", 1)[0]
     version = re.search(r'^version\s*=\s*"([^"\n]+)"', package, re.MULTILINE)
-    if version is None or version.group(1) != tag[1:]:
-        raise ValueError("Tag does not match the package version")
+    if version is None or not tag_fits_version(tag, version.group(1)):
+        raise ValueError("Tag does not fit the package version line (same MAJOR.MINOR, patch at or above Cargo.toml)")
     provenance = {"tag": tag, "tag_commit": commit, "workflow_commit": workflow_sha,
                   "run_url": os.environ.get("RELEASE_RUN_URL", "")}
     provenance["eligibility_policy"] = "exact-sha-main-ci"

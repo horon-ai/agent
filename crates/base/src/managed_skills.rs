@@ -1,4 +1,5 @@
-//! Skills the model authors itself through `skill_manage create`/`update`.
+//! Skills the model authors itself through `skill_manage create`/`update`, and
+//! removes with `skill_manage delete`.
 //!
 //! Managed skills live beside the authored ones but in a directory of their
 //! own (`~/.horon-agent/managed-skills/<name>/SKILL.md`), so an authored skill
@@ -146,6 +147,96 @@ fn refuse_symlink(path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Removes one managed skill and returns the path that is now gone.
+///
+/// This is the only destructive step in the managed-skill lifecycle, so every
+/// guard is stated here rather than at the caller:
+///
+/// - The name is validated again, so `..` or a separator cannot reach a
+///   directory above the managed one even from a caller that skipped
+///   [`validate_name`].
+/// - A symlinked entry is unlinked, never followed. Whatever it points at is
+///   not the model's, so that target keeps every byte.
+/// - A real directory is canonicalized and must resolve inside the canonical
+///   managed directory. [`std::fs::remove_dir_all`] unlinks a nested symlink
+///   instead of descending through it, so nothing outside stays reachable even
+///   through an entry tree that was real at the top.
+/// - A missing entry reports not-found with the path that was looked for, and
+///   a plain file under the name is refused instead of deleted.
+pub fn remove(name: &str) -> Result<PathBuf> {
+    let name = validate_name(name)?;
+    let root = dir()?;
+    let skill_dir = root.join(&name);
+    let metadata = match std::fs::symlink_metadata(&skill_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("Managed skill '{name}' not found in {}.", root.display())
+        }
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "Cannot read managed skill '{}': {error}",
+                skill_dir.display()
+            ));
+        }
+    };
+
+    if metadata.file_type().is_symlink() {
+        unlink(&skill_dir)?;
+        return Ok(skill_dir);
+    }
+    anyhow::ensure!(
+        metadata.is_dir(),
+        "Refusing to delete {}: a managed skill is a directory, and this is not one.",
+        skill_dir.display()
+    );
+
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("Cannot resolve the managed skill directory {}: {error}", root.display()))?;
+    let canonical_dir = skill_dir
+        .canonicalize()
+        .map_err(|error| anyhow::anyhow!("Cannot resolve managed skill '{}': {error}", skill_dir.display()))?;
+    anyhow::ensure!(
+        canonical_dir != canonical_root && canonical_dir.starts_with(&canonical_root),
+        "Refusing to delete {}: it resolves to {}, outside the managed skill directory {}.",
+        skill_dir.display(),
+        canonical_dir.display(),
+        canonical_root.display()
+    );
+    std::fs::remove_dir_all(&canonical_dir)
+        .map_err(|error| anyhow::anyhow!("Cannot delete managed skill '{}': {error}", skill_dir.display()))?;
+    Ok(skill_dir)
+}
+
+/// Whether `path` is a skill file that lives inside the managed directory.
+///
+/// `path` is the `SKILL.md` a registry entry carries, so it is compared through
+/// its parent directory. Both sides are canonicalized, which also refuses an
+/// entry reached through a symlink out of the managed directory.
+pub fn contains_path(path: &Path) -> bool {
+    let Ok(root) = dir() else {
+        return false;
+    };
+    let (Ok(root), Some(parent)) = (root.canonicalize(), path.parent()) else {
+        return false;
+    };
+    parent.canonicalize().is_ok_and(|parent| parent.starts_with(&root))
+}
+
+/// Unlink one symlink entry.
+///
+/// Unix unlinks a symlink with `unlink` whether it points at a file or a
+/// directory. Windows refuses the file form for a directory symlink, so the
+/// directory form is tried before giving up with the first error.
+fn unlink(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(first) => {
+            std::fs::remove_dir(path).map_err(|_| anyhow::anyhow!("Cannot unlink {}: {first}", path.display()))
+        }
+    }
 }
 
 /// Renders `value` as a single-line YAML scalar.

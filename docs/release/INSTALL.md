@@ -82,3 +82,26 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 ### CI 가드
 
 `scripts/ci/check_linux_bare_runtime.sh <binary>`가 바이너리를 `debian:trixie-slim`에서 돌린다. 컨테이너에서 OpenSSL 라이브러리와 CA 저장소를 지우고, `ldd` 결과가 glibc 계열과 libgcc 허용 목록 안에 있는지 확인한다. 이어서 `--version`과 모의 프로바이더를 상대로 `run` 한 턴을 실행한다. CI `build` 작업의 Linux 항목이 release 프로필 빌드 뒤에 이 스크립트를 돌린다. 이 단계는 GitHub 호스팅 러너에서만 돈다 (`CI_SELF_HOSTED`를 켜면 macOS 항목만 남는다). Docker가 있으면 개발자 기계에서도 같은 명령을 돌릴 수 있다.
+
+## 릴리스 번호와 자동 발행
+
+루트 `Cargo.toml`의 `[package].version`이 버전의 단일 출처다. 이 값은 릴리스 라인(MAJOR.MINOR)과 그 라인의 가장 낮은 patch를 정하고, 이후 patch 번호는 태그가 매긴다. 버전을 올리는 커밋은 만들지 않는다.
+
+| 단계 | 하는 일 |
+| --- | --- |
+| main push | `ci.yml`이 그 커밋을 검사한다. |
+| CI 성공 | `release-tag.yml`이 `scripts/release/next_version.py`로 다음 태그를 고른다. 같은 MAJOR.MINOR의 가장 높은 태그에 patch를 1 더하고, 그 라인에 태그가 없으면 `Cargo.toml` 버전을 그대로 쓴다. 이미 태그된 커밋과 최신 릴리스보다 오래된 커밋은 건너뛴다. |
+| 태그 생성 | 같은 실행이 그 커밋에 태그를 만들고 `release.yml`을 `workflow_call`로 부른다. 이후 검사(정확한 커밋의 CI 성공, 드래프트, 플랫폼 빌드, `SHA256SUMS`, 공개, 설치 확인)는 태그를 직접 push할 때와 같다. |
+| 이미지 게시 | 공개된 릴리스의 Linux 자산을 `SHA256SUMS`로 확인한 뒤 컨테이너 이미지로 묶어 올린다. |
+
+`prepare_source.py`는 태그가 `Cargo.toml`과 MAJOR.MINOR가 같고 patch가 그 이상일 때만 빌드를 허락한다. 새 MINOR나 MAJOR를 내려면 `Cargo.toml`과 `Cargo.lock`의 루트 버전만 올려 main에 병합한다. 저장소 변수 `RELEASE_AUTO`를 `false`로 두면 태그를 만들지 않는다. `release-tag.yml`을 수동 실행하면 만들 태그만 보고하고 아무것도 만들지 않는다.
+
+업데이트 확인은 릴리스 버전이 현재 버전보다 높을 때만 갱신한다. 그래서 0.98.x로 직접 빌드한 설치본은 0.1.x 릴리스를 새 버전으로 보지 않는다. 이런 설치본은 `scripts/install/install.sh`로 한 번 다시 설치한다.
+
+## 컨테이너 이미지
+
+릴리스마다 `ghcr.io/horon-ai/agent`에 `linux/amd64`, `linux/arm64` 이미지를 `<버전>`, `<MAJOR.MINOR>`, `latest` 태그로 올린다. GitHub Packages는 cargo와 PyPI 레지스트리를 지원하지 않고, SDK는 이미 npm과 PyPI로 나가므로 GitHub Packages에는 헤드리스 데몬을 바로 띄우는 컨테이너만 올린다. 이미지는 다시 컴파일하지 않고 릴리스 자산을 그대로 넣는다 (`scripts/release/Containerfile`).
+
+```bash
+docker run --rm ghcr.io/horon-ai/agent:latest --version
+```

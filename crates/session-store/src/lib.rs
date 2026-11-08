@@ -9,7 +9,10 @@
 //! It does not depend on `horon-agent-base`, `horon-agent-app-core`, or any
 //! provider runtime. [`WriterHandle`] owns a dedicated blocking I/O thread;
 //! [`BlockingWriter`] and the doctor/recovery functions are blocking surfaces.
-//! Original blobs and the catalog dirty marker are durable, not disposable caches.
+//! Original blobs are durable, not disposable caches. A writer's catalog dirty
+//! marker is created before the originals it covers but not flushed: every
+//! derived file is revalidated against the original log's stamp, so a crash
+//! that loses an unflushed marker costs one rebuild, never a stale read.
 //!
 //! # Cross-language canonical form
 //!
@@ -89,7 +92,7 @@ pub use writer::{AppendOutcome, BlockingWriter, WriterHandle};
 /// immediately before the named sync, or after the named completed operation.
 ///
 /// The derived points (`CacheStaged`, `CacheRenamed`, `CatalogRowStaged`,
-/// `CatalogPublished`, `DirtyRemoved`) mark stages of a publication that is
+/// `CatalogPublished`, `DirtyCreated`, `DirtyRemoved`) mark stages of a publication that is
 /// intentionally not flushed, so a caller can still inject a failure there
 /// even though no syscall follows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +101,7 @@ pub enum IoPoint {
     DirectorySync,
     DirtyFileSync,
     DirtyDirectorySync,
+    DirtyCreated,
     BlobWrite,
     BlobFileSync,
     BlobVerified,

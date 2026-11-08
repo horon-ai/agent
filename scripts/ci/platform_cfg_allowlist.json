@@ -48,6 +48,14 @@
       "count": 1,
       "reason": "read-only directory fixture built from POSIX mode bits."
     },
+    "crates/app-core/src/agent/post_tool_feedback_replace_tests.rs": {
+      "count": 1,
+      "reason": "whole test file is Unix-only (#![cfg(unix)]): every case drives a real hook script through /bin/sh to prove what the model sees, which Windows cannot spawn the same way."
+    },
+    "crates/app-core/src/agent/request_messages_tests.rs": {
+      "count": 12,
+      "reason": "the hook cases drive real hook scripts and a shell `sed` filter, and the hook runner itself is exercised on Unix; the platform-neutral structural probe in the same file keeps its own `#[cfg(unix)]` off so the process/copy counters are gated on every OS."
+    },
     "crates/app-core/src/agent/soft_interrupt_commit_tests.rs": {
       "count": 1,
       "reason": "read-only directory fixture built from POSIX mode bits."
@@ -132,6 +140,10 @@
       "count": 2,
       "reason": "FIFO-based stub fixtures (mkfifo); Windows has no FIFO."
     },
+    "crates/app-core/src/tool/skill_delete_tests.rs": {
+      "count": 2,
+      "reason": "one test points a managed skill entry at a directory outside the managed tree to prove delete unlinks the link and keeps the target, which needs std::os::unix::fs::symlink; the inner async body carries the second cfg line so it is not compiled on Windows."
+    },
     "crates/app-core/src/tool/tests.rs": {
       "count": 6,
       "reason": "hook-gate dispatch tests write chmod'd POSIX shell scripts."
@@ -139,6 +151,10 @@
     "crates/app-core/src/tool/toolbox_tests.rs": {
       "count": 5,
       "reason": "hook-gate tests write chmod'd POSIX shell scripts."
+    },
+    "crates/app-core/src/tool/write_shebang.rs": {
+      "count": 6,
+      "reason": "the execute bit `write` grants a newly created shebang file: mode arithmetic and `PermissionsExt` exist only on Unix, and Windows keeps the file exactly as written, so the Unix implementation, its no-op counterpart and their test modules are the whole OS split."
     },
     "crates/base/src/background/tests/finalize.rs": {
       "count": 1,
@@ -159,6 +175,14 @@
     "crates/base/src/hooks.rs": {
       "count": 20,
       "reason": "hook tests write #!/bin/sh scripts and chmod them (one asserts Linux pid timing); Windows has no POSIX shell and the adapter has no test-fixture shell abstraction, so they assert hook semantics, not OS primitives."
+    },
+    "crates/base/src/hooks/post_tool_feedback_tests.rs": {
+      "count": 9,
+      "reason": "the hook cases write /bin/sh scripts to model a linter's stdout; the envelope parser tests beside them are platform-neutral."
+    },
+    "crates/base/src/hooks/pre_request_tests.rs": {
+      "count": 13,
+      "reason": "the hook cases write /bin/sh scripts because a hook is an external process spawned from a command line; the platform-neutral case proves an unset hook returns None."
     },
     "crates/base/src/import_tests.rs": {
       "count": 8,

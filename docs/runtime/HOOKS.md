@@ -16,13 +16,15 @@ session_end   = ""                            # observer
 pre_tool      = "~/bin/horon-agent-tool-policy"     # gate
 post_tool     = ""                            # observer
 post_tool_feedback = "~/bin/horon-agent-vale"       # feeds output back to the model
+pre_request   = "~/bin/horon-agent-request-policy"  # rewrites the outgoing messages
 pre_tool_timeout_ms = 5000
 post_tool_feedback_timeout_ms = 10000
+pre_request_timeout_ms = 5000
 ```
 
-명령 키 여덟 개(`pre_tool_transform`, `turn_start`, `turn_end`,
+명령 키 아홉 개(`pre_tool_transform`, `turn_start`, `turn_end`,
 `session_start`, `session_end`, `pre_tool`, `post_tool`,
-`post_tool_feedback`)는 명령 문자열이나 문자열 배열을 받는다.
+`post_tool_feedback`, `pre_request`)는 명령 문자열이나 문자열 배열을 받는다.
 독립 플러그인은 디스패처 없이 한 이벤트를 함께 쓸 수 있다.
 
 ```toml
@@ -44,7 +46,9 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
 `HORON_AGENT_HOOK_POST_TOOL_FEEDBACK`,
 `HORON_AGENT_HOOK_POST_TOOL_FEEDBACK_TIMEOUT_MS`,
 `HORON_AGENT_HOOK_PRE_TOOL_TRANSFORM`,
-`HORON_AGENT_HOOK_PRE_TOOL_TRANSFORM_TIMEOUT_MS`.
+`HORON_AGENT_HOOK_PRE_TOOL_TRANSFORM_TIMEOUT_MS`,
+`HORON_AGENT_HOOK_PRE_REQUEST`,
+`HORON_AGENT_HOOK_PRE_REQUEST_TIMEOUT_MS`.
 명령 재정의는 명령 문자열이나 TOML 문자열 배열을 받는다. 예를 들어
 `HORON_AGENT_HOOK_TURN_END='["notify-one", "notify-two"]'`처럼 쓴다.
 
@@ -57,7 +61,7 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
 
 | 변수 | 의미 |
 | --- | --- |
-| `HORON_AGENT_HOOK_EVENT` | `turn_start`, `turn_end`, `session_start`, `session_end`, `pre_tool`, `post_tool`, `post_tool_feedback`, `pre_tool_transform` |
+| `HORON_AGENT_HOOK_EVENT` | `turn_start`, `turn_end`, `session_start`, `session_end`, `pre_tool`, `post_tool`, `post_tool_feedback`, `pre_tool_transform`, `pre_request` |
 | `HORON_AGENT_HOOK_SESSION_ID` | 이벤트가 속한 세션 |
 | `HORON_AGENT_HOOK_CWD` | 세션 작업 디렉터리 |
 | `HORON_AGENT_HOOK_PAYLOAD` | 모든 필드를 그대로 담은 JSON 객체(최대 16 KB) |
@@ -137,7 +141,37 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
   때문이다. 표준 오류는 버린다.
 - 시간 초과(`post_tool_feedback_timeout_ms`, 기본 10초)와 스폰 실패는 아무것도 더하지
   않고 기록만 한다.
-- 여러 훅은 선언 순서대로 실행되고 출력은 이어 붙인다.
+- 여러 훅은 선언 순서대로 실행되고 각 훅은 앞 훅이 남긴 결과를
+  `HORON_AGENT_HOOK_OUTPUT`(최대 8 KB)으로 받는다. 붙이는 텍스트는 하나의 덩어리로
+  이어 붙인다.
+
+### 결과를 바꾸는 봉투
+
+표준 출력이 `content`, `is_error`, `note` 중 하나 이상을 담은 JSON 객체이면 훅은
+텍스트를 덧붙이는 대신 모델이 보는 결과 자체를 정한다.
+
+| 키 | 형식 | 효과 |
+| --- | --- | --- |
+| `content` | 문자열 | 결과 텍스트를 통째로 바꾼다(최대 8 KB) |
+| `is_error` | 불리언 | 결과를 오류로 표시한다(`tool_result.is_error`) |
+| `note` | 문자열 | 결과 뒤에 별도 `<system-reminder>` 블록으로 붙는다 |
+
+예를 들어 비밀 값을 지우고 모델에게 알린다.
+
+```bash
+#!/bin/sh
+# ~/bin/horon-agent-redact
+cat >/dev/null
+printf '%s' '{"content":"(output redacted)","note":"the raw output held a credential"}'
+```
+
+```toml
+[hooks]
+post_tool_feedback = "~/bin/horon-agent-redact"
+```
+
+세 키가 없는 JSON 객체와 JSON이 아닌 출력은 지금처럼 덧붙인다. 이 훅은 모델이 보는
+결과만 바꾼다. 파일 상태와 되돌리기 저널은 바뀌지 않는다.
 
 빠르게 유지하고 앞단에서 걸러야 한다. 이 훅은 읽기를 포함한 모든 도구 호출에서
 실행된다.
@@ -222,6 +256,47 @@ esac
 exit 0
 ```
 
+## 요청 훅: `pre_request`
+
+`pre_request`는 **에이전트 턴의 모델 요청 전마다 동기적으로** 실행되며 그 요청이 보낼
+메시지를 바꿀 수 있다. 저장된 대화 기록은 바뀌지 않는다. 압축·자문 같은 보조 호출은
+대화가 아니라 그 호출의 프롬프트를 다루므로 이 훅을 지나지 않는다.
+
+- 표준 입력으로 `{"session_id": ..., "turn": ..., "model": ..., "messages": [...]}`를
+  받는다. `messages`는 `/chat/completions` 요청 본문과 같은 모양이며, 시스템
+  프롬프트가 있으면 `{"role":"system","content":"..."}`가 첫 항목으로 들어간다.
+- 표준 출력이 비어 있으면 요청은 그대로 나간다.
+- 표준 출력이 `{"messages": [...]}`이면 그 요청에 한해 메시지가 교체된다. 요청을
+  만든 메시지와 저장된 기록은 그대로다.
+- 시스템 프롬프트 항목은 뺄 수도 바꿀 수도 없다. 첫 항목이 요청의 시스템
+  프롬프트와 다르면 교체를 통째로 거부하고 원래 메시지를 쓴다.
+- 잘못된 JSON, 0이 아닌 종료 코드, 시간 초과(`pre_request_timeout_ms`, 기본 5초),
+  스폰 실패는 원래 메시지를 유지하고 경고를 한 번 기록한다(열린 실패).
+- 여러 명령은 선언 순서대로 실행되고 각 명령은 앞 명령이 남긴 메시지를 받는다.
+
+```bash
+#!/bin/bash
+# ~/bin/horon-agent-request-policy: mask a path in everything the model reads
+python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+for message in payload["messages"]:
+    for block in message.get("content", []):
+        if block.get("type") == "text":
+            block["text"] = block["text"].replace("/Users/alice", "/home/user")
+json.dump({"messages": payload["messages"]}, sys.stdout)
+'
+```
+
+```toml
+[hooks]
+pre_request = "~/bin/horon-agent-request-policy"
+pre_request_timeout_ms = 5000
+```
+
+훅이 설정되지 않은 요청 경로는 프로세스를 띄우지 않고 메시지도 복사하지 않는다.
+설정 여부를 먼저 확인하고, 필요할 때만 페이로드를 만든다.
+
 ## 예제: 턴 종료 시 tmux 상태 표시와 데스크톱 알림
 
 ```bash
@@ -256,7 +331,7 @@ post_tool     = "~/bin/horon-agent-event-log"
 
 - 훅 조회는 설정 기반이며 설정을 다시 읽을 때 다시 조회한다. horon-agent를
   재시작하지 않고 훅을 추가하거나 바꿀 수 있다.
-- 핫 경로(`pre_tool`/`post_tool`)는 페이로드를 만들기 전에 훅이 설정됐는지 확인하므로
-  설정되지 않은 훅은 거의 비용이 들지 않는다.
+- 핫 경로(`pre_tool`/`post_tool`/`pre_request`)는 페이로드를 만들기 전에 훅이
+  설정됐는지 확인하므로 설정되지 않은 훅은 거의 비용이 들지 않는다.
 - 재귀 방지(`HORON_AGENT_HOOKS_DISABLED=1`) 덕분에 훅은 중첩 프로세스에서 훅을 다시
   발동시키지 않고 `horon-agent` CLI 명령을 호출할 수 있다.

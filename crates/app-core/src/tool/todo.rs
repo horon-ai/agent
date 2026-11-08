@@ -14,6 +14,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+#[path = "todo_blocked.rs"]
+mod blocked;
+
 pub struct TodoTool;
 
 impl TodoTool {
@@ -71,17 +74,18 @@ struct TodoInput {
 }
 
 fn parse_todo_input(input: Value) -> Result<TodoInput> {
-    let params: TodoInput = serde_json::from_value(normalize_todo_input(input))?;
+    let mut params: TodoInput = serde_json::from_value(normalize_todo_input(input))?;
     if let Some(todo) = params.todos.as_ref().and_then(|todos| {
         todos
             .iter()
             .find(|todo| crate::todo::canonical_todo_status(&todo.status).is_none())
     }) {
         bail!(
-            "invalid todo status {:?}; expected one of: pending, in_progress, completed, cancelled",
+            "invalid todo status {:?}; expected one of: pending, in_progress, blocked, completed, cancelled",
             todo.status
         );
     }
+    blocked::normalize(&mut params.todos)?;
     Ok(params)
 }
 
@@ -99,6 +103,9 @@ fn goal_group_key(group: Option<&str>) -> Option<String> {
 /// An ACP plan entry has three states, so a todo in any other state
 /// (`cancelled` today) is left out instead of being shown as work that is still
 /// pending; an unknown priority becomes `medium` rather than silently `high`.
+/// A `blocked` item is shown as `pending`: it is open work that nobody is doing
+/// right now, and calling it `in_progress` would claim progress the agent cannot
+/// make. The blocker note rides on the todo itself, not on the plan entry.
 fn plan_entries(todos: &[TodoItem]) -> Vec<PlanEntryWire> {
     todos
         .iter()
@@ -106,6 +113,7 @@ fn plan_entries(todos: &[TodoItem]) -> Vec<PlanEntryWire> {
             let status = match todo.status.trim().to_ascii_lowercase().as_str() {
                 "pending" => "pending",
                 "in_progress" => "in_progress",
+                "blocked" => "pending",
                 "completed" => "completed",
                 _ => return None,
             };
@@ -638,8 +646,13 @@ impl Tool for TodoTool {
                             },
                             "status": {
                                 "type": "string",
-                                "enum": ["pending", "in_progress", "completed", "cancelled"],
-                                "description": "Status. Use completed when the task is done."
+                                "enum": ["pending", "in_progress", "blocked", "completed", "cancelled"],
+                                "description": "Status. Use completed when the task is done; use blocked, with `blocker`, when it cannot proceed until something outside your control lands."
+                            },
+                            "blocker": {
+                                "type": "string",
+                                "maxLength": 500,
+                                "description": "What a blocked task waits on, in one short sentence. Required for blocked; ignored for every other status."
                             },
                             "priority": {
                                 "type": "string",
@@ -1082,20 +1095,6 @@ mod tests {
             .map(|todo| todo.status)
             .collect();
         assert_eq!(statuses, ["completed", "completed", "cancelled"]);
-    }
-
-    #[test]
-    fn rejects_unknown_todo_statuses_with_valid_vocabulary() {
-        let error = parse(json!({
-            "todos": [
-                {"content": "a", "status": "blocked", "priority": "high", "id": "1", "confidence": "plausible"}
-            ]
-        }))
-        .err()
-        .expect("unknown status should be rejected");
-        let message = error.to_string();
-        assert!(message.contains("invalid todo status \"blocked\""));
-        assert!(message.contains("pending, in_progress, completed, cancelled"));
     }
 
     #[test]

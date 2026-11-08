@@ -39,8 +39,8 @@ sessions/
   <id>.bak                   legacy recoverable snapshot (preserved)
   .catalog.index.jsonl       derived cache: one row per session, for listing
   .catalog.lock              catalog write lock
-  .catalog.dirty/<id>        durable marker: empty file, one per session being rebuilt
-                             (confirmed by its directory entry where that is durable)
+  .catalog.dirty/<id>        rebuild hint: empty file, one per session being rebuilt
+                             (created before the originals, never flushed)
   .origin-id                 this HOME's writer identity, created once at 0600
   edit-stats/                per-session edit counters (not a session)
 ```
@@ -59,24 +59,36 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 [`../architecture/CRATES.md`](../architecture/CRATES.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
 있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
 
-`.catalog.dirty/<id>` 표식은 예외 없이 원본이지만 내용이 없는 빈 파일이다. 리더는 바이트가 아니라
-존재만 검사하므로(`cache_io.rs::dirty_present`), 크래시가 보존해야 하는 것은 그 이름을 담은 디렉터리
-항목 하나다. 그래서 표식은 두 단계로 확정한다.
+`.catalog.dirty/<id>` 표식은 내용이 없는 빈 파일이다. 리더는 바이트가 아니라 존재만 검사한다
+(`cache_io.rs::dirty_present`). 표식은 "이 세션의 파생물을 곧 다시 만들어야 한다"는 힌트이고, 원본이
+아니다. 그래서 writer는 표식을 원본보다 먼저 만들지만 fsync하지 않는다.
 
-- 표식을 만들 때는 항상 빈 파일을 만든 뒤 디렉터리 fsync를 낸다. 디렉터리 flush가 생성 자체를
-  확정하는 플랫폼(Unix)에서는 표식 파일의 fsync를 생략하고 디렉터리 fsync만 낸다. Windows는
-  디렉터리를 flush할 수 없어 파일 fsync를 유지한다
-  (`horon_agent_platform::directory_sync_is_effective`).
-- 디렉터리 fsync가 실패하면 append는 오류로 돌아가고 이벤트 로그에는 바이트가 들어가지 않는다.
-  그래서 표식이 없는데 로그만 내구해지는 순서는 생기지 않는다.
-- 같은 묶음 안에서 한 번 확인한 표식은 그대로 재사용한다. 표식 하나가 그 묶음의 모든 원본을 덮기
-  때문이고, 매 append마다 디렉터리 작업을 되풀이하지 않는다.
+- 표식은 그 묶음의 첫 원본 append 전에 만든다. 만들기가 실패하면 append는 오류로 돌아가고 이벤트
+  로그에는 바이트가 들어가지 않는다(`IoPoint::DirtyCreated`).
+- 표식 파일과 그 디렉터리 항목은 flush하지 않는다. 커밋마다 내던 디렉터리 fsync 한 번이 이 결정으로
+  없어졌다(원샷 질문 1건 기준 약 5회).
+- 같은 묶음 안에서 한 번 만든 표식은 그대로 재사용한다.
 
-프로세스 크래시는 kill -9 뒤 재시작으로 검증한다(`tests/dirty_batches.rs`의
-`an_empty_marker_left_by_a_crash_repairs_the_next_listing`, macOS 10회 재시작 QA). 전원 손실은
-저널링 파일시스템이 디렉터리 항목을 보존한다는 전제 위에서 같은 보장을 받는다. 그 항목을 잃어도
-비용은 목록 행 하나를 다시 만드는 것뿐이다. 원본 이벤트 로그·블롭·로컬 상태 파일은 그대로 남고,
-다음 목록 조회가 스탬프를 대조해 행을 재생성한다.
+**fsync를 빼도 되는 근거.** 표식이 없어도 낡은 파생물을 믿는 경로가 없다. 파생물은 모두 원본 이벤트
+로그의 `Stamp`(device, inode, 길이, mtime, ctime)를 함께 저장하고, 읽을 때마다 지금 로그와 대조한다.
+체크포인트는 `checkpoint.rs::load`가 로그·색인·요약의 스탬프를, 목록 행은 `catalog.rs::list`가 행의
+스탬프와 `summary.json`을 확인한다. 원본 append는 로그를 늘리므로 스탬프가 반드시 바뀌고, 맞지
+않는 파생물은 writer 락 아래에서 원본으로 다시 만든다. 로그는 저장이 끝나기 전에 flush되므로,
+전원이 나가 표식이나 표식 디렉터리가 사라져도 남는 것은 "늘어난 로그 + 낡은 스탬프의 파생물"이고,
+그 조합은 언제나 재생성으로 이어진다. 비용은 다음 조회의 재생성 한 번이다.
+
+이 근거는 테스트가 고정한다(`tests/dirty_batches.rs`).
+
+| 테스트 | 흉내 내는 상황 | 확인하는 것 |
+| --- | --- | --- |
+| `an_empty_marker_left_by_a_crash_repairs_the_next_listing` | 같은 프로세스에서 파생 게시 직전에 멈춤 | 다음 목록이 원본을 읽어 행을 고친다 |
+| `a_marker_lost_to_power_loss_never_serves_a_stale_listing_or_context` | 전원 차단으로 flush하지 않은 표식, 또는 표식 디렉터리 전체가 사라짐 | 목록 head와 대화 문맥이 둘 다 최신 원본까지 오고, 다음 저장도 정상이다 |
+| `a_writer_killed_inside_a_save_leaves_originals_the_next_reader_serves` | 저장 묶음 안에서 writer 프로세스를 `abort`로 죽임(표식을 남긴 경우와 지운 경우) | 죽은 저장의 원본이 로그에 남고 리더가 그것까지 돌려준다 |
+
+이전 계약은 표식을 원본으로 보고 디렉터리 fsync로 확정했다. 위 스탬프 대조가 이미 같은 보장을 주고
+있었고, 이 문서도 "그 항목을 잃어도 비용은 목록 행 하나를 다시 만드는 것"이라고 적고 있었으므로
+fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식은 원본이 나타나기 전의 순서
+표시라 지금처럼 flush한다.
 
 한 묶음 커밋은 로그 flush를 한 번만 낸다. 묶음 안의 append는 원본 바이트를 다 쓰고도 flush를
 미루고, 묶음 끝의 `flush_pending_log`가 그 파일을 한 번에 확정한다. `local-head.json`을 비롯한

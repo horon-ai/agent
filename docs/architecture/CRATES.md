@@ -104,16 +104,12 @@ HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루�
 - 이벤트 로그 append, 원본 표식(`event_origin.rs`), 아카이브
 - 런타임 저널(`durable_runtime/store.rs`)과 durable input
 - 블롭
-- 더티 표식 생성(`writer.rs`의 `.catalog.dirty/<id>`)
 - 원본에서 다시 만들 수 없는 로컬 상태: `local-head.json`, `local-head-explicit.json`, `local-explicit-source.json`, `local-runtime.json`
 
-더티 표식은 빈 파일이고 리더는 존재만 검사하므로, 확정할 것은 그 이름을 담은 디렉터리 항목 하나다.
-`writer.rs::dirty`는 어느 플랫폼에서나 빈 파일을 만든 뒤 디렉터리 fsync를 내고, 그 디렉터리 flush가
-생성을 확정하는 플랫폼(Unix)에서는 파일 fsync를 생략한다. 판단은 core가 아니라 어댑터의
-`directory_sync_is_effective()`가 하고, 이 값이 `false`인 Windows는 파일 fsync를 유지한다. 이
-생략으로 줄어드는 것은 표식 생성당 시스템 호출 하나이고, 프로세스 크래시 뒤 표식 존재는 재시작
-테스트가 확인한다. 전원 손실은 저널링 파일시스템이 디렉터리 항목을 보존한다는 전제에 기대며, 그
-항목을 잃어도 원본은 남고 목록 행 하나만 다시 만들면 된다.
+더티 표식(`writer.rs`의 `.catalog.dirty/<id>`)은 원본이 아니라 재생성 힌트다. `writer.rs::dirty`는
+빈 파일을 원본 append보다 먼저 만들되 flush하지 않는다. 낡은 파생을 막는 것은 아래의 `Stamp` 대조이고,
+전원 손실로 표식을 잃어도 늘어난 로그와 낡은 스탬프가 남아 다음 조회가 원본에서 다시 만든다. 근거와
+고정 테스트는 [`../protocol/SESSION_STORE.md`](../protocol/SESSION_STORE.md)에 있다.
 
 한 묶음 커밋은 로그 flush를 한 번만 낸다. `BlockingWriter::batched` 안의 append는 원본 바이트를 다 쓴 뒤 flush를 미루고, 묶음 끝의 `flush_pending_log`가 그 한 번을 낸다. `local-head.json` 같은 선택 상태는 그 flush가 성공한 뒤에만 쓴다. flush가 실패하면 `batched`는 오류를 돌려주고 확정된 선택 상태는 남기지 않으므로, 같은 이벤트를 다시 보내면 로그에 한 번만 들어간다. 블롭 flush는 블롭마다 그대로다.
 

@@ -549,8 +549,27 @@ fn todo(content: &str, status: &str, group: Option<&str>) -> TodoItem {
         completion_confidence: None,
         confidence_history: Vec::new(),
         blocked_by: Vec::new(),
+        blocker: None,
         assigned_to: None,
     }
+}
+
+#[test]
+fn todo_blocked_item_is_open_and_keeps_its_note() {
+    let mut blocked = todo("ship", "blocked", None);
+    blocked.blocker = Some("  waiting on the CI queue  ".to_string());
+
+    // Open work: not done, so completion checks must not pass on it.
+    assert!(is_incomplete_todo(&blocked));
+    assert!(!todo_status_is_completed("blocked"));
+    assert!(todo_status_is_blocked(" Blocked "));
+    assert_eq!(todo_blocker_note(&blocked), Some("waiting on the CI queue"));
+
+    // Nothing to read when the note is missing or blank.
+    assert_eq!(todo_blocker_note(&todo("ship", "blocked", None)), None);
+    let mut blank = todo("ship", "blocked", None);
+    blank.blocker = Some("   ".to_string());
+    assert_eq!(todo_blocker_note(&blank), None);
 }
 
 fn delivery_goal(group: Option<&str>, delivery: Option<DeliveryState>) -> TodoGoal {

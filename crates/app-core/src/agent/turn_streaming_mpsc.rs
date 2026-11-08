@@ -254,17 +254,16 @@ impl Agent {
                 record_request_extra_clone(request_base);
             }
             let send_messages = stamped.as_deref().unwrap_or(request_base);
-            // The provider reads placeholders; the vault keeps the real bytes for
-            // the tool that later needs them. `block` refuses the request here.
-            let masked_messages = crate::secrets::outbound_messages(
-                send_messages,
-                &self.session.id,
-                crate::config::config().tools.secrets_mode,
-            )?;
-            if masked_messages.is_some() {
-                record_request_extra_clone(send_messages);
-            }
-            let send_messages = masked_messages.as_deref().unwrap_or(send_messages);
+            let model = self.provider_model();
+            let request_context = crate::hooks::pre_request::RequestContext {
+                session_id: &self.session.id,
+                cwd: self.working_dir(),
+                turn: super::stream_rules::user_turn_index(&self.session),
+                model: &model,
+                system: &split_prompt.static_part,
+            };
+            let outbound = super::request_messages::project(&request_context, send_messages).await?;
+            let send_messages = outbound.as_deref().unwrap_or(send_messages);
             let prompt_has_recent_tool_result = Self::messages_end_with_tool_result(send_messages);
             let provider = Arc::clone(&self.provider);
             // Capture the model id the request was issued with. A provider may

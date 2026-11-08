@@ -1060,20 +1060,20 @@ fn same_canonical_path(first: &Path, second: &Path) -> bool {
     }
 }
 
-fn load_agents_md_files_from_dirs(
+pub(crate) fn load_agents_md_files_from_dirs(
     project_dir: &Path,
     global_agents_md: Option<&Path>,
 ) -> (Option<String>, ContextInfo) {
     let mut contents = vec![];
     let mut info = ContextInfo::default();
 
-    // Helper to load a file if it exists, returns (formatted_content, raw_size)
+    // Load a file if it exists: (formatted_content, expanded_size_chars)
     let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
         if path.exists() {
             std::fs::read_to_string(path).ok().map(|content| {
-                let raw_size = content.len();
+                let content = crate::context_import::expand_context_imports(&content, path, project_dir);
                 let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, raw_size)
+                (formatted, content.len())
             })
         } else {
             None

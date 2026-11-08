@@ -451,6 +451,11 @@ pub struct TodoItem {
     pub confidence_history: Vec<ConfidenceState>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_by: Vec<String>,
+    /// What a `blocked` todo waits on. Required while the status is blocked and
+    /// dropped for every other status, so the readable reason travels with the
+    /// item instead of being inferred from `blocked_by`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_to: Option<String>,
 }

@@ -23,7 +23,9 @@ does not. So every check here reads a counter:
 - FD and thread retention across a short attach/detach soak;
 - the IRC mailbox cap, the messages a flood drops, one body allocation per
   broadcast, waiters left parked after churn, and the broadcast concurrency
-  ceiling.
+  ceiling;
+- the request projection with no `pre_request` hook configured: no child
+  process spawned and no message copied.
 
 The measurements are the repo's own tests. Each one prints one
 `STRUCTURAL_PERF section=<name> k=v k=v` line, so this gate reads the numbers
@@ -197,9 +199,34 @@ MEASUREMENTS = (
             "mcp::sources::tests::structural_user_config_rereads",
         ],
     },
+    # The request projection is free when no `pre_request` hook is configured:
+    # no child process, and no message copied. The probe floor is what keeps a
+    # zero from certifying a measurement that never built a request.
+    {
+        "section": "hooks",
+        "source": "request-messages",
+        "args": [
+            "-p",
+            "horon-agent-app-core",
+            "--lib",
+            "agent::request_messages::tests::structural_unset_pre_request_is_free",
+        ],
+    },
 )
 
-REQUIRED_SECTIONS = ("queue", "pending", "page", "hash", "frame", "soak", "context", "irc", "skill", "mcp_config")
+REQUIRED_SECTIONS = (
+    "queue",
+    "pending",
+    "page",
+    "hash",
+    "frame",
+    "soak",
+    "context",
+    "irc",
+    "skill",
+    "mcp_config",
+    "hooks",
+)
 
 
 class GateError(Exception):
@@ -637,6 +664,35 @@ def check_mcp_config(report: Report, records: list[dict[str, str]], bounds: dict
         )
 
 
+def check_hooks(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """An unset `pre_request` hook costs no process and no message copy.
+
+    The floor on the probe itself carries the weight here: a request projection
+    that never ran would report zero spawns and zero copies for the same reason
+    a correct one does, and the gate must not read that as a pass.
+    """
+    for record in records:
+        section = "hooks"
+        report.at_least(
+            section,
+            "request_messages_in_probe",
+            as_int(record, "request_messages_in_probe", section),
+            1,
+        )
+        report.at_most(
+            section,
+            "hook_process_spawns",
+            as_int(record, "hook_process_spawns", section),
+            bounds["hooks_unset_process_spawns_max"],
+        )
+        report.at_most(
+            section,
+            "request_message_copies",
+            as_int(record, "request_message_copies", section),
+            bounds["hooks_unset_message_copies_max"],
+        )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -648,6 +704,7 @@ CHECKS = {
     "irc": check_irc,
     "skill": check_skill,
     "mcp_config": check_mcp_config,
+    "hooks": check_hooks,
 }
 
 

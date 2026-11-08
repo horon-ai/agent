@@ -255,6 +255,7 @@ jobs:
           python3 tests/test_public_release_builds.py
           python3 tests/test_release_ci.py
           python3 scripts/release/test_release.py
+          python3 scripts/release/test_auto_release.py
           python3 tests/test_verify_public_release.py
           python3 tests/test_watch_release_run.py
           bash -n scripts/ci/install_justrust.sh scripts/release/build_linux_compat.sh scripts/release/release.sh
@@ -436,7 +437,7 @@ jobs:
           set -euo pipefail
           TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
           echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -562,6 +563,142 @@ jobs:
             --timeout 600 \
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
+      - name: Run skill_manage cohort
+        shell: bash
+        # The `horon-agent-app-core` lib suite only ever runs through filtered
+        # cohorts in this workflow, so a new `skill_manage` action would compile
+        # without its tests ever executing. `skill_delete` covers the
+        # managed-only refusal with its source, the not-found answer, and the
+        # symlink unlink that keeps its target; the symlink test is Unix-only,
+        # which is why the floor is one pass rather than the full count.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- skill_delete --nocapture
+
+      - name: Run context_import cohort
+        shell: bash
+        # `horon-agent-base` lib tests are compiled by the step above but only
+        # executed by filtered cohorts, so the `@path` import expansion would
+        # compile without a single test running. The 14 `context_import_*`
+        # tests are platform-neutral (relative, absolute, `~/`, fenced-code and
+        # hop-limit cases over temp directories), so the floor is the full
+        # count rather than one: a filter that matches nothing would otherwise
+        # report a green `0 passed`.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 14 \
+            -- context_import --nocapture
+
+      - name: Run todo blocked and write shebang cohort (todo blocked)
+        shell: bash
+        # Same gap as `skill_manage`: the `horon-agent-app-core` lib suite only
+        # runs through filtered cohorts here, so the `blocked` todo status would
+        # compile without its tests ever executing. `todo_blocked` covers the
+        # blocker note being required, capped and dropped off a non-blocked item,
+        # the note showing up in the tool result, the ACP plan downgrading the
+        # item to pending, and a blocked list counting as unfinished.
+        # `run_lib_tests.py` forwards its arguments to libtest, which accepts a
+        # single filter, so this needs one step per filter.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- todo_blocked --nocapture
+
+      - name: Run todo blocked and write shebang cohort (write shebang)
+        shell: bash
+        # `write_shebang` covers the execute bit a newly created `#!` file gets,
+        # an overwrite keeping its mode, and a plain file keeping the default.
+        # Those tests are Unix-only, hence the one-pass floor rather than the
+        # full count.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- write_shebang --nocapture
+
+      - name: Run todo blocked policy cohort
+        shell: bash
+        # The shared policy crate owns `is_incomplete_todo`, so its blocked test
+        # is where "not done, not in progress" is pinned. It lives in a package
+        # the compile step used to skip, which is why the compile and e2e `-p`
+        # sets now name `horon-agent-todo-policy`.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-todo-policy \
+            --timeout 600 --min-passed 1 \
+            -- todo_blocked --nocapture
+
+      - name: Run hooks cohort
+        shell: bash
+        # The `horon-agent-base` and `horon-agent-app-core` lib suites only run
+        # through filtered cohorts here, so a lifecycle hook that compiles is
+        # not a hook that was tested. `hooks::pre_request::tests` covers the
+        # request rewrite (replacement, empty stdout, fail-open, system-prompt
+        # refusal, chained commands, stdin payload, recursion guard) and
+        # `hooks::post_tool_feedback::tests` covers the feedback envelope and
+        # the text it appends. The hook cases write small /bin/sh scripts, so
+        # each filter carries `--min-passed 1` while still reporting a pass on
+        # Windows, where only the platform-neutral cases run.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- hooks::pre_request::tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- hooks::post_tool_feedback::tests --nocapture
+
+      - name: Run hooks cohort (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        # The end-to-end hook cases run a real hook script, which these tests
+        # write with /bin/sh, so they are Unix-only: a turn whose request the
+        # hook rewrote while the stored transcript stayed put, the same request
+        # left byte-identical by an empty or failing hook, and the structural
+        # probe behind the `hooks` section of the perf gate.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::request_messages::tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::post_tool_feedback_replace_tests --nocapture
+
+      - name: Run memory record cohort
+        shell: bash
+        # `memory` update and `read memory://` both live in the
+        # `horon-agent-app-core` lib suite, which this workflow only ever runs
+        # through filtered cohorts. Without a step naming their prefixes the
+        # tests would compile and never execute, so each filter must report at
+        # least one pass (`--min-passed 1`): `memory_update` covers the in-place
+        # update (id, links and created_at kept, secret redaction, unknown id,
+        # empty update refused) and `memory_url` covers the full-record read,
+        # the newest-first listing, not-found and out-of-scope refusal.
+        # `run_lib_tests.py` forwards its arguments to libtest, which accepts a
+        # single filter, so each filter needs its own call. The store-side
+        # helpers (tag normalization, the one-line preview) sit in the
+        # `horon-agent-base` suite.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- memory_update --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- memory_url --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- memory_update --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the
@@ -571,7 +708,7 @@ jobs:
           # against an occasional slow hosted runner. Compilation is already done
           # in the dedicated compile step above.
           set -euo pipefail
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi

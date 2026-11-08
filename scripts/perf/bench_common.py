@@ -66,8 +66,31 @@ def short_temp_dir(prefix: str = "hb-") -> str:
     socket path well inside the limit.
     """
     root = "/tmp" if os.path.isdir("/tmp") else None
+    if IS_WINDOWS:
+        return _inherited_acl_temp_dir(prefix)
     path = tempfile.mkdtemp(prefix=prefix, dir=root)
     return os.path.realpath(path)
+
+
+def _inherited_acl_temp_dir(prefix: str) -> str:
+    """A Windows temp dir that keeps the ACL inherited from %TEMP%.
+
+    ``tempfile.mkdtemp`` passes mode 0o700, which CPython (3.12.4+, 3.13+)
+    turns into a protected ACL granting only SYSTEM, Administrators and the
+    owner. On an elevated runner the owner is the Administrators group, so a
+    process under a filtered (LUA) token, such as a command inside the Codex
+    Windows sandbox, can read nothing below it. A plain ``os.mkdir`` inherits
+    the user's own %TEMP% ACL instead.
+    """
+    base = tempfile.gettempdir()
+    for _ in range(100):
+        path = os.path.join(base, prefix + os.urandom(4).hex())
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            continue
+        return os.path.realpath(path)
+    raise FileExistsError(errno.EEXIST, "no unused temp dir name", base)
 
 
 def isolated_home_env(root: str, prefix: str) -> dict[str, str]:

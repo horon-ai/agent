@@ -68,6 +68,8 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=skill source=skill-overlay skill_warmup_file_reads=50 "
     "skill_unchanged_request_file_reads=0 skill_unchanged_request_dir_reads=0",
     "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
+    "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
+    "request_message_copies=0",
 ]
 
 
@@ -393,6 +395,52 @@ class ViolationTest(unittest.TestCase):
         self.assert_fails_naming(lines, "rejected_frame_bytes")
 
 
+class HooksSectionTest(unittest.TestCase):
+    """An unset `pre_request` hook must stay free, and the probe must have run."""
+
+    def test_a_spawned_process_with_no_hook_fails_the_gate(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=hooks",
+            "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 "
+            "hook_process_spawns=1 request_message_copies=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("hook_process_spawns", named)
+
+    def test_a_copied_message_with_no_hook_fails_the_gate(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=hooks",
+            "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 "
+            "hook_process_spawns=0 request_message_copies=1",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("request_message_copies", named)
+
+    def test_a_probe_that_built_no_request_fails_rather_than_passing_on_zeros(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=hooks",
+            "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=0 "
+            "hook_process_spawns=0 request_message_copies=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("request_messages_in_probe", named)
+
+    def test_a_missing_hooks_section_fails_the_same_way(self):
+        without_hooks = [
+            line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=hooks")
+        ]
+        run = run_gate(without_hooks)
+        self.assertEqual(run.code, 2, "a hooks section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["hooks"])
+        self.assertIn("hooks", run.stderr)
+
+
 class MissingMeasurementTest(unittest.TestCase):
     def test_a_missing_section_fails_instead_of_passing_on_nothing(self):
         without_soak = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=soak")]
@@ -496,6 +544,8 @@ class BudgetTest(unittest.TestCase):
             "skill_unchanged_request_file_reads_max",
             "skill_unchanged_request_dir_reads_max",
             "mcp_config_user_rereads_max",
+            "hooks_unset_process_spawns_max",
+            "hooks_unset_message_copies_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

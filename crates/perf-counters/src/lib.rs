@@ -9,7 +9,8 @@
 //! built for a request. [`record_skill_dir_read`] counts skill-directory scans
 //! made while discovering the skill catalog, [`record_skill_file_read`] counts
 //! SKILL.md files opened and the bytes read from them, and
-//! [`record_mcp_config_read`] counts MCP configuration files parsed and their bytes.
+//! [`record_mcp_config_read`] counts MCP configuration files parsed and their bytes,
+//! and [`record_hook_spawn`] counts lifecycle-hook child processes actually spawned.
 //!
 //! Each recording call is one relaxed atomic read (the gate) plus one relaxed
 //! atomic add; high-water marks add a compare-and-swap that only spins when a new
@@ -73,6 +74,7 @@ static READ_BYTES_AVOIDED: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGING_BATCHES: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGED_RESULTS: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGED_BYTES: AtomicU64 = AtomicU64::new(0);
+static HOOK_PROCESS_SPAWNS: AtomicU64 = AtomicU64::new(0);
 
 /// Read once from [`ENV_ENABLE`] and cached, so the gate stays a single load and
 /// changing the variable mid-process cannot make counters inconsistent.
@@ -299,6 +301,18 @@ pub fn record_tool_result_aging(results: u64, removed_bytes: u64) {
     TOOL_RESULT_AGED_BYTES.fetch_add(removed_bytes, Ordering::Relaxed);
 }
 
+/// One hook child process actually spawned.
+///
+/// Every lifecycle hook is an external command, so this is the counter that
+/// shows whether a hook is free when it is unset: a request path that checks
+/// its configuration first spawns nothing and leaves the count alone.
+pub fn record_hook_spawn() {
+    if !enabled() {
+        return;
+    }
+    HOOK_PROCESS_SPAWNS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Tests and benchmark harnesses only; nothing in the daemon calls it.
 pub fn reset() {
     for slot in [
@@ -339,6 +353,7 @@ pub fn reset() {
         &TOOL_RESULT_AGING_BATCHES,
         &TOOL_RESULT_AGED_RESULTS,
         &TOOL_RESULT_AGED_BYTES,
+        &HOOK_PROCESS_SPAWNS,
     ] {
         slot.store(0, Ordering::Relaxed);
     }
@@ -386,6 +401,7 @@ pub struct Snapshot {
     pub tool_result_aging_batches: u64,
     pub tool_result_aged_results: u64,
     pub tool_result_aged_bytes: u64,
+    pub hook_process_spawns: u64,
 }
 
 impl Snapshot {
@@ -447,6 +463,7 @@ pub fn snapshot() -> Snapshot {
         tool_result_aging_batches: TOOL_RESULT_AGING_BATCHES.load(Ordering::Relaxed),
         tool_result_aged_results: TOOL_RESULT_AGED_RESULTS.load(Ordering::Relaxed),
         tool_result_aged_bytes: TOOL_RESULT_AGED_BYTES.load(Ordering::Relaxed),
+        hook_process_spawns: HOOK_PROCESS_SPAWNS.load(Ordering::Relaxed),
     }
 }
 
