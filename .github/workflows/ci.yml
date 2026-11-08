@@ -562,6 +562,20 @@ jobs:
             --timeout 600 \
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
+      - name: Run skill_manage cohort
+        shell: bash
+        # The `horon-agent-app-core` lib suite only ever runs through filtered
+        # cohorts in this workflow, so a new `skill_manage` action would compile
+        # without its tests ever executing. `skill_delete` covers the
+        # managed-only refusal with its source, the not-found answer, and the
+        # symlink unlink that keeps its target; the symlink test is Unix-only,
+        # which is why the floor is one pass rather than the full count.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- skill_delete --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the
