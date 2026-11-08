@@ -13,12 +13,16 @@ these tests pin only the arithmetic and report shapes that silently rot:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -606,6 +610,643 @@ class ReportShapeTests(unittest.TestCase):
         self.assertIn("2.50× more", markdown)
         self.assertIn("pi (missing)", markdown)
         self.assertIn("| horon |", markdown)
+
+
+class ToolRegistryTests(unittest.TestCase):
+    def test_omp_and_omo_runners_are_registered(self) -> None:
+        self.assertIs(bench.RUNNERS.get("omp"), bench.OmpRunner)
+        self.assertIs(bench.RUNNERS.get("omo"), bench.OmoRunner)
+        self.assertEqual(bench.OmpRunner.name, "omp")
+        self.assertEqual(bench.OmpRunner.label, "oh-my-pi (omp)")
+        self.assertEqual(bench.OmoRunner.name, "omo")
+        self.assertEqual(bench.OmoRunner.label, "oh-my-openagent (omo)")
+
+    def test_tools_flag_accepts_omp_and_omo(self) -> None:
+        args = bench.parse_args(["--tools", "omp", "omo"])
+        self.assertEqual(args.tools, ["omp", "omo"])
+        for name in args.tools:
+            self.assertIn(name, bench.RUNNERS, f"{name} would be reported as an unknown tool")
+
+    def test_tools_help_lists_every_runner(self) -> None:
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured), self.assertRaises(SystemExit):
+            bench.parse_args(["--help"])
+        text = captured.getvalue()
+        for name in bench.RUNNERS:
+            self.assertIn(name, text)
+
+    def test_resolve_bin_finds_omp_and_omo(self) -> None:
+        if os.name == "nt":
+            self.skipTest("the executable bit does not decide lookup on Windows")
+        with tempfile.TemporaryDirectory() as root:
+            for name in ("omp", "omo"):
+                path = os.path.join(root, name)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("#!/bin/sh\n")
+                os.chmod(path, 0o755)
+                found = bench.resolve_bin(name, None, {"PATH": root})
+                self.assertEqual(os.path.realpath(found or ""), os.path.realpath(path))
+            self.assertIsNone(bench.resolve_bin("omp", None, {"PATH": ""}))
+
+
+class ToolEnvIsolationTests(unittest.TestCase):
+    """omp and omo must never see the parent's config, home, or credentials."""
+
+    PARENT_LEAKS = {
+        "OMP_PROFILE": "leak",
+        "OMP_PLUGIN_ROOT": "/leak",
+        "OMP_CODING_AGENT_DIR": "/leak",
+        "OMP_DAEMON_RUNTIME_DIR": "/leak",
+        "OMO_CODING_AGENT_DIR": "/leak",
+        "OMO_PACKAGE_DIR": "/leak",
+        "OMO_PLUGIN_ROOT": "/leak",
+        "OMO_DEBUG": "1",
+        # Without this scrub omo opts back into telemetry even under automation.
+        "OMO_TELEMETRY_ALLOW_AUTOMATION": "1",
+        "SENPI_CODING_AGENT_DIR": "/leak",
+        "PI_CODING_AGENT_DIR": "/leak",
+        "PI_CONFIG_DIR": "/leak",
+        "PI_PACKAGE_DIR": "/leak",
+        "ANTHROPIC_API_KEY": "leak",
+        "OPENAI_API_KEY": "leak",
+        "OPENAI_BASE_URL": "http://leak/v1",
+    }
+
+    # These are written by the runner itself, so they must point into the temp
+    # root instead of being absent.
+    AGENT_DIR_KEYS = ("PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR", "SENPI_CODING_AGENT_DIR")
+
+    def _assert_isolated(self, env: dict, root: str) -> None:
+        for key in self.PARENT_LEAKS:
+            if key in self.AGENT_DIR_KEYS:
+                if key in env:
+                    self.assertTrue(env[key].startswith(root), f"{key}={env[key]}")
+                continue
+            self.assertNotIn(key, env, key)
+        self.assertTrue(env["HOME"].startswith(root), env["HOME"])
+        self.assertNotEqual(os.path.realpath(env["HOME"]), os.path.realpath(os.path.expanduser("~")))
+
+    def test_omp_env_drops_parent_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root = os.path.realpath(root)
+            with mock.patch.dict(os.environ, self.PARENT_LEAKS, clear=False):
+                env = bench.omp_env(root, "http://127.0.0.1:9")
+            self._assert_isolated(env, root)
+
+    def test_omo_env_drops_parent_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root = os.path.realpath(root)
+            with mock.patch.dict(os.environ, self.PARENT_LEAKS, clear=False):
+                env = bench.omo_env(root, "http://127.0.0.1:9")
+            self._assert_isolated(env, root)
+            agent_dirs = {env[key] for key in self.AGENT_DIR_KEYS}
+            self.assertEqual(len(agent_dirs), 1)
+
+    def test_mock_models_json_points_at_the_mock_server(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            env = bench.omp_env(root, "http://127.0.0.1:9")
+            with open(os.path.join(env["PI_CODING_AGENT_DIR"], "models.json"), encoding="utf-8") as fh:
+                models = json.load(fh)
+        provider = models["providers"]["mock"]
+        self.assertEqual(provider["baseUrl"], "http://127.0.0.1:9/v1")
+        self.assertEqual(provider["api"], "openai-completions")
+        self.assertEqual([model["id"] for model in provider["models"]], ["mock-model"])
+
+    def test_omp_and_omo_turn_off_telemetry_and_updates(self) -> None:
+        for builder in (bench.omp_env, bench.omo_env):
+            with self.subTest(tool=builder.__name__), tempfile.TemporaryDirectory() as root:
+                env = builder(root, "http://127.0.0.1:9")
+                self.assertEqual(env["PI_OFFLINE"], "1")
+                self.assertEqual(env["PI_SKIP_VERSION_CHECK"], "1")
+                self.assertEqual(env["PI_TELEMETRY"], "0")
+                self.assertEqual(env["DISABLE_TELEMETRY"], "1")
+                self.assertEqual(env["DO_NOT_TRACK"], "1")
+
+    def test_each_measurement_gets_a_fresh_agent_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            first = bench.omp_env(root, "http://127.0.0.1:9")
+            second = bench.omp_env(root, "http://127.0.0.1:9")
+        # omp caches the provider base URL inside the agent dir, so a reused dir
+        # would keep calling an older endpoint.
+        self.assertNotEqual(first["PI_CODING_AGENT_DIR"], second["PI_CODING_AGENT_DIR"])
+
+    def test_oneshot_and_session_argv_carry_the_required_flags(self) -> None:
+        omp = bench.omp_oneshot_argv("omp")
+        self.assertIn("-p", omp)
+        self.assertIn("--no-session", omp)
+        self.assertIn("--no-title", omp)
+        self.assertIn("--no-lsp", omp)
+        self.assertEqual(omp[omp.index("--model") + 1], "mock/mock-model")
+        self.assertEqual(omp[-1], bench.TURN_PROMPT)
+        omo = bench.omo_oneshot_argv("omo")
+        self.assertIn("-p", omo)
+        self.assertIn("--no-session", omo)
+        self.assertEqual(omo[omo.index("--tools") + 1], "bash,read")
+        # The MCP scenario drops `--tools`: the strict allowlist would have to
+        # spell the server's tool name, which differs between builds.
+        self.assertNotIn("--tools", bench.omo_oneshot_argv("omo", bench.mcp_prompt(), tools=None))
+        self.assertEqual(omo[omo.index("--model") + 1], "mock/mock-model")
+        for argv in (bench.omp_session_argv("omp"), bench.omo_session_argv("omo")):
+            self.assertIn("--mode", argv)
+            self.assertEqual(argv[argv.index("--mode") + 1], "rpc")
+
+
+class ToolListTests(unittest.TestCase):
+    def test_horon_is_first_and_appears_once(self) -> None:
+        self.assertEqual(bench.normalize_tools(["omp", "omo"]), ["horon", "omp", "omo"])
+        self.assertEqual(
+            bench.normalize_tools(["horon", "omp", "omo", "omp"]), ["horon", "omp", "omo"]
+        )
+        self.assertEqual(bench.normalize_tools(["jcode", "horon"]), ["horon", "jcode"])
+
+
+class MissingToolWarningTests(unittest.TestCase):
+    REPORT = {
+        "results": [],
+        "skipped": [
+            {"name": "syscalls", "reason": "strace not available"},
+            {"name": "omp", "reason": "install failed: bun is required"},
+        ],
+    }
+
+    def test_feature_skip_is_not_a_missing_tool(self) -> None:
+        self.assertEqual([s["name"] for s in bench.missing_tools(self.REPORT)], ["omp"])
+        self.assertEqual(bench.missing_tools({"skipped": [{"name": "syscalls", "reason": "x"}]}), [])
+
+    def test_markdown_warns_before_the_tables(self) -> None:
+        markdown = bench.render_markdown(bc.build_report("compare", [], self.REPORT["skipped"], "t"), [1], 1)
+        warning = next(line for line in markdown.splitlines() if line.startswith("> **Warning"))
+        self.assertIn("1 tool(s) were not measured", warning)
+        self.assertIn("omp (install failed: bun is required)", warning)
+        self.assertNotIn("syscalls", warning)
+
+    def test_ci_run_gets_an_annotation_and_a_summary_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                bench.announce_missing_tools(
+                    bench.missing_tools(self.REPORT),
+                    {"GITHUB_ACTIONS": "true", "GITHUB_STEP_SUMMARY": str(summary)},
+                )
+            self.assertEqual(
+                out.getvalue().strip(),
+                "::warning title=compare: omp not measured::omp: install failed: bun is required",
+            )
+            self.assertIn("`omp`: install failed: bun is required", summary.read_text())
+
+    def test_nothing_is_announced_outside_ci_or_without_missing_tools(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bench.announce_missing_tools(bench.missing_tools(self.REPORT), {})
+            bench.announce_missing_tools([], {"GITHUB_ACTIONS": "true"})
+        self.assertEqual(out.getvalue(), "")
+
+    def test_annotation_text_cannot_start_a_new_command(self) -> None:
+        line = bench.github_warnings([{"name": "x", "reason": "a\n::error::b 100%"}])[0]
+        self.assertNotIn("\n", line)
+        self.assertIn("a%0A::error::b 100%25", line)
+
+
+class FakeMockServer:
+    """Enough of the mock server for the scenario wiring, with no process."""
+
+    base_url = "http://127.0.0.1:9"
+
+    def reset(self) -> None:
+        pass
+
+
+class ScenarioSummarizeTests(unittest.TestCase):
+    def test_round_trip_needs_the_sentinel_in_every_run(self) -> None:
+        seen = [{"ms": 1.0, "sentinel_seen": True}, {"ms": 2.0, "sentinel_seen": True}]
+        self.assertTrue(bench.summarize_scenario(seen)["tool_round_trip"])
+
+    def test_mock_ok_without_the_sentinel_is_not_a_round_trip(self) -> None:
+        # The agent answered, but nothing proves it reached the fixture.
+        summary = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": False}])
+        self.assertFalse(summary["tool_round_trip"])
+        self.assertEqual(summary["ms"], 1.0)
+
+    def test_an_empty_series_is_not_a_round_trip(self) -> None:
+        summary = bench.summarize_scenario([])
+        self.assertFalse(summary["tool_round_trip"])
+        self.assertIsNone(summary["ms"])
+
+    def test_ready_time_is_the_median_of_the_runs_that_saw_it(self) -> None:
+        runs = [
+            {"ms": 100.0, "sentinel_seen": True, "mcp_ready_ms": 40.0},
+            {"ms": 120.0, "sentinel_seen": True, "mcp_ready_ms": 60.0},
+            {"ms": 90.0, "sentinel_seen": False, "mcp_ready_ms": None},
+        ]
+        summary = bench.summarize_scenario(runs)
+        self.assertEqual(summary["mcp_ready_ms"], 50.0)
+        self.assertFalse(summary["tool_round_trip"])
+
+    def test_via_comes_from_the_runs(self) -> None:
+        summary = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": True, "via": "file-read"}])
+        self.assertEqual(summary["via"], "file-read")
+
+    def test_status_separates_a_real_measurement_from_a_failed_one(self) -> None:
+        ok = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": True}])
+        failed = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": False}])
+        self.assertEqual(ok["status"], "ok")
+        self.assertEqual(failed["status"], "failed")
+
+
+class ScenarioSelectionTests(unittest.TestCase):
+    def test_default_is_all_four_scenarios(self) -> None:
+        args = bench.parse_args([])
+        self.assertEqual(args.scenarios, ["oneshot", "sessions", "skill", "mcp"])
+        self.assertEqual(
+            bench.parse_scenarios(args.scenarios), ["oneshot", "sessions", "skill", "mcp"]
+        )
+
+    def test_a_comma_list_and_a_repeated_name_normalize(self) -> None:
+        self.assertEqual(bench.parse_scenarios(["skill,mcp", "skill"]), ["skill", "mcp"])
+
+    def test_an_unknown_scenario_fails_instead_of_being_dropped(self) -> None:
+        with self.assertRaises(SystemExit):
+            bench.parse_scenarios(["skills"])
+        with self.assertRaises(SystemExit):
+            bench.parse_scenarios([""])
+
+    def _patched(self):
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        return saved
+
+    def test_a_subset_really_skips_the_missing_phases(self) -> None:
+        order: list[str] = []
+
+        class FakeRunner:
+            name = "horon"
+            label = "horon"
+            binary = "/b"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root, cwd, timeout, syscalls=False) -> dict:
+                order.append("oneshot")
+                return {"ms": 1.0, "peak_rss_bytes": 1, "tool_roundtrip": True}
+
+            def sessions(self, mock, root, cwd, count, turns, timeout) -> dict:
+                order.append("sessions")
+                return {"samples": [], "errors": [], "sessions_created": count}
+
+            def skill(self, mock, root, cwd, timeout) -> dict:
+                order.append("skill")
+                return {"ms": 1.0, "sentinel_seen": True, "via": "file-read"}
+
+            def mcp(self, mock, root, cwd, timeout) -> dict:
+                order.append("mcp")
+                return {"ms": 1.0, "sentinel_seen": True, "via": "mcp-tool"}
+
+        runner = FakeRunner()
+        saved = self._patched()
+        try:
+            only_oneshot = bench.measure_tools(
+                [runner], FakeMockServer(), [1], 1, 1, 1, 30.0, scenarios=["oneshot"]
+            )[0]
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+        self.assertEqual(order, ["oneshot"])
+        self.assertIsNone(only_oneshot["sessions_memory"])
+        self.assertIsNone(only_oneshot["skill"])
+        self.assertIsNone(only_oneshot["mcp"])
+
+        order.clear()
+        saved = self._patched()
+        try:
+            both = bench.measure_tools(
+                [runner], FakeMockServer(), [1], 1, 1, 1, 30.0, scenarios=["skill", "mcp"]
+            )[0]
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+        self.assertEqual(order, ["skill", "mcp"])
+        self.assertIsNone(both["oneshot"])
+        self.assertIsNone(both["sessions_memory"])
+        self.assertEqual(both["skill"]["via"], "file-read")
+        self.assertTrue(both["mcp"]["tool_round_trip"])
+
+    def test_an_unsupported_scenario_is_decided_once(self) -> None:
+        calls: list[str] = []
+
+        class FakeRunner:
+            name = "horon"
+            label = "horon"
+            binary = "/b"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root, cwd, timeout, syscalls=False) -> dict:
+                return {"ms": 1.0, "peak_rss_bytes": 1, "tool_roundtrip": True}
+
+            def sessions(self, mock, root, cwd, count, turns, timeout) -> dict:
+                return {"samples": [], "errors": [], "sessions_created": count}
+
+            def mcp(self, mock, root, cwd, timeout) -> dict:
+                calls.append("mcp")
+                return bench.unsupported("no MCP client")
+
+        saved = self._patched()
+        try:
+            result = bench.measure_tools(
+                [FakeRunner()], FakeMockServer(), [1], 1, 1, 3, 30.0, scenarios=["mcp"]
+            )[0]
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+        self.assertEqual(calls, ["mcp"])
+        self.assertEqual(result["mcp"], {"skipped": "no MCP client"})
+
+
+class ScenarioRouteTests(unittest.TestCase):
+    def test_pi_mcp_is_unsupported_with_a_reason(self) -> None:
+        result = bench.PiRunner("/pi").mcp(FakeMockServer(), "/tmp/root", "/tmp/root/ws", 1.0)
+        self.assertIn("skipped", result)
+        self.assertIn("MCP", result["skipped"])
+
+    def test_horon_argv_allow_the_tool_each_scenario_needs(self) -> None:
+        skill = bench.horon_turn_argv("/h", bench.skill_prompt("/w/SKILL.md"), "read")
+        self.assertEqual(skill[skill.index("--tools") + 1], "read")
+        self.assertTrue(skill[-1].startswith("[bench:skill]"))
+        mcp = bench.horon_turn_argv("/h", bench.mcp_prompt(), "mcp_call")
+        self.assertEqual(mcp[mcp.index("--tools") + 1], "mcp_call")
+        self.assertTrue(mcp[-1].startswith("[bench:mcp]"))
+
+    def test_horon_keeps_mcp_off_outside_the_new_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            # The one-shot and the session daemon both build their env here.
+            self.assertEqual(bench.horon_env(root, "/h")["HORON_AGENT_RUN_MCP"], "0")
+
+    def test_prompt_markers_select_the_mock_plan(self) -> None:
+        self.assertTrue(bench.skill_prompt("/w/SKILL.md").startswith("[bench:skill]"))
+        self.assertTrue(bench.mcp_prompt().startswith("[bench:mcp]"))
+        self.assertFalse(bench.TURN_PROMPT.startswith("[bench:"))
+
+
+class ScenarioEnvIsolationTests(unittest.TestCase):
+    """Every scenario env keeps its home and config under the scenario root."""
+
+    PARENT_LEAKS = ToolEnvIsolationTests.PARENT_LEAKS
+
+    REQUIRED_KEYS = {
+        "HoronRunner": ("HOME", "XDG_CONFIG_HOME", "HORON_AGENT_HOME"),
+        "JcodeRunner": ("HOME", "XDG_CONFIG_HOME", "JCODE_HOME"),
+        "ClaudeRunner": ("HOME", "XDG_CONFIG_HOME", "CLAUDE_CONFIG_DIR"),
+        "CodexRunner": ("HOME", "XDG_CONFIG_HOME", "CODEX_HOME"),
+        "OpencodeRunner": ("HOME", "XDG_CONFIG_HOME"),
+        "PiRunner": ("HOME", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR"),
+        "OmpRunner": ("HOME", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR"),
+        "OmoRunner": ("HOME", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR",
+                      "OMO_CODING_AGENT_DIR", "SENPI_CODING_AGENT_DIR"),
+    }
+    GUARDED_KEYS = ("HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME", "JCODE_HOME",
+                    "HORON_AGENT_HOME", "PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR",
+                    "SENPI_CODING_AGENT_DIR")
+    RUNNERS = (bench.HoronRunner, bench.JcodeRunner, bench.ClaudeRunner, bench.CodexRunner,
+               bench.OpencodeRunner, bench.PiRunner, bench.OmpRunner, bench.OmoRunner)
+
+    def _capture(self, runner, scenario: str, root: str):
+        captured: list[dict] = []
+        saved = bench.measure_oneshot
+
+        def fake(argv, cwd, env, mock, timeout, syscalls=False):
+            captured.append({"argv": argv, "cwd": cwd, "env": env})
+            return {"ms": 1.0, "peak_rss_bytes": 1, "sentinel_seen": True, "via": "x",
+                    "error": None}
+
+        bench.measure_oneshot = fake
+        try:
+            with mock.patch.dict(os.environ, self.PARENT_LEAKS, clear=False):
+                result = getattr(runner, scenario)(
+                    FakeMockServer(), os.path.join(root, scenario),
+                    os.path.join(root, scenario, "ws"), 1.0,
+                )
+        finally:
+            bench.measure_oneshot = saved
+        return result, captured
+
+    def test_every_tool_keeps_skill_and_mcp_state_under_the_scenario_root(self) -> None:
+        leak_values = set(self.PARENT_LEAKS.values())
+        for runner_cls in self.RUNNERS:
+            for scenario in ("skill", "mcp"):
+                with self.subTest(tool=runner_cls.__name__, scenario=scenario), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    root = os.path.realpath(tmp)
+                    result, captured = self._capture(runner_cls("/bin/tool"), scenario, root)
+                    if "skipped" in result:
+                        # A tool without an addressable MCP client says so and
+                        # never builds an env for that scenario.
+                        self.assertEqual(scenario, "mcp")
+                        self.assertIn(runner_cls, (bench.PiRunner, bench.ClaudeRunner, bench.CodexRunner))
+                        self.assertTrue(result["skipped"])
+                        self.assertEqual(captured, [])
+                        continue
+                    self.assertEqual(len(captured), 1)
+                    env = captured[0]["env"]
+                    for key in self.GUARDED_KEYS:
+                        if key in env:
+                            self.assertTrue(
+                                os.path.realpath(env[key]).startswith(root),
+                                f"{runner_cls.__name__} {scenario}: {key}={env[key]}",
+                            )
+                            self.assertNotIn(env[key], leak_values, key)
+                    for key in self.REQUIRED_KEYS[runner_cls.__name__]:
+                        self.assertIn(key, env, f"{runner_cls.__name__} {scenario}")
+
+    def test_fixtures_land_in_each_tools_own_skill_path(self) -> None:
+        for runner_cls in self.RUNNERS:
+            with self.subTest(tool=runner_cls.__name__), tempfile.TemporaryDirectory() as tmp:
+                root = os.path.realpath(tmp)
+                self._capture(runner_cls("/bin/tool"), "skill", root)
+                found = [
+                    os.path.join(dirpath, name)
+                    for dirpath, _dirs, names in os.walk(root)
+                    for name in names
+                    if name == "SKILL.md"
+                ]
+                self.assertEqual(len(found), 1, found)
+                with open(found[0], encoding="utf-8") as fh:
+                    self.assertIn("BENCH-SKILL-SENTINEL", fh.read())
+
+    def test_horon_registers_the_fixture_mcp_server_in_the_global_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.realpath(tmp)
+            _result, captured = self._capture(bench.HoronRunner("/bin/horon"), "mcp", root)
+            env = captured[0]["env"]
+            self.assertEqual(env["HORON_AGENT_RUN_MCP"], "1")
+            path = os.path.join(env["HORON_AGENT_HOME"], "mcp.json")
+            with open(path, encoding="utf-8") as fh:
+                config = json.load(fh)
+        self.assertIn("bench", config["servers"])
+        self.assertTrue(config["servers"]["bench"]["args"][0].endswith("bench_mcp_server.py"))
+        self.assertIn("mcp_call", captured[0]["argv"])
+
+    def test_horon_skill_scenario_also_enables_mcp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _result, captured = self._capture(
+                bench.HoronRunner("/bin/horon"), "skill", os.path.realpath(tmp)
+            )
+        self.assertEqual(captured[0]["env"]["HORON_AGENT_RUN_MCP"], "1")
+
+
+class ScenarioReportTests(unittest.TestCase):
+    def _result(self, name: str, label: str, skill=None, mcp=None, error=None) -> dict:
+        return {
+            "name": name,
+            "label": label,
+            "version": "v1",
+            "version_ms": {"summary": {"median": 1.0}},
+            "oneshot": {"ms": 100.0, "peak_rss_bytes": 40e6, "tool_roundtrip": True},
+            "sessions_memory": {
+                "points": [{"sessions": 1, "post_turn_rss_bytes": 45e6}],
+                "first_session_idle_rss_bytes": 40e6,
+                "each_additional_idle_rss_bytes": 3e6,
+                "first_session_post_turn_rss_bytes": 45e6,
+                "each_additional_post_turn_rss_bytes": 4e6,
+                "skipped": [],
+            },
+            "skill": skill,
+            "mcp": mcp,
+            "install_size_bytes": 1024,
+            "error": error,
+        }
+
+    def test_new_tables_carry_times_routes_and_reasons(self) -> None:
+        results = [
+            self._result("horon", "horon",
+                         skill={"ms": 100.0, "peak_rss_bytes": 40e6, "tool_round_trip": True,
+                                "via": "file-read", "summary": {"samples": 1}},
+                         mcp={"ms": 200.0, "peak_rss_bytes": 50e6, "tool_round_trip": True,
+                              "via": "mcp-tool", "mcp_ready_ms": 80.0,
+                              "summary": {"samples": 1}}),
+            self._result("pi", "pi",
+                         skill={"ms": 250.0, "peak_rss_bytes": 60e6, "tool_round_trip": True,
+                                "via": "file-read", "summary": {"samples": 1}},
+                         mcp={"skipped": "pi has no MCP client"}),
+        ]
+        report = bc.build_report("compare", results, [])
+        report["parameters"] = {"scenarios": ["oneshot", "sessions", "skill", "mcp"]}
+        markdown = bench.render_markdown(report, [1], 1)
+        self.assertIn("**Skill invocation**", markdown)
+        self.assertIn("**MCP tool call**", markdown)
+        self.assertIn("| Via |", markdown)
+        self.assertIn("file-read", markdown)
+        self.assertIn("mcp-tool", markdown)
+        self.assertIn("2.50× more", markdown)
+        self.assertIn("skipped: pi has no MCP client", markdown)
+        self.assertIn("80.0 ms", markdown)
+
+    def test_a_not_selected_scenario_renders_no_table(self) -> None:
+        results = [self._result("horon", "horon")]
+        report = bc.build_report("compare", results, [])
+        report["parameters"] = {"scenarios": ["oneshot"]}
+        markdown = bench.render_markdown(report, [1], 1)
+        self.assertNotIn("**Skill invocation**", markdown)
+        self.assertNotIn("**MCP tool call**", markdown)
+        self.assertIn("**One-shot headless prompt**", markdown)
+
+    def test_a_broken_row_still_gets_a_row_with_its_error(self) -> None:
+        results = [self._result("horon", "horon", error="no such binary")]
+        report = bc.build_report("compare", results, [])
+        report["parameters"] = {"scenarios": ["skill"]}
+        markdown = bench.render_markdown(report, [1], 1)
+        self.assertIn("no such binary", markdown)
+
+    def test_a_failed_round_trip_shows_no_time_or_memory(self) -> None:
+        # A row that never reached the fixture measured startup, not the
+        # scenario, so printing its time next to horon's would read as a result.
+        results = [
+            self._result("horon", "horon",
+                         skill={"ms": 100.0, "peak_rss_bytes": 40e6, "tool_round_trip": True,
+                                "via": "skill-uri", "summary": {"samples": 1}, "status": "ok"}),
+            self._result("jcode", "jcode",
+                         skill={"ms": 250.0, "peak_rss_bytes": 60e6, "tool_round_trip": False,
+                                "via": None, "summary": {"samples": 1}, "status": "failed",
+                                "runs": [{"ms": 250.0, "sentinel_seen": False}]}),
+        ]
+        report = bc.build_report("compare", results, [])
+        report["parameters"] = {"scenarios": ["skill"]}
+        markdown = bench.render_markdown(report, [1], 1)
+        jcode_line = next(
+            line for line in markdown.splitlines()
+            if line.startswith("| jcode |") and "failed:" in line
+        )
+        self.assertIn("| — |", jcode_line)
+        self.assertNotIn("2.50× more", jcode_line)
+        self.assertIn("failed:", jcode_line)
+        # The raw run stays in the JSON for a postmortem.
+        self.assertEqual(results[1]["skill"]["runs"][0]["ms"], 250.0)
+
+    def test_markdown_cell_does_not_break_the_table(self) -> None:
+        self.assertEqual(bench.scenario_cell("a | b"), "a / b")
+
+
+class McpFixtureTests(unittest.TestCase):
+    def test_fixture_answers_initialize_list_call_and_rejects_unknown_methods(self) -> None:
+        proc = subprocess.Popen(
+            [sys.executable, str(bench.MCP_FIXTURE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        requests = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2024-11-05", "capabilities": {}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "bench_echo", "arguments": {"text": "bench-nonce-7"}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "not_here", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "resources/list"},
+        ]
+        out, _err = proc.communicate(
+            "\n".join(json.dumps(item) for item in requests) + "\n", timeout=30
+        )
+        self.assertEqual(proc.returncode, 0)
+        responses = [json.loads(line) for line in out.splitlines() if line.strip()]
+        self.assertEqual([item["id"] for item in responses], [1, 2, 3, 4, 5])
+        self.assertEqual(responses[0]["result"]["protocolVersion"], "2024-11-05")
+        self.assertEqual(responses[1]["result"]["tools"][0]["name"], "bench_echo")
+        self.assertEqual(responses[2]["result"]["content"][0]["text"], "bench-nonce-7")
+        self.assertFalse(responses[2]["result"]["isError"])
+        self.assertEqual(responses[3]["error"]["code"], -32602)
+        self.assertEqual(responses[4]["error"]["code"], -32601)
+
+    def test_fixture_exits_zero_on_eof(self) -> None:
+        proc = subprocess.Popen(
+            [sys.executable, str(bench.MCP_FIXTURE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        out, _err = proc.communicate("", timeout=30)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(out.strip(), "")
+
+
+class SkillFixtureTests(unittest.TestCase):
+    def test_fixture_has_frontmatter_and_the_sentinel_body(self) -> None:
+        text = bench.SKILL_FIXTURE.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\n"))
+        self.assertIn("name: bench-skill", text)
+        self.assertIn("description:", text)
+        self.assertIn("BENCH-SKILL-SENTINEL", text)
+
+    def test_install_skill_copies_it_under_the_requested_root(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = bench.install_skill(root)
+            self.assertEqual(os.path.dirname(path), os.path.join(root, "bench-skill"))
+            with open(path, encoding="utf-8") as fh:
+                self.assertIn("BENCH-SKILL-SENTINEL", fh.read())
 
 
 if __name__ == "__main__":

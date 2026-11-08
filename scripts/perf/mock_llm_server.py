@@ -7,11 +7,22 @@ Anthropic Messages (Claude Code) with canned data.
 
 Scenario, evaluated per request:
 
-1. First request of a conversation that offers a shell-like tool -> the model
-   asks for that tool once with {"command": "ls"}.
-2. A request whose transcript already carries a tool result -> the model answers
+1. The prompt carries ``[bench:skill]`` -> ask for the fixture skill through the
+   agent's own skill tool, a ``skill://`` read, or a plain read of the SKILL.md
+   path the prompt names, whichever the tool list supports. The request record
+   keeps which route was used (``via``) and whether the fixture sentinel came
+   back in a later tool result.
+2. The prompt carries ``[bench:mcp]`` -> call the fixture MCP tool
+   ``bench_echo`` with a nonce, or read the ``xd://...bench_echo`` route an agent
+   prints instead of exposing a function. A later request counts as a round trip
+   only when it carries that nonce in a tool result.
+3. omp's skill routing-hint request -> one valid hint, so omp does not retry it
+   three times in the skill scenario.
+4. First request of a conversation that offers a shell-like tool -> the model
+   asks for that tool once with ``{"command": "ls"}``.
+5. A request whose transcript already carries a tool result -> the model answers
    with the fixed text ``mock-ok`` and stops.
-3. A request with no shell tool -> the model answers ``mock-ok`` immediately.
+6. A request with no shell tool -> the model answers ``mock-ok`` immediately.
 
 Every request is recorded so the benchmark can prove a tool round-trip actually
 happened (``GET /__stats``).
@@ -36,6 +47,48 @@ MOCK_MODEL = "mock-model"
 # Absolute paths mentioned in a request (workspace hints and tool output).
 PATH_RE = re.compile(r"(?:/(?:Users|home|tmp|private|var|opt|workspace|root)[\w./\-]*)")
 SHELL_NAME_HINTS = ("bash", "shell", "exec", "terminal", "run_command", "cmd")
+
+# Scenario markers the benchmark harness puts in its prompt. A request without a
+# marker keeps the original `ls` plan, so existing one-shot and session numbers
+# stay what they were.
+SKILL_MARKER = "[bench:skill]"
+MCP_MARKER = "[bench:mcp]"
+SKILL_NAME = "bench-skill"
+# Text inside the fixture SKILL.md; seeing it in a later request proves the skill
+# body actually reached the model.
+SKILL_SENTINEL = "BENCH-SKILL-SENTINEL"
+MCP_TOOL_SUFFIX = "bench_echo"
+NONCE_PREFIX = "bench-nonce-"
+# omp asks the model to compress every installed skill's description into a
+# routing hint before it will list the skill; a short plain answer is rejected
+# and retried, which would put three model calls in the skill scenario.
+ROUTING_HINT_PROMPT = "Compress into one routing hint"
+ROUTING_HINT_ANSWER = "Use when the bench-skill fixture skill is requested."
+# The section horon's prompt uses to tell the model how to open a skill; a read
+# tool that does not spell `skill://` itself is still reached that way.
+SKILLS_SECTION_HINT = "# Available Skills"
+
+# Tool-name families seen across the measured agents.
+SKILL_TOOL_NAMES = ("skill", "skills.read", "skill_manage", "skill.read", "skills", "skill.list")
+READ_TOOL_NAMES = ("read", "read_file", "file.read", "cat")
+WRITE_TOOL_NAMES = ("write", "write_file", "file.write")
+SKILL_NAME_PROPS = ("skill", "name", "skill_name")
+SKILL_ACTION_PROPS = ("action", "operation", "mode", "command")
+PATH_PROPS = ("file_path", "path", "file", "filepath", "target_file", "uri", "url")
+# A tool that opens a local file. `uri`/`url` are deliberately absent: an MCP
+# resource reader has a `uri` but needs a `server`, and calling it with a path
+# just fails.
+FILE_PATH_PROPS = ("file_path", "path", "file", "filepath", "target_file")
+MCP_TEXT_PROPS = ("text", "input", "message", "content", "value", "query", "prompt")
+# A route an agent prints in its prompt for an MCP tool it reaches by reading a
+# URI instead of exposing a function (omp).
+MCP_ROUTE_RE = re.compile(r"xd://[^\s\"'`)\]}]*" + MCP_TOOL_SUFFIX)
+# The fixed MCP surface a session keeps in its cache-stable tool list; a late
+# server's tool is reached through it instead of by its own name.
+DEFERRED_MCP_TOOL_NAMES = ("mcp_call", "mcp.call")
+DEFERRED_SERVER_RE = re.compile(r"server\s*=\s*\\?[\"']([^\"'\\]+)")
+# A nonce the mock handed out; finding it in a tool result is the MCP round trip.
+NONCE_RE = re.compile(NONCE_PREFIX + r"\d+")
 
 
 def _text_of(content) -> str:
@@ -151,6 +204,284 @@ def has_tool_result(kind: str, body: dict) -> bool:
     return False
 
 
+# A skill or MCP plan calls again only while the fixture's proof is missing.
+# An agent whose tool keeps failing would otherwise loop until the harness
+# timeout, so the plan stops after this many calls and answers plainly; the
+# run then reports a failed round trip with its reason instead of a timeout.
+MAX_SCENARIO_TOOL_CALLS = 4
+
+
+def tool_call_count(kind: str, body: dict) -> int:
+    """Tool calls the model already made anywhere in this transcript."""
+    if kind == "anthropic":
+        return sum(
+            1
+            for message in body.get("messages") or []
+            if isinstance(message, dict) and message.get("role") == "assistant"
+            and isinstance(message.get("content"), list)
+            for block in message["content"]
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        )
+    if kind == "responses":
+        return sum(
+            1
+            for item in body.get("input") or []
+            if isinstance(item, dict)
+            and item.get("type") in ("function_call", "custom_tool_call", "local_shell_call")
+        )
+    return sum(
+        len(message.get("tool_calls") or [])
+        for message in body.get("messages") or []
+        if isinstance(message, dict) and message.get("role") == "assistant"
+    )
+
+
+def tool_result_text(kind: str, body: dict) -> str:
+    """Flatten the tool results of the current (last) user turn.
+
+    The skill plan proves a round trip by finding the fixture sentinel here, so
+    the search must cover exactly the results belonging to this turn: an earlier
+    turn's skill body would otherwise make a call-less turn look answered.
+    """
+    parts: list[str] = []
+    if kind == "anthropic":
+        messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("role") != "user":
+                continue
+            content = messages[index].get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        parts.append(_text_of(block.get("content")))
+            break
+        return "\n".join(parts)
+    if kind == "responses":
+        parts: list[str] = []
+        for item in body.get("input") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") in ("function_call_output", "custom_tool_call_output", "local_shell_call_output"):
+                parts.append(_text_of(item.get("output")))
+            elif item.get("role") == "user":
+                parts = []
+            elif item.get("role") == "tool":
+                parts.append(_text_of(item.get("content")))
+        return "\n".join(parts)
+    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get("role") != "user":
+            continue
+        for later in messages[index + 1 :]:
+            if later.get("role") == "tool":
+                parts.append(_text_of(later.get("content")))
+        break
+    return "\n".join(parts)
+
+
+def _tool_required(tool: dict) -> list[str]:
+    for key in ("input_schema", "parameters", "schema", "inputSchema"):
+        schema = tool.get(key)
+        if isinstance(schema, dict) and isinstance(schema.get("required"), list):
+            return [str(name) for name in schema["required"]]
+    fn = tool.get("function")
+    if isinstance(fn, dict):
+        return _tool_required(fn)
+    return []
+
+
+def _tool_text(tool: dict) -> str:
+    """Everything the model can read about a tool, for capability hints."""
+    return json.dumps(tool, ensure_ascii=False).lower()
+
+
+def _first_prop(props: dict, candidates: tuple[str, ...]) -> str | None:
+    for candidate in candidates:
+        if candidate in props:
+            return candidate
+    return None
+
+
+def flatten_tools(tools, namespace: str | None = None) -> list[tuple[dict, str | None]]:
+    """Tools in call order, with the namespace a nested tool belongs to.
+
+    Codex exposes an MCP server as one namespace tool holding its tools, so a
+    flat scan would never see `bench_echo` at all.
+    """
+    flat: list[tuple[dict, str | None]] = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        nested = tool.get("tools")
+        if isinstance(nested, list):
+            parent = _tool_name(tool) or namespace
+            flat.extend(flatten_tools(nested, parent))
+            continue
+        flat.append((tool, namespace))
+    return flat
+
+
+def _tool_named(tools, names: tuple[str, ...]) -> dict | None:
+    wanted = {name.casefold() for name in names}
+    for tool, _namespace in flatten_tools(tools):
+        if _tool_name(tool).strip().casefold() in wanted:
+            return tool
+    return None
+
+
+def find_skill_tool(tools) -> dict | None:
+    """The agent's own skill tool (`Skill`, `skill`, `skills.read`, ...)."""
+    return _tool_named(tools, SKILL_TOOL_NAMES)
+
+
+def find_read_tool(tools) -> dict | None:
+    """A tool that opens a local file, used for the skill-body fallback routes."""
+    for candidate, _namespace in flatten_tools(tools):
+        name = _tool_name(candidate).casefold()
+        reads = name in READ_TOOL_NAMES or name.endswith(".read") or name.startswith("read_")
+        if not reads or "resource" in name:
+            continue
+        if _first_prop(_tool_schema_props(candidate), FILE_PATH_PROPS):
+            return candidate
+    return None
+
+
+def find_write_tool(tools) -> dict | None:
+    """A tool that writes to a path, used to reach a URI-based MCP route."""
+    for candidate, _namespace in flatten_tools(tools):
+        name = _tool_name(candidate).casefold()
+        if name not in WRITE_TOOL_NAMES and not name.endswith(".write"):
+            continue
+        if _first_prop(_tool_schema_props(candidate), FILE_PATH_PROPS):
+            return candidate
+    return None
+
+
+def find_mcp_tool(tools) -> tuple[dict, str | None] | None:
+    """The fixture MCP tool and its namespace, matched by the name suffix.
+
+    Agents name a server's tools differently (`mcp__s__t`, `s_t`,
+    `mcp__<server>_<tool>`, or a namespace holding the bare tool name), but all
+    of them keep the tool's own name at the end.
+    """
+    for tool, namespace in flatten_tools(tools):
+        if _tool_name(tool).strip().casefold().endswith(MCP_TOOL_SUFFIX):
+            return tool, namespace
+    return None
+
+
+def find_deferred_mcp_tool(tools) -> dict | None:
+    """The fixed `mcp_call` surface, if the session exposes it."""
+    for tool, _namespace in flatten_tools(tools):
+        if _tool_name(tool).strip().casefold() in DEFERRED_MCP_TOOL_NAMES:
+            return tool
+    return None
+
+
+def deferred_server_name(body: dict) -> str | None:
+    """The server name the prompt or the transcript's announcement spells."""
+    match = DEFERRED_SERVER_RE.search(json.dumps(body, ensure_ascii=False))
+    return match.group(1) if match else None
+
+
+def find_mcp_route(body: dict) -> str | None:
+    """A `xd://...bench_echo` route printed in the prompt, if any."""
+    match = MCP_ROUTE_RE.search(json.dumps(body, ensure_ascii=False))
+    return match.group(0) if match else None
+
+
+def user_turn_text(kind: str, body: dict) -> str:
+    """The text of the prompt that started the current turn."""
+    if kind == "anthropic":
+        messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                return _text_of(message.get("content"))
+        return ""
+    if kind == "responses":
+        for item in reversed(body.get("input") or []):
+            if isinstance(item, dict) and item.get("role") == "user":
+                return _text_of(item.get("content"))
+        return ""
+    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return _text_of(message.get("content"))
+    return ""
+
+
+def skill_path_from_prompt(prompt: str) -> str | None:
+    """The absolute SKILL.md path the harness put in the skill prompt."""
+    for token in prompt.replace("`", " ").replace(",", " ").split():
+        if token.lower().endswith("skill.md") and (token.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", token)):
+            return token
+    return None
+
+
+def _skill_arguments(tool: dict, value: str) -> dict:
+    """Build a skill-tool call from the tool's own schema.
+
+    Names, actions and paths differ per agent (`Skill{skill}`, `skill{name}`,
+    `skill_manage{action,name}`, `skills.read{name}`); reading the schema beats a
+    per-agent branch, and a property the schema does not define is never sent.
+    """
+    props = _tool_schema_props(tool)
+    required = _tool_required(tool)
+    arguments: dict = {}
+    for name, schema in props.items():
+        lowered = name.lower()
+        if lowered in SKILL_NAME_PROPS:
+            arguments[name] = SKILL_NAME
+        elif lowered in SKILL_ACTION_PROPS:
+            options = [str(v) for v in (schema.get("enum") or [])] if isinstance(schema, dict) else []
+            for preferred in ("load", "read", "invoke", "use"):
+                if preferred in options:
+                    arguments[name] = preferred
+                    break
+            else:
+                arguments[name] = options[0] if options else "load"
+        elif lowered in PATH_PROPS:
+            arguments[name] = value
+    for name in required:
+        if name in arguments:
+            continue
+        schema = props.get(name) or {}
+        options = schema.get("enum") if isinstance(schema, dict) else None
+        if isinstance(options, list) and options:
+            arguments[name] = options[0]
+        elif schema.get("type") == "number" or schema.get("type") == "integer":
+            arguments[name] = 0
+        elif schema.get("type") == "boolean":
+            arguments[name] = True
+        else:
+            arguments[name] = ""
+    return arguments
+
+
+def _mcp_arguments(tool: dict, nonce: str) -> dict:
+    props = _tool_schema_props(tool)
+    prop = _first_prop(props, MCP_TEXT_PROPS)
+    if prop is None:
+        prop = next((name for name in props if props[name].get("type") == "string"), None)
+    return {prop or "text": nonce}
+
+
+def _plan_name(body: dict, prompt: str) -> str:
+    """Which scenario this request belongs to, from the harness's prompt marker.
+
+    The whole transcript is searched, not only the newest user message: some
+    agents send a turn's tool results as a user message, so the prompt that
+    carried the marker is no longer the last one by the time the tool result
+    comes back.
+    """
+    blob = prompt + "\n" + json.dumps(body, ensure_ascii=False)
+    if SKILL_MARKER in blob:
+        return "skill"
+    if MCP_MARKER in blob:
+        return "mcp"
+    return "ls"
+
+
 def collect_paths(body: dict) -> list[str]:
     found: set[str] = set()
     blob = json.dumps(body, ensure_ascii=False)
@@ -191,6 +522,7 @@ class Stats:
             "counts": counts,
             "tool_roundtrips": sum(1 for r in requests if r.get("issued_tool_call")),
             "tool_results_seen": sum(1 for r in requests if r.get("has_tool_result")),
+            "sentinels_seen": sum(1 for r in requests if r.get("sentinel_seen")),
             "requests": requests,
         }
 
@@ -297,30 +629,152 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- shared scenario ------------------------------------------------
     def _scenario(self, kind: str, body: dict, endpoint: str) -> dict:
-        shell = find_shell_tool(body.get("tools"))
+        """Decide what the model asks for next, and record why.
+
+        A request's plan comes from a marker in the request's prompt:
+        `[bench:skill]` invokes the fixture skill, `[bench:mcp]` calls the
+        fixture MCP tool, and anything else keeps the original `ls` behaviour
+        (so one-shot and session numbers are unchanged). omp's skill-routing
+        hint request carries no marker; answering it plainly would make omp
+        retry, so it gets a valid hint instead.
+        """
+        tools = body.get("tools")
+        prompt = user_turn_text(kind, body)
+        plan_name = _plan_name(body, prompt)
+        if ROUTING_HINT_PROMPT in prompt:
+            plan_name = "hint"
         saw_result = has_tool_result(kind, body)
-        calls_tool = shell is not None and not saw_result
+        results = tool_result_text(kind, body)
+        transcript = json.dumps(body, ensure_ascii=False)
         counter = STATS.next_call_id()
+        nonce = f"{NONCE_PREFIX}{counter}"
+
+        tool_name = None
+        arguments: dict = {}
+        namespace = None
+        via = None
+        if plan_name == "hint":
+            pass
+        elif plan_name == "skill":
+            skill_tool = find_skill_tool(tools)
+            read_tool = find_read_tool(tools)
+            shell = find_shell_tool(tools)
+            path = skill_path_from_prompt(prompt)
+            # The body can arrive as a tool result or as an injected user
+            # message (Claude Code does the latter), so the whole transcript is
+            # searched; only the fixture contains the sentinel.
+            if SKILL_SENTINEL in transcript:
+                pass
+            elif skill_tool is not None:
+                tool_name = _tool_name(skill_tool)
+                via = "skill-tool"
+                arguments = _skill_arguments(skill_tool, SKILL_NAME)
+            elif read_tool is not None and (
+                "skill://" in _tool_text(read_tool)
+                or (SKILLS_SECTION_HINT in transcript and "skill://" in transcript)
+            ):
+                prop = _first_prop(_tool_schema_props(read_tool), PATH_PROPS) or "file_path"
+                tool_name = _tool_name(read_tool)
+                via = "skill-uri"
+                arguments = {prop: f"skill://{SKILL_NAME}"}
+            elif read_tool is not None and path:
+                prop = _first_prop(_tool_schema_props(read_tool), PATH_PROPS) or "file_path"
+                tool_name = _tool_name(read_tool)
+                via = "file-read"
+                arguments = {prop: path}
+            elif shell is not None and path:
+                # Codex has no file-read tool; its shell tool is the documented
+                # way to open a skill file.
+                tool_name = shell[0]
+                via = "file-read"
+                arguments = {shell[1]: f"cat '{path}'"}
+        elif plan_name == "mcp":
+            mcp = find_mcp_tool(tools)
+            route = find_mcp_route(body)
+            deferred = find_deferred_mcp_tool(tools)
+            server = deferred_server_name(body)
+            if NONCE_RE.search(results):
+                pass
+            elif mcp is not None:
+                mcp_tool, namespace = mcp
+                # A tool nested in a namespace is called as `namespace.tool`:
+                # that is the name the Responses API dispatches (a bare name is
+                # accepted by the wire and then never runs).
+                child = _tool_name(mcp_tool)
+                tool_name = f"{namespace}.{child}" if namespace else child
+                via = "mcp-tool"
+                arguments = _mcp_arguments(mcp_tool, nonce)
+            elif deferred is not None and server:
+                # horon keeps its tool list cache-stable and announces a late
+                # server's tool in the transcript, so the call goes through the
+                # fixed mcp_call surface.
+                tool_name = _tool_name(deferred)
+                via = "mcp-call"
+                arguments = {"server": server, "tool": MCP_TOOL_SUFFIX,
+                             "arguments": {"text": nonce}}
+            elif route and find_write_tool(tools) is not None:
+                write_tool = find_write_tool(tools)
+                assert write_tool is not None
+                prop = _first_prop(_tool_schema_props(write_tool), PATH_PROPS) or "path"
+                tool_name = _tool_name(write_tool)
+                via = "mcp-route"
+                arguments = {prop: route, "content": json.dumps({"text": nonce})}
+            elif route and find_read_tool(tools) is not None:
+                read_tool = find_read_tool(tools)
+                assert read_tool is not None
+                prop = _first_prop(_tool_schema_props(read_tool), PATH_PROPS) or "path"
+                tool_name = _tool_name(read_tool)
+                via = "mcp-route"
+                arguments = {prop: route}
+        else:
+            shell = find_shell_tool(tools)
+            if shell is not None and not saw_result:
+                tool_name = shell[0]
+                arguments = {shell[1]: "ls"}
+
+        capped = plan_name in ("skill", "mcp") and tool_call_count(kind, body) >= MAX_SCENARIO_TOOL_CALLS
+        if capped:
+            tool_name, arguments, namespace, via = None, {}, None, None
+        calls_tool = tool_name is not None
+        if plan_name == "skill":
+            sentinel_seen = SKILL_SENTINEL in transcript
+        elif plan_name == "mcp":
+            sentinel_seen = NONCE_RE.search(results) is not None
+        else:
+            sentinel_seen = False
         entry = {
             "endpoint": endpoint,
             "kind": kind,
             "stream": bool(body.get("stream")),
             "model": body.get("model"),
+            "plan": plan_name,
             "has_tool_result": saw_result,
             "issued_tool_call": calls_tool,
-            "tool_name": shell[0] if shell else None,
-            "tool_choice_prop": shell[1] if shell else None,
-            "tool_count": len(body.get("tools") or []),
+            "tool_name": tool_name,
+            "tool_choice_prop": next(iter(arguments), None),
+            "via": via,
+            "sentinel_seen": sentinel_seen,
+            "capped": capped,
+            "bench_echo_exposed": plan_name == "mcp"
+            and bool(
+                find_mcp_tool(tools) is not None
+                or find_mcp_route(body)
+                or (find_deferred_mcp_tool(tools) is not None and deferred_server_name(body))
+            ),
+            "tool_count": len(tools or []),
+            # Every tool name the request offered, so a missing MCP server can
+            # be told apart from a misnamed one without re-running the agent.
+            "tool_names": [_tool_name(tool) for tool, _ns in flatten_tools(tools)][:60],
             "paths": collect_paths(body),
             "ts": time.time(),
         }
         STATS.record(entry)
-        choice = "tool" if calls_tool else "text"
         return {
-            "choice": choice,
+            "choice": "tool" if calls_tool else "text",
             "call_id": f"call_mock_{counter}",
-            "tool": shell[0] if shell else None,
-            "prop": shell[1] if shell else "command",
+            "tool": tool_name,
+            "arguments": arguments,
+            "text": ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT,
             "model": body.get("model") or MOCK_MODEL,
             "stream": bool(body.get("stream")),
         }
@@ -341,14 +795,14 @@ class Handler(BaseHTTPRequestHandler):
                             "type": "function",
                             "function": {
                                 "name": plan["tool"],
-                                "arguments": json.dumps({plan["prop"]: "ls"}),
+                                "arguments": json.dumps(plan["arguments"]),
                             },
                         }
                     ],
                 }
                 finish = "tool_calls"
             else:
-                message = {"role": "assistant", "content": FINAL_TEXT}
+                message = {"role": "assistant", "content": plan["text"]}
                 finish = "stop"
             self._send_json(
                 {
@@ -370,7 +824,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         self._sse(None, {**base, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
         if plan["choice"] == "tool":
-            args = json.dumps({plan["prop"]: "ls"})
+            args = json.dumps(plan["arguments"])
             self._sse(
                 None,
                 {
@@ -413,7 +867,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._sse(
                 None,
-                {**base, "choices": [{"index": 0, "delta": {"content": FINAL_TEXT}, "finish_reason": None}]},
+                {**base, "choices": [{"index": 0, "delta": {"content": plan["text"]}, "finish_reason": None}]},
             )
             self._sse(None, {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
         self._sse(
@@ -449,7 +903,7 @@ class Handler(BaseHTTPRequestHandler):
                     "status": "completed",
                     "call_id": plan["call_id"],
                     "name": plan["tool"],
-                    "arguments": json.dumps({plan["prop"]: "ls"}),
+                    "arguments": json.dumps(plan["arguments"]),
                 }
             else:
                 item = {
@@ -457,7 +911,7 @@ class Handler(BaseHTTPRequestHandler):
                     "type": "message",
                     "status": "completed",
                     "role": "assistant",
-                    "content": [{"type": "output_text", "text": FINAL_TEXT, "annotations": []}],
+                    "content": [{"type": "output_text", "text": plan["text"], "annotations": []}],
                 }
             self._send_json(
                 {
@@ -484,7 +938,7 @@ class Handler(BaseHTTPRequestHandler):
             {"type": "response.in_progress", "response": {**response_base, "output": []}},
         )
         if plan["choice"] == "tool":
-            args = json.dumps({plan["prop"]: "ls"})
+            args = json.dumps(plan["arguments"])
             added = {
                 "id": item_id,
                 "type": "function_call",
@@ -550,7 +1004,7 @@ class Handler(BaseHTTPRequestHandler):
                     "item_id": msg_id,
                     "output_index": 0,
                     "content_index": 0,
-                    "delta": FINAL_TEXT,
+                    "delta": plan["text"],
                 },
             )
             self._sse(
@@ -560,7 +1014,7 @@ class Handler(BaseHTTPRequestHandler):
                     "item_id": msg_id,
                     "output_index": 0,
                     "content_index": 0,
-                    "text": FINAL_TEXT,
+                    "text": plan["text"],
                 },
             )
             self._sse(
@@ -570,7 +1024,7 @@ class Handler(BaseHTTPRequestHandler):
                     "item_id": msg_id,
                     "output_index": 0,
                     "content_index": 0,
-                    "part": {"type": "output_text", "text": FINAL_TEXT, "annotations": []},
+                    "part": {"type": "output_text", "text": plan["text"], "annotations": []},
                 },
             )
             done_item = {
@@ -578,7 +1032,7 @@ class Handler(BaseHTTPRequestHandler):
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
-                "content": [{"type": "output_text", "text": FINAL_TEXT, "annotations": []}],
+                "content": [{"type": "output_text", "text": plan["text"], "annotations": []}],
             }
             self._sse(
                 "response.output_item.done",
@@ -615,12 +1069,12 @@ class Handler(BaseHTTPRequestHandler):
                         "type": "tool_use",
                         "id": plan["call_id"].replace("call_", "toolu_"),
                         "name": plan["tool"],
-                        "input": {plan["prop"]: "ls"},
+                        "input": plan["arguments"],
                     }
                 ]
                 stop = "tool_use"
             else:
-                content = [{"type": "text", "text": FINAL_TEXT}]
+                content = [{"type": "text", "text": plan["text"]}]
                 stop = "end_turn"
             self._send_json(
                 {
@@ -673,7 +1127,7 @@ class Handler(BaseHTTPRequestHandler):
                     "index": 0,
                     "delta": {
                         "type": "input_json_delta",
-                        "partial_json": json.dumps({plan["prop"]: "ls"}),
+                        "partial_json": json.dumps(plan["arguments"]),
                     },
                 },
             )
@@ -689,7 +1143,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "type": "content_block_delta",
                     "index": 0,
-                    "delta": {"type": "text_delta", "text": FINAL_TEXT},
+                    "delta": {"type": "text_delta", "text": plan["text"]},
                 },
             )
             self._sse("content_block_stop", {"type": "content_block_stop", "index": 0})

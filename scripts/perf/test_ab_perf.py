@@ -151,10 +151,33 @@ class ControlRunTest(unittest.TestCase):
             with open(emit, encoding="utf-8") as handle:
                 report = json.load(handle)
             self.assertTrue(report["same_binary"])
-            self.assertEqual(report["adoption_decision"], "control-no-change")
-            self.assertTrue(report["timing"]["within_noise_band"])
+            # Timing on a shared runner decides between the two control outcomes;
+            # only the facts that do not depend on timing are asserted here.
+            self.assertIn(report["adoption_decision"], ("control-no-change", "control-drift"))
+            self.assertNotIn(
+                report["adoption_decision"], ("adopt-pending-correctness", "reject-regression")
+            )
             self.assertIn("no improvement", report["interpretation"].lower())
-            self.assertNotEqual(report["adoption_decision"], "adopt-pending-correctness")
+
+    def test_same_binary_beyond_the_band_is_drift_in_both_directions(self):
+        counts = {"failure": 0, "timeout": 0}
+        for delta_ms in (-5.0, 5.0):
+            text, decision = ab_perf.interpret(
+                delta_ms, delta_ms * 10, 1.0, False, True, counts, 6
+            )
+            self.assertEqual(decision, "control-drift", "delta %+.1f ms" % delta_ms)
+            self.assertIn("runner noise", text)
+
+    def test_different_binaries_keep_their_decisions(self):
+        counts = {"failure": 0, "timeout": 0}
+        cases = (
+            ((-5.0, -50.0, 1.0, False), "adopt-pending-correctness"),
+            ((5.0, 50.0, 1.0, False), "reject-regression"),
+            ((0.5, 5.0, 1.0, True), "not-adopted-no-measurable-change"),
+        )
+        for (delta_ms, delta_pct, band_ms, within), expected in cases:
+            _, decision = ab_perf.interpret(delta_ms, delta_pct, band_ms, within, False, counts, 6)
+            self.assertEqual(decision, expected)
 
 
 class ReportShapeTest(unittest.TestCase):
