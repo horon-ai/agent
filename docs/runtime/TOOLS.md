@@ -270,6 +270,17 @@ memory = "essential"
 
 크레이트는 파일 시스템을 읽지 않으므로 외부 변경을 스스로 감지하지 않습니다. 감지는 호출자가 `BlobId::of`로 현재 바이트를 기록된 상태와 비교할 때 일어납니다. 이력은 프로세스 밖으로 나가지 않으며, 다른 프로세스나 재시작한 세션과 공유하지 않습니다.
 
+## todo의 blocked 상태
+
+`todo` 도구는 `blocked`를 상태로 받습니다. 외부 의존 때문에 진행할 수 없는 작업을 `pending`이나 `in_progress`로 적으면 이유가 사라지고, 목록만 보고는 무엇을 기다리는지 알 수 없습니다.
+
+- `blocked`에는 `blocker` 문자열이 필요합니다. 500자까지이고, 비어 있거나 공백뿐이면 거부합니다 (`crates/app-core/src/tool/todo_blocked.rs` `normalize`). 이유 없는 차단은 저장하지 않습니다.
+- `blocked`가 아닌 항목에 붙은 `blocker`는 버립니다. 상태가 바뀐 뒤에도 남은 메모가 살아 있는 이유처럼 읽히기 때문입니다.
+- 저장 전에 앞뒤 공백을 지웁니다.
+- 완료 검사는 `blocked`를 완료로 보지 않습니다. 남은 항목이 `blocked` 하나뿐인 목록은 완료가 아니고, 자동 재촉도 그 항목을 남은 일로 셉니다 (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). 진행 중 항목을 하나만 두는 규칙에서도 `in_progress`로 세지 않습니다.
+- ACP 계획 항목은 세 상태만 있어 `blocked`를 `pending`으로 내보냅니다 (`crates/app-core/src/tool/todo.rs` `plan_entries`). 지금 아무도 하지 않는 열린 일이라는 뜻이고, 이유는 항목 자체의 `blocker`에 남습니다.
+- 도구 결과의 JSON에 `blocker`가 함께 나오므로 목록을 보는 쪽이 이유를 읽을 수 있습니다.
+
 ## read 결과에 붙는 중첩 AGENTS.md
 
 `read` 도구는 파일 본문을 돌려줄 때, 그 파일 위쪽 디렉터리에 있는 `AGENTS.md`를 찾아 결과 끝에 덧붙입니다. 세션이 실제로 읽는 디렉터리의 규칙을 그 파일과 함께 보게 하려는 장치입니다. 이 문서는 현재 트리의 동작을 설명합니다. 코드는 `crates/app-core/src/tool/nested_agents.rs`의 `inject_for_read`와, `crates/app-core/src/tool/read.rs`의 `execute`가 그 함수를 부르는 자리에 있습니다.

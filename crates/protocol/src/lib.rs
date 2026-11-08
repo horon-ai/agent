@@ -558,7 +558,7 @@ impl SwarmMemberRuntime {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SwarmTodoItem {
     pub content: String,
-    /// "pending", "in_progress", or "completed".
+    /// "pending", "in_progress", "blocked", or "completed".
     pub status: String,
     /// The three most recent tool calls made while this todo was active.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -33,6 +33,12 @@ pub use horon_agent_task_types::{
     TodoGoalField, TodoItem, TodoPlan, TodoPlanChange, TodoPlanField,
 };
 
+/// Longest blocker note a `blocked` todo may carry.
+///
+/// The note is shown next to the item, so it must stay a reason rather than a
+/// second description of the work.
+pub const TODO_BLOCKER_MAX_CHARS: usize = 500;
+
 /// Return the canonical todo status for model-written status vocabulary.
 ///
 /// The todo tool historically accepted any string, so persisted sessions can
@@ -48,6 +54,10 @@ pub fn canonical_todo_status(status: &str) -> Option<&'static str> {
         || status.eq_ignore_ascii_case("in-progress")
     {
         Some("in_progress")
+    } else if status.eq_ignore_ascii_case("blocked") {
+        // A blocked item is waiting on something outside the agent's control.
+        // It stays open: not done, and not the single item in progress.
+        Some("blocked")
     } else if status.eq_ignore_ascii_case("completed")
         || status.eq_ignore_ascii_case("complete")
         || status.eq_ignore_ascii_case("done")
@@ -67,6 +77,19 @@ pub fn todo_status_is_completed(status: &str) -> bool {
 
 pub fn todo_status_is_cancelled(status: &str) -> bool {
     canonical_todo_status(status) == Some("cancelled")
+}
+
+pub fn todo_status_is_blocked(status: &str) -> bool {
+    canonical_todo_status(status) == Some("blocked")
+}
+
+/// The blocker note a blocked todo actually carries.
+///
+/// An empty or whitespace-only note is no note: the item is blocked on
+/// something the reader cannot see, which is exactly what the status is meant
+/// to prevent.
+pub fn todo_blocker_note(todo: &TodoItem) -> Option<&str> {
+    todo.blocker.as_deref().map(str::trim).filter(|note| !note.is_empty())
 }
 
 /// Whether the plan's intent understanding is solid enough to work against.

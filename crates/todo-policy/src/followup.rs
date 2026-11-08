@@ -119,6 +119,12 @@ pub struct FollowUpPolicy {
     last_poke_fingerprint: Option<String>,
 }
 
+/// Open work: everything that is neither completed nor cancelled.
+///
+/// A `blocked` todo is open here. It waits on something outside the agent, so
+/// calling the plan done would claim a result that does not exist, and calling
+/// it the one item in progress would hide the block. The poke text names it as
+/// remaining work and the model decides what to do next.
 pub fn is_incomplete_todo(todo: &TodoItem) -> bool {
     !todo_status_is_completed(&todo.status) && !todo_status_is_cancelled(&todo.status)
 }
