@@ -417,6 +417,20 @@ class ScenarioPlanTests(ServerCase):
         self.assertEqual(arguments, {"path": "skill://bench-skill"})
         self.assertEqual(self.requests()[0]["via"], "skill-uri")
 
+    def test_skill_plan_uses_skill_uri_from_the_prompt_section(self) -> None:
+        # horon's read tool does not spell `skill://`; its prompt section does,
+        # and that is the route the model is told to take.
+        messages = [
+            {"role": "system",
+             "content": "# Available Skills\n\nYou can read a skill with the read tool at "
+                        "`skill://<name>`, or the user can invoke it with `/skill:<name>`."},
+            {"role": "user", "content": self.SKILL_PROMPT},
+        ]
+        name, arguments = tool_call_of(self.chat(self.SKILL_PROMPT, read_tool("Read a file."), messages))
+        self.assertEqual(name, "read")
+        self.assertEqual(arguments, {"path": "skill://bench-skill"})
+        self.assertEqual(self.requests()[0]["via"], "skill-uri")
+
     def test_skill_plan_falls_back_to_the_prompt_path(self) -> None:
         name, arguments = tool_call_of(self.chat(self.SKILL_PROMPT, read_tool("Read a file.")))
         self.assertEqual(name, "read")
@@ -571,8 +585,10 @@ class ScenarioPlanTests(ServerCase):
         completed = json.loads(events[-1][1])["response"]
         call = completed["output"][0]
         self.assertEqual(call["type"], "function_call")
-        self.assertEqual(call["name"], "bench_echo")
-        self.assertEqual(call["namespace"], "mcp__bench")
+        # A nested tool is dispatched as `namespace.tool`; the bare name is
+        # accepted by the wire and then never runs.
+        self.assertEqual(call["name"], "mcp__bench.bench_echo")
+        self.assertNotIn("namespace", call)
         self.assertEqual(self.requests()[0]["via"], "mcp-tool")
 
     def test_routing_hint_request_gets_a_hint_not_mock_ok(self) -> None:

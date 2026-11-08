@@ -742,6 +742,9 @@ class ToolEnvIsolationTests(unittest.TestCase):
         self.assertIn("-p", omo)
         self.assertIn("--no-session", omo)
         self.assertEqual(omo[omo.index("--tools") + 1], "bash,read")
+        # The MCP scenario drops `--tools`: the strict allowlist would have to
+        # spell the server's tool name, which differs between builds.
+        self.assertNotIn("--tools", bench.omo_oneshot_argv("omo", bench.mcp_prompt(), tools=None))
         self.assertEqual(omo[omo.index("--model") + 1], "mock/mock-model")
         for argv in (bench.omp_session_argv("omp"), bench.omo_session_argv("omo")):
             self.assertIn("--mode", argv)
@@ -843,6 +846,12 @@ class ScenarioSummarizeTests(unittest.TestCase):
     def test_via_comes_from_the_runs(self) -> None:
         summary = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": True, "via": "file-read"}])
         self.assertEqual(summary["via"], "file-read")
+
+    def test_status_separates_a_real_measurement_from_a_failed_one(self) -> None:
+        ok = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": True}])
+        failed = bench.summarize_scenario([{"ms": 1.0, "sentinel_seen": False}])
+        self.assertEqual(ok["status"], "ok")
+        self.assertEqual(failed["status"], "failed")
 
 
 class ScenarioSelectionTests(unittest.TestCase):
@@ -1034,7 +1043,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
                         # A tool without an addressable MCP client says so and
                         # never builds an env for that scenario.
                         self.assertEqual(scenario, "mcp")
-                        self.assertIn(runner_cls, (bench.PiRunner, bench.CodexRunner))
+                        self.assertIn(runner_cls, (bench.PiRunner, bench.ClaudeRunner))
                         self.assertTrue(result["skipped"])
                         self.assertEqual(captured, [])
                         continue
@@ -1148,6 +1157,31 @@ class ScenarioReportTests(unittest.TestCase):
         report["parameters"] = {"scenarios": ["skill"]}
         markdown = bench.render_markdown(report, [1], 1)
         self.assertIn("no such binary", markdown)
+
+    def test_a_failed_round_trip_shows_no_time_or_memory(self) -> None:
+        # A row that never reached the fixture measured startup, not the
+        # scenario, so printing its time next to horon's would read as a result.
+        results = [
+            self._result("horon", "horon",
+                         skill={"ms": 100.0, "peak_rss_bytes": 40e6, "tool_round_trip": True,
+                                "via": "skill-uri", "summary": {"samples": 1}, "status": "ok"}),
+            self._result("jcode", "jcode",
+                         skill={"ms": 250.0, "peak_rss_bytes": 60e6, "tool_round_trip": False,
+                                "via": None, "summary": {"samples": 1}, "status": "failed",
+                                "runs": [{"ms": 250.0, "sentinel_seen": False}]}),
+        ]
+        report = bc.build_report("compare", results, [])
+        report["parameters"] = {"scenarios": ["skill"]}
+        markdown = bench.render_markdown(report, [1], 1)
+        jcode_line = next(
+            line for line in markdown.splitlines()
+            if line.startswith("| jcode |") and "failed:" in line
+        )
+        self.assertIn("| — |", jcode_line)
+        self.assertNotIn("2.50× more", jcode_line)
+        self.assertIn("failed: the fixture sentinel never came back", jcode_line)
+        # The raw run stays in the JSON for a postmortem.
+        self.assertEqual(results[1]["skill"]["runs"][0]["ms"], 250.0)
 
     def test_markdown_cell_does_not_break_the_table(self) -> None:
         self.assertEqual(bench.scenario_cell("a | b"), "a / b")

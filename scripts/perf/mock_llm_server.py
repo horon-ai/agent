@@ -64,6 +64,9 @@ NONCE_PREFIX = "bench-nonce-"
 # and retried, which would put three model calls in the skill scenario.
 ROUTING_HINT_PROMPT = "Compress into one routing hint"
 ROUTING_HINT_ANSWER = "Use when the bench-skill fixture skill is requested."
+# The section horon's prompt uses to tell the model how to open a skill; a read
+# tool that does not spell `skill://` itself is still reached that way.
+SKILLS_SECTION_HINT = "# Available Skills"
 
 # Tool-name families seen across the measured agents.
 SKILL_TOOL_NAMES = ("skill", "skills.read", "skill_manage", "skill.read", "skills", "skill.list")
@@ -634,7 +637,10 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(skill_tool)
                 via = "skill-tool"
                 arguments = _skill_arguments(skill_tool, SKILL_NAME)
-            elif read_tool is not None and "skill://" in _tool_text(read_tool):
+            elif read_tool is not None and (
+                "skill://" in _tool_text(read_tool)
+                or (SKILLS_SECTION_HINT in transcript and "skill://" in transcript)
+            ):
                 prop = _first_prop(_tool_schema_props(read_tool), PATH_PROPS) or "file_path"
                 tool_name = _tool_name(read_tool)
                 via = "skill-uri"
@@ -659,7 +665,11 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             elif mcp is not None:
                 mcp_tool, namespace = mcp
-                tool_name = _tool_name(mcp_tool)
+                # A tool nested in a namespace is called as `namespace.tool`:
+                # that is the name the Responses API dispatches (a bare name is
+                # accepted by the wire and then never runs).
+                child = _tool_name(mcp_tool)
+                tool_name = f"{namespace}.{child}" if namespace else child
                 via = "mcp-tool"
                 arguments = _mcp_arguments(mcp_tool, nonce)
             elif deferred is not None and server:
@@ -715,8 +725,10 @@ class Handler(BaseHTTPRequestHandler):
                 or find_mcp_route(body)
                 or (find_deferred_mcp_tool(tools) is not None and deferred_server_name(body))
             ),
-            "namespace": namespace,
             "tool_count": len(tools or []),
+            # Every tool name the request offered, so a missing MCP server can
+            # be told apart from a misnamed one without re-running the agent.
+            "tool_names": [_tool_name(tool) for tool, _ns in flatten_tools(tools)][:60],
             "paths": collect_paths(body),
             "ts": time.time(),
         }
@@ -725,7 +737,6 @@ class Handler(BaseHTTPRequestHandler):
             "choice": "tool" if calls_tool else "text",
             "call_id": f"call_mock_{counter}",
             "tool": tool_name,
-            "namespace": namespace,
             "arguments": arguments,
             "text": ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT,
             "model": body.get("model") or MOCK_MODEL,
@@ -858,8 +869,6 @@ class Handler(BaseHTTPRequestHandler):
                     "name": plan["tool"],
                     "arguments": json.dumps(plan["arguments"]),
                 }
-                if plan.get("namespace"):
-                    item["namespace"] = plan["namespace"]
             else:
                 item = {
                     "id": msg_id,
@@ -902,8 +911,6 @@ class Handler(BaseHTTPRequestHandler):
                 "name": plan["tool"],
                 "arguments": "",
             }
-            if plan.get("namespace"):
-                added["namespace"] = plan["namespace"]
             self._sse(
                 "response.output_item.added",
                 {"type": "response.output_item.added", "output_index": 0, "item": added},

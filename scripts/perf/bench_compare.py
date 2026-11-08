@@ -690,19 +690,13 @@ def omp_session_argv(binary: str) -> list[str]:
     ]
 
 
-def omo_oneshot_argv(binary: str, prompt: str = TURN_PROMPT, tools: str = "bash,read") -> list[str]:
+def omo_oneshot_argv(binary: str, prompt: str = TURN_PROMPT, tools: str | None = "bash,read") -> list[str]:
     # omo's default tool set has no plain shell tool and --tools is a strict
     # allowlist, so `bash` has to be named for the mock model to find it.
-    return [
-        binary,
-        "-p",
-        "--no-session",
-        "--model",
-        "mock/mock-model",
-        "--tools",
-        tools,
-        prompt,
-    ]
+    argv = [binary, "-p", "--no-session", "--model", "mock/mock-model"]
+    if tools:
+        argv += ["--tools", tools]
+    return argv + [prompt]
 
 
 def omo_session_argv(binary: str) -> list[str]:
@@ -1878,11 +1872,16 @@ class ClaudeRunner(ToolRunner):
         return measure_oneshot(claude_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        env = claude_env(root, mock.base_url)
-        config = os.path.join(root, "mcp.json")
-        write_mcp_servers(config, mcp_servers(), wrapper="mcpServers")
-        argv = claude_oneshot_argv(self.binary, mcp_prompt(), mcp_config=config)
-        return measure_oneshot(argv, cwd, env, mock, timeout)
+        # Every documented config surface was tried against this pinned build
+        # (`--mcp-config` as a file and as a JSON string, `--strict-mcp-config`
+        # on and off, project `.mcp.json`, `~/.claude.json`, and a settings file
+        # enabling project servers): the print-mode tool list stayed at its 12
+        # built-in tools, so the fixture's tool is never offered to the model.
+        return unsupported(
+            "Claude Code 2.1.317 -p did not expose a configured stdio MCP server in any of "
+            "the five config forms tried (--mcp-config file/string, project .mcp.json, "
+            "~/.claude.json, settings enableAllProjectMcpServers)"
+        )
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = claude_env(root, mock.base_url)
@@ -1913,13 +1912,10 @@ class CodexRunner(ToolRunner):
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        # This build nests every server's tools inside one namespace tool
-        # (`mcp__bench` holding `bench_echo`); a model that answers with a bare
-        # function call is not dispatched there, so the round trip cannot be
-        # proven and the row says so instead of timing out on three repeats.
-        return unsupported(
-            "codex exposes MCP tools as a namespace tool the mock model cannot address"
-        )
+        env = codex_env(root)
+        write_codex_mcp_config(os.path.join(env["CODEX_HOME"], "config.toml"), mcp_servers())
+        argv = codex_oneshot_argv(self.binary, mock.base_url or "", mcp_prompt())
+        return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = codex_env(root)
@@ -2056,10 +2052,10 @@ class OmoRunner(ToolRunner):
         write_mcp_servers(
             os.path.join(env["PI_CODING_AGENT_DIR"], "mcp.json"), mcp_servers(), wrapper="mcpServers"
         )
-        # `--tools` is a strict allowlist and the MCP tool is named
-        # `mcp_<server>_<tool>` here, so it has to be named.
-        tools = f"read,mcp_{MCP_SERVER_NAME}_{MCP_TOOL_NAME}"
-        argv = omo_oneshot_argv(self.binary, mcp_prompt(), tools=tools)
+        # `--tools` is a strict allowlist, and naming the MCP tool there is
+        # fragile across builds (`mcp_<server>_<tool>`), so the default set is
+        # used: it already includes every connected server's tools.
+        argv = omo_oneshot_argv(self.binary, mcp_prompt(), tools=None)
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
@@ -2325,11 +2321,13 @@ def summarize_scenario(runs: list[dict]) -> dict:
     ready = [run["mcp_ready_ms"] for run in runs if run.get("mcp_ready_ms") is not None]
     ready_summary = bc.summarize(ready)
     vias = [run.get("via") for run in runs if run.get("via")]
+    round_trip = bool(runs) and all(run.get("sentinel_seen") for run in runs)
     return {
         "ms": summary["median"] if summary else None,
         "summary": summary,
         "peak_rss_bytes": max(peaks) if peaks else None,
-        "tool_round_trip": bool(runs) and all(run.get("sentinel_seen") for run in runs),
+        "tool_round_trip": round_trip,
+        "status": "ok" if round_trip else "failed",
         "mcp_ready_ms": ready_summary["median"] if ready_summary else None,
         "mcp_ready_summary": ready_summary,
         "via": vias[-1] if vias else None,
@@ -2608,6 +2606,14 @@ def scenario_row(result: dict, scenario: str, results: list[dict], with_ready: b
     notes = data.get("errors") or ([data["error"]] if data.get("error") else [])
     if not notes and data.get("tool_round_trip") is False:
         notes = ["the fixture sentinel never came back"]
+    if data.get("status") == "failed" or data.get("tool_round_trip") is False:
+        # A run whose round trip failed measured the wrong thing, so its time
+        # and memory are not comparable and are left out of the table.
+        cells = [label, "—", "", "—", "—", "—", data.get("via") or "—", "no"]
+        if with_ready:
+            cells.append("—")
+        reason = notes[0] if notes else "the fixture sentinel never came back"
+        return cells + [scenario_cell(f"failed: {reason}")]
     note = scenario_cell(notes[0]) if notes else ""
     cells = [
         label,
