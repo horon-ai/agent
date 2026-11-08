@@ -1004,10 +1004,8 @@ fn interrupted_commit() -> Result<InterruptedCommit> {
         prefix.len()
     );
 
-    // Fail the commit where it stops being about the log: `select` publishes
-    // `local-head-explicit.json` through a rename once anything stands at that
-    // name, and a directory there refuses it. A session that never selected a
-    // head explicitly keeps no flag file, so the directory is the only entry.
+    // Fail the commit at `select`: an implicit head keeps no flag file, so a
+    // directory at `local-head-explicit.json` makes its rename publish fail.
     let blocker = log
         .parent()
         .context("the log sits in the session directory")?
