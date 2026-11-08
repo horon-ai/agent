@@ -49,7 +49,7 @@ on:
         description: "Comma-separated tools to compare with horon: jcode, claude_code, codex, opencode, pi, omp (oh-my-pi), omo (oh-my-openagent)"
         type: string
         required: false
-        default: jcode,claude_code,codex,opencode,pi
+        default: jcode,claude_code,codex,opencode,pi,omp,omo
       sessions:
         type: string
         required: false
@@ -80,7 +80,7 @@ on:
       competitors:
         description: "Comma-separated tools to compare with horon: jcode, claude_code, codex, opencode, pi, omp (oh-my-pi), omo (oh-my-openagent)"
         required: false
-        default: jcode,claude_code,codex,opencode,pi
+        default: jcode,claude_code,codex,opencode,pi,omp,omo
       sessions:
         description: "Concurrent session counts for the memory comparison (space-separated); wider spreads such as '1 10 100' make the per-session slope measurable"
         required: false

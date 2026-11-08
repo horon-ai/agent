@@ -55,7 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_common as bc  # noqa: E402
 
 SUITE = "compare"
-DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi"]
+DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi", "omp", "omo"]
 TURN_PROMPT = "List the files in the current directory, then reply with mock-ok."
 SESSION_TURNS = [
     "List the files in the current directory.",

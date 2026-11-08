@@ -45,7 +45,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | --- | --- | --- |
 | `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. |
 | `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `compile` 중 쉼표로 고른다. |
-| `competitors` | `jcode,claude_code,codex,opencode,pi` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)는 넣을 때만 잰다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
+| `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 | `oneshot_runs` | `3` | one-shot 프롬프트를 빌드마다 몇 번 잴지. 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
@@ -133,7 +133,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 - `omp`는 `--no-title` 없이 실행하면 제목 생성용 모델 요청이 한 번 더 나가 원샷 요청 수가 달라진다. `--no-lsp`는 언어 서버 내려받기를 막는다.
 - 두 도구 모두 agent 디렉터리에 모델 목록과 base URL을 캐시하므로(omp는 `agent.db`, `models.db`) 측정마다 새 agent 디렉터리를 만든다. 세션 측정에서는 세션마다 따로 만든다.
 - 텔레메트리, 버전 확인, mock 서버 밖 네트워크는 `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`, `DISABLE_TELEMETRY=1`, `DO_NOT_TRACK=1`로 끈다. 부모 환경의 `OMP_*`, `OMO_*`, `SENPI_*`, `PI_CONFIG_DIR`, API 키는 지우고 홈·설정 경로는 임시 디렉터리 아래만 가리킨다.
-- 기본 비교 목록에는 아직 넣지 않는다. 세 OS에서 측정이 확인되기 전까지는 `-f competitors=omp,omo`처럼 넣을 때만 잰다. 목록에 넣더라도 `benchmark-os.yml`이 입력 목록을 `--tools`로 넘기므로 측정 대상은 입력이 정한다.
+- 두 도구는 기본 비교 목록(`benchmark.yml`의 `competitors` 기본값과 `bench_compare.py`의 `DEFAULT_TOOLS`)에 들어 있다. Linux, macOS, Windows에서 `version_ms`·`oneshot`·`sessions_memory`가 모두 측정된 뒤에 넣었다. 측정 대상은 `benchmark-os.yml`이 입력 목록을 `--tools`로 넘겨 정하므로 `-f competitors=jcode,pi`처럼 빼는 것도 된다.
 
 ### 측정의 한계
 
