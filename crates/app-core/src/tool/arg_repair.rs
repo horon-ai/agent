@@ -75,12 +75,22 @@ fn prepare(schema: &Value) -> Prepared {
             .map(|kind| kind == "object")
             .unwrap_or_else(|| object.contains_key("properties"))
     });
-    let validator = if object_shaped {
-        jsonschema::validator_for(&schema).ok()
-    } else {
-        None
+    if !object_shaped {
+        return Prepared {
+            schema,
+            validator: None,
+        };
+    }
+    let Ok(validator) = jsonschema::validator_for(&schema) else {
+        return Prepared {
+            schema,
+            validator: None,
+        };
     };
-    Prepared { schema, validator }
+    Prepared {
+        schema,
+        validator: Some(validator),
+    }
 }
 
 /// Repair `input` against `schema`, returning the repaired value and one note
