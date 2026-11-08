@@ -1948,8 +1948,12 @@ class CodexRunner(ToolRunner):
 
     def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         # This Codex build has no file-read tool: it lists the skill in the
-        # prompt and expects the shell tool to open the SKILL.md.
-        path = install_skill(os.path.join(root, "home", "skills"))
+        # prompt and expects the shell tool to open the SKILL.md. The fixture
+        # is a project skill (`<cwd>/.agents/skills`, where Codex's own tests
+        # put one) rather than a `$CODEX_HOME/skills` one: the Windows sandbox
+        # denies its shell reads under CODEX_HOME (`Access to the path ... is
+        # denied`), while the working folder stays readable on every OS.
+        path = install_skill(os.path.join(cwd, ".agents", "skills"))
         env = codex_env(root)
         argv = codex_oneshot_argv(self.binary, mock.base_url or "", skill_prompt(path))
         return measure_oneshot(argv, cwd, env, mock, timeout)
