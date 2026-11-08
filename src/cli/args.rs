@@ -191,7 +191,7 @@ pub(crate) enum Command {
         #[arg(long, value_name = "DIR")]
         assets: std::path::PathBuf,
 
-        /// Agent release version the assets belong to, e.g. 0.98.1
+        /// Agent release version the assets belong to, e.g. 0.1.0
         #[arg(long, value_name = "VERSION")]
         agent_version: String,
 

@@ -1,6 +1,6 @@
 [package]
 name = "horon-agent"
-version = "0.98.1"
+version = "0.1.0"
 description = "Headless agent backend for horon: one binary serving a Unix socket, the harness API, and ACP, speaking an OpenAI-compatible model protocol"
 edition = "2024"
 rust-version = "1.99"
