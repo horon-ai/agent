@@ -125,7 +125,9 @@ pub(crate) fn read_frontmatter_measured(path: &Path) -> (Result<SkillFrontmatter
         Ok(file) => file,
         Err(error) => return (Err(error.into()), ReadStats::default()),
     };
-    let mut buf = Vec::with_capacity(FRONTMATTER_MAX);
+    // Most frontmatter fits the first chunk, so it is parsed straight from the
+    // stack buffer; the heap buffer is only grown when a second chunk is needed.
+    let mut buf = Vec::new();
     let mut chunk = [0u8; FRONTMATTER_CHUNK];
     loop {
         let read = match file.read(&mut chunk) {
@@ -135,11 +137,21 @@ pub(crate) fn read_frontmatter_measured(path: &Path) -> (Result<SkillFrontmatter
         if read == 0 {
             break;
         }
-        buf.extend_from_slice(&chunk[..read]);
-        match scan(&buf) {
-            Ok(Some(frontmatter)) => return (Ok(frontmatter), ReadStats::one_file(buf.len())),
+        let scanned = if buf.is_empty() {
+            scan(&chunk[..read])
+        } else {
+            buf.extend_from_slice(&chunk[..read]);
+            scan(&buf)
+        };
+        let seen = if buf.is_empty() { read } else { buf.len() };
+        match scanned {
+            Ok(Some(frontmatter)) => return (Ok(frontmatter), ReadStats::one_file(seen)),
             Ok(None) => {}
-            Err(error) => return (Err(error), ReadStats::one_file(buf.len())),
+            Err(error) => return (Err(error), ReadStats::one_file(seen)),
+        }
+        if buf.is_empty() {
+            buf.reserve(FRONTMATTER_MAX);
+            buf.extend_from_slice(&chunk[..read]);
         }
         if buf.len() >= FRONTMATTER_MAX {
             break;

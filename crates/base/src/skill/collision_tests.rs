@@ -15,8 +15,11 @@ fn candidate(skill: super::Skill, source_id: &'static str, managed: bool) -> Can
     }
 }
 
+/// Surviving names, sorted: `resolve` returns admission order.
 fn names(resolution: &collision::Resolution) -> Vec<String> {
-    resolution.skills.iter().map(|skill| skill.name.clone()).collect()
+    let mut names: Vec<String> = resolution.skills.iter().map(|skill| skill.name.clone()).collect();
+    names.sort();
+    names
 }
 
 #[test]

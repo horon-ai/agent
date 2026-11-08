@@ -112,7 +112,9 @@ pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
     // Every accepted copy of a frontmatter name, first one first. A lookup here
     // replaces a scan of `admitted`, which made a large catalog quadratic.
     let mut by_name: HashMap<String, Vec<usize>> = HashMap::with_capacity(candidates.len());
-    let mut taken: HashSet<String> = HashSet::with_capacity(candidates.len());
+    // Addresses given to renamed copies. Bare names are the keys of `by_name`,
+    // so a catalog without collisions inserts nothing here.
+    let mut renamed: HashSet<String> = HashSet::new();
     let mut warnings = Vec::new();
 
     for candidate in candidates {
@@ -131,7 +133,6 @@ pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
         }
 
         let Some(copies) = by_name.get(&raw_name) else {
-            taken.insert(raw_name.clone());
             by_name.insert(raw_name, vec![admitted.len()]);
             admitted.push(Admitted::new(skill));
             continue;
@@ -153,24 +154,24 @@ pub(super) fn resolve(candidates: Vec<Candidate>) -> Resolution {
             ));
             continue;
         }
-        let name = free_slot(&namespace_for(&skill.path, source_id), &raw_name, &taken);
+        let name = free_slot(&namespace_for(&skill.path, source_id), &raw_name, |name| {
+            by_name.contains_key(name) || renamed.contains(name)
+        });
         warnings.push(format!(
             "Skills: name collision: \"{raw_name}\" from {path} differs from {existing_path}; \
              available as \"{name}\""
         ));
         skill.name = name.clone();
-        taken.insert(name);
+        renamed.insert(name);
         if let Some(copies) = by_name.get_mut(&raw_name) {
             copies.push(admitted.len());
         }
         admitted.push(Admitted::new(skill));
     }
 
-    let mut skills: Vec<Skill> = admitted.into_iter().map(|entry| entry.skill).collect();
-    // A namespaced candidate can be accepted after a bare one from another
-    // source, so the list is sorted like every other registry listing: two
-    // merges of the same directories must produce the same order.
-    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    // Admission order: the registry is a map and its listing sorts by name, so
+    // sorting here bought nothing.
+    let skills = admitted.into_iter().map(|entry| entry.skill).collect();
     Resolution { skills, warnings }
 }
 
@@ -184,10 +185,10 @@ fn identical_to_any(admitted: &mut [Admitted], copies: &[usize], candidate: &Ski
 }
 
 /// `<namespace>/<raw>`, or the first free `~2`, `~3` suffix for that address.
-fn free_slot(namespace: &str, raw: &str, taken: &HashSet<String>) -> String {
+fn free_slot(namespace: &str, raw: &str, taken: impl Fn(&str) -> bool) -> String {
     let mut name = format!("{namespace}/{raw}");
     let mut suffix = 2;
-    while taken.contains(&name) {
+    while taken(&name) {
         name = format!("{namespace}/{raw}~{suffix}");
         suffix += 1;
     }

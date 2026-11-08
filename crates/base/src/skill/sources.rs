@@ -329,7 +329,9 @@ fn load_level(
         .filter(|row| row.level == level)
         .filter(|row| switches.is_on(row.enable))
         .map(|row| ResolvedSource::new(row, working_dir))
-        .filter(|source| !source.entries.is_empty())
+        // A source with nothing on disk would only cost a thread; the scan
+        // stats the same paths, so a source created later is still seen.
+        .filter(|source| source.entries.iter().any(|(path, _)| path.exists()))
         .collect();
     // The table is already in this order; sorting states it for the merge and
     // keeps a reordered table from silently changing which skill wins.
@@ -418,7 +420,12 @@ fn scan_source(source: &ResolvedSource, reuse: Option<&Reused>) -> Scanned {
     // `read_dir` returns entries in filesystem order, which differs between
     // machines and between two runs on the same machine. Sorting here is what
     // makes the same directories always produce the same list.
-    scanned.candidates.sort_by(|a, b| a.skill.path.cmp(&b.skill.path));
+    // Byte order of the whole path, not `Path`'s component-by-component order:
+    // either is deterministic, and this one does not re-parse both paths on
+    // every comparison.
+    scanned
+        .candidates
+        .sort_unstable_by(|a, b| a.skill.path.as_os_str().cmp(b.skill.path.as_os_str()));
     scanned
 }
 
