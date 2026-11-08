@@ -66,6 +66,10 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 [`../architecture/CRATES.md`](../architecture/CRATES.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
 있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
 
+새로 만든 폴더는 그 항목을 부모 폴더에 확정해야 정전 뒤에도 남는다. 세션 writer는 `sessions/`
+루트를 열 때 루트를 새로 만든 경우에만 부모를 flush한다(`writer.rs`의 `ensure_dir`). 이미 있는
+루트의 항목은 만들 때 확정됐으므로, 세션을 열 때마다 부모를 다시 flush하지 않는다.
+
 `.catalog.dirty/<id>` 표식은 내용이 없는 빈 파일이다. 리더는 바이트가 아니라 존재만 검사한다
 (`cache_io.rs::dirty_present`). 표식은 "이 세션의 파생물을 곧 다시 만들어야 한다"는 힌트이고, 원본이
 아니다. 그래서 writer는 표식을 원본보다 먼저 만들지만 fsync하지 않는다.
@@ -422,6 +426,10 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 - 두 프로세스가 같은 세션에 동시에 append해도 순번이 유실되거나 충돌하지 않습니다.
 - 압축(compact) 전후의 `RuntimeState`는 같습니다. 보존 대상 항목은 하나도 잃지 않습니다.
 - 대화 그래프의 정규 바이트는 이 저널 때문에 바뀌지 않습니다.
+- 저널을 열 때 새로 만든 폴더 단계마다 그 부모 폴더를 flush합니다(`store.rs::ensure_private_dir`).
+  첫 레코드는 저널 폴더를 flush해 `runtime.jsonl` 항목을 확정하지만, 폴더 자신의 항목이 부모에
+  확정되지 않으면 정전 뒤 폴더와 함께 확정된 저널을 잃기 때문입니다. 이미 있는 폴더는 flush하지
+  않으므로 append마다 비용이 늘지 않습니다. 시험은 `durable_runtime/directory_tests.rs`에 있습니다.
 
 ### 한도
 
