@@ -1194,6 +1194,7 @@ def measure_daemon_sessions(
                 "phase": "idle",
                 "rss_bytes": idle_rss,
                 "pss_bytes": bc.process_tree_pss_bytes(daemon.proc.pid),
+                "live_heap_bytes": live_heap_bytes(daemon.proc.pid),
             }
         )
         turn_times: list[list[float]] = []
@@ -1222,6 +1223,8 @@ def measure_daemon_sessions(
         counters, counter_error = read_process_counters(probe)
         if samples:
             samples[-1].update(counters)
+            # Taken after the RSS sample above so the inspection cannot move it.
+            samples[-1]["live_heap_bytes"] = live_heap_bytes(daemon.proc.pid)
         return {
             "sessions": session_count,
             "samples": samples,
@@ -1237,6 +1240,26 @@ def measure_daemon_sessions(
             del session
         if daemon is not None:
             daemon.close()
+
+
+_HEAP_TOTAL = re.compile(r"All zones: \d+ nodes \((\d+) bytes\)")
+
+
+def live_heap_bytes(pid: int) -> int | None:
+    """Bytes the process's malloc zones hold live, on macOS only.
+
+    Beside the RSS sample this separates live data from memory the allocator
+    keeps after it was freed. ``heap(1)`` ships with macOS; elsewhere, or when
+    the tool cannot inspect the process, the value is ``None``.
+    """
+    if sys.platform != "darwin" or shutil.which("heap") is None:
+        return None
+    try:
+        out = subprocess.run(["heap", str(pid)], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _HEAP_TOTAL.search(out)
+    return int(match.group(1)) if match else None
 
 
 def thread_name_counts(pid: int) -> dict[str, int] | None:
@@ -2353,6 +2376,8 @@ def summarize_sessions(points: list[dict], turns: int) -> dict:
         "each_additional_post_turn_rss_bytes": slope_series(points, "post_turn_rss_bytes"),
         "first_session_idle_pss_bytes": plan_first_session(points, "idle_pss_bytes"),
         "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
+        "each_additional_idle_live_heap_bytes": slope_series(points, "idle_live_heap_bytes"),
+        "each_additional_post_turn_live_heap_bytes": slope_series(points, "post_turn_live_heap_bytes"),
         "first_session_threads": plan_first_session(points, "thread_count"),
         "each_additional_threads": slope_series(points, "thread_count"),
         "first_session_fds": plan_first_session(points, "fd_count"),
@@ -2515,6 +2540,8 @@ def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd:
         "idle_pss_bytes": (idle or {}).get("pss_bytes"),
         "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
         "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
+        "idle_live_heap_bytes": (idle or {}).get("live_heap_bytes"),
+        "post_turn_live_heap_bytes": (post or {}).get("live_heap_bytes"),
         "thread_count": (post or {}).get("thread_count"),
         "fd_count": (post or {}).get("fd_count"),
         "counter_error": measurement.get("counter_error"),
