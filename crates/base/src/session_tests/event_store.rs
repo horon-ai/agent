@@ -1005,12 +1005,14 @@ fn interrupted_commit() -> Result<InterruptedCommit> {
     );
 
     // Fail the commit where it stops being about the log: `select` publishes
-    // `local-head-explicit.json` through a rename, and a directory there refuses it.
+    // `local-head-explicit.json` through a rename once anything stands at that
+    // name, and a directory there refuses it. A session that never selected a
+    // head explicitly keeps no flag file, so the directory is the only entry.
     let blocker = log
         .parent()
         .context("the log sits in the session directory")?
         .join("local-head-explicit.json");
-    std::fs::remove_file(&blocker)?;
+    assert!(!blocker.exists(), "an implicit selection keeps no flag file");
     std::fs::create_dir(&blocker)?;
     session.add_message(Role::User, text("reserved tail"));
     session.save().expect_err("the blocked select must fail the commit");
