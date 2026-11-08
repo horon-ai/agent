@@ -869,11 +869,38 @@ fn process_lock_for(dir: &Path) -> Arc<Mutex<()>> {
     fresh
 }
 
+/// Create the journal directory, flushing the entry of every level this call created.
+///
+/// The first record's file is confirmed by flushing this directory, but a crash
+/// before the new directory's own entry reaches its parent loses the directory
+/// and the confirmed journal with it. An existing directory needs no flush: its
+/// entry was confirmed when it was created.
 fn ensure_private_dir(path: &Path) -> JournalResult<()> {
+    let mut created = Vec::new();
+    let mut level = Some(path);
+    while let Some(current) = level {
+        match std::fs::symlink_metadata(current) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => created.push(current.to_path_buf()),
+            Err(error) => {
+                return Err(JournalError::io_context(
+                    "inspect the journal directory",
+                    current,
+                    error,
+                ));
+            }
+        }
+        level = current.parent();
+    }
     horon_agent_platform::create_private_dir(path, true)
         .map_err(|error| JournalError::io_context("create the journal directory", path, error))?;
     horon_agent_platform::set_permissions_private_dir(path)
         .map_err(|error| JournalError::io_context("restrict the journal directory", path, error))?;
+    for directory in created.iter().rev() {
+        if let Some(parent) = directory.parent() {
+            sync_directory_entry(parent)?;
+        }
+    }
     Ok(())
 }
 
