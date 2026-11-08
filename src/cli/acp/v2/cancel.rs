@@ -36,34 +36,50 @@ pub(super) const CANCEL_REPLY_BOUND: Duration = Duration::from_secs(10);
 /// plain mutex is enough; neither side holds it across an await.
 #[derive(Debug, Default)]
 pub(crate) struct CancelRegistry {
-    advertised: StdMutex<HashSet<String>>,
+    state: StdMutex<Advertised>,
+}
+
+#[derive(Debug, Default)]
+struct Advertised {
+    calls: HashSet<String>,
+    /// The run the advertised calls belong to: the last one reported running.
+    run_id: Option<String>,
 }
 
 impl CancelRegistry {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
-        self.advertised
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn lock(&self) -> std::sync::MutexGuard<'_, Advertised> {
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The call entered its execution phase: the mapper advertised
     /// `capabilities.cancel` for it.
     pub(crate) fn advertise(&self, tool_call_id: &str) {
-        self.lock().insert(tool_call_id.to_string());
+        self.lock().calls.insert(tool_call_id.to_string());
     }
 
     /// The call reached a final status, or its cancel was accepted.
     pub(crate) fn withdraw(&self, tool_call_id: &str) {
-        self.lock().remove(tool_call_id);
+        self.lock().calls.remove(tool_call_id);
     }
 
-    /// No call of the session stays cancellable.
-    pub(crate) fn clear(&self) {
-        self.lock().clear();
+    /// A run reported running: the calls it advertises belong to it.
+    pub(crate) fn run_started(&self, run_id: &str) {
+        self.lock().run_id = Some(run_id.to_string());
+    }
+
+    /// A run reported its end. Only the run whose calls are advertised clears
+    /// them: the late end of a run another run already replaced must not take
+    /// back what the running one advertised.
+    pub(crate) fn run_ended(&self, run_id: &str) {
+        let mut state = self.lock();
+        if state.run_id.as_deref().is_none_or(|current| current == run_id) {
+            state.run_id = None;
+            state.calls.clear();
+        }
     }
 
     pub(crate) fn is_advertised(&self, tool_call_id: &str) -> bool {
-        self.lock().contains(tool_call_id)
+        self.lock().calls.contains(tool_call_id)
     }
 }
 

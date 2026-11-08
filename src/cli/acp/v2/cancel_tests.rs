@@ -192,6 +192,44 @@ async fn accepted_tool_call_cancel_answers_empty_and_reports_cancelled_once() {
     client.close_stdin().await;
 }
 
+/// The late end of a run another run already replaced takes back nothing: the
+/// call the running run advertised stays cancellable, and only that run's own
+/// end withdraws it.
+#[tokio::test]
+async fn stale_run_end_keeps_the_running_runs_calls_cancellable() {
+    let mut client = v2_client().await;
+    let (_session, mut daemon) = attach_v2(&client).await;
+    daemon.emit(running("r1", "m-1")).await;
+    daemon.emit(running("r2", "m-2")).await;
+    for event in call_started("c2", "bash", &json!({"command":"sleep 30"})) {
+        daemon.emit(event).await;
+    }
+    daemon.emit(idle("r1", "m-1", "end_turn")).await;
+    daemon_barrier(&mut client, &mut daemon, "stale").await;
+
+    client.send(cancel_request(json!("cancel"), "c2")).await;
+    let request = daemon.recv_type("cancel_tool_call").await;
+    assert_eq!(request["call_id"], "c2", "{request}");
+    daemon
+        .emit(cancel_result(
+            request["id"].as_u64().expect("a daemon request id"),
+            true,
+        ))
+        .await;
+    let (_, response) = client.recv_response(json!("cancel")).await;
+    assert_eq!(response["result"], json!({}), "{response}");
+
+    for event in call_started("c3", "bash", &json!({"command":"sleep 30"})) {
+        daemon.emit(event).await;
+    }
+    daemon.emit(idle("r2", "m-2", "end_turn")).await;
+    daemon_barrier(&mut client, &mut daemon, "ended").await;
+    client.send(cancel_request(json!("after-end"), "c3")).await;
+    let (_, response) = client.recv_response(json!("after-end")).await;
+    assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
+    client.close_stdin().await;
+}
+
 fn is_final(status: &str) -> bool {
     matches!(status, "completed" | "failed" | "cancelled")
 }

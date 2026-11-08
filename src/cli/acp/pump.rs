@@ -1019,7 +1019,12 @@ fn track_cancelable(cancelable: &v2::cancel::CancelRegistry, event: &ServerEvent
     match event {
         ServerEvent::ToolExec { id, .. } => cancelable.advertise(id),
         ServerEvent::ToolDone { id, .. } | ServerEvent::ToolCancelled { id } => cancelable.withdraw(id),
-        ServerEvent::ForegroundState { running: false, .. } => cancelable.clear(),
+        ServerEvent::ForegroundState {
+            running: true, run_id, ..
+        } => cancelable.run_started(run_id),
+        ServerEvent::ForegroundState {
+            running: false, run_id, ..
+        } => cancelable.run_ended(run_id),
         _ => {}
     }
 }
