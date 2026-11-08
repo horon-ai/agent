@@ -552,6 +552,65 @@ class ScenarioPlanTests(ServerCase):
         self.assertEqual(entry["via"], "mcp-call")
         self.assertTrue(entry["bench_echo_exposed"])
 
+    def test_management_tool_calls_bench_echo_through_action_call(self) -> None:
+        # jcode keeps MCP tools out of an OpenAI-compatible tool list and
+        # dispatches them through `mcp action=call`.
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp",
+                    "description": "Search and call MCP tools, or manage servers.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["search", "call", "list"]},
+                            "server": {"type": "string"},
+                            "tool": {"type": "string"},
+                            "arguments": {"type": "object"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+            }
+        ]
+        prompt = '[bench:mcp] Call the bench_echo tool on the MCP server="bench" once.'
+        name, arguments = tool_call_of(self.chat(prompt, tools))
+        self.assertEqual(name, "mcp")
+        self.assertEqual(arguments["action"], "call")
+        self.assertEqual(arguments["server"], "bench")
+        self.assertEqual(arguments["tool"], "bench_echo")
+        self.assertTrue(arguments["arguments"]["text"].startswith("bench-nonce-"))
+        self.assertEqual(self.requests()[0]["via"], "mcp-action")
+
+    def test_deferred_listing_loads_the_schema_through_tool_search(self) -> None:
+        # Claude Code lists a deferred MCP tool on its own line of the prompt;
+        # in the JSON body that line follows a literal `\n`.
+        system = "Use ToolSearch with query \"select:<name>\" to load:\nWebFetch\nmcp__bench__bench_echo\n"
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": self.MCP_PROMPT}]
+        search = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "ToolSearch",
+                    "description": "Load deferred tool schemas.",
+                    "parameters": {"type": "object",
+                                   "properties": {"query": {"type": "string"},
+                                                  "max_results": {"type": "number"}},
+                                   "required": ["query"]},
+                },
+            }
+        ]
+        name, arguments = tool_call_of(self.chat(self.MCP_PROMPT, search, messages))
+        self.assertEqual(name, "ToolSearch")
+        self.assertEqual(arguments["query"], "select:mcp__bench__bench_echo")
+        self.assertEqual(self.requests()[0]["via"], "tool-search")
+        self.assertTrue(self.requests()[0]["bench_echo_exposed"])
+        # Once the schema is loaded the tool itself is offered and called.
+        name, arguments = tool_call_of(self.chat(self.MCP_PROMPT, search + MCP_TOOL, messages))
+        self.assertEqual(name, "mcp__bench__bench_echo")
+        self.assertTrue(arguments["text"].startswith("bench-nonce-"))
+
     def test_mcp_route_is_read_through_the_write_tool(self) -> None:
         system = "- \"bench_echo\" -> `xd://mcp__bench_echo`"
         messages = [
@@ -606,10 +665,11 @@ class ScenarioPlanTests(ServerCase):
         completed = json.loads(events[-1][1])["response"]
         call = completed["output"][0]
         self.assertEqual(call["type"], "function_call")
-        # A nested tool is dispatched as `namespace.tool`; the bare name is
-        # accepted by the wire and then never runs.
-        self.assertEqual(call["name"], "mcp__bench.bench_echo")
-        self.assertNotIn("namespace", call)
+        # A nested tool is called by its own name with the namespace in its
+        # own field (codex-rs `ResponseItem::FunctionCall`); a dotted
+        # `namespace.tool` name is never dispatched by the client.
+        self.assertEqual(call["name"], "bench_echo")
+        self.assertEqual(call["namespace"], "mcp__bench")
         self.assertEqual(self.requests()[0]["via"], "mcp-tool")
 
     def test_routing_hint_request_gets_a_hint_not_mock_ok(self) -> None:

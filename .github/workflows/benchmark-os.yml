@@ -336,6 +336,31 @@ jobs:
             sudo apt-get install -y -qq strace
           fi
 
+      - name: Allow the Codex sandbox (bubblewrap) on Ubuntu 24.04
+        # Codex runs its shell tool inside bubblewrap. On ubuntu-24.04 the
+        # AppArmor user-namespace restriction leaves the new namespace without
+        # capabilities, so every command fails with `bwrap: loopback: Failed
+        # RTM_NEWADDR: Operation not permitted` and the skill scenario never
+        # reads its SKILL.md. This is the setup Codex documents for 24.04
+        # (developers.openai.com/codex/concepts/sandboxing): install bubblewrap
+        # and load the `bwrap-userns-restrict` profile. The sandbox stays on.
+        if: ${{ matrix.unit == 'compare' && runner.os == 'Linux' && contains(env.COMPETITORS, 'codex') }}
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap apparmor-profiles apparmor-utils
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+            /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          bwrap --version
+          # A failing check is reported, not fatal: the other rows still run,
+          # and the Codex skill row then records the sandbox error it saw.
+          if bwrap --unshare-all --ro-bind / / true; then
+            echo "bwrap: namespace sandbox works"
+          else
+            echo "::warning::bwrap still cannot create its sandbox; the Codex skill row will show the error"
+          fi
+
       - uses: actions/setup-node@v7
         if: ${{ matrix.unit == 'compare' }}
         with:
