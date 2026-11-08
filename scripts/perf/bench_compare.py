@@ -627,8 +627,13 @@ def omo_env(root: str, base_url: str) -> dict:
     return pi_family_telemetry_env(env)
 
 
-def pi_oneshot_argv(binary: str, prompt: str = TURN_PROMPT) -> list[str]:
-    return [binary, "-p", "--no-session", "--provider", "mock", "--model", "mock-model", prompt]
+def pi_oneshot_argv(binary: str, prompt: str = TURN_PROMPT, mcp: bool = False) -> list[str]:
+    # pi 1.x connects every server in mcp.json; --no-mcp keeps the rows that do
+    # not measure MCP free of it, so they stay comparable with the other tools.
+    argv = [binary, "-p", "--no-session", "--provider", "mock", "--model", "mock-model"]
+    if not mcp:
+        argv.append("--no-mcp")
+    return argv + [prompt]
 
 
 def pi_session_argv(binary: str) -> list[str]:
@@ -637,6 +642,7 @@ def pi_session_argv(binary: str) -> list[str]:
         "--mode",
         "rpc",
         "--no-session",
+        "--no-mcp",
         "--provider",
         "mock",
         "--model",
@@ -1975,7 +1981,13 @@ class PiRunner(ToolRunner):
         return measure_oneshot(pi_oneshot_argv(self.binary, skill_prompt(path)), cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        return unsupported("pi has no MCP client; its README points at a user extension")
+        env = pi_env(root, mock.base_url or "")
+        # The default `codemode` exposure hides the tool behind a script tool;
+        # `direct` declares `mcp__bench__bench_echo` to the model, and the first
+        # prompt waits for a server with direct tools before it is sent.
+        servers = {name: {**entry, "exposure": "direct"} for name, entry in mcp_servers().items()}
+        write_mcp_servers(os.path.join(env["PI_CODING_AGENT_DIR"], "mcp.json"), servers, wrapper="mcpServers")
+        return measure_oneshot(pi_oneshot_argv(self.binary, mcp_prompt(), mcp=True), cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = pi_env(root, mock.base_url or "")
