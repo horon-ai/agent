@@ -63,6 +63,11 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=irc source=irc-core mailbox_high_water=100 mailbox_dropped=900 "
     "broadcast_body_allocations=1 waiters_live_after_churn=0 broadcast_inflight_high_water=16 flood=1000 "
     "broadcast_targets=64",
+    "STRUCTURAL_PERF section=skill source=skill-catalog skills=200 skill_catalog_file_reads=200 "
+    "skill_catalog_bytes=40000",
+    "STRUCTURAL_PERF section=skill source=skill-overlay skill_warmup_file_reads=50 "
+    "skill_unchanged_request_file_reads=0 skill_unchanged_request_dir_reads=0",
+    "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
 ]
 
 
@@ -291,6 +296,62 @@ class ViolationTest(unittest.TestCase):
         )
         self.assert_fails_naming(lines, "mailbox_high_water")
 
+    def test_an_unchanged_request_that_reads_a_skill_file_fails(self):
+        # One SKILL.md read again although nothing changed: the overlay cache
+        # fell back to rescanning the workspace on every request.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=skill source=skill-overlay",
+            "STRUCTURAL_PERF section=skill source=skill-overlay skill_warmup_file_reads=50 "
+            "skill_unchanged_request_file_reads=1 skill_unchanged_request_dir_reads=0",
+        )
+        self.assert_fails_naming(lines, "skill_unchanged_request_file_reads")
+
+    def test_a_catalog_that_reads_whole_bodies_fails(self):
+        # 32 KiB per skill: the listing read every body instead of its
+        # frontmatter prefix.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=skill source=skill-catalog",
+            "STRUCTURAL_PERF section=skill source=skill-catalog skills=200 skill_catalog_file_reads=200 "
+            "skill_catalog_bytes=6553600",
+        )
+        self.assert_fails_naming(lines, "skill_catalog_bytes_per_skill")
+
+    def test_skill_counters_that_read_zero_fail(self):
+        # Every counter at 0 is what a run with the counters off reports; it
+        # would pass every ceiling, so the floors must refuse it.
+        lines = [
+            line
+            for line in HEALTHY_LINES
+            if not line.startswith("STRUCTURAL_PERF section=skill")
+        ] + [
+            "STRUCTURAL_PERF section=skill source=skill-catalog skills=200 skill_catalog_file_reads=0 "
+            "skill_catalog_bytes=0",
+            "STRUCTURAL_PERF section=skill source=skill-overlay skill_warmup_file_reads=0 "
+            "skill_unchanged_request_file_reads=0 skill_unchanged_request_dir_reads=0",
+        ]
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        failed = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertTrue(
+            {"skill_catalog_file_reads", "skill_catalog_bytes", "skill_warmup_file_reads"} <= failed, failed
+        )
+
+    def test_an_mcp_config_reread_on_every_session_fails(self):
+        # The user config was parsed again for an unchanged file: the parse
+        # cache is gone and every session start pays for ~/.claude.json again.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=mcp_config",
+            "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=27",
+        )
+        self.assert_fails_naming(lines, "mcp_config_user_rereads")
+
+    def test_mcp_config_counters_that_read_zero_fail(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=mcp_config",
+            "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=0 mcp_config_user_rereads=0",
+        )
+        self.assert_fails_naming(lines, "mcp_config_warmup_reads")
+
     def test_a_reader_that_accepts_a_frame_above_the_cap_fails(self):
         # The reader buffered past its own cap instead of refusing: one byte
         # over, and the next frame after it would be read as the tail of this
@@ -430,6 +491,11 @@ class BudgetTest(unittest.TestCase):
             "irc_broadcast_body_allocations",
             "irc_waiters_live_after_churn",
             "irc_broadcast_concurrency",
+            "skill_catalog_bytes_per_skill_max",
+            "skill_catalog_file_reads_per_skill_max",
+            "skill_unchanged_request_file_reads_max",
+            "skill_unchanged_request_dir_reads_max",
+            "mcp_config_user_rereads_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

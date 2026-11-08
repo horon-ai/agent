@@ -103,7 +103,16 @@ pub async fn run() -> Result<()> {
         crate::skill::SkillRegistry::effective_for_working_dir(&global, None)
             .list()
             .into_iter()
-            .map(|skill| skill.as_memory_entry())
+            .filter_map(|skill| match skill.as_memory_entry() {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    logging::warn(&format!(
+                        "Skill '{}' could not be read for memory; skipping it: {error}",
+                        skill.name
+                    ));
+                    None
+                }
+            })
             .collect()
     });
 

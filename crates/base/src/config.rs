@@ -13,7 +13,9 @@ pub use horon_agent_config_types::{
     StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
+pub use mcp::McpSourcesConfig;
 use serde::{Deserialize, Serialize};
+pub use skills::SkillsConfig;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
@@ -24,43 +26,6 @@ const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
 } else {
     Duration::from_millis(500)
 };
-
-#[cfg(test)]
-#[test]
-fn custom_websearch_config_toml_roundtrip() {
-    let input = r#"
-engine = "custom"
-fallback_engines = []
-[custom]
-endpoint = "https://search.example.test/api"
-method = "POST"
-query_param = "search"
-count_param = "limit"
-params = { format = "json" }
-body = { options = { safe = true } }
-headers = { Accept = "application/json" }
-header_env = { Authorization = "SEARCH_AUTH" }
-results_pointer = "/data/hits"
-title_pointer = "/name"
-url_pointer = "/link"
-snippet_pointer = "/summary"
-"#;
-    let config: WebSearchConfig = toml::from_str(input).unwrap();
-    assert_eq!(config.engine, WebSearchEngine::Custom);
-    assert_eq!(WebSearchEngine::parse("custom"), Some(WebSearchEngine::Custom));
-    assert!(WebSearchEngine::Custom.is_local());
-    assert_eq!(WebSearchEngine::Custom.as_str(), "custom");
-    let encoded = toml::to_string(&config).unwrap();
-    let decoded: WebSearchConfig = toml::from_str(&encoded).unwrap();
-    assert_eq!(
-        serde_json::to_value(config).unwrap(),
-        serde_json::to_value(decoded).unwrap()
-    );
-    let no_count: CustomWebSearchConfig = toml::from_str("endpoint = 'https://example.test'").unwrap();
-    assert!(no_count.count_param.is_none());
-    assert_eq!(no_count.method, CustomWebSearchMethod::Get);
-    assert!(WebSearchConfig::default().custom.is_none());
-}
 
 const CONFIG_ENV_KEYS: &[&str] = &[
     "HOME",
@@ -444,6 +409,12 @@ pub struct Config {
     /// them verbatim so a CLI settings save never wipes Desktop preferences.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub desktop: Option<toml::Table>,
+
+    /// `[skills]`: which collections beside horon-agent's own are read.
+    pub skills: SkillsConfig,
+
+    /// `[mcp]`: which MCP configs beside horon-agent's own are read.
+    pub mcp: McpSourcesConfig,
 }
 
 /// Warned once per process, so a typo costs one line rather than one per write.
@@ -1185,11 +1156,19 @@ pub mod change_report;
 mod config_file;
 mod default_file;
 mod env_overrides;
+mod mcp;
+mod skills;
+mod sponsors_default;
+use sponsors_default::sponsors_is_default;
 mod tool_selection;
 
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "config/moved_tests.rs"]
+mod moved_tests;
 
 #[cfg(test)]
 #[path = "config_channel_compat_tests.rs"]
@@ -1206,125 +1185,3 @@ mod display_tests;
 #[cfg(test)]
 #[path = "config/storage_tests.rs"]
 mod storage_tests;
-
-/// Whether integration discovery settings carry no information beyond the shipped
-/// default, so `[sponsors]` can be left out of written config files.
-///
-/// Discovery originally shipped opt-in with `enabled = false`, and because
-/// config saves serialize the whole struct, any save during that window froze
-/// the old default into the user's file and permanently disabled discovery even
-/// after the default flipped. Omitting default sections prevents a repeat.
-fn sponsors_is_default(sponsors: &SponsorsConfig) -> bool {
-    sponsors.enabled && is_default_discovery_endpoint(&sponsors.endpoint)
-}
-
-/// Endpoints used by shipped defaults. These may also be explicit user choices.
-fn is_default_discovery_endpoint(endpoint: &str) -> bool {
-    matches!(
-        endpoint.trim_end_matches('/'),
-        "https://api.horon-agent.sh/v1/discovery" | "https://api.solosystems.dev/v1/discovery"
-    )
-}
-
-#[cfg(test)]
-mod ambient_approval_tool_selection_tests {
-    use super::*;
-
-    fn core_config() -> ToolConfig {
-        ToolConfig {
-            profile: CORE_TOOL_PROFILE.to_string(),
-            ..ToolConfig::default()
-        }
-    }
-
-    fn clientless(on: bool) -> AmbientConfig {
-        AmbientConfig {
-            approval_for_clientless_runs: on,
-            ..AmbientConfig::default()
-        }
-    }
-
-    #[test]
-    fn clientless_approval_joins_the_core_allow_list() {
-        let cfg = core_config();
-
-        let off = cfg
-            .selection_with_ambient(&clientless(false))
-            .allowed_tools
-            .expect("core is an allow-list");
-        assert_eq!(
-            off.len(),
-            CORE_TOOLS.len() + 1,
-            "the default core surface is the kept set plus the dispatcher"
-        );
-        assert!(!off.contains(CLIENTLESS_APPROVAL_TOOL));
-
-        let on = cfg
-            .selection_with_ambient(&clientless(true))
-            .allowed_tools
-            .expect("core is an allow-list");
-        assert!(
-            on.contains(CLIENTLESS_APPROVAL_TOOL),
-            "a clientless run must be able to call request_permission, got {on:?}"
-        );
-        assert_eq!(
-            on.len(),
-            CORE_TOOLS.len() + 2,
-            "exactly one tool joins the core surface"
-        );
-        assert_eq!(CORE_TOOLS.len(), 15, "CORE_TOOLS itself grows to fifteen");
-    }
-
-    #[test]
-    fn selection_applies_the_live_ambient_settings() {
-        // The production entry point must widen exactly like the explicit
-        // variant: the agent builds its allow-list from `selection()`.
-        let cfg = core_config();
-        let live = config();
-        assert_eq!(
-            cfg.selection().allowed_tools,
-            cfg.selection_with_ambient(&live.ambient).allowed_tools
-        );
-    }
-
-    #[test]
-    fn explicit_disabled_wins_over_the_clientless_join() {
-        let cfg = ToolConfig {
-            profile: CORE_TOOL_PROFILE.to_string(),
-            disabled: vec![CLIENTLESS_APPROVAL_TOOL.to_string()],
-            ..ToolConfig::default()
-        };
-        let allowed = cfg
-            .selection_with_ambient(&clientless(true))
-            .allowed_tools
-            .expect("core is an allow-list");
-        assert!(!allowed.contains(CLIENTLESS_APPROVAL_TOOL));
-    }
-
-    #[test]
-    fn empty_allow_list_is_not_widened() {
-        let cfg = ToolConfig {
-            profile: "none".to_string(),
-            ..ToolConfig::default()
-        };
-        let allowed = cfg
-            .selection_with_ambient(&clientless(true))
-            .allowed_tools
-            .expect("none is an empty allow-list");
-        assert!(allowed.is_empty(), "an explicitly disabled surface must stay empty");
-    }
-
-    #[test]
-    fn explicit_enabled_list_also_gains_the_clientless_tool() {
-        let cfg = ToolConfig {
-            enabled: vec!["bash".to_string()],
-            ..ToolConfig::default()
-        };
-        let allowed = cfg
-            .selection_with_ambient(&clientless(true))
-            .allowed_tools
-            .expect("explicit enabled is an allow-list");
-        assert!(allowed.contains("bash"));
-        assert!(allowed.contains(CLIENTLESS_APPROVAL_TOOL));
-    }
-}

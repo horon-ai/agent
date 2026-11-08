@@ -13,6 +13,7 @@ pub mod pool;
 mod protocol;
 mod remote;
 pub mod schema_cache;
+mod sources;
 mod tool;
 
 pub use client::{

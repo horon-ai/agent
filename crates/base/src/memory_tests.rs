@@ -702,7 +702,7 @@ fn retrieval_candidates_include_local_skills() {
             crate::skill::SkillRegistry::effective_for_working_dir(&global, None)
                 .list()
                 .into_iter()
-                .map(|skill| skill.as_memory_entry())
+                .filter_map(|skill| skill.as_memory_entry().ok())
                 .collect()
         });
         let project_dir = home.join("project-with-skill");
@@ -730,6 +730,38 @@ fn retrieval_candidates_include_local_skills() {
                 MemoryCategory::Custom(ref name) if name == "Skills"
             )
         }));
+    });
+}
+
+#[test]
+fn memory_provider_skips_unreadable_skill() {
+    // Mirrors the startup provider: one skill whose body file disappeared must
+    // drop out of the collected entries, not abort the whole conversion.
+    with_temp_home(|home| {
+        let project = home.join("project");
+        let skills_dir = project.join(".horon-agent/skills");
+        for name in ["readable-skill", "vanishing-skill"] {
+            let dir = skills_dir.join(name);
+            fs::create_dir_all(&dir).expect("create skill dir");
+            fs::write(
+                dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: Skill {name}\n---\n\nBody of {name}.\n"),
+            )
+            .expect("write skill");
+        }
+
+        let registry = crate::skill::SkillRegistry::load_for_working_dir(Some(&project)).expect("load skills");
+        fs::remove_file(skills_dir.join("vanishing-skill/SKILL.md")).expect("delete one skill body");
+
+        let entries: Vec<MemoryEntry> = registry
+            .list()
+            .into_iter()
+            .filter_map(|skill| skill.as_memory_entry().ok())
+            .collect();
+
+        assert_eq!(entries.len(), 1, "the unreadable skill must be skipped");
+        assert_eq!(entries[0].id, "skill:readable-skill");
+        assert!(entries[0].content.contains("Body of readable-skill."));
     });
 }
 

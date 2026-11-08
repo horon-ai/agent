@@ -466,78 +466,9 @@ impl McpConfig {
         }
     }
 
-    /// Import MCP servers from Codex CLI on first run.
-    ///
-    /// Claude Code configuration is intentionally not imported here. It is a
-    /// live source read by `load_for_dir`, so persisting it would make deleted
-    /// servers survive in horon-agent's snapshot and would duplicate inline secrets.
-    /// This only runs while ~/.horon-agent/mcp.json does not exist.
-    fn import_from_codex_once() {
-        let horon_agent_mcp = match crate::storage::horon_agent_dir() {
-            Ok(dir) => dir.join("mcp.json"),
-            Err(_) => return,
-        };
-
-        if horon_agent_mcp.exists() {
-            return; // Not first run
-        }
-
-        let Ok(codex_config) = crate::storage::user_home_path(".codex/config.toml") else {
-            return;
-        };
-        if !codex_config.exists() {
-            return;
-        }
-        let Ok(imported) = Self::load_from_codex_toml(&codex_config) else {
-            return;
-        };
-        if imported.servers.is_empty() {
-            return;
-        }
-
-        let server_count = imported.servers.len();
-        let environment_value_count = imported.servers.values().map(|server| server.env.len()).sum();
-        if let Err(e) = imported.save_to_file(&horon_agent_mcp) {
-            crate::logging::error(&format!("Failed to save imported MCP config: {}", e));
-            return;
-        }
-        crate::logging::info(&Self::codex_import_log_message(
-            server_count,
-            environment_value_count,
-            &horon_agent_mcp,
-        ));
-    }
-
-    fn codex_import_log_message(
-        server_count: usize,
-        environment_value_count: usize,
-        destination: &std::path::Path,
-    ) -> String {
-        let environment_note = if environment_value_count == 0 {
-            "no configured environment values were copied".to_string()
-        } else {
-            format!(
-                "copied {} configured environment value(s), which may contain secrets",
-                environment_value_count
-            )
-        };
-        format!(
-            "MCP: One-time imported {} server(s) from Codex CLI (~/.codex/config.toml) into {}; {}. Claude Code MCP configuration remains live and was not copied",
-            server_count,
-            destination.display(),
-            environment_note,
-        )
-    }
-
-    fn live_claude_log_message(server_count: usize, source: &str) -> String {
-        format!(
-            "MCP: Loaded {} server(s) live from Claude Code ({}); source values were not copied into horon-agent config",
-            server_count, source
-        )
-    }
-
-    /// Parse MCP servers from Codex CLI's config.toml ([mcp_servers.*] sections)
-    fn load_from_codex_toml(path: &std::path::Path) -> anyhow::Result<Self> {
+    /// Parse MCP servers from Codex CLI's config.toml ([mcp_servers.*] sections).
+    /// The live Codex source in `mcp::sources` reads through this.
+    pub(super) fn load_from_codex_toml(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         horon_agent_perf_counters::record_mcp_config_read(content.len() as u64);
         let table: toml::Table = content.parse()?;
@@ -566,9 +497,8 @@ impl McpConfig {
                         .unwrap_or_default();
                     let shared = server.get("shared").and_then(|v| v.as_bool()).unwrap_or(true);
                     // Codex uses `enabled = false` to keep a server registered
-                    // but not started; carrying it over keeps disabled servers
-                    // disabled after the one-time import instead of silently
-                    // activating them.
+                    // but not started; carrying it over keeps a disabled server
+                    // disabled instead of silently activating it.
                     let enabled = server.get("enabled").and_then(|v| v.as_bool());
                     config.servers.insert(
                         name.clone(),
@@ -591,55 +521,16 @@ impl McpConfig {
         Ok(config)
     }
 
-    /// Parse MCP servers from Claude Code's `~/.claude.json`.
-    ///
-    /// Claude Code stores a global set under the top-level `mcpServers` key, and
-    /// per-project sets under `projects.<abs_path>.mcpServers`. We merge the
-    /// global set first, then overlay the entry for `cwd` (if any) so a
-    /// project-specific server wins for the active directory.
-    fn load_claude_json(path: &std::path::Path, cwd: Option<&std::path::Path>) -> Self {
-        let mut config = Self::default();
-        let Ok(content) = std::fs::read_to_string(path) else {
-            return config;
-        };
-        horon_agent_perf_counters::record_mcp_config_read(content.len() as u64);
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
-            return config;
-        };
-
-        // Global servers under top-level `mcpServers`.
-        if let Some(map) = value.get("mcpServers")
-            && let Ok(servers) =
-                serde_json::from_value::<std::collections::HashMap<String, McpServerConfig>>(map.clone())
-        {
-            config.servers.extend(servers);
-        }
-
-        // Per-project servers under `projects.<abs_path>.mcpServers`.
-        if let (Some(cwd), Some(projects)) = (cwd, value.get("projects").and_then(|p| p.as_object())) {
-            let cwd_str = cwd.to_string_lossy();
-            if let Some(project) = projects.get(cwd_str.as_ref())
-                && let Some(map) = project.get("mcpServers")
-                && let Ok(servers) =
-                    serde_json::from_value::<std::collections::HashMap<String, McpServerConfig>>(map.clone())
-            {
-                Self::merge_servers_preferring_runnable(&mut config.servers, servers);
-            }
-        }
-
-        config
-    }
-
-    /// Parse the project-local config bytes an authorization decision covered, in
-    /// override order: `.horon-agent/mcp.json`, then `.mcp.json` (Claude Code
-    /// project config), then `.claude/mcp.json` (legacy compatibility). Later
-    /// files override same-named servers from earlier ones.
+    /// Parse the project-local config bytes an authorization decision covered,
+    /// highest priority first: `.horon-agent/mcp.json`, then `.mcp.json`
+    /// (Claude Code project config), then `.claude/mcp.json` (legacy
+    /// compatibility). An earlier file keeps a same-named server.
     fn parse_project_locals(files: &[crate::workspace_trust::ProjectConfigFile]) -> Self {
         let mut merged = Self::default();
         for file in files {
             horon_agent_perf_counters::record_mcp_config_read(file.bytes.len() as u64);
             if let Ok(config) = serde_json::from_slice::<Self>(&file.bytes) {
-                Self::merge_servers_preferring_runnable(&mut merged.servers, config.servers);
+                super::sources::merge_lower(&mut merged.servers, config.servers);
             }
         }
         merged
@@ -649,7 +540,7 @@ impl McpConfig {
     ///
     /// This is the single enforcement point for workspace trust: the digest, the
     /// recorded decision and the bytes that are then parsed all come from one read.
-    fn load_authorized_project_locals(project_root: &std::path::Path) -> Self {
+    pub(super) fn load_authorized_project_locals(project_root: &std::path::Path) -> Self {
         match crate::workspace_trust::authorize_project_config(project_root) {
             crate::workspace_trust::ProjectConfigAccess::Absent => Self::default(),
             crate::workspace_trust::ProjectConfigAccess::Skipped { reason } => {
@@ -679,67 +570,12 @@ impl McpConfig {
     ///
     /// Remote/client sessions run inside a long-lived server whose cwd is
     /// unrelated to the session's project, so the session working directory
-    /// must be threaded through explicitly (issue #420).
-    #[expect(
-        clippy::collapsible_if,
-        reason = "Import logic keeps source-specific MCP config merge order explicit"
-    )]
+    /// must be threaded through explicitly (issue #420). The sources and their
+    /// order are described in `mcp::sources`.
     pub fn load_for_dir(project_dir: Option<&std::path::Path>) -> Self {
-        // Codex CLI is a one-time migration. Claude Code remains a live source.
-        Self::import_from_codex_once();
-
-        let mut merged = Self::default();
-        let claude_mcp_enabled = std::env::var_os("HORON_AGENT_DISABLE_CLAUDE_MCP").is_none();
-
-        // Load horon-agent's own global config (~/.horon-agent/mcp.json)
-        if let Ok(horon_agent_dir) = crate::storage::horon_agent_dir() {
-            let horon_agent_mcp = horon_agent_dir.join("mcp.json");
-            if horon_agent_mcp.exists() {
-                if let Ok(config) = Self::load_from_file(&horon_agent_mcp) {
-                    merged.servers.extend(config.servers);
-                }
-            }
-        }
-
-        // Claude Code user/global config (~/.claude.json): top-level mcpServers
-        // plus per-project entries for the project directory.
-        if claude_mcp_enabled && let Ok(claude_json) = crate::storage::user_home_path(".claude.json") {
-            if claude_json.exists() {
-                let cwd = project_dir.map(std::path::Path::to_path_buf);
-                let config = Self::load_claude_json(&claude_json, cwd.as_deref());
-                if !config.servers.is_empty() {
-                    crate::logging::info(&Self::live_claude_log_message(config.servers.len(), "~/.claude.json"));
-                }
-                Self::merge_servers_preferring_runnable(&mut merged.servers, config.servers);
-            }
-        }
-
-        // Older Claude Code global config is also a live source. Reading it on
-        // every load preserves compatibility without copying any inline env
-        // values into ~/.horon-agent/mcp.json.
-        if claude_mcp_enabled && let Ok(claude_mcp) = crate::storage::user_home_path(".claude/mcp.json") {
-            if claude_mcp.exists()
-                && let Ok(config) = Self::load_from_file(&claude_mcp)
-            {
-                if !config.servers.is_empty() {
-                    crate::logging::info(&Self::live_claude_log_message(
-                        config.servers.len(),
-                        "~/.claude/mcp.json (legacy)",
-                    ));
-                }
-                Self::merge_servers_preferring_runnable(&mut merged.servers, config.servers);
-            }
-        }
-
-        // Project-local config files, resolved against the project directory and
-        // gated on workspace trust.
-        if let Some(project_root) = project_dir {
-            Self::merge_servers_preferring_runnable(
-                &mut merged.servers,
-                Self::load_authorized_project_locals(project_root).servers,
-            );
-        }
-
+        let mut merged = Self {
+            servers: super::sources::load_merged(project_dir),
+        };
         // Claude Code expands environment references after source precedence is
         // resolved, so remote servers receive already-expanded URLs and headers.
         merged.expand_environment_variables();
@@ -759,34 +595,6 @@ impl McpConfig {
         });
 
         merged
-    }
-
-    /// Merge `incoming` over `existing`, except that a remote (HTTP/SSE) entry
-    /// never displaces a local stdio entry for the same name.
-    ///
-    /// Issue #653: a `type: http` entry in `~/.claude.json` used to overwrite a
-    /// working stdio server from `~/.horon-agent/mcp.json`. Remote servers are now
-    /// runnable, but a remote twin of a working local server typically needs a
-    /// separate login, so the local server keeps winning to avoid surprising
-    /// existing setups.
-    fn merge_servers_preferring_runnable(
-        existing: &mut std::collections::HashMap<String, McpServerConfig>,
-        incoming: std::collections::HashMap<String, McpServerConfig>,
-    ) {
-        for (name, cfg) in incoming {
-            if let Some(current) = existing.get(&name)
-                && current.is_stdio()
-                && !cfg.is_stdio()
-            {
-                crate::logging::info(&format!(
-                    "MCP: Keeping existing stdio server '{}'; ignoring {} definition from a lower-precedence config",
-                    name,
-                    cfg.transport.as_deref().unwrap_or("http")
-                ));
-                continue;
-            }
-            existing.insert(name, cfg);
-        }
     }
 }
 

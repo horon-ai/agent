@@ -183,6 +183,9 @@ impl Tool for ReadTool {
         if starts_with_ignore_ascii_case(&params.file_path, "artifact://") {
             return read_artifact_url(&params, &ctx).await;
         }
+        if starts_with_ignore_ascii_case(&params.file_path, read_skill::SCHEME) {
+            return read_skill::read_skill_url(&params, &ctx).await;
+        }
 
         if is_history_url(&params.file_path) {
             return read_history_url(&params, &ctx);
@@ -602,15 +605,20 @@ fn remember_read(
 
 #[cfg(test)]
 mod agent_url_tests;
+#[path = "read_skill.rs"]
+mod read_skill;
 #[cfg(test)]
 mod tests;
 
 /// A path that leaves the filesystem: an `agent://` reference or any URL scheme.
 ///
-/// `artifact://` and `history://` name local session data, so they are not
+/// `artifact://`, `history://` and `skill://` name local data, so they are not
 /// network effects even though they look like URLs.
 fn is_remote_path(path: &str) -> bool {
-    if starts_with_ignore_ascii_case(path, "artifact://") || starts_with_ignore_ascii_case(path, "history://") {
+    if starts_with_ignore_ascii_case(path, "artifact://")
+        || starts_with_ignore_ascii_case(path, "history://")
+        || starts_with_ignore_ascii_case(path, read_skill::SCHEME)
+    {
         return false;
     }
     crate::agent_result_cache::is_agent_url(path) || path.contains("://")
@@ -638,7 +646,13 @@ async fn read_artifact_url(params: &ReadInput, ctx: &ToolContext) -> Result<Tool
         .map_err(|_| anyhow::anyhow!("artifact:// ID must be numeric, got: {rest}"))?;
     let path = crate::artifacts::path(&ctx.session_id, id)?;
     let content = tokio::fs::read_to_string(&path).await?;
+    let output = page_text(params, &selector, &content)?;
+    Ok(ToolOutput::new(output).with_title(params.file_path.clone()))
+}
 
+/// Page `content` with the path selector or the offset/limit of `params`,
+/// exactly as a file read pages it, continuation hint included.
+fn page_text(params: &ReadInput, selector: &Selector, content: &str) -> Result<String> {
     let explicit_range =
         params.start_line.is_some() || params.end_line.is_some() || params.offset.is_some() || params.limit.is_some();
     if !matches!(selector, Selector::None) && explicit_range {
@@ -649,9 +663,9 @@ async fn read_artifact_url(params: &ReadInput, ctx: &ToolContext) -> Result<Tool
 
     let (rendered, range) = if matches!(selector, Selector::None) {
         let range = normalize_read_range(params)?;
-        (render_range(&content, range.offset, range.limit, false), Some(range))
+        (render_range(content, range.offset, range.limit, false), Some(range))
     } else {
-        (render_with_selector(&content, &selector, false)?, None)
+        (render_with_selector(content, selector, false)?, None)
     };
 
     let mut output = rendered.body;
@@ -677,7 +691,7 @@ async fn read_artifact_url(params: &ReadInput, ctx: &ToolContext) -> Result<Tool
             }
         }
     }
-    Ok(ToolOutput::new(output).with_title(params.file_path.clone()))
+    Ok(output)
 }
 
 /// Whether a path names the stored-transcript reader (`history://...`).

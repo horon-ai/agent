@@ -352,13 +352,13 @@ fn expansion_after_merge_ignores_shadowed_references() {
     let mut merged = McpConfig::default();
     merged.servers.insert(
         "same-name".to_string(),
-        serde_json::from_value(serde_json::json!({"command": "${SHADOWED}"})).unwrap(),
+        serde_json::from_value(serde_json::json!({"command": "${WINNER}"})).unwrap(),
     );
-    let incoming = serde_json::from_value(serde_json::json!({
-        "same-name": {"command": "${WINNER}"}
+    let lower = serde_json::from_value(serde_json::json!({
+        "same-name": {"command": "${SHADOWED}"}
     }))
     .unwrap();
-    McpConfig::merge_servers_preferring_runnable(&mut merged.servers, incoming);
+    super::super::sources::merge_lower(&mut merged.servers, lower);
 
     let warnings = merged
         .expand_environment_variables_with(|variable| (variable == "WINNER").then(|| "winning-command".to_string()));
@@ -431,33 +431,6 @@ fn expanded_values_invalidate_schema_cache_fingerprint() {
 }
 
 #[test]
-fn test_load_claude_json_global_and_project_servers() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let cwd = temp.path().join("myproject");
-    std::fs::create_dir_all(&cwd).unwrap();
-    let claude_json = temp.path().join(".claude.json");
-
-    let body = serde_json::json!({
-        "mcpServers": {
-            "global-srv": { "command": "global-bin" }
-        },
-        "projects": {
-            cwd.to_string_lossy(): {
-                "mcpServers": {
-                    "project-srv": { "command": "project-bin", "args": ["--flag"] }
-                }
-            }
-        }
-    });
-    std::fs::write(&claude_json, serde_json::to_string_pretty(&body).unwrap()).unwrap();
-
-    let config = McpConfig::load_claude_json(&claude_json, Some(&cwd));
-    assert_eq!(config.servers.len(), 2);
-    assert_eq!(config.servers.get("global-srv").unwrap().command, "global-bin");
-    assert_eq!(config.servers.get("project-srv").unwrap().command, "project-bin");
-}
-
-#[test]
 fn test_load_project_locals_resolves_against_given_dir_not_cwd() {
     let _home = HomeSandbox::new();
     // Issue #420: remote/client sessions must load project-local MCP config
@@ -488,8 +461,8 @@ fn test_load_project_locals_resolves_against_given_dir_not_cwd() {
 #[test]
 fn test_load_project_locals_merge_order() {
     let _home = HomeSandbox::new();
-    // `.horon-agent/mcp.json` loads first, then `.mcp.json` overrides same-named
-    // servers, then `.claude/mcp.json`.
+    // Highest priority first: `.horon-agent/mcp.json`, then `.mcp.json`, then
+    // `.claude/mcp.json`. An earlier file keeps a same-named server.
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
     std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
@@ -514,8 +487,8 @@ fn test_load_project_locals_merge_order() {
     assert_eq!(config.servers.len(), 3);
     assert_eq!(
         config.servers.get("shared-name").unwrap().command,
-        "claude-bin",
-        ".mcp.json must override .horon-agent/mcp.json for same-named servers"
+        "horon-agent-bin",
+        ".horon-agent/mcp.json must win over .mcp.json for same-named servers"
     );
     assert!(config.servers.contains_key("horon-agent-only"));
     assert!(config.servers.contains_key("legacy-only"));
@@ -660,8 +633,8 @@ fn http_entry_does_not_displace_a_working_stdio_server_of_the_same_name() {
 #[test]
 fn stdio_entry_still_overrides_an_existing_http_entry() {
     let _home = HomeSandbox::new();
-    // The precedence guard is one-directional: a runnable stdio definition must
-    // still win over a non-runnable http one from an earlier config.
+    // A stdio definition wins over a remote one in both directions, so a
+    // lower-priority stdio entry still replaces a higher-priority http entry.
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
     std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
@@ -681,9 +654,9 @@ fn stdio_entry_still_overrides_an_existing_http_entry() {
 }
 
 #[test]
-fn stdio_entry_of_same_transport_still_overrides_by_precedence() {
+fn same_transport_collision_keeps_the_higher_priority_entry() {
     let _home = HomeSandbox::new();
-    // Same-transport collisions keep the existing last-writer-wins behavior.
+    // Same-transport collisions keep the first, highest-priority definition.
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
     std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
@@ -699,327 +672,5 @@ fn stdio_entry_of_same_transport_still_overrides_by_precedence() {
     .unwrap();
 
     let config = load_trusted_project_locals(project);
-    assert_eq!(config.servers.get("github").unwrap().command, "new-bin");
-}
-
-#[test]
-fn claude_json_http_entry_does_not_displace_horon_agent_stdio_server() {
-    // The exact configuration from issue #653: `github` is stdio in
-    // ~/.horon-agent/mcp.json and http in ~/.claude.json. The http entry used to win
-    // the merge and then be dropped by the non-stdio filter, so a working
-    // server vanished with no indication it had been overwritten.
-    let _guard = crate::storage::lock_test_env();
-    let original_cwd = std::env::current_dir().expect("current cwd");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let home = tempfile::tempdir().expect("home tempdir");
-    let project = tempfile::tempdir().expect("project tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-    std::env::set_current_dir(project.path()).expect("set project cwd");
-
-    std::fs::write(
-        home.path().join("mcp.json"),
-        r#"{"mcpServers":{"github":{"type":"stdio","command":"npx","args":["-y","mcp-remote"]}}}"#,
-    )
-    .expect("write horon-agent mcp config");
-    // `user_home_path()` maps external configs under HORON_AGENT_HOME to an
-    // `external/` subdirectory, so this is where ~/.claude.json is read from.
-    let external = home.path().join("external");
-    std::fs::create_dir_all(&external).expect("create external dir");
-    std::fs::write(
-        external.join(".claude.json"),
-        r#"{"mcpServers":{"github":{"type":"http","url":"https://api.githubcopilot.com/mcp/"}}}"#,
-    )
-    .expect("write claude config");
-    crate::workspace_trust::trust_for_tests(project.path());
-
-    let result = std::panic::catch_unwind(|| {
-        let merged = McpConfig::load_for_dir(Some(project.path()));
-        let github = merged
-            .servers
-            .get("github")
-            .expect("the stdio github server must survive the http entry");
-        assert_eq!(github.command, "npx");
-        assert!(github.is_stdio());
-    });
-
-    std::env::set_current_dir(original_cwd).expect("restore cwd");
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-    result.expect("issue #653 merge assertions");
-}
-
-#[test]
-fn claude_is_live_while_codex_is_a_one_time_snapshot() {
-    let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let home = tempfile::tempdir().expect("home tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-
-    let external = home.path().join("external");
-    let codex_dir = external.join(".codex");
-    std::fs::create_dir_all(&codex_dir).expect("create external config dirs");
-    let claude_path = external.join(".claude.json");
-    let codex_path = codex_dir.join("config.toml");
-
-    std::fs::write(
-        &claude_path,
-        r#"{"mcpServers":{"alpha":{"command":"claude-alpha","args":["--first"],"env":{"TOKEN":"claude-inline-secret"}},"beta":{"command":"claude-beta"}}}"#,
-    )
-    .expect("write Claude config");
-    std::fs::write(
-        &codex_path,
-        r#"[mcp_servers.codex_only]
-command = "codex-bin"
-args = ["--snapshot"]
-env = { TOKEN = "codex-inline-secret" }
-"#,
-    )
-    .expect("write Codex config");
-
-    let result = std::panic::catch_unwind(|| {
-        let first = McpConfig::load_for_dir(None);
-        assert!(first.servers.contains_key("alpha"));
-        assert!(first.servers.contains_key("beta"));
-        assert!(first.servers.contains_key("codex_only"));
-
-        let snapshot_path = home.path().join("mcp.json");
-        let snapshot = std::fs::read_to_string(&snapshot_path).expect("Codex snapshot");
-        assert!(snapshot.contains("codex_only"));
-        assert!(snapshot.contains("codex-inline-secret"));
-        assert!(!snapshot.contains("alpha"));
-        assert!(!snapshot.contains("beta"));
-        assert!(!snapshot.contains("claude-inline-secret"));
-
-        std::fs::write(
-            &claude_path,
-            r#"{"mcpServers":{"alpha":{"command":"claude-alpha","args":["--edited"]}}}"#,
-        )
-        .expect("edit Claude config");
-        std::fs::remove_file(&codex_path).expect("remove Codex source");
-
-        let second = McpConfig::load_for_dir(None);
-        assert_eq!(second.servers.get("alpha").expect("live alpha").args, vec!["--edited"]);
-        assert!(!second.servers.contains_key("beta"));
-        assert!(
-            second.servers.contains_key("codex_only"),
-            "the one-time Codex snapshot remains authoritative after import"
-        );
-    });
-
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-    result.expect("live Claude and snapshot Codex assertions");
-}
-
-#[test]
-fn codex_import_preserves_enabled_false() {
-    let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let home = tempfile::tempdir().expect("home tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-
-    let codex_dir = home.path().join("external").join(".codex");
-    std::fs::create_dir_all(&codex_dir).expect("create codex config dir");
-    std::fs::write(
-        codex_dir.join("config.toml"),
-        r#"[mcp_servers.disabled_one]
-command = "disabled-bin"
-enabled = false
-
-[mcp_servers.active_one]
-command = "active-bin"
-"#,
-    )
-    .expect("write Codex config");
-
-    let result = std::panic::catch_unwind(|| {
-        let config = McpConfig::load_for_dir(None);
-        let disabled = config
-            .servers
-            .get("disabled_one")
-            .expect("disabled server is still imported");
-        assert!(
-            !disabled.is_enabled(),
-            "enabled = false must survive the import instead of silently activating the server"
-        );
-        assert!(
-            config
-                .servers
-                .get("active_one")
-                .expect("default-enabled server")
-                .is_enabled()
-        );
-
-        let snapshot = std::fs::read_to_string(home.path().join("mcp.json")).expect("Codex snapshot");
-        assert!(
-            snapshot.contains(r#""enabled": false"#),
-            "snapshot should record the disabled state: {snapshot}"
-        );
-    });
-
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-    result.expect("codex enabled=false import assertions");
-}
-
-#[test]
-fn claude_only_config_never_creates_a_horon_agent_snapshot() {
-    let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let home = tempfile::tempdir().expect("home tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-
-    let external = home.path().join("external");
-    std::fs::create_dir_all(&external).expect("create external config dir");
-    std::fs::write(
-        external.join(".claude.json"),
-        r#"{"mcpServers":{"private":{"command":"claude-bin","env":{"TOKEN":"must-not-be-copied"}}}}"#,
-    )
-    .expect("write Claude config");
-
-    let result = std::panic::catch_unwind(|| {
-        let config = McpConfig::load_for_dir(None);
-        assert!(config.servers.contains_key("private"));
-        assert!(
-            !home.path().join("mcp.json").exists(),
-            "a live Claude source must not be persisted into horon-agent config"
-        );
-    });
-
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-    result.expect("Claude no-snapshot assertions");
-}
-
-#[test]
-fn legacy_claude_config_is_live_and_deletions_do_not_leave_a_snapshot() {
-    let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let home = tempfile::tempdir().expect("home tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-
-    let legacy_dir = home.path().join("external/.claude");
-    std::fs::create_dir_all(&legacy_dir).expect("create legacy Claude config dir");
-    let legacy_path = legacy_dir.join("mcp.json");
-    std::fs::write(
-        &legacy_path,
-        r#"{"mcpServers":{"alpha":{"command":"legacy-alpha"},"beta":{"command":"legacy-beta"}}}"#,
-    )
-    .expect("write legacy Claude config");
-
-    let result = std::panic::catch_unwind(|| {
-        let first = McpConfig::load_for_dir(None);
-        assert!(first.servers.contains_key("alpha"));
-        assert!(first.servers.contains_key("beta"));
-        assert!(!home.path().join("mcp.json").exists());
-
-        std::fs::write(
-            &legacy_path,
-            r#"{"mcpServers":{"alpha":{"command":"legacy-alpha-edited"}}}"#,
-        )
-        .expect("edit legacy Claude config");
-
-        let second = McpConfig::load_for_dir(None);
-        assert_eq!(second.servers["alpha"].command, "legacy-alpha-edited");
-        assert!(
-            !second.servers.contains_key("beta"),
-            "deleting a server from the live legacy source must remove it"
-        );
-        assert!(
-            !home.path().join("mcp.json").exists(),
-            "legacy Claude values must never be snapshotted"
-        );
-    });
-
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-    result.expect("legacy Claude live-source assertions");
-}
-
-#[test]
-fn disabling_claude_mcp_skips_both_live_sources_but_preserves_horon_agent_sources() {
-    let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    let previous_disable = std::env::var_os("HORON_AGENT_DISABLE_CLAUDE_MCP");
-    let home = tempfile::tempdir().expect("home tempdir");
-    let project = tempfile::tempdir().expect("project tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
-    crate::env::set_var("HORON_AGENT_DISABLE_CLAUDE_MCP", "1");
-
-    std::fs::write(
-        home.path().join("mcp.json"),
-        r#"{"mcpServers":{"horon-agent-global":{"command":"horon-agent-global"}}}"#,
-    )
-    .expect("write horon-agent global config");
-    std::fs::create_dir_all(project.path().join(".horon-agent")).expect("create horon-agent project dir");
-    std::fs::write(
-        project.path().join(".horon-agent/mcp.json"),
-        r#"{"mcpServers":{"horon-agent-project":{"command":"horon-agent-project"}}}"#,
-    )
-    .expect("write horon-agent project config");
-
-    let external = home.path().join("external");
-    std::fs::create_dir_all(external.join(".claude")).expect("create Claude config dirs");
-    std::fs::write(
-        external.join(".claude.json"),
-        r#"{"mcpServers":{"claude-current":{"command":"claude-current"}}}"#,
-    )
-    .expect("write current Claude config");
-    std::fs::write(
-        external.join(".claude/mcp.json"),
-        r#"{"mcpServers":{"claude-legacy":{"command":"claude-legacy"}}}"#,
-    )
-    .expect("write legacy Claude config");
-    crate::workspace_trust::trust_for_tests(project.path());
-
-    let result = std::panic::catch_unwind(|| {
-        let config = McpConfig::load_for_dir(Some(project.path()));
-        assert!(config.servers.contains_key("horon-agent-global"));
-        assert!(config.servers.contains_key("horon-agent-project"));
-        assert!(!config.servers.contains_key("claude-current"));
-        assert!(!config.servers.contains_key("claude-legacy"));
-    });
-
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
-    }
-    if let Some(previous_disable) = previous_disable {
-        crate::env::set_var("HORON_AGENT_DISABLE_CLAUDE_MCP", previous_disable);
-    } else {
-        crate::env::remove_var("HORON_AGENT_DISABLE_CLAUDE_MCP");
-    }
-    result.expect("Claude MCP opt-out assertions");
-}
-
-#[test]
-fn mcp_source_logs_explain_provenance_without_config_values() {
-    let live = McpConfig::live_claude_log_message(2, "~/.claude.json");
-    assert!(live.contains("Loaded 2 server(s) live from Claude Code (~/.claude.json)"));
-    assert!(live.contains("source values were not copied"));
-
-    let imported = McpConfig::codex_import_log_message(1, 2, std::path::Path::new("/sandbox/.horon-agent/mcp.json"));
-    assert!(imported.contains("One-time imported 1 server(s) from Codex CLI"));
-    assert!(imported.contains("/sandbox/.horon-agent/mcp.json"));
-    assert!(imported.contains("2 configured environment value(s)"));
-    assert!(imported.contains("may contain secrets"));
-    assert!(imported.contains("Claude Code MCP configuration remains live and was not copied"));
-    assert!(!imported.contains("TOKEN"));
-    assert!(!imported.contains("inline-secret"));
+    assert_eq!(config.servers.get("github").unwrap().command, "old-bin");
 }

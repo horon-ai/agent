@@ -251,13 +251,13 @@ const SKILL_DESC_MAX_CHARS: usize = 120;
 /// cacheable prompt prefix, so an unbounded list makes every request pay for
 /// skills the model will never invoke. Past this budget the section drops the
 /// one-line descriptions first, then truncates the name list, and states how
-/// many skills it left out. Omitted skills stay reachable: `skill_manage` and
-/// a `/skillname` invocation both resolve against the registry, never against
-/// this rendered text.
+/// many skills it left out. Omitted skills stay reachable: `read skill://name`
+/// and a `/skill:name` invocation both resolve against the registry, never
+/// against this rendered text.
 pub const SKILLS_SECTION_MAX_BYTES: usize = 48 * 1024;
 
-const SKILLS_SECTION_HEADER: &str =
-    "# Available Skills\n\nYou have access to the following skills that the user can invoke with `/skillname`:\n";
+const SKILLS_SECTION_HEADER: &str = "# Available Skills\n\nYou can read a skill with the read tool at `skill://<name>`, \
+     or the user can invoke it with `/skill:<name>` or `/<name>`:\n";
 const SKILLS_SECTION_FOOTER: &str =
     "\n\nWhen a user asks about available skills or capabilities, mention these skills.";
 
@@ -354,13 +354,13 @@ fn skills_section_notice(omitted: usize, descriptions_dropped: bool) -> String {
     if descriptions_dropped {
         notice.push_str(
             "\n\nDescriptions are omitted here to keep this list within its size budget; \
-             call skill_manage with action=list for them.",
+             read `skill://<name>` for a skill's instructions.",
         );
     }
     if omitted > 0 {
         notice.push_str(&format!(
             "\n{} more skills are installed but not listed here. They still work: \
-             invoke one with `/skillname` or load it with skill_manage.",
+             read one with `skill://<name>` or invoke it with `/skill:<name>`.",
             omitted
         ));
     }

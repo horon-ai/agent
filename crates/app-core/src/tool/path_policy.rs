@@ -145,10 +145,10 @@ fn resolved_paths(tool: &str, input: &Value, ctx: &ToolContext) -> Vec<PathBuf> 
     for key in keys {
         if let Some(path) = object.get(*key).and_then(Value::as_str) {
             // A URI-shaped reference names content its reader resolves
-            // (`agent://`, `artifact://`, `history://`), not a file on disk; a
-            // deny rule on the literal text would reject the whole read.
-            let lower = path.to_ascii_lowercase();
-            if lower.starts_with("agent://") || lower.starts_with("artifact://") || lower.starts_with("history://") {
+            // (`agent://`, `artifact://`, `history://`, `skill://`), not a file
+            // in the working directory; a deny rule on the literal text would
+            // reject the whole read. The `skill://` reader checks the real file.
+            if is_local_uri(path) {
                 continue;
             }
             named.push(path);
@@ -167,14 +167,16 @@ fn resolved_paths(tool: &str, input: &Value, ctx: &ToolContext) -> Vec<PathBuf> 
         .collect()
 }
 
-/// Paths that name local session data rather than a filesystem location. The
-/// deny policy cannot reason about them, and resolving them would invent a
+/// Paths that name local data rather than a filesystem location. The deny
+/// policy cannot reason about them, and resolving them would invent a
 /// nonsense path in the working directory.
 fn is_local_uri(path: &str) -> bool {
-    ["agent://", "artifact://", "history://"].iter().any(|prefix| {
-        path.get(..prefix.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-    })
+    ["agent://", "artifact://", "history://", "skill://"]
+        .iter()
+        .any(|prefix| {
+            path.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
 }
 
 #[cfg(test)]
