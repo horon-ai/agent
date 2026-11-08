@@ -697,11 +697,11 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             elif mcp is not None:
                 mcp_tool, namespace = mcp
-                # A tool nested in a namespace is called as `namespace.tool`:
-                # that is the name the Responses API dispatches (a bare name is
-                # accepted by the wire and then never runs).
-                child = _tool_name(mcp_tool)
-                tool_name = f"{namespace}.{child}" if namespace else child
+                # A tool nested in a namespace is called by its own name with
+                # the namespace in a separate `namespace` field, the shape the
+                # Codex client deserializes (`ResponseItem::FunctionCall`); a
+                # dotted `namespace.tool` name is never dispatched.
+                tool_name = _tool_name(mcp_tool)
                 via = "mcp-tool"
                 arguments = _mcp_arguments(mcp_tool, nonce)
             elif deferred is not None and server:
@@ -766,6 +766,10 @@ class Handler(BaseHTTPRequestHandler):
             # be told apart from a misnamed one without re-running the agent.
             "tool_names": [_tool_name(tool) for tool, _ns in flatten_tools(tools)][:60],
             "paths": collect_paths(body),
+            # The tail of the tool results so far, kept only for the skill and
+            # MCP plans: a call that ran without returning the fixture's proof
+            # is diagnosed from this instead of a re-run.
+            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp") and results else None,
             "ts": time.time(),
         }
         STATS.record(entry)
@@ -774,6 +778,7 @@ class Handler(BaseHTTPRequestHandler):
             "call_id": f"call_mock_{counter}",
             "tool": tool_name,
             "arguments": arguments,
+            "namespace": namespace if calls_tool else None,
             "text": ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT,
             "model": body.get("model") or MOCK_MODEL,
             "stream": bool(body.get("stream")),
@@ -903,6 +908,7 @@ class Handler(BaseHTTPRequestHandler):
                     "status": "completed",
                     "call_id": plan["call_id"],
                     "name": plan["tool"],
+                    **({"namespace": plan["namespace"]} if plan.get("namespace") else {}),
                     "arguments": json.dumps(plan["arguments"]),
                 }
             else:
@@ -945,6 +951,7 @@ class Handler(BaseHTTPRequestHandler):
                 "status": "in_progress",
                 "call_id": plan["call_id"],
                 "name": plan["tool"],
+                **({"namespace": plan["namespace"]} if plan.get("namespace") else {}),
                 "arguments": "",
             }
             self._sse(

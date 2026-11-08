@@ -606,10 +606,11 @@ class ScenarioPlanTests(ServerCase):
         completed = json.loads(events[-1][1])["response"]
         call = completed["output"][0]
         self.assertEqual(call["type"], "function_call")
-        # A nested tool is dispatched as `namespace.tool`; the bare name is
-        # accepted by the wire and then never runs.
-        self.assertEqual(call["name"], "mcp__bench.bench_echo")
-        self.assertNotIn("namespace", call)
+        # A nested tool is called by its own name with the namespace in its
+        # own field (codex-rs `ResponseItem::FunctionCall`); a dotted
+        # `namespace.tool` name is never dispatched by the client.
+        self.assertEqual(call["name"], "bench_echo")
+        self.assertEqual(call["namespace"], "mcp__bench")
         self.assertEqual(self.requests()[0]["via"], "mcp-tool")
 
     def test_routing_hint_request_gets_a_hint_not_mock_ok(self) -> None:

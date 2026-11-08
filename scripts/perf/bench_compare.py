@@ -483,6 +483,28 @@ def codex_oneshot_argv(binary: str, base_url: str, prompt: str = TURN_PROMPT) ->
     ]
 
 
+def write_codex_mcp_config(codex_home: str) -> None:
+    """The fixture server as a Codex `[mcp_servers]` table.
+
+    JSON string literals are valid TOML basic strings, so a Windows path keeps
+    its backslashes escaped. `approval_mode = "approve"` lets the one call run
+    under `approval_policy="never"` instead of being cancelled for approval.
+    """
+    entry = mcp_server_entry()
+    args = ", ".join(json.dumps(arg) for arg in entry["args"])
+    text = (
+        f"[mcp_servers.{MCP_SERVER_NAME}]\n"
+        f"command = {json.dumps(entry['command'])}\n"
+        f"args = [{args}]\n"
+        "\n"
+        f"[mcp_servers.{MCP_SERVER_NAME}.tools.{MCP_TOOL_NAME}]\n"
+        'approval_mode = "approve"\n'
+    )
+    os.makedirs(codex_home, exist_ok=True)
+    with open(os.path.join(codex_home, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def opencode_env(root: str, base_url: str, mcp: dict | None = None) -> dict:
     env = isolated_tool_env(root, "OPENCODE")
     config_dir = os.path.join(root, "config", "opencode")
@@ -838,6 +860,7 @@ def _measure_oneshot(
     mcp_ready_ms = None
     via = None
     tools_offered: list[str] = []
+    result_excerpt = None
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -861,6 +884,10 @@ def _measure_oneshot(
         # report means a skipped row can be checked without a re-run.
         if requests:
             tools_offered = list(requests[0].get("tool_names") or [])
+        # The last tool result the agent sent back: when a call ran but the
+        # sentinel is missing, this says why (a sandbox refusal, a shell error).
+        excerpts = [r["result_excerpt"] for r in requests if r.get("result_excerpt")]
+        result_excerpt = excerpts[-1] if excerpts else None
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -892,6 +919,7 @@ def _measure_oneshot(
         "mcp_ready_ms": mcp_ready_ms,
         "via": via,
         "tools_offered": tools_offered,
+        "result_excerpt": result_excerpt,
     }
 
 
@@ -1909,17 +1937,14 @@ class CodexRunner(ToolRunner):
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        # This build nests a server's tools inside one Responses namespace tool
-        # (`mcp__bench` holding `bench_echo`) and never lists a flat
-        # `mcp__bench__bench_echo`. Calling the nested tool as
-        # `mcp__bench.bench_echo` is accepted by the wire, but the client then
-        # resends the same request without a tool result (4453 requests in the
-        # 180 s window of the macOS run), so the round trip cannot be proven.
-        return unsupported(
-            "codex 0.166.0 lists the server only as the Responses namespace tool mcp__bench; "
-            "a dotted call is not dispatched and the client resends the request (4453 requests "
-            "in 180 s), so the fixture tool is unreachable"
-        )
+        # Codex reads stdio servers from `[mcp_servers.<name>]` in
+        # $CODEX_HOME/config.toml and offers each one to the model as a
+        # Responses namespace tool (`mcp__bench` holding `bench_echo`); the mock
+        # calls it with the namespace in its own field, as the client expects.
+        env = codex_env(root)
+        write_codex_mcp_config(env["CODEX_HOME"])
+        argv = codex_oneshot_argv(self.binary, mock.base_url or "", mcp_prompt())
+        return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = codex_env(root)
