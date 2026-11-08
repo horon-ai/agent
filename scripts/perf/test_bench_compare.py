@@ -1043,7 +1043,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
                         # A tool without an addressable MCP client says so and
                         # never builds an env for that scenario.
                         self.assertEqual(scenario, "mcp")
-                        self.assertIn(runner_cls, (bench.PiRunner, bench.ClaudeRunner))
+                        self.assertIn(runner_cls, (bench.PiRunner, bench.ClaudeRunner, bench.CodexRunner))
                         self.assertTrue(result["skipped"])
                         self.assertEqual(captured, [])
                         continue
@@ -1179,7 +1179,7 @@ class ScenarioReportTests(unittest.TestCase):
         )
         self.assertIn("| — |", jcode_line)
         self.assertNotIn("2.50× more", jcode_line)
-        self.assertIn("failed: the fixture sentinel never came back", jcode_line)
+        self.assertIn("failed:", jcode_line)
         # The raw run stays in the JSON for a postmortem.
         self.assertEqual(results[1]["skill"]["runs"][0]["ms"], 250.0)
 

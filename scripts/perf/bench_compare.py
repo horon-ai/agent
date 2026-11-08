@@ -1836,7 +1836,9 @@ class JcodeRunner(ToolRunner):
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         env = self._root(root, mock)
+        # Both places jcode documents: the global home file and the project one.
         write_mcp_servers(os.path.join(root, "home", "mcp.json"), mcp_servers(), wrapper="mcpServers")
+        write_mcp_servers(os.path.join(cwd, ".jcode", "mcp.json"), mcp_servers(), wrapper="mcpServers")
         argv = jcode_oneshot_argv(self.binary, mcp_prompt(), tools=None)
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
@@ -1912,10 +1914,17 @@ class CodexRunner(ToolRunner):
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        env = codex_env(root)
-        write_codex_mcp_config(os.path.join(env["CODEX_HOME"], "config.toml"), mcp_servers())
-        argv = codex_oneshot_argv(self.binary, mock.base_url or "", mcp_prompt())
-        return measure_oneshot(argv, cwd, env, mock, timeout)
+        # This build nests a server's tools inside one Responses namespace tool
+        # (`mcp__bench` holding `bench_echo`) and never lists a flat
+        # `mcp__bench__bench_echo`. Calling the nested tool as
+        # `mcp__bench.bench_echo` is accepted by the wire, but the client then
+        # resends the same request without a tool result (4453 requests in the
+        # 180 s window of the macOS run), so the round trip cannot be proven.
+        return unsupported(
+            "codex 0.166.0 lists the server only as the Responses namespace tool mcp__bench; "
+            "a dotted call is not dispatched and the client resends the request (4453 requests "
+            "in 180 s), so the fixture tool is unreachable"
+        )
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = codex_env(root)
@@ -2322,12 +2331,24 @@ def summarize_scenario(runs: list[dict]) -> dict:
     ready_summary = bc.summarize(ready)
     vias = [run.get("via") for run in runs if run.get("via")]
     round_trip = bool(runs) and all(run.get("sentinel_seen") for run in runs)
+    failure = None
+    if not round_trip:
+        errors = [run.get("error") for run in runs if run.get("error")]
+        if errors:
+            failure = str(errors[0])
+        elif runs and all((run.get("mock_requests") or 0) <= 1 for run in runs):
+            # The agent answered on its first request, so the fixture's tool was
+            # never offered (or never called) and the numbers are startup only.
+            failure = "no tool that could reach the fixture was offered (one request, no tool call)"
+        else:
+            failure = "the fixture sentinel never came back"
     return {
         "ms": summary["median"] if summary else None,
         "summary": summary,
         "peak_rss_bytes": max(peaks) if peaks else None,
         "tool_round_trip": round_trip,
         "status": "ok" if round_trip else "failed",
+        "failure": failure,
         "mcp_ready_ms": ready_summary["median"] if ready_summary else None,
         "mcp_ready_summary": ready_summary,
         "via": vias[-1] if vias else None,
@@ -2612,7 +2633,7 @@ def scenario_row(result: dict, scenario: str, results: list[dict], with_ready: b
         cells = [label, "—", "", "—", "—", "—", data.get("via") or "—", "no"]
         if with_ready:
             cells.append("—")
-        reason = notes[0] if notes else "the fixture sentinel never came back"
+        reason = data.get("failure") or (notes[0] if notes else "the round trip failed")
         return cells + [scenario_cell(f"failed: {reason}")]
     note = scenario_cell(notes[0]) if notes else ""
     cells = [
