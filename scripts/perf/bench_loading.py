@@ -492,13 +492,18 @@ def run_probe(binary: Path, fixture: dict, home: Path, timeout: float, mode: str
             run["status"] = "failed"
             run["reasons"].append("%s is missing counters %s" % (name, ", ".join(missing)))
 
+    # The ~/.claude.json fixture must actually be loaded, or a side that skips
+    # it would look like an improvement. The proof is the server it defines in
+    # the loaded config, not a re-read: once warmed, a parse cache legitimately
+    # reads the unchanged file zero times in the measured stage.
     if run["status"] == "ok" and int(fixture.get("mcp_config_bytes") or 0) > 0:
-        reads = (run["stage_delta"].get("mcp_config_load") or {}).get("mcp_config_reads")
-        if not reads:
+        detail = next((stage.get("detail") or {} for stage in stages if stage.get("name") == "mcp_config_load"), {})
+        servers = detail.get("servers")
+        if not servers:
             run["status"] = "failed"
             run["reasons"].append(
-                "mcp_config_load read no config (mcp_config_reads=%r) while the fixture carries a %d-byte ~/.claude.json"
-                % (reads, int(fixture["mcp_config_bytes"]))
+                "mcp_config_load loaded no server (servers=%r) while the fixture carries a %d-byte ~/.claude.json"
+                % (servers, int(fixture["mcp_config_bytes"]))
             )
 
     if run["status"] == "ok":
