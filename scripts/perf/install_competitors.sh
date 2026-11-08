@@ -135,11 +135,13 @@ jcode_fetch() {
 }
 
 sha256_of() {
+  # Hash stdin: with a path argument, GNU sha256sum on Git Bash prefixes the line
+  # with `\` when the path holds a backslash, which breaks the comparison.
   local digest
   if have sha256sum; then
-    digest="$(sha256sum "$1")" || return 1
+    digest="$(sha256sum <"$1")" || return 1
   elif have shasum; then
-    digest="$(shasum -a 256 "$1")" || return 1
+    digest="$(shasum -a 256 <"$1")" || return 1
   else
     return 1
   fi
