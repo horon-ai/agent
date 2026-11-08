@@ -13,12 +13,15 @@ these tests pin only the arithmetic and report shapes that silently rot:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -606,6 +609,148 @@ class ReportShapeTests(unittest.TestCase):
         self.assertIn("2.50× more", markdown)
         self.assertIn("pi (missing)", markdown)
         self.assertIn("| horon |", markdown)
+
+
+class ToolRegistryTests(unittest.TestCase):
+    def test_omp_and_omo_runners_are_registered(self) -> None:
+        self.assertIs(bench.RUNNERS.get("omp"), bench.OmpRunner)
+        self.assertIs(bench.RUNNERS.get("omo"), bench.OmoRunner)
+        self.assertEqual(bench.OmpRunner.name, "omp")
+        self.assertEqual(bench.OmpRunner.label, "oh-my-pi (omp)")
+        self.assertEqual(bench.OmoRunner.name, "omo")
+        self.assertEqual(bench.OmoRunner.label, "oh-my-openagent (omo)")
+
+    def test_tools_flag_accepts_omp_and_omo(self) -> None:
+        args = bench.parse_args(["--tools", "omp", "omo"])
+        self.assertEqual(args.tools, ["omp", "omo"])
+        for name in args.tools:
+            self.assertIn(name, bench.RUNNERS, f"{name} would be reported as an unknown tool")
+
+    def test_tools_help_lists_every_runner(self) -> None:
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured), self.assertRaises(SystemExit):
+            bench.parse_args(["--help"])
+        text = captured.getvalue()
+        for name in bench.RUNNERS:
+            self.assertIn(name, text)
+
+    def test_resolve_bin_finds_omp_and_omo(self) -> None:
+        if os.name == "nt":
+            self.skipTest("the executable bit does not decide lookup on Windows")
+        with tempfile.TemporaryDirectory() as root:
+            for name in ("omp", "omo"):
+                path = os.path.join(root, name)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("#!/bin/sh\n")
+                os.chmod(path, 0o755)
+                found = bench.resolve_bin(name, None, {"PATH": root})
+                self.assertEqual(os.path.realpath(found or ""), os.path.realpath(path))
+            self.assertIsNone(bench.resolve_bin("omp", None, {"PATH": ""}))
+
+
+class ToolEnvIsolationTests(unittest.TestCase):
+    """omp and omo must never see the parent's config, home, or credentials."""
+
+    PARENT_LEAKS = {
+        "OMP_PROFILE": "leak",
+        "OMP_PLUGIN_ROOT": "/leak",
+        "OMP_CODING_AGENT_DIR": "/leak",
+        "OMP_DAEMON_RUNTIME_DIR": "/leak",
+        "OMO_CODING_AGENT_DIR": "/leak",
+        "OMO_PACKAGE_DIR": "/leak",
+        "OMO_PLUGIN_ROOT": "/leak",
+        "SENPI_CODING_AGENT_DIR": "/leak",
+        "PI_CODING_AGENT_DIR": "/leak",
+        "PI_CONFIG_DIR": "/leak",
+        "PI_PACKAGE_DIR": "/leak",
+        "ANTHROPIC_API_KEY": "leak",
+        "OPENAI_API_KEY": "leak",
+        "OPENAI_BASE_URL": "http://leak/v1",
+    }
+
+    # These are written by the runner itself, so they must point into the temp
+    # root instead of being absent.
+    AGENT_DIR_KEYS = ("PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR", "SENPI_CODING_AGENT_DIR")
+
+    def _assert_isolated(self, env: dict, root: str) -> None:
+        for key in self.PARENT_LEAKS:
+            if key in self.AGENT_DIR_KEYS:
+                if key in env:
+                    self.assertTrue(env[key].startswith(root), f"{key}={env[key]}")
+                continue
+            self.assertNotIn(key, env, key)
+        self.assertTrue(env["HOME"].startswith(root), env["HOME"])
+        self.assertNotEqual(os.path.realpath(env["HOME"]), os.path.realpath(os.path.expanduser("~")))
+
+    def test_omp_env_drops_parent_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root = os.path.realpath(root)
+            with mock.patch.dict(os.environ, self.PARENT_LEAKS, clear=False):
+                env = bench.omp_env(root, "http://127.0.0.1:9")
+            self._assert_isolated(env, root)
+
+    def test_omo_env_drops_parent_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root = os.path.realpath(root)
+            with mock.patch.dict(os.environ, self.PARENT_LEAKS, clear=False):
+                env = bench.omo_env(root, "http://127.0.0.1:9")
+            self._assert_isolated(env, root)
+            agent_dirs = {env[key] for key in self.AGENT_DIR_KEYS}
+            self.assertEqual(len(agent_dirs), 1)
+
+    def test_mock_models_json_points_at_the_mock_server(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            env = bench.omp_env(root, "http://127.0.0.1:9")
+            with open(os.path.join(env["PI_CODING_AGENT_DIR"], "models.json"), encoding="utf-8") as fh:
+                models = json.load(fh)
+        provider = models["providers"]["mock"]
+        self.assertEqual(provider["baseUrl"], "http://127.0.0.1:9/v1")
+        self.assertEqual(provider["api"], "openai-completions")
+        self.assertEqual([model["id"] for model in provider["models"]], ["mock-model"])
+
+    def test_omp_and_omo_turn_off_telemetry_and_updates(self) -> None:
+        for builder in (bench.omp_env, bench.omo_env):
+            with self.subTest(tool=builder.__name__), tempfile.TemporaryDirectory() as root:
+                env = builder(root, "http://127.0.0.1:9")
+                self.assertEqual(env["PI_OFFLINE"], "1")
+                self.assertEqual(env["PI_SKIP_VERSION_CHECK"], "1")
+                self.assertEqual(env["PI_TELEMETRY"], "0")
+                self.assertEqual(env["DISABLE_TELEMETRY"], "1")
+                self.assertEqual(env["DO_NOT_TRACK"], "1")
+
+    def test_each_measurement_gets_a_fresh_agent_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            first = bench.omp_env(root, "http://127.0.0.1:9")
+            second = bench.omp_env(root, "http://127.0.0.1:9")
+        # omp caches the provider base URL inside the agent dir, so a reused dir
+        # would keep calling an older endpoint.
+        self.assertNotEqual(first["PI_CODING_AGENT_DIR"], second["PI_CODING_AGENT_DIR"])
+
+    def test_oneshot_and_session_argv_carry_the_required_flags(self) -> None:
+        omp = bench.omp_oneshot_argv("omp")
+        self.assertIn("-p", omp)
+        self.assertIn("--no-session", omp)
+        self.assertIn("--no-title", omp)
+        self.assertIn("--no-lsp", omp)
+        self.assertEqual(omp[omp.index("--model") + 1], "mock/mock-model")
+        self.assertEqual(omp[-1], bench.TURN_PROMPT)
+        omo = bench.omo_oneshot_argv("omo")
+        self.assertIn("-p", omo)
+        self.assertIn("--no-session", omo)
+        self.assertEqual(omo[omo.index("--tools") + 1], "bash,read")
+        self.assertEqual(omo[omo.index("--model") + 1], "mock/mock-model")
+        for argv in (bench.omp_session_argv("omp"), bench.omo_session_argv("omo")):
+            self.assertIn("--mode", argv)
+            self.assertEqual(argv[argv.index("--mode") + 1], "rpc")
+
+
+class ToolListTests(unittest.TestCase):
+    def test_horon_is_first_and_appears_once(self) -> None:
+        self.assertEqual(bench.normalize_tools(["omp", "omo"]), ["horon", "omp", "omo"])
+        self.assertEqual(
+            bench.normalize_tools(["horon", "omp", "omo", "omp"]), ["horon", "omp", "omo"]
+        )
+        self.assertEqual(bench.normalize_tools(["jcode", "horon"]), ["horon", "jcode"])
 
 
 if __name__ == "__main__":

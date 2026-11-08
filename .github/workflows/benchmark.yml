@@ -46,6 +46,7 @@ on:
         required: false
         default: all
       competitors:
+        description: "Comma-separated tools to compare with horon: jcode, claude_code, codex, opencode, pi, omp (oh-my-pi), omo (oh-my-openagent)"
         type: string
         required: false
         default: jcode,claude_code,codex,opencode,pi
@@ -77,7 +78,7 @@ on:
         required: false
         default: all
       competitors:
-        description: "Comma-separated tools to compare with horon: jcode, claude_code, codex, opencode, pi"
+        description: "Comma-separated tools to compare with horon: jcode, claude_code, codex, opencode, pi, omp (oh-my-pi), omo (oh-my-openagent)"
         required: false
         default: jcode,claude_code,codex,opencode,pi
       sessions:

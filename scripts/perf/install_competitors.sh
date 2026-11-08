@@ -6,6 +6,9 @@
 #
 # <comma-list> defaults to "jcode,claude_code,codex,opencode,pi"; "horon" is
 # supplied by the caller as a locally built binary and is never installed here.
+# "omp" (@oh-my-pi/pi-coding-agent) and "omo" (omo-ai) install the same way as
+# the other npm tools but need Bun (omp) or Node 24+ / Bun (omo) on the runner;
+# a missing runtime leaves them out of bins.args with a reason to stderr.
 # Every tool lands in <dest_dir> and <dest_dir>/bins.args receives one line:
 #
 #   --bin jcode=/path --bin codex=/path ...
@@ -24,7 +27,8 @@
 # benchmark can open it.
 #
 # Versions are pinned so a workflow rerun measures the same tools:
-#   JCODE_VERSION, CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION
+#   JCODE_VERSION, CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION,
+#   OMP_VERSION, OMO_VERSION
 # Override any of them through the environment.
 set -uo pipefail
 
@@ -47,6 +51,11 @@ CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.317}"
 CODEX_VERSION="${CODEX_VERSION:-0.166.0}"
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.19.5}"
 PI_VERSION="${PI_VERSION:-0.73.1}"
+# @oh-my-pi/pi-coding-agent ships its CLI as a Bun script (engines bun>=1.4.4),
+# so the compare job installs Bun before running it.
+OMP_VERSION="${OMP_VERSION:-18.18.0}"
+# omo-ai runs on Node 24+ (or Bun); the job has both.
+OMO_VERSION="${OMO_VERSION:-5.1.64}"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -280,6 +289,24 @@ install_pi() {
   install_node_tool pi "@mariozechner/pi-coding-agent@${PI_VERSION}" "pi"
 }
 
+install_omp() {
+  # The package's bin is a Bun script; npm does not enforce engines, so the
+  # runtime is checked here and reported as a skip instead of a hard failure.
+  if ! have bun; then
+    note_fail omp "bun is required to run @oh-my-pi/pi-coding-agent and was not found"
+    return 1
+  fi
+  install_node_tool omp "@oh-my-pi/pi-coding-agent@${OMP_VERSION}" "omp"
+}
+
+install_omo() {
+  if ! have bun && ! have node; then
+    note_fail omo "node 24+ or bun is required to run omo-ai and neither was found"
+    return 1
+  fi
+  install_node_tool omo "omo-ai@${OMO_VERSION}" "omo"
+}
+
 IFS=',' read -r -a wanted <<<"$TOOLS"
 for tool in "${wanted[@]}"; do
   tool="$(echo "$tool" | tr -d '[:space:]')"
@@ -290,6 +317,8 @@ for tool in "${wanted[@]}"; do
     codex) install_codex || true ;;
     opencode) install_opencode || true ;;
     pi) install_pi || true ;;
+    omp) install_omp || true ;;
+    omo) install_omo || true ;;
     horon) : ;; # provided by the caller
     *)
       note_fail "$tool" "unknown tool"

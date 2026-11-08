@@ -38,13 +38,14 @@ gh workflow run benchmark.yml --ref dev                                   # 세 
 gh workflow run benchmark.yml --ref dev -f os=windows                     # Windows만
 gh workflow run benchmark.yml --ref dev -f os=linux,macos -f suites=compare,tools
 gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
+gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 ```
 
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
 | `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. |
 | `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `compile` 중 쉼표로 고른다. |
-| `competitors` | `jcode,claude_code,codex,opencode,pi` | horon과 비교할 도구. 설치에 실패한 도구는 `skipped`로 남는다. |
+| `competitors` | `jcode,claude_code,codex,opencode,pi` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)는 넣을 때만 잰다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 | `oneshot_runs` | `3` | one-shot 프롬프트를 빌드마다 몇 번 잴지. 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
@@ -58,7 +59,7 @@ gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 
 | 묶음 | 스크립트 | 재는 것 |
 | --- | --- | --- |
-| `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리, 동시 세션 수에 따른 메모리, 설치 크기. Linux는 `fsync` 호출 수도 잰다. |
+| `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리, 동시 세션 수에 따른 메모리, 설치 크기. Linux는 `fsync` 호출 수도 잰다. |
 | `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, 하네스 브리지 단계별 준비 시간 |
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연 |
@@ -94,13 +95,13 @@ python3 scripts/perf/bench_startup.py ./target/release/horon-agent --runs 10
 경쟁 도구 비교는 도구를 먼저 설치한다. `--bin name=path`로 지정하지 않은 도구는 PATH에서 찾는다.
 
 ```bash
-bash scripts/perf/install_competitors.sh /tmp/bench-tools jcode,claude_code,codex,opencode,pi
+bash scripts/perf/install_competitors.sh /tmp/bench-tools jcode,claude_code,codex,opencode,pi,omp,omo
 python3 scripts/perf/bench_compare.py --bin horon=./target/release/horon-agent $(cat /tmp/bench-tools/bins.args) \
   --install-failures /tmp/bench-tools/failures.txt \
   --sessions 1 5 10 --turns 3 --json-out compare.json --markdown-out compare.md
 ```
 
-`install_competitors.sh`는 버전을 고정해 설치한다. jcode는 GitHub 릴리스 `v0.99.1`(Windows는 `.exe`), 나머지는 `npm install --prefix`로 `@anthropic-ai/claude-code@2.1.317`, `@openai/codex@0.166.0`, `opencode-ai@1.19.5`, `@mariozechner/pi-coding-agent@0.73.1`이다. 버전은 `JCODE_VERSION`, `CLAUDE_VERSION`, `CODEX_VERSION`, `OPENCODE_VERSION`, `PI_VERSION`으로 바꾼다. Windows에서는 Git Bash로 돌리고, npm 도구는 `.cmd` 실행 파일로 기록한다.
+`install_competitors.sh`는 버전을 고정해 설치한다. jcode는 GitHub 릴리스 `v0.99.1`(Windows는 `.exe`), 나머지는 `npm install --prefix`로 `@anthropic-ai/claude-code@2.1.317`, `@openai/codex@0.166.0`, `opencode-ai@1.19.5`, `@mariozechner/pi-coding-agent@0.73.1`, `@oh-my-pi/pi-coding-agent@18.18.0`, `omo-ai@5.1.64`이다. 버전은 `JCODE_VERSION`, `CLAUDE_VERSION`, `CODEX_VERSION`, `OPENCODE_VERSION`, `PI_VERSION`, `OMP_VERSION`, `OMO_VERSION`으로 바꾼다. Windows에서는 Git Bash로 돌리고, npm 도구는 `.cmd` 실행 파일로 기록한다.
 
 jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운로드 주소를 5번까지 다시 시도하고, 그래도 실패하면 같은 파일을 GitHub 릴리스 API의 자산 id로 받는다. 어느 쪽으로 받든 릴리스의 `SHA256SUMS`에 적힌 값과 같을 때만 쓴다. 설치에 실패한 도구는 `<dest>/failures.txt`에 `이름<TAB>이유` 한 줄로 남고, `bench_compare.py --install-failures`가 이 파일을 읽어 `compare.md`의 `Skipped:` 줄에 `install failed: <이유>`로 적는다.
 
@@ -114,9 +115,25 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 
-배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi는 `models.json`과 `--mode rpc`를 쓴다.
+배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
 세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`를 켠 실행의 시간은 느려지므로 시간 비교에 쓰지 않는다.
+
+### omp와 omo
+
+두 도구는 pi와 같은 `models.json`·RPC 계약을 쓰므로 같은 하네스를 공유하되 실행 방식과 기본값이 달라 다음을 따로 맞춘다.
+
+| 도구 | 보고서 이름 | npm 패키지 | 고정 버전 | 실행 런타임 | mock 연결 |
+| --- | --- | --- | --- | --- | --- |
+| `omp` | `oh-my-pi (omp)` | `@oh-my-pi/pi-coding-agent` | `18.18.0` (`OMP_VERSION`) | Bun 1.4.4 이상 (`engines`) | 임시 HOME 아래 `models.json`의 `providers.mock`, `-p --no-session --no-title --model mock/mock-model --no-lsp` |
+| `omo` | `oh-my-openagent (omo)` | `omo-ai` | `5.1.64` (`OMO_VERSION`) | Node 24 이상 또는 Bun | 같은 `models.json`, `-p --no-session --model mock/mock-model --tools bash,read` |
+
+- `omp`는 npm CLI를 Bun 스크립트로 배포하므로 compare 작업이 `oven-sh/setup-bun`으로 Bun을 먼저 설치한다. Bun이 없으면 installer가 두 도구를 `skipped`로 남기고 작업은 계속된다.
+- `omo`의 기본 도구 목록에는 셸 도구(`bash`)가 없고 `--tools`는 허용 목록이라, `bash`와 `read`를 명시해야 mock 모델이 도구를 부를 수 있다.
+- `omp`는 `--no-title` 없이 실행하면 제목 생성용 모델 요청이 한 번 더 나가 원샷 요청 수가 달라진다. `--no-lsp`는 언어 서버 내려받기를 막는다.
+- 두 도구 모두 agent 디렉터리에 모델 목록과 base URL을 캐시하므로(omp는 `agent.db`, `models.db`) 측정마다 새 agent 디렉터리를 만든다. 세션 측정에서는 세션마다 따로 만든다.
+- 텔레메트리, 버전 확인, mock 서버 밖 네트워크는 `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`, `DISABLE_TELEMETRY=1`, `DO_NOT_TRACK=1`로 끈다. 부모 환경의 `OMP_*`, `OMO_*`, `SENPI_*`, `PI_CONFIG_DIR`, API 키는 지우고 홈·설정 경로는 임시 디렉터리 아래만 가리킨다.
+- 기본 비교 목록에는 아직 넣지 않는다. 세 OS에서 측정이 확인되기 전까지는 `-f competitors=omp,omo`처럼 넣을 때만 잰다. 목록에 넣더라도 `benchmark-os.yml`이 입력 목록을 `--tools`로 넘기므로 측정 대상은 입력이 정한다.
 
 ### 측정의 한계
 

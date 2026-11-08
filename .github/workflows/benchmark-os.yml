@@ -341,6 +341,14 @@ jobs:
         with:
           node-version: "24"
 
+      - uses: oven-sh/setup-bun@v2
+        # omp's npm CLI is a Bun script and declares engines bun>=1.4.4; omo
+        # prefers Bun when it is present. Both are optional competitors, so a
+        # missing Bun only removes them (installer records a reason), but the
+        # step itself must not fail the job.
+        if: ${{ matrix.unit == 'compare' }}
+        continue-on-error: true
+
       - name: Install competitor CLIs
         if: ${{ matrix.unit == 'compare' }}
         shell: bash
@@ -367,9 +375,20 @@ jobs:
           fi
           install_failures=()
           [[ -f "$RUNNER_TEMP/bench-tools/failures.txt" ]] && install_failures=(--install-failures "$RUNNER_TEMP/bench-tools/failures.txt")
+          # The dispatched list decides what is measured. Without --tools the
+          # script's default set would skip a competitor whose binary is
+          # installed but whose name is not a default.
+          tools="horon"
+          IFS=',' read -r -a wanted <<<"$COMPETITORS"
+          for tool in "${wanted[@]}"; do
+            tool="$(echo "$tool" | tr -d '[:space:]')"
+            [ -z "$tool" ] && continue
+            [ "$tool" = "horon" ] && continue
+            tools="$tools $tool"
+          done
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
-            --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args \
+            --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args --tools $tools \
             ${install_failures[@]+"${install_failures[@]}"} \
             --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"

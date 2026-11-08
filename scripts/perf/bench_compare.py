@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -156,6 +157,23 @@ BASE_ENV_DROP = (
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "PI_CODING_AGENT_DIR",
+    "PI_CONFIG_DIR",
+    "PI_PACKAGE_DIR",
+    "PI_CODING_AGENT_SESSION_DIR",
+    "OMP_CODING_AGENT_DIR",
+    "OMP_PROFILE",
+    "OMP_PLUGIN_ROOT",
+    "OMP_AUTH_BROKER_URL",
+    "OMP_AUTH_BROKER_TOKEN",
+    "OMP_DAEMON_PROJECT_DIR",
+    "OMP_DAEMON_RUNTIME_DIR",
+    "OMP_TEXT_PREDICT_AGENT_DIR",
+    "OMP_AUTO_UPDATE_TARGET",
+    "OMO_CODING_AGENT_DIR",
+    "SENPI_CODING_AGENT_DIR",
+    "OMO_PACKAGE_DIR",
+    "OMO_PLUGIN_ROOT",
+    "OMO_DEBUG",
     "OPENCODE_CONFIG",
 )
 
@@ -177,6 +195,8 @@ def resolve_bin(name: str, override: str | None, env: dict) -> str | None:
         "codex": ["codex"],
         "opencode": ["opencode"],
         "pi": ["pi"],
+        "omp": ["omp"],
+        "omo": ["omo"],
     }.get(name, [])
     for candidate in candidates:
         found = shutil.which(candidate, path=env.get("PATH"))
@@ -426,12 +446,9 @@ def opencode_oneshot_argv(binary: str) -> list[str]:
     return [binary, "run", "-m", "openai/mock-model", TURN_PROMPT]
 
 
-def pi_env(root: str, base_url: str) -> dict:
-    env = scrub_env(os.environ)
-    env.update(bc.isolated_home_env(root, "PI"))
-    agent_dir = os.path.join(root, "pi")
-    os.makedirs(agent_dir, exist_ok=True)
-    models = {
+def mock_models_config(base_url: str) -> dict:
+    """The ``models.json`` shape the pi family reads: one OpenAI-compatible provider."""
+    return {
         "providers": {
             "mock": {
                 "baseUrl": f"{base_url}/v1",
@@ -451,15 +468,91 @@ def pi_env(root: str, base_url: str) -> dict:
             }
         }
     }
+
+
+def _write_models_json(agent_dir: str, base_url: str) -> None:
+    os.makedirs(agent_dir, exist_ok=True)
     with open(os.path.join(agent_dir, "models.json"), "w", encoding="utf-8") as fh:
-        json.dump(models, fh, indent=2)
+        json.dump(mock_models_config(base_url), fh, indent=2)
+
+
+def pi_env(root: str, base_url: str) -> dict:
+    env = scrub_env(os.environ)
+    env.update(bc.isolated_home_env(root, "PI"))
+    agent_dir = os.path.join(root, "pi")
+    _write_models_json(agent_dir, base_url)
     env["PI_CODING_AGENT_DIR"] = agent_dir
+    return pi_family_telemetry_env(env)
+
+
+# Paths ``bc.isolated_home_env`` fills in. It copies ``os.environ``, so the
+# scrub must run after it and these keys must be put back on top: without the
+# re-apply the scrub would also delete the isolated paths and the tool would
+# fall back to the real user home.
+ISOLATED_ENV_KEYS = (
+    "HOME",
+    "TMPDIR",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "TEMP",
+    "TMP",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+)
+
+
+def isolated_tool_env(root: str, prefix: str) -> dict:
+    """Parent env with every tool-home variable dropped, plus isolated paths."""
+    source = bc.isolated_home_env(root, prefix)
+    keys = ISOLATED_ENV_KEYS + (f"{prefix}_HOME", f"{prefix}_RUNTIME_DIR")
+    isolated = {key: source[key] for key in keys if key in source}
+    env = scrub_env(source)
+    env.update(isolated)
+    return env
+
+
+def _fresh_agent_dir(root: str, tool: str) -> str:
+    """A new agent dir per measurement.
+
+    omp caches the provider list and its base URL in ``agent.db``/``models.db``
+    inside the agent dir and keeps calling the cached address, so reusing one
+    dir across runs would measure a stale endpoint.
+    """
+    base = os.path.join(root, tool)
+    os.makedirs(base, exist_ok=True)
+    return tempfile.mkdtemp(prefix="agent-", dir=base)
+
+
+def pi_family_telemetry_env(env: dict) -> dict:
+    """Turn off update checks, telemetry, and any network use beyond the mock server."""
     env["PI_OFFLINE"] = "1"
     env["PI_SKIP_VERSION_CHECK"] = "1"
     env["PI_TELEMETRY"] = "0"
     env["DISABLE_TELEMETRY"] = "1"
     env["DO_NOT_TRACK"] = "1"
     return env
+
+
+def omp_env(root: str, base_url: str) -> dict:
+    env = isolated_tool_env(root, "OMP")
+    agent_dir = _fresh_agent_dir(root, "omp")
+    _write_models_json(agent_dir, base_url)
+    env["PI_CODING_AGENT_DIR"] = agent_dir
+    return pi_family_telemetry_env(env)
+
+
+def omo_env(root: str, base_url: str) -> dict:
+    env = isolated_tool_env(root, "OMO")
+    agent_dir = _fresh_agent_dir(root, "omo")
+    _write_models_json(agent_dir, base_url)
+    # omo and the senpi engine it runs each read one of these names.
+    env["PI_CODING_AGENT_DIR"] = agent_dir
+    env["OMO_CODING_AGENT_DIR"] = agent_dir
+    env["SENPI_CODING_AGENT_DIR"] = agent_dir
+    return pi_family_telemetry_env(env)
 
 
 def pi_oneshot_argv(binary: str) -> list[str]:
@@ -476,6 +569,62 @@ def pi_session_argv(binary: str) -> list[str]:
         "mock",
         "--model",
         "mock-model",
+    ]
+
+
+def omp_oneshot_argv(binary: str) -> list[str]:
+    # --no-title keeps a session-title request (one extra model call) out of the
+    # measurement, and --no-lsp stops a language-server download attempt.
+    return [
+        binary,
+        "-p",
+        "--no-session",
+        "--no-title",
+        "--model",
+        "mock/mock-model",
+        "--no-lsp",
+        TURN_PROMPT,
+    ]
+
+
+def omp_session_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--no-title",
+        "--model",
+        "mock/mock-model",
+        "--no-lsp",
+    ]
+
+
+def omo_oneshot_argv(binary: str) -> list[str]:
+    # omo's default tool set has no plain shell tool and --tools is a strict
+    # allowlist, so `bash` has to be named for the mock model to find it.
+    return [
+        binary,
+        "-p",
+        "--no-session",
+        "--model",
+        "mock/mock-model",
+        "--tools",
+        "bash,read",
+        TURN_PROMPT,
+    ]
+
+
+def omo_session_argv(binary: str) -> list[str]:
+    return [
+        binary,
+        "--mode",
+        "rpc",
+        "--no-session",
+        "--model",
+        "mock/mock-model",
+        "--tools",
+        "bash,read",
     ]
 
 
@@ -1238,8 +1387,8 @@ class CodexSession:
 
 
 class PiSession:
-    def __init__(self, binary: str, cwd: str, env: dict):
-        self.handle = spawn(pi_session_argv(binary), cwd, env)
+    def __init__(self, binary: str, cwd: str, env: dict, argv_fn=pi_session_argv):
+        self.handle = spawn(argv_fn(binary), cwd, env)
 
     def turn(self, prompt: str, timeout: float = 180.0) -> str | None:
         assert self.handle.proc.stdin is not None
@@ -1640,6 +1789,59 @@ class PiRunner(ToolRunner):
         return measure_proc_sessions(lambda: PiSession(self.binary, cwd, env), count, turns, timeout)
 
 
+class OmpRunner(ToolRunner):
+    """oh-my-pi's omp: the pi protocol with its own agent directory and flags."""
+
+    name = "omp"
+    label = "oh-my-pi (omp)"
+
+    def env_for_version(self, root: str) -> dict:
+        return omp_env(root, "http://127.0.0.1:1")
+
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
+        env = omp_env(root, mock.base_url or "")
+        return measure_oneshot(omp_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        base_url = mock.base_url or ""
+        # Each session gets its own agent dir: omp stores its model cache in a
+        # SQLite database there, and concurrent processes over one file would
+        # serialise on its lock instead of measuring what the session costs.
+        return measure_proc_sessions(
+            lambda: PiSession(self.binary, cwd, omp_env(root, base_url), omp_session_argv),
+            count,
+            turns,
+            timeout,
+        )
+
+
+class OmoRunner(ToolRunner):
+    """oh-my-openagent's omo: the same pi RPC protocol over the senpi engine."""
+
+    name = "omo"
+    label = "oh-my-openagent (omo)"
+
+    def env_for_version(self, root: str) -> dict:
+        return omo_env(root, "http://127.0.0.1:1")
+
+    def oneshot(
+        self, mock: MockServer, root: str, cwd: str, timeout: float, syscalls: bool = False
+    ) -> dict:
+        env = omo_env(root, mock.base_url or "")
+        return measure_oneshot(omo_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
+
+    def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
+        base_url = mock.base_url or ""
+        return measure_proc_sessions(
+            lambda: PiSession(self.binary, cwd, omo_env(root, base_url), omo_session_argv),
+            count,
+            turns,
+            timeout,
+        )
+
+
 RUNNERS = {
     "horon": HoronRunner,
     "jcode": JcodeRunner,
@@ -1647,6 +1849,8 @@ RUNNERS = {
     "codex": CodexRunner,
     "opencode": OpencodeRunner,
     "pi": PiRunner,
+    "omp": OmpRunner,
+    "omo": OmoRunner,
 }
 
 
@@ -1702,8 +1906,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--turns", type=int, default=3, help="turns per session (default: 3)")
     parser.add_argument("--version-runs", type=int, default=5, help="--version repeats (default: 5)")
     parser.add_argument("--oneshot-runs", type=int, default=3, help="one-shot prompt repeats (default: 3)")
-    parser.add_argument("--tools", nargs="+", default=DEFAULT_TOOLS,
-                        help=f"tools to measure (default: {' '.join(DEFAULT_TOOLS)})")
+    parser.add_argument("--tools", nargs="+", default=DEFAULT_TOOLS, metavar="TOOL",
+                        help=f"tools to measure (default: {' '.join(DEFAULT_TOOLS)}); "
+                             f"accepted names: {' '.join(RUNNERS)}")
     parser.add_argument("--timeout", type=float, default=180.0, help="per-turn/oneshot timeout seconds")
     parser.add_argument("--syscalls", action="store_true",
                         help="count fsync/fdatasync calls per one-shot with strace (Linux only; "
@@ -1745,6 +1950,22 @@ def missing_binary_reason(name: str, install_failures: dict[str, str]) -> str:
     if reason:
         return f"install failed: {reason}"
     return "binary not found (pass --bin name=path)"
+
+
+def normalize_tools(names: list[str]) -> list[str]:
+    """Put horon first and drop duplicate names.
+
+    The workflow builds ``--tools horon <competitors>``, so horon arrives twice
+    when the input still lists it; measuring the baseline twice would print two
+    horon rows and halve the report's meaning.
+    """
+    tools: list[str] = []
+    for name in names:
+        if name not in tools:
+            tools.append(name)
+    if "horon" in tools:
+        tools.remove("horon")
+    return ["horon"] + tools
 
 
 def plan_first_session(points: list[dict], key: str) -> float | None:
@@ -2187,9 +2408,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.syscalls and not syscalls:
         skipped.append({"name": "syscalls", "reason": "strace not available"})
 
-    if "horon" not in args.tools:
-        args.tools = ["horon"] + list(args.tools)
-    args.tools = order_tools(args.tools, overrides)
+    args.tools = order_tools(normalize_tools(args.tools), overrides)
 
     runners: list[ToolRunner] = []
     for name in args.tools:
