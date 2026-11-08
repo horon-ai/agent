@@ -80,6 +80,10 @@ MCP_TEXT_PROPS = ("text", "input", "message", "content", "value", "query", "prom
 # A route an agent prints in its prompt for an MCP tool it reaches by reading a
 # URI instead of exposing a function (omp).
 MCP_ROUTE_RE = re.compile(r"xd://[^\s\"'`)\]}]*" + MCP_TOOL_SUFFIX)
+# The fixed MCP surface a session keeps in its cache-stable tool list; a late
+# server's tool is reached through it instead of by its own name.
+DEFERRED_MCP_TOOL_NAMES = ("mcp_call", "mcp.call")
+DEFERRED_SERVER_RE = re.compile(r"server\s*=\s*\\?[\"']([^\"'\\]+)")
 # A nonce the mock handed out; finding it in a tool result is the MCP round trip.
 NONCE_RE = re.compile(NONCE_PREFIX + r"\d+")
 
@@ -329,6 +333,20 @@ def find_mcp_tool(tools) -> tuple[dict, str | None] | None:
         if _tool_name(tool).strip().casefold().endswith(MCP_TOOL_SUFFIX):
             return tool, namespace
     return None
+
+
+def find_deferred_mcp_tool(tools) -> dict | None:
+    """The fixed `mcp_call` surface, if the session exposes it."""
+    for tool, _namespace in flatten_tools(tools):
+        if _tool_name(tool).strip().casefold() in DEFERRED_MCP_TOOL_NAMES:
+            return tool
+    return None
+
+
+def deferred_server_name(body: dict) -> str | None:
+    """The server name the prompt or the transcript's announcement spells."""
+    match = DEFERRED_SERVER_RE.search(json.dumps(body, ensure_ascii=False))
+    return match.group(1) if match else None
 
 
 def find_mcp_route(body: dict) -> str | None:
@@ -635,6 +653,8 @@ class Handler(BaseHTTPRequestHandler):
         elif plan_name == "mcp":
             mcp = find_mcp_tool(tools)
             route = find_mcp_route(body)
+            deferred = find_deferred_mcp_tool(tools)
+            server = deferred_server_name(body)
             if NONCE_RE.search(results):
                 pass
             elif mcp is not None:
@@ -642,6 +662,14 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(mcp_tool)
                 via = "mcp-tool"
                 arguments = _mcp_arguments(mcp_tool, nonce)
+            elif deferred is not None and server:
+                # horon keeps its tool list cache-stable and announces a late
+                # server's tool in the transcript, so the call goes through the
+                # fixed mcp_call surface.
+                tool_name = _tool_name(deferred)
+                via = "mcp-call"
+                arguments = {"server": server, "tool": MCP_TOOL_SUFFIX,
+                             "arguments": {"text": nonce}}
             elif route and find_write_tool(tools) is not None:
                 write_tool = find_write_tool(tools)
                 assert write_tool is not None
@@ -682,7 +710,11 @@ class Handler(BaseHTTPRequestHandler):
             "via": via,
             "sentinel_seen": sentinel_seen,
             "bench_echo_exposed": plan_name == "mcp"
-            and bool(find_mcp_tool(tools) is not None or find_mcp_route(body)),
+            and bool(
+                find_mcp_tool(tools) is not None
+                or find_mcp_route(body)
+                or (find_deferred_mcp_tool(tools) is not None and deferred_server_name(body))
+            ),
             "namespace": namespace,
             "tool_count": len(tools or []),
             "paths": collect_paths(body),

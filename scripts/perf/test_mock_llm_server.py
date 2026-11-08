@@ -486,6 +486,37 @@ class ScenarioPlanTests(ServerCase):
         self.assertFalse(entry["issued_tool_call"])
         self.assertFalse(entry["bench_echo_exposed"])
 
+    def test_deferred_surface_calls_bench_echo_through_mcp_call(self) -> None:
+        # horon keeps its tool list cache-stable: a late server's tool is only
+        # announced in the transcript and reached through the fixed mcp_call.
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_call",
+                    "description": "Call an MCP tool by server and raw tool name.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "server": {"type": "string"},
+                            "tool": {"type": "string"},
+                            "arguments": {"type": "object"},
+                        },
+                        "required": ["server", "tool", "arguments"],
+                    },
+                },
+            }
+        ]
+        prompt = '[bench:mcp] Call the bench_echo tool on the MCP server="bench" once.'
+        name, arguments = tool_call_of(self.chat(prompt, tools))
+        self.assertEqual(name, "mcp_call")
+        self.assertEqual(arguments["server"], "bench")
+        self.assertEqual(arguments["tool"], "bench_echo")
+        self.assertTrue(arguments["arguments"]["text"].startswith("bench-nonce-"))
+        entry = self.requests()[0]
+        self.assertEqual(entry["via"], "mcp-call")
+        self.assertTrue(entry["bench_echo_exposed"])
+
     def test_mcp_route_is_read_through_the_write_tool(self) -> None:
         system = "- \"bench_echo\" -> `xd://mcp__bench_echo`"
         messages = [

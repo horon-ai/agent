@@ -965,8 +965,8 @@ class ScenarioRouteTests(unittest.TestCase):
         skill = bench.horon_turn_argv("/h", bench.skill_prompt("/w/SKILL.md"), "read")
         self.assertEqual(skill[skill.index("--tools") + 1], "read")
         self.assertTrue(skill[-1].startswith("[bench:skill]"))
-        mcp = bench.horon_turn_argv("/h", bench.mcp_prompt(), "mcp__bench__bench_echo")
-        self.assertEqual(mcp[mcp.index("--tools") + 1], "mcp__bench__bench_echo")
+        mcp = bench.horon_turn_argv("/h", bench.mcp_prompt(), "mcp_call")
+        self.assertEqual(mcp[mcp.index("--tools") + 1], "mcp_call")
         self.assertTrue(mcp[-1].startswith("[bench:mcp]"))
 
     def test_horon_keeps_mcp_off_outside_the_new_scenarios(self) -> None:
@@ -1031,8 +1031,11 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
                     root = os.path.realpath(tmp)
                     result, captured = self._capture(runner_cls("/bin/tool"), scenario, root)
                     if "skipped" in result:
-                        # pi is the one tool without an MCP client.
-                        self.assertEqual((runner_cls, scenario), (bench.PiRunner, "mcp"))
+                        # A tool without an addressable MCP client says so and
+                        # never builds an env for that scenario.
+                        self.assertEqual(scenario, "mcp")
+                        self.assertIn(runner_cls, (bench.PiRunner, bench.CodexRunner))
+                        self.assertTrue(result["skipped"])
                         self.assertEqual(captured, [])
                         continue
                     self.assertEqual(len(captured), 1)
@@ -1073,7 +1076,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
                 config = json.load(fh)
         self.assertIn("bench", config["servers"])
         self.assertTrue(config["servers"]["bench"]["args"][0].endswith("bench_mcp_server.py"))
-        self.assertIn("mcp__bench__bench_echo", captured[0]["argv"])
+        self.assertIn("mcp_call", captured[0]["argv"])
 
     def test_horon_skill_scenario_also_enables_mcp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

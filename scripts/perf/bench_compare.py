@@ -98,7 +98,12 @@ def skill_prompt(skill_md_path: str) -> str:
 
 
 def mcp_prompt() -> str:
-    return f"{MCP_MARKER} Call the {MCP_TOOL_NAME} tool once, then reply with mock-ok."
+    # The server name is spelled out because a session whose tool list stays
+    # cache-stable reaches the tool through `mcp_call`, which needs it.
+    return (
+        f'{MCP_MARKER} Call the {MCP_TOOL_NAME} tool on the MCP server="{MCP_SERVER_NAME}" '
+        f"once, then reply with mock-ok."
+    )
 
 
 def install_skill(skill_root: str) -> str:
@@ -1793,8 +1798,9 @@ class HoronRunner(ToolRunner):
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         env = self._root(root, mock, run_mcp=True)
         write_mcp_servers(os.path.join(env["HORON_AGENT_HOME"], "mcp.json"), mcp_servers())
-        tools = f"mcp__{MCP_SERVER_NAME}__{MCP_TOOL_NAME}"
-        argv = horon_turn_argv(self.binary, mcp_prompt(), tools)
+        # A cache-stable tool list exposes the fixed `mcp_call` surface rather
+        # than the server's tool name, so that is what the allow-list names.
+        argv = horon_turn_argv(self.binary, mcp_prompt(), "mcp_call")
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
@@ -1907,10 +1913,13 @@ class CodexRunner(ToolRunner):
         return measure_oneshot(argv, cwd, env, mock, timeout)
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        env = codex_env(root)
-        write_codex_mcp_config(os.path.join(env["CODEX_HOME"], "config.toml"), mcp_servers())
-        argv = codex_oneshot_argv(self.binary, mock.base_url or "", mcp_prompt())
-        return measure_oneshot(argv, cwd, env, mock, timeout)
+        # This build nests every server's tools inside one namespace tool
+        # (`mcp__bench` holding `bench_echo`); a model that answers with a bare
+        # function call is not dispatched there, so the round trip cannot be
+        # proven and the row says so instead of timing out on three repeats.
+        return unsupported(
+            "codex exposes MCP tools as a namespace tool the mock model cannot address"
+        )
 
     def sessions(self, mock: MockServer, root: str, cwd: str, count: int, turns: int, timeout: float) -> dict:
         env = codex_env(root)
@@ -2597,6 +2606,8 @@ def scenario_row(result: dict, scenario: str, results: list[dict], with_ready: b
     rss = data.get("peak_rss_bytes")
     roundtrip = data.get("tool_round_trip")
     notes = data.get("errors") or ([data["error"]] if data.get("error") else [])
+    if not notes and data.get("tool_round_trip") is False:
+        notes = ["the fixture sentinel never came back"]
     note = scenario_cell(notes[0]) if notes else ""
     cells = [
         label,
