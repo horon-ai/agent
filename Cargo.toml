@@ -128,7 +128,7 @@ horon-agent-platform = { path = "crates/platform" }
 # Archive extraction (for auto-update)
 tempfile = "3"
 # Only for the opt-in legacy SQLite session-index import feature and its CLI QA.
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 
 [features]
 # Memory recall uses Jev Decisions and needs no local inference stack.
