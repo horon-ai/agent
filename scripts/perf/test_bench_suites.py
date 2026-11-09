@@ -241,8 +241,8 @@ class MergeParts(unittest.TestCase):
 class DaemonHomeEnv(unittest.TestCase):
     """Both suites start the daemon on a throwaway HORON_HOME.
 
-    The binary reads its home from HORON_HOME only; under any other name the
-    daemon would open the caller's real ~/.horon.
+    The binary reads its home from HORON_HOME only. Under any other name it
+    falls back to `$HOME/.horon`, away from the directory the suite prepared.
     """
 
     def _start(self, module, root: Path) -> tuple[tuple, dict]:
