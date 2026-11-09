@@ -151,14 +151,71 @@ Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 `src/cli/acp.rs`). Requirement 3 check: the structural gate and A/B runner in
 `docs/performance/BENCHMARK.md`.
 
+## CI warnings: zero is the completion condition
+
+A task is not finished while any job of its CI run shows a warning. A green run
+with warnings is not done: keep fixing until a run on the final commit shows none,
+and do not merge or report success before then.
+
+- **What counts.** Any warning in any job log of any workflow the change
+  triggers (`CI`, `Structural performance`, `Release Recovery Validation`, ...):
+  rustc, clippy and cargo `warning:`, rustup `warn:`, cargo-audit `Warning:`,
+  script `warning:` lines, `cargo:warning=` build-script output, and `##[warning]`
+  or `warning`-level annotations.
+- **How to check.** When the run has finished, run
+  `python3 scripts/ci/run_warnings.py <run-id>` (needs a signed-in `gh`; find the
+  id with `gh run list --branch <branch>`). It prints every distinct warning with
+  its job and step and exits 0 only when there are none. Paste that result, not
+  the green check marks, as the evidence.
+- **Fix the cause.** Do not hide a warning with `#[allow]`, `-A`, `--ignore`, a
+  lowered log level or a renamed message. An external cause this repository cannot
+  fix (an unmaintained transitive crate, a Rust toolchain defect) may be allowed at
+  the narrowest scope, with the reason beside it and named in the report. Existing
+  cases: the `audit_ignores` list in `scripts/ci/check_security.sh` (triage in
+  `docs/safety/SECURITY.md`) and the `linker_messages` allow in
+  `crates/app-core/src/lib.rs`.
+- **Gates that keep it at zero.** `ci.yml` sets `CARGO_BUILD_WARNINGS=deny`, so a
+  rustc or build-script warning in a workspace crate fails the build, and
+  `scripts/ci/check_security.sh` runs `cargo audit --deny warnings`. A new
+  advisory in the RustSec database can therefore turn CI red without a code
+  change; triage it the same way. `notice`-level annotations (the macOS runner
+  capacity notice) are GitHub's and are not warnings.
+
+## CI gates by change type
+
+`ci.yml` and `structural-perf.yml` start with a `Changed Paths` job
+(`scripts/ci/classify_changes.py`) that classifies a pull request by its files.
+
+- **Documentation only** (README, `docs/`, `AGENTS.md`, templates): runs
+  `Documentation Checks` (links, UTF-8, English/Korean pairs) and
+  `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
+  `horon_agent_docs` tests still run). The release build, the three-OS test
+  matrix, the SDK jobs and the structural performance gate are skipped.
+- **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
+  gate runs.
+- **Pushes and manual dispatches always run everything.** Release evidence
+  (`scripts/release/check_ci.py`) accepts only a fully successful push run.
+- `CI Required` and `Structural performance required` always finish and fail
+  only when a gate failed or was cancelled; use them as the required checks so
+  a skipped gate never leaves a check pending.
+- Every action is pinned to a commit with a `# vX` comment (Dependabot keeps them
+  current); `release.yml`, `release-tag.yml` and the publish workflows are not
+  part of this gating. `actionlint` must report nothing (`Workflow Lint`).
+
 ## Docs
 
 `docs/` is grouped by topic into `architecture/`, `protocol/`, `runtime/`,
 `provider/`, `safety/`, `performance/`, and `release/`. File names are
 uppercase (`docs/runtime/TOOLS.md`). Extend an existing doc before adding a
-new file. Docs are written in Korean.
+new file. Docs are bilingual and English is the default: `X.md` is the
+canonical English text and `X.ko.md` is its Korean counterpart in the same
+folder, as with `README.md` and `README.ko.md`. Change both in the same commit.
+Each pair keeps the same headings, tables, code fences and links, and links
+between docs stay inside their own language. `python3 scripts/ci/check_docs_pairs.py`
+checks this and runs in the Quality Guardrails job.
 
-Every Markdown file under `docs/`, including subfolders, is compiled into the
-binary and served by the `horon_agent_docs` tool (`crates/app-core/build.rs`).
+Every English Markdown file under `docs/`, including subfolders, and the root
+`README.md` are compiled into the binary and served by the `horon_agent_docs`
+tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.
 `docs/README.md` is the index; update it in the same change.

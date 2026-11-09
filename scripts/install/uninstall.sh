@@ -6,7 +6,7 @@
 # reinstall picks up where you left off.
 #
 # Flags:
-#   --purge     Also delete ~/.horon-agent (config, auth, sessions, logs, memory).
+#   --purge     Also delete ~/.horon (config, auth, sessions, logs, memory).
 #   --dry-run   Print what would be removed without deleting anything.
 #   --yes       Skip the confirmation prompt.
 #
@@ -39,18 +39,18 @@ done
 OS="$(uname -s)"
 case "$OS" in
   MINGW*|MSYS*|CYGWIN*)
-    HORON_AGENT_HOME="${LOCALAPPDATA:?LOCALAPPDATA not set}/horon-agent"
+    HORON_HOME="${LOCALAPPDATA:?LOCALAPPDATA not set}/horon-agent"
     LAUNCHER_DIR="${HORON_AGENT_INSTALL_DIR:-$LOCALAPPDATA/horon-agent/bin}"
     LAUNCHER="$LAUNCHER_DIR/horon-agent.exe"
-    BUILDS_DIR="$HORON_AGENT_HOME/builds"
-    USER_DATA_DIR="$HORON_AGENT_HOME"
+    BUILDS_DIR="$HORON_HOME/builds"
+    USER_DATA_DIR="$HORON_HOME"
     ;;
   *)
-    HORON_AGENT_HOME="$HOME/.horon-agent"
+    HORON_HOME="$HOME/.horon"
     LAUNCHER_DIR="${HORON_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
     LAUNCHER="$LAUNCHER_DIR/horon-agent"
-    BUILDS_DIR="$HORON_AGENT_HOME/builds"
-    USER_DATA_DIR="$HORON_AGENT_HOME"
+    BUILDS_DIR="$HORON_HOME/builds"
+    USER_DATA_DIR="$HORON_HOME"
     ;;
 esac
 
@@ -72,7 +72,7 @@ if [ "$OS" = "Darwin" ]; then
       TARGETS+=("$app (legacy CLI launcher)")
     fi
   done
-  [ -d "$HOME/.horon-agent/notifications/macos/HoronAgent Notifications.app" ] && TARGETS+=("$HOME/.horon-agent/notifications/macos/HoronAgent Notifications.app (notification helper)")
+  [ -d "$HOME/.horon/notifications/macos/HoronAgent Notifications.app" ] && TARGETS+=("$HOME/.horon/notifications/macos/HoronAgent Notifications.app (notification helper)")
 fi
 if [ "$PURGE" = true ] && [ -d "$USER_DATA_DIR" ]; then
   TARGETS+=("$USER_DATA_DIR (ALL user data: config, auth, sessions, logs, memory)")
@@ -130,6 +130,16 @@ remove() {
   fi
 }
 
+# Alias launchers (horon, hrn) are removed only when they are ours: a symlink to
+# a horon-agent binary, or (Windows) a byte-identical copy of the launcher.
+for alias in horon hrn; do
+  alias_path="$LAUNCHER_DIR/$alias${LAUNCHER##*horon-agent}"
+  if [ -L "$alias_path" ] && [ "$(basename "$(readlink "$alias_path")")" = "$(basename "$LAUNCHER")" ]; then
+    remove "$alias_path"
+  elif [ -f "$alias_path" ] && [ ! -L "$alias_path" ] && [ -f "$LAUNCHER" ] && cmp -s "$alias_path" "$LAUNCHER"; then
+    remove "$alias_path"
+  fi
+done
 remove "$LAUNCHER"
 if [ "$OS" = "Darwin" ]; then
   for app in "$HOME/Applications/HoronAgent.app" "$HOME/Applications/horon-agent.app" "$HOME/Applications/HoronAgent Notifications.app"; do
@@ -137,7 +147,7 @@ if [ "$OS" = "Darwin" ]; then
       remove "$app"
     fi
   done
-  remove "$HOME/.horon-agent/notifications/macos/HoronAgent Notifications.app"
+  remove "$HOME/.horon/notifications/macos/HoronAgent Notifications.app"
 fi
 if [ "$PURGE" = true ]; then
   remove "$USER_DATA_DIR"

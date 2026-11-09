@@ -133,7 +133,7 @@ async fn binary_integration_reload_handoff() -> Result<()> {
         // This test must exercise the real exec-based reload handoff, not the
         // in-process test shortcut used by other e2e cases.
         .env_remove("HORON_AGENT_TEST_SESSION")
-        .env("HORON_AGENT_HOME", &home_dir)
+        .env("HORON_HOME", &home_dir)
         .env("HORON_AGENT_RUNTIME_DIR", &runtime_dir)
         .env("HORON_AGENT_INSTALL_DIR", &install_dir)
         .env("HORON_AGENT_DEBUG_CONTROL", "1")

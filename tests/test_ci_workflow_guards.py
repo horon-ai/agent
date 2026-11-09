@@ -50,12 +50,15 @@ class WorkflowGuardTests(unittest.TestCase):
                       '--no-default-features --features pdf', arm64)
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
-        # The only allowed condition is the negation of the repository-wide
-        # switch to the self-hosted macOS runner, which cannot run Windows jobs
-        # at all. The negation keeps fork pull requests on hosted runners.
+        # The only allowed conditions are the path classification (a
+        # documentation-only pull request skips the job) and the negation of the
+        # repository-wide switch to the self-hosted macOS runner, which cannot
+        # run Windows jobs at all. The negation keeps fork pull requests on
+        # hosted runners.
         conditions = [line.strip() for line in arm64.splitlines() if line.strip().startswith('if:')]
         self.assertEqual(conditions, [
-            "if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' "
+            "if: ${{ needs.changes.outputs.code == 'true' && "
+            "!(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' "
             "|| github.event.pull_request.head.repo.full_name == github.repository)) }}",
         ])
 
@@ -173,7 +176,7 @@ class WorkflowGuardTests(unittest.TestCase):
         steps = re.split(r'^      - name: ', workflow, flags=re.MULTILINE)
         cleanup = [step for step in steps if step.startswith('Free disk space')]
         linux = [step for step in cleanup if '(macOS)' not in step.splitlines()[0]]
-        self.assertEqual(len(linux), 3, 'quality, build, and windows-cross-check')
+        self.assertEqual(len(linux), 4, 'quality, build, windows-cross-check, and docs-corpus')
         for step in linux:
             with self.subTest(step=step.splitlines()[0]):
                 self.assertIn('run: bash scripts/ci/free_disk_space.sh', step)
@@ -184,19 +187,55 @@ class WorkflowGuardTests(unittest.TestCase):
         step_start = workflow.rindex('      - name: ', 0, marker)
         self.assertIn("runner.environment == 'github-hosted'", workflow[step_start:marker])
 
-    def test_workflows_use_maintained_action_majors(self):
+    def test_workflows_pin_actions_to_commits_of_maintained_majors(self):
+        pinned = ('ci.yml', 'structural-perf.yml', 'require-issue.yml', 'freebsd-smoke.yml',
+                  'windows-smoke.yml', 'loading-ab.yml', 'benchmark.yml',
+                  'benchmark-os.yml', 'benchmark-docs.yml', 'release-recovery.yml')
+        use = re.compile(r'^\s*(?:- )?uses: (\S+)@(\S+)(?: # (\S+))?\s*$')
+        for name in pinned:
+            text = (ROOT / f'.github/workflows/{name}').read_text()
+            for number, line in enumerate(text.splitlines(), 1):
+                match = use.match(line)
+                if not match or match.group(1).startswith('./'):
+                    continue
+                with self.subTest(workflow=name, line=number):
+                    # A moving tag can change what a job executes; a commit
+                    # cannot. The comment keeps the human-readable version.
+                    self.assertRegex(match.group(2), r'^[0-9a-f]{40}$', line)
+                    self.assertTrue(match.group(3), f'missing version comment: {line}')
         for name in ('ci.yml', 'structural-perf.yml'):
             text = (ROOT / f'.github/workflows/{name}').read_text()
             with self.subTest(workflow=name):
                 self.assertNotIn('actions/checkout@v4', text)
-                self.assertIn('actions/checkout@v7', text)
+                self.assertIn('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7', text)
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        for action in ('actions/upload-artifact@v7',
-                       'actions/setup-node@v7',
-                       'astral-sh/setup-uv@v10.3.3',
-                       'mozilla-actions/sccache-action@v0.0.11'):
+        for action in ('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7',
+                       'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7',
+                       'astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3',
+                       'mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11'):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
+
+    def test_documentation_only_changes_never_leave_a_required_check_pending(self):
+        # A skipped job reports "skipped", which a branch rule waits on forever.
+        # The aggregate job always runs and fails only on a real failure, and it
+        # must list every other job so a new gate cannot slip past it.
+        for name, aggregate in (('ci.yml', 'ci-required'),
+                                ('structural-perf.yml', 'structural-perf-required')):
+            text = (ROOT / f'.github/workflows/{name}').read_text()
+            jobs = text.split('\njobs:', 1)[1]
+            names = re.findall(r'^  ([A-Za-z0-9_-]+):\n', jobs, re.MULTILINE)
+            block = jobs.split(f'\n  {aggregate}:\n', 1)[1]
+            with self.subTest(workflow=name):
+                self.assertIn('if: ${{ always() }}', block)
+                needs = block.split('runs-on:', 1)[0]
+                for job in names:
+                    if job != aggregate:
+                        self.assertRegex(needs, rf'\b{re.escape(job)}\b', job)
+        # A push or dispatch must never be classified as documentation-only,
+        # because release evidence needs every mandatory job to have run.
+        script = (ROOT / 'scripts/ci/classify_changes.py').read_text()
+        self.assertIn('if event != "pull_request"', script)
 
     def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
         # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by

@@ -3,9 +3,9 @@
 use super::super::protocol::McpConfig;
 use std::path::{Path, PathBuf};
 
-/// An isolated `HORON_AGENT_HOME` with an optional config.toml and a cold
+/// An isolated `HORON_HOME` with an optional config.toml and a cold
 /// parse cache. Other tools' files live under `<home>/external`, which is where
-/// `user_home_path` resolves `~` while `HORON_AGENT_HOME` is set.
+/// `user_home_path` resolves `~` while `HORON_HOME` is set.
 struct Sandbox {
     _guard: std::sync::MutexGuard<'static, ()>,
     home: tempfile::TempDir,
@@ -17,9 +17,9 @@ impl Sandbox {
     fn with_config(config: &str) -> Self {
         let guard = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("home");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let previous_disable = std::env::var_os("HORON_AGENT_DISABLE_CLAUDE_MCP");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         crate::env::remove_var("HORON_AGENT_DISABLE_CLAUDE_MCP");
         if !config.is_empty() {
             std::fs::write(home.path().join("config.toml"), config).expect("config");
@@ -47,8 +47,8 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         match self.previous_home.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         match self.previous_disable.take() {
             Some(value) => crate::env::set_var("HORON_AGENT_DISABLE_CLAUDE_MCP", value),

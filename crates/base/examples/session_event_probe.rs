@@ -1,4 +1,4 @@
-//! Public Session API probe; invoke in separate processes with isolated HORON_AGENT_HOME.
+//! Public Session API probe; invoke in separate processes with isolated HORON_HOME.
 use anyhow::{Context, Result, ensure};
 use horon_agent_base::message::{ContentBlock, Role};
 use horon_agent_base::session::{Session, SessionStatus, StoredCompactionState};

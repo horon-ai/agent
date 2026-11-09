@@ -14,7 +14,7 @@ name: Loading A/B
 # The counters decide, not the clock: a candidate that reads more skill bytes,
 # rereads a workspace skill, or rereads a user MCP config than the baseline fails
 # the "Check counters" step. Times are reported for the record
-# (docs/performance/BENCHMARK.md, "스킬·MCP 설정 로딩 A/B").
+# (docs/performance/BENCHMARK.md, "Skill and MCP config loading A/B").
 
 on:
   workflow_dispatch:
@@ -36,6 +36,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   HORON_AGENT_CI: "1"
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
@@ -55,7 +60,7 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: head
           # Full history, so both inputs resolve below whether they name a
@@ -82,13 +87,15 @@ jobs:
           git -C base rev-parse HEAD | tee "$RESULTS/base-commit.txt"
           git -C head rev-parse HEAD | tee "$RESULTS/head-commit.txt"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: loading-ab
           workspaces: |
@@ -217,7 +224,7 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:
           name: loading-ab-${{ github.run_id }}

@@ -1,4 +1,4 @@
-//! User-created collections of sessions, stored in `~/.horon-agent/collections.json`.
+//! User-created collections of sessions, stored in `~/.horon/collections.json`.
 //!
 //! A collection is a named group the user builds by hand, independent of the
 //! directory a session runs in. A session belongs to at most one collection.

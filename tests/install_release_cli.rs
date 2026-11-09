@@ -3,7 +3,7 @@
 //! Each fixture builds the asset directory an installer would hand the command:
 //! one tarred agent executable plus its `SHA256SUMS`. Verification, staging and
 //! channel activation then run in the child process against a temporary
-//! `HORON_AGENT_HOME`, so nothing here reads the machine's real installation.
+//! `HORON_HOME`, so nothing here reads the machine's real installation.
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ impl Fixture {
             .current_dir(self.home.path())
             .env_clear()
             .env("HOME", self.home.path())
-            .env("HORON_AGENT_HOME", self.home.path())
+            .env("HORON_HOME", self.home.path())
             .env("XDG_CONFIG_HOME", self.home.path().join("config"))
             .env("XDG_CACHE_HOME", self.home.path().join("cache"))
             .env("HORON_AGENT_NON_INTERACTIVE", "1")

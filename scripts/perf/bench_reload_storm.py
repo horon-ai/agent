@@ -8,7 +8,7 @@ number this measures is how long N such resumes take, individually and together.
 
 CI has no live sessions, so the script builds them: `fixtures/gen_event_log.py`
 writes real canonical `EventEnvelope` records into a throwaway
-`HORON_AGENT_HOME/sessions/<id>/events.jsonl`. Every record carries its own
+`HORON_HOME/sessions/<id>/events.jsonl`. Every record carries its own
 session id and the store refuses a log whose records name another session, so
 each session gets its own generated log rather than a copy.
 
@@ -181,10 +181,10 @@ def storm(socket_path: str, session_ids: list[str], cwd: str, chunk: int, deadli
 
 def start_daemon(binary: str, root: Path, repo: Path, log_path: Path) -> tuple[subprocess.Popen, str, str]:
     # Every store, cache, and socket lives under the throwaway root; the user's
-    # real ~/.horon-agent is never read or written.
+    # real ~/.horon is never read or written.
     env = common.isolated_home_env(str(root), "HORON_AGENT")
     env["HORON_AGENT_DEBUG_CONTROL"] = "1"
-    home = private(Path(env["HORON_AGENT_HOME"]))
+    home = private(Path(env["HORON_HOME"]))
     runtime = private(Path(env["HORON_AGENT_RUNTIME_DIR"]))
     private(home / "sessions")
     socket_path = str(runtime / "horon-agent.sock")
@@ -199,7 +199,7 @@ def start_daemon(binary: str, root: Path, repo: Path, log_path: Path) -> tuple[s
         **common.new_group_kwargs(),
     )
     log.close()
-    return process, socket_path, env["HORON_AGENT_HOME"]
+    return process, socket_path, env["HORON_HOME"]
 
 
 def parse_counts(raw: str) -> list[int]:

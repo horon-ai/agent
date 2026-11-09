@@ -35,7 +35,11 @@ fn collect_markdown(dir: &Path, files: &mut Vec<PathBuf>) {
         if path.is_dir() {
             println!("cargo:rerun-if-changed={}", path.display());
             collect_markdown(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md")
+            && !path.to_string_lossy().ends_with(".ko.md")
+        {
+            // English is the bundled language. The `.ko.md` pairs stay in the
+            // repository and are not compiled into the binary.
             files.push(path);
         }
     }

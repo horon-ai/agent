@@ -222,7 +222,7 @@ fn neither_sdk_has_an_untriaged_public_capability() {
         );
         if !PY_ONLY.is_empty() {
             eprintln!(
-                "warning: SDK parity has {} explicitly triaged Python-only methods: {}",
+                "note: SDK parity has {} explicitly triaged Python-only methods: {}",
                 PY_ONLY.len(),
                 PY_ONLY.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ")
             );
@@ -231,7 +231,7 @@ fn neither_sdk_has_an_untriaged_public_capability() {
 
     if !TS_ONLY.is_empty() {
         eprintln!(
-            "warning: SDK parity has {} explicitly triaged TypeScript-only methods: {}",
+            "note: SDK parity has {} explicitly triaged TypeScript-only methods: {}",
             TS_ONLY.len(),
             TS_ONLY.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ")
         );

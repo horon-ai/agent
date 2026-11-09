@@ -27,9 +27,9 @@ fn server_logging_enabled_defaults_on_and_respects_falsey_env() {
 #[test]
 fn append_server_sample_writes_jsonl_under_memory_logs_dir() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("create temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let sample = ServerRuntimeMemorySample {
         schema_version: 2,
@@ -74,18 +74,18 @@ fn append_server_sample_writes_jsonl_under_memory_logs_dir() {
     assert_eq!(parsed["kind"], "process");
 
     if let Some(prev) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
+        crate::env::set_var("HORON_HOME", prev);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
 #[test]
 fn append_client_sample_writes_jsonl_under_memory_logs_dir() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("create temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let sample = ClientRuntimeMemorySample {
         schema_version: 2,
@@ -128,9 +128,9 @@ fn append_client_sample_writes_jsonl_under_memory_logs_dir() {
     assert!(contents.contains("\"session_test\""));
 
     if let Some(prev) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
+        crate::env::set_var("HORON_HOME", prev);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 

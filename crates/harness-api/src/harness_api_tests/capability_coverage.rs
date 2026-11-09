@@ -420,8 +420,8 @@ fn a_gated_event_is_withheld_from_a_connection_without_its_capability() {
 /// The SDKs mirror horon-agent's external credential locations by hand, so a new one
 /// added in Rust must also be inherited by launched instances.
 ///
-/// `HORON_AGENT_HOME` redirects every `user_home_path` lookup into
-/// `$HORON_AGENT_HOME/external/`, which is what makes an instance private. The cost
+/// `HORON_HOME` redirects every `user_home_path` lookup into
+/// `$HORON_HOME/external/`, which is what makes an instance private. The cost
 /// is that an instance only sees another CLI's credentials if the SDK links
 /// that directory in. Miss one and inheritance silently half-works: the
 /// instance starts fine and fails on the first turn with an auth error, which
@@ -482,7 +482,7 @@ fn sdk_covers(sdk: &str, path: &str) -> bool {
 /// Home-relative paths horon-agent reads other tools' credentials from.
 ///
 /// Read out of the source so the list cannot drift: `user_home_path` is the
-/// single funnel for "a file in the user's home that HORON_AGENT_HOME sandboxes".
+/// single funnel for "a file in the user's home that HORON_HOME sandboxes".
 fn external_credential_paths() -> Vec<String> {
     const CREDENTIAL_HINTS: [&str; 5] = ["auth", "credential", "oauth", "hosts.json", "apps.json"];
     let mut found = Vec::new();

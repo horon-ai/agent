@@ -385,6 +385,7 @@ async fn send_ntfy(
 // Desktop (cross-platform, fire-and-forget)
 // ---------------------------------------------------------------------------
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reap_notification_child(mut child: std::process::Child) {
     let _ = std::thread::Builder::new()
         .name("horon-agent-notification-child".to_string())
@@ -737,7 +738,7 @@ mod tests {
         }
     }
 
-    /// Isolates `~/.horon-agent` for one test and serializes env mutation.
+    /// Isolates `~/.horon` for one test and serializes env mutation.
     struct TestHome {
         previous: Option<std::ffi::OsString>,
         _dir: tempfile::TempDir,
@@ -748,8 +749,8 @@ mod tests {
         fn new() -> Self {
             let lock = crate::storage::lock_test_env();
             let dir = tempfile::TempDir::new().expect("temp home");
-            let previous = std::env::var_os("HORON_AGENT_HOME");
-            crate::env::set_var("HORON_AGENT_HOME", dir.path());
+            let previous = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", dir.path());
             Self {
                 previous,
                 _dir: dir,
@@ -761,8 +762,8 @@ mod tests {
     impl Drop for TestHome {
         fn drop(&mut self) {
             match &self.previous {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }

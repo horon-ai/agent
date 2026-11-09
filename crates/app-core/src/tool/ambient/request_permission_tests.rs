@@ -27,8 +27,8 @@ impl TestHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("temp home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         // Own the store root and its mode before any writer can create it
         // first: the event store accepts only a 0700 root, and a directory that
         // another test's writer created with the default umask is refused as
@@ -53,8 +53,8 @@ impl TestHome {
 impl Drop for TestHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

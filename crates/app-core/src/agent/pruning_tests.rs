@@ -13,8 +13,8 @@ struct RestoreHome(Option<OsString>);
 impl Drop for RestoreHome {
     fn drop(&mut self) {
         match self.0.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }
@@ -22,8 +22,8 @@ impl Drop for RestoreHome {
 
 fn isolated_home() -> (tempfile::TempDir, RestoreHome) {
     let home = tempfile::tempdir().expect("tempdir");
-    let restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     let sessions = home.path().join("sessions");
     std::fs::create_dir_all(&sessions).expect("session store root");
     horon_agent_platform::fs::set_dir_permissions_owner_only(&sessions).expect("owner-only session store root");

@@ -78,7 +78,7 @@ impl SkillRegistry {
     /// commands from seeing a stale startup-only skill snapshot after reloads.
     ///
     /// Holds GLOBAL skills only (the user rows of [`sources::SOURCES`]:
-    /// `~/.horon-agent/skills/`, `~/.agents/skills/`, and another tool's
+    /// `~/.horon/skills/`, `~/.agents/skills/`, and another tool's
     /// collection once its switch is on). Project-local skills are a
     /// per-session overlay composed at read time from the session's workspace
     /// root (issue #457); they must never enter this shared registry, and the
@@ -125,7 +125,7 @@ impl SkillRegistry {
     }
 
     /// Load only the user-level rows of [`sources::SOURCES`]: horon-agent's own
-    /// `~/.horon-agent/skills/`, `~/.agents/skills/`, and the collections other
+    /// `~/.horon/skills/`, `~/.agents/skills/`, and the collections other
     /// tools own once their switch is on.
     ///
     /// This is what the process-wide shared registry holds. Project-local
@@ -139,7 +139,7 @@ impl SkillRegistry {
     }
 
     /// Load only the project-level rows of [`sources::SOURCES`] for a
-    /// workspace root: `./.horon-agent/skills/`, `./.claude/skills/`, and
+    /// workspace root: `./.horon/skills/`, `./.claude/skills/`, and
     /// `./.agents/skills/`.
     ///
     /// Served from a per-workspace cache that is revalidated with `stat` on
@@ -364,7 +364,7 @@ impl SkillRegistry {
         self.reload_global()
     }
 
-    /// Reload the shared global skill sources (plugins, `~/.horon-agent/skills/`,
+    /// Reload the shared global skill sources (plugins, `~/.horon/skills/`,
     /// `~/.agents/skills/`) into this registry.
     ///
     /// Project-local skills are intentionally NOT loaded here: they are a
@@ -419,7 +419,7 @@ pub const ENDORSED_SKILLS: &[EndorsedSkill] = &[
         name: "optimization",
         description: "Improve performance, latency, throughput, memory usage, or general efficiency by defining metrics, measuring, attributing bottlenecks, and prioritizing macro-optimizations.",
         category: "horon-agent",
-        source: "install into ~/.horon-agent/skills/optimization/SKILL.md",
+        source: "install into ~/.horon/skills/optimization/SKILL.md",
         install: None,
     },
     EndorsedSkill {
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn load_for_working_dir_reads_project_local_horon_agent_skills() {
         let temp = tempfile::tempdir().expect("tempdir");
-        write_test_skill(temp.path(), ".horon-agent", "wd-only");
+        write_test_skill(temp.path(), ".horon", "wd-only");
 
         let registry = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("load skills");
 
@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn project_overlay_is_session_scoped_and_composes_over_globals() {
         let temp = tempfile::tempdir().expect("tempdir");
-        write_test_skill(temp.path(), ".horon-agent", "session-skill");
+        write_test_skill(temp.path(), ".horon", "session-skill");
 
         // The overlay resolves against the given workspace root, not the
         // process cwd or a shared registry (issue #457).
@@ -906,7 +906,7 @@ mod tests {
         // chdir is process-global; serialize with other env-sensitive tests.
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        write_test_skill(temp.path(), ".horon-agent", "session-skill");
+        write_test_skill(temp.path(), ".horon", "session-skill");
 
         let prev_cwd = std::env::current_dir().expect("cwd");
         // reload_global must not pick up project-local skills even when the
@@ -1002,7 +1002,7 @@ mod tests {
     fn registry_contains_reports_loaded_skills() {
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        write_test_skill(temp.path(), ".horon-agent", "present-skill");
+        write_test_skill(temp.path(), ".horon", "present-skill");
 
         let registry = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("load skills");
         assert!(registry.contains("present-skill"));
@@ -1051,7 +1051,7 @@ mod tests {
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         for index in 0..5 {
-            write_request_skill(temp.path(), ".horon-agent", &format!("request-skill-{index}"), "Body.");
+            write_request_skill(temp.path(), ".horon", &format!("request-skill-{index}"), "Body.");
         }
 
         // Counted per test thread: the process-wide skill_dir_reads counter is
@@ -1096,8 +1096,8 @@ mod tests {
     fn skill_snapshot_budget_overlay_reads_fresh_between_requests() {
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        write_request_skill(temp.path(), ".horon-agent", "live-skill", "first body");
-        let skill_md = temp.path().join(".horon-agent/skills/live-skill/SKILL.md");
+        write_request_skill(temp.path(), ".horon", "live-skill", "first body");
+        let skill_md = temp.path().join(".horon/skills/live-skill/SKILL.md");
         let base = SkillRegistry::default();
 
         current_thread_runtime().block_on(async {
@@ -1171,7 +1171,7 @@ mod tests {
     fn skill_snapshot_budget_reload_sees_deleted_and_relinked_skills() {
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let skills_dir = temp.path().join(".horon-agent/skills");
+        let skills_dir = temp.path().join(".horon/skills");
         let target = temp.path().join("target-skill");
         std::fs::create_dir_all(&target).expect("target dir");
         std::fs::write(
@@ -1236,9 +1236,9 @@ mod tests {
     #[test]
     fn skill_snapshot_budget_thousand_skills_in_temp_home_keep_prompt_bounded_and_fresh() {
         let _env_guard = crate::storage::lock_test_env();
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let temp = tempfile::tempdir().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         std::fs::create_dir_all(temp.path().join("external")).expect("external dir");
         let skills_dir = temp.path().join("skills");
         for index in 0..1_000 {
@@ -1287,9 +1287,9 @@ mod tests {
             .to_string();
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
 
         assert_eq!(loaded, 1_000);

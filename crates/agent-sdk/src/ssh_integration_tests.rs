@@ -60,7 +60,7 @@ fn localhost_native_harness() {
     let help = Command::new(&binary)
         .env_clear()
         .env("HOME", &home)
-        .env("HORON_AGENT_HOME", &home)
+        .env("HORON_HOME", &home)
         .env("HORON_AGENT_RUNTIME_DIR", &runtime)
         .env("XDG_RUNTIME_DIR", &runtime)
         .current_dir(root)
@@ -80,7 +80,7 @@ fn localhost_native_harness() {
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", &home)
-        .env("HORON_AGENT_HOME", &home)
+        .env("HORON_HOME", &home)
         .env("XDG_RUNTIME_DIR", &runtime)
         .env("HORON_AGENT_RUNTIME_DIR", &runtime)
         .env("HORON_AGENT_SOCKET", &daemon_socket)
@@ -123,7 +123,7 @@ fn localhost_native_harness() {
         .port();
     let remote_script = root.join("remote.sh");
     std::fs::write(&remote_script, format!(
-        "export HOME={} HORON_AGENT_HOME={} XDG_RUNTIME_DIR={} HORON_AGENT_SOCKET={} HORON_AGENT_WAKE_MODE=external\nexport HORON_AGENT_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"\ncd \"$HOME\" || exit 1\nexec /bin/sh -c \"$SSH_ORIGINAL_COMMAND\"\n",
+        "export HOME={} HORON_HOME={} XDG_RUNTIME_DIR={} HORON_AGENT_SOCKET={} HORON_AGENT_WAKE_MODE=external\nexport HORON_AGENT_RUNTIME_DIR=\"$XDG_RUNTIME_DIR\"\ncd \"$HOME\" || exit 1\nexec /bin/sh -c \"$SSH_ORIGINAL_COMMAND\"\n",
         shell_quote(home.to_str().unwrap()), shell_quote(home.to_str().unwrap()),
         shell_quote(runtime.to_str().unwrap()), shell_quote(daemon_socket.to_str().unwrap()),
     )).unwrap();

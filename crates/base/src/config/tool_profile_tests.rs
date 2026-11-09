@@ -19,9 +19,9 @@ impl TestHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("temp home");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
         crate::env::remove_var("HORON_AGENT_TOOL_PROFILE");
         Config::invalidate_cache();
         Self {
@@ -46,8 +46,8 @@ impl Drop for TestHome {
             None => crate::env::remove_var("HORON_AGENT_TOOL_PROFILE"),
         }
         match self.previous_home.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         Config::invalidate_cache();
     }

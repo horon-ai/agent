@@ -382,7 +382,7 @@ impl RuleConfigFile {
 
 impl Drop for RuleConfigFile {
     fn drop(&mut self) {
-        if let Ok(dir) = std::env::var("HORON_AGENT_HOME") {
+        if let Ok(dir) = std::env::var("HORON_HOME") {
             let _ = std::fs::remove_file(std::path::Path::new(&dir).join("config.toml"));
         }
         crate::config::invalidate_config_cache();

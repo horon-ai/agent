@@ -429,7 +429,7 @@ async fn coordinator_identity_uses_live_agent_when_lock_is_available() {
 async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("temp home");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    crate::env::set_var("HORON_HOME", temp_home.path());
 
     let agent = test_agent_with_working_dir("coord_busy", "/tmp/coord").await;
 
@@ -456,15 +456,15 @@ async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() 
     assert_eq!(identity.provider_key.as_deref(), Some("claude-api"));
     assert_eq!(identity.route_api_method.as_deref(), Some("claude-api"));
 
-    crate::env::remove_var("HORON_AGENT_HOME");
+    crate::env::remove_var("HORON_HOME");
 }
 
 #[tokio::test]
 async fn session_agent_models_drive_spawn_selection() {
     let _env = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
     let agent = test_agent_with_working_dir("routing_busy", "/tmp/coord").await;
     let sessions = Arc::new(RwLock::new(HashMap::from([(
         "routing_busy".to_string(),
@@ -536,9 +536,9 @@ async fn session_agent_models_drive_spawn_selection() {
         Some("global-model")
     );
     if let Some(previous) = previous {
-        crate::env::set_var("HORON_AGENT_HOME", previous);
+        crate::env::set_var("HORON_HOME", previous);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -1003,8 +1003,8 @@ impl Provider for YieldScriptProvider {
 async fn schema_spawn_installs_yield_on_the_child_only() {
     let _env = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let (tx, rx) = mpsc::channel(64);
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1166,8 +1166,8 @@ async fn schema_spawn_installs_yield_on_the_child_only() {
     assert_eq!(projected.output, "a");
 
     if let Some(previous) = previous {
-        crate::env::set_var("HORON_AGENT_HOME", previous);
+        crate::env::set_var("HORON_HOME", previous);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }

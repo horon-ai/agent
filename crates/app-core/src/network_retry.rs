@@ -303,7 +303,7 @@ mod tests {
         assert!(classify_message("401 unauthorized").is_none());
     }
 
-    /// Real error strings harvested from ~/.horon-agent/logs. Every wifi-outage
+    /// Real error strings harvested from ~/.horon/logs. Every wifi-outage
     /// shape observed in the wild must classify as a network interruption so
     /// the wait-for-network path engages instead of failing the turn.
     #[test]

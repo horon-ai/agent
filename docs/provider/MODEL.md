@@ -1,25 +1,27 @@
-# 모델 호출
+# Model calls
 
-에이전트는 모델 요청을 OpenAI 호환 API의 `/chat/completions`로 직접 보낸다. 사이에 라우터 프로세스나 플러그인 계층이 없고, 모델을 위해 포트를 열지 않는다. 엔드포인트는 `config.toml`의 `[providers.<name>]`에 적고, `[provider] default_provider`나 `--provider-profile`로 고른다.
+Language: **English** | [한국어](MODEL.ko.md)
 
-## 모델 경로
+The agent sends model requests directly to an OpenAI-compatible API's `/chat/completions`. There is no router process or plugin layer in between, and no port is opened for the model. Endpoints are written under `[providers.<name>]` in `config.toml` and selected with `[provider] default_provider` or `--provider-profile`.
 
-모델 요청은 한 경로로만 나간다.
+## Model path
 
-1. `[provider] default_provider`가 시작 프로파일 이름을 고른다. `--provider-profile <name>`을 주면 그 실행에서만 `[providers.<name>]` 표를 고른다. 내장 프로파일 id는 `[provider] default_provider`나 `--provider <id>`로 고른다.
-2. 모델은 `--model <id>`, 프로파일의 `default_model`, `[provider] default_model` 가운데 정해진 값으로 고른다. 셋 다 없으면 호출이 오류로 끝난다.
-3. 요청 URL은 `base_url` 뒤에 `/chat/completions`를 붙여 만든다. `base_url`에는 `/v1` 같은 API 접두사까지 적는다.
-4. 도구 정의는 같은 요청 본문의 `tools`로 실린다. 별도 모델 서버가 도구를 중계하지 않는다.
+Model requests leave through a single path.
 
-프로파일을 정하지 않은 채 모델을 부르면 에이전트는 네트워크에 닿기 전에 멈추고, stderr에 `[providers.<name>]`에 `openai-compatible` 프로파일을 추가하라는 안내가 나온다.
+1. `[provider] default_provider` selects the startup profile name. Given `--provider-profile <name>`, that run selects the `[providers.<name>]` table instead. Built-in profile ids are selected with `[provider] default_provider` or `--provider <id>`.
+2. The model is chosen from `--model <id>`, the profile's `default_model`, and `[provider] default_model`, whichever is set. If none is set the call ends in an error.
+3. The request URL is `base_url` with `/chat/completions` appended. Write the API prefix such as `/v1` as part of `base_url`.
+4. Tool definitions travel as `tools` in the same request body. No separate model server relays the tools.
 
-## 명시적 프로바이더 접두사
+Calling a model with no profile selected makes the agent stop before it reaches the network, and stderr tells you to add an `openai-compatible` profile under `[providers.<name>]`.
 
-`--model`이나 `/model`에 `openai:`, `openai-api:`, `openai-oauth:` 접두사를 붙이면 내장 OpenAI 경로를 명시한 것으로 본다. 이 접두사는 모델 이름 추론과 활성 `[providers.<name>]` 프로파일보다 먼저 처리되므로, 접두사가 붙은 모델이 활성 호환 프로파일로 흘러가지 않는다 (`crates/base/src/provider/mod.rs` `set_model`, `crates/provider-core/src/selection.rs` `explicit_model_provider_prefix`). `openai-api:`와 `openai-oauth:`는 각각 API 키와 OAuth 자격 증명 모드까지 고정한다 (`crates/provider-core/src/auth_mode.rs` `parse_explicit_credential_prefix`).
+## Explicit provider prefixes
 
-이 빌드에는 내장 OpenAI 런타임이 없다. 그래서 `openai:gpt-5` 같은 지정은 요청을 보내기 전에 실패하고, 오류는 활성 프로파일 이름을 짚으면서 그 프로파일을 쓰려면 `<profile>:<model>`을 쓰라고 안내한다. 접두사가 없는 모델 이름은 지금 활성 프로파일에 남는다. 이 동작은 `explicit_openai_prefix_never_falls_through_to_active_profile` 테스트가 고정한다 (`crates/base/src/provider/tests.rs`).
+Adding the `openai:`, `openai-api:`, or `openai-oauth:` prefix to `--model` or `/model` is taken as naming the built-in OpenAI path explicitly. The prefix is handled before model-name inference and before the active `[providers.<name>]` profile, so a prefixed model never flows into an active compatible profile (`crates/base/src/provider/mod.rs` `set_model`, `crates/provider-core/src/selection.rs` `explicit_model_provider_prefix`). `openai-api:` and `openai-oauth:` also pin API-key and OAuth credential mode respectively (`crates/provider-core/src/auth_mode.rs` `parse_explicit_credential_prefix`).
 
-## 설정
+This build has no built-in OpenAI runtime. So a specification such as `openai:gpt-5` fails before sending a request, and the error names the active profile and says to use `<profile>:<model>` to use that profile. An unprefixed model name stays with the currently active profile. This behavior is pinned by the `explicit_openai_prefix_never_falls_through_to_active_profile` test (`crates/base/src/provider/tests.rs`).
+
+## Configuration
 
 ```toml
 [provider]
@@ -43,50 +45,50 @@ id = "my-vision-model"
 input = ["text", "image"]
 ```
 
-| 키 | 뜻 |
+| Key | Meaning |
 | --- | --- |
-| `type` | `"openai-compatible"`. 이 빌드의 모델 경로가 쓰는 값이다. |
-| `base_url` | 필수. API 접두사까지 포함한 주소다. `http://localhost`와 `http://127.0.0.1`도 받는다. |
-| `api_key_env` | 키가 든 환경 변수 이름이다. 프로세스 환경을 먼저 보고, 값이 없으면 `env_file`을 읽는다. |
-| `env_file` | 설정 디렉터리에 두는 키 파일 이름이다. `MY_GW_API_KEY=...`처럼 한 줄에 하나씩 적는다. |
-| `auth` | `bearer`(기본), `header`, `none` 가운데 하나다. `header`는 `auth_header`로 헤더 이름을 정하고, 비우면 `api-key`를 쓴다. |
-| `default_model` | 프로파일의 기본 모델 id다. |
-| `models` | `[[providers.<name>.models]]` 배열이다. `id`가 필수이고 `context_window`, `input`, `reasoning`, `reasoning_effort`를 곁들일 수 있다. |
-| `headers` | 모든 요청에 붙는 추가 HTTP 헤더다. |
-| `extra_body` | 요청 본문에 합칠 최상위 JSON 객체다. 백엔드 전용 필드(`chat_template_kwargs` 등)를 넣을 때 쓴다. |
-| `requires_api_key` | 키가 필요한지 명시한다. 로컬 엔드포인트처럼 키가 없으면 `false`로 둔다. |
-| `prompt_cache_key` | 요청 본문에 계보 고정 `prompt_cache_key`를 실을지 정한다. `true`는 항상 싣고, `false`는 싣지 않으며, 비우면 `api.openai.com`과 `openrouter.ai` 호스트에만 싣는다. 엄격한 스키마의 게이트웨이가 모르는 필드로 400을 내면 `false`로 둔다. |
+| `type` | `"openai-compatible"`. The value the model path in this build uses. |
+| `base_url` | Required. The address including the API prefix. `http://localhost` and `http://127.0.0.1` are accepted too. |
+| `api_key_env` | Name of the environment variable holding the key. It checks the process environment first and reads `env_file` when no value is there. |
+| `env_file` | Name of the key file kept in the config directory. Write one per line, such as `MY_GW_API_KEY=...`. |
+| `auth` | One of `bearer` (default), `header`, `none`. `header` takes the header name from `auth_header` and uses `api-key` when empty. |
+| `default_model` | The profile's default model id. |
+| `models` | The `[[providers.<name>.models]]` array. `id` is required, and `context_window`, `input`, `reasoning`, and `reasoning_effort` may accompany it. |
+| `headers` | Extra HTTP headers added to every request. |
+| `extra_body` | A top-level JSON object merged into the request body. Use it for backend-only fields such as `chat_template_kwargs`. |
+| `requires_api_key` | States whether a key is needed. Set it to `false` where there is no key, as with a local endpoint. |
+| `prompt_cache_key` | Decides whether a lineage-stable `prompt_cache_key` goes into the request body. `true` always sends it, `false` never does, and leaving it empty sends it only for `api.openai.com` and `openrouter.ai` hosts. Set it to `false` when a gateway with a strict schema returns 400 for the unknown field. |
 
-`default_model` 한 줄만으로도 호출은 된다. `models` 배열은 컨텍스트 크기와 입력 형식을 알려 모델 선택과 압축 계산을 돕는다.
+A single `default_model` line is enough to make calls. The `models` array tells the agent context size and input modalities, which helps model selection and compaction estimates.
 
-## 프롬프트 캐시 키
+## Prompt cache key
 
-`prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 24자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.
+A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 24 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.
 
-세션 id가 없는 호출에는 키를 싣지 않는다. `prompt_cache_key = true`는 호스트를 가리지 않고 싣지만, 모르는 필드를 거부하는 엔드포인트에는 `false`를 쓴다.
+Calls without a session id send no key. `prompt_cache_key = true` sends it regardless of host, but use `false` for an endpoint that rejects unknown fields.
 
-`api.openai.com` 호스트에는 `prompt_cache_retention`도 함께 실린다. 값은 `HORON_AGENT_OPENAI_PROMPT_CACHE_RETENTION`(`in_memory` 또는 `24h`)이 있으면 그것이고, 없으면 모델이 확장 보존을 지원할 때만 `24h`다. 기본 30분 보존을 쓰는 모델에는 필드를 싣지 않는다. 다른 호스트에는 이 필드를 싣지 않는다. `extra_body`는 두 필드보다 나중에 합쳐지므로 프로파일에서 값을 덮어쓸 수 있다.
+The `api.openai.com` host also carries `prompt_cache_retention`. Its value is `HORON_AGENT_OPENAI_PROMPT_CACHE_RETENTION` (`in_memory` or `24h`) when that is set, and otherwise `24h` only when the model supports extended retention. Models that use the default 30-minute retention get no field. Other hosts do not get this field. `extra_body` is merged after both fields, so a profile can override the values.
 
-## API 키와 파일 위치
+## API keys and file locations
 
-키는 다음 순서로 찾는다.
+Keys are looked up in this order.
 
-1. `api_key_env`가 가리키는 환경 변수.
-2. `env_file`이 가리키는 키 파일.
-3. 내장 프로파일이면 그 프로파일이 정한 환경 변수와 파일.
+1. The environment variable `api_key_env` points at.
+2. The key file `env_file` points at.
+3. For a built-in profile, the environment variable and file that profile defines.
 
-`env_file`과 `config.toml`은 서로 다른 디렉터리에 있다.
+`env_file` and `config.toml` live in different directories.
 
-| 파일 | 위치 |
+| File | Location |
 | --- | --- |
-| `config.toml` | `HORON_AGENT_HOME`이 있으면 `<홈>/config.toml`, 없으면 `~/.horon-agent/config.toml` |
-| 키 파일 | `HORON_AGENT_HOME`이 있으면 `<홈>/config/horon-agent/<env_file>`, 없으면 플랫폼 설정 디렉터리 아래 `horon-agent/<env_file>`(macOS는 `~/Library/Application Support/horon-agent/`, Linux는 `~/.config/horon-agent/`) |
+| `config.toml` | `<home>/config.toml` when `HORON_HOME` is set, otherwise `~/.horon/config.toml` |
+| Key file | `<home>/config/horon-agent/<env_file>` when `HORON_HOME` is set, otherwise `horon-agent/<env_file>` under the platform config directory (`~/Library/Application Support/horon-agent/` on macOS, `~/.config/horon-agent/` on Linux) |
 
-키 파일은 읽을 때 권한을 좁힌다. 키 값을 `config.toml`의 `api_key`에 직접 적을 수도 있지만, 파일이 그대로 복사되기 쉬우므로 `provider add --api-key-stdin`으로 키 파일에 저장하는 편을 권한다.
+Key files get narrowed permissions when read. You can also write the key value directly into `api_key` in `config.toml`, but because that file is easily copied around, storing the key in a key file with `provider add --api-key-stdin` is the better choice.
 
-## 프로파일 만들기
+## Creating a profile
 
-`provider add`가 같은 표를 `config.toml`에 쓰고, `--api-key-stdin`으로 받은 키를 키 파일에 저장한다.
+`provider add` writes the same table into `config.toml` and stores the key received on `--api-key-stdin` in the key file.
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
@@ -97,52 +99,52 @@ printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
   --set-default
 ```
 
-`--set-default`는 `[provider] default_provider = "my-gw"`와 `[provider] default_model`을 함께 쓴다. 기존 이름을 바꾸려면 `--overwrite`를 준다. 로컬 엔드포인트처럼 키가 필요 없으면 `--auth none`을 쓴다.
+`--set-default` writes `[provider] default_provider = "my-gw"` and `[provider] default_model` together. To change an existing name, pass `--overwrite`. For a local endpoint that needs no key, use `--auth none`.
 
-만든 프로파일은 다음처럼 바로 확인한다.
+Check the new profile right away like this.
 
 ```bash
 horon-agent --provider-profile my-gw --model my-model run "hello"
 horon-agent --provider-profile my-gw auth-test --prompt "Reply exactly OK"
 ```
 
-## 준비 상태 확인
+## Checking readiness
 
 ```bash
 horon-agent provider current --json
 ```
 
-출력 필드는 `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, 그리고 준비가 안 됐을 때의 `unavailable_reason`이다(`src/cli/commands/report_info.rs`). `ready`가 `true`면 지금 설정으로 `/chat/completions`를 부를 수 있다는 뜻이다.
+The output fields are `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, and `unavailable_reason` when it is not ready (`src/cli/commands/report_info.rs`). `ready` being `true` means the current configuration can call `/chat/completions`.
 
-## 오류 해결
+## Troubleshooting
 
-| 증상 | 원인과 조치 |
+| Symptom | Cause and fix |
 | --- | --- |
-| `Unknown provider profile '<name>'. Add [providers.<name>] to config.toml.` | `default_provider`나 `--provider-profile`이 가리키는 이름이 설정에 없다. 표 이름과 값을 맞춘다. |
-| `Provider profile '<name>' has invalid base_url ...` | `base_url`이 비었거나 `https://` 또는 `http://localhost` 형식이 아니다. 접두사까지 적는다. |
-| 키가 없다는 오류 | 오류에 채워야 할 환경 변수 이름이 나온다. 키 값은 오류에 나오지 않는다. 변수를 내보내거나 `env_file`에 적는다. |
-| 401 또는 403 | 키가 틀렸거나 `auth` 형식이 엔드포인트와 맞지 않는다. 대부분 `bearer`이고, `x-api-key` 계열은 `auth = "header"`와 `auth_header`를 쓴다. |
-| 404 | `base_url`에 `/v1` 같은 접두사가 빠졌을 수 있다. 에이전트는 `base_url` 뒤에 `/chat/completions`만 붙인다. |
-| 모델을 찾지 못함 | `--model`, 프로파일 `default_model`, `[provider] default_model` 가운데 엔드포인트가 모르는 id가 있다. `[[providers.<name>.models]]`의 `id`와 맞춘다. |
+| `Unknown provider profile '<name>'. Add [providers.<name>] to config.toml.` | The name `default_provider` or `--provider-profile` points at is not in the configuration. Match the table name and value. |
+| `Provider profile '<name>' has invalid base_url ...` | `base_url` is empty or is not in the `https://` or `http://localhost` form. Include the prefix. |
+| A missing-key error | The error names the environment variable to fill in. The key value never appears in the error. Export the variable or write it to `env_file`. |
+| 401 or 403 | The key is wrong or the `auth` style does not match the endpoint. It is usually `bearer`, and `x-api-key` style endpoints use `auth = "header"` with `auth_header`. |
+| 404 | `base_url` may be missing a prefix such as `/v1`. The agent appends only `/chat/completions` to `base_url`. |
+| Model not found | One of `--model`, the profile `default_model`, or `[provider] default_model` names an id the endpoint does not know. Match the `id` in `[[providers.<name>.models]]`. |
 
-## 내장 프로파일
+## Built-in profiles
 
-`crates/provider-metadata/src/catalog.rs`에 OpenAI 호환 프로파일 43개가 있다. `openrouter`, `zai`, `kimi`, `cerebras`, `ollama`, `lmstudio`, `nvidia-nim` 같은 id를 `[provider] default_provider`에 그대로 쓸 수 있고, `zai`, `kimi`, `cerebras`, `ollama`, `lmstudio`, `nvidia-nim`처럼 CLI 선택지가 있는 id는 `--provider <id>`로도 고를 수 있다. `openrouter`처럼 `--provider` 선택지가 없는 id는 `[provider] default_provider`로 쓴다. 각 프로파일은 자기 `base_url`, 키 환경 변수, 키 파일 이름을 정해 두고, 대부분은 기본 모델도 정해 둔다. 기본 모델이 없는 프로파일은 게이트웨이(`openrouter`, `orcarouter`, `conifer`, `chutes`), 로컬 런타임(`ollama`, `lmstudio`), 범용 `openai-compatible`, 그리고 `openai-api`·`anthropic-api`이며, 이때는 `--model`을 주거나 `[provider] default_model`을 적어야 한다. `[providers.<name>]` 표를 직접 만들었다면 그 표의 `default_model`이 같은 역할을 한다. `--provider-profile`은 `[providers.<name>]` 표를 고르는 플래그이므로 사용자가 정의한 이름에만 쓴다. 내장 프로파일과 같은 이름의 표를 두면 내장 프로파일이 먼저 잡히므로 다른 이름을 쓴다.
+`crates/provider-metadata/src/catalog.rs` holds 43 OpenAI-compatible profiles. Ids such as `openrouter`, `zai`, `kimi`, `cerebras`, `ollama`, `lmstudio`, and `nvidia-nim` can be used directly in `[provider] default_provider`, and any of those ids can also be selected with `--provider <id>`. Each profile defines its own `base_url`, key environment variable, and key file name, and most also define a default model. Profiles without a default model are the gateways (`openrouter`, `orcarouter`, `conifer`, `chutes`), the local runtimes (`ollama`, `lmstudio`), the generic `openai-compatible`, and `openai-api` and `anthropic-api`, and for those you have to pass `--model` or set `[provider] default_model`. If you created a `[providers.<name>]` table yourself, that table's `default_model` plays the same role. `--provider-profile` is the flag that selects a `[providers.<name>]` table, so use it only with names you defined. A table with the same name as a built-in profile loses to the built-in profile, so use a different name.
 
-## 컨텍스트 압축
+## Context compaction
 
-직접 프로바이더는 프로바이더 고유 압축 산출물을 만들지 않는다. 대신 horon-agent의 구조화 요약 압축이 같은 엔드포인트의 현재 모델에 요약을 요청하므로, 임계치 자동 압축과 수동 `/compact`가 모두 동작한다 (`crates/provider-openai/src/chat/mod.rs` `supports_compaction`, `crates/provider-openai/src/chat/tests.rs` `summary_compaction_is_available_for_the_chat_provider`). `[compaction] summary_model`(환경 변수 `HORON_AGENT_COMPACTION_SUMMARY_MODEL`)을 지정하면 세션 프로바이더를 fork해 그 모델로 요약하고, 그 호출이 실패하면 세션 모델로 한 번 다시 요청한다 (`crates/base/src/compaction/summary.rs`). `openai_auto`와 `openai_explicit` 같은 프로바이더 고유 전략은 이 직접 경로에 없다.
+A direct provider does not produce provider-specific compaction artifacts. Instead horon-agent's structured summary compaction asks the current model on the same endpoint for a summary, so both threshold auto-compaction and manual `/compact` work (`crates/provider-openai/src/chat/mod.rs` `supports_compaction`, `crates/provider-openai/src/chat/tests.rs` `summary_compaction_is_available_for_the_chat_provider`). Setting `[compaction] summary_model` (environment variable `HORON_AGENT_COMPACTION_SUMMARY_MODEL`) forks the session provider and summarizes with that model, and if that call fails it retries once with the session model (`crates/base/src/compaction/summary.rs`). Provider-specific strategies such as `openai_auto` and `openai_explicit` do not exist on this direct path.
 
-## 이전 릴리스 정리
+## Cleaning up previous releases
 
-예전 릴리스가 내려받던 네이티브 플러그인 번들 폴더 `~/.horon-agent/native-plugin-bundles/`는 이제 쓰지 않으므로 직접 지워도 된다.
+The native plugin bundle directory `~/.horon/native-plugin-bundles/` that earlier releases downloaded is no longer used, so you can delete it yourself.
 
-## 모델 사용 메타데이터
+## Model usage metadata
 
-공유 런타임은 `ModelRoute.usage`를 제공한다. 공개 API와 Rust SDK는
-`get_runtime_info()`와 푸시되는 `RuntimeInfo` 이벤트로 이를
-`ModelRouteInfo.usage: Option<ModelUsage>`로 노출한다. 기존 `list_models()` 반환
-타입은 바뀌지 않는다. TypeScript SDK는 같은 선택 필드 `usage`를 노출한다.
+The shared runtime provides `ModelRoute.usage`. The public API and the Rust SDK expose it as
+`ModelRouteInfo.usage: Option<ModelUsage>` through `get_runtime_info()` and the pushed
+`RuntimeInfo` event. The existing `list_models()` return type does not change. The
+TypeScript SDK exposes the same optional field, `usage`.
 
 ```json
 {
@@ -154,59 +156,55 @@ horon-agent provider current --json
 }
 ```
 
-### 단위와 적용 범위
+### Units and scope
 
-- `count`는 **이 라우트에서 저장된 어시스턴트 응답이 하나 이상 있는 추적된 에이전트
-  턴**을 센다. 턴은 저장된 입력 메시지에 고정된다. 도구 이어하기, 잘린 답변
-  이어하기, 재적재 이어하기는 라우트마다 한 번씩 센다. 세션 저널은 핸드오프와
-  재시작을 거쳐도 턴 정체성을 보존한다. 새 입력은 새 턴을 시작한다. 이후 요청이
-  실패하거나 취소되어도 앞서 저장된 응답은 사용으로 남는다. 이 값은 작업 성공을
-  재지 않는다.
-- `last_used_unix_secs`는 마지막으로 기록된 저장 응답 시각이다. 긴 턴이 진행되는
-  동안 count를 늘리지 않고 앞으로 나아갈 수 있다.
-- `tracking_started_unix_secs`는 이 로컬 원장의 적용 범위를 표시한다. 추적이
-  시작되기 전에는 값이 없다. count는 전체 기간의 과거 추정치가 아니다. count가
-  0이면 이 범위에 기록된 턴이 없다는 뜻이며 "한 번도 쓰지 않았다"는 뜻이 아니다.
-- `selection_count`와 `last_selected_unix_secs`는 headless 전환 이전 TUI가 남긴
-  `model_picker_usage.json`에서 온다. 이 값은 선택기 선택을 재며 모델 요청을
-  재지 않는다. effort 변형은 한 라우트 안에서 합산된다. 이 카운터는 따로 유지된다.
-- `usage`가 없으면 메타데이터를 알 수 없다는 뜻이며 구버전 서버도 여기에 해당한다.
-  이를 "한 번도 쓰지 않음"으로 표시하면 안 된다.
+- `count` counts **tracked agent turns with at least one stored assistant response on this route**. A turn is pinned
+  to a stored input message. Tool continuations, truncated-answer continuations, and reload continuations each count
+  once per route. The session journal preserves turn identity across handoffs and restarts. New input starts a new
+  turn. Even if a later request fails or is cancelled, the previously stored response stays counted as usage. This
+  value does not measure task success.
+- `last_used_unix_secs` is the time of the last recorded stored response. A long turn can move forward without
+  raising the count while it runs.
+- `tracking_started_unix_secs` marks the coverage of this local ledger. There is no value before tracking starts.
+  The count is not a retroactive estimate over the whole history. A count of 0 means no turns were recorded in this
+  scope, not that the model was never used.
+- `selection_count` and `last_selected_unix_secs` come from `model_picker_usage.json`, which the TUI left behind
+  before the headless transition. These values count picker selections, not model requests. Effort variants are
+  summed within one route. This counter is maintained separately.
+- No `usage` means the metadata is unknown, and older servers fall into that case too. It must not be displayed as
+  "never used".
 
-원장은 `HORON_AGENT_HOME`(보통 `~/.horon-agent`) 아래 `model-usage-v1.sqlite3`에
-저장된다. SQLite가 동시 쓰기를 직렬화한다. 기본 키는 영구 세션/입력 턴 ID와 라우트
-정체성을 합치므로 도구 이어하기가 반복되어도 count가 늘지 않는다. 읽기는 원장을
-만들거나 바꾸지 않는다. 런타임 기록은 스트리밍 경로와 블로킹 경로가 함께 쓰며,
-데스크톱, CLI, swarm 에이전트가 여기에 해당한다. 디버그 세션과 숨은 보조 모델
-호출은 세지 않는다. 하나로 확정할 수 없는 서빙 라우트는 추측하지 않는다. 모델
-폴백은 응답을 실제로 서빙한 모델에 귀속된다.
+The ledger is stored in `model-usage-v1.sqlite3` under `HORON_HOME` (usually `~/.horon`).
+SQLite serializes concurrent writes. The primary key combines the persistent session/input turn ID with the route
+identity, so repeated tool continuations do not raise the count. Reads neither create nor modify the ledger. Runtime
+recording is used by both the streaming and blocking paths, which covers the desktop, the CLI, and swarm agents.
+Debug sessions and hidden auxiliary model calls are not counted. A serving route that cannot be pinned down is not
+guessed. Model fallback is attributed to the model that actually served the response.
 
-오래된 세션은 정확히 채울 수 없다. 그 메시지는 토큰 수는 저장하지만 모델/라우트
-정체성은 저장하지 않고, 환경 스냅샷은 여덟 개만 보존한다. 세션의 최신 모델도 마지막
-수정 시각도 정확한 과거 요청 귀속을 제공하지 않는다. 선택기를 열 때 대화 기록을
-스캔하지 않는다.
+Old sessions cannot be filled in exactly. Their messages store token counts but not model/route
+identity, and only eight environment snapshots are kept. Neither the session's latest model nor its last
+modified time provides an exact attribution of past requests. Opening the picker does not
+scan the conversation.
 
-### 순위와 최신성
+### Ranking and recency
 
-`horon_agent_sdk::compare_model_usage`와 TypeScript `compareModelUsage`는 추적된 턴
-수, 마지막 사용 시각, 과거 선택 횟수, 마지막 선택 시각 순으로 사용량을 좋은 순서로
-비교한다. 검색 관련성과 명시적인 current/favorite 정책은 이 비교기보다 앞서고, 그
-뒤에 안정적인 모델/라우트 타이브레이커가 붙는다. headless 전환 이전 TUI도 같은 비교기를 썼고
-기존 current/favorite 정책을 그대로 두었다.
+`horon_agent_sdk::compare_model_usage` and the TypeScript `compareModelUsage` compare usage from best to worst by
+tracked turn count, last-used time, past selection count, and last-selected time, in that order. Search relevance and
+explicit current/favorite policy come before this comparator, and a stable model/route tiebreaker follows it.
+The TUI from before the headless transition used the same comparator and left the existing current/favorite policy
+in place.
 
-레거시 프로토콜 클라이언트는 `get_model_catalog.subscribe_usage_updates: true`로
-`model_usage_updated` 델타 이벤트를 옵트인한다. 이 플래그의 기본값은 false이므로
-새 enum 변형을 해독할 수 없는 구버전 클라이언트는 새 이벤트 종류를 받지 않는다.
-새 API 브리지가 옵트인한다. 각 델타는 라우트 하나를 실어 나르므로 전체 카탈로그를
-다시 만들지 않고 바쁜 Agent 잠금도 피한다. 브리지는 캐시한 카탈로그를 갱신하고
-`RuntimeInfo`를 발행한다. 단조 병합은 한 추적 에포크 안에서 늦은 스냅샷이나 다른
-세션의 이벤트가 count를 되돌리지 못하게 한다.
+Legacy protocol clients opt in to `model_usage_updated` delta events with
+`get_model_catalog.subscribe_usage_updates: true`. This flag defaults to false, so an older client that cannot decode
+the new enum variant does not receive the new event kind. The new API bridge opts in. Each delta carries one route,
+so it does not rebuild the whole catalog and avoids the busy Agent lock. The bridge updates its cached catalog and
+publishes `RuntimeInfo`. Monotonic merging keeps a late snapshot or another session's event from rolling the count
+back within one tracking epoch.
 
-### 배포
+### Deployment
 
-데스크톱 핫 리로드만으로는 데몬이 갱신되지 않는다. 먼저 격리된 소켓에서 런타임을
-빌드하고 검증한다. 검증한 소스 빌드를 발행한 뒤 안전한 유휴 시간에
-`horon-agent server promote <installed-version>`과 `horon-agent server reload --json`을
-쓴다. `server stop --force`를 쓰거나 kill 신호를 보내면 안 된다. 지원되는 재적재는
-세션을 체크포인트하지만 진행 중인 모델 생성에는 여전히 신호를 보낸다. 세션이
-처리 중이면 활성화를 미룬다.
+Desktop hot reload alone does not update the daemon. First build and verify the runtime on an isolated socket. After
+publishing the verified source build, run
+`horon-agent server promote <installed-version>` and `horon-agent server reload --json` during a safe idle period.
+Do not use `server stop --force` or send a kill signal. A supported reload checkpoints sessions but still signals
+in-progress model generation. If a session is processing, activation is deferred.

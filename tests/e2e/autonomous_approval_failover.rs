@@ -29,7 +29,7 @@ const TARGET_ROUTE: &str = "openai-api:gpt-5.4";
 // ---------------------------------------------------------------------------
 
 fn isolated_home() -> PathBuf {
-    PathBuf::from(std::env::var_os("HORON_AGENT_HOME").expect("setup_test_env sets HORON_AGENT_HOME"))
+    PathBuf::from(std::env::var_os("HORON_HOME").expect("setup_test_env sets HORON_HOME"))
 }
 
 fn write_config(body: &str) {
@@ -212,7 +212,7 @@ fn tool_calls_for(session_id: &str, tool_call_id: &str) -> (usize, usize) {
 
 /// The scenario owns its own runtime so the ambient runner loop it starts is
 /// aborted when the scenario ends. That loop never returns on its own, and a
-/// leaked one would read whichever `HORON_AGENT_HOME` a later test installed.
+/// leaked one would read whichever `HORON_HOME` a later test installed.
 fn on_dedicated_runtime<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T> + Send + 'static,
@@ -853,7 +853,7 @@ fn record_human_verdict(request_id: &str, verdict: &str) -> Result<()> {
             "--verdict",
             verdict,
         ])
-        .env("HORON_AGENT_HOME", isolated_home())
+        .env("HORON_HOME", isolated_home())
         .output()?;
     assert!(
         output.status.success(),

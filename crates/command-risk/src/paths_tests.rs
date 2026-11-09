@@ -8,7 +8,7 @@ use super::*;
 
 fn ctx() -> RiskContext {
     RiskContext {
-        scratch_dir: Some(PathBuf::from("/home/u/.horon-agent/scratch")),
+        scratch_dir: Some(PathBuf::from("/home/u/.horon/scratch")),
         working_dir: Some(PathBuf::from("/home/u/proj")),
         home_dir: Some(PathBuf::from("/home/u")),
     }
@@ -61,7 +61,7 @@ fn root_and_system_paths_are_catastrophic() {
 #[test]
 fn credential_stores_inside_home_are_catastrophic() {
     let ctx = ctx();
-    for sub in [".ssh", ".gnupg", ".aws", ".config", ".horon-agent"] {
+    for sub in [".ssh", ".gnupg", ".aws", ".config", ".horon"] {
         let expanded = expand(&format!("~/{sub}"), &ctx);
         assert!(is_catastrophic_target(&expanded, &ctx), "~/{sub}");
     }
@@ -153,7 +153,7 @@ fn unresolvable_targets_escalate_rather_than_pass() {
 fn missing_home_context_does_not_panic_or_misfire() {
     // On an exotic host HOME may be unset; the system-path tier must still work.
     let ctx = RiskContext {
-        scratch_dir: Some(PathBuf::from("/home/u/.horon-agent/scratch")),
+        scratch_dir: Some(PathBuf::from("/home/u/.horon/scratch")),
         working_dir: Some(PathBuf::from("/srv/app")),
         home_dir: None,
     };
@@ -196,7 +196,7 @@ fn ordinary_config_files_remain_editable() {
     let ctx = ctx();
     for path in [
         "/home/u/.config/app/settings.toml",
-        "/home/u/.horon-agent/sessions/old.json",
+        "/home/u/.horon/sessions/old.json",
         "/home/u/Documents/notes/draft.md",
     ] {
         assert!(
@@ -205,7 +205,7 @@ fn ordinary_config_files_remain_editable() {
         );
     }
     // ...while the roots themselves stay protected.
-    for path in ["/home/u/.config", "/home/u/.horon-agent", "/home/u/Documents"] {
+    for path in ["/home/u/.config", "/home/u/.horon", "/home/u/Documents"] {
         assert!(is_catastrophic_target(Path::new(path), &ctx), "{path}");
     }
 }
@@ -214,7 +214,7 @@ fn ordinary_config_files_remain_editable() {
 fn known_variable_logs_are_bounded_but_unknown_expansions_still_confirm() {
     let ctx = ctx();
     for raw in [
-        "$HOME/.horon-agent/scratch/tests.log",
+        "$HOME/.horon/scratch/tests.log",
         "${HOME}/proj/tests.log",
         "$HORON_AGENT_SCRATCH_DIR/tests.log",
         "${HORON_AGENT_SCRATCH_DIR}/backup.patch",

@@ -613,7 +613,7 @@ pub struct Instance {
 /// The environment one isolated instance's daemon and CLI children run with.
 pub fn instance_env(root: &Path, home: &Path, runtime: &Path, profile: Option<&str>) -> Vec<(String, String)> {
     let mut env = vec![
-        ("HORON_AGENT_HOME".to_string(), home.display().to_string()),
+        ("HORON_HOME".to_string(), home.display().to_string()),
         ("HORON_AGENT_RUNTIME_DIR".to_string(), runtime.display().to_string()),
         ("HOME".to_string(), root.display().to_string()),
         ("XDG_CONFIG_HOME".to_string(), root.join("config").display().to_string()),

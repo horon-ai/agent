@@ -146,9 +146,9 @@ done <<< "$ldd_output"
   || fail "horon-agent --version failed"
 
 export HOME=/tmp/bare-home
-export HORON_AGENT_HOME="$HOME/.horon-agent"
-mkdir -p "$HORON_AGENT_HOME"
-cat > "$HORON_AGENT_HOME/config.toml" <<'CONFIG'
+export HORON_HOME="$HOME/.horon"
+mkdir -p "$HORON_HOME"
+cat > "$HORON_HOME/config.toml" <<'CONFIG'
 [provider]
 default_provider = "mock"
 

@@ -35,12 +35,7 @@ fn unchanged_requests_read_no_skill_files() {
     let _guard = cold_cache();
     let workspace = tempfile::tempdir().expect("tempdir");
     for index in 0..50 {
-        write_skill(
-            workspace.path(),
-            ".horon-agent",
-            &format!("skill-{index:02}"),
-            "Unchanged.",
-        );
+        write_skill(workspace.path(), ".horon", &format!("skill-{index:02}"), "Unchanged.");
     }
 
     let warmup_before = test_support::file_reads();
@@ -81,12 +76,12 @@ fn unchanged_requests_read_no_skill_files() {
 fn edit_add_delete_relink_visible_next_request() {
     let _guard = cold_cache();
     let workspace = tempfile::tempdir().expect("tempdir");
-    write_skill(workspace.path(), ".horon-agent", "alpha", "First alpha.");
-    write_skill(workspace.path(), ".horon-agent", "beta", "Steady beta.");
+    write_skill(workspace.path(), ".horon", "alpha", "First alpha.");
+    write_skill(workspace.path(), ".horon", "beta", "Steady beta.");
     let first = overlay_cache::overlay(Some(workspace.path()));
     assert_eq!(description(&first, "alpha").as_deref(), Some("First alpha."));
 
-    write_skill(workspace.path(), ".horon-agent", "alpha", "Edited alpha.");
+    write_skill(workspace.path(), ".horon", "alpha", "Edited alpha.");
     let edited = overlay_cache::overlay(Some(workspace.path()));
     assert_eq!(description(&edited, "alpha").as_deref(), Some("Edited alpha."));
     // The untouched skill is taken from the previous build, not read again: its
@@ -101,11 +96,11 @@ fn edit_add_delete_relink_visible_next_request() {
         "the edited SKILL.md is read again"
     );
 
-    write_skill(workspace.path(), ".horon-agent", "gamma", "New gamma.");
+    write_skill(workspace.path(), ".horon", "gamma", "New gamma.");
     let added = overlay_cache::overlay(Some(workspace.path()));
     assert_eq!(description(&added, "gamma").as_deref(), Some("New gamma."));
 
-    std::fs::remove_dir_all(workspace.path().join(".horon-agent/skills/beta")).expect("delete beta");
+    std::fs::remove_dir_all(workspace.path().join(".horon/skills/beta")).expect("delete beta");
     let deleted = overlay_cache::overlay(Some(workspace.path()));
     assert!(
         deleted.get("beta").is_none(),
@@ -149,8 +144,8 @@ fn skill_md_created_in_an_existing_directory_is_seen() {
 fn same_size_restored_mtime_edit_detected() {
     let _guard = cold_cache();
     let workspace = tempfile::tempdir().expect("tempdir");
-    write_skill(workspace.path(), ".horon-agent", "steady", "aaaa");
-    let skill_md = workspace.path().join(".horon-agent/skills/steady/SKILL.md");
+    write_skill(workspace.path(), ".horon", "steady", "aaaa");
+    let skill_md = workspace.path().join(".horon/skills/steady/SKILL.md");
     let first = overlay_cache::overlay(Some(workspace.path()));
     assert_eq!(description(&first, "steady").as_deref(), Some("aaaa"));
 
@@ -158,7 +153,7 @@ fn same_size_restored_mtime_edit_detected() {
         .expect("metadata")
         .modified()
         .expect("mtime");
-    write_skill(workspace.path(), ".horon-agent", "steady", "bbbb");
+    write_skill(workspace.path(), ".horon", "steady", "bbbb");
     std::fs::File::options()
         .write(true)
         .open(&skill_md)
@@ -188,7 +183,7 @@ fn same_size_same_mtime_relink_detected() {
         )
         .expect("write target");
     }
-    let skills = workspace.path().join(".horon-agent/skills");
+    let skills = workspace.path().join(".horon/skills");
     std::fs::create_dir_all(&skills).expect("skills dir");
     let link = skills.join("linked");
     std::os::unix::fs::symlink(targets.path().join("one"), &link).expect("link");
@@ -206,15 +201,10 @@ fn concurrent_revalidation_is_consistent() {
     let _guard = cold_cache();
     let workspace = tempfile::tempdir().expect("tempdir");
     for index in 0..20 {
-        write_skill(
-            workspace.path(),
-            ".horon-agent",
-            &format!("shared-{index:02}"),
-            "Shared.",
-        );
+        write_skill(workspace.path(), ".horon", &format!("shared-{index:02}"), "Shared.");
     }
     overlay_cache::overlay(Some(workspace.path()));
-    write_skill(workspace.path(), ".horon-agent", "shared-00", "Changed under readers.");
+    write_skill(workspace.path(), ".horon", "shared-00", "Changed under readers.");
 
     let path = workspace.path();
     let listings: Vec<Vec<(String, String)>> = std::thread::scope(|scope| {
@@ -260,7 +250,7 @@ fn cache_is_bounded() {
 fn forget_rescans_the_workspace() {
     let _guard = cold_cache();
     let workspace = tempfile::tempdir().expect("tempdir");
-    write_skill(workspace.path(), ".horon-agent", "kept", "Kept.");
+    write_skill(workspace.path(), ".horon", "kept", "Kept.");
     let first = overlay_cache::overlay(Some(workspace.path()));
     overlay_cache::forget(Some(workspace.path()));
     let second = overlay_cache::overlay(Some(workspace.path()));
@@ -273,7 +263,7 @@ fn structural_unchanged_request() {
     let _guard = cold_cache();
     let workspace = tempfile::tempdir().expect("tempdir");
     for index in 0..50 {
-        write_skill(workspace.path(), ".horon-agent", &format!("gate-{index:02}"), "Gated.");
+        write_skill(workspace.path(), ".horon", &format!("gate-{index:02}"), "Gated.");
     }
 
     // Process-wide counters: the gate runs this test alone with

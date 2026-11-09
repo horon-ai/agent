@@ -524,14 +524,14 @@ mod tests {
     impl OfflineEnv {
         fn new(home: &std::path::Path) -> Self {
             let keys = [
-                "HORON_AGENT_HOME",
+                "HORON_HOME",
                 "OPENROUTER_API_KEY",
                 "TYPESAFE_API_KEY",
                 "AIMLAPI_API_KEY",
                 "HORON_AGENT_MEMORY_JEV_PROVIDER",
             ];
             let previous = keys.into_iter().map(|key| (key, std::env::var_os(key))).collect();
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
             for key in &keys[1..] {
                 crate::env::remove_var(key);
             }
@@ -690,8 +690,8 @@ mod tests {
         let _guard = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("home");
         let project = tempfile::tempdir().expect("project");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
 
         let tool = MemoryTool::new();
         let remember = tool
@@ -721,9 +721,9 @@ mod tests {
         );
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -744,8 +744,8 @@ mod tests {
         let _guard = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("home");
         let project = tempfile::tempdir().expect("project");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
 
         // The session that spawns a worker records something project-scoped.
         let spawner = MemoryTool::new();
@@ -794,9 +794,9 @@ mod tests {
         );
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }

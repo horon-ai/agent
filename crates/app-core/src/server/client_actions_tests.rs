@@ -103,8 +103,8 @@ impl Provider for StreamingMockProvider {
 fn clone_split_session_uses_persisted_session_state() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let mut parent = crate::session::Session::create_with_id("session_parent_split_test".to_string(), None, None);
     parent.working_dir = Some("/tmp/horon-agent-split-test".to_string());
@@ -171,9 +171,9 @@ fn clone_split_session_uses_persisted_session_state() {
     assert_ne!(child.id, parent.id);
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -189,8 +189,8 @@ impl SplitTestHome {
         // directory that is not owner-private; create it at 0700 so a load of a
         // never-saved session reports NotFound instead of an unusable root.
         crate::storage::create_store_dir(&directory.path().join("sessions"), false).expect("create sessions dir");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", directory.path());
+        let previous_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", directory.path());
         Self {
             _directory: directory,
             previous_home,
@@ -201,9 +201,9 @@ impl SplitTestHome {
 impl Drop for SplitTestHome {
     fn drop(&mut self) {
         if let Some(home) = &self.previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -509,8 +509,8 @@ async fn enabling_swarm_does_not_auto_elect_coordinator() {
 async fn rename_session_event_uses_agent_session_id_even_when_client_id_is_stale() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider.clone()).await;
@@ -583,9 +583,9 @@ async fn rename_session_event_uses_agent_session_id_even_when_client_id_is_stale
     assert_eq!(loaded.custom_title.as_deref(), Some("Release planning"));
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -840,8 +840,8 @@ fn live_member(session_id: &str) -> (SwarmMember, mpsc::UnboundedReceiver<Server
 async fn resume_all_continues_interrupted_idle_live_session() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let provider = Arc::new(StreamingMockProvider::default());
     provider.queue_response(vec![
@@ -926,9 +926,9 @@ async fn resume_all_continues_interrupted_idle_live_session() {
     }
 
     if let Some(home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", home);
+        crate::env::set_var("HORON_HOME", home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -936,8 +936,8 @@ async fn resume_all_continues_interrupted_idle_live_session() {
 async fn resume_all_skips_session_with_completed_turn() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider.clone()).await;
@@ -1006,9 +1006,9 @@ async fn resume_all_skips_session_with_completed_turn() {
     }
 
     if let Some(home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", home);
+        crate::env::set_var("HORON_HOME", home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -1017,8 +1017,8 @@ async fn resume_all_skips_session_with_completed_turn() {
 async fn daemon_saved_flag_survives_later_session_writes() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider.clone()).await;
@@ -1047,8 +1047,8 @@ async fn daemon_saved_flag_survives_later_session_writes() {
     assert!(loaded.save_label.is_none());
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }

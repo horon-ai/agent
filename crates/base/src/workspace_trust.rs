@@ -5,7 +5,7 @@
 //! so an edited file asks again instead of inheriting an earlier decision. Decisions are
 //! recorded in `<agent dir>/workspace-trust.json`; nothing is written into the workspace.
 //!
-//! Only the workspace files are gated. User-level configuration (`~/.horon-agent/mcp.json`,
+//! Only the workspace files are gated. User-level configuration (`~/.horon/mcp.json`,
 //! `~/.claude.json`, `~/.claude/mcp.json`) and native plugin selections stay outside this
 //! module: they are the user's own configuration, not a repository's.
 
@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Project-local files whose contents the agent will execute when they name MCP servers.
-pub const PROJECT_CONFIG_SURFACES: [&str; 3] = [".horon-agent/mcp.json", ".mcp.json", ".claude/mcp.json"];
+pub const PROJECT_CONFIG_SURFACES: [&str; 3] = [".horon/mcp.json", ".mcp.json", ".claude/mcp.json"];
 
 /// File under the agent directory that records workspace decisions.
 pub const TRUST_FILE_NAME: &str = "workspace-trust.json";
@@ -520,11 +520,11 @@ mod tests {
         fn install(home: &Path) -> Self {
             let guard = crate::storage::lock_test_env();
             let saved = Self {
-                home: std::env::var_os("HORON_AGENT_HOME"),
+                home: std::env::var_os("HORON_HOME"),
                 trust: std::env::var_os(TRUST_ENV),
                 _lock: guard,
             };
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
             crate::env::remove_var(TRUST_ENV);
             set_cli_trust_workspace(false);
             set_trust_file_for_tests(home.join(TRUST_FILE_NAME));
@@ -536,8 +536,8 @@ mod tests {
         fn drop(&mut self) {
             set_cli_trust_workspace(false);
             match &self.home {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             match &self.trust {
                 Some(value) => crate::env::set_var(TRUST_ENV, value),

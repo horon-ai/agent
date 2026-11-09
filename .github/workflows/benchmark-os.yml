@@ -50,6 +50,11 @@ permissions:
   contents: read
 
 env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   HORON_AGENT_CI: "1"
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
@@ -70,7 +75,7 @@ jobs:
       has_compile: ${{ steps.sel.outputs.compile_has_jobs }}
       units: ${{ steps.sel.outputs.units }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           sparse-checkout: scripts/perf
@@ -114,7 +119,7 @@ jobs:
       CARGO_PROFILE_RELEASE_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Empty for a dispatch, so the dispatched ref's commit is measured.
           ref: ${{ inputs.ref }}
@@ -155,9 +160,11 @@ jobs:
           Write-Output "MSVC linker: $link"
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: benchmark-${{ runner.os }}
           # Save the dependency build even when a later step fails, so a rerun
@@ -176,7 +183,7 @@ jobs:
         # cache key. A before/after pair has to be measured on one machine in
         # one job, so the second tree appears only once that key is settled.
         if: ${{ inputs.baseline_ref != '' && steps.sel.outputs.compare == 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.baseline_ref }}
           path: .bench-baseline
@@ -193,7 +200,7 @@ jobs:
           git status --porcelain
           test -z "$(git status --porcelain)"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         # The baseline tree gets its own cache entry and its own target
         # directory. Adding it as a second workspace to the step above would
         # fold its Cargo.lock into one key, so every baseline bump would
@@ -253,7 +260,7 @@ jobs:
           git rev-parse HEAD > "$RESULTS/commit.txt"
           "./target/release/horon-agent$exe" --version | tee "$RESULTS/horon-version.txt"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: bench-bin-${{ inputs.os }}-${{ github.run_id }}
           path: bench-bin.tar
@@ -266,7 +273,7 @@ jobs:
           mkdir -p "$RESULTS"
           echo "${{ job.status }}" > "$RESULTS/status.txt"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:
           name: bench-part-${{ inputs.os }}-build-${{ github.run_id }}
@@ -295,15 +302,15 @@ jobs:
       TURNS: ${{ inputs.turns }}
       ONESHOT_RUNS: ${{ inputs.oneshot_runs }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: bench-bin-${{ inputs.os }}-${{ github.run_id }}
           path: bench-bin-download
@@ -368,12 +375,12 @@ jobs:
             echo "::warning::bwrap still cannot create its sandbox; the Codex skill row will show the error"
           fi
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: ${{ matrix.unit == 'compare' }}
         with:
           node-version: "24"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         # omp's npm CLI is a Bun script and declares engines bun>=1.4.4; omo
         # prefers Bun when it is present. Both are optional competitors, so a
         # missing Bun only removes them (installer records a reason), but the
@@ -466,7 +473,7 @@ jobs:
           mkdir -p "$RESULTS"
           echo "${{ job.status }}" > "$RESULTS/status.txt"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:
           name: bench-part-${{ inputs.os }}-${{ matrix.unit }}-${{ github.run_id }}
@@ -487,7 +494,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -498,7 +505,7 @@ jobs:
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
@@ -516,9 +523,11 @@ jobs:
           Write-Output "MSVC linker: $link"
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$link" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # Separate from the build job's key: this job builds the dev profile
           # for `cargo check`, the build job the release profile.
@@ -544,7 +553,7 @@ jobs:
           mkdir -p "$RESULTS"
           echo "${{ job.status }}" > "$RESULTS/status.txt"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:
           name: bench-part-${{ inputs.os }}-compile-${{ github.run_id }}
@@ -565,12 +574,12 @@ jobs:
     env:
       SUITES: ${{ inputs.suites }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           sparse-checkout: scripts/perf
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         # A part that never uploaded is reported as missing by bench_merge.py,
         # so an empty match must not end the job before the merge runs.
         continue-on-error: true
@@ -608,7 +617,7 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: benchmark-${{ inputs.os }}-${{ github.run_id }}
           path: bench-results/

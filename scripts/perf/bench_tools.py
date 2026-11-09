@@ -283,15 +283,15 @@ def summarize_case(
 
 
 def start_daemon(binary: str, root: Path, repo: Path, log_path: Path) -> tuple[subprocess.Popen, dict]:
-    # isolated_home_env points HOME, HORON_AGENT_HOME, HORON_AGENT_RUNTIME_DIR and
+    # isolated_home_env points HOME, HORON_HOME, HORON_AGENT_RUNTIME_DIR and
     # every XDG dir at the throwaway root, so nothing reads or writes the user's
-    # real ~/.horon-agent. It creates the dirs with the process umask, and the
+    # real ~/.horon. It creates the dirs with the process umask, and the
     # session store refuses anything that is not exactly owner-private.
     env = common.isolated_home_env(str(root), "HORON_AGENT")
     env["HORON_AGENT_DEBUG_CONTROL"] = "1"
-    for key in ("HORON_AGENT_HOME", "HORON_AGENT_RUNTIME_DIR"):
+    for key in ("HORON_HOME", "HORON_AGENT_RUNTIME_DIR"):
         private_dir(Path(env[key]))
-    private_dir(Path(env["HORON_AGENT_HOME"]) / "sessions")
+    private_dir(Path(env["HORON_HOME"]) / "sessions")
     socket_path = os.path.join(env["HORON_AGENT_RUNTIME_DIR"], "horon-agent.sock")
     log = open(log_path, "w", encoding="utf-8")
     process = subprocess.Popen(

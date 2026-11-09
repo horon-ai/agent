@@ -89,13 +89,13 @@ mod tests {
     fn with_temp_home(f: impl FnOnce(&std::path::Path)) {
         let _lock = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().unwrap();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(temp.path())));
         if let Some(previous) = previous {
-            crate::env::set_var("HORON_AGENT_HOME", previous);
+            crate::env::set_var("HORON_HOME", previous);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
@@ -163,8 +163,8 @@ mod tests {
     fn session_agent_models_isolate_clear_inherit_and_resume() {
         let _lock = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().unwrap();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         let mut first = Session::create_with_id("first".into(), None, None);
         let mut second = Session::create_with_id("second".into(), None, None);
         first.save_prepared().unwrap();
@@ -229,9 +229,9 @@ mod tests {
         assert_eq!(std::fs::read(&config_path).unwrap(), before);
         assert!(first.set_agent_model_override("invalid", Some("model".into())).is_err());
         if let Some(previous) = previous {
-            crate::env::set_var("HORON_AGENT_HOME", previous);
+            crate::env::set_var("HORON_HOME", previous);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }

@@ -80,8 +80,8 @@ if [ "${1:-}" = "install-release" ]; then
   done
   [ "${CLI_FAIL:-0}" != "1" ] || exit 1
   install_dir="${HORON_AGENT_INSTALL_DIR:?}"
-  mkdir -p "$HORON_AGENT_HOME/builds/versions/1.2.3" "$install_dir"
-  printf "%s\n" "1.2.3" > "$HORON_AGENT_HOME/builds/current-version"
+  mkdir -p "$HORON_HOME/builds/versions/1.2.3" "$install_dir"
+  printf "%s\n" "1.2.3" > "$HORON_HOME/builds/current-version"
   cp "$0" "$install_dir/horon-agent"
   chmod +x "$install_dir/horon-agent"
   exit 0
@@ -122,7 +122,7 @@ cli_arg_log="$tmp/cli-args.log"
 run_install() {
   PATH="$tmp/bin:$PATH" \
     HOME="$tmp/home" \
-    HORON_AGENT_HOME="$tmp/home/.horon-agent" \
+    HORON_HOME="$tmp/home/.horon" \
     HORON_AGENT_INSTALL_DIR="$tmp/install" \
     ASSET_SOURCE_DIR="$assets" \
     CLI_ARG_LOG="$cli_arg_log" \
@@ -134,7 +134,7 @@ run_install() {
 
 PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home" \
-  HORON_AGENT_HOME="$tmp/home/.horon-agent" \
+  HORON_HOME="$tmp/home/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install" \
   ASSET_SOURCE_DIR="$assets" \
   CLI_ARG_LOG="$cli_arg_log" \
@@ -144,7 +144,7 @@ PATH="$tmp/bin:$PATH" \
   bash "$repo_dir/scripts/install/install.sh" >/dev/null
 
 test ! -e "$desktop_setup_log"
-test "$(cat "$tmp/home/.horon-agent/builds/current-version")" = "1.2.3"
+test "$(cat "$tmp/home/.horon/builds/current-version")" = "1.2.3"
 
 # The installer hands the executable a local asset directory holding exactly the
 # same release, and never asks the executable to download anything itself.
@@ -173,7 +173,7 @@ mkdir -p "$tmp/home-checksumless/builds" "$tmp/install-checksumless"
 printf '%s\n' 'prior-version' > "$tmp/home-checksumless/builds/current-version"
 if PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-checksumless" \
-  HORON_AGENT_HOME="$tmp/home-checksumless/.horon-agent" \
+  HORON_HOME="$tmp/home-checksumless/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-checksumless" \
   ASSET_SOURCE_DIR="$missing_assets" \
   CLI_ARG_LOG="$tmp/cli-args-checksumless.log" \
@@ -190,7 +190,7 @@ test ! -e "$tmp/install-checksumless/horon-agent"
 # A corrupted asset fails verification before the executable is run.
 if PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-corrupt" \
-  HORON_AGENT_HOME="$tmp/home-corrupt/.horon-agent" \
+  HORON_HOME="$tmp/home-corrupt/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-corrupt" \
   ASSET_SOURCE_DIR="$assets" \
   CORRUPT_ASSET=horon-agent-linux-x86_64.tar.gz \
@@ -209,7 +209,7 @@ printf '%s\n' 'prior-version' > "$tmp/home-failed/builds/current-version"
 printf '%s\n' 'prior launcher' > "$tmp/install-failed/horon-agent"
 if PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-failed" \
-  HORON_AGENT_HOME="$tmp/home-failed/.horon-agent" \
+  HORON_HOME="$tmp/home-failed/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-failed" \
   ASSET_SOURCE_DIR="$assets" \
   CLI_FAIL=1 \
@@ -226,7 +226,7 @@ test "$(cat "$tmp/install-failed/horon-agent")" = 'prior launcher'
 # A release lookup failure fails the install.
 if PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-lookup" \
-  HORON_AGENT_HOME="$tmp/home-lookup/.horon-agent" \
+  HORON_HOME="$tmp/home-lookup/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-lookup" \
   ASSET_SOURCE_DIR="$assets" \
   FAIL_RELEASE=1 \
@@ -245,7 +245,7 @@ windows_url_log="$tmp/windows-arm64-urls.log"
 PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-windows" \
   LOCALAPPDATA="$tmp/localappdata-windows" \
-  HORON_AGENT_HOME="$tmp/home-windows/.horon-agent" \
+  HORON_HOME="$tmp/home-windows/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-windows" \
   ASSET_SOURCE_DIR="$windows_assets" \
   CLI_ARG_LOG="$tmp/cli-args-windows.log" \
@@ -264,7 +264,7 @@ build_assets "$freebsd_assets" horon-agent-freebsd-x86_64
 freebsd_url_log="$tmp/freebsd-urls.log"
 PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-freebsd" \
-  HORON_AGENT_HOME="$tmp/home-freebsd/.horon-agent" \
+  HORON_HOME="$tmp/home-freebsd/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-freebsd" \
   ASSET_SOURCE_DIR="$freebsd_assets" \
   CLI_ARG_LOG="$tmp/cli-args-freebsd.log" \
@@ -274,7 +274,7 @@ PATH="$tmp/bin:$PATH" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
   bash "$repo_dir/scripts/install/install.sh" >/dev/null
 grep -q '/horon-agent-freebsd-x86_64.tar.gz$' "$freebsd_url_log"
-test "$(cat "$tmp/home-freebsd/.horon-agent/builds/current-version")" = "1.2.3"
+test "$(cat "$tmp/home-freebsd/.horon/builds/current-version")" = "1.2.3"
 
 # An archive carrying a member the installer does not expect is refused instead
 # of being unpacked wholesale.
@@ -293,7 +293,7 @@ tar -czf "$odd_assets/horon-agent-linux-x86_64.tar.gz" -C "$odd_assets/stage" ho
 rm -rf "$odd_assets/stage" "$odd_assets/stage-extra" "$odd_assets/agent.tar.gz"
 if PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-odd" \
-  HORON_AGENT_HOME="$tmp/home-odd/.horon-agent" \
+  HORON_HOME="$tmp/home-odd/.horon" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-odd" \
   ASSET_SOURCE_DIR="$odd_assets" \
   CLI_ARG_LOG="$tmp/cli-args-odd.log" \

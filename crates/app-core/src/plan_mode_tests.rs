@@ -89,8 +89,8 @@ struct IsolatedHome {
 impl IsolatedHome {
     fn new() -> Self {
         let home = tempfile::tempdir().expect("isolated agent home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::Config::invalidate_cache();
         Self { _home: home, previous }
     }
@@ -99,8 +99,8 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match &self.previous {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

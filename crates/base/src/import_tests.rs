@@ -89,7 +89,7 @@ fn test_convert_blocks_content() {
 fn imported_tool_history_is_provider_neutral() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let transcript = temp.path().join("tool-history.jsonl");
     std::fs::write(
         &transcript,
@@ -165,7 +165,7 @@ fn imported_history_is_bounded_for_fast_initial_render() {
 fn repeated_external_resume_reuses_the_imported_snapshot() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let transcript = temp.path().join("cached.jsonl");
     std::fs::write(
         &transcript,
@@ -236,7 +236,7 @@ fn ordinary_resume_never_stops_a_live_claude_process() {
 
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let external = temp.path().join("external/.claude");
     let transcript = external.join("projects/demo/ordinary-live.jsonl");
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
@@ -272,7 +272,7 @@ fn explicit_takeover_preserves_history_and_stops_only_matching_process() {
 
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let external = temp.path().join("external/.claude");
     let transcript = external.join("projects/demo/takeover-live.jsonl");
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
@@ -332,7 +332,7 @@ fn takeover_with_no_complete_messages_leaves_claude_running() {
 
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let external = temp.path().join("external/.claude");
     let transcript = external.join("projects/demo/incomplete-live.jsonl");
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
@@ -369,7 +369,7 @@ fn takeover_rejects_a_transcript_from_a_different_live_session() {
 
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let external = temp.path().join("external/.claude");
     let transcript = external.join("projects/demo/wrong-session.jsonl");
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
@@ -403,7 +403,7 @@ fn takeover_timeout_preserves_the_staged_horon_agent_session_after_sigterm() {
 
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let external = temp.path().join("external/.claude");
     let transcript = external.join("projects/demo/slow-exit.jsonl");
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
@@ -444,7 +444,7 @@ fn takeover_timeout_preserves_the_staged_horon_agent_session_after_sigterm() {
 fn cached_imported_session_preserves_existing_history_verbatim() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let imported_id = imported_codex_session_id("legacy-tools");
     let mut legacy = Session::create_with_id(imported_id.clone(), None, None);
     legacy.append_stored_message(StoredMessage {
@@ -526,7 +526,7 @@ fn message_role_prefilter_accepts_json_whitespace() {
 fn test_discover_projects_uses_sandboxed_external_home() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -540,7 +540,7 @@ fn test_discover_projects_uses_sandboxed_external_home() {
 fn test_list_claude_code_sessions_uses_live_transcripts_when_index_is_stale() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo-project");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -605,7 +605,7 @@ fn test_list_claude_code_sessions_uses_live_transcripts_when_index_is_stale() {
 fn test_list_claude_code_sessions_uses_index_metadata_without_parsing_transcript() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo-project");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -648,7 +648,7 @@ fn test_list_claude_code_sessions_uses_index_metadata_without_parsing_transcript
 fn test_list_claude_code_sessions_skips_empty_index_entries_without_messages() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo-project");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -685,7 +685,7 @@ fn test_list_claude_code_sessions_skips_empty_index_entries_without_messages() {
 fn test_import_claude_session_uses_recovered_live_transcript() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo-project");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -729,7 +729,7 @@ fn test_import_claude_session_uses_recovered_live_transcript() {
 fn test_import_pi_session_creates_horon_agent_snapshot() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let pi_dir = temp.path().join("external/.pi/agent/sessions/project");
     std::fs::create_dir_all(&pi_dir).unwrap();
@@ -757,7 +757,7 @@ fn test_import_pi_session_creates_horon_agent_snapshot() {
 fn test_import_opencode_session_creates_horon_agent_snapshot() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let session_dir = temp
         .path()
@@ -871,7 +871,7 @@ fn test_import_opencode_session_creates_horon_agent_snapshot() {
 fn test_resolve_resume_target_to_horon_agent_imports_codex_session() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let codex_dir = temp.path().join("external/.codex/sessions/2026/04/05");
     std::fs::create_dir_all(&codex_dir).unwrap();
@@ -911,7 +911,7 @@ fn test_resolve_resume_target_to_horon_agent_imports_codex_session() {
 fn test_resolve_resume_target_to_horon_agent_imports_claude_code_session() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo-project");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -965,7 +965,7 @@ fn test_resolve_resume_target_to_horon_agent_imports_claude_code_session() {
 fn test_reimporting_claude_session_preserves_horon_agent_continuation() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let project_dir = temp.path().join("external/.claude/projects/demo-project");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -1033,7 +1033,7 @@ fn test_reimporting_claude_session_preserves_horon_agent_continuation() {
 fn test_import_cursor_session_creates_horon_agent_snapshot() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     // Cursor stores transcripts at
     // ~/.cursor/projects/<project>/agent-transcripts/<uuid>/<uuid>.jsonl where the
@@ -1102,7 +1102,7 @@ fn test_import_cursor_session_creates_horon_agent_snapshot() {
 fn removing_a_prepared_import_takeover_session_takes_its_original() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let mut session = Session::create_with_id("takeover_lock_cleanup".to_string(), None, None);
     session.add_message(

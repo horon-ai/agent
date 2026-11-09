@@ -131,7 +131,7 @@ impl MultiProvider {
                             None
                         }
                     },
-                    std::env::var_os("HORON_AGENT_HOME").map(|value| value.into_encoded_bytes()),
+                    std::env::var_os("HORON_HOME").map(|value| value.into_encoded_bytes()),
                     crate::config::config_reload_generation(),
                 ),
                 Self::provider_key(active),

@@ -1400,9 +1400,9 @@ mod tests {
     #[tokio::test]
     async fn todo_write_emits_plan_updated() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
 
         let entries = plan_sent_for(
             "acp-plan-updated",
@@ -1430,18 +1430,18 @@ mod tests {
         );
 
         if let Some(home) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
     #[tokio::test]
     async fn plan_omits_cancelled_entries() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
 
         let entries = plan_sent_for(
             "acp-plan-cancelled",
@@ -1462,18 +1462,18 @@ mod tests {
         assert_eq!(entries[0].status, "completed");
 
         if let Some(home) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
     #[tokio::test]
     async fn plan_updated_not_sent_to_non_acp_session() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
 
         // Another session's editor connection is installed the whole time: it
         // must never receive a plan that belongs to a different session.
@@ -1523,9 +1523,9 @@ mod tests {
         crate::server::unregister_session_event_sink(plain, &plain_tx);
         crate::tool::acp_session::clear("acp-plan-other-session", token);
         if let Some(home) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -1536,9 +1536,9 @@ mod tests {
     #[tokio::test]
     async fn an_ungrouped_goal_does_not_survive_into_a_grouped_next_task() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
         let session = "issue-695-ungrouped";
         let tool = TodoTool::new();
 
@@ -1584,9 +1584,9 @@ mod tests {
         assert_eq!(goals[0].group.as_deref(), Some("second task"));
 
         if let Some(home) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -1596,9 +1596,9 @@ mod tests {
     #[tokio::test]
     async fn moving_to_a_new_task_replaces_what_the_todos_panel_shows() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
         let session = "issue-695-new-task";
         let tool = TodoTool::new();
 
@@ -1664,9 +1664,9 @@ mod tests {
         assert_eq!(goals[0].group.as_deref(), Some("second task"));
 
         if let Some(home) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", home);
+            crate::env::set_var("HORON_HOME", home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -1677,9 +1677,9 @@ mod tests {
     #[tokio::test]
     async fn a_moderate_first_write_returns_no_continuation_and_records_instead() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
         let session = "gate-deferral-execute";
 
         let output = TodoTool::new()
@@ -1787,17 +1787,17 @@ mod tests {
         assert!(digest.contains("feedback loop"));
 
         match previous_home {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 
     #[tokio::test]
     async fn low_ownership_completion_is_saved_without_mid_write_rejection() {
         let _guard = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
         let session = "ownership-save-before-turn-gate";
 
         let output = TodoTool::new()
@@ -1850,8 +1850,8 @@ mod tests {
         );
 
         match previous_home {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 

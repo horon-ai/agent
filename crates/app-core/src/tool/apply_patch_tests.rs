@@ -333,14 +333,14 @@ async fn add_file_over_a_non_utf8_file_records_an_approximate_edit() {
     impl Drop for Home {
         fn drop(&mut self) {
             if let Some(old) = self.0.take() {
-                crate::env::set_var("HORON_AGENT_HOME", old);
+                crate::env::set_var("HORON_HOME", old);
             } else {
-                crate::env::remove_var("HORON_AGENT_HOME");
+                crate::env::remove_var("HORON_HOME");
             }
         }
     }
-    let _home = Home(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _home = Home(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
 
     let dir = tempfile::tempdir().expect("work dir");
     let target = dir.path().join("legacy.txt");

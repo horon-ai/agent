@@ -710,7 +710,7 @@ mod reload_target_tests {
 mod reload_target_integration_tests {
     //! End-to-end-ish coverage that drives `server_update_candidate` through the
     //! REAL channel resolution (`build::shared_server_update_candidate`) against
-    //! a temp `HORON_AGENT_HOME`. This reproduces the field "/update -> new client,
+    //! a temp `HORON_HOME`. This reproduces the field "/update -> new client,
     //! stale server" state for a normal install.
     use super::{newer_binary_available, server_update_candidate};
     use crate::build;
@@ -773,8 +773,8 @@ mod reload_target_integration_tests {
     fn normal_user_daemon_detects_and_targets_update_after_update() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("temp dir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
         let old_release = "0.14.3";
@@ -809,7 +809,7 @@ mod reload_target_integration_tests {
         );
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         }
     }
 
@@ -855,8 +855,8 @@ mod reload_target_integration_tests {
     fn freshly_updated_release_daemon_reports_no_phantom_update() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("temp dir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
         // Wrapper written strictly AFTER the payload (the bad copy order).
@@ -885,9 +885,9 @@ mod reload_target_integration_tests {
         assert!(wrapper_mtime > payload_mtime);
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -899,16 +899,16 @@ mod deleted_suffix_tests {
 
     #[test]
     fn strips_linux_deleted_marker() {
-        let p = PathBuf::from("/home/u/.horon-agent/builds/versions/abc/horon-agent (deleted)");
+        let p = PathBuf::from("/home/u/.horon/builds/versions/abc/horon-agent (deleted)");
         assert_eq!(
             strip_deleted_suffix(p),
-            PathBuf::from("/home/u/.horon-agent/builds/versions/abc/horon-agent")
+            PathBuf::from("/home/u/.horon/builds/versions/abc/horon-agent")
         );
     }
 
     #[test]
     fn leaves_normal_paths_untouched() {
-        let p = PathBuf::from("/home/u/.horon-agent/builds/versions/abc/horon-agent");
+        let p = PathBuf::from("/home/u/.horon/builds/versions/abc/horon-agent");
         assert_eq!(strip_deleted_suffix(p.clone()), p);
     }
 

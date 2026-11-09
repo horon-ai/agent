@@ -283,8 +283,8 @@ mod tests {
     #[test]
     fn loads_api_key_from_env_before_config_file() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "HORON_AGENT_PROVIDER_ENV_TEST_KEY"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "HORON_AGENT_PROVIDER_ENV_TEST_KEY"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         save_env_value_to_env_file(
             "HORON_AGENT_PROVIDER_ENV_TEST_KEY",
@@ -303,8 +303,8 @@ mod tests {
     #[test]
     fn loads_and_removes_values_from_sandboxed_config_file() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "HORON_AGENT_PROVIDER_ENV_TEST_VALUE"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "HORON_AGENT_PROVIDER_ENV_TEST_VALUE"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         save_env_value_to_env_file(
             "HORON_AGENT_PROVIDER_ENV_TEST_VALUE",
@@ -331,8 +331,8 @@ mod tests {
     #[test]
     fn accepts_legacy_zai_key_for_zhipu() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "ZHIPU_API_KEY", "ZAI_API_KEY"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "ZHIPU_API_KEY", "ZAI_API_KEY"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         save_env_value_to_env_file("ZAI_API_KEY", "zai.env", Some("legacy-zai-key")).expect("save legacy key");
         horon_agent_core::env::remove_var("ZAI_API_KEY");
@@ -346,8 +346,8 @@ mod tests {
     #[test]
     fn save_named_api_key_writes_file_without_poisoning_process_env() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "TEST_NAMED_API_KEY"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "TEST_NAMED_API_KEY"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         save_named_api_key("test-named.env", "TEST_NAMED_API_KEY", "sk-live").expect("save key");
 
@@ -368,8 +368,8 @@ mod tests {
     #[test]
     fn corrected_env_file_wins_after_a_saved_key() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "TEST_CORRECTED_API_KEY"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "TEST_CORRECTED_API_KEY"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         save_named_api_key("test-corrected.env", "TEST_CORRECTED_API_KEY", "sk-wrong").expect("save pasted key");
         let file_path = horon_agent_storage::app_config_dir()
@@ -401,8 +401,8 @@ mod tests {
     #[test]
     fn loads_api_key_with_zero_width_space_from_config_file() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "HORON_AGENT_PROVIDER_FOO_API_KEY"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "HORON_AGENT_PROVIDER_FOO_API_KEY"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         // Write an env file with a U+200B zero-width space prefixed onto the key,
         // mirroring issue #376's reproduction.
@@ -423,8 +423,8 @@ mod tests {
     #[test]
     fn loads_api_key_with_invisible_chars_from_env_var() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::new(&["HORON_AGENT_HOME", "HORON_AGENT_PROVIDER_BAR_API_KEY"]);
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        let _guard = EnvGuard::new(&["HORON_HOME", "HORON_AGENT_PROVIDER_BAR_API_KEY"]);
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
         // NBSP + BOM padding around the env-provided key.
         horon_agent_core::env::set_var("HORON_AGENT_PROVIDER_BAR_API_KEY", "\u{00A0}sk-env-key\u{FEFF}");
 

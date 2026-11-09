@@ -54,12 +54,12 @@ if (-not $InstallDir) {
     $InstallDir = Join-Path $localAppData "horon-agent\bin"
 }
 
-$HoronAgentHome = if ($env:HORON_AGENT_HOME) {
-    $env:HORON_AGENT_HOME
+$HoronAgentHome = if ($env:HORON_HOME) {
+    $env:HORON_HOME
 } elseif ($env:USERPROFILE) {
-    Join-Path $env:USERPROFILE ".horon-agent"
+    Join-Path $env:USERPROFILE ".horon"
 } else {
-    Join-Path ([Environment]::GetFolderPath("UserProfile")) ".horon-agent"
+    Join-Path ([Environment]::GetFolderPath("UserProfile")) ".horon"
 }
 
 function Write-Info($msg) { Write-Host $msg -ForegroundColor Blue }
@@ -945,20 +945,20 @@ if ($DownloadMode -eq "tar") {
 
 Assert-HoronAgentBinaryCandidate -BinaryPath $DestBin -ExpectedVersion $Version | Out-Null
 
-$oldHome = $env:HORON_AGENT_HOME
+$oldHome = $env:HORON_HOME
 $oldInstallDir = $env:HORON_AGENT_INSTALL_DIR
 try {
     # Windows keeps build channels under %LOCALAPPDATA%\horon-agent\builds, which
     # is the layout the existing installs, docs and verification use. Setting
-    # HORON_AGENT_HOME here would move them to ~/.horon-agent/builds instead.
-    $env:HORON_AGENT_HOME = $null
+    # HORON_HOME here would move them to ~/.horon/builds instead.
+    $env:HORON_HOME = $null
     $env:HORON_AGENT_INSTALL_DIR = $InstallDir
     $arguments = @("install-release", "--assets", $AssetsDir, "--agent-version", $VersionNum)
     if ($SourceBinary) { $arguments += @("--source-binary", $SourceBinary) }
     & $DestBin @arguments
     if ($LASTEXITCODE -ne 0) { Write-Err "Release installation failed" }
 } finally {
-    $env:HORON_AGENT_HOME = $oldHome
+    $env:HORON_HOME = $oldHome
     $env:HORON_AGENT_INSTALL_DIR = $oldInstallDir
 }
 } finally {

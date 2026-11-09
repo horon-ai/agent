@@ -209,10 +209,10 @@ mod tests {
             let lock = crate::storage::lock_test_env();
             let temp = tempfile::tempdir().expect("tempdir");
             let vars = vec![
-                ("HORON_AGENT_HOME", std::env::var_os("HORON_AGENT_HOME")),
+                ("HORON_HOME", std::env::var_os("HORON_HOME")),
                 ("OPENCODE_API_KEY", std::env::var_os("OPENCODE_API_KEY")),
             ];
-            crate::env::set_var("HORON_AGENT_HOME", temp.path());
+            crate::env::set_var("HORON_HOME", temp.path());
             crate::env::set_var("OPENCODE_API_KEY", "sk-test-opencode");
             Self {
                 vars,
@@ -222,7 +222,7 @@ mod tests {
         }
 
         fn save_opencode_cache(&self, source_api_base: &str, model_ids: &[&str]) {
-            let horon_agent_home = std::env::var_os("HORON_AGENT_HOME").expect("HORON_AGENT_HOME set");
+            let horon_agent_home = std::env::var_os("HORON_HOME").expect("HORON_HOME set");
             let cache_dir = std::path::PathBuf::from(horon_agent_home).join("cache");
             std::fs::create_dir_all(&cache_dir).expect("create cache dir");
             let cache = crate::provider::catalog_cache::DiskCache {
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn custom_config_profile_model_is_routed_to_its_profile() {
         let _guard = EnvGuard::new();
-        let horon_agent_home = std::env::var_os("HORON_AGENT_HOME").expect("HORON_AGENT_HOME set");
+        let horon_agent_home = std::env::var_os("HORON_HOME").expect("HORON_HOME set");
         std::fs::write(
             std::path::PathBuf::from(horon_agent_home).join("config.toml"),
             "[providers.omlx]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:18000/v1\"\ndefault_model = \"KAT-Coder-V2.5-Dev-OptiQ-4bit\"\n",
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn custom_config_profile_model_routes_from_both_sources() {
         let _guard = EnvGuard::new();
-        let horon_agent_home = std::env::var_os("HORON_AGENT_HOME").expect("HORON_AGENT_HOME set");
+        let horon_agent_home = std::env::var_os("HORON_HOME").expect("HORON_HOME set");
         std::fs::write(
             std::path::PathBuf::from(horon_agent_home).join("config.toml"),
             "[providers.omlx]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:18000/v1\"\ndefault_model = \"KAT-Coder-V2.5-Dev-OptiQ-4bit\"\n",

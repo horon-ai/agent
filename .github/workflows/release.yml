@@ -1,6 +1,11 @@
 name: Release
 
 env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   HORON_AGENT_CI: "1"
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1094,7 +1099,7 @@ jobs:
           installed=false
           for attempt in 1 2 3 4 5; do
             if HOME="$install_home" XDG_CONFIG_HOME="$install_home/.config" \
-              HORON_AGENT_HOME="$install_home/.horon-agent" HORON_AGENT_INSTALL_DIR="$install_home/.local/bin" \
+              HORON_HOME="$install_home/.horon" HORON_AGENT_INSTALL_DIR="$install_home/.local/bin" \
               HORON_AGENT_VERSION="$RELEASE_TAG" HORON_AGENT_SKIP_SERVER_RELOAD=1 HORON_AGENT_NO_TELEMETRY=1 \
               bash scripts/install/install.sh; then
               installed=true

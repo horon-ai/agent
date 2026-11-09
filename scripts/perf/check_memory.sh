@@ -94,7 +94,7 @@ fi
 # Skip (not fail) when a session the caller asked for does not exist on this
 # machine: thresholds are only meaningful against a fixed workload.
 if [[ "$SESSION_SUPPLIED" -eq 1 ]] \
-    && ! ls "$HOME/.horon-agent/sessions/${SESSION_ID}"* >/dev/null 2>&1; then
+    && ! ls "$HOME/.horon/sessions/${SESSION_ID}"* >/dev/null 2>&1; then
     emit "$(jq -cn --arg session "$SESSION_ID" \
         '{status:"skipped", reason:("probe session " + $session + " not found")}')"
     exit 3

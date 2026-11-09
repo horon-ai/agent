@@ -286,16 +286,16 @@ fn a_gate_approval_record_is_not_resumed_by_the_ambient_sweep() {
 
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::invalidate_config_cache();
 
     struct RestoreHome(Option<std::ffi::OsString>);
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::invalidate_config_cache();
         }

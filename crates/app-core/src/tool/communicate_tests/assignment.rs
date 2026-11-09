@@ -13,10 +13,10 @@ async fn communicate_assign_task_can_spawn_fallback_agent() {
         "[agents]\nswarm_model = \"openai-api:isolation-probe-model\"\n",
     )
     .expect("write conflicting outer config");
-    let _outer_home = EnvGuard::set("HORON_AGENT_HOME", outer_home.path());
+    let _outer_home = EnvGuard::set("HORON_HOME", outer_home.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
-    // The env override would set agents.swarm_model regardless of HORON_AGENT_HOME.
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
+    // The env override would set agents.swarm_model regardless of HORON_HOME.
     let _swarm_model = EnvGuard::remove("HORON_AGENT_SWARM_MODEL");
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
@@ -24,7 +24,7 @@ async fn communicate_assign_task_can_spawn_fallback_agent() {
     assert_eq!(
         crate::config::config().agents.swarm_model,
         None,
-        "spawn config must come from the isolated HORON_AGENT_HOME"
+        "spawn config must come from the isolated HORON_HOME"
     );
 
     let provider: Arc<dyn Provider> = Arc::new(DelayedTestProvider {
@@ -138,7 +138,7 @@ async fn communicate_assign_next_assigns_next_runnable_task() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -248,7 +248,7 @@ async fn communicate_assign_next_can_prefer_fresh_spawn_server_side() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -358,7 +358,7 @@ async fn communicate_assign_next_can_spawn_if_needed_server_side() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -450,7 +450,7 @@ async fn communicate_fill_slots_tops_up_to_concurrency_limit() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -544,7 +544,7 @@ async fn communicate_assign_task_can_prefer_fresh_spawn_over_reuse() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 

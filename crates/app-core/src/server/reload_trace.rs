@@ -148,8 +148,8 @@ mod tests {
     fn record_value_appends_jsonl_trace_event() -> anyhow::Result<()> {
         let _guard = crate::storage::lock_test_env();
         let temp_home = tempfile::TempDir::new()?;
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp_home.path());
 
         record_value(
             "reload/id:with/slashes",
@@ -168,9 +168,9 @@ mod tests {
         assert_eq!(event["schema_version"], 1);
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         Ok(())
     }
@@ -179,8 +179,8 @@ mod tests {
     fn record_value_stops_appending_past_size_cap() -> anyhow::Result<()> {
         let _guard = crate::storage::lock_test_env();
         let temp_home = tempfile::TempDir::new()?;
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp_home.path());
 
         let reload_id = "reload-cap-test";
         let path = trace_path(reload_id)?;
@@ -197,9 +197,9 @@ mod tests {
         assert_eq!(size_before, size_after, "appending past the cap must not grow the file");
 
         if let Some(prev_home) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         Ok(())
     }

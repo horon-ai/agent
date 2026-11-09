@@ -8,7 +8,7 @@ own sessions, its own state, and no way to disturb the user's live work by
 accident.
 
 ``launch()`` gives it one. It starts a private daemon and bridge under a
-dedicated ``HORON_AGENT_HOME`` and runtime directory, and shuts them down on
+dedicated ``HORON_HOME`` and runtime directory, and shuts them down on
 ``close()``.
 """
 
@@ -66,17 +66,17 @@ SHARED_FILES = frozenset(name for name in CREDENTIAL_FILES if name != "config.to
 #: horon-agent's own config directory, relative to the platform config root.
 #:
 #: ``app_config_dir()`` is where provider env files live (``anthropic.env``,
-#: ``n.env`` for the horon-agent subscription), and ``HORON_AGENT_HOME``
-#: redirects it to ``$HORON_AGENT_HOME/config/horon-agent``.
+#: ``n.env`` for the horon-agent subscription), and ``HORON_HOME``
+#: redirects it to ``$HORON_HOME/config/horon-agent``.
 APP_CONFIG_DIRNAME = "horon-agent"
 
 #: Where horon-agent looks for *other* tools' credentials, relative to ``$HOME``.
 #:
 #: horon-agent can log in by reusing an existing CLI's OAuth store, so a large
-#: share of real users have no usable ``~/.horon-agent/auth.json`` at all: the
+#: share of real users have no usable ``~/.horon/auth.json`` at all: the
 #: working credentials live in files under ``~/.claude/`` or
-#: ``~/.config/github-copilot/``. Under ``HORON_AGENT_HOME`` these lookups are
-#: sandboxed to ``$HORON_AGENT_HOME/external/``, so an instance that inherits
+#: ``~/.config/github-copilot/``. Under ``HORON_HOME`` these lookups are
+#: sandboxed to ``$HORON_HOME/external/``, so an instance that inherits
 #: only ``auth.json`` silently has no credentials and fails on the first turn.
 #: Linking the recognized credential files makes inheritance mean what it says
 #: without exposing either directory wholesale.
@@ -139,7 +139,7 @@ class LaunchedInstance:
 
     #: API socket path to connect to.
     socket_path: str
-    #: The instance's ``HORON_AGENT_HOME``.
+    #: The instance's ``HORON_HOME``.
     horon_agent_home: str
     #: The bridge process.
     process: asyncio.subprocess.Process
@@ -160,7 +160,7 @@ def _user_home_dir() -> str:
 
 def user_horon_agent_home() -> str:
     """Resolve the user's real horon-agent home, ignoring any instance override."""
-    return os.environ.get("HORON_AGENT_HOME") or os.path.join(_user_home_dir(), ".horon-agent")
+    return os.environ.get("HORON_HOME") or os.path.join(_user_home_dir(), ".horon")
 
 
 def user_app_config_dir() -> str:
@@ -249,7 +249,7 @@ def inherit_credentials(from_home: str, to_home: str) -> list[str]:
         inherited.append(name)
 
     # horon-agent's provider env files live in its platform config directory, which
-    # ``HORON_AGENT_HOME`` moves to ``$HORON_AGENT_HOME/config/horon-agent``. Link only the
+    # ``HORON_HOME`` moves to ``$HORON_HOME/config/horon-agent``. Link only the
     # env files: caches and usage data are not credentials and must stay
     # instance-private. Most importantly, never link the directory itself. A
     # buggy recursive cleanup can descend through a directory link and delete
@@ -268,7 +268,7 @@ def inherit_credentials(from_home: str, to_home: str) -> list[str]:
         pass
 
     # Other CLIs' credential stores, which horon-agent reads directly and which
-    # ``HORON_AGENT_HOME`` redirects to ``$HORON_AGENT_HOME/external/``. Share only
+    # ``HORON_HOME`` redirects to ``$HORON_HOME/external/``. Share only
     # the exact credential files. Linking whole directories would also expose
     # transcripts, configuration, and anything those tools add in the future.
     for relative in EXTERNAL_CREDENTIAL_FILES:
@@ -299,7 +299,7 @@ def read_daemon_pid(horon_agent_home: str, runtime_dir: str) -> int | None:
     """Pid of the daemon serving an instance, read from its own server registry.
 
     Synchronous on purpose: the only caller is an exit handler, which cannot
-    await. horon-agent records every server in ``$HORON_AGENT_HOME/servers.json``
+    await. horon-agent records every server in ``$HORON_HOME/servers.json``
     keyed by socket path, and an instance's registry lists only that instance's
     daemon, so this can never resolve to the server the user is running
     themselves.
@@ -558,7 +558,7 @@ async def launch_instance(options: LaunchOptions | None = None) -> LaunchedInsta
     env = dict(os.environ)
     env.update(
         {
-            "HORON_AGENT_HOME": horon_agent_home,
+            "HORON_HOME": horon_agent_home,
             "HORON_AGENT_RUNTIME_DIR": runtime_dir,
             "HORON_AGENT_API_SOCKET": socket_path,
             "HORON_AGENT_SOCKET": os.path.join(runtime_dir, "horon-agent.sock"),

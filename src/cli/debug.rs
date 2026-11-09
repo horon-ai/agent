@@ -32,7 +32,7 @@ pub async fn run_debug_command(
         eprintln!("Debug socket not found at {:?}", debug_socket);
         eprintln!("\nMake sure:");
         eprintln!("  1. A horon-agent server is running (horon-agent or horon-agent serve)");
-        eprintln!("  2. debug_socket is enabled in ~/.horon-agent/config.toml");
+        eprintln!("  2. debug_socket is enabled in ~/.horon/config.toml");
         eprintln!("     [display]");
         eprintln!("     debug_socket = true");
         eprintln!("\nOr use 'horon-agent debug start' to start a server.");
@@ -267,7 +267,7 @@ async fn debug_start_server(arg: &str, socket_path: Option<String>) -> Result<()
     if crate::transport::is_socket_path(&debug_socket) {
         eprintln!("✓ Debug socket at {}", debug_socket.display());
     } else {
-        eprintln!("⚠ Debug socket not enabled. Add to ~/.horon-agent/config.toml:");
+        eprintln!("⚠ Debug socket not enabled. Add to ~/.horon/config.toml:");
         eprintln!("  [display]");
         eprintln!("  debug_socket = true");
     }

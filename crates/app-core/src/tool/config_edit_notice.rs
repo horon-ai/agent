@@ -1,7 +1,7 @@
 //! Tell the agent (and through it, the user) what a config.toml edit did.
 //!
 //! When a user asks horon-agent to change a setting, the agent writes
-//! `~/.horon-agent/config.toml` and then has to guess whether the change took
+//! `~/.horon/config.toml` and then has to guess whether the change took
 //! effect. That guess is where the confusion comes from. Instead, every file
 //! write that lands on the active config file appends an explicit report:
 //! which keys changed, and whether each one is live in running sessions or
@@ -23,7 +23,7 @@ fn comparable(path: &Path) -> std::path::PathBuf {
 
 /// Whether `path` is the config file the running process actually reads.
 ///
-/// Compares resolved paths so `~/.horon-agent/config.toml`, a relative path, and a
+/// Compares resolved paths so `~/.horon/config.toml`, a relative path, and a
 /// symlinked horon-agent home all resolve to the same file.
 fn is_active_config_file(path: &Path) -> bool {
     let Some(config_path) = crate::config::Config::path() else {

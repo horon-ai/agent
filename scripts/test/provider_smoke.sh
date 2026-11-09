@@ -20,7 +20,7 @@ workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
 set +e
-output=$(HORON_AGENT_HOME="$workdir" PATH="$repo_root/target/release:$PATH" \
+output=$(HORON_HOME="$workdir" PATH="$repo_root/target/release:$PATH" \
   horon-agent run --no-update --trace --provider "$provider" "$prompt" 2>&1)
 status=$?
 set -e

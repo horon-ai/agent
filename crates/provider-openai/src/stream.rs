@@ -1033,7 +1033,7 @@ fn handle_openai_image_generation_item(item: &Value, pending: &mut VecDeque<Stre
         .unwrap_or_default();
     let dir = std::env::current_dir()
         .unwrap_or_else(|_| std::env::temp_dir())
-        .join(".horon-agent")
+        .join(".horon")
         .join("generated-images");
     if let Err(err) = std::fs::create_dir_all(&dir) {
         horon_agent_logging::warn(&format!("Failed to create OpenAI generated image directory: {}", err));

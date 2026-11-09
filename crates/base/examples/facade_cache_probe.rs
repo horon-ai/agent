@@ -296,7 +296,7 @@ fn main() -> anyhow::Result<()> {
     let over_fixture = std::env::args().nth(2).expect("over-1MiB fixture path");
     let home = tempfile::Builder::new().prefix("horon-agent-facade-probe-").tempdir()?;
     // The store refuses an agent home that is not 0700; `TempDir` already created it that way.
-    unsafe { std::env::set_var("HORON_AGENT_HOME", home.path()) };
+    unsafe { std::env::set_var("HORON_HOME", home.path()) };
 
     let under = threshold_report("facade_probe_under", &under_fixture, false)?;
     let over = threshold_report("facade_probe_over", &over_fixture, true)?;

@@ -61,8 +61,8 @@ impl Home {
     fn isolated() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("tempdir");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path().join("home"));
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path().join("home"));
         crate::config::Config::invalidate_cache();
         Self {
             dir,
@@ -75,8 +75,8 @@ impl Home {
 impl Drop for Home {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

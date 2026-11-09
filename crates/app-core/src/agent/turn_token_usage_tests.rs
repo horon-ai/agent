@@ -73,8 +73,8 @@ fn returns_none_without_assistant_usage() {
 fn compacted_usage_and_stub_use_global_history_coordinates() {
     let _lock = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     let mut session = Session::create_with_id("usage_coordinates".into(), None, None);
     session.provider_key = Some("openai".into());
     session.model = Some("test".into());
@@ -99,7 +99,7 @@ fn compacted_usage_and_stub_use_global_history_coordinates() {
     let stub = Session::load_startup_stub(&session.id).unwrap();
     assert_eq!(session_turn_token_usage_after(&stub, 1).unwrap().output_tokens, 2);
     match previous {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
 }

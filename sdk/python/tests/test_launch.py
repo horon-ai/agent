@@ -128,7 +128,7 @@ def test_login_inheritance_creates_file_links_never_credential_directory_links(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
     user_config = pathlib.Path(user_app_config_dir())
-    source = home / ".horon-agent"
+    source = home / ".horon"
     instance = tmp_path / "instance"
     (home / ".claude").mkdir(parents=True)
     user_config.mkdir(parents=True)

@@ -190,8 +190,8 @@ mod tests {
     fn history_blocks_mask_a_credential_when_obfuscation_is_on() {
         let _env_lock = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("temp home");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         let config_path = crate::config::Config::path().expect("config path");
         std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("config dir");
         std::fs::write(&config_path, "[tools]\nsecrets_mode = \"obfuscate\"\n").expect("write config");
@@ -209,8 +209,8 @@ mod tests {
 
         drop(registration);
         match previous_home {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::invalidate_config_cache();
 

@@ -182,7 +182,7 @@ pub fn launcher_dir() -> Result<PathBuf> {
         return Ok(custom);
     }
 
-    if let Some(sandbox_home) = non_empty_env_path("HORON_AGENT_HOME") {
+    if let Some(sandbox_home) = non_empty_env_path("HORON_HOME") {
         return Ok(sandbox_home.join("bin"));
     }
 
@@ -208,12 +208,53 @@ pub fn launcher_binary_path() -> Result<PathBuf> {
     Ok(launcher_dir()?.join(binary_name()))
 }
 
+/// Extra launcher names installed next to `horon-agent`. They run the same binary.
+pub const LAUNCHER_ALIASES: [&str; 2] = ["horon", "hrn"];
+
+fn alias_file_name(alias: &str) -> String {
+    format!("{alias}{}", std::env::consts::EXE_SUFFIX)
+}
+
+/// Paths of the alias launchers (`horon`, `hrn`) in the launcher directory.
+pub fn launcher_alias_paths() -> Result<Vec<PathBuf>> {
+    let dir = launcher_dir()?;
+    Ok(LAUNCHER_ALIASES
+        .iter()
+        .map(|alias| dir.join(alias_file_name(alias)))
+        .collect())
+}
+
+/// An alias path is ours to replace when it is absent, a symlink to a
+/// `horon-agent` binary (Unix), or a byte-identical copy of the previous
+/// launcher (Windows, where launchers are copies). Anything else is another
+/// program that happens to use the same name and must not be overwritten.
+fn alias_is_replaceable(alias: &Path, previous_launcher: Option<&[u8]>) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(alias) else {
+        return !alias.exists();
+    };
+    if meta.file_type().is_symlink() {
+        return match std::fs::read_link(alias) {
+            Ok(target) => target.file_stem().is_some_and(|stem| stem == binary_stem()),
+            Err(_) => false,
+        };
+    }
+    meta.is_file()
+        && previous_launcher.is_some_and(|previous| std::fs::read(alias).is_ok_and(|bytes| bytes == previous))
+}
+
 fn update_launcher_symlink(target: &Path) -> Result<PathBuf> {
     let launcher = launcher_binary_path()?;
 
     if let Some(parent) = launcher.parent() {
         storage::ensure_dir(parent)?;
     }
+
+    // Where launchers are copies (Windows), ownership of an alias is judged against
+    // the launcher's content from before this swap.
+    let previous_launcher = match std::fs::symlink_metadata(&launcher) {
+        Ok(meta) if meta.is_file() => std::fs::read(&launcher).map(Some)?,
+        _ => None,
+    };
 
     let temp = launcher.parent().unwrap_or_else(|| Path::new(".")).join(format!(
         ".{}-launcher-{}",
@@ -222,6 +263,13 @@ fn update_launcher_symlink(target: &Path) -> Result<PathBuf> {
     ));
 
     crate::platform_support::atomic_symlink_swap(target, &launcher, &temp)?;
+
+    // The alias directory is the launcher directory, which was just written.
+    for alias in launcher_alias_paths()? {
+        if alias_is_replaceable(&alias, previous_launcher.as_deref()) {
+            crate::platform_support::atomic_symlink_swap(target, &alias, &temp)?;
+        }
+    }
     Ok(launcher)
 }
 

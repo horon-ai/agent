@@ -171,7 +171,7 @@ impl SkillTool {
                         install
                     ),
                     None => anyhow::anyhow!(
-                        "Skill '{}' is endorsed but not installed (source: {}). Install it into ~/.horon-agent/skills/{}/SKILL.md, then run skill_manage reload_all.",
+                        "Skill '{}' is endorsed but not installed (source: {}). Install it into ~/.horon/skills/{}/SKILL.md, then run skill_manage reload_all.",
                         name,
                         endorsed.source,
                         name
@@ -469,11 +469,11 @@ fn skill_source_help() -> String {
     for path in crate::skill::project_skill_paths() {
         help.push_str(&format!("- ./{path}/<skill-name>/SKILL.md (workspace)\n"));
     }
-    help.push_str("- ~/.horon-agent/skills/<skill-name>/SKILL.md (user)\n");
+    help.push_str("- ~/.horon/skills/<skill-name>/SKILL.md (user)\n");
     help.push_str("- ~/.claude/skills and installed Claude Code plugins ([skills] claude_user, off by default)\n");
     help.push_str("- ~/.agents/skills (user)\n");
     help.push_str("- ~/.codex/skills ([skills] codex_user, off by default)\n");
-    help.push_str("- ~/.horon-agent/managed-skills ([tools] managed_skills, off by default)\n\n");
+    help.push_str("- ~/.horon/managed-skills ([tools] managed_skills, off by default)\n\n");
     help.push_str("A workspace skill wins over a user skill of the same name.\n\n");
     help
 }
@@ -539,7 +539,7 @@ mod tests {
 
     /// Runs `body` on a fresh runtime while the process-wide test env lock is
     /// held on this thread. The managed-skill tests below mutate
-    /// `HORON_AGENT_HOME`, so they must stay serialized, but the `std` guard
+    /// `HORON_HOME`, so they must stay serialized, but the `std` guard
     /// belongs outside the async body rather than held across an await point.
     fn run_with_env_lock(body: impl Future<Output = ()>) {
         let _guard = crate::storage::lock_test_env();
@@ -553,7 +553,7 @@ mod tests {
 
     fn create_test_tool_with_skill(name: &str) -> (SkillTool, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let skill_dir = temp_dir.path().join(".horon-agent").join("skills").join(name);
+        let skill_dir = temp_dir.path().join(".horon").join("skills").join(name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -610,10 +610,10 @@ mod tests {
         // The help text names every switch that gates a source, so a skill the
         // operator installed elsewhere is explained rather than missing.
         for expected in [
-            "./.horon-agent/skills/<skill-name>/SKILL.md (workspace)",
+            "./.horon/skills/<skill-name>/SKILL.md (workspace)",
             "./.claude/skills/<skill-name>/SKILL.md (workspace)",
             "./.agents/skills/<skill-name>/SKILL.md (workspace)",
-            "~/.horon-agent/skills/<skill-name>/SKILL.md (user)",
+            "~/.horon/skills/<skill-name>/SKILL.md (user)",
             "[skills] claude_user, off by default",
             "[skills] codex_user, off by default",
             "[tools] managed_skills, off by default",
@@ -677,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_reports_an_unreadable_body_as_a_tool_error() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let skill_dir = temp_dir.path().join(".horon-agent").join("skills").join("bad-utf8");
+        let skill_dir = temp_dir.path().join(".horon").join("skills").join("bad-utf8");
         std::fs::create_dir_all(&skill_dir).unwrap();
         let mut bytes = b"---\nname: bad-utf8\ndescription: Bad UTF-8 body\n---\n\n".to_vec();
         bytes.extend_from_slice(&[0xff, 0xfe, 0xfd]);
@@ -794,7 +794,7 @@ mod tests {
     #[tokio::test]
     async fn list_shows_where_a_colliding_skill_moved() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mine = temp_dir.path().join(".horon-agent").join("skills").join("shared");
+        let mine = temp_dir.path().join(".horon").join("skills").join("shared");
         std::fs::create_dir_all(&mine).unwrap();
         std::fs::write(
             mine.join("SKILL.md"),
@@ -844,7 +844,7 @@ mod tests {
         );
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let skill_dir = temp_dir.path().join(".horon-agent").join("skills").join(omitted_name);
+        let skill_dir = temp_dir.path().join(".horon").join("skills").join(omitted_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -868,14 +868,14 @@ mod tests {
         );
     }
 
-    /// A private `HORON_AGENT_HOME` with one `[tools]` table, restored on drop.
+    /// A private `HORON_HOME` with one `[tools]` table, restored on drop.
     struct ManagedHome(Option<std::ffi::OsString>, tempfile::TempDir);
 
     impl Drop for ManagedHome {
         fn drop(&mut self) {
             match &self.0 {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::Config::invalidate_cache();
         }
@@ -883,8 +883,8 @@ mod tests {
 
     fn managed_home(tools_table: &str) -> ManagedHome {
         let temp = tempfile::tempdir().unwrap();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         std::fs::write(temp.path().join("config.toml"), format!("[tools]\n{tools_table}")).unwrap();
         crate::config::Config::invalidate_cache();
         ManagedHome(previous, temp)

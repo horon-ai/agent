@@ -201,7 +201,7 @@ impl PendingFailoverEvent {
     }
 }
 
-/// `~/.horon-agent/failover-events.json`, the durable announcement log.
+/// `~/.horon/failover-events.json`, the durable announcement log.
 ///
 /// Sibling of the approvals directory rather than a per-session file: one write
 /// per switch, and the session id inside each entry is what scopes a re-emit.

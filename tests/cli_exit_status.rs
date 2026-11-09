@@ -7,7 +7,7 @@ fn invoke(args: &[&str]) -> Output {
         .current_dir(root.path())
         .env_clear()
         .env("HOME", root.path())
-        .env("HORON_AGENT_HOME", root.path().join("horon-agent"))
+        .env("HORON_HOME", root.path().join("horon-agent"))
         .env("NO_COLOR", "1")
         .args(args)
         .output()

@@ -30,7 +30,7 @@ struct Member {
 /// a remote daemon's session list.
 ///
 /// Respects `HORON_AGENT_RUNTIME_DIR` (isolated `durable-state/swarm`), then
-/// `HORON_AGENT_HOME` (or the default `~/.horon-agent`) under `state/swarm`. Missing or
+/// `HORON_HOME` (or the default `~/.horon`) under `state/swarm`. Missing or
 /// malformed snapshots are harmless. Values already supplied by the API win.
 /// Only swarm ownership is used, never a transcript's ordinary fork parent.
 /// Statuses describe the last persisted snapshot, not a live liveness probe.
@@ -38,12 +38,12 @@ pub fn enrich_sessions_from_local_swarm_state(sessions: &mut [SessionInfo]) {
     let dir = if let Ok(runtime) = std::env::var("HORON_AGENT_RUNTIME_DIR") {
         std::path::PathBuf::from(runtime).join("durable-state")
     } else {
-        let home = std::env::var_os("HORON_AGENT_HOME")
+        let home = std::env::var_os("HORON_HOME")
             .map(std::path::PathBuf::from)
             .or_else(|| {
                 std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
-                    .map(|home| std::path::PathBuf::from(home).join(".horon-agent"))
+                    .map(|home| std::path::PathBuf::from(home).join(".horon"))
             });
         let Some(home) = home else { return };
         home.join("state")

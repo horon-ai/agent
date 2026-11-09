@@ -2,7 +2,7 @@
 //!
 //! Split out of `config_tests.rs` to keep that file under the test-size
 //! ratchet. These tests cover the path a user actually takes: a hand-written
-//! `~/.horon-agent/config.toml` loaded through the same global cache the running
+//! `~/.horon/config.toml` loaded through the same global cache the running
 //! process uses.
 
 use super::Config;
@@ -18,9 +18,9 @@ use super::Config;
 #[test]
 fn reported_display_config_survives_a_real_config_file_round_trip() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let path = Config::path().expect("config path");
@@ -60,8 +60,8 @@ fn reported_display_config_survives_a_real_config_file_round_trip() {
     );
 
     match prev_home {
-        Some(prev) => crate::env::set_var("HORON_AGENT_HOME", prev),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(prev) => crate::env::set_var("HORON_HOME", prev),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     Config::invalidate_cache();
 }
@@ -71,9 +71,9 @@ fn reported_display_config_survives_a_real_config_file_round_trip() {
 #[test]
 fn legacy_tui_config_sections_load_without_error() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let path = Config::path().expect("config path");
@@ -112,8 +112,8 @@ fn legacy_tui_config_sections_load_without_error() {
     );
 
     match prev_home {
-        Some(prev) => crate::env::set_var("HORON_AGENT_HOME", prev),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(prev) => crate::env::set_var("HORON_HOME", prev),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     Config::invalidate_cache();
 }

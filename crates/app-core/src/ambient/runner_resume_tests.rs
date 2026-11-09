@@ -22,7 +22,6 @@ use crate::session::{Session, SessionStatus};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -30,10 +29,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 // Harness
 // ---------------------------------------------------------------------------
 
-/// Isolates `~/.horon-agent` for one test and serializes env mutation.
+/// Isolates `~/.horon` for one test and serializes env mutation.
 struct TestHome {
     previous: Option<std::ffi::OsString>,
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -41,26 +40,27 @@ impl TestHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("temp home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         crate::config::Config::invalidate_cache();
         Self {
             previous,
-            dir,
+            _dir: dir,
             _lock: lock,
         }
     }
 
-    fn path(&self) -> PathBuf {
-        self.dir.path().to_path_buf()
+    #[cfg(unix)]
+    fn path(&self) -> std::path::PathBuf {
+        self._dir.path().to_path_buf()
     }
 }
 
 impl Drop for TestHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

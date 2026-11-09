@@ -33,7 +33,7 @@ fn main() {
 
 fn default_socket_path() -> String {
     let home = std::env::var("HOME").expect("HOME not set");
-    format!("{home}/.horon-agent/horon-agent-api.sock")
+    format!("{home}/.horon/horon-agent-api.sock")
 }
 
 fn run_session<R: BufRead, W: Write>(mut client: HarnessClient<R, W>, message: &str) {

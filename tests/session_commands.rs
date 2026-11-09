@@ -57,7 +57,7 @@ impl Sandbox {
             .current_dir(self.path())
             .env_clear()
             .env("HOME", self.path())
-            .env("HORON_AGENT_HOME", home)
+            .env("HORON_HOME", home)
             .env("HORON_AGENT_RUNTIME_DIR", self.path().join("run"))
             .env("XDG_RUNTIME_DIR", self.path().join("run"))
             .env("XDG_CONFIG_HOME", self.path().join("config"))

@@ -292,7 +292,9 @@ fn skills_report(data: &Value) -> String {
     let mut report = String::from("## Loaded skills\n\n");
     let loaded = data["skills"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     if loaded.is_empty() {
-        report.push_str("No skills loaded. Add skills under `~/.horon-agent/skills/<name>/SKILL.md` or the workspace `.horon-agent/skills`.\n");
+        report.push_str(
+            "No skills loaded. Add skills under `~/.horon/skills/<name>/SKILL.md` or the workspace `.horon/skills`.\n",
+        );
     }
     for skill in loaded {
         let name = skill["name"].as_str().unwrap_or("");
@@ -371,15 +373,15 @@ mod tests {
     async fn runtime_commands_read_actual_state_without_inference() {
         let _lock = crate::storage::lock_test_env();
         let home = tempfile::TempDir::new().unwrap();
-        let old = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let old = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         struct Restore(Option<std::ffi::OsString>);
         impl Drop for Restore {
             fn drop(&mut self) {
                 if let Some(value) = &self.0 {
-                    crate::env::set_var("HORON_AGENT_HOME", value);
+                    crate::env::set_var("HORON_HOME", value);
                 } else {
-                    crate::env::remove_var("HORON_AGENT_HOME");
+                    crate::env::remove_var("HORON_HOME");
                 }
             }
         }

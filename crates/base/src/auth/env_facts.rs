@@ -172,7 +172,7 @@ impl AuthMethodChoice {
     pub fn precondition_message(self) -> Option<&'static str> {
         match self {
             AuthMethodChoice::BlockedConfigUnwritable => Some(
-                "horon-agent cannot write its config directory, so a login could not be saved. Fix directory permissions (or set HORON_AGENT_HOME) and try again.",
+                "horon-agent cannot write its config directory, so a login could not be saved. Fix directory permissions (or set HORON_HOME) and try again.",
             ),
             AuthMethodChoice::ApiKeyNonInteractive => Some(
                 "This terminal is not interactive. Provide an API key via the provider's environment variable or `horon-agent provider add --api-key-stdin`.",

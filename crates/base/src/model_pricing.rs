@@ -8,7 +8,7 @@
 //! providers, including every OpenAI-compatible profile horon-agent ships.
 //!
 //! This module mirrors the OpenRouter catalog pattern:
-//!   - a 24h disk cache under `~/.horon-agent/cache/models_dev_pricing.json`,
+//!   - a 24h disk cache under `~/.horon/cache/models_dev_pricing.json`,
 //!   - synchronous lookups that never block on the network,
 //!   - a background refresh scheduled on cache miss/staleness.
 //!
@@ -52,7 +52,7 @@ struct PricingCache {
 }
 
 /// In-memory pricing cache keyed by the on-disk cache path it was loaded
-/// from, so changing `HORON_AGENT_HOME` (tests, multi-home setups) never serves
+/// from, so changing `HORON_HOME` (tests, multi-home setups) never serves
 /// pricing that belongs to a different home directory.
 ///
 /// Held behind an `Arc` so per-route pricing lookups share one parsed catalog
@@ -68,7 +68,7 @@ static CACHE_DISK_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 
 fn cache_path() -> PathBuf {
     crate::storage::horon_agent_dir()
-        .unwrap_or_else(|_| PathBuf::from(".").join(".horon-agent"))
+        .unwrap_or_else(|_| PathBuf::from(".").join(".horon"))
         .join("cache")
         .join(CACHE_FILE)
 }
@@ -327,7 +327,7 @@ fn ensure_cache_fresh() -> Option<Arc<PricingCache>> {
 /// are enabled this is a cheap memory-cache hit for a fresh catalog.
 pub fn ensure_fresh() {
     // Test builds must not read or write the real home (process-global test
-    // sandboxes swap `HORON_AGENT_HOME` between cases) and never reach the
+    // sandboxes swap `HORON_HOME` between cases) and never reach the
     // network unless the environment opts in, so the gate comes first.
     if !refresh_requested_now() {
         return;
@@ -619,9 +619,9 @@ mod tests {
     fn startup_skips_cache_read_when_refresh_off() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let prev_refresh = std::env::var_os(REFRESH_ENV);
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         crate::env::remove_var(REFRESH_ENV);
         clear_memory_cache_for_tests();
 
@@ -660,8 +660,8 @@ mod tests {
         clear_memory_cache_for_tests();
         restore_refresh_env(prev_refresh);
         match prev_home {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 
@@ -669,8 +669,8 @@ mod tests {
     fn resellers_fall_back_to_vendor_pricing_seen_elsewhere() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         clear_memory_cache_for_tests();
 
         save_test_cache(&[
@@ -800,9 +800,9 @@ mod tests {
 
         clear_memory_cache_for_tests();
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -810,8 +810,8 @@ mod tests {
     fn local_profiles_do_not_borrow_hosted_pricing() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         clear_memory_cache_for_tests();
 
         save_test_cache(&[(
@@ -835,9 +835,9 @@ mod tests {
 
         clear_memory_cache_for_tests();
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -867,8 +867,8 @@ mod tests {
     fn mapped_compatible_profiles_do_not_borrow_foreign_pricing() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         clear_memory_cache_for_tests();
 
         save_test_cache(&[
@@ -906,9 +906,9 @@ mod tests {
 
         clear_memory_cache_for_tests();
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -916,8 +916,8 @@ mod tests {
     fn missing_cache_rates_do_not_merge_with_free_ones() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         clear_memory_cache_for_tests();
 
         // Alphabetically-first listings have a missing cache_read and an
@@ -974,9 +974,9 @@ mod tests {
 
         clear_memory_cache_for_tests();
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -1039,8 +1039,8 @@ mod tests {
     fn lookup_normalizes_model_ids() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         clear_memory_cache_for_tests();
 
         save_test_cache(&[
@@ -1080,9 +1080,9 @@ mod tests {
 
         clear_memory_cache_for_tests();
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }

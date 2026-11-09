@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// Get path to builds directory
 pub fn builds_dir() -> Result<PathBuf> {
     let dir = resolve_builds_dir(
-        std::env::var_os("HORON_AGENT_HOME").map(PathBuf::from),
+        std::env::var_os("HORON_HOME").map(PathBuf::from),
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
         storage::horon_agent_dir()?,
         cfg!(windows),
@@ -28,7 +28,7 @@ fn resolve_builds_dir(
     if is_windows && let Some(local_app_data) = local_app_data {
         // Keep runtime channel discovery aligned with scripts/install/install.ps1 and
         // the supported Windows layout under %LOCALAPPDATA%\horon-agent\builds.
-        // Durable user state and logs still live under ~/.horon-agent.
+        // Durable user state and logs still live under ~/.horon.
         return local_app_data.join("horon-agent").join("builds");
     }
 
@@ -240,7 +240,7 @@ mod tests {
         let resolved = resolve_builds_dir(
             None,
             Some(PathBuf::from("/local-app-data")),
-            PathBuf::from("/home/test/.horon-agent"),
+            PathBuf::from("/home/test/.horon"),
             true,
         );
 
@@ -252,7 +252,7 @@ mod tests {
         let resolved = resolve_builds_dir(
             Some(PathBuf::from("/isolated-horon-agent")),
             Some(PathBuf::from("/local-app-data")),
-            PathBuf::from("/home/test/.horon-agent"),
+            PathBuf::from("/home/test/.horon"),
             true,
         );
 
@@ -264,10 +264,10 @@ mod tests {
         let resolved = resolve_builds_dir(
             None,
             Some(PathBuf::from("/ignored/local-app-data")),
-            PathBuf::from("/home/test/.horon-agent"),
+            PathBuf::from("/home/test/.horon"),
             false,
         );
 
-        assert_eq!(resolved, PathBuf::from("/home/test/.horon-agent/builds"));
+        assert_eq!(resolved, PathBuf::from("/home/test/.horon/builds"));
     }
 }

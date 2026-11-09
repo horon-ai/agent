@@ -1253,11 +1253,11 @@ mod tests {
     fn issue_790_owned_manager_keeps_its_initial_config_directory() {
         let _guard = crate::storage::lock_test_env();
         let original_cwd = std::env::current_dir().expect("current cwd");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let home = tempfile::tempdir().expect("home tempdir");
         let project = tempfile::tempdir().expect("project tempdir");
         let elsewhere = tempfile::tempdir().expect("elsewhere tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         std::fs::write(
             project.path().join(".mcp.json"),
             r#"{"mcpServers":{"project-only":{"command":"project-server"}}}"#,
@@ -1272,9 +1272,9 @@ mod tests {
 
         std::env::set_current_dir(original_cwd).expect("restore cwd");
         if let Some(previous_home) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", previous_home);
+            crate::env::set_var("HORON_HOME", previous_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
 
         assert!(fresh.servers.contains_key("project-only"));
@@ -1623,12 +1623,12 @@ done
     /// the manager are metered, non-matching servers are not.
     #[tokio::test]
     // The test-env mutex must intentionally stay held across awaits so the
-    // HORON_AGENT_HOME/config mutation stays serialized for the whole test.
+    // HORON_HOME/config mutation stays serialized for the whole test.
     #[allow(clippy::await_holding_lock)]
     async fn discovery_provenance_end_to_end_with_real_mcp_server() {
         let env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().unwrap();
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         std::fs::write(temp.path().join("config.toml"), "[sponsors]\nenabled = true\n").unwrap();
         crate::config::Config::invalidate_cache();
         crate::sponsors::provenance::reset_for_tests();

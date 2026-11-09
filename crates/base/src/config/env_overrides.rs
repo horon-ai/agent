@@ -634,7 +634,7 @@ mod idle_hibernation_env_tests {
     use super::*;
     use std::ffi::OsString;
 
-    /// Isolated home plus a restored environment, so a real `HORON_AGENT_HOME`
+    /// Isolated home plus a restored environment, so a real `HORON_HOME`
     /// or a leftover override cannot leak into the parse.
     struct EnvCase {
         _lock: std::sync::MutexGuard<'static, ()>,
@@ -646,7 +646,7 @@ mod idle_hibernation_env_tests {
         fn new() -> Self {
             let lock = crate::storage::lock_test_env();
             let dir = tempfile::tempdir().expect("temp home");
-            let keys = ["HORON_AGENT_HOME", "HORON_AGENT_IDLE_HIBERNATION_SECS"];
+            let keys = ["HORON_HOME", "HORON_AGENT_IDLE_HIBERNATION_SECS"];
             let previous = keys
                 .into_iter()
                 .map(|key| {
@@ -654,7 +654,7 @@ mod idle_hibernation_env_tests {
                     (key, value)
                 })
                 .collect();
-            crate::env::set_var("HORON_AGENT_HOME", dir.path());
+            crate::env::set_var("HORON_HOME", dir.path());
             crate::env::remove_var("HORON_AGENT_IDLE_HIBERNATION_SECS");
             Self {
                 _lock: lock,

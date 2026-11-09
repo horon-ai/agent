@@ -20,7 +20,7 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 /// A private home for the duration of a test, serialized against every other
-/// test that swaps `HORON_AGENT_HOME` or installs the global bus.
+/// test that swaps `HORON_HOME` or installs the global bus.
 pub(super) struct TestEnv {
     previous: Option<std::ffi::OsString>,
     _dir: tempfile::TempDir,
@@ -31,8 +31,8 @@ impl TestEnv {
     pub(super) fn new(config: &str) -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("temp home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         if !config.is_empty() {
             let path = crate::config::Config::path().expect("config path");
             std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config dir");
@@ -51,8 +51,8 @@ impl Drop for TestEnv {
     fn drop(&mut self) {
         horon_agent_irc_core::global::clear();
         match self.previous.take() {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

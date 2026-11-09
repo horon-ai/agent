@@ -2,7 +2,7 @@
 //!
 //! The notes are the model's own short-term index — a goal, a checklist, a
 //! decision it must not lose after a compaction. They are stored per session
-//! (`~/.horon-agent/context-notes/<session-id>.md`), read back into every
+//! (`~/.horon/context-notes/<session-id>.md`), read back into every
 //! request's dynamic system prompt by `Agent::build_system_prompt_split`, and
 //! deleted with the conversation branch. `history://current` (read) exposes
 //! the full stored transcript beside them.

@@ -349,14 +349,14 @@ async fn cleanup_without_a_removal_publishes_no_gate_and_keeps_other_sessions_in
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
     let home = tempfile::TempDir::new().expect("isolated home");
-    let _home = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _home = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     let sessions: SessionAgents = Arc::new(RwLock::new(HashMap::new()));
     let connections = Arc::new(RwLock::new(HashMap::from([(
         "conn_other".to_string(),

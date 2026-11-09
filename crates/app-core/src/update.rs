@@ -164,7 +164,7 @@ pub const UPDATE_RELEASE_URL_OVERRIDE_ENV: &str = "HORON_AGENT_UPDATE_RELEASE_UR
 
 /// Release-endpoint override for update rehearsals.
 ///
-/// Only honored when `HORON_AGENT_HOME` points at a sandbox, so a stray environment
+/// Only honored when `HORON_HOME` points at a sandbox, so a stray environment
 /// variable can never redirect a real install to an arbitrary download.
 fn release_url_override() -> Option<String> {
     release_url_override_with(
@@ -180,7 +180,7 @@ fn release_url_override_with(value: Option<String>, sandboxed_home: bool) -> Opt
     }
     if !sandboxed_home {
         crate::logging::warn(&format!(
-            "Ignoring {UPDATE_RELEASE_URL_OVERRIDE_ENV}: only honored with a sandboxed HORON_AGENT_HOME"
+            "Ignoring {UPDATE_RELEASE_URL_OVERRIDE_ENV}: only honored with a sandboxed HORON_HOME"
         ));
         return None;
     }

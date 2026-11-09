@@ -1061,8 +1061,8 @@ mod tests {
             .prefix("horon-agent-secrets-home-")
             .tempdir()
             .expect("temp home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
 
         let session_id = "secrets-test-no-disk";
         let registration = register_session_vault(session_id);
@@ -1101,8 +1101,8 @@ mod tests {
         assert!(offenders.is_empty(), "the real value reached disk: {offenders:?}");
 
         match previous {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }

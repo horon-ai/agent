@@ -25,7 +25,7 @@ const WAIT_LIMIT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 fn isolated_home() -> PathBuf {
-    PathBuf::from(std::env::var_os("HORON_AGENT_HOME").expect("setup_test_env sets HORON_AGENT_HOME"))
+    PathBuf::from(std::env::var_os("HORON_HOME").expect("setup_test_env sets HORON_HOME"))
 }
 
 fn write_config(body: &str) {

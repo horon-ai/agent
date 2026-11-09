@@ -4,7 +4,7 @@ use super::*;
 fn loader_boundary_id_lookup_prefers_events_and_refuses_corrupt_events() -> anyhow::Result<()> {
     let _lock = tests::lock_env();
     let home = tempfile::tempdir()?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", home.path());
+    let _home = tests::EnvVarGuard::set("HORON_HOME", home.path());
     let mut canonical = Session::create_with_id("requested_id".into(), None, None);
     canonical.add_message(
         Role::User,
@@ -50,7 +50,7 @@ fn loader_boundary_id_lookup_prefers_events_and_refuses_corrupt_events() -> anyh
 fn loader_boundary_id_lookup_rejects_a_foreign_snapshot_without_events() -> anyhow::Result<()> {
     let _lock = tests::lock_env();
     let home = tempfile::tempdir()?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", home.path());
+    let _home = tests::EnvVarGuard::set("HORON_HOME", home.path());
     let path = session_path("requested_missing")?;
     let unrelated = Session::create_with_id("different_missing".into(), None, None);
     crate::storage::write_json(&path, &unrelated)?;
@@ -68,7 +68,7 @@ fn loader_boundary_id_lookup_rejects_a_foreign_snapshot_without_events() -> anyh
 fn loader_boundary_explicit_title_backfill_preserves_priority_and_source() -> anyhow::Result<()> {
     let _lock = tests::lock_env();
     let home = tempfile::tempdir()?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", home.path());
+    let _home = tests::EnvVarGuard::set("HORON_HOME", home.path());
     let path = home.path().join("exports/title-copy.json");
     for (title, custom, label, expected) in [
         (None, None, None, "Visible first question"),
@@ -106,7 +106,7 @@ fn loader_boundary_explicit_title_backfill_preserves_priority_and_source() -> an
 fn explicit_export_paths_preserve_identity_source_and_save_guard() -> anyhow::Result<()> {
     let _lock = tests::lock_env();
     let home = tempfile::tempdir()?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", home.path());
+    let _home = tests::EnvVarGuard::set("HORON_HOME", home.path());
     for (id, relative) in [
         ("renamed_id", "sessions/renamed_export.json"),
         ("elsewhere_id", "exports/elsewhere_id.json"),

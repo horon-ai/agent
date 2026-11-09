@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn minilm_embedding_is_numerically_stable_across_inference_engines() {
         let dir = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join(".horon-agent/models/all-MiniLM-L6-v2"))
+            .map(|h| std::path::PathBuf::from(h).join(".horon/models/all-MiniLM-L6-v2"))
             .filter(|d| is_model_available(d));
         let Some(dir) = dir else {
             eprintln!("skip: MiniLM model not present locally");
@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn minilm_related_beats_unrelated_if_present() {
         let dir = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join(".horon-agent/models/all-MiniLM-L6-v2"))
+            .map(|h| std::path::PathBuf::from(h).join(".horon/models/all-MiniLM-L6-v2"))
             .filter(|d| is_model_available(d));
         match dir {
             Some(d) => related_beats_unrelated(&d),

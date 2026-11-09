@@ -7,11 +7,11 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// A workspace with project skills under an isolated `HORON_AGENT_HOME`, so
-/// the global registry never reads the real `~/.horon-agent`.
+/// A workspace with project skills under an isolated `HORON_HOME`, so
+/// the global registry never reads the real `~/.horon`.
 struct Fixture {
     _lock: std::sync::MutexGuard<'static, ()>,
-    home: tempfile::TempDir,
+    _home: tempfile::TempDir,
     workspace: tempfile::TempDir,
     previous_home: Option<std::ffi::OsString>,
 }
@@ -20,12 +20,12 @@ impl Fixture {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("home");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::invalidate_config_cache();
         Self {
             _lock: lock,
-            home,
+            _home: home,
             workspace: tempfile::tempdir().expect("workspace"),
             previous_home,
         }
@@ -33,7 +33,7 @@ impl Fixture {
 
     /// Write a project skill and return its directory.
     fn skill(&self, name: &str, body: &str) -> PathBuf {
-        let dir = self.workspace.path().join(".horon-agent/skills").join(name);
+        let dir = self.workspace.path().join(".horon/skills").join(name);
         std::fs::create_dir_all(&dir).expect("skill dir");
         std::fs::write(
             dir.join("SKILL.md"),
@@ -66,8 +66,8 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         match self.previous_home.take() {
-            Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(previous) => crate::env::set_var("HORON_HOME", previous),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::invalidate_config_cache();
     }
@@ -180,7 +180,7 @@ async fn a_dot_dot_path_is_refused() {
 async fn a_symlink_out_of_the_skill_is_refused() {
     let fixture = Fixture::new();
     let dir = fixture.skill("qa-skill", "Body.");
-    let outside = fixture.home.path().join("outside.txt");
+    let outside = fixture._home.path().join("outside.txt");
     write(&outside, "outside text\n");
     std::os::unix::fs::symlink(&outside, dir.join("link.md")).expect("symlink");
     let error = fixture

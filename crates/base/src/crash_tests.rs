@@ -7,17 +7,17 @@ where
     F: FnOnce(&Path) -> T,
 {
     let _guard = crate::storage::lock_test_env();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
+    let previous = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("create temp agent home");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     install_panic_hook_with_enabled(enabled);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(temp.path())));
 
     BUNDLES_ENABLED.store(false, Ordering::SeqCst);
     match previous {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
 }

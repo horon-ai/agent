@@ -53,7 +53,7 @@ impl SpawnedWindowsServer {
             .arg("windows-e2e-model")
             .arg("serve")
             .env_remove("HORON_AGENT_TEST_SESSION")
-            .env("HORON_AGENT_HOME", &home_dir)
+            .env("HORON_HOME", &home_dir)
             .env("HORON_AGENT_RUNTIME_DIR", &runtime_dir)
             .env("HORON_AGENT_INSTALL_DIR", &install_dir)
             .env("HORON_AGENT_OPENAI_COMPAT_API_BASE", "http://127.0.0.1:9/v1")
@@ -88,7 +88,7 @@ impl SpawnedWindowsServer {
     fn apply_env<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         command
             .env_remove("HORON_AGENT_TEST_SESSION")
-            .env("HORON_AGENT_HOME", &self.home_dir)
+            .env("HORON_HOME", &self.home_dir)
             .env("HORON_AGENT_RUNTIME_DIR", &self.runtime_dir)
             .env("HORON_AGENT_INSTALL_DIR", &self.install_dir)
             .env("HORON_AGENT_OPENAI_COMPAT_API_BASE", "http://127.0.0.1:9/v1")

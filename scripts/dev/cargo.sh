@@ -48,7 +48,7 @@ start_rust_action_log() {
     0|false|no|off) return ;;
   esac
 
-  local state_root="${HORON_AGENT_HOME:-${HOME:+$HOME/.horon-agent}}"
+  local state_root="${HORON_HOME:-${HOME:+$HOME/.horon}}"
   [[ -n "$state_root" ]] || state_root="$repo_root/target/horon-agent-state"
   rust_action_log_path="${HORON_AGENT_RUST_ACTION_LOG_PATH:-$state_root/logs/rust-actions.jsonl}"
   rust_action_log_started_ns=$(date +%s%N)
@@ -144,11 +144,11 @@ configure_build_tmpdir() {
   elif [[ -n "${HORON_AGENT_SCRATCH_DIR:-}" ]]; then
     candidate="$HORON_AGENT_SCRATCH_DIR/cargo-tmp"
     build_tmpdir_status="horon-agent-scratch"
-  elif [[ -n "${HORON_AGENT_HOME:-}" ]]; then
-    candidate="$HORON_AGENT_HOME/scratch/cargo-tmp"
+  elif [[ -n "${HORON_HOME:-}" ]]; then
+    candidate="$HORON_HOME/scratch/cargo-tmp"
     build_tmpdir_status="horon-agent-home"
   elif [[ -n "${HOME:-}" ]]; then
-    candidate="$HOME/.horon-agent/scratch/cargo-tmp"
+    candidate="$HOME/.horon/scratch/cargo-tmp"
     build_tmpdir_status="home-scratch"
   else
     candidate="$repo_root/target/horon-agent-scratch/cargo-tmp"

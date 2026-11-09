@@ -226,7 +226,7 @@ mod tests {
         }
     }
 
-    /// Point `HORON_AGENT_HOME` at a temp dir for the life of the guard.
+    /// Point `HORON_HOME` at a temp dir for the life of the guard.
     struct TempHome {
         _dir: tempfile::TempDir,
         previous: Option<std::ffi::OsString>,
@@ -235,8 +235,8 @@ mod tests {
     impl TempHome {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("temp home");
-            let previous = std::env::var_os("HORON_AGENT_HOME");
-            crate::env::set_var("HORON_AGENT_HOME", dir.path());
+            let previous = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", dir.path());
             Self { _dir: dir, previous }
         }
     }
@@ -244,8 +244,8 @@ mod tests {
     impl Drop for TempHome {
         fn drop(&mut self) {
             match &self.previous {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }

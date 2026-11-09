@@ -13,7 +13,7 @@ fn text(value: &str) -> Vec<ContentBlock> {
 fn task7_recent_lists_event_original_without_creating_sqlite() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-recent-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("catalog_event".into(), None, None);
     session.add_message(Role::User, text("catalog first prompt"));
     session.save()?;
@@ -39,7 +39,7 @@ fn task7_new_session_saves_beside_unreceipted_legacy_database() -> Result<()> {
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-unreceipted-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     // The operator's real HOME still carries the legacy catalog database without an
     // offline completion receipt. A brand-new session's own event log consumes no
     // catalog metadata, so that HOME-wide gate must not block saving or loading it.
@@ -84,7 +84,7 @@ fn task7_incomplete_first_file_migration_resumes_on_load_and_restart() -> Result
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-first-file-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut legacy = Session::create_with_id("task7_first_file".into(), None, None);
     legacy.add_message(Role::User, text("preserved first file"));
     legacy.status = SessionStatus::Closed;
@@ -135,7 +135,7 @@ fn task7_incomplete_first_file_migration_resumes_on_load_and_restart() -> Result
 fn append_restart_keeps_original_prefix_and_never_creates_legacy_authority() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-append-restart-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("event_restart".into(), None, None);
     session.add_message(Role::User, text("first"));
     session.save()?;
@@ -159,7 +159,7 @@ fn append_restart_keeps_original_prefix_and_never_creates_legacy_authority() -> 
 fn startup_and_remote_stubs_preserve_existing_history_on_save() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-startup-stub-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut original = Session::create_with_id("stub_preserved".into(), None, None);
     original.add_message(Role::User, text("never erase"));
     original.save()?;
@@ -183,7 +183,7 @@ fn startup_and_remote_stubs_preserve_existing_history_on_save() -> Result<()> {
 fn stale_facade_cannot_acknowledge_overwriting_another_save() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-stale-facade-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut first = Session::create_with_id("source_conflict".into(), None, None);
     first.add_message(Role::User, text("base"));
     first.save()?;
@@ -218,7 +218,7 @@ fn a_resume_marker_written_mid_turn_does_not_drop_the_turn() -> Result<()> {
 
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-concurrent-marker-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     let mut live = Session::create_with_id("concurrent_marker".into(), None, None);
     live.add_message(Role::User, text("do the long job"));
@@ -279,7 +279,7 @@ fn a_resume_marker_written_mid_turn_does_not_drop_the_turn() -> Result<()> {
 fn a_foreign_transcript_event_is_still_a_source_conflict() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-foreign-transcript-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     let mut live = Session::create_with_id("foreign_transcript".into(), None, None);
     live.add_message(Role::User, text("do the long job"));
@@ -306,7 +306,7 @@ fn a_foreign_transcript_event_is_still_a_source_conflict() -> Result<()> {
 fn renderer_rewind_selects_original_head_and_undo_restores_it() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-rewind-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("rewind_events".into(), None, None);
     session.add_message(Role::User, text("one"));
     session.add_message(Role::Assistant, text("two"));
@@ -326,7 +326,7 @@ fn renderer_rewind_selects_original_head_and_undo_restores_it() -> Result<()> {
 fn failed_sync_has_no_success_and_retries_the_reserved_event_ids() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-retry-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("retry_events".into(), None, None);
     let mut fail = true;
     session.set_event_io_hook(Box::new(move |point| {
@@ -361,7 +361,7 @@ fn failed_sync_has_no_success_and_retries_the_reserved_event_ids() -> Result<()>
 fn compaction_releases_prefix_but_export_and_renderer_keep_full_history() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-compaction-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("bounded_context".into(), None, None);
     session.provider_key = Some("openai".into());
     session.model = Some("test-model".into());
@@ -401,7 +401,7 @@ fn compaction_releases_prefix_but_export_and_renderer_keep_full_history() -> Res
 fn compacted_payload_carries_structured_usage_and_restoration() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-payload-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("structured_payload".into(), None, None);
     session.provider_key = Some("openai".into());
     session.model = Some("payload-model".into());
@@ -487,7 +487,7 @@ fn compacted_payload_carries_structured_usage_and_restoration() -> Result<()> {
 fn clearing_compaction_or_changing_model_restores_original_context() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-invalidate-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     for clear in [true, false] {
         let mut session = Session::create_with_id(format!("invalidate_{clear}"), None, None);
         session.provider_key = Some("openai".into());
@@ -529,7 +529,7 @@ fn clearing_compaction_or_changing_model_restores_original_context() -> Result<(
 fn remote_startup_save_does_not_reappend_compacted_history() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-remote-startup-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("remote_compacted".into(), None, None);
     session.provider_key = Some("openai".into());
     session.model = Some("model".into());
@@ -563,7 +563,7 @@ fn resident_context_reports_the_released_prefix_after_compaction() -> Result<()>
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-event-store-resident-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("resident_bound".into(), None, None);
     for index in 0..12 {
         session.add_message(Role::User, text(&format!("{index:02}{}", "z".repeat(6000))));
@@ -703,7 +703,7 @@ fn source_hash_streams_the_log_and_matches_the_whole_file_digest() -> Result<()>
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-source-hash-parity-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("source_hash_parity".into(), None, None);
     session.add_message(Role::User, text("seed"));
     session.save()?;
@@ -776,7 +776,7 @@ fn source_hash_peak_buffer_stays_fixed_while_the_log_grows() -> Result<()> {
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-source-hash-buffer-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("source_hash_buffer".into(), None, None);
     session.add_message(Role::User, text("seed"));
     session.save()?;
@@ -814,7 +814,7 @@ fn source_hash_changes_when_the_log_is_appended_between_two_calls() -> Result<()
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-source-hash-stale-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("source_hash_stale".into(), None, None);
     session.add_message(Role::User, text("first"));
     session.save()?;
@@ -832,7 +832,7 @@ fn source_hash_changes_when_the_log_is_appended_between_two_calls() -> Result<()
 fn a_mutated_prefix_still_reports_a_source_conflict() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-source-hash-mutated-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut live = Session::create_with_id("source_hash_mutated".into(), None, None);
     live.add_message(Role::User, text("first"));
     live.save()?;
@@ -857,7 +857,7 @@ fn a_mutated_prefix_still_reports_a_source_conflict() -> Result<()> {
 fn a_truncated_prefix_still_reports_a_source_conflict() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-source-hash-truncated-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut live = Session::create_with_id("source_hash_truncated".into(), None, None);
     live.add_message(Role::User, text("first"));
     live.add_message(Role::Assistant, text("second"));
@@ -886,7 +886,7 @@ fn a_torn_tail_is_refused_until_recovery_rewrites_the_complete_prefix() -> Resul
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-source-hash-torn-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut live = Session::create_with_id("source_hash_torn".into(), None, None);
     live.add_message(Role::User, text("first"));
     live.add_message(Role::Assistant, text("second"));
@@ -990,7 +990,7 @@ impl InterruptedCommit {
 /// facade still holds them as pending, which is exactly what a retry reads.
 fn interrupted_commit() -> Result<InterruptedCommit> {
     let (home, home_path) = canonical_tempdir("horon-agent-streaming-commit-")?;
-    let env = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let env = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("streaming_commit".into(), None, None);
     for index in 0..40 {
         session.add_message(Role::User, text(&format!("seed {index} {}", "s".repeat(32 * 1024))));
@@ -1221,7 +1221,7 @@ fn streaming_commit_validation_reads_through_one_fixed_buffer() -> Result<()> {
     use horon_agent_session_store as store;
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-commit-buffer-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("commit_buffer".into(), None, None);
     session.add_message(Role::User, text("seed"));
     session.save()?;

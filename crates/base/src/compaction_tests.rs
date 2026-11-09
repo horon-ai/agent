@@ -1123,16 +1123,16 @@ fn max_context_tokens_applies_at_construction_and_reloads_before_requests() {
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             if let Some(home) = &self.0 {
-                crate::env::set_var("HORON_AGENT_HOME", home);
+                crate::env::set_var("HORON_HOME", home);
             } else {
-                crate::env::remove_var("HORON_AGENT_HOME");
+                crate::env::remove_var("HORON_HOME");
             }
             crate::config::Config::invalidate_cache();
         }
     }
     let home = tempfile::tempdir().unwrap();
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     let mut cfg = crate::config::Config::default();
     cfg.compaction.max_context_tokens = 50_000;
     cfg.save().unwrap();
@@ -1348,8 +1348,8 @@ struct PolicyHome(Option<std::ffi::OsString>);
 impl Drop for PolicyHome {
     fn drop(&mut self) {
         match &self.0 {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }
@@ -1362,7 +1362,7 @@ fn install_policy_config(
     compaction: &crate::config::CompactionConfig,
     native_mode: Option<&str>,
 ) {
-    crate::env::set_var("HORON_AGENT_HOME", home);
+    crate::env::set_var("HORON_HOME", home);
     let mut cfg = crate::config::Config {
         compaction: compaction.clone(),
         ..crate::config::Config::default()
@@ -1378,7 +1378,7 @@ fn install_policy_config(
 async fn compaction_policy_native_strategy_skips_structured_paths() {
     let _lock = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let _restore = PolicyHome(std::env::var_os("HORON_AGENT_HOME"));
+    let _restore = PolicyHome(std::env::var_os("HORON_HOME"));
     install_policy_config(home.path(), &crate::config::CompactionConfig::default(), Some("auto"));
 
     let mut manager = CompactionManager::new().with_budget(200_000);
@@ -1416,7 +1416,7 @@ fn compaction_policy_context_budget_too_small_blocks_compaction() {
 fn compaction_policy_retention_is_not_a_fixed_message_count() {
     let _lock = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let _restore = PolicyHome(std::env::var_os("HORON_AGENT_HOME"));
+    let _restore = PolicyHome(std::env::var_os("HORON_HOME"));
     // A reserve small enough that both windows can hold a budget, so the only
     // difference between the two managers is the window size.
     let compaction = crate::config::CompactionConfig {

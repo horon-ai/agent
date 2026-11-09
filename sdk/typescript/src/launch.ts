@@ -8,7 +8,7 @@
  * state, and no way to disturb the user's live work by accident.
  *
  * `launch()` gives it one. It starts a private daemon and bridge under a
- * dedicated `HORON_AGENT_HOME` and runtime directory, and shuts them down on
+ * dedicated `HORON_HOME` and runtime directory, and shuts them down on
  * `close()`.
  */
 
@@ -57,10 +57,10 @@ const SHARED_FILES = new Set(CREDENTIAL_FILES.filter((name) => name !== "config.
  * Where horon-agent looks for *other* tools' credentials, relative to `$HOME`.
  *
  * horon-agent can log in by reusing an existing CLI's OAuth store, so a large share
- * of real users have no usable `~/.horon-agent/auth.json` at all: the working
+ * of real users have no usable `~/.horon/auth.json` at all: the working
  * credentials live in files under `~/.claude/` or
  * `~/.config/github-copilot/`. Under
- * `HORON_AGENT_HOME` these lookups are sandboxed to `$HORON_AGENT_HOME/external/`, so an
+ * `HORON_HOME` these lookups are sandboxed to `$HORON_HOME/external/`, so an
  * instance that inherits only `auth.json` silently has no credentials and
  * fails on the first turn. Linking the recognized credential files makes
  * inheritance mean what it says without exposing either directory wholesale.
@@ -69,9 +69,9 @@ const SHARED_FILES = new Set(CREDENTIAL_FILES.filter((name) => name !== "config.
  * horon-agent's own config directory, relative to the platform config root.
  *
  * `app_config_dir()` is where provider env files live (`anthropic.env`,
- * `n.env` for the horon-agent subscription), and `HORON_AGENT_HOME` redirects it to
- * `$HORON_AGENT_HOME/config/horon-agent`. It is easy to miss because it is not under
- * `~/.horon-agent` at all, and missing it is not a subtle failure: on a machine
+ * `n.env` for the horon-agent subscription), and `HORON_HOME` redirects it to
+ * `$HORON_HOME/config/horon-agent`. It is easy to miss because it is not under
+ * `~/.horon` at all, and missing it is not a subtle failure: on a machine
  * whose working credential is a horon-agent subscription, `auth.json` holds only a
  * stale OAuth token, so the instance inherits exactly the credential that does
  * not work and none of the ones that do.
@@ -203,7 +203,7 @@ export interface LaunchOptions {
 export interface LaunchedInstance {
   /** API socket path to connect to. */
   socketPath: string;
-  /** The instance's `HORON_AGENT_HOME`. */
+  /** The instance's `HORON_HOME`. */
   horonAgentHome: string;
   /** The bridge process. */
   process: ChildProcess;
@@ -222,7 +222,7 @@ function userHomeDir(): string {
 
 /** Resolve the user's real horon-agent home, ignoring any instance override. */
 export function userHoronAgentHome(): string {
-  return process.env.HORON_AGENT_HOME ?? path.join(userHomeDir(), ".horon-agent");
+  return process.env.HORON_HOME ?? path.join(userHomeDir(), ".horon");
 }
 
 /** The user's horon-agent config directory, mirroring `storage::app_config_dir`. */
@@ -279,7 +279,7 @@ export function inheritCredentials(fromHome: string, toHome: string): string[] {
   }
 
   // horon-agent's provider env files live in its platform config directory, which
-  // `HORON_AGENT_HOME` moves to `$HORON_AGENT_HOME/config/horon-agent`. Link only the env files:
+  // `HORON_HOME` moves to `$HORON_HOME/config/horon-agent`. Link only the env files:
   // caches and usage data are not credentials and must stay instance-private.
   // Most importantly, never link the directory itself. A buggy recursive
   // cleanup can descend through a directory link and delete the user's files;
@@ -298,7 +298,7 @@ export function inheritCredentials(fromHome: string, toHome: string): string[] {
   }
 
   // Other CLIs' credential stores, which horon-agent reads directly and which
-  // `HORON_AGENT_HOME` redirects to `$HORON_AGENT_HOME/external/`. Share only the exact
+  // `HORON_HOME` redirects to `$HORON_HOME/external/`. Share only the exact
   // credential files. Linking whole directories would also expose transcripts,
   // configuration, and anything those tools add in the future.
   for (const relative of EXTERNAL_CREDENTIAL_FILES) {
@@ -333,7 +333,7 @@ export function inheritCredentials(fromHome: string, toHome: string): string[] {
  *
  * Synchronous on purpose: the only caller is a process "exit" handler, which
  * cannot await, so shelling out to the CLI is not available. horon-agent records
- * every server in `$HORON_AGENT_HOME/servers.json` keyed by socket path, and an
+ * every server in `$HORON_HOME/servers.json` keyed by socket path, and an
  * instance's registry lists only that instance's daemon, so this can never
  * resolve to the server the user is running themselves.
  */
@@ -563,7 +563,7 @@ export async function launchInstance(options: LaunchOptions = {}): Promise<Launc
       cwd: options.workingDir ?? process.cwd(),
       env: {
         ...process.env,
-        HORON_AGENT_HOME: horonAgentHome,
+        HORON_HOME: horonAgentHome,
         HORON_AGENT_RUNTIME_DIR: runtimeDir,
         HORON_AGENT_API_SOCKET: socketPath,
         HORON_AGENT_SOCKET: path.join(runtimeDir, "horon-agent.sock"),

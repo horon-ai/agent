@@ -218,7 +218,7 @@ BASE_ENV_DROP = (
     "CLAUDE_CONFIG_DIR",
     "JCODE_HOME",
     "JCODE_RUNTIME_DIR",
-    "HORON_AGENT_HOME",
+    "HORON_HOME",
     "HORON_AGENT_RUNTIME_DIR",
     "HORON_AGENT_SOCKET",
     "XDG_CONFIG_HOME",
@@ -948,7 +948,7 @@ def _measure_oneshot(
 
 
 def _horon_log_dir(env: dict) -> Path | None:
-    home = env.get("HORON_AGENT_HOME")
+    home = env.get("HORON_HOME")
     return Path(home, "logs") if home else None
 
 
@@ -1931,7 +1931,7 @@ class HoronRunner(ToolRunner):
     def _root(self, root: str, mock: MockServer, run_mcp: bool = False) -> dict:
         home = write_horon_config(root, mock.base_url)
         env = horon_env(root, self.binary)
-        env["HORON_AGENT_HOME"] = home
+        env["HORON_HOME"] = home
         # The one-shot and session rows keep MCP off so their numbers stay
         # comparable with docs/performance/RESULTS.md; only the MCP scenario
         # turns server startup into part of the measurement.
@@ -1945,7 +1945,7 @@ class HoronRunner(ToolRunner):
         return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
     def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
-        path = install_skill(os.path.join(cwd, ".horon-agent", "skills"))
+        path = install_skill(os.path.join(cwd, ".horon", "skills"))
         # MCP is on for both new scenarios; with no server configured it costs
         # nothing, and the flag is what a real skill turn runs with.
         env = self._root(root, mock, run_mcp=True)
@@ -1954,7 +1954,7 @@ class HoronRunner(ToolRunner):
 
     def mcp(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         env = self._root(root, mock, run_mcp=True)
-        write_mcp_servers(os.path.join(env["HORON_AGENT_HOME"], "mcp.json"), mcp_servers())
+        write_mcp_servers(os.path.join(env["HORON_HOME"], "mcp.json"), mcp_servers())
         # A cache-stable tool list exposes the fixed `mcp_call` surface rather
         # than the server's tool name, so that is what the allow-list names.
         argv = horon_turn_argv(self.binary, mcp_prompt(), "mcp_call")

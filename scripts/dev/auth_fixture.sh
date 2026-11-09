@@ -22,9 +22,9 @@ Usage: $(basename "$0") <command> [args...]
 Commands:
   list                         List saved local auth fixtures
   path [name]                  Print fixture root, or a specific fixture path
-  save <name>                  Save the current sandbox HORON_AGENT_HOME as a fixture
-  load <name>                  Replace the sandbox HORON_AGENT_HOME with a saved fixture
-  reset-sandbox                Remove only the current sandbox HORON_AGENT_HOME
+  save <name>                  Save the current sandbox HORON_HOME as a fixture
+  load <name>                  Replace the sandbox HORON_HOME with a saved fixture
+  reset-sandbox                Remove only the current sandbox HORON_HOME
   delete <name>                Delete a saved fixture
   env <name>                   Print exports for running against a loaded fixture
   run <name> -- <args...>      Load fixture, then run horon-agent with args in sandbox
@@ -91,9 +91,9 @@ run_horon-agent() {
   (
     cd "$repo_root"
     if [[ -x "$binary_path" ]]; then
-      env HORON_AGENT_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" "$binary_path" "$@"
+      env HORON_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" "$binary_path" "$@"
     else
-      env HORON_AGENT_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" cargo run --bin horon-agent -- "$@"
+      env HORON_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" cargo run --bin horon-agent -- "$@"
     fi
   )
 }
@@ -114,7 +114,7 @@ save_fixture() {
   meta=$(metadata_path "$name")
   ensure_parent_dirs
   if [[ ! -d "$horon_agent_home" ]]; then
-    echo "sandbox HORON_AGENT_HOME does not exist: $horon_agent_home" >&2
+    echo "sandbox HORON_HOME does not exist: $horon_agent_home" >&2
     exit 1
   fi
   mkdir -p "$(dirname "$dst")"
@@ -144,7 +144,7 @@ load_fixture() {
   copy_dir_contents "$src" "$horon_agent_home"
   chmod -R go-rwx "$horon_agent_home" 2>/dev/null || true
   echo "Loaded auth fixture '$name' into sandbox '$sandbox_name'"
-  echo "HORON_AGENT_HOME=$horon_agent_home"
+  echo "HORON_HOME=$horon_agent_home"
 }
 
 delete_fixture() {
@@ -182,7 +182,7 @@ case "$command" in
   reset-sandbox)
     rm -rf "$horon_agent_home"
     mkdir -p "$horon_agent_home" "$runtime_dir"
-    echo "Reset sandbox HORON_AGENT_HOME: $horon_agent_home"
+    echo "Reset sandbox HORON_HOME: $horon_agent_home"
     ;;
   delete)
     name=$(require_name "${1:-}")
@@ -192,7 +192,7 @@ case "$command" in
     name=$(require_name "${1:-}")
     load_fixture "$name" >/dev/null
     cat <<EOF
-export HORON_AGENT_HOME="$horon_agent_home"
+export HORON_HOME="$horon_agent_home"
 export HORON_AGENT_RUNTIME_DIR="$runtime_dir"
 EOF
     ;;

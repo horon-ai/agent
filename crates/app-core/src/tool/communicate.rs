@@ -1731,9 +1731,7 @@ impl CommunicateTool {
         let description = if swarm_prompt.is_empty() {
             BASE_DESCRIPTION.to_string()
         } else {
-            format!(
-                "{BASE_DESCRIPTION}\n\nSwarm prompt (user-tunable via ~/.horon-agent/swarm-prompt.md):\n{swarm_prompt}"
-            )
+            format!("{BASE_DESCRIPTION}\n\nSwarm prompt (user-tunable via ~/.horon/swarm-prompt.md):\n{swarm_prompt}")
         };
         Self { description }
     }

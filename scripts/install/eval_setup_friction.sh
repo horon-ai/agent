@@ -15,7 +15,7 @@
 #              complaint, asked of the real rc files the installer wrote.
 #   Section B  idempotency - three installs must leave exactly one PATH line
 #              per rc file (no duplicate exports piling up run after run).
-#   Section C  retention - an upgrade must preserve ~/.horon-agent config and auth,
+#   Section C  retention - an upgrade must preserve ~/.horon config and auth,
 #              keep both immutable version binaries (rollback stays possible),
 #              and the launcher must serve the new version.
 #   Section D  Windows parity - static audit that the Git Bash installer path
@@ -126,12 +126,12 @@ version="__VERSION__"
 if [ "${1:-}" = "--version" ]; then printf 'horon-agent %s\n' "$version"; exit 0; fi
 if [ "${1:-}" = "install-release" ]; then
   install_dir="${HORON_AGENT_INSTALL_DIR:?}"
-  version_dir="$HORON_AGENT_HOME/builds/versions/$version"
-  mkdir -p "$version_dir" "$HORON_AGENT_HOME/builds" "$install_dir"
+  version_dir="$HORON_HOME/builds/versions/$version"
+  mkdir -p "$version_dir" "$HORON_HOME/builds" "$install_dir"
   printf '#!/usr/bin/env bash\nprintf "horon-agent %s\\n"\n' "$version" > "$version_dir/horon-agent"
   chmod +x "$version_dir/horon-agent"
-  printf '%s\n' "$version" > "$HORON_AGENT_HOME/builds/stable-version"
-  printf '%s\n' "$version" > "$HORON_AGENT_HOME/builds/current-version"
+  printf '%s\n' "$version" > "$HORON_HOME/builds/stable-version"
+  printf '%s\n' "$version" > "$HORON_HOME/builds/current-version"
   cp "$version_dir/horon-agent" "$install_dir/horon-agent"
   chmod +x "$install_dir/horon-agent"
   exit 0
@@ -161,7 +161,7 @@ run_install() {
   PATH="$work/bin:/usr/bin:/bin" \
   HOME="$home" \
   XDG_CONFIG_HOME="$home/.config" \
-  HORON_AGENT_HOME="$home/.horon-agent" \
+  HORON_HOME="$home/.horon" \
   HORON_AGENT_INSTALL_DIR="$home/.local/bin" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
   bash "$install_sh" 2>&1
@@ -253,9 +253,9 @@ home_c="$work/home-c"
 run_install "$home_c" "1.2.3" >/dev/null 2>&1
 
 # Simulate accumulated user state between installs.
-mkdir -p "$home_c/.horon-agent"
-printf 'model = "kept"\n' > "$home_c/.horon-agent/config.toml"
-printf '{"kept":true}\n' > "$home_c/.horon-agent/auth.json"
+mkdir -p "$home_c/.horon"
+printf 'model = "kept"\n' > "$home_c/.horon/config.toml"
+printf '{"kept":true}\n' > "$home_c/.horon/auth.json"
 
 run_install "$home_c" "1.3.0" >/dev/null 2>&1
 
@@ -263,20 +263,20 @@ ver=$("$home_c/.local/bin/horon-agent" --version 2>/dev/null || true)
 [ "$ver" = "horon-agent 1.3.0" ]; check "upgrade switches the launcher to the new version" \
   "horon-agent 1.3.0" "${ver:-<no output>}" "$?"
 
-[ "$(cat "$home_c/.horon-agent/config.toml" 2>/dev/null)" = 'model = "kept"' ]
-check "upgrade preserves ~/.horon-agent/config.toml" \
+[ "$(cat "$home_c/.horon/config.toml" 2>/dev/null)" = 'model = "kept"' ]
+check "upgrade preserves ~/.horon/config.toml" \
   "file unchanged" "missing or modified" "$?"
 
-[ "$(cat "$home_c/.horon-agent/auth.json" 2>/dev/null)" = '{"kept":true}' ]
-check "upgrade preserves ~/.horon-agent/auth.json" \
+[ "$(cat "$home_c/.horon/auth.json" 2>/dev/null)" = '{"kept":true}' ]
+check "upgrade preserves ~/.horon/auth.json" \
   "file unchanged" "missing or modified" "$?"
 
-[ -x "$home_c/.horon-agent/builds/versions/1.2.3/horon-agent" ] && [ -x "$home_c/.horon-agent/builds/versions/1.3.0/horon-agent" ]
+[ -x "$home_c/.horon/builds/versions/1.2.3/horon-agent" ] && [ -x "$home_c/.horon/builds/versions/1.3.0/horon-agent" ]
 check "both immutable version binaries kept (rollback possible)" \
   "versions/1.2.3 and versions/1.3.0 both executable" \
-  "$(ls "$home_c/.horon-agent/builds/versions" 2>/dev/null | tr '\n' ' ')" "$?"
+  "$(ls "$home_c/.horon/builds/versions" 2>/dev/null | tr '\n' ' ')" "$?"
 
-stable_ver=$(cat "$home_c/.horon-agent/builds/stable-version" 2>/dev/null || true)
+stable_ver=$(cat "$home_c/.horon/builds/stable-version" 2>/dev/null || true)
 [ "$stable_ver" = "1.3.0" ]; check "stable channel marker points at the new version" \
   "1.3.0" "${stable_ver:-<missing>}" "$?"
 
@@ -300,12 +300,12 @@ bash "$uninstall_sh" --yes >/dev/null 2>&1
 uninstall_status=$?
 check "uninstall (no --purge) completes" "exit 0" "exit $uninstall_status" "$uninstall_status"
 
-[ ! -e "$home_c/.local/bin/horon-agent" ] && [ ! -d "$home_c/.horon-agent/builds" ]
+[ ! -e "$home_c/.local/bin/horon-agent" ] && [ ! -d "$home_c/.horon/builds" ]
 check "uninstall removes launcher and build channels" \
   "launcher and builds gone" "still present" "$?"
 
-[ "$(cat "$home_c/.horon-agent/config.toml" 2>/dev/null)" = 'model = "kept"' ] \
-  && [ "$(cat "$home_c/.horon-agent/auth.json" 2>/dev/null)" = '{"kept":true}' ]
+[ "$(cat "$home_c/.horon/config.toml" 2>/dev/null)" = 'model = "kept"' ] \
+  && [ "$(cat "$home_c/.horon/auth.json" 2>/dev/null)" = '{"kept":true}' ]
 check "uninstall keeps config/auth for a cheap return" \
   "config.toml and auth.json intact" "user data lost" "$?"
 
@@ -384,7 +384,7 @@ EVAL_WIN_STATE="$win_state" \
 PATH="$work/bin:/usr/bin:/bin" \
 HOME="$home_w" \
 LOCALAPPDATA="$work/localappdata" \
-HORON_AGENT_HOME="$home_w/.horon-agent" \
+HORON_HOME="$home_w/.horon" \
 HORON_AGENT_INSTALL_DIR="$work/localappdata/horon-agent/bin" \
 HORON_AGENT_SKIP_SERVER_RELOAD=1 \
 bash "$install_sh" >/dev/null 2>&1

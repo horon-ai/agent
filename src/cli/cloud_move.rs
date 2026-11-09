@@ -1524,8 +1524,8 @@ mod tests {
     impl Drop for HomeGuard {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
@@ -1537,8 +1537,8 @@ mod tests {
     fn installing_a_moved_session_drops_the_stale_journal_and_its_lock() {
         let _env_lock = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("tempdir");
-        let _home = HomeGuard(std::env::var_os("HORON_AGENT_HOME"));
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let _home = HomeGuard(std::env::var_os("HORON_HOME"));
+        crate::env::set_var("HORON_HOME", home.path());
 
         let sess = session::Session::create_with_id("cloud-move-install".to_string(), None, None);
         let path = session::session_path(&sess.id).expect("session path");

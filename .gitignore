@@ -6,7 +6,7 @@ __pycache__/
 # Local onboarding sandbox + auth fixtures. May contain REAL OAuth tokens copied
 # from $HOME (see scripts/dev/onboarding_sandbox.sh seed-real-logins). Never commit.
 /.tmp/
-/.horon-agent/generated-images/
+/.horon/generated-images/
 
 # Stray experiment/debug artifacts at the repo root. Real assets live under
 # docs/ and tests/ and are committed explicitly.

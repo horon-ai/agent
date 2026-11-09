@@ -26,7 +26,7 @@ impl Sandbox {
     }
 
     fn set_home(&self) {
-        crate::env::set_var("HORON_AGENT_HOME", &self.home);
+        crate::env::set_var("HORON_HOME", &self.home);
     }
 }
 

@@ -269,8 +269,8 @@ async fn invalid_threshold_or_large_query_is_fail_closed() {
 fn manager_scope_active_filter_and_storage_failures() {
     let _guard = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let old = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let old = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     let result = std::panic::catch_unwind(|| {
         let manager = MemoryManager::new_test().with_skills(false);
         let mut project = MemoryGraph::new();
@@ -305,8 +305,8 @@ fn manager_scope_active_filter_and_storage_failures() {
         assert!(collect_scoped(&manager, MemoryScope::Project).is_ok());
     });
     match old {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     if let Err(error) = result {
         std::panic::resume_unwind(error);

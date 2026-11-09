@@ -319,7 +319,7 @@ impl DispatchTimings {
 
     /// Sum of the measured stages. The total covers a little more (the start
     /// lifecycle line and result delivery), so this is never the larger number.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn stage_sum_ms(&self) -> u64 {
         self.hook_transform_ms + self.hook_gate_ms + self.execute_ms + self.post_feedback_ms + self.overflow_guard_ms
     }
@@ -344,7 +344,7 @@ fn observe_dispatch_timings(tool_call_id: &str, timings: DispatchTimings) {
 fn observe_dispatch_timings(_tool_call_id: &str, _timings: DispatchTimings) {}
 
 /// Stage breakdown recorded for `tool_call_id` by the real dispatch path.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn dispatch_timings_for(tool_call_id: &str) -> Option<DispatchTimings> {
     DISPATCH_TIMINGS
         .lock()
@@ -2741,7 +2741,7 @@ impl Registry {
     }
 
     /// Like [`Self::register_mcp_tools`], but resolves project-local MCP config
-    /// (`.mcp.json`, `.horon-agent/mcp.json`, `.claude/mcp.json`) against
+    /// (`.mcp.json`, `.horon/mcp.json`, `.claude/mcp.json`) against
     /// `working_dir` instead of the server process cwd. Remote/client sessions
     /// must pass their session working directory here (issue #420).
     pub async fn register_mcp_tools_for_dir(

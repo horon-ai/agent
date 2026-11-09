@@ -518,7 +518,7 @@ fn goal_log_lines(log_path: &std::path::Path, session_id: &str) -> Vec<String> {
 /// init time, so an in-process test reads whatever path some other initializer
 /// in this binary happened to open. The assertions therefore run in a child of
 /// this same test binary, selected with `--exact`: there the logger is
-/// guaranteed fresh and `HORON_AGENT_HOME` is the sandbox that child creates.
+/// guaranteed fresh and `HORON_HOME` is the sandbox that child creates.
 #[test]
 fn the_continuation_emits_its_log_line() {
     let output = std::process::Command::new(std::env::current_exe().expect("the test binary path"))

@@ -51,9 +51,9 @@ enum PathRule {
     /// Relative to the workspace root, or to the process cwd when a session has
     /// no workspace yet.
     Project(&'static str),
-    /// Relative to horon-agent's own home (`~/.horon-agent`).
+    /// Relative to horon-agent's own home (`~/.horon`).
     AgentHome(&'static str),
-    /// Relative to the user's home, sandboxed under `HORON_AGENT_HOME/external`
+    /// Relative to the user's home, sandboxed under `HORON_HOME/external`
     /// while a sandbox is configured.
     UserHome(&'static str),
     /// horon-agent's managed-skill directory (`skill_manage create`/`update`).
@@ -119,7 +119,7 @@ pub(crate) const SOURCES: &[SourceRow] = &[
         id: "horon-agent",
         level: Level::Project,
         priority: 100,
-        entries: &[entry(PathRule::Project(".horon-agent/skills"), EntryKind::SkillsDir)],
+        entries: &[entry(PathRule::Project(".horon/skills"), EntryKind::SkillsDir)],
         enable: Enable::Always,
     },
     SourceRow {

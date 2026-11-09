@@ -19,7 +19,7 @@ const PROTECTED_CREDENTIAL_SUBPATHS: &[&str] = &[".ssh", ".gnupg", ".aws", ".kub
 /// exactly, so `~/.config` is protected while `~/.config/app/stale.toml` is not.
 const PROTECTED_HOME_SUBPATHS: &[&str] = &[
     ".config",
-    ".horon-agent",
+    ".horon",
     ".claude",
     ".local",
     ".local/share",

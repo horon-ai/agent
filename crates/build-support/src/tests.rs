@@ -11,13 +11,13 @@ fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
 fn with_temp_horon_agent_home<T>(f: impl FnOnce() -> T) -> T {
     let _guard = test_env_lock();
     let temp_home = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    horon_agent_core::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    horon_agent_core::env::set_var("HORON_HOME", temp_home.path());
     let result = f();
     if let Some(prev_home) = prev_home {
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", prev_home);
+        horon_agent_core::env::set_var("HORON_HOME", prev_home);
     } else {
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
     result
 }
@@ -619,5 +619,54 @@ fn repair_never_downgrades_when_stable_is_older() {
             "repair must never move shared-server backward to an older stable"
         );
         assert_eq!(read_shared_server_version().unwrap().as_deref(), Some(shared_new),);
+    });
+}
+
+#[test]
+fn launcher_update_installs_horon_and_hrn_aliases_for_the_same_binary() {
+    with_temp_horon_agent_home(|| {
+        let version = "alias-current";
+        let version_binary = install_binary_at_version(std::env::current_exe().as_ref().unwrap(), version)
+            .expect("install test version");
+        update_current_symlink(version).expect("update current symlink");
+
+        let launcher = update_launcher_symlink_to_current().expect("update launcher");
+
+        let aliases = launcher_alias_paths().expect("alias paths");
+        let names: Vec<_> = aliases
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        let suffix = std::env::consts::EXE_SUFFIX;
+        assert_eq!(names, [format!("horon{suffix}"), format!("hrn{suffix}")]);
+        for alias in aliases {
+            assert_eq!(alias.parent(), launcher.parent());
+            assert_eq!(
+                std::fs::read(&alias).expect("alias"),
+                std::fs::read(&version_binary).expect("version binary")
+            );
+        }
+    });
+}
+
+#[test]
+fn launcher_update_never_replaces_an_unrelated_program_named_like_an_alias() {
+    with_temp_horon_agent_home(|| {
+        let version = "alias-foreign";
+        install_binary_at_version(std::env::current_exe().as_ref().unwrap(), version).expect("install test version");
+        update_current_symlink(version).expect("update current symlink");
+        let bin = launcher_dir().expect("launcher dir");
+        std::fs::create_dir_all(&bin).expect("bin dir");
+        let suffix = std::env::consts::EXE_SUFFIX;
+        let foreign = bin.join(format!("horon{suffix}"));
+        std::fs::write(&foreign, "#!/bin/sh\necho other\n").expect("foreign file");
+
+        update_launcher_symlink_to_current().expect("update launcher");
+
+        assert_eq!(
+            std::fs::read_to_string(&foreign).expect("foreign intact"),
+            "#!/bin/sh\necho other\n"
+        );
+        assert!(bin.join(format!("hrn{suffix}")).exists());
     });
 }

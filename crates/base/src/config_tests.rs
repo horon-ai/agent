@@ -23,7 +23,7 @@ struct GeminiConfigEnv {
 impl GeminiConfigEnv {
     fn new() -> Self {
         let previous = [
-            "HORON_AGENT_HOME",
+            "HORON_HOME",
             "HORON_AGENT_GEMINI_FORCE_OAUTH",
             "GOOGLE_CLOUD_PROJECT",
             "GOOGLE_CLOUD_PROJECT_ID",
@@ -32,7 +32,7 @@ impl GeminiConfigEnv {
         .map(|key| (key, std::env::var_os(key)))
         .collect();
         let home = tempfile::tempdir().unwrap();
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         for key in [
             "HORON_AGENT_GEMINI_FORCE_OAUTH",
             "GOOGLE_CLOUD_PROJECT",
@@ -803,16 +803,16 @@ fn acp_protocol_v2_defaults_true() {
     assert!(!off.acp.protocol_v2);
 
     let _guard = crate::storage::lock_test_env();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
+    let previous = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     let path = Config::create_default_config_file().expect("create default config file");
     let content = std::fs::read_to_string(path).expect("read default config file");
     assert!(
         content.contains("# protocol_v2 = true"),
         "generated default config should document the v2 switch"
     );
-    restore_env_var("HORON_AGENT_HOME", previous);
+    restore_env_var("HORON_HOME", previous);
 }
 
 #[test]
@@ -955,9 +955,9 @@ fn tool_config_disabled_only_keeps_full_profile_with_deny_list() {
 #[test]
 fn test_generated_default_config_has_expected_user_defaults() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
 
     let path = Config::create_default_config_file().expect("create default config file");
     let content = std::fs::read_to_string(path).expect("read default config file");
@@ -1042,18 +1042,18 @@ fn test_generated_default_config_has_expected_user_defaults() {
     );
 
     if let Some(prev) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
+        crate::env::set_var("HORON_HOME", prev);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
 #[test]
 fn global_config_cache_reloads_after_manual_file_edit() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let path = Config::path().expect("config path");
@@ -1068,16 +1068,16 @@ fn global_config_cache_reloads_after_manual_file_edit() {
 
     assert!(crate::config::config().display.emoji);
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 
 #[test]
 fn config_save_invalidates_global_config_cache() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let mut cfg = Config::default();
@@ -1089,7 +1089,7 @@ fn config_save_invalidates_global_config_cache() {
     cfg.save().expect("save updated config");
     assert!(crate::config::config().display.emoji);
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 
@@ -1147,9 +1147,9 @@ fn config_env_fingerprint_tracks_every_apply_env_override_var() {
 #[test]
 fn cached_external_auth_trust_observes_manual_revocation() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let auth_file = dir.path().join("external-auth.json");
@@ -1172,7 +1172,7 @@ fn cached_external_auth_trust_observes_manual_revocation() {
         &auth_file
     ));
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 
@@ -1225,9 +1225,9 @@ fn unknown_approval_mode_falls_back_to_off() {
 #[test]
 fn tool_switches_load_from_a_real_config_file() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let path = Config::path().expect("config path");
@@ -1254,7 +1254,7 @@ fn tool_switches_load_from_a_real_config_file() {
     assert_eq!(loaded.tools.approval_mode, ApprovalMode::Write);
     assert_eq!(loaded.tools.secrets_mode, SecretsMode::Obfuscate);
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 
@@ -1520,9 +1520,9 @@ fn populate_context_limits_from_config_seeds_qualified_runtime_model_shapes() {
 #[test]
 fn migrate_legacy_swarm_spawn_mode_flips_visible_to_inline_once() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
 
     let config_path = dir.path().join("config.toml");
     let original =
@@ -1553,15 +1553,15 @@ fn migrate_legacy_swarm_spawn_mode_flips_visible_to_inline_once() {
     let content = std::fs::read_to_string(&config_path).expect("read config");
     assert!(content.contains("swarm_spawn_mode = \"visible\""));
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
 }
 
 #[test]
 fn migrate_legacy_swarm_spawn_mode_noops_without_visible_value() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
 
     // No config file at all: no migration, but the marker is written.
     assert!(!Config::migrate_legacy_swarm_spawn_mode_once());
@@ -1573,22 +1573,22 @@ fn migrate_legacy_swarm_spawn_mode_noops_without_visible_value() {
     // Explicit non-visible values are never rewritten (marker already set,
     // but check the matcher too with a fresh home).
     let dir2 = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir2.path());
+    crate::env::set_var("HORON_HOME", dir2.path());
     let config_path = dir2.path().join("config.toml");
     std::fs::write(&config_path, "[agents]\nswarm_spawn_mode = \"headless\"\n").expect("write config");
     assert!(!Config::migrate_legacy_swarm_spawn_mode_once());
     let content = std::fs::read_to_string(&config_path).expect("read config");
     assert!(content.contains("swarm_spawn_mode = \"headless\""));
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
 }
 
 #[test]
 fn sponsors_optout_survives_config_save_and_reload() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let path = Config::path().expect("config path");
@@ -1627,7 +1627,7 @@ fn sponsors_optout_survives_config_save_and_reload() {
         }
     }
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 
@@ -1723,9 +1723,9 @@ fn swarm_root_effort_env_overrides_and_shared_resolution() {
 #[test]
 fn anthropic_cache_preference_persists_and_preserves_other_settings() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
     let path = Config::path().unwrap();
     std::fs::write(&path, "[provider]\ndefault_model = 'keep-me'\n").unwrap();
@@ -1740,16 +1740,16 @@ fn anthropic_cache_preference_persists_and_preserves_other_settings() {
     std::fs::write(&path, "[broken").unwrap();
     assert!(Config::set_anthropic_cache_ttl_1h(false).is_err());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "[broken");
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 
 #[test]
 fn cli_config_save_round_trips_desktop_tables() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     Config::invalidate_cache();
 
     let path = dir.path().join("config.toml");
@@ -1776,7 +1776,7 @@ fn cli_config_save_round_trips_desktop_tables() {
     Config::set_default_model(Some("gpt-test"), None).expect("save");
     assert!(!std::fs::read_to_string(&path).unwrap().contains("[desktop"));
 
-    restore_env_var("HORON_AGENT_HOME", prev_home);
+    restore_env_var("HORON_HOME", prev_home);
     Config::invalidate_cache();
 }
 

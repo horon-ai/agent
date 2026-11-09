@@ -364,7 +364,7 @@ def create_home(template: Path, facts: dict, destination: Path) -> Path:
 
 def probe_environment(home: str) -> dict:
     env = dict(os.environ)
-    env["HORON_AGENT_HOME"] = home
+    env["HORON_HOME"] = home
     env["HOME"] = home
     env["HORON_AGENT_PERF_COUNTERS"] = "1"
     # The measured fixture decides which MCP sources are in play. An ambient

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark and optionally regression-check horon-agent startup time.
 
-Every measurement runs under a temporary HORON_AGENT_HOME and
+Every measurement runs under a temporary HORON_HOME and
 HORON_AGENT_RUNTIME_DIR so it does not interfere with the user's real server,
 logs, or credentials.
 
@@ -104,10 +104,10 @@ def run_simple_timing(binary: str, *args: str, runs: int) -> list[float]:
 
 def isolated_env(root: str) -> dict[str, str]:
     env = os.environ.copy()
-    env["HORON_AGENT_HOME"] = os.path.join(root, "home")
+    env["HORON_HOME"] = os.path.join(root, "home")
     env["HORON_AGENT_RUNTIME_DIR"] = os.path.join(root, "run")
     env["HORON_AGENT_SOCKET"] = os.path.join(env["HORON_AGENT_RUNTIME_DIR"], "horon-agent.sock")
-    os.makedirs(env["HORON_AGENT_HOME"], exist_ok=True)
+    os.makedirs(env["HORON_HOME"], exist_ok=True)
     os.makedirs(env["HORON_AGENT_RUNTIME_DIR"], exist_ok=True)
     return env
 

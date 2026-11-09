@@ -1,6 +1,6 @@
 //! Configuration file support for horon-agent
 //!
-//! Config is loaded from `~/.horon-agent/config.toml` (or `$HORON_AGENT_HOME/config.toml`)
+//! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
 pub use horon_agent_config_types::{
@@ -64,7 +64,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_GATEWAY_BIND_ADDR",
     "HORON_AGENT_GATEWAY_ENABLED",
     "HORON_AGENT_GATEWAY_PORT",
-    "HORON_AGENT_HOME",
+    "HORON_HOME",
     "HORON_AGENT_HOOK_PRE_TOOL",
     "HORON_AGENT_HOOK_PRE_TOOL_TRANSFORM",
     "HORON_AGENT_HOOK_PRE_TOOL_TRANSFORM_TIMEOUT_MS",
@@ -865,7 +865,7 @@ pub struct ToolConfig {
     /// by default because it starts and keeps a server process.
     pub lsp: bool,
     /// Opt-in managed skills: let `skill_manage create`/`update` write skill
-    /// files into `~/.horon-agent/managed-skills/`. Off by default, so a
+    /// files into `~/.horon/managed-skills/`. Off by default, so a
     /// model never authors its own instructions unless the operator asks.
     pub managed_skills: bool,
     /// Opt-in `context_notes`: expose the tool that keeps a small notes file

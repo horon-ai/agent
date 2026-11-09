@@ -234,7 +234,7 @@ if [[ "$SYNC_SOURCE" -eq 1 ]]; then
         --exclude '*.log' \
         --exclude '.claude/' \
         --exclude '.codex-socktest/' \
-        --exclude '.horon-agent/' \
+        --exclude '.horon/' \
         --exclude '.tmp/' \
         --exclude '.wrangler/' \
         --exclude 'tmp/' \
