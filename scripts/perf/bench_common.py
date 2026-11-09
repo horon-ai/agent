@@ -413,6 +413,31 @@ def process_tree_pss_bytes(pid: int) -> int | None:
     return total
 
 
+def process_tree_status_bytes(pid: int, field: str) -> int | None:
+    """Summed ``/proc/<pid>/status`` value (e.g. ``RssAnon``, ``RssFile``) over the tree; Linux only.
+
+    Splitting RSS into anonymous and file-backed pages tells heap and stack
+    growth apart from mapped files (the binary, shared libraries) being touched.
+    """
+    if not os.path.isdir("/proc"):
+        return None
+    prefix = field + ":"
+    total = 0
+    found = False
+    for child in process_tree_pids(pid):
+        try:
+            with open(f"/proc/{child}/status", "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if line.startswith(prefix):
+                        total += int(line.split()[1]) * 1024
+                        found = True
+                        break
+        except (OSError, ValueError, IndexError):
+            continue
+    return total if found else None
+
+
+
 class MemorySampler:
     """Background sampler that keeps the peak tree RSS of a process."""
 

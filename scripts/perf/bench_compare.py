@@ -1216,6 +1216,7 @@ def measure_daemon_sessions(
     cwd: str,
     timeout: float,
     probe=None,
+    diagnostics=None,
 ) -> dict:
     """Generic N-session harness for a single daemon process.
 
@@ -1268,6 +1269,11 @@ def measure_daemon_sessions(
             samples[-1].update(counters)
             # Taken after the RSS sample above so the inspection cannot move it.
             samples[-1]["live_heap_bytes"] = live_heap_bytes(daemon.proc.pid)
+            samples[-1]["rss_anon_bytes"] = bc.process_tree_status_bytes(daemon.proc.pid, "RssAnon")
+            samples[-1]["rss_file_bytes"] = bc.process_tree_status_bytes(daemon.proc.pid, "RssFile")
+            # Last on purpose: a purge changes RSS, so every other sample is taken first.
+            if diagnostics is not None:
+                samples[-1].update(diagnostics(daemon.proc.pid))
         return {
             "sessions": session_count,
             "samples": samples,
@@ -1414,6 +1420,36 @@ def server_memory_probe(debug_socket: str):
         return json.loads(sessions_client(debug_socket, "server:memory", timeout=30))
 
     return probe
+
+
+def horon_memory_diagnostics(debug_socket: str):
+    """Callable that splits a horon daemon's post-turn RSS by what holds it.
+
+    ``allocator_live_bytes`` is what the allocator reports as live (glibc
+    ``mallinfo2``; ``None`` where the daemon has no allocator stats), and
+    ``post_purge_rss_bytes`` is the tree RSS after ``allocator:purge`` hands
+    freed pages back (``malloc_trim`` on glibc). RSS minus the post-purge value
+    is memory the allocator kept after it was freed; the post-purge value minus
+    live bytes is what neither explains (stacks, mapped files, fragmentation).
+    The purge changes the process, so this must run after every other sample.
+    """
+
+    def run(pid: int) -> dict:
+        out: dict = {}
+        try:
+            info = json.loads(sessions_client(debug_socket, "allocator:info", timeout=30))
+            out["allocator_live_bytes"] = (info.get("stats") or {}).get("allocated_bytes")
+        except Exception as exc:  # noqa: BLE001
+            out["allocator_error"] = str(exc)[:120]
+        try:
+            sessions_client(debug_socket, "allocator:purge", timeout=30)
+            time.sleep(0.3)
+            out["post_purge_rss_bytes"] = bc.process_tree_rss_bytes(pid)
+        except Exception as exc:  # noqa: BLE001
+            out["purge_error"] = str(exc)[:120]
+        return out
+
+    return run
 
 
 def read_process_counters(probe) -> tuple[dict, str | None]:
@@ -1934,6 +1970,7 @@ class HoronRunner(ToolRunner):
             cwd,
             timeout,
             probe=server_memory_probe(debug_socket_for(os.path.join(root, "run", "bench.sock"))),
+            diagnostics=horon_memory_diagnostics(debug_socket_for(os.path.join(root, "run", "bench.sock"))),
         )
 
 
@@ -2421,6 +2458,10 @@ def summarize_sessions(points: list[dict], turns: int) -> dict:
         "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
         "each_additional_idle_live_heap_bytes": slope_series(points, "idle_live_heap_bytes"),
         "each_additional_post_turn_live_heap_bytes": slope_series(points, "post_turn_live_heap_bytes"),
+        "each_additional_post_turn_rss_anon_bytes": slope_series(points, "post_turn_rss_anon_bytes"),
+        "each_additional_post_turn_rss_file_bytes": slope_series(points, "post_turn_rss_file_bytes"),
+        "each_additional_post_turn_allocator_live_bytes": slope_series(points, "post_turn_allocator_live_bytes"),
+        "each_additional_post_purge_rss_bytes": slope_series(points, "post_purge_rss_bytes"),
         "first_session_threads": plan_first_session(points, "thread_count"),
         "each_additional_threads": slope_series(points, "thread_count"),
         "first_session_fds": plan_first_session(points, "fd_count"),
@@ -2593,6 +2634,11 @@ def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd:
         "errors": errors,
         "sessions_created": created,
         "thread_names": measurement.get("thread_names"),
+        "post_turn_rss_anon_bytes": (post or {}).get("rss_anon_bytes"),
+        "post_turn_rss_file_bytes": (post or {}).get("rss_file_bytes"),
+        "post_turn_allocator_live_bytes": (post or {}).get("allocator_live_bytes"),
+        "post_purge_rss_bytes": (post or {}).get("post_purge_rss_bytes"),
+        "diagnostic_error": (post or {}).get("allocator_error") or (post or {}).get("purge_error"),
     }
 
 
