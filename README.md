@@ -1,131 +1,211 @@
-# horon agent
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="horon-agent: a headless coding agent for OpenAI-compatible endpoints" width="720">
+</p>
 
-The agent backend for horon. One binary, `horon-agent`, runs an agent over a Unix
-socket, the harness API, or ACP on stdio. It has no terminal UI and speaks one
-model protocol, OpenAI-compatible.
+<p align="center">
+  <strong>A headless coding agent. One Rust binary, no terminal UI, any OpenAI-compatible endpoint.</strong>
+</p>
 
-## Fixed requirements
+<p align="center">
+  Language: <strong>English</strong> | <a href="README.ko.md">한국어</a>
+</p>
 
-These hold for every change; `AGENTS.md` carries the full contract.
+<p align="center">
+  <a href="https://github.com/horon-ai/agent/releases/latest"><img src="https://img.shields.io/github/v/release/horon-ai/agent?style=flat&amp;colorA=222222&amp;colorB=58A6FF" alt="Latest release"></a>
+  <a href="https://github.com/horon-ai/agent/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/horon-ai/agent/ci.yml?branch=main&amp;style=flat&amp;colorA=222222&amp;colorB=3FB950" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/horon-ai/agent?style=flat&amp;colorA=222222&amp;colorB=58A6FF" alt="License: MIT"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
+</p>
 
-- **No TUI.** The binary never opens a terminal; `ratatui`, `crossterm`, and
-  `horon-agent-tui*` stay out of the dependency graph.
-- **ACP v1 and v2.** `horon-agent acp` must serve both protocol versions,
-  answering `initialize` with the highest version both sides support. Both are
-  implemented: v2 negotiates in `src/cli/acp/v2`, v1 pins to protocol version 1.
-  The adapter and the stdio contract are in
-  [docs/protocol/ACP.md](docs/protocol/ACP.md).
-- **No measured performance regression** against the recorded baseline on the
-  same machine and workload. Measurement method:
-  [`docs/performance/BENCHMARK.md`](docs/performance/BENCHMARK.md); recorded
-  numbers: [`docs/performance/RESULTS.md`](docs/performance/RESULTS.md).
+`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. It never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
-## Build
+- **Headless by contract.** `ratatui`, `crossterm` and `horon-agent-tui*` are not in the dependency graph.
+- **ACP v1 and v2.** `horon-agent acp` answers `initialize` with the highest protocol version both sides support.
+- **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
+- **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 69.8 ms on Linux and 104.7 ms on macOS ([numbers and caveats](#benchmarks)).
 
-Needs a recent stable Rust toolchain (edition 2024).
+## Install
 
-```bash
-cargo build -p horon-agent
-./target/debug/horon-agent --version
+**macOS · Linux**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
 ```
 
-## Install a release
+**Windows (PowerShell)**
 
-Published installers fetch a release's assets into a directory and hand them to
-the binary instead of unpacking the archive themselves:
-
-```bash
-horon-agent install-release --assets <dir> --agent-version <version>
+```powershell
+irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
-The binary verifies `SHA256SUMS`, extracts the platform archive, stages an
-immutable version directory, and activates the stable/current channel links. A
-version directory that already holds different bytes is refused rather than
-overwritten. `--source-binary <path>` installs a locally built executable
-through the same path. Details:
-[`docs/release/INSTALL.md`](docs/release/INSTALL.md).
+The installer downloads the release archive and `SHA256SUMS`, then hands them to `horon-agent install-release`, which verifies the checksum, stages an immutable version directory and switches the `stable`/`current` links. A version directory that already holds different bytes is refused, not overwritten ([details](docs/release/INSTALL.md)).
 
-Besides `horon-agent`, the installer places two more launcher names next to it,
-`horon` and `hrn`. They run the same binary (symlinks on Unix, copies on
-Windows) and follow every update. A file with one of those names that is not
-ours is left alone. Data lives in `~/.horon` (`HORON_HOME` moves it), and
-project-level files in `.horon/`.
+**Container (Linux, amd64 and arm64)**
 
-## Run
-
-```bash
-./target/debug/horon-agent serve                      # agent daemon
-./target/debug/horon-agent run "summarize this repo"  # one message, then exit
-./target/debug/horon-agent api-bridge --api-socket /run/user/1000/horon-agent-api.sock
-./target/debug/horon-agent acp                        # ACP v1/v2 over stdio for editors, see docs/protocol/ACP.md
+```sh
+docker run --rm ghcr.io/horon-ai/agent:latest --version
 ```
 
-`HORON_AGENT_SOCKET` moves the daemon socket and `HORON_AGENT_API_SOCKET` the
-harness API socket.
+**From source** (Rust 1.99+, edition 2024)
 
-## Model endpoint: an OpenAI-compatible API, called directly
-
-Every model request goes to an OpenAI-compatible API's `/chat/completions`
-endpoint straight from the agent process. There is no router process or plugin
-layer in between, and nothing listens on a port for the agent. Configure the
-endpoint in `config.toml`; see
-[`docs/provider/MODEL.md`](docs/provider/MODEL.md) for keys, errors and cleanup.
-
-- A provider is a `[providers.<name>]` table with `type = "openai-compatible"`,
-  `base_url`, `default_model`, `api_key_env` or `env_file`, and `auth`. Requests
-  go to `base_url` plus `/chat/completions`.
-- `[provider] default_provider = "<name>"` picks the startup profile;
-  `--provider-profile <name>` and `--model <model-id>` override it for one
-  launch. `horon-agent provider add` writes the same tables.
-- Readiness is `horon-agent provider current --json`. `ready`, `resolved_provider`,
-  `selected_model` and, when not ready, `unavailable_reason` come from
-  `src/cli/commands/report_info.rs`.
-- With no configured provider, a model call fails before it reaches the network,
-  and the error names the `openai-compatible` profile to add.
-- Built-in OpenAI-compatible profiles such as `openrouter`, `zai`, `kimi`, and
-  `ollama` can be named in `[provider] default_provider`; profiles that also have
-  a CLI choice, such as `zai`, `kimi`, and `ollama`, work with `--provider <id>`
-  too. `openrouter` has no CLI choice and is selected through
-  `default_provider`. Keys live in the environment variable or `env_file` each
-  profile declares (`crates/provider-metadata/src/catalog.rs`).
-
-## Sessions
-
-History is an append-only event log at
-`~/.horon/sessions/<id>/events.jsonl`, with large payloads in
-content-addressed blobs. Archive, compaction, and rewind append records and
-never delete an original.
-
-```bash
-./target/debug/horon-agent session inspect <id>       # read-only layout and damage report
-./target/debug/horon-agent session doctor             # validate, never repair
-./target/debug/horon-agent session migrate --apply    # dry run without --apply
+```sh
+cargo build --release -p horon-agent
+./target/release/horon-agent --version
 ```
 
-Format and wire contract: `docs/protocol/SESSION_STORE.md`.
+Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows (x86_64, aarch64) and FreeBSD (x86_64). The launcher is `horon-agent`; on `dev` it also creates the short aliases `horon` and `hrn`, which ship with the next release. Data lives in `~/.horon` (override with `HORON_HOME`); releases up to v0.1.1 use `~/.horon-agent`.
 
-## Tools
+## Quick start
 
-The default profile is `core`: file read/write/edit, shell, search, web fetch
-and search, skills, MCP, `undo`, and `ask`. Swarm, memory, and the other
-optional tools stay in the tree but off; enable them with
-`--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, or `[tools] profile` in
-`~/.horon/config.toml`.
+Point the agent at an endpoint. Any OpenAI-compatible server works; this example uses a local one with no key.
 
-Agents in the same daemon and swarm can message each other with the `irc` tool
-(`send`, `wait`, `inbox`, `list`). It is off by default; set `irc = true` under
-`[tools]` to turn it on. Behavior, limits and the `[irc]` settings are in
-`docs/runtime/IRC.md`.
+```toml
+# ~/.horon/config.toml
+[provider]
+default_provider = "local"
 
-## Verify
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo test --workspace
+[providers.local]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
+auth = "none"
+default_model = "my-model"
 ```
 
-## Docs
+For a hosted endpoint, set `auth = "bearer"` and `api_key_env = "MY_API_KEY"` instead. Then check readiness and run a turn:
 
-- `AGENTS.md`: working rules and the fixed requirements.
-- `docs/README.md`: index of the remaining docs (Korean).
+```sh
+horon-agent provider current --json   # "ready": true when a profile resolves
+horon-agent run "summarize this repo"
+```
+
+<p align="center">
+  <img src="docs/assets/terminal-run.svg" alt="Terminal transcript: provider current reports ready, then horon-agent run executes an ls tool call and the model answers mock-ok" width="860">
+</p>
+
+<sub>Captured from a real run of a `dev` build against the repository's deterministic mock model server (`scripts/perf/mock_llm_server.py`), with an isolated home directory. The model reply is the mock's fixed text.</sub>
+
+With no profile configured, a model call stops before the network and names the missing `[providers.<name>]` table. See [docs/provider/MODEL.md](docs/provider/MODEL.md) for every key (`headers`, `extra_body`, `context_window`, built-in profiles such as `openrouter`, `zai`, `kimi`, `ollama`).
+
+## Ways to run it
+
+| Command | What it does |
+| --- | --- |
+| `horon-agent run "<message>"` | Send one message, run tools until the turn ends, exit. |
+| `horon-agent repl` | Simple line-based REPL (no TUI). |
+| `horon-agent serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
+| `horon-agent api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
+| `horon-agent acp` | ACP v1/v2 adapter on stdio for editors. |
+
+### Editors (ACP)
+
+Register `horon-agent` with the argument `acp` as an external agent. In Zed (`settings.json`):
+
+```json
+{
+  "agent_servers": {
+    "horon agent": {
+      "type": "custom",
+      "command": "/absolute/path/to/horon-agent",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+JetBrains and other ACP clients take the same two values. See [docs/protocol/ACP.md](docs/protocol/ACP.md).
+
+### SDKs
+
+| Language | Package name | Location |
+| --- | --- | --- |
+| TypeScript | `@horon-ai/agent-sdk` | [`sdk/typescript`](sdk/typescript) |
+| Python | `horon-agent-sdk` | [`sdk/python`](sdk/python) |
+
+Both talk the harness API (protocol v1) over the `api-bridge` socket and can start their own daemon with `launch()`. As of this writing neither package is on npm or PyPI, so install from a source checkout; each SDK README has the steps.
+
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs, editors over ACP and the terminal reach the agent daemon through api-bridge, acp and run; the daemon stores sessions in an event log and calls an OpenAI-compatible endpoint directly" width="860">
+</p>
+
+Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](docs/architecture/CRATES.md); the daemon, sessions and sockets are in [docs/architecture/SERVER.md](docs/architecture/SERVER.md).
+
+## Features
+
+- **A core tool set of 15.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo` and `ask`. A core session sends seven of them up front plus `toolbox`, names the other eight in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
+- **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon-agent session inspect|doctor|export|import|migrate|recover-to` work on the store ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
+- **Edit safety.** A journal backs `undo` for file edits, and `redo` and hashline anchors are opt-in ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
+- **MCP and skills.** `horon-agent mcp` lists configured MCP servers and manages remote-server OAuth credentials; skills are read through `skill://` and managed with `skill_manage`.
+- **Unattended runs.** Turn recovery, `horon-agent runtime-state` (inspect and settle durable pending inputs) and `horon-agent approvals` (record a human verdict for a run that stopped waiting on a person) support runs with no one at the keyboard ([docs/safety/SAFETY.md](docs/safety/SAFETY.md)).
+- **Agent-to-agent messaging.** An opt-in `irc` mailbox bus (`[tools] irc = true`) lets agents in one daemon `send`, `wait`, `inbox` and `list` ([docs/runtime/IRC.md](docs/runtime/IRC.md)).
+- **Workspace trust.** Project-local MCP config is skipped until its digest is trusted; `--trust-workspace` records the decision ([docs/safety/SECURITY.md](docs/safety/SECURITY.md)).
+- **TLS without OpenSSL.** rustls with the union of bundled webpki roots and the OS trust store; the Linux binary needs only glibc, libm and libgcc_s ([docs/release/INSTALL.md](docs/release/INSTALL.md)).
+
+## Benchmarks
+
+Measured by `.github/workflows/benchmark-docs.yml` on GitHub-hosted runners, commit `2a4027c`, against jcode v0.99.1, using a deterministic mock model and one `ls` tool call per turn. Each OS runs on a different machine, so compare within a row, never across rows.
+
+<p align="center">
+  <img src="docs/assets/benchmark-oneshot.svg" alt="Bar chart of median one-shot time. Linux: horon 69.8 ms, jcode 149.4 ms. macOS: horon 104.7 ms, jcode 361.6 ms. Windows: horon 189.0 ms, jcode 112.9 ms" width="780">
+</p>
+
+| Linux (`ubuntu-24.04`) | horon | jcode |
+| --- | --- | --- |
+| One-shot turn, median | 69.8 ms | 149.4 ms |
+| Skill invocation, median | 57.8 ms | 59.2 ms |
+| MCP tool call, median | 86.2 ms | 182.1 ms |
+| Peak tree RSS, one-shot | 36.4 MB | 38.3 MB |
+| Memory per additional session, idle after 3 turns | 201.5 KB | 127.9 KB |
+| Install size | 110.5 MB | 163.4 MB |
+
+On macOS horon was faster on the one-shot (104.7 ms against 361.6 ms), skill (118.4 ms against 270.0 ms) and MCP (111.8 ms against 659.2 ms) runs. **On Windows jcode was faster on the one-shot turn** (112.9 ms against 189.0 ms) and tied on skills; horon was faster on the MCP call (215.8 ms against 306.2 ms). On Linux jcode adds less memory per extra session. These runs are single-commit CI samples, not a guarantee. The full tables for eight tools, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
+
+## Configuration defaults
+
+| Setting | Default | Other values |
+| --- | --- | --- |
+| Tool profile (`--tool-profile`, `[tools] profile`) | `core` | `full`, `acp`, `minimal`, `none` |
+| `[acp] profile` | `standard` | `extended`, `full` |
+| `[tools] ask_policy` | `recommended` | `error` |
+| `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
+| `[storage] sync` | `full` (power-loss durable) | `fast` |
+| `[server] idle_hibernation_secs` | `1800` | `0` disables |
+| Update check on `serve` | not run | `--no-update` skips it everywhere |
+
+`AGENTS.md` lists the complete set of defaults that are part of the contract.
+
+## Documentation
+
+The docs are written in Korean and are compiled into the binary, where the `horon_agent_docs` tool serves them.
+
+| Topic | Read |
+| --- | --- |
+| Index and fixed requirements | [docs/README.md](docs/README.md) |
+| Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
+| Editors and ACP | [docs/protocol/ACP.md](docs/protocol/ACP.md) |
+| Harness API for SDKs | [docs/protocol/HARNESS_API.md](docs/protocol/HARNESS_API.md) |
+| Tools, approvals, edit safety | [docs/runtime/TOOLS.md](docs/runtime/TOOLS.md) |
+| Turns, recovery, `--resume` | [docs/runtime/TURNS.md](docs/runtime/TURNS.md) |
+| Release install and Linux servers | [docs/release/INSTALL.md](docs/release/INSTALL.md) |
+| Performance method and results | [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md) |
+
+## Contributing
+
+Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no TUI, ACP v1 and v2 both served, and no measured performance regression against the recorded baseline.
+
+- Branch from `dev` and open the pull request against `dev`. Every pull request must link a real issue in this repository (`Closes #123`); the `Require Linked Issue` check enforces it.
+- Run the checks before pushing:
+
+  ```sh
+  cargo fmt --all -- --check
+  cargo clippy --locked --all-targets --all-features -- -D warnings
+  cargo test --workspace
+  ```
+
+- Performance claims come from the benchmark workflows on GitHub Actions, not from a developer machine.
+
+## License
+
+[MIT](LICENSE). Copyright 2025 Jeremy Huang and 2026 horon-ai.

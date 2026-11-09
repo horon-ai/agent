@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 404" width="1000" height="404" role="img" aria-labelledby="t d">
+<title id="t">horon-agent running one turn in a terminal</title>
+<desc id="d">Terminal transcript: provider current --json reports ready true with selected model mock-model; horon-agent run executes one bash tool call, ls, lists NOTES.md, and the model answers mock-ok. Output was captured from a real run against a local mock model server.</desc>
+<style>.t{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px;white-space:pre}</style>
+<rect width="1000" height="404" rx="12" fill="#0d1117"/>
+<rect x="0.5" y="0.5" width="999" height="403" rx="12" fill="none" stroke="#30363d"/>
+<circle cx="24" cy="22" r="6" fill="#ff5f56"/><circle cx="44" cy="22" r="6" fill="#ffbd2e"/><circle cx="64" cy="22" r="6" fill="#27c93f"/>
+<text x="20" y="68" class="t"><tspan fill="#7ee787">$</tspan> <tspan fill="#e6edf3">horon-agent provider current --json</tspan></text>
+<text x="20" y="90" class="t" fill="#c9d1d9" xml:space="preserve">{</text>
+<text x="20" y="112" class="t" fill="#c9d1d9" xml:space="preserve">  "requested_provider": "auto",</text>
+<text x="20" y="134" class="t" fill="#c9d1d9" xml:space="preserve">  "requested_model": null,</text>
+<text x="20" y="156" class="t" fill="#c9d1d9" xml:space="preserve">  "resolved_provider": "OpenAI",</text>
+<text x="20" y="178" class="t" fill="#c9d1d9" xml:space="preserve">  "selected_model": "mock-model",</text>
+<text x="20" y="200" class="t" fill="#7ee787" xml:space="preserve">  "ready": true</text>
+<text x="20" y="222" class="t" fill="#c9d1d9" xml:space="preserve">}</text>
+<text x="20" y="244" class="t" fill="#c9d1d9" xml:space="preserve"></text>
+<text x="20" y="266" class="t"><tspan fill="#7ee787">$</tspan> <tspan fill="#e6edf3">horon-agent run --quiet --provider-profile mock --model mock-model --tools bash "list the files here"</tspan></text>
+<text x="20" y="288" class="t" fill="#c9d1d9" xml:space="preserve">[bash] $ ls</text>
+<text x="20" y="310" class="t" fill="#8b949e" xml:space="preserve">[Tokens] upload: 12 download: 4</text>
+<text x="20" y="332" class="t" fill="#c9d1d9" xml:space="preserve">  → NOTES.md</text>
+<text x="20" y="354" class="t" fill="#7ee787" xml:space="preserve">mock-ok</text>
+<text x="20" y="376" class="t" fill="#8b949e" xml:space="preserve">[Tokens] upload: 12 download: 4</text>
+</svg>
