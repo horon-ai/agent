@@ -14,6 +14,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[path = "mcp_resources.rs"]
+mod resources;
+
+#[cfg(all(test, unix))]
+#[path = "mcp_resources_tests.rs"]
+mod resources_tests;
+
 #[derive(Debug, Deserialize)]
 struct McpSearchInput {
     #[serde(default)]
@@ -457,6 +464,15 @@ struct McpToolInput {
     headers: Option<HashMap<String, String>>,
     #[serde(default)]
     transport: Option<String>,
+    /// Resource URI for `read_resource`.
+    #[serde(default)]
+    uri: Option<String>,
+    /// Prompt name for `get_prompt`.
+    #[serde(default)]
+    name: Option<String>,
+    /// Prompt arguments for `get_prompt`; the server expands them.
+    #[serde(default)]
+    arguments: Option<Value>,
 }
 
 fn connection_config(params: &McpToolInput, configured: Option<McpServerConfig>) -> Result<McpServerConfig> {
@@ -552,7 +568,7 @@ impl Tool for McpManagementTool {
     }
 
     fn description(&self) -> &str {
-        "Manage MCP (Model Context Protocol) servers, including HTTP/SSE connections and local OAuth status/logout. Interactive login requires the explicit CLI command `horon-agent mcp login <configured-server>`."
+        "Manage MCP (Model Context Protocol) servers, including HTTP/SSE connections and local OAuth status/logout. Lists servers' resources and prompts, reads one resource, and expands one prompt. Interactive login requires the explicit CLI command `horon-agent mcp login <configured-server>`."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -562,12 +578,23 @@ impl Tool for McpManagementTool {
                 "intent": super::intent_schema_property(),
                 "action": {
                     "type": "string",
-                    "enum": ["list", "connect", "disconnect", "reload", "status", "logout"],
-                    "description": "Action."
+                    "enum": [
+                        "list",
+                        "connect",
+                        "disconnect",
+                        "reload",
+                        "status",
+                        "logout",
+                        "resources",
+                        "read_resource",
+                        "prompts",
+                        "get_prompt"
+                    ],
+                    "description": "Action. resources/prompts list; read_resource fetches one resource body; get_prompt expands one prompt on the server."
                 },
                 "server": {
                     "type": "string",
-                    "description": "Server name."
+                    "description": "Server name. Omit for resources/prompts to cover every connected server."
                 },
                 "command": {
                     "type": "string",
@@ -596,6 +623,19 @@ impl Tool for McpManagementTool {
                     "type": "string",
                     "enum": ["stdio", "http", "streamable-http", "sse"],
                     "description": "Ad hoc transport. Remote URLs default to Streamable HTTP with legacy SSE fallback."
+                },
+                "uri": {
+                    "type": "string",
+                    "description": "Resource URI for action=read_resource."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Prompt name for action=get_prompt."
+                },
+                "arguments": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Prompt arguments for action=get_prompt."
                 }
             },
             "required": ["action"]
@@ -603,6 +643,7 @@ impl Tool for McpManagementTool {
     }
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+        let accept_large_output = super::accepts_large_output(&input);
         let params: McpToolInput = serde_json::from_value(input)?;
         let started = std::time::Instant::now();
         let action = params.action.clone();
@@ -624,11 +665,15 @@ impl Tool for McpManagementTool {
             "disconnect" => self.disconnect_server(params).await,
             "reload" => self.reload_config(&ctx.session_id).await,
             "status" | "logout" => self.oauth_action(params).await,
+            "resources" => self.resources_action(params).await,
+            "read_resource" => self.read_resource_action(params, accept_large_output).await,
+            "prompts" => self.prompts_action(params).await,
+            "get_prompt" => self.get_prompt_action(params, accept_large_output).await,
             "login" => anyhow::bail!(
                 "Interactive MCP OAuth login is CLI-only. Run `horon-agent mcp login <configured-server>` in a terminal (add --no-browser to print the authorization URL). No browser was opened."
             ),
             _ => Ok(ToolOutput::new(format!(
-                "Unknown action: {}. Use 'list', 'connect', 'disconnect', 'reload', 'status', or 'logout'.",
+                "Unknown action: {}. Use 'list', 'connect', 'disconnect', 'reload', 'status', 'logout', 'resources', 'read_resource', 'prompts', or 'get_prompt'.",
                 params.action
             ))),
         };
