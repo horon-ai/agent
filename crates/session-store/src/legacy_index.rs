@@ -41,7 +41,6 @@ pub(crate) fn import(bundle: &Bundle, stage: &Path, state: &mut Replay) -> Resul
         .map_err(sql_error)?;
     let names = statement
         .column_names()
-        .iter()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
     let mut rows = statement
