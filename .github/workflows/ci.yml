@@ -836,7 +836,7 @@ jobs:
         if: runner.os == 'Linux'
         # Pre-built binary: building cargo-audit from source costs 5-10 minutes
         # on a job that already has a full target dir.
-        uses: taiki-e/install-action@f84dff0ad3f25ff0e5dc531e626734a4e7d11ac7 # cargo-audit
+        uses: taiki-e/install-action@c5695724643db014337e10f479712023ee658d78 # cargo-audit
         with:
           tool: cargo-audit
 
@@ -1306,7 +1306,7 @@ jobs:
       - name: Install cargo-xwin
         # Pre-built release binary; building it from the git source cost several
         # minutes on every run.
-        uses: taiki-e/install-action@f6388b110b375c1334ce32dc42cd2f78cb5b016d # cargo-xwin
+        uses: taiki-e/install-action@c5695724643db014337e10f479712023ee658d78 # cargo-xwin
         with:
           tool: cargo-xwin
 
