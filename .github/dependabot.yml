@@ -1,0 +1,13 @@
+# Workflows pin every action to a commit (see tests/test_ci_workflow_guards.py).
+# Dependabot rewrites the commit and the `# vX` comment together, so a pin does
+# not go stale. One grouped pull request a week keeps the noise to a single PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
