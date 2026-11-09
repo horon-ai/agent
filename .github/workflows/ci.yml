@@ -709,8 +709,10 @@ jobs:
         # `session::session_tests::` covers the event store and its local head
         # files (no explicit-head flag for a session that never selected one);
         # `session_replication` covers what a replica reads from those files.
-        # The other `session` modules are left out: three of their tests fail
-        # on `dev` itself and are outside this change.
+        # `session::tests::durability::` covers the close at the end of a run
+        # publishing only the runtime binding, with nothing appended to the log.
+        # The other `session` modules are left out: two of their tests fail on
+        # `dev` itself and are outside this change.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
@@ -720,6 +722,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- session::session_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- session::tests::durability:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \

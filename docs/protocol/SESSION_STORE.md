@@ -51,6 +51,9 @@ sessions/
 스냅샷의 경로와 해시를, `local-runtime.json`은 재개에 쓰는 `working_dir`, `migration_epoch`,
 `provider_session_id`와 표시용 `status`를 담는다. `local-runtime.json`은 이 필드 가운데 하나가
 바뀔 때만 다시 쓰고, `last_pid`와 `last_active_at`만 움직인 배치는 파일을 쓰지 않는다.
+`status`, `last_pid`, `last_active_at`의 원본은 `local-runtime.json` 하나다. 이벤트 로그의 보조 기록
+(`AuxiliaryRecorded`)에는 이 값들을 넣지 않고, 로더도 바인딩에서 되살린다. 그래서 실행 끝의 닫기처럼
+상태만 바뀐 저장은 바인딩만 확정하고 로그에는 아무것도 덧붙이지 않는다(`event_save.rs`의 바인딩 전용 경로).
 
 `local-head-explicit.json`이 없으면 모든 리더(`event_store.rs`, `event_cache.rs`, `archive.rs`,
 `history_page.rs`, 복제 `replication.rs`)가 "명시 선택 없음"으로 읽는다. 그래서 `local-head.json`과

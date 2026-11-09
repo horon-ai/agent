@@ -166,13 +166,11 @@ impl Session {
         {
             value.insert("pruned_tool_results".into(), json!(self.pruned_tool_results));
         }
+        // `status`, `last_pid` and `last_active_at` are the local runtime binding:
+        // `local-runtime.json` is their original and the loader restores them from
+        // there. Recording them here as well made every status change (the close at
+        // the end of a run) a full log commit for a value no reader takes back.
         value.insert("is_debug".into(), json!(self.is_debug));
-        value.insert(
-            "runtime_history".into(),
-            json!({
-                "status":self.status, "last_pid":self.last_pid, "last_active_at":self.last_active_at
-            }),
-        );
         Value::Object(value)
     }
 }
