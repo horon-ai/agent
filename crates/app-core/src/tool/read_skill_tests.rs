@@ -11,7 +11,7 @@ use std::sync::Arc;
 /// the global registry never reads the real `~/.horon`.
 struct Fixture {
     _lock: std::sync::MutexGuard<'static, ()>,
-    home: tempfile::TempDir,
+    _home: tempfile::TempDir,
     workspace: tempfile::TempDir,
     previous_home: Option<std::ffi::OsString>,
 }
@@ -25,7 +25,7 @@ impl Fixture {
         crate::config::invalidate_config_cache();
         Self {
             _lock: lock,
-            home,
+            _home: home,
             workspace: tempfile::tempdir().expect("workspace"),
             previous_home,
         }
@@ -180,7 +180,7 @@ async fn a_dot_dot_path_is_refused() {
 async fn a_symlink_out_of_the_skill_is_refused() {
     let fixture = Fixture::new();
     let dir = fixture.skill("qa-skill", "Body.");
-    let outside = fixture.home.path().join("outside.txt");
+    let outside = fixture._home.path().join("outside.txt");
     write(&outside, "outside text\n");
     std::os::unix::fs::symlink(&outside, dir.join("link.md")).expect("symlink");
     let error = fixture

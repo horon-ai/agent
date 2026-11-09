@@ -322,7 +322,7 @@ if ($targets.Count -eq 0) {
 Write-Info "The following will be removed:"
 foreach ($target in $targets) { Write-Host "  - $target" }
 if (-not $Purge) {
-    Write-Warn "User data in $userDataDir is kept. Run with -Purge for a full wipe."
+    Write-Info "User data in $userDataDir is kept. Run with -Purge for a full wipe."
 }
 
 if ($DryRun) {

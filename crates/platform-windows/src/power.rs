@@ -87,7 +87,7 @@ impl SleepInhibitor for PowerGuard {
 
     fn stop(&mut self) {
         if let Some(stop_tx) = self.stop_tx.take() {
-            drop(stop_tx.send(()));
+            let _ = stop_tx.send(());
         }
 
         let clear_result = match self.done_rx.take() {
@@ -148,7 +148,7 @@ fn run_power_guard(
         return;
     }
 
-    drop(stop_rx.recv());
+    let _ = stop_rx.recv();
     let cleared = unsafe { SetThreadExecutionState(clear_execution_state_flags()) };
     let result = if cleared == 0 {
         Err(io::Error::last_os_error())

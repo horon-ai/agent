@@ -385,6 +385,7 @@ async fn send_ntfy(
 // Desktop (cross-platform, fire-and-forget)
 // ---------------------------------------------------------------------------
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reap_notification_child(mut child: std::process::Child) {
     let _ = std::thread::Builder::new()
         .name("horon-agent-notification-child".to_string())

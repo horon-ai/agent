@@ -5,7 +5,6 @@
 //! contract: every field on a record, a newest-first listing, a not-found for an
 //! unknown id, and a refusal for a record outside the caller's scopes.
 
-use super::*;
 use crate::tool::read::ReadTool;
 use crate::tool::{Tool, ToolContext, ToolEffects, ToolExecutionMode};
 use serde_json::json;

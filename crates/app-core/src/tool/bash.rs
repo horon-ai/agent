@@ -291,7 +291,7 @@ fn parse_progress_marker_with_checkpoint(line: &str) -> Option<(BackgroundTaskPr
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 fn parse_progress_marker(line: &str) -> Option<BackgroundTaskProgress> {
     parse_progress_marker_with_checkpoint(line).map(|(progress, _)| progress)
 }
@@ -751,7 +751,7 @@ fn non_interactive_env_enabled() -> bool {
 #[cfg(test)]
 static BASH_NON_INTERACTIVE_ENV_TEST_OVERRIDE: Mutex<Option<bool>> = Mutex::new(None);
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 fn set_bash_non_interactive_env_test_override(value: Option<bool>) {
     *BASH_NON_INTERACTIVE_ENV_TEST_OVERRIDE
         .lock()
@@ -774,7 +774,7 @@ fn bash_minimizer_enabled() -> bool {
 #[cfg(test)]
 static BASH_MINIMIZER_TEST_OVERRIDE: Mutex<Option<bool>> = Mutex::new(None);
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 fn set_bash_minimizer_test_override(value: Option<bool>) {
     *BASH_MINIMIZER_TEST_OVERRIDE
         .lock()
@@ -874,14 +874,14 @@ fn bash_session_cwd_enabled() -> bool {
 #[cfg(test)]
 static BASH_SESSION_CWD_TEST_OVERRIDE: Mutex<Option<bool>> = Mutex::new(None);
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 fn set_bash_session_cwd_test_override(value: Option<bool>) {
     *BASH_SESSION_CWD_TEST_OVERRIDE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 fn forget_bash_session_cwd(session_id: &str) {
     bash_session_cwds()
         .lock()

@@ -2,10 +2,14 @@
 //! stores, and the cost of a projection with no `pre_request` hook configured.
 
 use super::*;
+#[cfg(unix)]
 use crate::agent::Agent;
 use crate::hooks::pre_request::RequestContext;
-use crate::message::{Message, Role, StreamEvent, ToolDefinition};
+use crate::message::{Message, Role};
+#[cfg(unix)]
+use crate::message::{StreamEvent, ToolDefinition};
 use horon_agent_message_types::ContentBlock;
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
 /// Environment overrides for one test, restored on drop.

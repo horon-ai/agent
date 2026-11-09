@@ -25,11 +25,20 @@ permissions:
   contents: read
 
 env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   HORON_AGENT_CI: "1"
   # CI builds without the local parallel-frontend rustc wrapper from
   # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
+  # A rustc or build-script warning in a workspace crate fails the build. CI must
+  # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
+  # merging. Warnings in registry dependencies are never reported by cargo.
+  CARGO_BUILD_WARNINGS: deny
   SCCACHE_GHA_ENABLED: "true"
   # Test and dev builds do not need debug info, and on a hosted runner every byte
   # is disk. The workspace profiles already set debug = 0; these make that hold
@@ -331,7 +340,7 @@ jobs:
           # race on the shared `~/.rustup/downloads/*.partial` file and fail with
           # "could not rename ... No such file or directory". Fetching it once here
           # removes the race. (Was failing every Build & Test job.)
-          components: rust-src
+          components: rust-src${{ runner.os == 'macOS' && ', llvm-tools' || '' }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -988,9 +997,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - name: Install the pinned toolchain
+        # `cargo fmt` runs under the toolchain rust-toolchain.toml pins. Installing
+        # it here, with its listed components, replaces rustup's automatic install,
+        # which prints a warning on first use.
+        run: rustup toolchain install --profile minimal
 
       - name: Check module declarations resolve
         # A `mod x;` with no file makes rustfmt fail with "Error writing files:
@@ -1189,7 +1200,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+          targets: x86_64-pc-windows-msvc
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -1232,23 +1243,13 @@ jobs:
           path: ${{ steps.xwin.outputs.dir }}
           key: cargo-xwin-${{ runner.os }}-${{ steps.xwin.outputs.version }}-x86_64-pc-windows-msvc-aarch64-pc-windows-msvc
 
+      # Only x64 is cross-checked here. The Windows ARM64 target is checked
+      # natively by "Windows ARM64 Release Configuration": a cross-check of it
+      # failed on every run because cargo-xwin feeds clang-style ring builds MSVC
+      # /imsvc flags, and an advisory step that always fails only adds warnings.
       - name: Check Windows x64 target
         shell: bash
         run: |
           cargo xwin check --locked --target x86_64-pc-windows-msvc
           # Shows the CRT and SDK landed in the cached directory.
           du -sh "$XWIN_CACHE_DIR"
-
-      # cargo-xwin currently feeds clang-style ring builds MSVC /imsvc flags for
-      # aarch64-pc-windows-msvc on Linux. Keep this advisory until upstream
-      # cargo-xwin/ring interop is fixed; native Windows ARM64 smoke covers the
-      # release artifact path.
-      - name: Check Windows ARM64 target (advisory)
-        # Advisory: a failure is recorded in the step summary instead of failing
-        # the step, so the known cargo-xwin/ring breakage does not attach a
-        # failure annotation to every run.
-        shell: bash
-        run: |
-          if ! cargo xwin check --locked --target aarch64-pc-windows-msvc --no-default-features --features pdf; then
-            echo "Advisory Windows ARM64 cross-check failed (cargo-xwin/ring interop); native Windows ARM64 jobs cover the release path." >> "$GITHUB_STEP_SUMMARY"
-          fi

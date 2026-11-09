@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 /// Isolates `~/.horon` for one test and serializes env mutation.
 struct TestHome {
     previous: Option<std::ffi::OsString>,
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -46,13 +46,14 @@ impl TestHome {
         crate::config::Config::invalidate_cache();
         Self {
             previous,
-            dir,
+            _dir: dir,
             _lock: lock,
         }
     }
 
+    #[cfg(unix)]
     fn path(&self) -> PathBuf {
-        self.dir.path().to_path_buf()
+        self._dir.path().to_path_buf()
     }
 }
 
