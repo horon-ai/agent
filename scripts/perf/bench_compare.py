@@ -316,7 +316,7 @@ context_window = 128000
 
 
 def horon_env(root: str, binary: str) -> dict:
-    env = isolated_tool_env(root, "HORON_AGENT")
+    env = isolated_tool_env(root, "HORON_AGENT", home_var="HORON_HOME")
     env["HORON_AGENT_SOCKET"] = os.path.join(root, "run", "horon-agent.sock")
     env["HORON_AGENT_RUN_MCP"] = "0"
     env["HORON_AGENT_RUN_AUTO_POKE"] = "0"
@@ -611,10 +611,10 @@ ISOLATED_ENV_KEYS = (
 )
 
 
-def isolated_tool_env(root: str, prefix: str) -> dict:
+def isolated_tool_env(root: str, prefix: str, home_var: str | None = None) -> dict:
     """Parent env with every tool-home variable dropped, plus isolated paths."""
-    source = bc.isolated_home_env(root, prefix)
-    keys = ISOLATED_ENV_KEYS + (f"{prefix}_HOME", f"{prefix}_RUNTIME_DIR")
+    source = bc.isolated_home_env(root, prefix, home_var)
+    keys = ISOLATED_ENV_KEYS + (home_var or f"{prefix}_HOME", f"{prefix}_RUNTIME_DIR")
     isolated = {key: source[key] for key in keys if key in source}
     env = scrub_env(source)
     env.update(isolated)
@@ -1929,9 +1929,9 @@ class HoronRunner(ToolRunner):
         return horon_env(root, self.binary)
 
     def _root(self, root: str, mock: MockServer, run_mcp: bool = False) -> dict:
-        home = write_horon_config(root, mock.base_url)
+        # horon_env names root/home as HORON_HOME, where this config lands.
+        write_horon_config(root, mock.base_url)
         env = horon_env(root, self.binary)
-        env["HORON_HOME"] = home
         # The one-shot and session rows keep MCP off so their numbers stay
         # comparable with docs/performance/RESULTS.md; only the MCP scenario
         # turns server startup into part of the measurement.

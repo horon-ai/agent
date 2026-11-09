@@ -481,6 +481,16 @@ jobs:
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --locked --release --target ${{ matrix.target }}
 
+      - name: Benchmark script smoke
+        # The benchmark workflow runs on demand and after a push to `main`, so
+        # nothing on a pull request started the daemon-backed suites: a renamed
+        # home variable broke three of them unnoticed. This runs tools, reload
+        # and compare once each against the binary built above and reads their
+        # reports, because a suite exits 0 even when its daemon never came up.
+        # Timings are discarded.
+        shell: bash
+        run: python3 scripts/perf/bench_smoke.py --binary target/${{ matrix.target }}/release/horon-agent
+
       - name: Bare Linux runtime smoke (Linux)
         # A hosted ubuntu image ships libssl, a CA bundle, a TTY, and
         # XDG_RUNTIME_DIR, so a release binary that linked OpenSSL dynamically

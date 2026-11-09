@@ -988,6 +988,13 @@ class ScenarioRouteTests(unittest.TestCase):
             # The one-shot and the session daemon both build their env here.
             self.assertEqual(bench.horon_env(root, "/h")["HORON_AGENT_RUN_MCP"], "0")
 
+    def test_horon_env_names_the_home_the_binary_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            # The session daemon takes this env as is, so the mock provider
+            # config has to sit in the home it names.
+            home = bench.write_horon_config(root, "http://127.0.0.1:9")
+            self.assertEqual(bench.horon_env(root, "/h")["HORON_HOME"], home)
+
     def test_prompt_markers_select_the_mock_plan(self) -> None:
         self.assertTrue(bench.skill_prompt("/w/SKILL.md").startswith("[bench:skill]"))
         self.assertTrue(bench.mcp_prompt().startswith("[bench:mcp]"))
