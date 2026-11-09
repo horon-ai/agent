@@ -699,6 +699,32 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- memory_update --nocapture
 
+      - name: Run session durability cohort
+        shell: bash
+        # The fsync reductions change which originals a session flushes, and
+        # none of the session or runtime-journal tests ran in this workflow
+        # before. `durable_runtime::` covers the runtime journal, including the
+        # entry flush of every directory level an open creates (the record of
+        # a confirmed journal must survive a power loss with its directory);
+        # `session::session_tests::` covers the event store and its local head
+        # files (no explicit-head flag for a session that never selected one);
+        # `session_replication` covers what a replica reads from those files.
+        # The other `session` modules are left out: three of their tests fail
+        # on `dev` itself and are outside this change.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- durable_runtime:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- session::session_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- session_replication --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the

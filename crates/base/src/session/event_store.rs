@@ -269,15 +269,29 @@ pub(super) fn select(
     // ignores the file when the flag says there is no selection. Recording an
     // implicit head would cost a flush per commit for a value nothing reads.
     let mut changed = false;
+    let head_file = directory.join("local-head.json");
+    let flag_file = directory.join("local-head-explicit.json");
     if explicit {
-        changed |= publish_local_file(&directory.join("local-head.json"), head, paths.sync_mode())?;
+        changed |= publish_local_file(&head_file, head, paths.sync_mode())?;
+    } else if absent(&flag_file)? && absent(&head_file)? {
+        // With neither file present every reader already resolves "no explicit
+        // selection": the flag defaults to false and there is no stored head to
+        // fall back to. Writing `false` would add a file flush and a directory
+        // flush for a value the absence already states, so a session that never
+        // had an explicit head (every new session) keeps no flag file.
+        return Ok(changed);
     }
-    changed |= publish_local_file(
-        &directory.join("local-head-explicit.json"),
-        &explicit,
-        paths.sync_mode(),
-    )?;
+    changed |= publish_local_file(&flag_file, &explicit, paths.sync_mode())?;
     Ok(changed)
+}
+
+/// Whether nothing exists at `path`, without following a link.
+fn absent(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
 }
 
 impl Session {

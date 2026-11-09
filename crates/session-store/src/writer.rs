@@ -76,7 +76,9 @@ impl BlockingWriter {
         let (hook, probe) = observation;
         let mode = paths.sync_mode();
         let mut disk = Disk::new(hook, mode);
-        disk.directory(paths.root())?;
+        // An existing root's entry was confirmed when it was created; flushing its
+        // parent again on every open only repeated a directory flush per session.
+        disk.ensure_dir(paths.root())?;
         // Canonicalizing rewrites the root, so the durability level is carried
         // over explicitly; the writer and every cache opened from these paths
         // then flush originals the same way.

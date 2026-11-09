@@ -56,6 +56,8 @@ pub enum JournalIoPoint {
     RecordFileSync,
     RecordDirectorySync,
     RecordRollbackFileSync,
+    /// The parent of a journal directory level this open created, flushed so the new entry survives.
+    DirectoryEntrySync,
     RecoveryTailWrite,
     RecoveryTailFileSync,
     RecoveryTailDirectorySync,
@@ -193,7 +195,8 @@ impl DurableRuntimeStore {
     fn open_inner(root: &Path, session_id: &str, limits: JournalLimits, hooks: HookSlot) -> JournalResult<Self> {
         validate_session_id(session_id)?;
         let dir = root.join(session_id);
-        ensure_private_dir(&dir)?;
+        let mut hooks = hooks;
+        ensure_private_dir(&dir, &mut hooks)?;
         let mut store = Self {
             session_id: session_id.to_string(),
             journal_path: dir.join(JOURNAL_FILE_NAME),
@@ -293,7 +296,7 @@ impl DurableRuntimeStore {
     fn with_writer_lock<T>(&mut self, body: impl FnOnce(&mut Self) -> JournalResult<T>) -> JournalResult<T> {
         let process_lock = Arc::clone(&self.process_lock);
         let _process_guard = process_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        ensure_private_dir(&self.dir)?;
+        ensure_private_dir(&self.dir, &mut self.hooks)?;
         let lock_path = self.lock_path.clone();
         let lock = OpenOptions::new()
             .create(true)
@@ -319,18 +322,8 @@ impl DurableRuntimeStore {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     fn hit(&mut self, point: JournalIoPoint) -> std::io::Result<()> {
-        match self.hooks.as_mut() {
-            Some(observe) => observe(point),
-            None => Ok(()),
-        }
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
-    fn hit(&mut self, _point: JournalIoPoint) -> std::io::Result<()> {
-        let _ = &self.hooks;
-        Ok(())
+        hit_slot(&mut self.hooks, point)
     }
 
     fn load_locked(&mut self) -> JournalResult<()> {
@@ -869,11 +862,40 @@ fn process_lock_for(dir: &Path) -> Arc<Mutex<()>> {
     fresh
 }
 
-fn ensure_private_dir(path: &Path) -> JournalResult<()> {
+/// Create the journal directory, flushing the entry of every level this call created.
+///
+/// The first record's file is confirmed by flushing this directory, but a crash
+/// before the new directory's own entry reaches its parent loses the directory
+/// and the confirmed journal with it. An existing directory needs no flush: its
+/// entry was confirmed when it was created.
+fn ensure_private_dir(path: &Path, hooks: &mut HookSlot) -> JournalResult<()> {
+    let mut created = Vec::new();
+    let mut level = Some(path);
+    while let Some(current) = level {
+        match std::fs::symlink_metadata(current) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => created.push(current.to_path_buf()),
+            Err(error) => {
+                return Err(JournalError::io_context(
+                    "inspect the journal directory",
+                    current,
+                    error,
+                ));
+            }
+        }
+        level = current.parent();
+    }
     horon_agent_platform::create_private_dir(path, true)
         .map_err(|error| JournalError::io_context("create the journal directory", path, error))?;
     horon_agent_platform::set_permissions_private_dir(path)
         .map_err(|error| JournalError::io_context("restrict the journal directory", path, error))?;
+    for directory in created.iter().rev() {
+        if let Some(parent) = directory.parent() {
+            hit_slot(hooks, JournalIoPoint::DirectoryEntrySync)
+                .map_err(|error| JournalError::io_context("sync the journal directory", parent, error))?;
+            sync_directory_entry(parent)?;
+        }
+    }
     Ok(())
 }
 
@@ -881,4 +903,17 @@ fn ensure_private_dir(path: &Path) -> JournalResult<()> {
 fn sync_directory_entry(path: &Path) -> JournalResult<()> {
     horon_agent_platform::sync_dir(path, crate::config::config().storage_sync_mode())
         .map_err(|error| JournalError::io_context("sync the journal directory", path, error))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn hit_slot(hooks: &mut HookSlot, point: JournalIoPoint) -> std::io::Result<()> {
+    match hooks.as_mut() {
+        Some(observe) => observe(point),
+        None => Ok(()),
+    }
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+fn hit_slot(_hooks: &mut HookSlot, _point: JournalIoPoint) -> std::io::Result<()> {
+    Ok(())
 }

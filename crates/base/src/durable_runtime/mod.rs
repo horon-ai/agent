@@ -73,6 +73,10 @@ pub use store::*;
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "directory_tests.rs"]
+mod directory_tests;
+
 use std::fmt;
 use std::path::Path;
 
