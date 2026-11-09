@@ -90,7 +90,7 @@ class Rendering(unittest.TestCase):
                     "reload.md": "   \n",
                 },
             )
-            body = bench_docs.render_body(results, "abc1234", now=NOW)
+            body = bench_docs.render_body(results, "abc1234", now=NOW, lang="ko")
         self.assertIn("#### Tool latency", body)
         self.assertIn("#### 기동\n\n```text\nserve ready 12 ms\n```", body)
         linux = body.split("### Linux", 1)[1].split("### macOS", 1)[0]
@@ -105,7 +105,7 @@ class Rendering(unittest.TestCase):
             # Directory names do not decide the OS or the order; platform.txt does.
             job_dir(results, "a-windows", "windows", files={"tools.md": "### W\n"})
             job_dir(results, "b-linux", "linux", files={"tools.md": "### L\n"})
-            body = bench_docs.render_body(results, "abc1234", now=NOW)
+            body = bench_docs.render_body(results, "abc1234", now=NOW, lang="ko")
         positions = [body.index(f"\n### {title}\n") for title in ("Linux", "macOS", "Windows")]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("| macOS | `—` | `—` | 결과 없음 |", body)
@@ -122,7 +122,7 @@ class Rendering(unittest.TestCase):
                 status="failure",
                 files={"runner.txt": "windows-latest\n", "horon-version.txt": "horon-agent v1\n", "tools.md": "### W\n"},
             )
-            body = bench_docs.render_body(results, "abc1234", now=NOW)
+            body = bench_docs.render_body(results, "abc1234", now=NOW, lang="ko")
         self.assertIn("| Windows | `windows-latest` | `horon-agent v1` | 일부 실패 (`failure`) |", body)
         windows = body.split("### Windows", 1)[1]
         self.assertIn("끝까지 성공하지 못했습니다", windows)
@@ -134,7 +134,7 @@ class Rendering(unittest.TestCase):
             job_dir(results, "one", "linux")
             job_dir(results, "two", "linux")
             with self.assertRaises(bench_docs.DocError):
-                bench_docs.render_body(results, "abc1234", now=NOW)
+                bench_docs.render_body(results, "abc1234", now=NOW, lang="ko")
 
     def test_headings_nest_under_the_block_and_fences_are_untouched(self) -> None:
         source = "# Comparison\n\n## Memory\n\n```sh\n# not a heading\n```\n"
@@ -142,6 +142,23 @@ class Rendering(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], "#### Comparison")
         self.assertIn("##### Memory", out)
         self.assertIn("# not a heading", out.splitlines())
+
+
+    def test_english_is_the_default_and_both_languages_share_the_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            job_dir(results, "benchmark-linux-1", "linux", files={"startup.txt": "serve ready 12 ms\n"})
+            en = bench_docs.render_body(results, "abc1234", now=NOW)
+            ko = bench_docs.render_body(results, "abc1234", now=NOW, lang="ko")
+        self.assertIn("#### Startup\n\n```text\nserve ready 12 ms\n```", en)
+        self.assertIn("Not measured: this run did not produce `compare.md`.", en)
+        self.assertIn("| macOS | `—` | `—` | No result |", en)
+        self.assertIn("#### 기동\n\n```text\nserve ready 12 ms\n```", ko)
+        headings = lambda body: [line for line in body.splitlines() if line.startswith("#")]
+        self.assertEqual(len(headings(en)), len(headings(ko)))
+        self.assertEqual(en.count("\n|"), ko.count("\n|"))
+        with self.assertRaises(bench_docs.DocError):
+            bench_docs.render_body(results, "abc1234", now=NOW, lang="fr")
 
 
 class CommandLine(unittest.TestCase):

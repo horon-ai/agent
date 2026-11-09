@@ -186,9 +186,15 @@ and do not merge or report success before then.
 `docs/` is grouped by topic into `architecture/`, `protocol/`, `runtime/`,
 `provider/`, `safety/`, `performance/`, and `release/`. File names are
 uppercase (`docs/runtime/TOOLS.md`). Extend an existing doc before adding a
-new file. Docs are written in Korean.
+new file. Docs are bilingual and English is the default: `X.md` is the
+canonical English text and `X.ko.md` is its Korean counterpart in the same
+folder, as with `README.md` and `README.ko.md`. Change both in the same commit.
+Each pair keeps the same headings, tables, code fences and links, and links
+between docs stay inside their own language. `python3 scripts/ci/check_docs_pairs.py`
+checks this and runs in the Quality Guardrails job.
 
-Every Markdown file under `docs/`, including subfolders, is compiled into the
-binary and served by the `horon_agent_docs` tool (`crates/app-core/build.rs`).
+Every English Markdown file under `docs/`, including subfolders, and the root
+`README.md` are compiled into the binary and served by the `horon_agent_docs`
+tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.
 `docs/README.md` is the index; update it in the same change.

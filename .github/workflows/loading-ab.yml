@@ -14,7 +14,7 @@ name: Loading A/B
 # The counters decide, not the clock: a candidate that reads more skill bytes,
 # rereads a workspace skill, or rereads a user MCP config than the baseline fails
 # the "Check counters" step. Times are reported for the record
-# (docs/performance/BENCHMARK.md, "스킬·MCP 설정 로딩 A/B").
+# (docs/performance/BENCHMARK.md, "Skill and MCP config loading A/B").
 
 on:
   workflow_dispatch:

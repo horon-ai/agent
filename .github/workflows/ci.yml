@@ -99,6 +99,12 @@ jobs:
         # every gate behind it. Naming the real cause first (221159294).
         run: python3 scripts/ci/check_module_files.py
 
+      - name: Check English/Korean documentation pairs
+        # Every README and docs/ page has an English X.md and a Korean X.ko.md
+        # with the same structure, valid relative links and a language switch.
+        # Python standard library only; takes well under a second.
+        run: python3 scripts/ci/check_docs_pairs.py
+
       # sccache is enabled once for the whole job and never for a single step:
       # a run that wrapped only one cargo invocation produced
       # `<unknown rustc version>` artifacts that the next unwrapped invocation

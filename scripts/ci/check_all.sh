@@ -62,6 +62,7 @@ echo "=== Format ==="
 # every gate behind it. Naming the real cause first turns a confusing Format
 # failure into an obvious one (221159294).
 run_gate "module declarations resolve" python3 scripts/ci/check_module_files.py
+run_gate "docs English/Korean pairs" python3 scripts/ci/check_docs_pairs.py
 if $FIX; then
     cargo fmt --all
 fi

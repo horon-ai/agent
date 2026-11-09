@@ -22,8 +22,12 @@ not measured rather than left out.
 
 Subcommands:
 
-    render      --doc PATH --results DIR --commit SHA [--run-url URL]
+    render      --doc PATH --results DIR --commit SHA [--run-url URL] [--lang en|ko]
     last-commit --doc PATH     prints the recorded commit, or nothing
+
+RESULTS.md (English, `--lang en`, the default) and RESULTS.ko.md (`--lang ko`)
+carry the same block in their own language; the workflow renders both. Table
+contents written by the benchmark suites are language-neutral and shared.
 """
 
 from __future__ import annotations
@@ -43,16 +47,67 @@ HEADING_RE = re.compile(r"^(#{1,6}) ")
 PLATFORMS = (("linux", "Linux"), ("macos", "macOS"), ("windows", "Windows"))
 
 # Fragments written by benchmark.yml, in the order they appear in an OS section.
-# (file name, title used when the fragment is plain text or missing)
+# (file name, title key used when the fragment is plain text or missing)
 FRAGMENTS = (
-    ("compare.md", "경쟁 도구 비교"),
-    ("startup.txt", "기동"),
-    ("loading-cold.txt", "세션 로딩 (COLD)"),
-    ("loading-warm.txt", "세션 로딩 (WARM)"),
-    ("tools.md", "도구 지연"),
-    ("reload.md", "리로드 폭주"),
-    ("compile.md", "컴파일 루프"),
+    ("compare.md", "compare"),
+    ("startup.txt", "startup"),
+    ("loading-cold.txt", "loading_cold"),
+    ("loading-warm.txt", "loading_warm"),
+    ("tools.md", "tools"),
+    ("reload.md", "reload"),
+    ("compile.md", "compile"),
 )
+
+LANGS = ("en", "ko")
+
+TEXT = {
+    "en": {
+        "compare": "Competitor comparison",
+        "startup": "Startup",
+        "loading_cold": "Session loading (COLD)",
+        "loading_warm": "Session loading (WARM)",
+        "tools": "Tool latency",
+        "reload": "Reload storm",
+        "compile": "Compile loop",
+        "missing": "Not measured: this run did not produce `{name}`.",
+        "no_result": "No result",
+        "unknown": "Unknown status",
+        "partial": "Partial failure (`{status}`)",
+        "success": "Success",
+        "no_platform": "This run has no {title} result. The job did not start or did not upload its result files.",
+        "job_failed": "The measurement job on this OS did not finish successfully. Any suite below without results is missing for that reason.",
+        "intro": "`.github/workflows/benchmark-docs.yml` rewrites this section automatically. Do not edit it by hand.",
+        "commit": "Commit",
+        "measured_at": "Measured at",
+        "run": "Run",
+        "run_note": "(raw JSON is in the per-OS `benchmark-<os>-<run_id>` artifacts)",
+        "runners": "Each OS is measured separately on a different GitHub-hosted runner. The machines differ, so do not compare absolute values across OSes; read only the relative comparison within one OS (multiples of horon) and the trend between commits.",
+        "header": "| OS | Runner | Binary | Status |",
+    },
+    "ko": {
+        "compare": "경쟁 도구 비교",
+        "startup": "기동",
+        "loading_cold": "세션 로딩 (COLD)",
+        "loading_warm": "세션 로딩 (WARM)",
+        "tools": "도구 지연",
+        "reload": "리로드 폭주",
+        "compile": "컴파일 루프",
+        "missing": "측정 안 됨: 이 실행에서 `{name}` 파일이 만들어지지 않았습니다.",
+        "no_result": "결과 없음",
+        "unknown": "상태 모름",
+        "partial": "일부 실패 (`{status}`)",
+        "success": "성공",
+        "no_platform": "이 실행에서 {title} 결과가 없습니다. 작업이 시작되지 못했거나 결과 파일을 올리지 못했습니다.",
+        "job_failed": "이 OS의 측정 작업이 끝까지 성공하지 못했습니다. 아래에서 결과가 없는 묶음은 그 때문입니다.",
+        "intro": "이 구간은 `.github/workflows/benchmark-docs.yml` 이 자동으로 다시 씁니다. 손으로 고치지 않습니다.",
+        "commit": "커밋",
+        "measured_at": "측정 시각",
+        "run": "실행",
+        "run_note": "(원본 JSON 은 OS별 `benchmark-<os>-<run_id>` 아티팩트)",
+        "runners": "OS마다 다른 GitHub 호스티드 러너에서 따로 잽니다. 기계가 다르므로 OS끼리 절대값을 비교하지 않고, 같은 OS 안의 상대 비교(horon 대비 배수)와 커밋 사이의 추세만 읽습니다.",
+        "header": "| OS | 러너 | 바이너리 | 상태 |",
+    },
+}
 
 # The block sits under a `##` section of RESULTS.md, each OS gets `###`, and
 # fragment headings are shifted so the shallowest one becomes this level.
@@ -144,35 +199,37 @@ def find_platform_dirs(results: Path) -> dict[str, Path]:
     return found
 
 
-def _fragment(results: Path, name: str, title: str) -> str:
+def _fragment(results: Path, name: str, title: str, lang: str = "en") -> str:
     heading = "#" * FRAGMENT_LEVEL + " " + title
     content = _read(results / name)
     if content is None:
-        return f"{heading}\n\n측정 안 됨: 이 실행에서 `{name}` 파일이 만들어지지 않았습니다."
+        return f"{heading}\n\n{TEXT[lang]['missing'].format(name=name)}"
     if name.endswith(".md"):
         return demote_headings(content)
     return f"{heading}\n\n```text\n{content}\n```"
 
 
-def _status_label(directory: Path | None) -> str:
+def _status_label(directory: Path | None, lang: str = "en") -> str:
+    text = TEXT[lang]
     if directory is None:
-        return "결과 없음"
+        return text["no_result"]
     status = _read(directory / "status.txt")
     if status == "success":
-        return "성공"
+        return text["success"]
     if status is None:
-        return "상태 모름"
-    return f"일부 실패 (`{status}`)"
+        return text["unknown"]
+    return text["partial"].format(status=status)
 
 
-def _platform_section(title: str, directory: Path | None) -> str:
+def _platform_section(title: str, directory: Path | None, lang: str = "en") -> str:
+    text = TEXT[lang]
     heading = "#" * PLATFORM_LEVEL + " " + title
     if directory is None:
-        return f"{heading}\n\n이 실행에서 {title} 결과가 없습니다. 작업이 시작되지 못했거나 결과 파일을 올리지 못했습니다."
+        return f"{heading}\n\n{text['no_platform'].format(title=title)}"
     parts = [heading]
     if _read(directory / "status.txt") not in ("success", None):
-        parts.append("이 OS의 측정 작업이 끝까지 성공하지 못했습니다. 아래에서 결과가 없는 묶음은 그 때문입니다.")
-    parts += [_fragment(directory, name, fragment_title) for name, fragment_title in FRAGMENTS]
+        parts.append(text["job_failed"])
+    parts += [_fragment(directory, name, text[key], lang) for name, key in FRAGMENTS]
     return "\n\n".join(parts)
 
 
@@ -181,22 +238,26 @@ def render_body(
     commit: str,
     run_url: str | None = None,
     now: _dt.datetime | None = None,
+    lang: str = "en",
 ) -> str:
+    if lang not in LANGS:
+        raise DocError(f"unknown language {lang!r}, expected one of {', '.join(LANGS)}")
+    text = TEXT[lang]
     now = now or _dt.datetime.now(_dt.timezone.utc)
     dirs = find_platform_dirs(results)
     lines = [
-        "이 구간은 `.github/workflows/benchmark-docs.yml` 이 자동으로 다시 씁니다. 손으로 고치지 않습니다.",
+        text["intro"],
         "",
-        f"- 커밋: `{commit}`",
-        f"- 측정 시각: {now.strftime('%Y-%m-%d %H:%M')} UTC",
+        f"- {text['commit']}: `{commit}`",
+        f"- {text['measured_at']}: {now.strftime('%Y-%m-%d %H:%M')} UTC",
     ]
     if run_url:
-        lines.append(f"- 실행: <{run_url}> (원본 JSON 은 OS별 `benchmark-<os>-<run_id>` 아티팩트)")
+        lines.append(f"- {text['run']}: <{run_url}> {text['run_note']}")
     lines += [
         "",
-        "OS마다 다른 GitHub 호스티드 러너에서 따로 잽니다. 기계가 다르므로 OS끼리 절대값을 비교하지 않고, 같은 OS 안의 상대 비교(horon 대비 배수)와 커밋 사이의 추세만 읽습니다.",
+        text["runners"],
         "",
-        "| OS | 러너 | 바이너리 | 상태 |",
+        text["header"],
         "| --- | --- | --- | --- |",
     ]
     for key, title in PLATFORMS:
@@ -204,9 +265,9 @@ def render_body(
         runner = (_read(directory / "runner.txt") if directory else None) or "—"
         version = (_read(directory / "horon-version.txt") if directory else None) or "—"
         version = version.splitlines()[0]
-        lines.append(f"| {title} | `{runner}` | `{version}` | {_status_label(directory)} |")
+        lines.append(f"| {title} | `{runner}` | `{version}` | {_status_label(directory, lang)} |")
     parts = ["\n".join(lines)]
-    parts += [_platform_section(title, dirs.get(key)) for key, title in PLATFORMS]
+    parts += [_platform_section(title, dirs.get(key), lang) for key, title in PLATFORMS]
     return "\n\n".join(parts)
 
 
@@ -218,6 +279,7 @@ def main(argv: list[str]) -> int:
     render.add_argument("--results", required=True, type=Path)
     render.add_argument("--commit", required=True)
     render.add_argument("--run-url")
+    render.add_argument("--lang", choices=LANGS, default="en")
     last = sub.add_parser("last-commit", help="print the commit recorded in the block")
     last.add_argument("--doc", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -229,7 +291,7 @@ def main(argv: list[str]) -> int:
             return 0
         if not args.results.is_dir():
             raise DocError(f"results directory not found: {args.results}")
-        body = render_body(args.results, args.commit, args.run_url)
+        body = render_body(args.results, args.commit, args.run_url, lang=args.lang)
         args.doc.write_text(replace_block(text, args.commit, body), encoding="utf-8")
     except DocError as exc:
         print(f"bench_docs: {args.doc}: {exc}", file=sys.stderr)

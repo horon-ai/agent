@@ -1,30 +1,38 @@
-# Swarm을 태스크 DAG로 (설계)
+# Swarm as a task DAG (design)
 
-상태: 구현 중이다(이전의 에이전트 우선 구도를 대체한다). DAG 엔진, deep/light
-모드, 게이트, 성장 메커니즘, 통신 마이그레이션 1~2단계(아티팩트 데이터플로, 서브트리 범위
-브로드캐스트)는 동작한다. 채널/공유 컨텍스트 폐기(3~4단계)는 아직 남아 있다.
+Language: **English** | [한국어](SWARM_TASK_GRAPH.ko.md)
 
-이 문서는 swarm 모듈을 에이전트 중심 모델에서 **태스크 DAG(방향성 비순환 그래프)**로 다시 짜는
-계획을 담는다. DAG가 기본 객체가 되고, 에이전트는 노드를 실행하고 분해하고 검증하는 교체 가능한
-일꾼이 된다. 설계 논의를 바탕으로 아키텍처, 데이터 모델, 완료와 커버리지 보장, 편향 예산, 도구
-표면을 기록한다.
+Status: in progress (it replaces the earlier agent-first shape). The DAG engine,
+deep/light modes, gates, the growth machinery, and communication migration steps 1-2
+(artifact dataflow, subtree-scoped broadcast) work. Discarding channels and shared
+context (steps 3-4) is still ahead.
+
+This document holds the plan for reworking the swarm module from an agent-centered
+model into a **task DAG (directed acyclic graph)**. The DAG becomes the primary
+object, and an agent becomes a replaceable worker that executes, decomposes, and
+verifies nodes. Building on the design discussion, it records the architecture, the
+data model, completion and coverage guarantees, the bias budget, and the tool surface.
 
 ---
 
-## 1. 동기와 핵심 재구성
+## 1. Motivation and the core reframing
 
-지금 swarm은 **에이전트 우선**이다. 에이전트를 띄우고 대화하면서 작업을 굴리고(DM, 채널, 역할),
-`PlanItem`의 `VersionedPlan`은 옆에 덧붙어 있다. 의존 그래프는 이미 내부에 있다
-(`PlanItem.blocked_by` 엣지, `summarize_plan_graph`, `next_runnable_item_ids`, `run_plan`/`fill_slots`).
-하지만 그것은 구현 세부에 머문다. 커버리지와 철저함은 그때그때 작업을 이끄는 쪽에 맡겨진다.
+Today swarm is **agent-first**. You start agents and drive work by talking to them
+(DM, channels, roles), and `VersionedPlan` of `PlanItem` sits alongside. The
+dependency graph is already inside (`PlanItem.blocked_by` edges,
+`summarize_plan_graph`, `next_runnable_item_ids`, `run_plan`/`fill_slots`). But it
+stays an implementation detail. Coverage and thoroughness are left to whoever happens
+to be driving the work.
 
-재구성은 **태스크 DAG를 기본 추상으로** 삼는다.
+The reframing takes the **task DAG as the primary abstraction**.
 
-- 의존 엣지와 노드별 명세를 가진 태스크 그래프를 선언한다.
-- 스케줄러가 DAG를 순회한다. 노드는 의존이 끝나면 실행 가능해지고 일꾼에 배정되며(재사용 또는 새로
-  띄우기), 완료되면 의존 노드를 자동으로 풀어 준다.
-- 에이전트는 풀에서 꺼내 쓰는 일꾼이지, 하나하나 챙기는 대상이 아니다.
-- 코디네이터와 워크트리 관리자 역할은 사용자에게 보이는 개념에서 **스케줄러 정책**으로 내려간다.
+- Declare a task graph with dependency edges and a per-node spec.
+- The scheduler walks the DAG. A node becomes runnable once its dependencies finish,
+  is assigned to a worker (reused or newly started), and on completion automatically
+  releases the nodes that depend on it.
+- An agent is a worker taken from a pool, not an object to be handled one at a time.
+- The coordinator and worktree-manager roles move from user-visible concepts down to
+  **scheduler policy**.
 
 ```text
 Now (agent-first)
@@ -36,82 +44,97 @@ DAG-first (reframe)
   Task A -> Task C --> Task D
 ```
 
-기존 `horon-agent-plan` 그래프 코드가 토대다. 새로 쓰는 것이 아니라 그 코드를 진화시킨다.
+The existing `horon-agent-plan` graph code is the foundation. This is not a rewrite;
+it evolves that code.
 
 ---
 
-## 1a. 두 모드: deep(포괄)와 light(팬아웃)
+## 1a. The two modes: deep (exhaustive) and light (fan-out)
 
-DAG 엔진은 두 **모드** 중 하나로 돈다. 의도적으로 **엔진 하나에 프리셋 둘**이며, 별개 시스템 둘이
-아니다. 두 모드 모두 같은 DAG 데이터 모델, 스케줄러, 엣지 위 데이터플로, 멤버 상한 메커니즘을 쓴다.
-차이는 엄격함 장치(의무 분해 + 비평/검증 게이트 + 재귀)를 켜는지, 그리고 멤버 상한이 얼마나 큰지뿐이다.
+The DAG engine runs in one of two **modes**. It is deliberately **one engine with two
+presets**, not two separate systems. Both modes use the same DAG data model, the same
+scheduler, the same edge dataflow, and the same member-cap mechanism. The only
+differences are whether the strictness devices (mandatory decomposition +
+critique/verify gates + recursion) are on, and how large the member cap is.
 
-핵심 구도는 이렇다. **light 모드는 구조적 압력을 끄고 상한을 작게 둔 deep 모드일 뿐이다.** 모드
-손잡이 하나를 가진 엔진 하나로 만들고, 스케줄러나 데이터플로를 복제하지 않는다.
+The core shape is this: **light mode is deep mode with the structural pressure off and
+the cap small.** Build one engine with one mode switch; do not duplicate the scheduler
+or the dataflow.
 
-- **Deep 모드(포괄):** 이 문서의 전부다. 목표는 구석진 곳을 하나도 남기지 않는 것이다. 재귀로
-  스스로 깊어지는 트리이고, 분해는 의무이며(기본이 복합), 어떤 노드든 닫히기 전에 비평/검증
-  게이트를 거쳐야 하고, 재귀는 깊이 제한 없이 장려되며, `what_i_did_not_check`를 포함한 타입 지정
-  핸드오프 스키마 전체가 강제된다. 최대 1000 에이전트 멤버 상한까지 확장한다. 비용과 지연이 크므로
-  의도적으로 쓴다. 예: "scrollwm의 멀티모니터 지원 탐색", 크고 위험한 리팩터링.
+- **Deep mode (exhaustive):** everything in this document. The goal is to leave no
+  corner untouched. It is a tree that deepens itself through recursion, decomposition
+  is mandatory (composite by default), every node passes a critique/verify gate before
+  it closes, recursion is encouraged with no depth limit, and the whole typed handoff
+  schema including `what_i_did_not_check` is enforced. It scales up to a cap of 1000
+  agent members. Cost and latency are high, so it is used deliberately. Examples:
+  "investigate multi-monitor support in scrollwm", a large and risky refactor.
 
-- **Light 모드(팬아웃):** 속도를 위해 일을 병렬화하고 품질을 적당히 올리는, 더 싼 프리셋이다.
-  극단까지 가지 않는다. 목표는 독립 단위를 병렬로 돌리는 것뿐이다. 대체로 평평하고(팬아웃 한
-  단계), 분해는 선택이며(에이전트 재량), 비평/검증 게이트는 꺼져 있거나 기껏해야 마지막 확인 한
-  번이고, 에이전트를 띄울 수 있는 것은 루트뿐이라 재귀 성장이 꺼진다. 핸드오프 아티팩트는 가볍고
-  자유 형식이어도 된다. 일꾼 상한이 작다(예: 4~16). 비용과 지연이 낮다. 사실상 오늘의 띄우고
-  팬아웃하는 동작을 싸게 유지한 것이다. 예: "독립 편집 5개를 병렬로 실행".
+- **Light mode (fan-out):** a cheaper preset that parallelizes work for speed and
+  raises quality modestly. It does not go to the extreme. The goal is only to run
+  independent units in parallel. It is mostly flat (a single fan-out step),
+  decomposition is optional (agent discretion), the critique/verify gates are off or
+  at most a single final check, and only the root may start agents, so recursive growth
+  is off. Handoff artifacts may be light and free-form. The worker cap is small (for
+  example 4-16). Cost and latency are low. In effect it keeps today's start-and-fan-out
+  behavior cheaply. Example: "run five independent edits in parallel".
 
-| 차원                 | Deep(포괄)                                 | Light(팬아웃)                    |
-| -------------------- | ------------------------------------------ | -------------------------------- |
-| 목표                 | 구석진 곳을 남기지 않기                    | 속도와 품질을 위한 병렬화        |
-| 모양                 | 재귀로 스스로 깊어지는 트리                | 대체로 평평한, 한 단계 팬아웃    |
-| 분해                 | 의무(기본이 복합)                          | 선택, 에이전트 재량              |
-| 비평/검증 게이트     | 모든 노드가 닫히기 전에 필요               | 끔(또는 마지막 확인 한 번)       |
-| 재귀                 | 장려, 깊이 무제한                          | 억제하거나 끔                    |
-| 핸드오프 아티팩트    | 전체 타입 스키마, `what_i_did_not_check`   | 가볍게, 자유 형식 허용           |
-| 멤버 상한            | 최대 1000 에이전트                         | 작게(예: 일꾼 4~16)              |
-| 비용 / 지연          | 높음, 의도적                               | 낮음, 빠름                       |
+| Dimension                   | Deep (exhaustive)                            | Light (fan-out)                     |
+| --------------------------- | -------------------------------------------- | ----------------------------------- |
+| Goal                        | leave no corner untouched                    | parallelize for speed and quality   |
+| Shape                       | a tree that deepens itself through recursion | mostly flat, one-step fan-out       |
+| Decomposition               | mandatory (composite by default)             | optional, agent discretion          |
+| Critique/verify gates       | required before every node closes            | off (or one final check)            |
+| Recursion                   | encouraged, unlimited depth                  | suppressed or off                   |
+| Handoff artifact            | the full typed schema, `what_i_did_not_check` | light, free-form allowed            |
+| Member cap                  | up to 1000 agents                            | small (e.g. 4-16 workers)           |
+| Cost / latency              | high, deliberate                             | low, fast                           |
 
-두 모드가 함께 쓰는 것은 DAG 데이터 모델, 스케줄러, 엣지 위 데이터플로(타입 지정 또는 가벼운
-아티팩트), 멤버 상한 메커니즘이다(상한만 다르다). 이 문서의 엄격함 절(6, 7)은 **deep 모드**를
-설명한다. light 모드는 그 게이트를 끌 뿐이다.
-
----
-
-## 2. 의존 그래프 위의 소유 트리
-
-"모두가 하나의 공유 그래프를 고친다"의 함정은 공유 `VersionedPlan`이 하나뿐이라는 데 있다. 자유
-형식 편집이 동시에 일어나면 일관성이 깨지고, 그래서 지금은 계획 변경이 코디네이터 하나로 제한된다.
-해법은 락을 더하는 것이 아니라 **변경이 무엇인지**를 바꾸는 것이다.
-
-**의존 그래프 위에 얹은 소유 트리**로 모델링한다. 변경 단위는 *자기가 소유한 노드를 확장하는
-것*이며, 임의 노드를 고치는 일은 없다.
-
-- 쓰기는 **소유자별로 나뉜다**. 자기 노드 아래에만 자식을 더하므로 두 소유자가 같은 영역을 쓰지
-  않는다. 이렇게 하면 전역 그래프는 하나로 두면서도 락 없이 코디네이터 병목을 없앤다.
-- 그래프는 여전히 **서버가 소유하고 버전을 매기는** 단일 진실 원천이다(`VersionedPlan`을
-  재사용한다). 다만 변경은 마지막 쓰기가 이기는 덩어리가 아니라 **덧붙이기 방식 연산**(노드 추가,
-  엣지 추가, 노드 완료)이 되고, 서버 쪽에서 비순환성과 소유권을 검증한다.
-- 새 엣지는 **이미 존재하는 상류** 노드만 가리킬 수 있다. 그래서 비순환성이 구조적으로 보장된다.
+What the two modes share is the DAG data model, the scheduler, edge dataflow (typed or
+lightweight artifacts), and the member-cap mechanism (only the number differs). The
+strictness sections of this document (6, 7) describe **deep mode**. Light mode only
+turns those gates off.
 
 ---
 
-## 3. 노드 종류: 원자와 복합
+## 2. An ownership tree over the dependency graph
 
-에이전트가 노드를 집었을 때 그 노드는 두 운명 중 하나를 간다. 상태는 초안 작성 시점이 아니라 실행
-중에 뒤집힌다. 노드를 미리 복합으로 선언할 필요는 **없다**. 어느 깊이의 에이전트든 자기에게 배정된
-노드를 확장할 수 있다.
+The trap of "everyone edits one shared graph" is that there is only one shared
+`VersionedPlan`. Concurrent free-form edits break consistency, which is why plan
+changes are currently limited to a single coordinator. The fix is not to add a lock but
+to change **what a change is**.
 
-- **원자:** 일꾼이 태스크를 직접 실행하고 핸드오프 아티팩트를 쓴다.
-- **복합:** 배정받은 에이전트가 태스크가 너무 크다고 판단한다. 실행하는 대신 노드를 **분해**해 자식
-  서브 DAG로 만들고, 그 서브 DAG를 이제 자기가 소유한다. 원래 노드는 **조인/종합 지점**이 된다.
-  자식이 모두 끝날 때까지 진행 중으로 남고, 끝나면 소유자가 다시 깨어나 자식 아티팩트를 읽고, 이
-  노드에 의존하는 쪽을 위해 종합 결과 하나를 쓴다.
+Model it as an **ownership tree layered on the dependency graph**. The unit of change
+is *extending a node you own*, never editing an arbitrary node.
 
-복합 노드의 소유자는 **기획자 겸 통합자**일 뿐이다(맵 다음 리듀스). 소유자가 분해하고, 자식이 일을
-하고, 소유자가 종합한다. 잎 작업을 직접 실행하지는 않는다. 이렇게 하면 노드마다 책임이 깔끔하게
-남고 소유 경계가 또렷해진다.
+- Writes are **divided by owner**. A node adds children only below itself, so two
+  owners never write the same region. That removes the coordinator bottleneck without a
+  lock while keeping one global graph.
+- The graph is still the **server-owned, versioned** single source of truth (it reuses
+  `VersionedPlan`). What changes is that a change becomes an **append-style operation**
+  (add node, add edge, complete node) instead of a last-writer-wins blob, and the server
+  validates acyclicity and ownership.
+- A new edge may point only at an **existing upstream** node. Acyclicity is therefore
+  structurally guaranteed.
+
+---
+
+## 3. Node kinds: atomic and composite
+
+When an agent picks up a node, the node goes one of two ways. The state flips during
+execution, not at draft time. There is **no** need to declare a node composite in
+advance. An agent at any depth can extend the node assigned to it.
+
+- **Atomic:** a worker executes the task directly and writes a handoff artifact.
+- **Composite:** the assigned agent decides the task is too big. Instead of executing,
+  it **decomposes** the node into a child sub-DAG and now owns that sub-DAG. The
+  original node becomes a **join/synthesis point**. It stays in progress until every
+  child finishes; then the owner wakes again, reads the child artifacts, and writes one
+  synthesized result for whoever depends on this node.
+
+The owner of a composite node is only a **planner and integrator** (map, then reduce).
+The owner decomposes, the children do the work, and the owner synthesizes. The owner
+does not execute leaf work itself. That leaves each node with a clean responsibility and
+sharp ownership boundaries.
 
 ```text
 Task A (atomic) --\
@@ -119,29 +142,33 @@ Task A (atomic) --\
 Task B (atomic) --/                                    --> D join / synthesize --> Task E
 ```
 
-**deep 모드**에서 재귀에는 고정 깊이나 노드당 팬아웃 제한이 없다. 성장은 설정 가능한 라이브 일꾼
-예산과 절대 전체 멤버 상한(swarm당 1000 에이전트, 10절)으로 제한된다. light 모드는 재귀 생성을
-끈다. 루트만 평평한 일꾼 팬아웃을 만들 수 있다.
+In **deep mode** recursion has no fixed depth and no per-node fan-out limit. Growth is
+bounded by a configurable live-worker budget and the absolute total member cap (1000
+agents per swarm, section 10). Light mode turns recursive spawning off. Only the root
+can create a flat worker fan-out.
 
 ---
 
-## 4. 종료 동작에 따른 노드 종류
+## 4. Node kinds by terminal behavior
 
-DAG는 태스크 유형을 가리지 않는다. 구조(분해, 게이트, 타입 지정 핸드오프)는 태스크와 무관하게
-같다. 바뀌는 것은 **아티팩트 종류와 "완료" 기준**뿐이다. 실제 태스크는 대개 **탐색한 뒤 행동**이고,
-그 순서는 그냥 의존 엣지 하나다. 탐색 노드가 구현 노드를 먹인다.
+The DAG is agnostic about task type. The structure (decomposition, gates, typed
+handoffs) is the same regardless of task. Only the **artifact kind and the definition of
+"done"** change. A real task usually **explores, then acts**, and that order is just one
+dependency edge. An exploration node feeds an implementation node.
 
-| 종류        | 아티팩트(출력)                          | "완료" 계약                    |
-| ----------- | --------------------------------------- | ------------------------------ |
-| `explore`   | 조사 결과(연구의 산출물)                | 비평 게이트를 통과             |
-| `implement` | diff / 커밋 참조 + 바뀐 내용            | 검증 게이트를 통과             |
-| `verify`    | 통과/실패 + 구체적 실패                 | 검사 실행 완료                 |
-| `fix`       | 패치                                    | 재검증 통과                    |
+| Kind        | Artifact (output)                       | "Done" contract                 |
+| ----------- | --------------------------------------- | ------------------------------- |
+| `explore`   | findings (the product of research)      | passes the critique gate        |
+| `implement` | diff / commit reference + what changed  | passes the verify gate          |
+| `verify`    | pass/fail + the concrete failure        | the check run completed         |
+| `fix`       | a patch                                 | re-verification passes          |
 
-- **검증과 수정**이 시스템을 서술만 하는 것이 아니라 *행동하고 스스로 고치게* 만든다. 검증이
-  실패하면 수정 노드가 생기고(그래프가 더 커진다), 비평이 빈틈 노드를 만드는 것과 같다.
-- 마지막 `synthesize` 노드는 **선택**이다. 순수 탐색 태스크에서는 이것이 산출물이고, 구현
-  태스크에서는 병합되고 검증된 코드가 산출물이며 보고서는 출시된 것의 얇은 요약이다.
+- **Verification and fixing** make the system act and repair itself instead of only
+  describing the system. A failed verification creates a fix node (the graph grows),
+  just as a critique creates gap nodes.
+- The final `synthesize` node is **optional**. In a pure exploration task it is the
+  deliverable; in an implementation task the merged and verified code is the deliverable
+  and the report is a thin summary of what shipped.
 
 ```text
 explore: how does X work --findings--> plan changes
@@ -153,44 +180,53 @@ verify --passes--> working feature, committed
 
 ---
 
-## 5. 데이터플로: 끝난 의존이 정보를 넘기는 방식
+## 5. Dataflow: how a finished dependency passes information
 
-핵심 통찰은 **의존 엣지가 곧 데이터 채널**이라는 것이다. 지금은 완료 보고가 *띄운 쪽*으로
-돌아간다(제어 흐름). DAG에서는 *의존하는 쪽*으로도 흘러야 한다(데이터 흐름).
+The key insight is that **a dependency edge is also a data channel**. Today a completion
+report goes back to the *spawner* (control flow). In a DAG it must also flow toward the
+*dependent* node (data flow).
 
-- 완료되면 각 노드는 노드에 붙은 구조화된 **핸드오프 아티팩트**를 저장한다.
-- 하류 태스크가 실행 가능해지면(의존이 모두 끝남) 스케줄러가 **입력을 조립한다**. 태스크 자체
-  프롬프트에 모든 의존의 병합된 아티팩트를 더해 일꾼의 시작 컨텍스트에 넣는다. 팬아웃(의존 하나가
-  여럿을 풀어 줌)과 팬인(의존 여럿이 하나를 먹임)이 자연스럽게 나온다.
-- 아티팩트는 기본이 **값이 아니라 참조**다. "API를 `crates/foo/api.rs`에 만들었고 타입은 X/Y,
-  커밋은 `abc123`." 저장소와 git이 공유 매체이고, 하류 에이전트는 파일을 직접 읽는다. 값으로 넣는
-  것은 저장소에 없는 것(결정, 설계, 분석)뿐이다. 이렇게 하면 컨텍스트가 작게 유지되고, 그 점은
-  깊이 들어갈수록 중요하다.
-- 복합 노드의 핸드오프는 **분해한 뒤 종합**(맵리듀스)이다. 자식이 끝나면 소유자가 자식 아티팩트를
-  들고 다시 깨어나 통합/종합 보고서 하나를 쓴다. 부모는 자식의 잡음을 이어 붙이지 않고 다음 계층을
-  위한 깨끗한 요약을 만든다.
+- On completion each node stores a structured **handoff artifact** attached to the node.
+- When a downstream task becomes runnable (all dependencies done), the scheduler
+  **assembles its input**. It adds the merged artifacts of every dependency to the
+  task's own prompt in the worker's starting context. Fan-out (one dependency releasing
+  several) and fan-in (several dependencies feeding one) follow naturally.
+- An artifact is by default **a reference, not a value**. "I created the API in
+  `crates/foo/api.rs`, types are X/Y, commit is `abc123`." The repository and git are the
+  shared medium, and the downstream agent reads the files directly. Values carry only
+  what the repository does not hold (decisions, designs, analyses). That keeps context
+  small, which matters more the deeper you go.
+- A composite node's handoff is **decompose then synthesize** (map-reduce). When children
+  finish, the owner wakes with their artifacts and writes one consolidated/synthesized
+  report. The parent does not concatenate the children's noise; it produces a clean
+  summary for the next layer.
 
 ---
 
-## 6. 완료와 커버리지: 철저함을 구조로 만들기
+## 6. Completion and coverage: making thoroughness structural
 
-목표는 완료가 충분히 포괄적이어서 태스크의 구석을 놓쳤을 가능성이 아주 낮아지는 것이다. 포괄성은
-프롬프트의 부탁이 아니라 **그래프의 구조적 성질**이어야 한다. 서로를 보강하는 압력 셋이 있다.
+The goal is that completion is comprehensive enough that the chance of missing a corner
+of the task is very low. Comprehensiveness must be a **structural property of the
+graph**, not a request in a prompt. Three pressures reinforce each other.
 
-### 6.1 의무 분해(넓이)
-탐색형 노드는 **기본이 복합**이다. 에이전트의 첫 일은 답하는 것이 아니라 **표면적을 열거**해 자식
-노드로 나누는 것이다. 커버리지가 산문 속에 묻혀 믿어야 하는 대상이 아니라 그래프에서 보이고 감사
-가능해진다(핫플러그 노드가 있었나? DPI 노드가 있었나?).
+### 6.1 Mandatory decomposition (breadth)
 
-### 6.2 비평/검증 게이트(적대적 빈틈 찾기)
-특정 노드에는 부모가 종합하거나 닫기 전에 자동으로 삽입된 **비평**(탐색용) 또는 **검증**(코드용)
-의존이 붙는다.
+An exploration node is **composite by default**. The agent's first job is not to answer
+but to **enumerate the surface** and split it into child nodes. Coverage then becomes
+visible and auditable in the graph instead of buried in prose and taken on faith (was
+there a hotplug node? a DPI node?).
 
-- 게이트는 적대적이다. "이것이 놓친 구석은 무엇인가?" / "실제로 동작하는가?"
-- 빈틈이나 실패를 찾으면 그래프에 **새 자식 노드**를 다시 넣고(재귀), 부모는 그것들이 소진되기
-  전까지 닫을 수 없다.
-- "무언가를 놓쳤을 가능성이 아주 낮다"가 이렇게 나온다. 열린 빈틈이나 실패한 검사가 있는 한
-  그래프가 부모의 완료를 문자 그대로 허용하지 않는다.
+### 6.2 Critique/verify gates (adversarial gap hunting)
+
+Certain nodes get an automatically inserted **critique** (for exploration) or **verify**
+(for code) dependency before the parent may synthesize or close.
+
+- The gate is adversarial. "What corner did this miss?" / "Does it actually work?"
+- When it finds a gap or a failure, it puts **new child nodes** back into the graph
+  (recursion), and the parent cannot close until those are exhausted.
+- That is how "very low chance of having missed something" comes about: as long as an
+  open gap or a failed check exists, the graph literally does not allow the parent to
+  complete.
 
 ```text
 explore X --> enumerate facets
@@ -200,71 +236,82 @@ critique --gap found--> facet: cursor crossing --> critique (loop)
 critique --no gaps--> synthesize report
 ```
 
-### 6.3 "확인하지 않은 것"을 명시한 타입 지정 아티팩트(얕음을 드러내기)
-핸드오프 아티팩트에는 **필수 스키마**가 있어 얕은 출력이 구조적으로 드러난다.
+### 6.3 A typed artifact that names what was not checked (exposing shallowness)
+
+The handoff artifact has a **required schema**, so shallow output shows up structurally.
 
 - `findings`
-- `evidence` (파일:줄 참조 / 커밋 참조, 근거 없는 주장이 아님)
+- `evidence` (file:line references / commit references, not unsupported claims)
 - `edge_cases_considered`
-- `validation` (코드의 검증 결과)
+- `validation` (verification results for code)
 - `open_questions`
 - `confidence`
 - `what_i_did_not_check`
 
-`what_i_did_not_check`가 요령이다. 에이전트가 *탐색하지 않은* 것을 나열하게 하면 탐색하지 않은
-구석이 드러나고, 비평/스케줄러가 그것을 새 노드로 바꾼다. 복잡한 태스크에서 `open_questions`와
-`what_i_did_not_check`가 비어 있는 것 자체가 감사자가 확인하는 위험 신호다.
+`what_i_did_not_check` is the trick. Making the agent list what it did *not* investigate
+surfaces the corners it did not investigate, and the critique/scheduler turns them into
+new nodes. On a complex task, an empty `open_questions` and `what_i_did_not_check` is
+itself the risk signal an auditor checks.
 
-그래서 지금 포괄성은 두 가지를 뜻하고, 둘 다 게이트로 강제된다. 표면을 덮었는가(비평), 실제로
-동작하는가(검증). 둘 다 빈틈과 실패를 새 노드로 바꾼다.
+So comprehensiveness now means two things, and gates enforce both: is the surface
+covered (critique), and does it actually work (verify). Both turn gaps and failures into
+new nodes.
 
-### 6.4 구현된 강제(2026-07: 성장 메커니즘)
+### 6.4 The enforcement that exists (2026-07: growth machinery)
 
-위 압력은 프롬프트 부탁이 아니라 `horon-agent-plan`의 `dag` 모듈에 하드 엔진 규칙으로 구현돼 있다.
+Those pressures are implemented as hard engine rules in the `dag` module of
+`horon-agent-plan`, not as prompt requests.
 
-- **루트 게이트(계획 전체 감사).** deep 모드의 `seed`마다 부모 없는 게이트(`plan::gate`)가 자동으로
-  삽입되고, 이 게이트는 모든 루트 수준 노드에 의존한다. 노드가 모두 원자적으로 실행되는 평평한
-  seed라도 마지막 적대적 통과 없이는 종료 상태에 이를 수 없고, 그 통과는 새 최상위 노드를
-  `inject_gap`할 수 있다(트리 꼭대기에서의 성장). 다시 seed하면 루트 게이트의 범위가 넓어지고, 이미
-  통과했던 게이트는 다시 열린다.
-- **열거 게이트 커버리지.** 통과하는 deep 게이트 아티팩트는 감사 범위의 모든 완료 노드를 id로
-  다뤄야 한다(범위 = 게이트의 비게이트 `depends_on`. 복합 게이트와 루트 게이트에 같은 규칙 하나).
-  열거 상한은 20이다. 상한을 넘으면 열거는 HIGH 신뢰 노드에 대해서만 완화되고, medium/low/해석 불가
-  신뢰 노드는 여전히 id로 다뤄야 한다. "모두 좋고 빈틈 없음"은 구조적으로 거부된다
-  (`UncoveredSiblings`). 범위가 낡은 경우를 잡는 규칙(`StaleGateScope`)은 게이트가 파견된 뒤에
-  노드가 범위에 들어오면 통과를 거부한다.
-- **아티팩트 없이는 턴이 끝나지 않는다.** deep 모드에는 자동 완료가 없다. 노드가 실행 중인 채로
-  끝난 일꾼 턴은 그 노드를 새 일꾼에게 한 번 다시 큐에 넣고(`no_artifact_requeues`), 반복되면
-  실패시킨다. deep 노드가 닫히는 길은 `expand_node`(분해)와 `complete_node`(검증된 아티팩트)뿐이다.
-- **성장 회계.** 모든 노드는 출처(`seed`/`expand`/`gap`/`gate`)를 기록한다. `PlanGraphStatus`는
-  `seeded_count`/`grown_count`를 담고, `plan_status`/`run_plan`은 성장 줄을 출력한다. 그래서 seed를
-  한 번도 넘어서지 못한 deep 계획은 탐색 부족이 눈에 보인다.
+- **Root gate (whole-plan audit).** For every deep-mode `seed`, a parentless gate
+  (`plan::gate`) is inserted automatically, and it depends on every root-level node.
+  Even a flat seed whose nodes all execute atomically cannot reach a terminal state
+  without a final adversarial pass, and that pass can `inject_gap` new top-level nodes
+  (growth at the top of the tree). Re-seeding widens the root gate's scope and reopens a
+  gate that had already passed.
+- **Enumeration gate coverage.** A passing deep gate artifact must address every
+  completed node in the audit scope by id (the scope is the gate's non-gate
+  `depends_on`; one rule for composite gates and the root gate alike). The enumeration
+  cap is 20. Past the cap, enumeration is relaxed only for HIGH confidence nodes, and
+  medium/low/unreadable confidence nodes must still be addressed by id. "All good, no
+  gaps" is structurally refused (`UncoveredSiblings`). The rule that catches a stale
+  scope (`StaleGateScope`) refuses a pass when a node entered the scope after the gate
+  was dispatched.
+- **A turn does not end without an artifact.** Deep mode has no auto-complete. A worker
+  turn that ends with its node still running re-queues that node for a new worker once
+  (`no_artifact_requeues`), and fails on a repeat. The only ways a deep node closes are
+  `expand_node` (decomposition) and `complete_node` (a verified artifact).
+- **Growth accounting.** Every node records its origin (`seed`/`expand`/`gap`/`gate`).
+  `PlanGraphStatus` carries `seeded_count`/`grown_count`, and `plan_status`/`run_plan`
+  print a growth line. So a deep plan that never outgrew its seed shows the
+  under-exploration plainly.
 
 ---
 
-## 7. 편향 예산: 무엇이 고정이고 무엇이 창발인가
+## 7. Bias budget: what is fixed and what emerges
 
-핵심 긴장은 이렇다. 사전 편향이 너무 많으면 잘 부서지는 워크플로를 하드코딩한 것이고, 너무 적으면
-커버리지 보장을 잃는다. 나누는 방식은 다음과 같다.
+The core tension is this. Too much prior bias hardcodes a workflow that breaks easily;
+too little loses the coverage guarantee. The split is as follows.
 
-### 첫 에이전트가 정하는 것(의도적으로 작은 씨앗)
-1. 루트 태스크의 구도(사용자 프롬프트에서 물려받음).
-2. 1단계 분해. 처음의 측면/자식 노드와 그 엣지다.
+### What the first agent decides (a deliberately small seed)
+1. The root task's shape (inherited from the user prompt).
+2. The first-level decomposition: the initial facet/child nodes and their edges.
 
-그 첫 분해조차 **잠정적**이다. 모든 자식이 다시 분해될 수 있고, 게이트는 첫 에이전트가 상상하지
-못한 형제를 넣을 수 있다. 첫 에이전트는 *씨앗*을 정하지 *모양*을 정하지 않는다.
+Even that first decomposition is **provisional**. Every child can be decomposed again,
+and a gate can insert siblings the first agent never imagined. The first agent sets the
+*seed*, not the *shape*.
 
-### 시스템이 고정하는 것(첫 에이전트의 선택이 아니라 구조)
-- **게이트 규율:** 모든 복합 노드는 닫히기 전에 비평/검증 의존을 얻는다. 감사를 건너뛸 선택지는
-  없다.
-- **핸드오프 계약:** `what_i_did_not_check`/`open_questions`를 담은 타입 지정 아티팩트를 모든
-  노드에 강제한다.
-- **재귀 권리:** 어떤 하위 노드든 자기 노드를 확장할 수 있다. 첫 에이전트는 자기가 그린 모양을
-  "잠글" 수 없다.
-- **빈틈/실패 -> 새 노드:** 비평과 검증은 원래 계획과 무관하게 놓친 것을 그래프로 바꾼다.
+### What the system fixes (structure, not the first agent's choice)
+- **Gate discipline:** every composite node gets a critique/verify dependency before it
+  closes. There is no option to skip the audit.
+- **Handoff contract:** a typed artifact carrying `what_i_did_not_check`/
+  `open_questions` is enforced on every node.
+- **Recursion right:** any sub-node can extend its own node. The first agent cannot
+  "lock" the shape it drew.
+- **Gap/failure -> new node:** critique and verification turn what was missed into
+  graph, independent of the original plan.
 
-그래서 포괄성 보장은 첫 에이전트가 똑똑한지에 **달려 있지 않다**. 평범한 첫 분해도 여전히 걸리고
-확장된다.
+So the coverage guarantee does **not** depend on the first agent being smart. An ordinary
+first decomposition still gets caught and expanded.
 
 ```text
 fully scripted <--> seeded <--> fully emergent
@@ -273,40 +320,48 @@ fully scripted <--> seeded <--> fully emergent
                             correct it)
 ```
 
-우리는 **B(씨앗 + 구조적 게이트)**에 있다.
+We are at **B (seed + structural gates)**.
 
-- **내용 / 도메인 지식:** 거의 전부 에이전트에서 온다(첫 에이전트가 씨앗을 놓고, 하위가 다듬는다).
-  시스템은 도메인(예: scrollwm)에 대해 아무것도 모른다.
-- **과정 / 엄격함 / 커버리지:** 첫 에이전트가 고르는 것은 거의 없다. 구조적이고 트리 전체에
-  균일하다.
-- **최종 모양:** 대부분 창발이다. 첫 에이전트의 초안은 보통 최종 노드 수의 작은 일부이고, 대부분의
-  노드는 재분해와 게이트가 낳은 빈틈/수정에서 태어난다.
+- **Content / domain knowledge:** almost all of it comes from agents (the first agent
+  lays the seed, sub-agents refine it). The system knows nothing about the domain (say,
+  scrollwm).
+- **Process / strictness / coverage:** the first agent chooses almost none of it. It is
+  structural and uniform across the tree.
+- **Final shape:** mostly emergent. The first agent's draft is usually a small fraction
+  of the final node count, and most nodes are born from re-decomposition and the gaps and
+  fixes the gates produce.
 
-**지켜야 할 불변식:** 도메인 가정을 구조 계층으로 흘리지 않는다. 게이트는 **도메인 중립**을
-유지해야 한다. 비평은 "이 태스크가 스스로 밝힌 범위와 아티팩트를 기준으로 무엇이 탐색되지
-않았나"를 묻고, 검증은 "이 태스크가 선언한 승인 검사"를 돌린다. 철저함 쪽 편향은 의도적이고, 특정
-내용 쪽 편향은 거의 0이어야 한다. 같은 태스크를 다시 돌리면 비슷한 1단계 측면(안정된 씨앗)이
-나오되 깊은 구조는 달라야 한다(적응적 탐색).
+**Invariant to hold:** domain assumptions must not leak into the structural layer. Gates
+must stay **domain-neutral**. A critique asks "against the scope and artifacts this task
+declares, what was not explored", and a verification runs "the acceptance checks this
+task declares". Bias toward thoroughness is deliberate; bias toward specific content
+should be near zero. Re-running the same task should produce similar first-level facets
+(a stable seed) with different deep structure (adaptive exploration).
 
 ---
 
-## 8. 인터페이스: 에이전트 스크립트가 아니라 강제되는 그래프 API
+## 8. Interface: an enforced graph API, not an agent script
 
-인터페이스 선택이 엄격함을 실제로 얼마나 강제할 수 있는지를 정한다. 검토한 선택지는 이렇다.
+The interface choice really decides how much strictness can be enforced. The options
+considered were:
 
-- **A. 재구성한 swarm 도구(그래프 연산).** 서버가 그래프를 소유하고 모든 변경에서 불변식
-  (비순환성, 소유권, 의무 게이트, 타입 지정 핸드오프)을 *강제*한다. "포괄성은 구조다"를 참으로
-  만드는 것은 이 선택지뿐이다.
-- **B. 에이전트가 스크립트를 쓴다.** 강력해 보이지만, 처음부터 끝까지 한 번에 도는 스크립트는
-  런타임 발견으로 자라는 그래프를 표현할 수 없다. 노드 결과를 기다렸다가 다시 들어와야 하고,
-  결국 같은 API를 감싼 명령형 드라이버가 된다. 다만 엄격함이 검증되지 않은 에이전트 코드에 살고
-  게이트는 우회 가능해진다. 편향이 부족한 실패 모드다.
-- **C. 도구 기본 연산 + 선택적 선언 설탕.** 도구가 검증된 기반이고, 정적인 부분은 한 번에 내는
-  명세로 허용하되 런타임 성장은 여전히 도구 호출로 간다.
+- **A. The reworked swarm tool (graph operations).** The server owns the graph and
+  *enforces* the invariants (acyclicity, ownership, mandatory gates, typed handoffs) on
+  every change. This option is the only one that makes "comprehensiveness is structure"
+  true.
+- **B. The agent writes a script.** It looks powerful, but a script that runs start to
+  finish cannot express a graph that grows through runtime discovery. It has to wait for
+  node results and re-enter, so it ends up an imperative driver wrapping the same API.
+  Meanwhile strictness lives in unverified agent code and the gates can be bypassed. That
+  is the under-biased failure mode.
+- **C. Primitive tool operations plus optional declarative sugar.** The tools are the
+  verified base, a static part is accepted as a spec submitted at once, and runtime
+  growth still goes through tool calls.
 
-**결정: A를 토대로 삼고 C의 설탕을 얹는다.** 그래프는 에이전트 쪽 스크립트가 아니라 검증된
-연산으로 바뀌는 서버 쪽 객체다. 에이전트는 그래프를 *정하는* 일에서 완전한 자유를 갖고(임의
-추론/도구 사용), 그것을 *집행하는* 일에서 구조적 게이트를 건너뛸 자유는 0이다.
+**Decision: build on A and add C's sugar.** The graph is a server-side object changed by
+verified operations, not an agent-side script. The agent keeps complete freedom in
+*deciding* the graph (arbitrary reasoning and tool use) and zero freedom in *enforcing*
+it, where the structural gates cannot be skipped.
 
 ```text
 agent reasoning (arbitrary)
@@ -316,88 +371,103 @@ agent reasoning (arbitrary)
   -- workers: complete_node + artifact --> swarm tool (loop)
 ```
 
-### 제안 도구 표면(`swarm`의 진화)
-- `swarm task_graph {nodes:[...], edges:[...]}` - 초기 DAG를 한 번에 seed한다(첫 에이전트의 초안).
-  연산의 묶음 형태이고 같은 검증을 받는다.
-- `swarm expand_node {node_id, children:[...], edges:[...]}` - 런타임 분해(재귀). 소유권과
-  비순환성을 검사한다.
+### The proposed tool surface (the evolution of `swarm`)
+- `swarm task_graph {nodes:[...], edges:[...]}` - seeds the initial DAG in one call (the
+  first agent's draft). It is the batch form of the operations and gets the same
+  validation.
+- `swarm expand_node {node_id, children:[...], edges:[...]}` - runtime decomposition
+  (recursion). It checks ownership and acyclicity.
 - `swarm complete_node {node_id, artifact:{findings, evidence, validation,
-  edge_cases_considered, open_questions, confidence, what_i_did_not_check}}` - 게이트가 검사하는
-  타입 지정 핸드오프.
-- `swarm run` - 스케줄러로 넘긴다.
-- `spawn` / `dm` / `channel`은 저수준 탈출구로 남는다.
+  edge_cases_considered, open_questions, confidence, what_i_did_not_check}}` - the typed
+  handoff the gates inspect.
+- `swarm run` - hands control to the scheduler.
+- `spawn` / `dm` / `channel` remain as low-level escape hatches.
 
-에이전트가 실제로 원하는 "더 많은 제어"는 노드별 프롬프트, 계산된 팬아웃, 조건부 확장이다. 그것은
-(a) 에이전트가 원하는 방식으로 노드 목록을 계산한 *뒤* 검증된 명세로 내는 것과 (b) 런타임
-`expand_node` 호출로 제공된다. 강제를 우회하는 스크립팅 언어로 제공되지 않는다.
-
----
-
-## 8a. 통신 개편: 데이터플로 먼저, 채팅은 다음
-
-지금 swarm 도구는 에이전트에게 풍부한 사람용 채팅 표면을 준다. DM, swarm 전체 브로드캐스트, 주제
-채널(구독/멤버), 공유 키-값 컨텍스트 저장소, 전달 모드(`notify`/`interrupt`/`wake`),
-`await_members`다. 사람 협업 은유를 에이전트에 볼트로 붙인 셈이다. DAG 모델에는 너무 많고 모양도
-틀렸다. 개편은 **더하기가 아니라 빼기**다.
-
-### 현재 모델이 맞지 않는 이유
-1. **채팅이지 데이터플로가 아니다.** 기존 채널은 모두 *에이전트 사이*의 푸시 알림 메시징이다.
-   DAG에서 기본 정보 전달은 **엣지 위 아티팩트를 통한 노드 -> 의존**인데, 그것은 아직 통신 기본
-   연산으로 존재하지 않는다. 새 모델에서 가장 중요한 "통신"이 현재 도구로 표현할 수 없는 것이므로,
-   에이전트는 서로 DM을 보내 데이터플로를 흉내 내야 한다. 우리가 대체하려는 그 손실 있는 조정
-   말이다.
-2. **겹치는 기본 연산이 너무 많다.** DM, 브로드캐스트, 채널, 공유 컨텍스트 팬아웃은 다른
-   에이전트에게 텍스트를 밀어 넣는 네 가지 방법이고, `message`는 이미 그중 셋 사이를 자동
-   라우팅한다. 코드베이스에는 모델이 동사를 계속 새로 만든 탓에 동작 동의어 정규화 계층까지 있다.
-   표면이 너무 크다는 냄새다. 동작이 많을수록 모델 오류가 는다.
-3. **브로드캐스트가 멤버 상한까지 확장되면 안 된다.** 1000 멤버 상한(10절)에서 swarm 전체 팬아웃은
-   보낼 때마다 1000방향 알림 폭풍이 된다. 그래서 브로드캐스트형 전송은 서브트리 범위다(마이그레이션
-   2단계, `handle_comm_message`/`handle_comm_share`에 구현됨). 보내는 쪽은 자기가 띄운 서브트리에만
-   닿고, swarm 전체 도달은 코디네이터만 유지한다.
-
-### 목표는 2계층 모델
-두 계층을 남기고 가운데를 버린다.
-
-- **1계층 - 구조적 데이터플로(새것, 기본).** 엣지 위 핸드오프 아티팩트다. 완료되면 노드의 타입
-  지정 아티팩트가 스케줄러를 통해 의존 노드로 자동으로 흐르고, 스케줄러는 새로 실행 가능해진
-  노드의 입력을 상류 아티팩트로 채운다. 오늘 DM이 쓰이는 대부분("내가 찾은 것은 이렇고, 이제 네가
-  가라")을 대체한다. 보내고 잊는 DM과 달리 타입이 있고, 내구적이고, 참조 방식이며, 다시 불러와도
-  살아남는다.
-- **2계층 - 예외 채널(유지, 얇게).** 그래프가 모델링할 수 없는 진짜 비구조적 경우에만
-  에이전트끼리 직접 접촉한다. 충돌 해소("우리 둘 다 `foo.rs`를 고치고 있다")와 소유 트리 위쪽으로
-  올리는 확인 질문이다. 그것이 **DM + 서브트리 범위 브로드캐스트**이고, 그 이상은 없다.
-
-### 내려가거나 잘리는 것
-- **공유 컨텍스트 키-값 저장소:** 저장소(진짜 공유 매체)와 타입 지정 아티팩트에 크게 중복된다.
-  저장소 밖 공유 상태가 구체적으로 필요할 때만 남기고, 아니면 두 번째 진실 원천이므로 없앤다.
-- **swarm 전체 브로드캐스트:** 에이전트가 소유한 하위에만 닿는 **서브트리 범위 브로드캐스트**로
-  대체한다. 그래야 멤버 상한만 한 폭풍이 되지 않는다. swarm 전체 브로드캐스트는 드문 코디네이터
-  전용 동작이 된다.
-- **일반 주제 채널:** 데이터플로가 구조가 되면 필요 없다. 채널은 *사람*이 임시 협업을 조직하는
-  방식이다. 에이전트는 자유 형식 방이 아니라 그래프 엣지로 협업해야 한다.
-
-### DAG 모델과의 정렬
-의존 엣지가 주 통신 채널(타입 지정 아티팩트)이 되고, 에이전트 간 메시징은 작은 예외 경로(DM +
-서브트리 브로드캐스트)로 줄어든다. 이렇게 하면 통신이 DAG와 정렬되고, 멤버 상한에서 브로드캐스트
-폭풍 위험이 사라지고, 오류가 잦은 도구 표면이 줄어든다.
-
-### 단계적 마이그레이션(앞에서 걷어내지 않는다)
-채널/공유 컨텍스트를 자르는 것은 기존 swarm 흐름에 실제 동작 변경이다. 단계를 나눈다.
-1. **완료.** 아티팩트 데이터플로. 완료 아티팩트가 의존으로 흐르고 그 입력을 채운다.
-2. **완료.** 보내는 쪽이 띄운 서브트리로 범위를 좁힌 브로드캐스트(구독자 없는 채널 대체와 공유
-   컨텍스트 알림 포함). swarm 전체 브로드캐스트는 코디네이터 탈출구로만 남는다.
-3. 기존 흐름을 채널/공유 컨텍스트에서 옮긴다(도구 스키마가 이제 그쪽을 권하지 않는다).
-4. 흐름이 옮겨진 뒤 중복 채팅 기본 연산을 폐기하고 제거한다.
+The "more control" an agent actually wants is per-node prompts, computed fan-out, and
+conditional expansion. That is provided (a) by computing the node list the way the agent
+wants and *then* submitting it as a verified spec, and (b) by runtime `expand_node` calls.
+It is not provided as a scripting language that bypasses enforcement.
 
 ---
 
-## 9. 예제: 시간에 따른 그래프 변화
+## 8a. Communication rework: dataflow first, chat later
 
-태스크: "scrollwm의 멀티모니터 지원 탐색". 상태 범례: 대기, 실행 중, 복합(분해 중/자식 대기),
-비평, 완료.
+Today's swarm tool gives agents a rich human-facing chat surface: DM, whole-swarm
+broadcast, topic channels (subscriptions/members), a shared key-value context store,
+delivery modes (`notify`/`interrupt`/`wake`), and `await_members`. It bolts a human
+collaboration metaphor onto agents. For the DAG model that is too much and the wrong
+shape. The rework is **subtraction, not addition**.
 
-### T0 - 첫 에이전트가 최상위 뼈대를 그린다
-루트 에이전트는 답하지 않는다. 씨앗을 놓는다. explore, gate, synthesize.
+### Why the current model does not fit
+1. **It is chat, not dataflow.** Every existing channel is push-notification messaging
+   *between agents*. In a DAG the primary information path is **node -> dependent through
+   artifacts on edges**, and that does not yet exist as a primitive. The most important
+   "communication" in the new model is what the current tools cannot express, so agents
+   must DM each other to imitate dataflow: the lossy coordination we are trying to
+   replace.
+2. **There are too many overlapping primitives.** DM, broadcast, channel, and shared
+   context fan-out are four ways to push text into another agent, and `message` already
+   auto-routes among three of them. The codebase even has a synonym-normalization layer
+   because the model kept inventing new verbs. That is the smell of an oversized surface.
+   More actions means more model errors.
+3. **Broadcast must not scale to the member cap.** At a 1000-member cap (section 10), a
+   whole-swarm fan-out becomes a 1000-way notification storm on every send. So
+   broadcast-style delivery is subtree-scoped (migration step 2, implemented in
+   `handle_comm_message`/`handle_comm_share`). A sender reaches only the subtree it
+   spawned, and only the coordinator keeps whole-swarm reach.
+
+### The goal is a two-layer model
+Keep two layers and drop the middle.
+
+- **Layer 1 - structural dataflow (new, primary).** Handoff artifacts on edges. On
+  completion a node's typed artifact flows automatically through the scheduler to the
+  dependent nodes, and the scheduler fills a newly runnable node's input with upstream
+  artifacts. This replaces most of what DM is used for today ("here is what I found, now
+  you go"). Unlike fire-and-forget DM, it is typed, durable, reference-based, and
+  survives a reload.
+- **Layer 2 - exception channel (kept, thin).** Agents contact each other directly only
+  in genuinely unstructured cases the graph cannot model: conflict resolution ("we are
+  both editing `foo.rs`") and confirmation questions raised up the ownership tree. That
+  is **DM + subtree-scoped broadcast**, nothing more.
+
+### What goes away or gets cut down
+- **The shared context key-value store:** it largely duplicates the repository (the real
+  shared medium) and typed artifacts. Keep it only when shared state outside the
+  repository is concretely needed; otherwise remove it as a second source of truth.
+- **Whole-swarm broadcast:** replace it with a **subtree-scoped broadcast** that reaches
+  only the children an agent owns. That is what keeps it from being a storm at the member
+  cap. Whole-swarm broadcast becomes a rare coordinator-only action.
+- **General topic channels:** unnecessary once dataflow is the structure. Channels are
+  how *humans* organize ad-hoc collaboration. Agents should collaborate through graph
+  edges, not free-form rooms.
+
+### Alignment with the DAG model
+The dependency edge becomes the primary communication channel (typed artifacts), and
+agent-to-agent messaging shrinks to a small exception path (DM + subtree broadcast). That
+aligns communication with the DAG, removes the broadcast-storm risk at the member cap,
+and shrinks an error-prone tool surface.
+
+### Staged migration (nothing is ripped out up front)
+Cutting channels and shared context is a real behavior change for existing swarm flows,
+so it is staged.
+1. **Done.** Artifact dataflow. Completion artifacts flow to dependents and fill their
+   input.
+2. **Done.** Broadcasts scoped to the subtree the sender spawned (including the
+   replacement for subscriberless channels and shared-context notifications). Whole-swarm
+   broadcast remains only as a coordinator escape hatch.
+3. Move existing flows off channels/shared context (the tool schema no longer recommends
+   them).
+4. Once the flows have moved, deprecate and remove the duplicate chat primitives.
+
+---
+
+## 9. Example: how the graph changes over time
+
+Task: "investigate multi-monitor support in scrollwm". Status legend: pending, running,
+composite (decomposing / waiting on children), critique, done.
+
+### T0 - the first agent draws the top-level skeleton
+The root agent does not answer. It lays a seed: explore, gate, synthesize.
 
 ```text
 explore multimonitor (composite) --\
@@ -405,7 +475,7 @@ explore multimonitor (composite) --\
 explore multimonitor (composite) --/
 ```
 
-### T1 - 루트가 explore를 측면으로 확장한다(복합 -> 자식)
+### T1 - the root expands explore into facets (composite -> children)
 ```text
 facet: geometry/layout -----------\
 facet: hotplug/disconnect ---------+
@@ -415,10 +485,10 @@ facet: workspace to output map ----+
 facet: existing code touchpoints --/
 ```
 
-### T2 - 스케줄러가 준비된 측면을 파견한다(팬아웃, 병렬 일꾼)
+### T2 - the scheduler dispatches the ready facets (fan-out, parallel workers)
 
-### T3 - 한 측면이 스스로 분해된다(재귀)
-`w2`는 핫플러그가 깊다고 보고 자기 노드를 확장한다. 이제 서브 DAG를 소유한다.
+### T3 - one facet decomposes itself (recursion)
+`w2` reports that hotplug is deep and expands its own node. It now owns a sub-DAG.
 
 ```text
 hotplug (owner: w2, composite) --> critique
@@ -427,71 +497,82 @@ hotplug (owner: w2, composite) --> critique
   --> restore on re-add --/
 ```
 
-### T4 - 원자 측면이 끝난다. 이제 엣지가 아티팩트를 나른다
-`F1,F3,F4,F6`이 타입 지정 아티팩트와 함께 완료된다. 비평은 `F2`에서 막혀 있다.
+### T4 - the atomic facets finish. Now the edges carry artifacts
+`F1,F3,F4,F6` complete with typed artifacts. The critique is blocked on `F2`.
 
-### T5 - 핫플러그 자식이 끝난다. 소유자가 종합하려고 다시 깨어난다(리듀스)
-`w2`가 H1/H2/H3을 읽고 깨끗한 핫플러그 보고서 하나를 쓴다. 복합 노드가 닫힌다.
+### T5 - the hotplug children finish. The owner wakes to synthesize (reduce)
+`w2` reads H1/H2/H3 and writes one clean hotplug report. The composite node closes.
 
-### T6 - 비평이 빈틈을 찾아 새 그래프를 낳는다
-감사자가 모든 측면의 `what_i_did_not_check`를 읽는다. 한 출력에서의 전체 화면이나 혼합 주사율을
-아무도 덮지 않았다. 감사자가 새 노드와 재비평을 넣고, synthesize는 계속 막힌다.
+### T6 - the critique finds gaps and grows a new graph
+The auditor reads every facet's `what_i_did_not_check`. Nobody covered fullscreen on a
+single output or mixed refresh rates. The auditor injects new nodes and a re-critique,
+and synthesize stays blocked.
 
 ```text
 critique (gaps found) --> fullscreen on one output --\
 critique (gaps found) --> mixed refresh rate --------+--> re-critique --> synthesize
 ```
 
-### T7 - 빈틈 노드가 끝나고, 재비평이 통과하고, synthesize가 돈다
-Synthesize가 모든 상류 아티팩트를 (참조로) 모아 최종 보고서를 만든다.
+### T7 - the gap nodes finish, re-critique passes, and synthesize runs
+Synthesize collects every upstream artifact (by reference) and writes the final report.
 
-예제가 보여 주는 것: 넓이(측면으로 드러나는 커버리지), 재귀(핫플러그가 스스로 분해), 엣지 위
-데이터플로(아티팩트가 의존 입력을 채움), 복합마다 맵리듀스(소유자가 종합), 게이트로서의
-포괄성(비평이 놓친 것을 그래프로 바꾸고, 부모는 열린 빈틈을 안고 닫을 수 없음). 그래프는 한 번
-그려지고 끝나지 않는다. 깊이나 빈틈이 발견되는 곳마다 자라고, 서브트리가 종합 아티팩트로 접히면서
-주의가 줄어든다.
+What the example shows: breadth (coverage exposed as facets), recursion (hotplug
+decomposing itself), dataflow on edges (artifacts filling dependent input), map-reduce
+per composite (the owner synthesizes), and comprehensiveness as a gate (the critique
+turns what was missed into graph, and the parent cannot close with an open gap). The
+graph is not drawn once and finished. It grows wherever depth or a gap is found, and
+attention shrinks as subtrees fold into synthesized artifacts.
 
 ---
 
-## 10. 데이터 모델 변경(`horon-agent-plan` 기준)
+## 10. Data model changes (against `horon-agent-plan`)
 
-`VersionedPlan` / `PlanItem`을 재사용한다(이미 `blocked_by` 엣지, `summarize_plan_graph`,
-`next_runnable_item_ids`, `newly_ready_item_ids`, `run_plan`/`fill_slots`가 있다). 다음을 더한다.
+It reuses `VersionedPlan` / `PlanItem` (which already has `blocked_by` edges,
+`summarize_plan_graph`, `next_runnable_item_ids`, `newly_ready_item_ids`,
+`run_plan`/`fill_slots`). It adds:
 
-- `PlanItem`: `owner_session`, `kind: atomic | composite`(그리고 종료 동작 종류:
-  `explore | implement | verify | fix`), `parent_node`,
+- `PlanItem`: `owner_session`, `kind: atomic | composite` (and the terminal-behavior
+  kind: `explore | implement | verify | fix`), `parent_node`,
   `output: Option<HandoffArtifact>`.
-- `HandoffArtifact`: 6.3절의 타입 스키마.
-- 새 연산 기반 변경: `expand_node(node_id, children, edges)`와 `complete_node(node_id, artifact)`.
-  소유권 검사, 비순환성 검사, 버전을 적용한다. `task_graph`는 묶음 seed 형태다.
-- 스케줄러: 파견할 때 상류 `output`으로 일꾼 입력을 채운다. 복합 조인에서는 소유자를 다시 깨워
-  종합하게 한다. 게이트 규율에 따라 비평/검증 의존을 자동 삽입한다.
-- 역할(코디네이터 / 워크트리 관리자)은 사용자에게 보이는 개체가 아니라 스케줄러 정책이 된다.
+- `HandoffArtifact`: the typed schema of section 6.3.
+- New operation-based changes: `expand_node(node_id, children, edges)` and
+  `complete_node(node_id, artifact)`. They apply ownership checking, acyclicity
+  checking, and versioning. `task_graph` is the batch seed form.
+- Scheduler: hydrate worker input from upstream `output` at dispatch. At a composite
+  join, wake the owner again to synthesize. Auto-insert critique/verify dependencies
+  according to gate discipline.
+- Roles (coordinator / worktree manager) become scheduler policy rather than
+  user-visible entities.
 
-### 폭주 방지: 전체 멤버 상한 하나
-폭주 방지는 제한 행렬이 아니라 상한 하나다. swarm은 최대 **`MAX_SWARM_MEMBERS` = 1000** 라이브
-멤버(에이전트)를 가질 수 있다. 의도적으로 **깊이 상한도, 노드당 넓이/팬아웃 상한도 없다**. spawn
-트리는 swarm이 1000 멤버에 이를 때까지 자유롭게 중첩하고 팬아웃할 수 있고, 그 지점에서 추가
-spawn은 명확한 오류로 거부된다. 이는 `ensure_spawn_coordinator_swarm`(`server/comm_session.rs`)에서
-swarm의 라이브 멤버를 세고 상한에 닿으면 spawn을 거부하는 방식으로 구현돼 있다. 예전
-`MAX_SWARM_SPAWN_DEPTH` 깊이 제한은 제거됐다.
+### Runaway protection: one total member cap
+Runaway protection is one cap, not a matrix of limits. A swarm may hold at most
+**`MAX_SWARM_MEMBERS` = 1000** live members (agents). There is deliberately **no depth
+cap and no per-node breadth/fan-out cap**. The spawn tree may nest and fan out freely
+until the swarm reaches 1000 members, at which point an additional spawn is refused with
+a clear error. This is implemented in `ensure_spawn_coordinator_swarm`
+(`server/comm_session.rs`) by counting the swarm's live members and refusing a spawn at
+the cap. The old `MAX_SWARM_SPAWN_DEPTH` depth limit has been removed.
 
-### 솔직한 트레이드오프와 한계
-- 멤버 상한 하나가 유일한 조절기다. 전체 동시성과 비용을 묶지만, 한쪽으로 치우친 트리(예: 탐욕스러운
-  노드 하나가 예산을 많이 먹는 경우)는 막지 못한다. 그 판단은 에이전트와 게이트 규율에 맡긴다.
-- 그래프는 일을 **순서 짓지만** 상호 배제를 하지는 않는다. 두 서브트리가 같은 파일을 고치는 것은
-  여전히 "락 없이 DM으로 이야기하기" 경우이고, 오늘과 같다.
-- 도메인 편향은 구조/게이트 계층에서 빼야 한다(7절 불변식).
+### Honest trade-offs and limits
+- The single member cap is the only regulator. It bounds total concurrency and cost, but
+  it cannot stop a lopsided tree (say, one greedy node eating much of the budget). That
+  judgment is left to the agents and the gate discipline.
+- The graph **orders** work but does not mutually exclude it. Two subtrees editing the
+  same file is still the "talk it over by DM, no lock" case, as today.
+- Domain bias must stay out of the structure/gate layer (section 7 invariant).
 
 ---
 
-## 11. 권장 구현 순서
+## 11. Recommended implementation order
 
-1. `horon-agent-plan`에 타입 지정 `HandoffArtifact` 스키마와 `PlanItem` 필드 추가를 착지시킨다.
-2. 검증된 `expand_node` / `complete_node` / `task_graph` 연산을 더한다(소유권 + 비순환성 + 게이트
-   자동 삽입).
-3. 스케줄러를 확장해 하류 입력을 상류 아티팩트로 채우고, 복합 소유자를 종합하려고 다시 깨운다.
-4. 텍스트 기반 시뮬레이터를 만들어 그래프가 변하는 모습(9절 같은)을 보고, 라이브 swarm에 연결하기
-   전에 스케줄러/비평/검증 메커니즘을 확인한다.
-5. 도구 표면(`task_graph`/`expand_node`/`complete_node`/`run`)을 그래프 우선 뷰로 재구성한다(headless
-   전환 이전에는 TUI도 같은 뷰로 바꾸는 항목이었다). `spawn`/`dm`은 탈출구로 남긴다.
+1. Land the typed `HandoffArtifact` schema and the `PlanItem` field additions in
+   `horon-agent-plan`.
+2. Add the verified `expand_node` / `complete_node` / `task_graph` operations (ownership
+   + acyclicity + automatic gate insertion).
+3. Extend the scheduler to hydrate downstream input from upstream artifacts and to wake a
+   composite owner to synthesize.
+4. Build a text-based simulator to watch the graph change (like section 9) and to check
+   the scheduler/critique/verification machinery before wiring it to a live swarm.
+5. Rework the tool surface (`task_graph`/`expand_node`/`complete_node`/`run`) around the
+   graph-first view (before the headless switch, this item also changed the TUI to the
+   same view). `spawn`/`dm` remain escape hatches.

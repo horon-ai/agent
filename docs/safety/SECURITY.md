@@ -1,216 +1,219 @@
-# 보안
+# Security
 
-워크스페이스 신뢰 게이트, 로컬 크래시 번들, 의존성 보안 분류를 다룬다.
+Language: **English** | [한국어](SECURITY.ko.md)
 
-## 워크스페이스 신뢰
+Workspace trust gates, local crash bundles, and dependency security classification.
 
-프로젝트 저장소는 에이전트가 실행할 MCP 서버를 지정할 수 있습니다. 그래서 horon agent는 워크스페이스의 프로젝트 로컬 설정을 그 내용에 대한 동의 없이는 읽지 않습니다. 이 문서는 현재 트리의 게이트 범위, 다이제스트 규칙, headless 실패 폐쇄, 재정의를 설명합니다.
+## Workspace trust
 
-### 무엇을 게이트하는가
+A project repository can name MCP servers for the agent to run. So horon agent does not read a workspace's project-local configuration without consent for its contents. This document explains the gate's scope, the digest rules, the headless fail-closed behavior, and the overrides in the current tree.
 
-게이트 대상은 워크스페이스에 있는 세 파일입니다 (`crates/base/src/workspace_trust.rs:22` `PROJECT_CONFIG_SURFACES`).
+### What is gated
+
+Three files in the workspace are gated (`crates/base/src/workspace_trust.rs:22` `PROJECT_CONFIG_SURFACES`).
 
 - `.horon/mcp.json`
 - `.mcp.json`
 - `.claude/mcp.json`
 
-사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다.
+User-level configuration is not gated. `~/.horon/mcp.json`, `~/.claude.json`, and `~/.claude/mcp.json` are the user's own configuration, not something a repository decides.
 
-강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
+There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
 
-### 다이제스트 규칙
+### Digest rules
 
-스냅샷은 고정 순서로 세 표면을 읽고 SHA-256을 계산합니다 (`workspace_trust.rs:162` `snapshot`).
+The snapshot reads the three surfaces in a fixed order and computes SHA-256 (`workspace_trust.rs:162` `snapshot`).
 
-1. 도메인 구분자 `horon-agent/workspace-trust/v1`로 시작합니다.
-2. 표면마다 `경로`, 상태, 내용 지문을 넣습니다.
-3. 상태는 `absent`, `present`, `unreadable` 셋입니다. `present`는 바이트 길이와 그 파일의 SHA-256을 함께 넣습니다.
+1. It starts with the domain separator `horon-agent/workspace-trust/v1`.
+2. For each surface it adds the path, the state, and a content fingerprint.
+3. The state is one of `absent`, `present`, `unreadable`. `present` includes the byte length together with that file's SHA-256.
 
-동의는 정규화한 워크스페이스 경로와 이 다이제스트의 쌍으로 기록합니다. 기록 파일은 에이전트 디렉터리의 `workspace-trust.json`이고 (`workspace_trust.rs:408` `trust_file_path`), 워크스페이스에는 아무것도 쓰지 않습니다. 항목은 버전 1, 다이제스트, 결정, 기록 시각, 표면별 SHA-256과 길이를 담습니다.
+Consent is recorded as the pair of the normalized workspace path and this digest. The record file is `workspace-trust.json` in the agent directory (`workspace_trust.rs:408` `trust_file_path`), and nothing is written into the workspace. An entry carries version 1, the digest, the decision, the recording time, and the per-surface SHA-256 and length.
 
-- 세 파일 중 하나라도 바이트가 바뀌면 다이제스트가 달라지고 그 워크스페이스는 다시 신뢰를 묻습니다. 파일을 새로 만들거나 지워도 마찬가지입니다.
-- 거부 이유는 바뀐 표면의 이름을 최대한 짚어 줍니다 (`workspace_trust.rs:304` `untrusted_reason`).
-- 기록은 파일 전체를 읽고 고쳐 쓰는 방식이라 두 프로세스가 같은 순간에 쓰면 한쪽 결정이 사라질 수 있습니다. 잃는 것은 결정 하나이고, 없던 허용이 생기지는 않습니다 (`workspace_trust.rs:222` `record`).
-- 다이제스트는 저장소를 신뢰할 수 있게 만드는 장치가 아닙니다. 사용자가 본 내용에 동의를 묶는 장치입니다.
+- If any of the three files changes even one byte, the digest differs and that workspace is asked for trust again. Creating or deleting a file has the same effect.
+- The denial reason names the changed surface as precisely as it can (`workspace_trust.rs:304` `untrusted_reason`).
+- The record is read and rewritten as a whole file, so if two processes write at the same moment one decision can be lost. What is lost is one decision; an allowance that did not exist never appears (`workspace_trust.rs:222` `record`).
+- The digest is not a mechanism that makes a repository trustworthy. It binds consent to the contents the user saw.
 
-### headless 실패 폐쇄
+### Headless fail-closed
 
-headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래서 모르는 상태는 허용이 아니라 거부입니다.
+A headless path has no client to ask. So an unknown state is denial, not allowance.
 
-- 현재 다이제스트에 대한 기록이 없으면 `Skipped`입니다. 경고를 남기고 프로젝트 로컬 설정을 싣지 않으며, 아무 결정도 기록하지 않습니다. 다음 실행에서 다시 묻습니다.
-- 기록은 있지만 다이제스트가 다르면 `Skipped`입니다. 바뀐 표면을 경고에 적습니다.
-- 표면이 일반 파일로 읽히지 않으면 재정의와 무관하게 `Skipped`입니다 (`workspace_trust.rs:258`).
-- 기록된 결정이 거부이면 `Skipped`입니다.
-- 세 파일이 모두 없으면 `Absent`이고 게이트가 작동하지 않습니다.
+- With no record for the current digest the result is `Skipped`. It logs a warning, does not load project-local configuration, and records no decision. The next run asks again.
+- With a record but a different digest the result is `Skipped`. The warning names the changed surface.
+- If a surface cannot be read as a regular file, the result is `Skipped` regardless of overrides (`workspace_trust.rs:258`).
+- If the recorded decision is denial, the result is `Skipped`.
+- If all three files are absent the result is `Absent` and the gate does not engage.
 
-거부는 실패가 아니라 폐쇄입니다. 세션은 계속 돌고, 프로젝트가 지정한 MCP 서버만 빠집니다.
+Denial is closure, not failure. The session keeps running and only the MCP servers the project named are dropped.
 
-### 재정의
+### Overrides
 
-| 수단 | 범위 | 기록 |
+| Means | Scope | Recording |
 | --- | --- | --- |
-| `--trust-workspace` | 이 실행 | 현재 다이제스트에 신뢰를 기록합니다. |
-| `HORON_AGENT_WORKSPACE_TRUST=trust` | 이 프로세스 | 기록하지 않습니다. |
-| `HORON_AGENT_WORKSPACE_TRUST=deny` | 이 프로세스 | 기록하지 않고, 저장된 신뢰가 있어도 거부합니다. |
-| `mcp test`, `mcp list` 같은 명시적 명령 | 그 명령 | 기록하지 않습니다. 명령 자체가 동의입니다. |
+| `--trust-workspace` | This run | Records trust for the current digest. |
+| `HORON_AGENT_WORKSPACE_TRUST=trust` | This process | Records nothing. |
+| `HORON_AGENT_WORKSPACE_TRUST=deny` | This process | Records nothing, and denies even when a stored trust exists. |
+| Explicit commands such as `mcp test` and `mcp list` | That command | Records nothing. The command itself is the consent. |
 
-환경 변수는 대소문자를 가리지 않고 `trust`와 `deny`만 알아봅니다. 다른 값은 무시되고 저장된 결정으로 돌아갑니다 (`workspace_trust.rs:363` `env_decision`). 환경 변수의 거부는 `--trust-workspace`보다 먼저 적용되므로, 둘을 함께 주면 거부가 이깁니다.
+The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:363` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
 
-## 크래시 번들
+## Crash bundles
 
-프로세스가 패닉하면 horon agent는 로컬 진단 번들을 남깁니다. 번들은 디스크에만 쓰고 어디로도 보내지 않습니다. 이 문서는 현재 트리의 위치, 내용, 리댁션, 전송하지 않는다는 보장을 설명합니다.
+When a process panics, horon agent leaves a local diagnostic bundle. The bundle is written to disk only and sent nowhere. This document explains the location, contents, redaction, and the no-transmission guarantee in the current tree.
 
-### 위치
+### Location
 
-번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:121` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
+The bundle is written under `crashes/` below the agent directory (`crates/base/src/crash.rs:121` `crash_root`). The agent directory defaults to `~/.horon` and can be changed with `HORON_HOME`.
 
-한 번들은 디렉터리 하나입니다.
+One bundle is one directory.
 
 ```
-<agent dir>/crashes/<UTC 시각>-p<pid>/
+<agent dir>/crashes/<UTC time>-p<pid>/
   bundle.json
   report.txt
 ```
 
-시각 형식은 `YYYYMMDDTHHMMSS.mmmZ`이고 PID가 붙습니다 (`crash.rs:158` `bundle_stamp`). 같은 이름이 이미 있으면 `-1`, `-2`처럼 번호를 붙여 새 디렉터리를 잡습니다 (`crash.rs:166` `create_bundle_dir`).
+The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:158` `bundle_stamp`). If the same name already exists, a new directory gets a suffix such as `-1` or `-2` (`crash.rs:166` `create_bundle_dir`).
 
-### 내용
+### Contents
 
-`bundle.json`은 스키마 1 문서입니다.
+`bundle.json` is a schema 1 document.
 
-| 필드 | 내용 |
+| Field | Contents |
 | --- | --- |
-| `schema` | 번들 형식 버전. 현재 1입니다. |
-| `captured_at` | 번들을 만든 UTC 시각과 PID. |
-| `pid` | 프로세스 ID. |
-| `panic.message` | 패닉 페이로드 문자열. |
-| `panic.location` | 파일, 줄, 열. |
-| `panic.thread` | 패닉이 난 스레드 이름 또는 ID. |
-| `operations` | 마지막 도구 디스패치 최대 64건. 오래된 것부터. |
+| `schema` | Bundle format version. Currently 1. |
+| `captured_at` | The UTC time the bundle was created, plus the PID. |
+| `pid` | Process ID. |
+| `panic.message` | The panic payload string. |
+| `panic.location` | File, line, column. |
+| `panic.thread` | The name or ID of the thread that panicked. |
+| `operations` | Up to the last 64 tool dispatches, oldest first. |
 
-`operations`는 프로세스 전역 링 버퍼입니다 (`crash.rs:25` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 입력 JSON 직렬화 문자열을 담습니다. 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않습니다.
+`operations` is a process-wide ring buffer (`crash.rs:25` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the serialized input JSON string. When the feature is off, dispatches are not recorded at all.
 
-`report.txt`는 같은 내용을 사람이 읽기 좋게 편다. 첫 줄은 `horon-agent crash bundle (local only; nothing was transmitted)`입니다 (`crash.rs:205` `render_report`).
+`report.txt` lays out the same contents for humans. Its first line is `horon-agent crash bundle (local only; nothing was transmitted)` (`crash.rs:205` `render_report`).
 
-### 리댁션
+### Redaction
 
-번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:51`).
+Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:51`).
 
-- 패닉 메시지, 위치, 스레드 이름, 도구 이름, 도구 입력 JSON에 같은 패스를 적용합니다.
-- 필드마다 2048자에서 자르고 `[truncated]`를 붙입니다. 도구 이름은 128자입니다 (`crash.rs:241` `truncate_chars`).
-- 도구 입력은 공격자가 영향을 줄 수 있는 텍스트로 취급합니다. 번들에는 불활성 데이터로만 쓰고, 다시 읽어 실행하거나 해석하지 않습니다.
+- The same pass applies to the panic message, location, thread name, tool names, and tool input JSON.
+- Fields are truncated at 2048 characters with `[truncated]` appended. Tool names are truncated at 128 characters (`crash.rs:241` `truncate_chars`).
+- Tool input is treated as text an attacker can influence. It is written into the bundle as inert data only and is never read back to be executed or interpreted.
 
-리댁션은 알려진 비밀 모양을 지우는 방어이고 완전한 보장이 아닙니다. 번들은 민감한 자료로 다루는 편이 맞습니다.
+Redaction is a defense that removes known secret shapes, not a complete guarantee. Bundles are better treated as sensitive material.
 
-### 전송하지 않음
+### Nothing is transmitted
 
-번들은 `std::fs::write`로 로컬 디렉터리에만 씁니다. 네트워크 호출, 업로드, 텔레메트리 전송이 없습니다. `report.txt` 첫 줄도 그 사실을 적습니다.
+The bundle is written to a local directory with `std::fs::write` only. There are no network calls, uploads, or telemetry sends. The first line of `report.txt` records that fact too.
 
-### 켜고 끄기
+### Turning it on and off
 
-`[features] crash_bundles`의 기본값은 `true`입니다 (`crates/config-types/src/lib.rs:1348`). `false`로 두면 패닉 훅이 번들을 쓰지 않고 도구 디스패치도 기록하지 않습니다.
+`[features] crash_bundles` defaults to `true` (`crates/config-types/src/feature.rs:54`). Setting it to `false` means the panic hook writes no bundle and tool dispatches are not recorded either.
 
-훅은 시작할 때 한 번 설치됩니다 (`src/cli/startup.rs:52`). 이후 호출은 활성 플래그만 갱신합니다 (`crash.rs:67` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
+The hook is installed once at startup (`src/cli/startup.rs:52`). Later calls only update the enabled flag (`crash.rs:67` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
 
-### 한계
+### Limits
 
-- 쓰기는 최선 노력입니다. 디렉터리 생성이나 파일 쓰기가 실패해도 패닉 처리 자체는 계속됩니다.
-- 스택 트레이스, 환경 변수 전체, 세션 트랜스크립트는 담지 않습니다. 패닉 위치와 최근 도구 호출만 담습니다.
-- 번들은 로컬에 남으므로 사용자가 직접 정리해야 합니다.
+- Writes are best effort. If creating the directory or writing a file fails, panic handling itself still continues.
+- Stack traces, full environment variables, and session transcripts are not included. Only the panic location and recent tool calls are.
+- Bundles stay local, so the user has to clean them up.
 
-## 의존성 보안 분류
+## Dependency security classification
 
-> **상태:** 날짜가 박힌 기록
-> **측정일:** 2026-05-14
-> **읽는 법:** 이 문서는 2026-05-14에 찍은 `cargo audit` 스냅숏이며 현재 상태가 아니다. 아래 표의 의존성 경로와 분류는 그날 트리를 본 결과다. 지금 값을 확인하려면 `scripts/ci/check_security.sh`를 직접 돌린다.
+> **Status:** dated record
+> **Measured:** 2026-05-14
+> **How to read:** this document is a `cargo audit` snapshot taken on 2026-05-14 and is not the current state. The dependency paths and classifications in the table below are what that day's tree looked like. To check current values, run `scripts/ci/check_security.sh` yourself.
 
-이 파일은 horon agent의 2026-05-14 `cargo audit` 결과와 그때 의도한 해결 경로를 기록한다.
-허용 목록이 아니다. 보안 권고가 드러나고 조치 가능하도록 남기는 분류 기록이다.
+This file records horon agent's 2026-05-14 `cargo audit` results and the resolution paths intended at the time.
+It is not an allowlist. It is a classification record kept so that security advisories stay visible and actionable.
 
-이 기록은 두 번의 제거 이전 트리를 기준으로 작성됐다. 먼저 TUI 크레이트가 빠졌고, 이어서 벤더
-프로바이더 런타임 크레이트가 빠졌다. 그래서 `ratatui`·`syntect` 경로를 적은 행과 프로바이더
-런타임을 거치던 행은 과거 기록으로 읽는다. 남은 프로바이더 관련 크레이트는 `provider-core`,
-`provider-env`, `provider-metadata`, `provider-openai` 넷이며 `provider-openai-runtime`은
-2026-10-29에 제거됐다(`ls crates/`).
+The record was written against the tree before two removals. First the TUI crate left, then the vendor
+provider runtime crate left. So rows naming `ratatui` and `syntect` paths and rows that went through the provider
+runtime are read as historical records. The provider crates that remain are `provider-core`,
+`provider-env`, `provider-metadata`, and `provider-openai`; `provider-openai-runtime` was
+removed on 2026-10-29 (`ls crates/`).
 
-### 현재 권고
+### Current advisories
 
-| 권고 | 크레이트 | 의존성 경로 | horon agent에서 영향받는 영역 | 분류 | 계획한 조치 |
+| Advisory | Crate | Dependency path | Area affected in horon agent | Classification | Planned action |
 |---|---|---|---|---|---|
-| `RUSTSEC-2025-0141` | `bincode` | `syntect -> bincode` | TUI의 Markdown/코드 하이라이팅 | 유지보수가 끊긴 전이 의존성. 프로바이더/인증 흐름에 직접 노출되지 않는다. | `syntect` 업그레이드를 추적하고, 업스트림이 `bincode`에서 곧 벗어나지 않으면 `syntect`를 교체한다. |
-| `RUSTSEC-2024-0436` | `paste` | `ratatui -> paste`, `tokenizers -> paste`, `tract-* -> paste` | TUI 렌더링, 토크나이저, 임베딩/모델 지원 | 전이 의존성이 널리 퍼져 있다. 한 모듈에 국한되지 않는다. | 로컬 우회보다 업스트림 의존성 업그레이드를 먼저 한다. `ratatui`, `tokenizers`, `tract-*`를 올린 뒤 다시 평가한다. |
-| `RUSTSEC-2026-0002` | `lru` | `ratatui -> lru` | TUI 렌더링/캐시 내부 | UI 의존성의 불건전성 경고. 인증/프로바이더 로직은 아니지만 프로세스에 함께 실린다. | 호환되는 시점에 `ratatui` / `ratatui-image`를 함께 올린다. |
-| `RUSTSEC-2026-0097` | `rand` | `azure_core`, `tungstenite`, `tract-*`, `ratatui-image` 등 | Azure 인증, 웹소켓, 임베딩, UI 전이 경로 | `rand::rng()`를 쓰는 사용자 정의 로거와 관련된 불건전성 경고. HoronAgent는 그 패턴을 의도적으로 쓰지 않지만 그래프에서 이 크레이트가 넓게 퍼져 있다. | `rand` 0.9 호환 의존성 스택으로 업스트림 업그레이드를 우선한다. |
-| `RUSTSEC-2026-0098` | `rustls-webpki` | `rustls` 의존성 스택 | rustls 사용처의 TLS 인증서 검증 | URI 이름에 대한 이름 제약을 잘못 받아들인다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
-| `RUSTSEC-2026-0099` | `rustls-webpki` | `rustls` 의존성 스택 | rustls 사용처의 TLS 인증서 검증 | 와일드카드 인증서에 이름 제약을 받아들인다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
-| `RUSTSEC-2026-0104` | `rustls-webpki` | `rustls` 의존성 스택 | TLS 인증서 폐기 목록 파싱 | CRL 파싱에서 도달 가능한 패닉이 있다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
-| `RUSTSEC-2026-0049` | `rustls-webpki` | `rustls` 의존성 스택(`aws-smithy` rustls 0.21) | TLS 인증서 폐기 목록 처리 | 잘못된 매칭 로직 때문에 Distribution Point가 지정한 CRL을 권위 있는 것으로 보지 않는다. 더 오래된 rustls 스택을 거친 전이 문제이며, 수정에는 rustls-webpki >=0.103.10이 필요하고 이는 `aws-sdk` 스택의 메이저 업그레이드를 요구한다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
-| `RUSTSEC-2026-0187` | `lopdf` | `horon-agent-pdf -> pdf-extract 0.8.2 -> lopdf 0.34` | PDF 텍스트 추출(`/pdf`, 이미지/PDF 읽기) | 깊게 중첩된 PDF 객체를 파싱할 때 스택이 넘친다. 사용자가 여는(악의적일 수 있는) PDF에서 텍스트를 추출할 때만 도달하며 인증/프로바이더/네트워크 경로는 아니다. `pdf-extract 0.8.2`가 `lopdf 0.34`를 고정하므로 업스트림 `pdf-extract` 릴리스 없이는 수정된 `>=0.42`로 올릴 수 없다. | `pdf-extract`가 `lopdf >=0.42`에 의존하는 릴리스를 내면 올리고 그때 무시를 뺀다. |
+| `RUSTSEC-2025-0141` | `bincode` | `syntect -> bincode` | TUI Markdown/code highlighting | Unmaintained transitive dependency. Not directly exposed to provider/auth flows. | Track the `syntect` upgrade, and replace `syntect` if upstream does not move off `bincode` soon. |
+| `RUSTSEC-2024-0436` | `paste` | `ratatui -> paste`, `tokenizers -> paste`, `tract-* -> paste` | TUI rendering, tokenizers, embedding/model support | The transitive dependency is widespread. Not confined to one module. | Prefer upstream dependency upgrades over local workarounds. Re-evaluate after raising `ratatui`, `tokenizers`, and `tract-*`. |
+| `RUSTSEC-2026-0002` | `lru` | `ratatui -> lru` | TUI rendering/cache internals | Unsoundness warning in a UI dependency. Not auth/provider logic, but it is loaded into the process. | Raise `ratatui` / `ratatui-image` together when a compatible version exists. |
+| `RUSTSEC-2026-0097` | `rand` | `azure_core`, `tungstenite`, `tract-*`, `ratatui-image`, and others | Azure auth, websockets, embeddings, UI transitive paths | Unsoundness warning involving a custom logger that uses `rand::rng()`. HoronAgent deliberately does not use that pattern, but the crate is widespread in the graph. | Prioritize upstream upgrades to a dependency stack compatible with `rand` 0.9. |
+| `RUSTSEC-2026-0098` | `rustls-webpki` | `rustls` dependency stack | TLS certificate verification wherever rustls is used | Accepts name constraints for URI names incorrectly. A transitive issue through the TLS library. | Raise the rustls/webpki stack when a compatible release ships. |
+| `RUSTSEC-2026-0099` | `rustls-webpki` | `rustls` dependency stack | TLS certificate verification wherever rustls is used | Accepts name constraints on wildcard certificates. A transitive issue through the TLS library. | Raise the rustls/webpki stack when a compatible release ships. |
+| `RUSTSEC-2026-0104` | `rustls-webpki` | `rustls` dependency stack | TLS certificate revocation list parsing | A reachable panic in CRL parsing. A transitive issue through the TLS library. | Raise the rustls/webpki stack when a compatible release ships. |
+| `RUSTSEC-2026-0049` | `rustls-webpki` | `rustls` dependency stack (`aws-smithy` rustls 0.21) | TLS certificate revocation list handling | Because of faulty matching logic it does not treat the CRL named by a Distribution Point as authoritative. A transitive issue through an older rustls stack, and the fix requires rustls-webpki >=0.103.10, which needs a major upgrade of the `aws-sdk` stack. | Raise the rustls/webpki stack when a compatible release ships. |
+| `RUSTSEC-2026-0187` | `lopdf` | `horon-agent-pdf -> pdf-extract 0.8.2 -> lopdf 0.34` | PDF text extraction (`/pdf`, image/PDF reading) | The stack overflows when parsing deeply nested PDF objects. Only reachable when extracting text from a PDF the user opens (which may be malicious), and not an auth/provider/network path. Because `pdf-extract 0.8.2` pins `lopdf 0.34`, it cannot move to the fixed `>=0.42` without an upstream `pdf-extract` release. | Raise it when `pdf-extract` ships a release that depends on `lopdf >=0.42`, and drop the ignore then. |
 
-### 우선순위
+### Priority
 
-1. rustls 스택을 거치는 `rustls-webpki` TLS 권고
-2. `ratatui`를 거치는 `lru` (headless 전환 이전 기록. 지금 트리에는 `ratatui` 가 없다)
-3. `syntect`를 거치는 `bincode`
-4. 여러 전이 의존성을 거치는 `paste` / `rand`
+1. The `rustls-webpki` TLS advisories through the rustls stack
+2. `lru` through `ratatui` (record from before the headless transition. The current tree has no `ratatui`)
+3. `bincode` through `syntect`
+4. `paste` / `rand` through multiple transitive dependencies
 
-### 지금 잠금 파일과의 차이
+### Difference from the current lock file
 
-이 절은 위 표를 다시 측정한 값이 아니라, 같은 크레이트가 오늘 `Cargo.lock`에 있는지만 센 결과다.
-`grep -c '^name = "<crate>"' Cargo.lock`으로 확인했고, 권고가 해결됐다는 뜻이 아니다.
+This section is not a re-measurement of the table above; it only counts whether the same crates are in today's
+`Cargo.lock`. It was checked with `grep -c '^name = "<crate>"' Cargo.lock`, and it does not mean an advisory is resolved.
 
-| 크레이트 | `Cargo.lock`에 있는가 | 관련 기록 |
+| Crate | In `Cargo.lock` | Related record |
 |---|---|---|
-| `ratatui` | 없다 | `lru` 행, TUI 경로 |
-| `syntect` | 없다 | `bincode` 행 |
-| `bincode` | 없다 | `RUSTSEC-2025-0141` |
-| `lru` | 없다 | `RUSTSEC-2026-0002` |
-| `quick-xml` | 없다 | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
-| `paste` | 있다 | `RUSTSEC-2024-0436` |
-| `rand` | 있다 | `RUSTSEC-2026-0097` |
-| `azure_core` | 있다 | `RUSTSEC-2026-0097` |
-| `tungstenite` | 있다 | `RUSTSEC-2026-0097` |
-| `tract-nnef` | 있다 | `RUSTSEC-2026-0097`, 아래 `RUSTSEC-2026-0217` 항목 |
-| `lopdf` | 있다 | `RUSTSEC-2026-0187` |
-| `rustls-webpki` | 있다 | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
-| `crossterm` | 없다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다 |
+| `ratatui` | No | `lru` row, TUI paths |
+| `syntect` | No | `bincode` row |
+| `bincode` | No | `RUSTSEC-2025-0141` |
+| `lru` | No | `RUSTSEC-2026-0002` |
+| `quick-xml` | No | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
+| `paste` | Yes | `RUSTSEC-2024-0436` |
+| `rand` | Yes | `RUSTSEC-2026-0097` |
+| `azure_core` | Yes | `RUSTSEC-2026-0097` |
+| `tungstenite` | Yes | `RUSTSEC-2026-0097` |
+| `tract-nnef` | Yes | `RUSTSEC-2026-0097`, the `RUSTSEC-2026-0217` item below |
+| `lopdf` | Yes | `RUSTSEC-2026-0187` |
+| `rustls-webpki` | Yes | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
+| `crossterm` | No | It left together with the deletion of the terminal image crate (`horon-agent-terminal-image`) |
 
-### 참고
+### Notes
 
-- 위 권고 중 프로바이더 인증 리팩터링이 만든 것은 없다.
-- 프로바이더/인증 강화 작업은 이 의존성 업그레이드와 별개로 계속해야 한다.
-- `RUSTSEC-2026-0217`(`tract-nnef` 0.21.10, NNEF 텐서 파서의 정수 오버플로)은
-  2026-07-30에 `horon-agent-embedding`을 `tract` 0.23으로 옮겨 해결했다.
-  인라인 `0.21.16` 수정은 도달할 수 없었다. `tract-data 0.21.16`이
-  `half ^2.5`를 고정하기 때문이다. 0.23 계열은 그 고정을 없앤다. 이 문제가
-  중요했던 이유는 파서가 바이너리에 실린 모델이 아니라 런타임에 내려받은 모델을
-  대상으로 돌기 때문에, 무시로 넘기는 것이 분명히 안전하지 않았기 때문이다.
-- `RUSTSEC-2024-0320`(`yaml-rust`)은 2026-03-05에 `syntect` 기능을 YAML 로딩
-  대신 내장 구문/테마 덤프로 줄여 의존성 그래프에서 제거했다.
-- `RUSTSEC-2026-0194` / `RUSTSEC-2026-0195`(`quick-xml` 0.39.2)는 데스크톱
-  크레이트의 winit 스택에 있는 빌드 시점 proc-macro인 `wayland-scanner`를 통해서만
-  도달한다. 컴파일 중에 신뢰하는 벤더링된 Wayland 프로토콜 XML을 파싱하고 런타임에
-  신뢰할 수 없는 입력을 건드리지 않는다. 해결은 업스트림 몫이다.
-  `wayland-scanner`가 `quick-xml >= 0.41`로 옮겨가야 한다. 2026-07-04에 분류해
-  `scripts/ci/check_security.sh`에서 무시했다.
-- 2026-11-09에 CI 경고를 0으로 맞추면서 `cargo audit`가 경고로만 보고하던 항목을 정리했다.
-  `anyhow`(RUSTSEC-2026-0190), `event-listener`(RUSTSEC-2026-0221), `tokio`(RUSTSEC-2026-0386)의
-  불건전성 권고와 `chacha20` yanked 경고는 `Cargo.lock`을 올려 해결했다
-  (`anyhow` 1.0.104, `event-listener` 5.4.2, `tokio` 1.53.3, `chacha20` 0.10.2).
-  남은 유지보수 중단 권고 다섯 건(`paste` RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441,
-  `rustybuzz` RUSTSEC-2026-0206, `ttf-parser` RUSTSEC-2026-0192, `unsafe-libyaml`
-  RUSTSEC-2024-0449)은 업스트림 대체 없이 이 저장소에서 뺄 수 없는 전이 의존성이라
-  `scripts/ci/check_security.sh`에서 무시했다. 이 스크립트는 `cargo audit --deny warnings`로
-  돌기 때문에 새 경고(유지보수 중단, 불건전성, yanked)는 CI를 실패시킨다.
-- `scripts/ci/check_security.sh`는 위에서 명시적으로 분류한 취약점 권고
-  (`rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
-  (`scripts/ci/check_security.sh`의 `audit_ignores`). 새
-  취약점은 기본적으로 여전히 CI를 실패시킨다.
-- 의존성 버전을 바꾸기 전에 다음을 실행한다.
+- None of the advisories above came from the provider auth refactor.
+- Provider/auth hardening work has to continue separately from these dependency upgrades.
+- `RUSTSEC-2026-0217` (`tract-nnef` 0.21.10, an integer overflow in the NNEF tensor parser) was
+  resolved on 2026-07-30 by moving `horon-agent-embedding` to `tract` 0.23.
+  The inline `0.21.16` fix was unreachable, because `tract-data 0.21.16` pins
+  `half ^2.5`. The 0.23 line removes that pin. What made this one important
+  is that the parser runs on models downloaded at runtime rather than models built
+  into the binary, so passing it over with an ignore was clearly not safe.
+- `RUSTSEC-2024-0320` (`yaml-rust`) was removed from the dependency graph on 2026-03-05 by
+  reducing the `syntect` feature to built-in syntax and theme dumps instead of YAML loading.
+- `RUSTSEC-2026-0194` / `RUSTSEC-2026-0195` (`quick-xml` 0.39.2) are reachable only through
+  `wayland-scanner`, a build-time proc-macro in the winit stack of the desktop
+  crate. It parses trusted, vendored Wayland protocol XML during compilation and never touches
+  untrusted input at runtime. The resolution is upstream's to make.
+  `wayland-scanner` has to move to `quick-xml >= 0.41`. It was classified on 2026-07-04 and
+  ignored in `scripts/ci/check_security.sh`.
+- On 2026-11-09, while bringing CI warnings to zero, the items `cargo audit` only reported as
+  warnings were cleaned up. The unsoundness advisories for `anyhow` (RUSTSEC-2026-0190),
+  `event-listener` (RUSTSEC-2026-0221) and `tokio` (RUSTSEC-2026-0386), and the `chacha20`
+  yanked warning, were fixed by bumping `Cargo.lock` (`anyhow` 1.0.104, `event-listener` 5.4.2,
+  `tokio` 1.53.3, `chacha20` 0.10.2). The five remaining unmaintained advisories (`paste`
+  RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441, `rustybuzz` RUSTSEC-2026-0206, `ttf-parser`
+  RUSTSEC-2026-0192, `unsafe-libyaml` RUSTSEC-2024-0449) are transitive dependencies this
+  repository cannot drop and that have no upstream replacement, so they are ignored in
+  `scripts/ci/check_security.sh`. That script runs `cargo audit --deny warnings`, so a new warning
+  (unmaintained, unsound, yanked) fails CI.
+- `scripts/ci/check_security.sh` ignores the vulnerability advisories explicitly classified
+  above (`rustls-webpki`) so CI stays actionable
+  (`audit_ignores` in `scripts/ci/check_security.sh`). New
+  vulnerabilities still fail CI by default.
+- Before changing dependency versions, run:
   - `cargo check`
   - `cargo test -j 1`
   - `scripts/ci/check_security.sh`
 
-2026-10-29: `crates/provider-openai-runtime`와 8317 기본 base는 이후 제거되었다.
+2026-10-29: `crates/provider-openai-runtime` and the 8317 default base were removed later.
 
-2026-11-04: 네이티브 플러그인 모델 경로도 제거되어 모델 요청은 `[providers.<name>]`의 OpenAI 호환 엔드포인트로 직접 나간다.
+2026-11-04: the native plugin model path was removed too, so model requests now go directly to an OpenAI-compatible endpoint from `[providers.<name>]`.

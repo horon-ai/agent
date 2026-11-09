@@ -1,52 +1,55 @@
-# horon agent 문서
+# horon agent documentation
 
-이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 한국어로 쓰고, 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
+Language: **English** | [한국어](README.ko.md)
 
-문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽는다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다.
+This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
 
-## 고정 요구사항
+The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change.
 
-모든 변경은 아래 세 가지를 지킨다. 정본은 저장소 루트의 `AGENTS.md`다.
+## Fixed requirements
 
-| 요구사항 | 내용 | 현재 상태 |
+Every change keeps the three rules below. The source of truth is `AGENTS.md` at the repository root.
+
+| Requirement | What it means | Current state |
 | --- | --- | --- |
-| TUI 제외 | 바이너리는 화면을 열지 않는다. `ratatui`, `crossterm`, `horon-agent-tui*`가 의존성 그래프에 없어야 한다. | 충족 |
-| ACP v1·v2 지원 | `horon-agent acp`가 `protocolVersion` 1과 2를 모두 처리하고, 양쪽이 지원하는 가장 높은 버전으로 답한다. v2를 더하면서 v1을 깨지 않는다. | 충족. v2 협상은 `src/cli/acp/v2/negotiate.rs`, v1은 `src/cli/acp/util.rs` |
-| 성능 회귀 방지 | 같은 기계·빌드 프로필·작업에서 기록된 기준선과 같거나 빨라야 한다. 느려지는 변경은 병합하지 않는다. | 측정 방법과 기록된 수치가 있음(`performance/BENCHMARK.md`, `performance/RESULTS.md`). 기록된 수치가 기준선이다 |
+| No TUI | The binary never opens a screen. `ratatui`, `crossterm`, and `horon-agent-tui*` must not appear in the dependency graph. | Met |
+| ACP v1 and v2 support | `horon-agent acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
+| No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
 
-## 폴더 구조
+## Folder layout
 
-| 폴더 | 문서 | 내용 |
+| Folder | Document | Contents |
 | --- | --- | --- |
-| `docs/` | [`README.md`](README.md) | 이 색인과 갱신 규칙 |
-| `architecture/` | [`SERVER.md`](architecture/SERVER.md) | 서버·세션·소켓 구조 |
-| | [`CRATES.md`](architecture/CRATES.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
-| `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
-| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
-| | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
-| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
-| | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | 도구 스케줄링과 반복 방지 |
-| | [`TURNS.md`](runtime/TURNS.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
-| | [`IRC.md`](runtime/IRC.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
-| | [`PROMPT.md`](runtime/PROMPT.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
-| | [`HOOKS.md`](runtime/HOOKS.md) | 수명 주기 훅 |
-| | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
-| `provider/` | [`MODEL.md`](provider/MODEL.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 사용 메타데이터 |
-| | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | 원격 MCP, 사용자 정의 웹 검색 |
-| `safety/` | [`SAFETY.md`](safety/SAFETY.md) | 안전 시스템, 무인 승인과 자동 전환 |
-| | [`SECURITY.md`](safety/SECURITY.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
-| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
-| | [`RESULTS.md`](performance/RESULTS.md) | 측정 결과와 한계 |
-| | [`MEMORY.md`](performance/MEMORY.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
-| `release/` | [`INSTALL.md`](release/INSTALL.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |
-| | [`WINDOWS.md`](release/WINDOWS.md) | Windows 빌드와 서명 |
+| `docs/` | [`README.md`](README.md) | This index and the update rules |
+| `architecture/` | [`SERVER.md`](architecture/SERVER.md) | Server, session, and socket structure |
+| | [`CRATES.md`](architecture/CRATES.md) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
+| `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
+| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | Harness API credential setup and the request and event surface |
+| | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | Session event storage format, delivery contract, writer pool, durable runtime journal |
+| `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
+| | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
+| | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, runtime commands, `--resume` |
+| | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
+| | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
+| | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
+| | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
+| `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to OpenAI-compatible endpoints, provider profiles and API keys, model usage metadata |
+| | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | Remote MCP, user-defined web search |
+| `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
+| | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |
+| `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
+| | [`RESULTS.md`](performance/RESULTS.md) | Measured results and their limits |
+| | [`MEMORY.md`](performance/MEMORY.md) | Memory regression budgets, idle session derived-cache release, incident response procedure |
+| `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, running on a Linux server, the TLS trust set |
+| | [`WINDOWS.md`](release/WINDOWS.md) | Windows build and signing |
 
-## 갱신 규칙
+## Update rules
 
-| 이런 변경이 생기면 | 이렇게 한다 |
+| When this changes | Do this |
 | --- | --- |
-| 현재 동작이 바뀔 때 | 그 동작을 설명하는 문서를 고친다. |
-| 문서를 새로 만들 때 | 맞는 폴더의 기존 문서에 절을 더하는 것을 먼저 검토한다. 새 파일은 대문자 이름으로 만들고 이 표에 올린다. |
-| 문서를 옮기거나 지울 때 | 이 표와 코드·스크립트·테스트 속 경로를 같은 변경에서 고친다. |
-| 같은 내용이 두 문서에 있을 때 | 하나를 정본으로 두고 나머지는 그것을 가리킨다. |
-| 측정 기록·인수 기록·계획을 남기고 싶을 때 | 문서를 만들지 않고 PR 본문이나 이슈에 적는다. 성능 수치는 `performance/RESULTS.md`에만 적는다. |
+| Current behavior changes | Edit the document that describes that behavior. |
+| You want a new document | First consider adding a section to an existing document in the right folder. A new file gets an uppercase name and a row in this table. |
+| A document moves or is deleted | Fix this table and the paths in code, scripts, and tests in the same change. |
+| The same content appears in two documents | Make one the source of truth and have the other point at it. |
+| You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
+| You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
