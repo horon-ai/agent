@@ -17,9 +17,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 # Internal crates that are allowed as dependencies of type crates.
-# Keep this list narrow. Add a crate only if it is itself a data-contract crate.
+# Keep this list narrow. Add a crate only if it is itself a data-contract crate
+# or a leaf crate with no dependencies of its own.
 ALLOWED_INTERNAL_TYPE_DEPS = {
     "horon-agent-message-types",
+    # Pure token-count function with an empty [dependencies] table; message-types
+    # uses it to size tool definitions.
+    "horon-agent-token-estimate",
 }
 
 # Internal crates that type crates must not depend on directly. Most are runtime,

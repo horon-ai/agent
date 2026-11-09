@@ -87,7 +87,10 @@ impl SleepInhibitor for PowerGuard {
 
     fn stop(&mut self) {
         if let Some(stop_tx) = self.stop_tx.take() {
-            drop(stop_tx.send(()));
+            match stop_tx.send(()) {
+                // Err: the guard thread already exited, so there is nothing to stop.
+                Ok(()) | Err(_) => {}
+            }
         }
 
         let clear_result = match self.done_rx.take() {
@@ -148,7 +151,10 @@ fn run_power_guard(
         return;
     }
 
-    drop(stop_rx.recv());
+    match stop_rx.recv() {
+        // Err: the sender was dropped, the owner is gone, which also ends the wait.
+        Ok(()) | Err(_) => {}
+    }
     let cleared = unsafe { SetThreadExecutionState(clear_execution_state_flags()) };
     let result = if cleared == 0 {
         Err(io::Error::last_os_error())

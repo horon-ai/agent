@@ -614,8 +614,10 @@ async fn registry_execute_pre_tool_hook_blocks_and_allows() {
 
 /// Minimal tool that returns at once, so any dispatch time these tests measure
 /// belongs to a hook stage rather than to the tool itself.
+#[cfg(unix)]
 struct DispatchProbeTool;
 
+#[cfg(unix)]
 #[async_trait]
 impl crate::tool::Tool for DispatchProbeTool {
     fn name(&self) -> &str {

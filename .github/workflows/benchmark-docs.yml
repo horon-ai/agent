@@ -33,6 +33,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   DOC: docs/performance/RESULTS.md
   CODE_PATHS: src crates Cargo.toml Cargo.lock .cargo rust-toolchain.toml scripts/perf
 

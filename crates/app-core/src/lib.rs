@@ -8,6 +8,12 @@
 // The `swarm` tool's `json!` parameter schema is large; the default macro
 // recursion limit (128) is exceeded once more properties are added.
 #![recursion_limit = "256"]
+// Apple's linker reports that the `__eh_frame` section of this crate's
+// unoptimized lib-test executable passes its 16 MB limit for the compact unwind
+// table, so panics in that test binary unwind through the slower DWARF path.
+// The binary exists only to run tests; shipped binaries link without the message.
+// Scoped to the one target that produces it.
+#![cfg_attr(all(test, target_os = "macos"), allow(linker_messages))]
 
 //! Application core for horon-agent (upper layer).
 //!

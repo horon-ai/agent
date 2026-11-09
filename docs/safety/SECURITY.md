@@ -193,9 +193,18 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
   신뢰할 수 없는 입력을 건드리지 않는다. 해결은 업스트림 몫이다.
   `wayland-scanner`가 `quick-xml >= 0.41`로 옮겨가야 한다. 2026-07-04에 분류해
   `scripts/ci/check_security.sh`에서 무시했다.
+- 2026-11-09에 CI 경고를 0으로 맞추면서 `cargo audit`가 경고로만 보고하던 항목을 정리했다.
+  `anyhow`(RUSTSEC-2026-0190), `event-listener`(RUSTSEC-2026-0221), `tokio`(RUSTSEC-2026-0386)의
+  불건전성 권고와 `chacha20` yanked 경고는 `Cargo.lock`을 올려 해결했다
+  (`anyhow` 1.0.104, `event-listener` 5.4.2, `tokio` 1.53.3, `chacha20` 0.10.2).
+  남은 유지보수 중단 권고 다섯 건(`paste` RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441,
+  `rustybuzz` RUSTSEC-2026-0206, `ttf-parser` RUSTSEC-2026-0192, `unsafe-libyaml`
+  RUSTSEC-2024-0449)은 업스트림 대체 없이 이 저장소에서 뺄 수 없는 전이 의존성이라
+  `scripts/ci/check_security.sh`에서 무시했다. 이 스크립트는 `cargo audit --deny warnings`로
+  돌기 때문에 새 경고(유지보수 중단, 불건전성, yanked)는 CI를 실패시킨다.
 - `scripts/ci/check_security.sh`는 위에서 명시적으로 분류한 취약점 권고
   (`rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
-  (`scripts/ci/check_security.sh:98-112`). 새
+  (`scripts/ci/check_security.sh`의 `audit_ignores`). 새
   취약점은 기본적으로 여전히 CI를 실패시킨다.
 - 의존성 버전을 바꾸기 전에 다음을 실행한다.
   - `cargo check`

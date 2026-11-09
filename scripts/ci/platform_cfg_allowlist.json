@@ -41,8 +41,8 @@
       "reason": "test fixture drives a stub daemon over a Unix socket."
     },
     "crates/app-core/src/agent/durable_input_tests.rs": {
-      "count": 1,
-      "reason": "read-only directory fixture built from POSIX mode bits."
+      "count": 2,
+      "reason": "read-only directory fixture built from POSIX mode bits, and the `mirror_dir` helper only that fixture calls."
     },
     "crates/app-core/src/agent/failover_budget.rs": {
       "count": 1,
@@ -53,28 +53,32 @@
       "reason": "whole test file is Unix-only (#![cfg(unix)]): every case drives a real hook script through /bin/sh to prove what the model sees, which Windows cannot spawn the same way."
     },
     "crates/app-core/src/agent/request_messages_tests.rs": {
-      "count": 12,
-      "reason": "the hook cases drive real hook scripts and a shell `sed` filter, and the hook runner itself is exercised on Unix; the platform-neutral structural probe in the same file keeps its own `#[cfg(unix)]` off so the process/copy counters are gated on every OS."
+      "count": 15,
+      "reason": "the hook cases drive real hook scripts and a shell `sed` filter, and the hook runner itself is exercised on Unix, so the imports only those cases use carry the same gate; the platform-neutral structural probe in the same file keeps its own `#[cfg(unix)]` off so the process/copy counters are gated on every OS."
     },
     "crates/app-core/src/agent/soft_interrupt_commit_tests.rs": {
-      "count": 1,
-      "reason": "read-only directory fixture built from POSIX mode bits."
+      "count": 3,
+      "reason": "read-only directory fixture built from POSIX mode bits; the `QueueThen` round that test alone uses carries the same gate on the enum variant and its match arm."
     },
     "crates/app-core/src/ambient/runner_resume_crash_tests.rs": {
       "count": 1,
       "reason": "crash matrix kills a child with `kill -9` and reads `ExitStatusExt::signal`."
     },
     "crates/app-core/src/ambient/runner_resume_tests.rs": {
+      "count": 2,
+      "reason": "gate for the crash matrix below, and `TestHome::path`, which only that matrix calls."
+    },
+    "crates/app-core/src/lib.rs": {
       "count": 1,
-      "reason": "gate for the crash matrix below."
+      "reason": "Apple's linker reports the lib-test executable's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for that test binary on macOS and is not actionable from this crate."
     },
     "crates/app-core/src/network_retry.rs": {
       "count": 10,
       "reason": "connectivity-wait strategy per OS: `ip monitor` on Linux, `route -n monitor` on macOS, reconnect-probe polling elsewhere."
     },
     "crates/app-core/src/notifications.rs": {
-      "count": 6,
-      "reason": "desktop notifications: `osascript` on macOS, `notify-send` on Linux, nothing elsewhere."
+      "count": 7,
+      "reason": "desktop notifications: `osascript` on macOS, `notify-send` on Linux, nothing elsewhere; `reap_notification_child` serves only those two."
     },
     "crates/app-core/src/overnight.rs": {
       "count": 10,
@@ -105,8 +109,8 @@
       "reason": "raw pipe-descriptor readiness test (FromRawFd)."
     },
     "crates/app-core/src/tool/bash.rs": {
-      "count": 1,
-      "reason": "`#[path]` gate for the POSIX-only bash test suite."
+      "count": 6,
+      "reason": "`#[path]` gate for the POSIX-only bash test suite, plus the helpers only that suite calls (`parse_progress_marker` and the session-cwd, minimizer and non-interactive-env test overrides), gated with it so Windows does not compile them unused."
     },
     "crates/app-core/src/tool/bash_destructive_gate.rs": {
       "count": 1,
@@ -132,6 +136,10 @@
       "count": 15,
       "reason": "hook tests write and execute POSIX shell scripts; hook execution is script-based by design, not an adapter primitive."
     },
+    "crates/app-core/src/tool/mod.rs": {
+      "count": 2,
+      "reason": "`stage_sum_ms` and `dispatch_timings_for` read the dispatch timings only the Unix-only hook-gate tests inspect; gated with them so Windows does not compile them unused."
+    },
     "crates/app-core/src/tool/read_skill_tests.rs": {
       "count": 1,
       "reason": "one test points a skill file symlink outside the skill directory to prove the skill:// reader refuses it, which needs std::os::unix::fs::symlink."
@@ -145,8 +153,8 @@
       "reason": "one test points a managed skill entry at a directory outside the managed tree to prove delete unlinks the link and keeps the target, which needs std::os::unix::fs::symlink; the inner async body carries the second cfg line so it is not compiled on Windows."
     },
     "crates/app-core/src/tool/tests.rs": {
-      "count": 6,
-      "reason": "hook-gate dispatch tests write chmod'd POSIX shell scripts."
+      "count": 8,
+      "reason": "hook-gate dispatch tests write chmod'd POSIX shell scripts; the `DispatchProbeTool` helper they share carries the same gate so Windows does not compile it unused."
     },
     "crates/app-core/src/tool/toolbox_tests.rs": {
       "count": 5,

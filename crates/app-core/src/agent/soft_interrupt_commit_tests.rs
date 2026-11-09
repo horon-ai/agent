@@ -62,6 +62,7 @@ enum Round {
     /// Fires the turn's cancel signal before answering.
     CancelThen(Vec<StreamEvent>),
     /// Queues a message before answering.
+    #[cfg(unix)]
     QueueThen(String, Vec<StreamEvent>),
 }
 
@@ -98,6 +99,7 @@ impl ScriptedProvider {
                 }
                 events
             }
+            #[cfg(unix)]
             Round::QueueThen(content, events) => {
                 if let Some(queue) = self.queue.lock().unwrap().as_ref() {
                     queue.lock().expect("queue lock").push(message(&content));

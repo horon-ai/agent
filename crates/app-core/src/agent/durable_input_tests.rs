@@ -55,6 +55,7 @@ impl Sandbox {
         DurableInputStore::open_in(&self.journal_root(), session_id).expect("open the input store")
     }
 
+    #[cfg(unix)]
     fn mirror_dir(&self) -> std::path::PathBuf {
         self.home.join("pending-soft-interrupts")
     }
