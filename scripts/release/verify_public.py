@@ -20,6 +20,25 @@ REQUIRED = {f"horon-agent-{platform}.tar.gz" for platform in PLATFORMS} | {
 }
 
 
+def select_release(pages, tag):
+    """Pick the one release named `tag` from `gh api --paginate --slurp` pages."""
+    matches = [release for page in pages for release in page if release.get("tag_name") == tag]
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one release for {tag}, found {len(matches)}")
+    return matches[0]
+
+
+def fetch_release(repo, tag, allow_draft=False):
+    """Read release metadata. `releases/tags/<tag>` answers 404 for a draft, so
+    a staged draft is found in the release list, which includes drafts for a
+    token with write access."""
+    if not allow_draft:
+        return json.loads(subprocess.check_output(["gh", "api", f"repos/{repo}/releases/tags/{tag}"]))
+    pages = json.loads(subprocess.check_output(
+        ["gh", "api", "--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"]))
+    return select_release(pages, tag)
+
+
 def verify_metadata(metadata, tag, allow_draft=False):
     if (metadata.get("tag_name") != tag or type(metadata.get("draft")) is not bool
             or (metadata["draft"] and not allow_draft)):
@@ -81,8 +100,7 @@ def main():
         parser.error("sha must be a full lowercase commit SHA")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", args.repo):
         parser.error("repo must be OWNER/REPO")
-    metadata = json.loads(subprocess.check_output(
-        ["gh", "api", f"repos/{args.repo}/releases/tags/{args.tag}"]))
+    metadata = fetch_release(args.repo, args.tag, allow_draft=args.allow_draft)
     names = verify_metadata(metadata, args.tag, allow_draft=args.allow_draft)
 
     def download_and_verify(directory):
