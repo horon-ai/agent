@@ -94,6 +94,12 @@ python3 scripts/perf/bench_reload_storm.py --binary ./target/release/horon-agent
 python3 scripts/perf/bench_startup.py ./target/release/horon-agent --runs 10
 ```
 
+To check only that the suites still start, run the smoke. It runs the tools, reload, and compare (horon only, `oneshot` and `sessions`) suites once each and exits 1 if any of them crashed, skipped, or recorded an error. A suite exits 0 even when its daemon never came up, so the smoke reads each JSON report rather than the exit code. The `Build & Test` job in `ci.yml` runs it on every code pull request against the binary it just built, because the benchmark workflow itself never runs on a pull request.
+
+```bash
+python3 scripts/perf/bench_smoke.py --binary ./target/release/horon-agent
+```
+
 The competitor comparison needs the tools installed first. A tool not given with `--bin name=path` is looked up on PATH.
 
 ```bash
