@@ -122,6 +122,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          # A later step failing (an advisory, a flaky test) must not throw away
+          # the artifacts the earlier steps spent minutes compiling.
+          cache-on-failure: true
           # Keyed by runner OS: with CI_SELF_HOSTED this job runs on macOS, and a
           # macOS cache restored on Linux (same branch) carries unusable artifacts.
           key: quality-${{ runner.os }}
@@ -386,6 +389,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          # A later step failing (an advisory, a flaky test) must not throw away
+          # the artifacts the earlier steps spent minutes compiling.
+          cache-on-failure: true
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
@@ -908,6 +914,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          # A later step failing (an advisory, a flaky test) must not throw away
+          # the artifacts the earlier steps spent minutes compiling.
+          cache-on-failure: true
           key: windows-latest
           cache-all-crates: "true"
 
@@ -1222,6 +1231,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          # A later step failing (an advisory, a flaky test) must not throw away
+          # the artifacts the earlier steps spent minutes compiling.
+          cache-on-failure: true
           key: windows-arm64-release-check
           cache-all-crates: "true"
 
@@ -1273,6 +1285,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          # A later step failing (an advisory, a flaky test) must not throw away
+          # the artifacts the earlier steps spent minutes compiling.
+          cache-on-failure: true
           key: windows-cross-check
           cache-all-crates: "true"
 
