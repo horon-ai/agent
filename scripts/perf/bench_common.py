@@ -93,8 +93,13 @@ def _inherited_acl_temp_dir(prefix: str) -> str:
     raise FileExistsError(errno.EEXIST, "no unused temp dir name", base)
 
 
-def isolated_home_env(root: str, prefix: str) -> dict[str, str]:
-    """Base env pointing every agent home at ``root``."""
+def isolated_home_env(root: str, prefix: str, home_var: str | None = None) -> dict[str, str]:
+    """Base env pointing every agent home at ``root``.
+
+    ``home_var`` names the home variable when it is not ``<prefix>_HOME``:
+    horon reads ``HORON_HOME`` while its runtime dir is
+    ``HORON_AGENT_RUNTIME_DIR``.
+    """
     env = os.environ.copy()
     home = os.path.join(root, "home")
     run = os.path.join(root, "run")
@@ -104,7 +109,7 @@ def isolated_home_env(root: str, prefix: str) -> dict[str, str]:
     state = os.path.join(root, "state")
     for path in (home, run, cache, config, data, state):
         os.makedirs(path, exist_ok=True)
-    env[prefix + "_HOME"] = home
+    env[home_var or prefix + "_HOME"] = home
     env[prefix + "_RUNTIME_DIR"] = run
     env["HOME"] = home
     env["XDG_CACHE_HOME"] = cache

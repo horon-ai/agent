@@ -94,6 +94,12 @@ python3 scripts/perf/bench_reload_storm.py --binary ./target/release/horon-agent
 python3 scripts/perf/bench_startup.py ./target/release/horon-agent --runs 10
 ```
 
+스위트가 뜨는지만 확인하려면 스모크를 돌린다. tools, reload, compare(horon만, `oneshot`과 `sessions`) 스위트를 한 번씩 실행하고 하나라도 죽거나 건너뛰거나 오류를 기록하면 종료 코드 1로 끝난다. 스위트는 데몬이 뜨지 못해도 종료 코드 0으로 끝나므로 스모크는 종료 코드 대신 각 JSON 보고서를 읽는다. 벤치마크 워크플로는 PR에서 돌지 않으므로 `ci.yml`의 `Build & Test` 잡이 코드 PR마다 방금 빌드한 바이너리로 이 스모크를 돌린다.
+
+```bash
+python3 scripts/perf/bench_smoke.py --binary ./target/release/horon-agent
+```
+
 경쟁 도구 비교는 도구를 먼저 설치한다. `--bin name=path`로 지정하지 않은 도구는 PATH에서 찾는다.
 
 ```bash
