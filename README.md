@@ -178,7 +178,7 @@ On macOS horon was faster on the one-shot (104.7 ms against 361.6 ms), skill (11
 
 ## Documentation
 
-The docs are written in Korean and are compiled into the binary, where the `horon_agent_docs` tool serves them.
+The docs are written in English (default) and Korean (`.ko.md` next to each file; for example `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them.
 
 | Topic | Read |
 | --- | --- |

@@ -1,24 +1,26 @@
-# 도구
+# Tools
 
-도구 로딩 단계, 효과와 승인 등급, 편집 안전 장치, `read`에 붙는 상위 `AGENTS.md`, 스킬 읽기(`skill://`), 기억 읽기(`memory://`)와 기억 갱신, MCP 설정 출처, 큰 도구 출력의 응축과 `read` 중복 단락, 오래된 결과 축약, 1회 보조 호출을 다룬다.
+Language: **English** | [한국어](TOOLS.ko.md)
 
-## 도구 발견과 지연 로딩
+This covers tool loading tiers, effects and approval tiers, edit safety, the ancestor `AGENTS.md` attached to `read`, skill reads (`skill://`), memory reads (`memory://`) and memory updates, where MCP configuration comes from, condensing large tool output and `read` deduplication, aging of old results, and the one-shot auxiliary call.
 
-`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열다섯 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다.
+## Tool discovery and deferred loading
 
-### 세 단계
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the fifteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
 
-`LoadMode`는 `crates/base/src/config.rs:825`에 정의되어 있습니다.
+### Three tiers
 
-| 값 | 의미 |
+`LoadMode` is defined in `crates/base/src/config.rs:825`.
+
+| Value | Meaning |
 | --- | --- |
-| `essential` | 요청에 즉시 실리고 참조 없이 바로 호출할 수 있습니다. 기본값입니다. |
-| `discoverable` | 지연 정의로 보냅니다. 스키마는 도구 참조가 그 이름을 가리킬 때 모델에 도달합니다. 네이티브 지연 로딩이 없는 프로바이더는 이 정의를 대신 버리고, `core` 세션에서는 색인이 그 이름을 알립니다. |
-| `off` | 요청에 보내지 않습니다. |
+| `essential` | Sent eagerly and callable with no discovery step. This is the default. |
+| `discoverable` | Sent as a deferred definition. The schema reaches the model once a tool reference names it. Providers without native deferred loading drop the definition instead, and in a `core` session the index names it. |
+| `off` | Not sent at all. |
 
-`discoverable`은 MCP 도구를 이미 옮기는 프로바이더 네이티브 지연 로딩을 재사용합니다. 정의는 요청의 도구 목록에 실리지만 캐시되는 시스템 프롬프트 접두사 밖에 있으므로, 접두사 바이트를 쓰지 않고 도구가 늘거나 줄어도 프롬프트 캐시를 무효화하지 않습니다.
+`discoverable` reuses the provider-native deferred loading that already carries MCP tools. The definition travels in the request's tool catalog but stays outside the cached system-prompt prefix, so it costs no prefix bytes and adding or removing a tool never invalidates the prompt cache.
 
-개별 도구의 단계는 `[tools.load_mode]` 표로 덮어씁니다. 이름은 정규화되고, 이 빌드에 없는 이름은 아무 효과가 없습니다.
+A per-tool tier is overridden with the `[tools.load_mode]` table. Names are normalized, and a name that does not exist in this build has no effect.
 
 ```toml
 [tools.load_mode]
@@ -26,578 +28,579 @@ batch = "off"
 memory = "essential"
 ```
 
-### 기본 배치
+### Default layout
 
-- `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:803` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
-- `CORE_TOOLS`는 여전히 열다섯 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:779` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다.
-- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 여덟 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:889` `ToolLoadTiers::tier`).
-- 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
-- `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:861` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
-- `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:889` `ToolLoadTiers::tier`).
-- 지연 기본값은 명시적 `full` 프로필에 허용 목록이 없을 때만 켜집니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, 프로필 미설정은 통과한 도구를 즉시 보냅니다 (`config.rs:1210` `ToolConfig::load_tiers`).
-- 세션은 시작할 때 단계를 한 번 확정합니다. 설정을 다시 읽어도 세션 중간에 도구가 즉시 집합과 지연 집합 사이를 옮기지 않습니다.
+- The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:803` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
+- `CORE_TOOLS` still holds fifteen entries and is the allow-list of the `core` profile (`config.rs:779` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session.
+- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eight core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`) become `discoverable` and are named in the index (`config.rs:889` `ToolLoadTiers::tier`).
+- Sessions that are not listing sessions send every core tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists and tiers are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
+- `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:861` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
+- `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:889` `ToolLoadTiers::tier`).
+- Deferred defaults turn on only when the explicit `full` profile has no allow-list. `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, and an unset profile send the tools that pass eagerly (`config.rs:1210` `ToolConfig::load_tiers`).
+- A session fixes its tiers once at start. Reloading configuration never moves a tool between the eager and deferred sets mid-session.
 
-`irc`는 코어 밖 도구입니다. `[tools] irc = true`일 때 `core`, `acp`, `minimal`, 명시 `enabled` 목록처럼 비어 있지 않은 허용 목록에 들어가고, 허용 목록이 없는 `full` 세션에는 원래부터 보입니다. 스위치가 꺼져 있으면 등록은 유지되지만 실행이 거부되므로 `full` 세션에서도 실제로 쓸 수 없습니다. 빈 허용 목록(`none`)은 켜져 있어도 그대로 비어 있습니다. 메일박스 동작과 설정은 [`IRC.md`](IRC.md)에 있습니다.
+`irc` is a tool outside the core set. With `[tools] irc = true` it joins a non-empty allow-list such as `core`, `acp`, `minimal`, or an explicit `enabled` list, and a `full` session without an allow-list sees it as it always did. With the switch off the registration stays but execution is refused, so it is unusable even in a `full` session. An empty allow-list (`none`) stays empty even with the switch on. Mailbox behaviour and configuration are in [`IRC.md`](IRC.md).
 
-#### 즉시 보내도록 되돌리기
+#### Forcing a tool back to eager
 
-- `[tools.load_mode] ask = "essential"`처럼 적으면 그 도구는 목록 모드 세션에서도 스키마와 함께 실립니다. 명시 항목이 기본 배치보다 우선합니다.
-- `monitor = "off"`는 그 도구를 요청에서도 색인에서도 뺍니다.
-- `toolbox = "off"`로 두거나 `[tools] disabled`에 `toolbox`를 넣으면 목록 모드가 꺼지고 코어 열다섯 도구가 모두 다시 즉시 실립니다. 닿을 방법이 없는 도구를 만들지 않기 위한 동작입니다.
+- Writing `[tools.load_mode] ask = "essential"` ships that tool with its schema even in a listing session. An explicit entry outranks the default layout.
+- `monitor = "off"` removes that tool from both the request and the index.
+- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts all fifteen core tools back on the eager surface. The point is to avoid creating a tool with no way to reach it.
 
-### 목록 색인
+### The listing index
 
-목록 모드 `core` 세션의 시스템 프롬프트 정적 부분에는 `# Additional tools` 절이 붙습니다. 짧은 안내 문장 하나와 `- <이름>: <한 줄 설명>` 행이 이름순으로 나옵니다 (`crates/base/src/prompt.rs:483` `build_additional_tools_section`). 안내 문장은 한 문장이고, 목록의 도구를 `toolbox`의 `run` 동작으로 부르는 방법만 알립니다. 행의 설명은 도구 설명의 첫 문장이거나 60자까지이므로, 매개변수는 모델이 `toolbox describe`로 따로 받습니다.
+The static part of a listing `core` session's system prompt gains an `# Additional tools` section. One short guidance sentence is followed by `- <name>: <one-line description>` rows in name order (`crates/base/src/prompt.rs:483` `build_additional_tools_section`). The guidance sentence says only how to call a listed tool through the `run` action of `toolbox`. A row's description is the first sentence of the tool description, capped at 60 characters, so the model fetches parameters separately with `toolbox describe`.
 
-- 프로바이더와 상관없이 같은 색인을 씁니다. 네이티브 지연 로딩이 있는 프로바이더도 지연 정의와 함께 이 색인을 받습니다. 없는 프로바이더는 지연 정의를 버리므로 이 색인이 이름을 알리는 유일한 경로입니다.
-- 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:897` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
-- 색인은 첫 도구 목록이 확정될 때 한 번 굳습니다. MCP 서버 등록 전의 워밍업 요청은 색인을 굳히지 않고, 확정 시점에 한 번 다시 만든 뒤 고정합니다. 이후 도구 잠금 해제, 압축, MCP 연결, 프로바이더 전환, 설정 재로드로는 바뀌지 않습니다 (`turn_execution.rs:834` `ensure_listed_tools_index`).
-- 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
-- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:175`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
-- 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다.
-- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`acp` 등)에만 붙고, 목록 모드 `core`에는 `todo`가 없으므로 붙지 않습니다 (`prompting.rs:233` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
+- The same index is used regardless of provider. Providers with native deferred loading receive this index alongside the deferred definitions. Providers without it drop the deferred definitions, so this index is the only thing that names them.
+- Rows are filtered by the same rule the session sees from `toolbox list`. `mcp__*` proxies and `toolbox` itself are left out, and a tool the session policy would have `toolbox` refuse (outside the allow-list, disabled, or turned off by the SDK) is not listed (`turn_execution.rs:897` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
+- The index freezes once, when the first tool list is locked. A warm-up request before MCP servers register does not freeze it; it is rebuilt once at lock time and then pinned. Unlocking tools, compaction, MCP connections, provider switches, and configuration reloads afterwards do not change it (`turn_execution.rs:834` `ensure_listed_tools_index`).
+- Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
+- When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:175`). An overridden session still keeps the names of listed tools.
+- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`.
+- The `todo` guidance sentence is appended only for sessions whose allow-list contains `todo` (`acp` and the like), and never for a listing `core` session, which has no `todo` (`prompting.rs:233` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox
 
-`toolbox`는 `full`과 `core` 프로필에서 등록됩니다 (`crates/app-core/src/tool/toolbox.rs:55` `enabled`). `acp`를 포함한 다른 프로필은 닫힌 허용 목록을 유지하므로 `toolbox`가 아예 없습니다. 허용 목록이 있는 `full` 세션에서도 그 목록이 도달 범위를 다시 좁힙니다. 스웜 작업자처럼 목록 모드도 `full`도 아닌 세션의 허용 목록에서는 `toolbox`가 빠집니다 (`agent.rs`의 `without_unreachable_dispatcher`).
+`toolbox` is registered under the `full` and `core` profiles (`crates/app-core/src/tool/toolbox.rs:55` `enabled`). Other profiles, including `acp`, keep a closed allow-list, so `toolbox` is absent. In a `full` session with an allow-list, that list narrows reach again. In a session that is neither listing nor `full`, such as a swarm worker, the allow-list leaves `toolbox` out (`without_unreachable_dispatcher` in `agent.rs`).
 
-세 동작이 있습니다.
+There are three actions.
 
-- `list`: 이 세션에 지연되었거나 색인에 오른 도구의 이름과 한 줄 설명을 보여 줍니다. 자기 자신과 MCP 표면(`mcp__*`, 즉시 실린 `mcp_search`/`mcp_call`)은 빼고, 이 세션에서 닿을 수 있는 도구만 이름순으로 나열합니다 (`toolbox.rs:282` `list`).
-- `describe`: 이름을 정규화한 뒤 설명과 입력 스키마를 텍스트로 돌려줍니다 (`toolbox.rs:318` `describe`). 스키마가 요청의 도구 목록에 없는 프로바이더에서도 모델이 매개변수를 알 수 있는 경로입니다.
-- `run`: 대상 도구를 `Registry::execute`로 실행합니다 (`toolbox.rs:336` `run`). `toolbox` 자신은 실행할 수 없고 `args`는 JSON 객체여야 합니다.
+- `list`: shows the names and one-line descriptions of tools deferred or indexed for this session. It leaves out itself and the MCP surface (`mcp__*`, plus the eagerly sent `mcp_search`/`mcp_call`), and lists only tools reachable in this session, in name order (`toolbox.rs:282` `list`).
+- `describe`: normalizes the name and returns the description and input schema as text (`toolbox.rs:318` `describe`). This is how the model learns parameters on providers whose tool list does not carry the schema.
+- `run`: executes the target tool through `Registry::execute` (`toolbox.rs:336` `run`). `toolbox` itself cannot be run, and `args` must be a JSON object.
 
-#### 정책은 대상 도구에 한 번 적용됩니다
+#### Policy applies once, to the target tool
 
-`toolbox run`은 직접 호출과 같은 정책을 받되, 바깥 호출이 아니라 대상 도구에 한 번만 적용됩니다. 계획 모드, 승인 요청, `pre_tool`/`post_tool` 훅은 안쪽 `Registry::execute`에서 대상 도구의 이름과 입력으로 돌아갑니다. 바깥 `toolbox` 호출에서는 이 단계를 건너뛰므로 승인을 두 번 묻거나 훅이 `toolbox`라는 이름을 받는 일이 없습니다 (`crates/app-core/src/tool/mod.rs:2144`). 허용 목록과 비활성 목록 검사는 바깥에도 남아서 `toolbox` 자신이 닿을 수 있는지 판단합니다.
+`toolbox run` gets the same policy as a direct call, but it applies once, to the target tool rather than to the outer call. Plan mode, approval requests, and the `pre_tool`/`post_tool` hooks run inside the inner `Registry::execute` with the target tool's name and input. The outer `toolbox` call skips those steps, so approval is never asked twice and a hook never receives the name `toolbox` (`crates/app-core/src/tool/mod.rs:2144`). The allow-list and disabled-list checks remain on the outside to decide whether `toolbox` itself is reachable.
 
-계획 모드가 읽기 전용 호출을 가르는 기준도 대상을 따라갑니다. `list`와 `describe`는 읽기 전용이고, `run`은 대상 도구가 선언한 효과를 쓰며, 대상을 알 수 없거나 동작이 올바르지 않으면 쓰기 장벽으로 취급합니다 (`toolbox.rs:132` `effects_for_input`). 그래서 계획 모드에서 `toolbox run write`는 `write` 직접 호출처럼 거부되고, `toolbox run ls`는 통과합니다.
+Plan mode's test for a read-only call also follows the target. `list` and `describe` are read-only, `run` uses the effects the target tool declares, and an unknown target or a malformed action counts as a write barrier (`toolbox.rs:132` `effects_for_input`). So in plan mode `toolbox run write` is refused like a direct `write`, and `toolbox run ls` passes.
 
-`off` 단계의 도구, 세션 허용 목록 밖의 도구, 비활성 목록에 든 도구는 `list`에 나오지 않고 `describe`와 `run`도 거부합니다.
+Tools at the `off` tier, tools outside the session allow-list, and tools on the disabled list do not appear in `list`, and `describe` and `run` refuse them.
 
-#### 참조와 다음 턴
+#### References and the next turn
 
-`describe`와 `run`은 결과 메타데이터에 `tool_references`를 넣습니다. 트랜스크립트 변환이 이를 `ContentBlock::ToolReference` 하나로 바꿉니다. 네이티브 지연 로딩이 있는 프로바이더는 그 참조로 다음 턴에 지연 스키마를 불러오므로 직접 호출이 가능해집니다. 없는 프로바이더에는 이 승격 효과가 없습니다. 이 경우 모델은 계속 `toolbox run`으로 부르면 됩니다.
+`describe` and `run` put `tool_references` into the result metadata. Transcript conversion turns it into a single `ContentBlock::ToolReference`. Providers with native deferred loading use that reference to load the deferred schema on the next turn, which makes a direct call possible. Providers without it get no such promotion; the model simply keeps calling through `toolbox run`.
 
-#### 클라이언트에서 보이는 모습
+#### How clients see it
 
-목록 모드 `core` 데몬에서는 `replace`, `webfetch`, `ask` 같은 목록 도구가 `toolbox` 호출로 나타납니다. ACP 편집기는 도구 이름으로 종류를 정하는데 `toolbox`는 어느 분류에도 없어서 `other`로 표시됩니다 (`src/cli/acp/util.rs:286` `tool_kind`). 편집기가 `ask`를 직접 호출로 받아 렌더링하는 흐름은 `acp` 프로필 세션에서만 기대할 수 있습니다.
+In a listing `core` daemon, listed tools such as `replace`, `webfetch`, and `ask` appear as `toolbox` calls. ACP editors pick a kind from the tool name, and `toolbox` belongs to no category, so it renders as `other` (`src/cli/acp/util.rs:286` `tool_kind`). Only an `acp` profile session can expect the editor to receive `ask` as a direct call and render it.
 
-#### 호스티드 검색
+#### Hosted search
 
-모델 요청은 OpenAI 호환 `/chat/completions`로 직접 나가고 요청 본문에 호스티드 도구를 싣지 않으므로, 에이전트가 OpenAI 호스티드 `web_search`를 붙이는 경로는 없습니다. `websearch`는 로컬 도구로만 동작합니다.
+Model requests go straight to an OpenAI-compatible `/chat/completions` and carry no hosted tools in the body, so nothing attaches OpenAI's hosted `web_search`. `websearch` works only as a local tool.
 
-### core가 닫혀 있는 이유
+### Why core stays closed
 
-`core`는 허용 목록입니다. 기본 headless 표면을 코어 열다섯 도구와 `toolbox` 하나로 고정하고, 나머지 모듈은 트리에 두되 노출하지 않습니다. 허용 목록은 닫힌 채 그대로이고 바뀐 것은 전달 방식뿐입니다. 일곱 도구는 스키마와 함께, 여덟 도구는 색인과 `toolbox`로 닿습니다. 마지막으로 합류한 `monitor`는 파일·명령 감시를 재시작 뒤에도 이어 가는 도구입니다. 이 선택은 세 가지를 지킵니다.
+`core` is an allow-list. It pins the default headless surface to the fifteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eight are reached through the index and `toolbox`. The most recent addition, `monitor`, watches files and commands across restarts. The choice preserves three things.
 
-- 기본 표면의 크기가 바뀌지 않아 요청 접두사와 프롬프트 캐시가 안정적입니다.
-- 쓰기와 셸을 포함한 기본 권한 범위가 예측 가능합니다.
-- 새 도구가 늘어도 headless 기본값이 조용히 넓어지지 않습니다.
+- The default surface's size does not change, so the request prefix and the prompt cache stay stable.
+- The default permission envelope, writes and shell included, stays predictable.
+- New tools do not quietly widen the headless default.
 
-넓히려면 `--tool-profile full`, `HORON_AGENT_TOOL_PROFILE=full`, `[tools] profile = "full"` 중 하나를 명시해야 합니다.
+Widening it takes an explicit `--tool-profile full`, `HORON_AGENT_TOOL_PROFILE=full`, or `[tools] profile = "full"`.
 
-### promote가 없는 이유
+### Why there is no promote
 
-`toolbox`는 스키마를 참조로 불러올 뿐입니다. 세션의 도구 정의를 고치지 않고, 트랜스크립트를 쓰지 않으며, 지연 도구를 즉시 집합으로 승격하지 않습니다. 승격 동작을 두면 세션 중간에 도구 목록이 바뀌어 프롬프트 캐시가 무효화되고, `full` 프로필의 지연 배치가 무의미해집니다. 그래서 `list`, `describe`, `run` 세 동작만 있고 `promote`는 없습니다.
+`toolbox` only loads a schema by reference. It does not edit the session's tool definitions, does not write to the transcript, and does not promote a deferred tool into the eager set. A promotion would change the tool list mid-session, invalidate the prompt cache, and make the `full` profile's deferred layout pointless. Hence the three actions `list`, `describe`, and `run`, and no `promote`.
 
-## 도구 효과, 계획 모드, 승인 등급
+## Tool effects, plan mode, and approval tiers
 
-도구 하나가 한 라운드에서 무엇을 건드리는지를 선언하는 비트 마스크와, 그 선언을 읽어 동시 실행 여부를 정하는 규칙, 계획 모드의 상태 기계, 그리고 승인 등급이 언제 개입하는지를 설명합니다. 세 장치는 같은 선언 하나를 공유합니다. 도구가 선언한 효과가 동시 실행의 근거이고, 계획 모드의 거절 근거이고, 승인 등급의 판단 근거입니다.
+This explains the bit mask that declares what one tool touches in a round, the rule that reads that declaration to decide concurrent execution, the plan-mode state machine, and when approval tiers step in. All three devices share one declaration. A tool's declared effects justify concurrent execution, justify a plan-mode refusal, and drive the approval tier.
 
-### 효과 비트
+### Effect bits
 
-`ToolEffects`는 다섯 비트를 가진 `u8` 래퍼입니다 (`crates/tool-core/src/lib.rs:166`).
+`ToolEffects` is a `u8` wrapper over five bits (`crates/tool-core/src/lib.rs:166`).
 
-| 비트 | 값 | 뜻 |
+| Bit | Value | Meaning |
 | --- | --- | --- |
-| `READ` | `1 << 0` | 파일이나 상태를 읽습니다. |
-| `WRITE` | `1 << 1` | 파일을 덮어씁니다. |
-| `APPEND` | `1 << 2` | 기존 내용 뒤에 덧붙입니다. |
-| `NETWORK` | `1 << 3` | 바깥으로 요청을 보냅니다. |
-| `PROCESS` | `1 << 4` | 프로세스를 띄웁니다. |
+| `READ` | `1 << 0` | Reads a file or state. |
+| `WRITE` | `1 << 1` | Overwrites a file. |
+| `APPEND` | `1 << 2` | Appends to existing content. |
+| `NETWORK` | `1 << 3` | Sends a request outward. |
+| `PROCESS` | `1 << 4` | Spawns a process. |
 
-`BARRIER`는 `WRITE | APPEND | PROCESS`입니다 (`crates/tool-core/src/lib.rs:176`). `NETWORK`는 일부러 빠져 있습니다. 두 번의 조회는 서로 간섭하지 않고, 유료 호출 횟수는 안전 문제가 아니라 예산 문제이기 때문입니다. 그래서 읽기와 네트워크만 선언한 호출은 같은 라운드에서 겹쳐 돌 수 있습니다 (`parallel_safe`, `crates/tool-core/src/lib.rs:223`).
+`BARRIER` is `WRITE | APPEND | PROCESS` (`crates/tool-core/src/lib.rs:176`). `NETWORK` is deliberately excluded. Two lookups do not interfere with each other, and a paid call count is a budget question rather than a safety one. A call declaring only reads and network therefore overlaps with others in the same round (`parallel_safe`, `crates/tool-core/src/lib.rs:223`).
 
-### 동시 실행 등급
+### Concurrency classes
 
-`ConcurrencyClass`는 `Ordered`와 `Concurrent` 둘입니다 (`crates/tool-core/src/lib.rs:151`). 등급은 효과에서 파생되며 따로 선언하지 않습니다 (`crates/tool-core/src/lib.rs:270`).
+`ConcurrencyClass` has two values, `Ordered` and `Concurrent` (`crates/tool-core/src/lib.rs:151`). The class is derived from effects and never declared separately (`crates/tool-core/src/lib.rs:270`).
 
-`Tool` 트레이트의 `effects` 기본값은 쓰기 배리어입니다 (`crates/tool-core/src/lib.rs:255`). 아무것도 선언하지 않은 도구는 겹쳐 돌 수 없다고 봅니다. 두 방향의 비용이 다르기 때문입니다.
+The `Tool` trait's default `effects` is the write barrier (`crates/tool-core/src/lib.rs:255`). A tool that declares nothing is assumed to be unable to overlap. The two mistakes cost differently.
 
-| 잘못된 선언 | 결과 |
+| Wrong declaration | Result |
 | --- | --- |
-| `Concurrent`인데 실제로는 씁니다 | 한 파일에 겹친 두 쓰기, 한 작업 트리에 겹친 두 셸이 서로의 변경을 덮어씁니다. 마지막 기록자가 조용히 이깁니다. 사용자 데이터가 사라집니다. |
-| `Ordered`인데 실제로는 읽기만 합니다 | 호출은 그대로 실행됩니다. 혼자 돌 뿐이라 느려질 뿐입니다. |
+| `Concurrent` when the tool actually writes | Two overlapping writes to one file, or two overlapping shells in one work tree, overwrite each other's changes. The last writer silently wins. User data disappears. |
+| `Ordered` when the tool only reads | Calls still run. They just run alone, which is slower. |
 
-읽기 전용이고 상태를 바꾸지 않는 도구만 `Concurrent`를 선언합니다.
+Only read-only, non-mutating tools declare `Concurrent`.
 
-`irc`는 파일을 쓰지 않지만 `effects()`를 재정의하지 않아 같은 기본 쓰기 배리어를 선언합니다. 그래서 한 라운드의 여러 `irc` 호출은 하나씩 순서대로 실행되고, 같은 발신자의 메시지 순서가 유지됩니다. 동시 실행 등급도 `Concurrent`가 아닙니다.
+`irc` writes no files but does not override `effects()`, so it declares the same default write barrier. Multiple `irc` calls in one round therefore run one at a time in order, which keeps one sender's message order intact. Its concurrency class is not `Concurrent` either.
 
-### 입력에 따라 달라지는 효과
+### Effects that depend on input
 
-도구의 영향 범위가 인자에 따라 갈리면 `effects_for_input`을 덮어씁니다 (`crates/tool-core/src/lib.rs:260`). 기본 구현은 `effects()`를 그대로 돌려줍니다.
+When a tool's footprint depends on its arguments, it overrides `effects_for_input` (`crates/tool-core/src/lib.rs:260`). The default implementation returns `effects()` unchanged.
 
-레지스트리는 이름만으로 효과를 묻지 않고 그 호출의 입력까지 넘겨 묻습니다.
+The registry asks for effects with the call's input, not with the name alone.
 
-- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1036`).
-- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1044`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
-- 두 함수 모두 `None`을 "분류할 수 없음"으로 씁니다. 호출자는 그 값을 쓰기 배리어로 읽습니다. 읽기 전용 게이트는 자기가 볼 수 없는 영향 범위를 가진 도구 때문에 열리지 않습니다.
+- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1036`).
+- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1044`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
+- Both treat `None` as "cannot classify". Callers read that value as the write barrier. A read-only gate never opens because of a tool whose footprint it cannot see.
 
-### 두 게이트
+### Two gates
 
-계획 모드 검사는 두 경로에 따로 있습니다. 두 경로가 서로 다른 방식으로 도구를 부르기 때문입니다.
+The plan-mode check exists in two places because the two paths call tools differently.
 
-| 경로 | 위치 | 무엇을 하는가 |
+| Path | Location | What it does |
 | --- | --- | --- |
-| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1450`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:1513`)를 지나 도구를 꺼내고 승인 게이트(`:1561`)와 `pre_tool` 훅(`:1582`)을 차례로 지납니다. |
-| 에이전트 | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | 라운드가 호출을 내보내기 전에 이름 하나를 검사합니다. 계획 모드 게이트가 `:1081`에 있습니다. |
+| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1450`) | Resolves the name, checks session policy, passes the plan-mode gate (`:1513`), takes the tool, then passes the approval gate (`:1561`) and the `pre_tool` hook (`:1582`) in order. |
+| Agent | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | Checks one name before the round dispatches any call. The plan-mode gate is at `:1081`. |
 
-에이전트 경로가 계획 모드 검사를 함수 맨 앞에 두는 이유는 그 아래 SDK 분기 때문입니다. SDK가 켠 도구나 콜백 도구는 허용 목록 검사에서 곧바로 `Ok`로 빠져나갑니다. 그 분기 뒤에 게이트를 두면 정확히 영향 범위를 볼 수 없는 호출이 검사를 지나칩니다. 그래서 계획 모드 검사는 그 분기보다 먼저 돌고, 레지스트리 경로도 같은 이유로 같은 기본값을 씁니다.
+The agent path puts the plan-mode check at the top of the function because of the SDK branch below it. SDK-enabled tools and callback tools exit straight to `Ok` from the allow-list check. A gate after that branch would let through exactly the calls whose footprint cannot be seen. So the plan-mode check runs before the branch, and the registry path uses the same default for the same reason.
 
-두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:1517`, `:1573`).
+Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:1517`, `:1573`).
 
-### 계획 모드 상태 기계
+### The plan-mode state machine
 
-`PlanState`는 네 값입니다 (`crates/app-core/src/plan_mode.rs:16`).
+`PlanState` has four values (`crates/app-core/src/plan_mode.rs:16`).
 
-| 상태 | 저장 이름 | 읽기 전용인가 | 뜻 |
+| State | Stored name | Read-only? | Meaning |
 | --- | --- | --- | --- |
-| `Off` | `off` | 아니요 | 계획 모드를 쓰지 않습니다. 모든 호출이 평소대로 돕니다. |
-| `Planning` | `planning` | 예 | 모델이 계획을 세우는 중입니다. |
-| `PendingApproval` | `pending_approval` | 예 | 계획을 제출했고 사용자가 아직 결정하지 않았습니다. |
-| `Approved` | `approved` | 아니요 | 계획이 승인되어 효과가 다시 허용됩니다. |
+| `Off` | `off` | No | Plan mode is unused. Every call runs as usual. |
+| `Planning` | `planning` | Yes | The model is drafting a plan. |
+| `PendingApproval` | `pending_approval` | Yes | A plan was submitted and the user has not decided. |
+| `Approved` | `approved` | No | The plan is approved, so effects are allowed again. |
 
-읽기 전용 여부는 `is_read_only`가 정합니다 (`crates/app-core/src/plan_mode.rs:50`). 게이트는 `allows_effects`로 판정하며, 읽기 전용 상태에서는 `parallel_safe`인 호출만 통과시킵니다 (`crates/app-core/src/plan_mode.rs:164`). 아무것도 선언하지 않은 도구는 트레이트 기본값이 쓰기 배리어라서 거절됩니다.
+`is_read_only` decides read-only status (`crates/app-core/src/plan_mode.rs:50`). The gate decides with `allows_effects`, and in a read-only state it lets through only `parallel_safe` calls (`crates/app-core/src/plan_mode.rs:164`). A tool that declares nothing falls back to the trait's write barrier and is refused.
 
-상태는 세션 ID로 키를 잡은 프로세스 전역 맵에 있습니다. 레지스트리 필드로 두지 않은 이유는 `Registry::Clone`이 호출마다 복제되기 때문입니다. 필드로 두면 복제본마다 상태가 갈라집니다.
+State lives in a process-global map keyed by session id. It is not a field on the registry because `Registry::Clone` copies per call; a field would split state across clones.
 
-- `state_for`는 항목이 없는 세션에 `Off`를 돌려줍니다 (`crates/app-core/src/plan_mode.rs:83`).
-- `set_state`는 `Off`를 저장하지 않고 항목을 지웁니다 (`crates/app-core/src/plan_mode.rs:94`).
-- `clear_state`는 세션 항목을 지웁니다 (`crates/app-core/src/plan_mode.rs:105`).
-- `transition`은 상태를 바꾸고 그 전이를 세션 재생 타임라인에 기록합니다 (`crates/app-core/src/plan_mode.rs:185`).
+- `state_for` returns `Off` for a session with no entry (`crates/app-core/src/plan_mode.rs:83`).
+- `set_state` stores no `Off`; it removes the entry (`crates/app-core/src/plan_mode.rs:94`).
+- `clear_state` removes the session entry (`crates/app-core/src/plan_mode.rs:105`).
+- `transition` changes the state and records the transition in the session replay timeline (`crates/app-core/src/plan_mode.rs:185`).
 
-거절 문구는 `block_message`가 만듭니다 (`crates/app-core/src/plan_mode.rs:173`). 무엇이 거절됐는지, 아무것도 바뀌지 않았는지, 빠져나갈 두 길이 무엇인지를 한 문단에 담습니다. 같은 호출을 다시 보내도 결과가 같다는 점도 적습니다.
+`block_message` writes the refusal text (`crates/app-core/src/plan_mode.rs:173`). One paragraph says what was refused, that nothing changed, and the two ways out. It also notes that resending the same call gives the same result.
 
-계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:919`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:455`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
+Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:919`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:455`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
-### 승인 등급
+### Approval tiers
 
-`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:511`). 기본값은 `off`이고 (`crates/base/src/config.rs:922`), 이는 지금까지처럼 묻지 않는 동작입니다.
+`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:511`). The default is `off` (`crates/base/src/config.rs:922`), which is the same non-asking behaviour as before.
 
-판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:70`). 순서가 중요합니다.
+`evaluate` decides (`crates/app-core/src/approval.rs:70`). Order matters.
 
-1. `dual_confirm_classes`에 든 위험 등급이면 모드와 무관하게 승인을 요구합니다. 이 목록에 등급을 넣는 이유가 바로 어떤 모드도 그것을 자동 승인하지 못하게 하는 것입니다.
-2. 모드가 `off`면 여기서 곧바로 자동 승인으로 돌려줍니다. 읽기 전용 분기보다 앞입니다. 순서가 뒤집히면 아무것도 바꾸지 않아야 할 모드가 호출마다 감사 줄을 쓰기 시작합니다.
-3. 읽기만 하는 호출은 어떤 모드에서도 묻지 않습니다 (`crates/app-core/src/approval.rs:43`).
-4. `write` 모드는 파일 변이만 자동 승인합니다. 프로세스나 네트워크가 섞이면 승인을 요구합니다.
-5. `all` 모드는 읽기 전용이 아닌 모든 호출을 자동 승인합니다.
+1. A danger class in `dual_confirm_classes` requires approval regardless of mode. That is exactly why a class goes into this list: so no mode can auto-approve it.
+2. If the mode is `off`, return auto-approval right here. This comes before the read-only branch. Reversing the order would make a mode that should change nothing start writing an audit line per call.
+3. A read-only call is never asked in any mode (`crates/app-core/src/approval.rs:43`).
+4. `write` mode auto-approves only file mutations. A process or network component requires approval.
+5. `all` mode auto-approves every call that is not read-only.
 
-위험 등급은 새로 분류하지 않고 기존 명령 위험 분류기의 판정을 그대로 씁니다 (`crates/app-core/src/approval.rs:52`). 이름이 붙는 등급은 `destructive-shell` 하나입니다 (`crates/app-core/src/approval.rs:20`). 셸 명령만이 영향 범위를 따질 대상이기 때문입니다.
+Danger classes are not reclassified; the existing command risk classifier's verdict is used as is (`crates/app-core/src/approval.rs:52`). The only class with a name is `destructive-shell` (`crates/app-core/src/approval.rs:20`), because shell commands are the only thing whose footprint needs weighing.
 
-`dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:940`, `crates/base/src/config/default_file.rs:476`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
+`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:940`, `crates/base/src/config/default_file.rs:476`). Empty leaves every decision to the mode.
 
-게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:1561`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
+The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:1561`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
 
-`irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없어서 `write` 모드에서 파일 변이와 같은 자동 승인을 받고, `all` 모드에서도 묻지 않습니다. 승인 창이 뜨는 도구가 아닙니다.
+`irc` has the write bit and no process or network bit, so `write` mode auto-approves it like a file mutation, and `all` mode does not ask either. It is not a tool that raises an approval prompt.
 
-### 감사 기록
+### Audit records
 
-자동 승인에는 감사 기록이 붙습니다. 새 파일이나 새 큐를 만들지 않고 기존 로그 이벤트 `TOOL_APPROVAL`을 씁니다 (`crates/app-core/src/approval.rs:139`). 필드는 도구 이름, 모드, 사유, 호출 ID 넷입니다 (`crates/app-core/src/approval.rs:125`).
+Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:139`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:125`).
 
-`off` 모드는 감사 줄을 쓰지 않습니다. 승인 등급이 없던 시절과 로그가 같아야 하기 때문입니다. 읽기 전용 호출도 감사 대상이 아닙니다. 그래서 `off`가 읽기 전용 분기보다 먼저 반환합니다.
+`off` mode writes no audit line, because logs must match the era before approval tiers existed. Read-only calls are not audited either. That is why `off` returns before the read-only branch.
 
-## 편집 안전 장치
+## Edit safety
 
-파일을 쓰는 도구는 쓰기가 성공한 뒤 그 호출의 변경 전후 스냅샷을 편집 저널에 남깁니다. `undo`는 가장 최근 단위를 되돌리고, `redo`는 마지막 `undo`가 지운 단위를 다시 적용합니다. `read`의 hashline 앵커와 `hashline_edit`는 줄 내용을 짧은 태그로 묶어 편집 대상 줄을 지정합니다. 이 문서는 현재 트리에 있는 이 동작의 범위와 한계를 설명합니다.
+A tool that writes a file records before and after snapshots of that call's changes in the edit journal once the write succeeds. `undo` reverts the most recent unit, and `redo` re-applies the unit the last `undo` removed. `read`'s hashline anchors and `hashline_edit` tag line contents so an edit can name target lines. This document describes the scope and limits of that behaviour in the current tree.
 
-### 저널
+### The journal
 
-저널은 `horon-agent-edit-safety` 크레이트가 소유합니다 (`crates/edit-safety/src/store.rs:162` `SnapshotStore`). 파일 내용은 SHA-256으로 주소를 매기고, 같은 바이트는 한 번만 저장합니다 (`crates/edit-safety/src/blob.rs:17` `BlobId`).
+The journal belongs to the `horon-agent-edit-safety` crate (`crates/edit-safety/src/store.rs:162` `SnapshotStore`). File contents are addressed by SHA-256, and identical bytes are stored once (`crates/edit-safety/src/blob.rs:17` `BlobId`).
 
-- 도구 호출 하나가 변이 단위 하나입니다. 여러 파일을 건드린 호출은 한 단위에 파일별 before/after를 담습니다.
-- 한 호출이 같은 경로를 두 번 건드리면 첫 before와 마지막 after만 남겨 순변경 하나로 기록합니다 (`crates/app-core/src/tool/undo.rs:95` `record`).
-- 기록은 쓰기가 성공한 뒤에만 합니다. 실패한 쓰기는 단위를 남기지 않습니다.
-- `commit`은 단위를 실행 취소 이력으로 옮기고, `abort`는 단위와 그 바이트를 버립니다 (`store.rs:228`, `store.rs:261`).
-- 이력은 세션마다 하나이고 프로세스 수명 동안만 유지합니다. 재시작하면 비어 있습니다.
-- 예산은 64 MiB입니다 (`store.rs:25` `DEFAULT_BYTE_BUDGET`). 커밋할 때 사용량이 예산을 넘으면 가장 오래된 단위부터 통째로 버립니다. 방금 커밋한 단위는 자기 커밋으로는 버려지지 않으므로, 예산보다 큰 단위도 최신인 동안은 남습니다 (`store.rs:228` `commit`).
-- 활성 단위의 바이트도 저장소 사용량에 잡히지만, 예산 정리는 커밋 시점에만 일어납니다.
+- One tool call is one mutation unit. A call touching several files holds per-file before/after in one unit.
+- When one call touches the same path twice, only the first before and the last after are kept, as one net change (`crates/app-core/src/tool/undo.rs:95` `record`).
+- Recording happens only after the write succeeds. A failed write leaves no unit.
+- `commit` moves the unit into the undo history, and `abort` discards the unit and its bytes (`store.rs:228`, `store.rs:261`).
+- History is one per session and lives only for the process lifetime. A restart starts empty.
+- The budget is 64 MiB (`store.rs:25` `DEFAULT_BYTE_BUDGET`). When usage exceeds it at commit time, the oldest units are dropped whole. A unit just committed is never dropped by its own commit, so a unit larger than the budget survives while it is the newest (`store.rs:228` `commit`).
+- An active unit's bytes count toward store usage, but budget pruning happens only at commit.
 
 ### undo
 
-`undo`는 커밋된 이력의 가장 최신 단위만 대상으로 합니다 (`crates/app-core/src/tool/undo.rs:271` `UndoTool`).
+`undo` targets only the newest committed unit in the history (`crates/app-core/src/tool/undo.rs:271` `UndoTool`).
 
-1. 각 파일의 현재 바이트를 단위의 after 상태와 비교합니다.
-2. 하나라도 다르면 기본적으로 호출을 거부합니다. `force: true`이면 덮어쓰고, 덮어쓴 경로를 결과에 나열합니다.
-3. 기록된 상태에 읽을 수 없던 파일이 있으면 단위 전체를 거부합니다. 일부만 복원하고 성공으로 보고하지 않습니다 (`store.rs:277` `undo`).
-4. 성공하면 파일을 before 상태로 되돌립니다. 파일이 없던 상태였으면 지우고, 바이트가 있던 상태였으면 그 바이트를 씁니다.
+1. Compare each file's current bytes with the unit's after state.
+2. If any differs, the call is refused by default. With `force: true` it overwrites and lists the overwritten paths in the result.
+3. If the recorded state holds a file that could not be read, the whole unit is refused. A partial restore is never reported as success (`store.rs:277` `undo`).
+4. On success, files go back to their before state. A file that did not exist is deleted; a state with bytes writes those bytes.
 
-저널은 파일을 직접 건드리지 않습니다. 복원할 바이트를 돌려주고, 쓰기는 호출자인 `undo` 도구가 합니다. 이 분리 덕분에 크레이트 단위 테스트는 파일 시스템 없이 돕니다.
+The journal never touches files itself. It returns the bytes to restore, and the calling `undo` tool writes them. That split lets crate-level tests run without a file system.
 
 ### redo
 
-`redo`는 `[tools] redo = true`일 때만 등록됩니다 (`crates/app-core/src/tool/undo.rs:133` `redo_enabled`). 기본값은 `false`입니다. 등록되어도 프로필의 허용 목록을 통과해야 모델에 보이므로, `core` 프로필에서는 `full`이나 명시적 허용 목록이 함께 필요합니다.
+`redo` is registered only when `[tools] redo = true` (`crates/app-core/src/tool/undo.rs:133` `redo_enabled`). The default is `false`. Even registered, it must pass the profile's allow-list to reach the model, so in the `core` profile it also needs `full` or an explicit allow-list.
 
-- 마지막 `undo`가 넘긴 단위의 after 상태를 다시 씁니다.
-- 각 파일의 현재 바이트가 그 단위의 before 상태와 같은지 먼저 확인합니다. 다르면 거부하고, `force: true`이면 덮어쓰고 경로를 나열합니다.
-- 성공하면 그 변경을 새 변이 단위로 다시 커밋합니다. 그래서 다시 `undo`할 수 있습니다.
-- redo 대기열은 세션별 모듈 상태에 있고 프로세스가 끝나면 사라집니다.
+- It rewrites the after state of the unit the last `undo` moved.
+- It first checks that each file's current bytes equal the unit's before state. On a mismatch it refuses; with `force: true` it overwrites and lists the paths.
+- On success it commits that change as a new mutation unit, so it can be undone again.
+- The redo queue lives in per-session module state and disappears when the process ends.
 
-### hashline 앵커
+### hashline anchors
 
-`read`에 `hashline: true`를 주면 각 줄 앞에 `{줄번호:>5}#{태그}:{본문}`을 붙입니다 (`crates/app-core/src/tool/read.rs:153`). 태그는 그 줄 바이트의 SHA-256 첫 두 바이트를 소문자 16진수 네 자리로 쓴 것입니다 (`crates/edit-safety/src/hashline.rs:27` `tag_for`). 16비트 값이므로 암호학적 약속이 아니라, 모델이 읽은 줄을 가리키는 값싼 표식입니다.
+Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:153`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
 
-- 2000바이트를 넘는 줄은 잘리고 `----` 태그를 받습니다 (`read.rs:13` `MAX_LINE_LEN`). 이 앵커는 내용을 가리키지 않으므로 편집에 쓸 수 없습니다.
-- `hashline_edit`는 `[tools] hashline_edit = true`일 때만 등록됩니다. 기본값은 `false`이고 코어 집합 밖입니다.
-- 입력은 `file_path`와 `ops` 배열입니다. 각 op는 `start_anchor`, 선택적 `end_anchor`, `new_text`를 가집니다.
-- 모든 앵커를 디스크의 현재 내용과 먼저 대조합니다. 하나라도 낡았으면 호출 전체를 거부하고 파일을 쓰지 않습니다 (`crates/app-core/src/tool/hashline_edit.rs:128` `resolve_ops`).
-- 줄 번호는 1부터 시작하고, span은 아래로만 진행하며, 겹치는 span은 거부합니다.
-- `new_text`가 빈 문자열이면 span을 지웁니다. 끝의 줄바꿈 하나는 내용이 아니라 구분자로 봅니다.
-- 쓰기 경로는 `edit`와 같습니다. 경로별 잠금, 변이 단위 하나, 같은 파일 접촉 이벤트를 씁니다.
+- A line longer than 2000 bytes is cut and receives the `----` tag (`read.rs:13` `MAX_LINE_LEN`). That anchor names no content, so it cannot be used for an edit.
+- `hashline_edit` is registered only when `[tools] hashline_edit = true`. The default is `false`, and it is outside the core set.
+- Input is `file_path` plus an `ops` array. Each op has `start_anchor`, an optional `end_anchor`, and `new_text`.
+- Every anchor is checked against the current on-disk content first. One stale anchor refuses the whole call and writes nothing (`crates/app-core/src/tool/hashline_edit.rs:128` `resolve_ops`).
+- Line numbers start at 1, spans move downward only, and overlapping spans are refused.
+- An empty `new_text` deletes the span. A single trailing newline counts as a separator rather than content.
+- The write path matches `edit`: per-path locking, one mutation unit, and the same file-touch events.
 
-### 한계와 실패 방식
+### Limits and failure modes
 
-| 상황 | 동작 |
+| Situation | Behaviour |
 | --- | --- |
-| 프로세스 재시작 | 이력이 비어 있어 `undo`가 되돌릴 것이 없다고 거부합니다. |
-| 기록 후 다른 프로세스가 파일을 바꿈 | `undo`가 거부합니다. `force: true`이면 덮어쓰고 경로를 나열합니다. |
-| 기록 당시 파일을 읽을 수 없었음 | 그 단위의 `undo` 전체가 거부됩니다. |
-| 예산 초과 | 가장 오래된 단위부터 사라지고, 그 단위는 되돌릴 수 없습니다. |
-| 예산보다 큰 단위 | 최신인 동안은 남습니다. 예산은 강제 상한이 아닙니다. |
-| 낡은 hashline 앵커 | 호출 전체가 거부되고 파일은 그대로입니다. |
-| `----` 앵커 | 편집에 쓸 수 없다는 오류로 거부합니다. |
-| 겹치는 span | 호출 전체가 거부됩니다. |
+| Process restart | History is empty, so `undo` refuses and says there is nothing to revert. |
+| Another process changed the file after recording | `undo` refuses. With `force: true` it overwrites and lists the paths. |
+| A file could not be read when recorded | `undo` for that whole unit is refused. |
+| Budget exceeded | The oldest units disappear and can no longer be reverted. |
+| A unit larger than the budget | It survives while it is the newest. The budget is not a hard cap. |
+| Stale hashline anchor | The whole call is refused and the file is untouched. |
+| `----` anchor | Refused with an error saying it cannot be used for an edit. |
+| Overlapping spans | The whole call is refused. |
 
-크레이트는 파일 시스템을 읽지 않으므로 외부 변경을 스스로 감지하지 않습니다. 감지는 호출자가 `BlobId::of`로 현재 바이트를 기록된 상태와 비교할 때 일어납니다. 이력은 프로세스 밖으로 나가지 않으며, 다른 프로세스나 재시작한 세션과 공유하지 않습니다.
+The crate never reads the file system, so it cannot detect outside changes by itself. Detection happens when the caller compares current bytes with the recorded state through `BlobId::of`. History never leaves the process and is not shared with another process or a restarted session.
 
-## write가 새로 만든 실행 파일
+## Executable files that write creates
 
-`write`가 새 파일을 만들 때 내용이 `#!`로 시작하면 유닉스에서 실행 권한을 함께 줍니다 (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). 방금 쓴 스크립트를 다음 턴에 `bash ./script.sh`로 부르다 권한 오류로 한 턴을 쓰는 일을 없애려는 처리입니다.
+When `write` creates a new file whose content starts with `#!`, it also grants the execute permission on Unix (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). The point is to stop a freshly written script from burning a turn on a permission error when it is next run as `bash ./script.sh`.
 
-- 권한은 새로 만들 때만 바뀝니다. 이미 있는 파일을 덮어쓸 때는 그 파일의 기존 모드를 그대로 둡니다. 모드는 파일 주인이 정한 값이고, 이번 호출은 내용만 바꿨기 때문입니다.
-- 목표 모드는 만들기 모드에 실행 비트를 더한 값입니다. 만들기 모드는 `0o666 & !umask`이므로 읽을 수 있는 분류에만 실행 비트를 붙입니다. umask가 022이면 644가 755가 되고, 077이면 600이 700이 됩니다 (`script_mode`).
-- `umask()`를 부르지 않습니다. 그 호출은 프로세스 전체 값이라 다른 스레드가 파일을 만드는 순간과 경쟁합니다. 대신 방금 만들어진 파일의 모드를 읽어 실행 비트를 그 모드에서 계산합니다.
-- 만들기일 때만 적용합니다. ACP 클라이언트 버퍼로 쓴 경우에는 디스크에 파일이 없으므로 실행 비트를 건드리지 않고, `edit`, `apply_patch`, `hashline_edit`도 그대로입니다.
-- 결과 본문에 파일을 실행 가능하게 만들었다는 문장이 붙습니다. 권한을 바꾸지 않았으면 붙지 않습니다.
-- 윈도우에는 실행 비트가 없으므로 아무것도 하지 않습니다. `#[cfg(not(unix))]`의 같은 이름 함수가 `false`를 돌려줍니다.
+- Permissions change only on creation. Overwriting an existing file keeps that file's mode, because the owner set the mode and this call changed only the content.
+- The target mode is the creation mode plus the execute bit. The creation mode is `0o666 & !umask`, so the execute bit is added only for readable classes. With umask 022, 644 becomes 755; with 077, 600 becomes 700 (`script_mode`).
+- `umask()` is never called. That value is process-wide and would race another thread creating a file. Instead the mode of the just-created file is read and the execute bit is computed from it.
+- It applies to creation only. Content written to the ACP client buffer does not exist on disk, so no execute bit is touched, and `edit`, `apply_patch`, and `hashline_edit` are unchanged.
+- The result body gains a sentence saying the file was made executable. It is absent when permissions were not changed.
+- Windows has no execute bit, so nothing happens. The same-named function under `#[cfg(not(unix))]` returns `false`.
 
-## todo의 blocked 상태
+## The blocked state in todo
 
-`todo` 도구는 `blocked`를 상태로 받습니다. 외부 의존 때문에 진행할 수 없는 작업을 `pending`이나 `in_progress`로 적으면 이유가 사라지고, 목록만 보고는 무엇을 기다리는지 알 수 없습니다.
+The `todo` tool accepts `blocked` as a status. Writing a task that cannot proceed for an external reason as `pending` or `in_progress` loses the reason, and the list alone no longer says what is being awaited.
 
-- `blocked`에는 `blocker` 문자열이 필요합니다. 500자까지이고, 비어 있거나 공백뿐이면 거부합니다 (`crates/app-core/src/tool/todo_blocked.rs` `normalize`). 이유 없는 차단은 저장하지 않습니다.
-- `blocked`가 아닌 항목에 붙은 `blocker`는 버립니다. 상태가 바뀐 뒤에도 남은 메모가 살아 있는 이유처럼 읽히기 때문입니다.
-- 저장 전에 앞뒤 공백을 지웁니다.
-- 완료 검사는 `blocked`를 완료로 보지 않습니다. 남은 항목이 `blocked` 하나뿐인 목록은 완료가 아니고, 자동 재촉도 그 항목을 남은 일로 셉니다 (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). 진행 중 항목을 하나만 두는 규칙에서도 `in_progress`로 세지 않습니다.
-- ACP 계획 항목은 세 상태만 있어 `blocked`를 `pending`으로 내보냅니다 (`crates/app-core/src/tool/todo.rs` `plan_entries`). 지금 아무도 하지 않는 열린 일이라는 뜻이고, 이유는 항목 자체의 `blocker`에 남습니다.
-- 도구 결과의 JSON에 `blocker`가 함께 나오므로 목록을 보는 쪽이 이유를 읽을 수 있습니다.
+- `blocked` requires a `blocker` string. It allows up to 500 characters and refuses an empty or whitespace-only value (`crates/app-core/src/tool/todo_blocked.rs` `normalize`). A block with no reason is not stored.
+- A `blocker` on an item that is not `blocked` is dropped. Left behind after a status change, it would read like a note that is still the live reason.
+- Surrounding whitespace is trimmed before saving.
+- Completion checks do not treat `blocked` as done. A list whose only remaining item is `blocked` is not complete, and the automatic nudge counts that item as remaining work (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). It also does not count as `in_progress` for the rule that allows only one in-progress item.
+- ACP plan entries have only three states, so `blocked` is exported as `pending` (`crates/app-core/src/tool/todo.rs` `plan_entries`). That means an open item nobody is working on right now, and the reason stays on the item's own `blocker`.
+- The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
 
-## read 결과에 붙는 중첩 AGENTS.md
+## Ancestor AGENTS.md attached to read results
 
-`read` 도구는 파일 본문을 돌려줄 때, 그 파일 위쪽 디렉터리에 있는 `AGENTS.md`를 찾아 결과 끝에 덧붙입니다. 세션이 실제로 읽는 디렉터리의 규칙을 그 파일과 함께 보게 하려는 장치입니다. 이 문서는 현재 트리의 동작을 설명합니다. 코드는 `crates/app-core/src/tool/nested_agents.rs`의 `inject_for_read`와, `crates/app-core/src/tool/read.rs`의 `execute`가 그 함수를 부르는 자리에 있습니다.
+When `read` returns a file body, it looks for `AGENTS.md` in directories above that file and appends them to the end of the result. The point is that a session reading a directory sees that directory's rules together with the file. This document describes the behaviour of the current tree. The code is `inject_for_read` in `crates/app-core/src/tool/nested_agents.rs`, called from `execute` in `crates/app-core/src/tool/read.rs`.
 
-### 무엇을 하는가
+### What it does
 
-주입 위치는 시스템 프롬프트가 아니라 도구 결과입니다. `read`의 `execute`가 텍스트 본문을 다 만든 뒤 `nested_agents::inject_for_read(&path, output.len(), &ctx)`를 부르고, 돌려받은 문자열을 결과 끝에 `push_str`로 붙입니다.
+The injection target is the tool result, not the system prompt. After `read`'s `execute` builds the text body, it calls `nested_agents::inject_for_read(&path, output.len(), &ctx)` and appends the returned string to the result with `push_str`.
 
-빈 본문 판정은 주입 호출 앞에서 `let base_is_empty = output.is_empty();`로 먼저 재어 둡니다. 그래야 `(empty file)` 표시가 주입문에 밀리지 않고, 빈 파일에도 조상 계약이 붙습니다(`if base_is_empty` 분기에서도 주입 결과를 붙입니다). 주입이 하는 일은 덧붙이기 하나뿐입니다. 파일 내용을 해석하거나 병합하거나 규칙으로 강제하지 않습니다.
+The empty-body decision is measured before that call with `let base_is_empty = output.is_empty();`. That keeps the `(empty file)` marker from being pushed aside by the injection text and still attaches ancestor contracts to an empty file (the `if base_is_empty` branch appends the injection too). Injection only appends. It never parses, merges, or enforces file contents as rules.
 
-### 어떤 파일이 붙는가
+### Which files are attached
 
-#### 조상 탐색 규칙
+#### Ancestor search rule
 
-탐색은 `find_agents_md_up`이 맡습니다. 읽는 파일이 든 디렉터리에서 시작해 위로 올라가고, 세션의 작업 디렉터리에서 멈춥니다. `while let Some(dir) = current` 루프가 `dir == root || !dir.starts_with(root)`에서 `break`합니다. 찾은 파일은 `found.reverse()`로 루트에서 리프 방향으로 정렬해 붙입니다. 가까운 디렉터리의 계약이 뒤에 오므로 더 구체적인 규칙을 나중에 읽습니다.
+The search is `find_agents_md_up`. It starts at the directory holding the file being read, walks upward, and stops at the session's working directory. The `while let Some(dir) = current` loop `break`s on `dir == root || !dir.starts_with(root)`. Found files are ordered root to leaf with `found.reverse()` before attaching, so a nearer directory's contract comes later and more specific rules are read last.
 
-세 가지는 대상에서 빠집니다.
+Three cases are excluded.
 
-- 작업 디렉터리 자신의 `AGENTS.md`는 붙지 않습니다. 위의 `break`가 작업 디렉터리에 닿는 순간 탐색을 끝내기 때문입니다. 그 파일은 시스템 프롬프트 계층이 이미 다룹니다([`docs/runtime/PROMPT.md`](PROMPT.md)의 4 계층).
-- 읽고 있는 파일이 그 디렉터리의 `AGENTS.md` 자신이면 자기 자신은 넣지 않습니다. `find_agents_md_up`의 `canonical != start` 조건이 그 경우를 거릅니다. 상위 계약만 붙습니다.
-- 조상 디렉터리에 `AGENTS.md`가 없으면 그 디렉터리는 건너뜁니다. 있는 것만 순서대로 모읍니다.
+- The working directory's own `AGENTS.md` is not attached, because the `break` above ends the search the moment it reaches the working directory. That file is already handled by the system prompt layers (layer 4 in [`docs/runtime/PROMPT.md`](PROMPT.md)).
+- When the file being read is that directory's own `AGENTS.md`, it is not included. The `canonical != start` condition in `find_agents_md_up` skips that case. Only ancestor contracts are attached.
+- An ancestor directory with no `AGENTS.md` is skipped. Only existing files are collected, in order.
 
-#### 경계 제한
+#### Boundary enforcement
 
-주입 대상 경로와 작업 디렉터리를 모두 실제 경로로 정규화한 뒤 비교합니다. `contain`이 `std::fs::canonicalize`를 양쪽에 걸고, `file == root || !file.starts_with(&root)`이면 `None`을 돌려줍니다. 그때는 아무것도 붙지 않습니다.
+Both the injection target path and the working directory are canonicalized before comparison. `contain` runs `std::fs::canonicalize` on both and returns `None` when `file == root || !file.starts_with(&root)`. Nothing is attached then.
 
-정규화를 거치므로 작업 디렉터리 안을 가리키는 심볼릭 링크가 실제로는 바깥 디렉터리를 향하면 거부됩니다. 링크 이름만 보고 통과시키지 않습니다. `contain_rejects_symlink_escaping_root` 테스트가 이 경우를 고정합니다.
+Because of the canonicalization, a symlink inside the working directory that actually points outside it is refused. The link's name alone never passes. The `contain_rejects_symlink_escaping_root` test pins this case.
 
-#### 크기 상한
+#### Size ceilings
 
-상한은 세 겹이고, 앞의 두 상한은 파일 본문만이 아니라 결과에 실제로 붙는 덧붙임의 바이트를 셉니다. 헤더와 절단 안내도 그 안에 들어갑니다.
+There are three ceilings, and the first two count the bytes actually appended to the result, not just the file body. Headers and truncation notices are inside them.
 
-| 상수 | 값 | 막는 것 |
+| Constant | Value | What it stops |
 | --- | --- | --- |
-| `MAX_BYTES_PER_FILE` | 16 KiB | 조상 `AGENTS.md` 한 파일이 만드는 블록 전체(헤더, 본문, 절단 안내) |
-| `MAX_BYTES_PER_READ` | 32 KiB | 한 번의 `read`가 붙이는 모든 블록의 합 |
-| `MAX_BASE_OUTPUT_BYTES` | 32 KiB | 이 크기 이상인 읽기 결과에는 아예 붙이지 않음. 가드가 시작되는 지점이 아니라, 덧붙임 때문에 아직 받아들일 만한 결과가 가드의 실제 한도 너머로 밀리지 않도록 잡아 둔 보수적 여유 |
+| `MAX_BYTES_PER_FILE` | 16 KiB | The whole block one ancestor `AGENTS.md` produces (header, body, truncation notice) |
+| `MAX_BYTES_PER_READ` | 32 KiB | The sum of every block one `read` attaches |
+| `MAX_BASE_OUTPUT_BYTES` | 32 KiB | A read result at or above this size gets no attachment at all. This is not where the guard starts; it is a conservative margin so the attachment cannot push a still-acceptable result past the guard's real limit |
 
-블록을 만들 때 헤더와 절단 안내의 길이를 먼저 빼고, 남은 만큼만 본문에 씁니다. 그래서 상한을 넘는 블록이 나오지 않습니다. 본문이 잘리면 UTF-8 문자 경계에서 자르고, 잘렸다는 `[Note: content truncated ...]` 줄을 그 블록 끝에 남깁니다. `MAX_BYTES_PER_READ`도 마찬가지로, 그 읽기가 붙이는 모든 블록과 건너뛰었다는 안내를 합친 양을 막습니다.
+When building a block, the header and truncation notice lengths are subtracted first and only the remainder goes into the body, so no block exceeds its ceiling. A cut body is cut at a UTF-8 character boundary and leaves an `[Note: content truncated ...]` line at the end of that block. `MAX_BYTES_PER_READ` likewise caps every block that read attaches plus the skipped notice.
 
-다음 조상 파일의 헤더조차 들어가지 않거나 잘린 본문에 붙일 안내가 들어가지 않으면 거기서 멈추고, 건너뛴 조상 파일이 몇 개인지 밝히는 `[Note: N more ancestor AGENTS.md files skipped: ...]` 안내를 결과 끝에 붙입니다. 이 안내가 들어갈 자리를 남기려고, 블록마다 쓸 수 있는 양을 정할 때 읽기 예산의 일부를 미리 떼어 둡니다(`SKIPPED_MARKER_RESERVE`). 그런데도 안내가 들어가지 않으면 안내를 버립니다. 상한을 넘겨서 붙이지는 않습니다.
+When even the next ancestor's header does not fit, or the notice for a truncated body does not fit, injection stops there and appends a `[Note: N more ancestor AGENTS.md files skipped: ...]` notice to the end of the result. To leave room for that notice, a slice of the read budget is held back when sizing each block (`SKIPPED_MARKER_RESERVE`). If the notice still does not fit, it is dropped. Nothing is appended past a ceiling.
 
-### 언제 붙지 않는가
+### When nothing is attached
 
-다음 중 하나라도 해당하면 결과는 원래 본문 그대로입니다.
+If any of the following holds, the result is the plain body.
 
-- 설정 `[tools] nested_agents_md`가 꺼져 있음. `inject_for_read`가 `crate::config::config().tools.nested_agents_md`를 가장 먼저 봅니다.
-- 세션에 작업 디렉터리가 없음. `ctx.working_dir.as_deref()`가 `None`이면 그 자리에서 반환하고 `nested_agents: no working_dir; skipping ancestor AGENTS.md injection` 로그를 남깁니다.
-- 읽은 파일이 작업 디렉터리 밖이거나, 심볼릭 링크가 바깥을 가리킴.
-- 위쪽 어디에도 `AGENTS.md`가 없음.
-- 읽기 결과가 이미 32 KiB 이상임(`base_output_bytes >= MAX_BASE_OUTPUT_BYTES`). 이 상한은 도구 결과 가드가 시작되는 지점이 아닙니다. 가드의 실제 한도는 `single_output_max_tokens`가 정하는 `min(예산 × 0.30, 50,000)` 토큰이고(`crates/app-core/src/tool/mod.rs:1201-1203`, 상수 정의는 `:1361`과 `:1372`), 이 값을 토큰당 4글자로 환산하므로(`APPROX_CHARS_PER_TOKEN = 4`, `crates/core/src/util.rs:17`) 예산이 16만 6,667 토큰 이상이면 20만 자에 머뭅니다. 문맥이 거의 찬 세션에서는 남은 여유가 이 값보다 먼저 걸립니다(`mod.rs:1668-1671`). 실제 모델의 문맥 창 규모에서는 32 KiB가 그 한도에 한참 못 미칩니다. 이 상한을 두는 이유는 덧붙임 때문에 아직 받아들일 만한 결과가 가드 한도 너머로 밀리지 않게 하려는 것입니다. 그 대가로 32 KiB와 가드의 실제 한도 사이에 드는 결과는 본문을 그대로 돌려받으면서 계약은 하나도 붙지 않고, 그 사실을 알리는 표시도 없습니다. 가드의 한도를 넘으면 결과 자체가 보류되고, 호출자가 `accept_large_output`을 넘길 때만 잘려서 돌아옵니다.
-- 같은 세션에서 그 경로를 이미 주입했음. 아래 세션 범위 캐시를 따릅니다.
-- `read`가 텍스트 분기까지 오지 않음. `agent://` 참조는 `is_agent_url`, 이미지는 `is_image_file`, PDF는 `is_pdf_file`, 바이너리는 `is_binary_file` 분기에서 먼저 반환하므로 주입 지점에 닿지 않습니다.
+- The `[tools] nested_agents_md` setting is off. `inject_for_read` reads `crate::config::config().tools.nested_agents_md` first.
+- The session has no working directory. If `ctx.working_dir.as_deref()` is `None` it returns immediately and logs `nested_agents: no working_dir; skipping ancestor AGENTS.md injection`.
+- The read file is outside the working directory, or a symlink points outward.
+- No `AGENTS.md` exists anywhere above.
+- The read result is already 32 KiB or larger (`base_output_bytes >= MAX_BASE_OUTPUT_BYTES`). This ceiling is not where the tool-result guard starts. The guard's real limit is `min(budget × 0.30, 50,000)` tokens from `single_output_max_tokens` (`crates/app-core/src/tool/mod.rs:1201-1203`, constants defined at `:1361` and `:1372`), converted at four characters per token (`APPROX_CHARS_PER_TOKEN = 4`, `crates/core/src/util.rs:17`), so it settles at 200,000 characters once the budget reaches about 166,667 tokens. In a session whose context is nearly full, the remaining headroom binds before that (`mod.rs:1668-1671`). At the context-window scale of real models, 32 KiB falls far short of that limit. The ceiling exists so the attachment cannot push a still-acceptable result past the guard. The cost is that a result between 32 KiB and the guard's real limit returns its body with no contracts and no marker saying so. Past the guard's limit the result itself is withheld and comes back truncated only when the caller passes `accept_large_output`.
+- The path was already injected in this session. See the session-scoped cache below.
+- `read` does not reach the text branch. `agent://` references return from `is_agent_url`, images from `is_image_file`, PDFs from `is_pdf_file`, and binaries from `is_binary_file` before the injection point.
 
-### 설정 방법
+### Configuration
 
-`config.toml`의 `[tools]` 표에 스위치가 있습니다. 기본값은 켜짐입니다(`crates/base/src/config.rs:902-905`, `crates/base/src/config.rs:934`).
+The switch is in the `[tools]` table of `config.toml`. It defaults to on (`crates/base/src/config.rs:902-905`, `crates/base/src/config.rs:934`).
 
 ```toml
 [tools]
 nested_agents_md = true
 ```
 
-환경변수로 덮어쓸 때는 `HORON_AGENT_NESTED_AGENTS_MD`를 씁니다. `0`이나 `false` 계열 값이 꺼짐으로 해석됩니다(`crates/base/src/config/env_overrides.rs:161-165`). 기본 설정 파일에도 같은 키와 설명이 들어 있습니다(`crates/base/src/config/default_file.rs:435-441`).
+The environment override is `HORON_AGENT_NESTED_AGENTS_MD`. Values like `0` or `false` parse as off (`crates/base/src/config/env_overrides.rs:161-165`). The default configuration file carries the same key and description (`crates/base/src/config/default_file.rs:435-441`).
 
-### 세션 범위 캐시
+### Session-scoped cache
 
-같은 세션에서 같은 `AGENTS.md`를 두 번 붙이지 않습니다. 주입한 경로를 세션 id별로 모아 두고, 이미 있는 경로는 건너뜁니다(`InjectedSessions`의 `already_injected`와 `mark_injected`).
+The same `AGENTS.md` is never attached twice in one session. Injected paths are collected per session id, and an existing path is skipped (`already_injected` and `mark_injected` on `InjectedSessions`).
 
-- 캐시는 프로세스 전역 하나이고, 추적하는 세션은 최대 64개입니다(`MAX_TRACKED_SESSIONS`). `ensure_session`이 세션을 등록한 뒤 `order.len() > MAX_TRACKED_SESSIONS`인 동안 가장 먼저 등록된 세션의 기록을 버립니다.
-- 기록이 밀려난 세션은 같은 경로를 다시 주입받습니다. `inserting_more_than_max_sessions_evicts_the_oldest` 테스트가 그 순서를 고정합니다.
-- 세션 안에서 파일 내용이 바뀌어도 다시 붙지 않습니다. 경로만 기억합니다.
+- The cache is process-global and tracks at most 64 sessions (`MAX_TRACKED_SESSIONS`). `ensure_session` registers a session, then drops the earliest-registered session's record while `order.len() > MAX_TRACKED_SESSIONS`.
+- A session whose record was pushed out receives the same path again. The `inserting_more_than_max_sessions_evicts_the_oldest` test pins that order.
+- Changing a file's content within a session does not re-attach it. Only the path is remembered.
 
-### 출력 형식 예시
+### Output examples
 
-블록은 줄바꿈 두 번 뒤에 대괄호 헤더가 오고, 그 아래에 파일 본문이 그대로 붙습니다(`inject_for_read`가 쓰는 `block_header`의 `format!("\n\n[Directory Context: {}]\n", ...)`).
+A block is two newlines, then a bracketed header, then the file body verbatim (`block_header`'s `format!("\n\n[Directory Context: {}]\n", ...)` in `inject_for_read`).
 
 ```text
     1	use crate::config;
 
 [Directory Context: /Users/me/repo/crates/base/AGENTS.md]
-crates/base 규칙 본문
+crates/base rules body
 
 [Directory Context: /Users/me/repo/crates/base/config/AGENTS.md]
-config 하위 디렉터리 규칙 본문
+config subdirectory rules body
 ```
 
-본문이 잘리면 그 블록 끝에 `[Note: content truncated to save context window; read the file directly for the rest: <경로>]`가 붙습니다. 예산이 모자라 남은 조상 파일을 건너뛰었으면, 그 대신 `[Note: N more ancestor AGENTS.md files skipped: this read's context budget is full; read them directly]`가 결과 끝에 붙습니다.
+A truncated body gets `[Note: content truncated to save context window; read the file directly for the rest: <path>]` at the end of its block. When budget ran out and ancestor files were skipped, `[Note: N more ancestor AGENTS.md files skipped: this read's context budget is full; read them directly]` is appended to the result instead.
 
-### 알려진 한계
+### Known limits
 
-- 대화가 압축돼도 다시 붙지 않습니다. 캐시는 세션 id와 경로만 보고, 압축을 감지해 기록을 지우는 경로가 없습니다.
-- 캐시는 프로세스 메모리에만 있습니다. 프로세스를 다시 띄우면 비어 있고, 그 세션의 첫 `read`에서 다시 붙습니다.
-- 세션 기록이 64개를 넘으면 오래된 세션의 기록이 밀려나므로, 그 세션은 같은 계약을 한 번 더 받습니다.
-- 주입은 `read` 한 곳에서만 일어납니다. `agentgrep`, `ls`, `bash` 출력에는 붙지 않습니다.
-- 규칙을 강제하지 않습니다. 붙은 본문은 모델이 읽는 텍스트일 뿐이고, 위반을 막는 검사는 없습니다.
-- 작업 디렉터리 자신의 `AGENTS.md`는 이 경로로 오지 않습니다. 그 파일과 전역 `~/AGENTS.md`는 프롬프트 계층이 맡습니다.
-- 읽기 결과가 32 KiB 이상이면 계약이 붙지 않는데, 그 사실이 결과에 드러나지 않습니다. 독자는 "여기에 AGENTS.md가 없다"와 "본문이 커서 계약을 건너뛰었다"를 구분할 수 없습니다. 가드의 실제 한도에 닿기 전까지 본문은 정상으로 돌아오므로, 결과만 보고는 어느 쪽인지 알 길이 없습니다. 이 조용한 누락에 책임이 있는 상수는 `MAX_BASE_OUTPUT_BYTES`입니다.
+- Compaction does not re-attach anything. The cache looks only at session id and path, and nothing clears records on compaction.
+- The cache is process memory only. A fresh process starts empty and re-attaches on that session's first `read`.
+- Past 64 sessions, the oldest session's record is pushed out, so that session receives the same contracts once more.
+- Injection happens in `read` only. It is not attached to `agentgrep`, `ls`, or `bash` output.
+- Rules are not enforced. An attached body is text the model reads, and no check blocks a violation.
+- The working directory's own `AGENTS.md` never arrives this way. That file and the global `~/AGENTS.md` belong to the prompt layers.
+- A read result of 32 KiB or more gets no contracts and the result does not say so. A reader cannot tell "there is no AGENTS.md here" from "the body was too large, so contracts were skipped". Until the guard's real limit, the body comes back normally, so the result alone cannot distinguish the two. The constant responsible for that silent omission is `MAX_BASE_OUTPUT_BYTES`.
 
-## 스킬 읽기
+## Reading skills
 
-스킬이 어디서 오는지, 이름이 겹칠 때 어떻게 되는지는 [`PROMPT.md`](PROMPT.md)의 "스킬" 절에 있습니다. 이 절은 도구가 스킬을 읽는 방법만 다룹니다.
+Where skills come from and what happens when names collide is in the "Skills" section of [`PROMPT.md`](PROMPT.md). This section covers only how the tool reads a skill.
 
 ### `read skill://`
 
-- `skill://<이름>`은 그 스킬의 본문을 돌려줍니다. 결과는 `## Skill: <이름>`, `Base directory: <스킬 폴더>` 두 줄로 시작하고, 앞머리는 빠집니다.
-- `skill://<이름>/<경로>`는 스킬 폴더 기준의 파일을 읽습니다. 이름에 namespace가 있으면(`claude/review`) 등록된 이름 가운데 가장 긴 접두가 이름이 되고 나머지가 경로입니다.
-- 줄 선택자(`skill://qa-skill/references/a.md:20-40`)와 `offset`/`limit`은 파일 읽기와 같게 동작합니다.
-- 이름은 이 세션의 실효 목록에서 찾습니다. 사용자 스킬에 그 세션 작업 폴더의 스킬을 더한 목록이라, 다른 저장소의 프로젝트 스킬은 보이지 않습니다.
-- 경로는 실제 경로로 바꾼 뒤 스킬 폴더의 실제 경로 안에 있어야 합니다. `..`, 절대 경로, 밖을 가리키는 심링크는 `skill:// path resolves outside the skill directory` 오류가 됩니다. 없는 스킬은 `skill:// names no installed skill` 오류입니다.
+- `skill://<name>` returns that skill's body. The result starts with `## Skill: <name>` and `Base directory: <skill folder>`; frontmatter is dropped.
+- `skill://<name>/<path>` reads a file relative to the skill folder. When the name carries a namespace (`claude/review`), the longest registered prefix becomes the name and the rest is the path.
+- Line selectors (`skill://qa-skill/references/a.md:20-40`) and `offset`/`limit` behave as in a file read.
+- The name is resolved against this session's effective list, which is user skills plus the skills in that session's working folder, so project skills from another repository are invisible.
+- The path is canonicalized and must lie inside the canonical skill folder. `..`, absolute paths, and outward symlinks fail with `skill:// path resolves outside the skill directory`. An unknown skill fails with `skill:// names no installed skill`.
 
-### 경로 정책과의 관계
+### Relationship to path policy
 
-경로 거부 정책(`path_policy`)은 `skill://` 글자 자체를 작업 폴더 경로로 해석하지 않습니다. 대신 `skill://<이름>/<경로>`가 가리키는 실제 파일에 기존 거부 규칙을 그대로 적용하므로, 정책이 막는 파일은 스킬 경로로도 읽을 수 없습니다. 작업 폴더 밖을 막는 정책을 둔 세션에서는 `~/.horon/skills` 같은 사용자 수준 스킬의 하위 파일이 이 규칙에 걸립니다. 그런 세션은 사용자 수준 스킬을 `skill_manage`(action `load`)로 읽습니다.
+The path-denial policy (`path_policy`) never treats the literal `skill://` as a working-folder path. Instead it applies the existing denial rules to the real file that `skill://<name>/<path>` names, so a file the policy blocks cannot be read through a skill path either. In a session whose policy blocks everything outside the working folder, a sub-file of a user-level skill such as `~/.horon/skills` hits that rule. Such sessions read user-level skills with `skill_manage` (action `load`).
 
-## 스킬 관리
+## Managing skills
 
-`skill_manage`의 `create`, `update`, `delete`는 모델이 직접 쓴 스킬만 다룹니다. 그 스킬은 `~/.horon/managed-skills/<이름>/SKILL.md`에 있고, 사람이 쓴 스킬과 이름이 겹치면 언제나 사람이 쓴 쪽이 이깁니다. 그래서 세 동작 모두 사람이 쓴 스킬을 고치거나 지우지 못합니다.
+`create`, `update`, and `delete` in `skill_manage` touch only skills the model wrote itself. Those live at `~/.horon/managed-skills/<name>/SKILL.md`, and a human-written skill with the same name always wins. So none of the three actions can edit or delete a human-written skill.
 
-| 동작 | 하는 일 | 거절하는 경우 |
+| Action | What it does | When it refuses |
 | --- | --- | --- |
-| `create` | 관리 스킬을 새로 씁니다. | 같은 이름의 스킬이 이미 로드되거나 관리 디렉터리에 있으면 거절합니다. |
-| `update` | 관리 스킬의 설명과 본문을 바꿉니다. | 관리 스킬이 없으면 `create`를 쓰라고 알립니다. |
-| `delete` | 관리 스킬 디렉터리를 지우고 스킬 목록을 다시 읽습니다. | 같은 이름이 사람이 쓴 스킬로 로드되면 그 출처를 밝히고 아무 파일도 지우지 않습니다. |
+| `create` | Writes a new managed skill. | Refuses when a skill with the same name is already loaded or exists in the managed directory. |
+| `update` | Changes a managed skill's description and body. | Says to use `create` when no managed skill exists. |
+| `delete` | Removes the managed skill directory and reloads the skill list. | When the same name is loaded as a human-written skill, names its source and deletes no file. |
 
-`create`와 `update`는 `[tools] managed_skills`가 켜져 있어야 실행됩니다. `delete`는 이 스위치를 보지 않습니다. 스위치를 끈 뒤에 남은 관리 스킬도 정리해야 하기 때문입니다.
+`create` and `update` require `[tools] managed_skills` to be on. `delete` ignores that switch, because managed skills left behind after turning it off still need cleaning up.
 
-`delete`의 안전 규칙은 `crates/base/src/managed_skills.rs`의 `remove` 한 곳에 모여 있습니다.
+The safety rules for `delete` live in one place, `remove` in `crates/base/src/managed_skills.rs`.
 
-- 이름을 다시 검증하므로 `..`이나 경로 구분자로 관리 디렉터리 밖에 닿지 못합니다.
-- 관리 디렉터리의 항목이 심링크면 링크만 지웁니다. 링크가 가리키는 디렉터리와 그 안의 파일은 그대로 남습니다.
-- 실제 디렉터리는 실제 경로로 바꾼 뒤 관리 디렉터리 안에 있는지 확인하고 지웁니다. 재귀 삭제는 안쪽의 심링크를 따라가지 않고 링크만 지웁니다.
-- 같은 이름이 없으면 not-found 오류를 냅니다.
-- 지운 뒤에는 공유 스킬 레지스트리를 다시 읽으므로 다음 턴의 목록과 로드에 바로 반영됩니다. 재읽기에 실패하면 파일은 이미 지워진 상태이므로 그 사실을 결과에 함께 적습니다.
+- The name is revalidated, so `..` or a path separator cannot reach outside the managed directory.
+- A symlink in the managed directory is deleted as a link only. The directory it points at and the files inside it stay.
+- A real directory is canonicalized, checked to be inside the managed directory, and then deleted. Recursive deletion does not follow inner symlinks and removes only the links.
+- A missing name produces a not-found error.
+- After deletion the shared skill registry is reloaded, so the next turn's list and loads see it immediately. If the reload fails, the result says so alongside the fact that the files are already gone.
 
-거절 문구는 이름이 어느 출처에 속하는지 밝힙니다. 예를 들어 작업 폴더의 `.agents/skills`에서 온 스킬이면 "a project skill from the agents source (<디렉터리>)"처럼 나옵니다. 이 문구는 스킬 출처 표(`crates/base/src/skill/sources.rs`의 `SOURCES`)를 그대로 읽어 만들므로, 표에 없는 디렉터리를 지어내지 않습니다.
+Refusal text names the source a name belongs to. A skill from a working folder's `.agents/skills`, for example, reads "a project skill from the agents source (<directory>)". The text is built by reading the skill source table (`SOURCES` in `crates/base/src/skill/sources.rs`), so it never invents a directory the table does not have.
 
-계획 모드에서는 세 동작이 모두 거절됩니다. `skill_manage`는 쓰기 효과를 선언하고, 계획 모드 게이트는 쓰기 효과를 가진 호출을 실행 전에 막습니다. 그 게이트는 [도구 효과, 계획 모드, 승인 등급](#도구-효과-계획-모드-승인-등급)에 설명되어 있습니다.
+In plan mode all three actions are refused. `skill_manage` declares the write effect, and the plan-mode gate blocks calls with the write effect before execution. That gate is described in [Tool effects, plan mode, and approval tiers](#tool-effects-plan-mode-and-approval-tiers).
 
-## 기억 읽기
+## Reading memory
 
-프롬프트에 주입되는 기억은 잘려 있고, 전체 내용을 보려면 `memory` 도구를 따로 불러야 했습니다. 이제 `read`가 `memory://` 참조를 그대로 처리합니다. 파일과 같은 도구, 같은 쪽 나누기 규칙을 씁니다.
+Memory injected into the prompt is truncated, and seeing the full content used to require a separate call to the `memory` tool. `read` now handles `memory://` references directly, with the same tool and the same paging rules as files.
 
 ### `read memory://`
 
-- `memory://<id>`는 그 기억 한 건의 전체 내용을 돌려줍니다. 출력은 `id`, `category`, `scope`, `tags`, `created`, `updated`, `links` 머리말과 `content:` 본문으로 이뤄집니다. `links`는 다른 기억으로 향하는 그래프 간선(관계, 대체, 모순, 파생)의 대상 id이고, 태그·클러스터 간선은 메타데이터라 빠집니다.
-- `memory://`(id 없음)는 저장된 기억을 최신순으로 나열합니다. 각 행은 `- <id> [<scope>/<category>] <한 줄 미리보기>`이고 미리보기는 첫 줄 80자까지입니다. 같은 시각에 저장된 기억은 id로 고정해 순서가 매번 같습니다.
-- 줄 선택자(`memory://<id>:1-3`)와 `start_line`/`end_line`/`offset`/`limit`은 파일 읽기와 똑같이 동작하고, 다음 쪽 이어 읽기 안내도 같습니다.
-- 없는 id는 `memory:// record not found: <id>` 오류입니다. 다른 프로젝트에서 저장한 기억은 이 세션의 범위 밖이므로 목록에도 나오지 않고 id로도 읽히지 않습니다.
-- 읽을 수 있는 범위는 `read`를 부른 호출의 작업 폴더 프로젝트 저장소와 사용자 수준 전역 저장소입니다.
-- 이 참조는 읽기 전용이고 파일 경로로 바뀌지 않습니다. 경로 거부 정책은 `memory://` 글자를 작업 폴더 경로로 해석하지 않으므로, 정책이 걸린 세션에서도 기억 읽기는 그대로 동작합니다.
-- `write`나 `edit`로 `memory://`에 쓰는 경로는 없습니다. 기억을 바꾸려면 `memory` 도구를 씁니다.
+- `memory://<id>` returns the full content of that one memory. The output is an `id`, `category`, `scope`, `tags`, `created`, `updated`, `links` header plus a `content:` body. `links` holds the target ids of graph edges to other memories (related, supersedes, contradicts, derived); tag and cluster edges are metadata and are left out.
+- `memory://` with no id lists stored memories newest first. Each row is `- <id> [<scope>/<category>] <one-line preview>` with the preview capped at 80 characters of the first line. Memories stored at the same instant are ordered by id, so the order is stable.
+- Line selectors (`memory://<id>:1-3`) and `start_line`/`end_line`/`offset`/`limit` work exactly as in a file read, including the next-page hint.
+- An unknown id fails with `memory:// record not found: <id>`. Memory stored by another project is outside this session's scope: it is not listed and cannot be read by id.
+- The readable scope is the working folder's project store from the call that made the `read`, plus the user-level global store.
+- The reference is read-only and never becomes a file path. The path-denial policy does not treat the literal `memory://` as a working-folder path, so memory reads work in a session with that policy.
+- No path writes to `memory://` through `write` or `edit`. Changing memory goes through the `memory` tool.
 
 ### `memory` action `update`
 
-- `{"action": "update", "id": "...", "content": "...", "category": "...", "tags": [...]}`는 기억 한 건을 제자리에서 고칩니다. 세 필드는 모두 선택이고 준 필드만 바뀝니다.
-- id, 생성 시각(`created_at`), 접근 횟수, 보강 기록, 그래프 간선은 그대로 남습니다. `updated_at`만 새 시각으로 바뀝니다.
-- 본문을 바꾸면 저장된 임베딩을 지우므로 다음 recall이 새 본문으로 다시 계산합니다. 태그를 바꾸면 그래프의 태그 간선도 함께 맞춥니다.
-- 본문은 저장 전에 비밀값 마스킹을 거칩니다. 세션 기록을 저장할 때와 같은 규칙입니다.
-- 없는 id는 `Not found: <id>`를 돌려줍니다. 아무 필드도 주지 않거나 본문이 공백뿐이면 도구 오류로 거부합니다.
+- `{"action": "update", "id": "...", "content": "...", "category": "...", "tags": [...]}` edits one memory in place. All three fields are optional and only supplied fields change.
+- The id, creation time (`created_at`), access count, reinforcement records, and graph edges stay. Only `updated_at` moves to the new time.
+- Changing the body drops the stored embedding, so the next recall recomputes it from the new body. Changing tags also updates the graph's tag edges.
+- The body goes through secrets masking before it is stored, with the same rules as saving session history.
+- An unknown id returns `Not found: <id>`. Supplying no field, or a whitespace-only body, is refused as a tool error.
 
-## MCP 서버 설정 출처
+## Where MCP server configuration comes from
 
-MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니다. 위쪽 출처가 먼저이고, 같은 이름은 먼저 온 정의가 이깁니다.
+MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.
 
-| 순서 | 출처 | 파일 | 켜는 조건 |
+| Order | Source | File | When it is on |
 | --- | --- | --- | --- |
-| 1 | 작업 폴더 | `.horon/mcp.json` > `.mcp.json` > `.claude/mcp.json` | 작업 폴더를 신뢰한 경우(`docs/safety/SECURITY.md`) |
-| 2 | horon-agent | `~/.horon/mcp.json` | 항상 |
-| 3 | Claude Code | `~/.claude.json`(이 프로젝트 항목 > 전역 `mcpServers`) > `~/.claude/mcp.json` | `[mcp] claude_user = true` |
-| 4 | Codex CLI | `~/.codex/config.toml`의 `[mcp_servers.*]` | `[mcp] codex_user = true` |
+| 1 | Working folder | `.horon/mcp.json` > `.mcp.json` > `.claude/mcp.json` | When the working folder is trusted (`docs/safety/SECURITY.md`) |
+| 2 | horon-agent | `~/.horon/mcp.json` | Always |
+| 3 | Claude Code | `~/.claude.json` (this project's entry > global `mcpServers`) > `~/.claude/mcp.json` | `[mcp] claude_user = true` |
+| 4 | Codex CLI | `[mcp_servers.*]` in `~/.codex/config.toml` | `[mcp] codex_user = true` |
 
-- 예외가 하나 있습니다. 같은 이름에 로컬 stdio 정의와 원격(HTTP, SSE) 정의가 함께 있으면 출처 순서와 상관없이 stdio 정의가 남고, 로그에 한 줄을 남깁니다. 잘 도는 로컬 서버의 원격 짝은 보통 따로 로그인이 필요하기 때문입니다(issue #653).
-- 다른 호스트의 사용자 설정(Claude Code, Codex)은 기본으로 꺼져 있습니다. 그 서버는 다른 호스트에서 검토한 것이고, 불러오면 여기서 프로세스가 뜹니다. 꺼진 파일에 서버가 있으면 프로세스마다 로그 한 줄로 개수와 켜는 설정을 알립니다. `HORON_AGENT_DISABLE_CLAUDE_MCP`가 있으면 `claude_user`가 켜져 있어도 Claude 출처를 읽지 않습니다.
-- Codex 설정은 매번 그 자리에서 읽습니다. 예전처럼 첫 실행 때 `~/.horon/mcp.json`으로 복사하지 않으므로, 환경 값(비밀일 수 있음)이 복제되지 않고 Codex에서 지운 서버는 다음 로드에서 사라집니다.
-- `~/.claude.json`의 프로젝트 항목은 정규화한 작업 폴더 경로로 고릅니다. 한 프로젝트의 서버가 다른 저장소 세션에 섞이지 않습니다.
-- 사용자 수준 파일은 `FileStamp`가 같은 동안 다시 파싱하지 않고 프로세스 캐시(최대 16개)를 씁니다. 세션이 시작될 때 바뀐 사용자 설정이 없으면 파일을 하나도 읽지 않습니다. 작업 폴더 파일은 캐시하지 않습니다. 신뢰 판정과 같은 한 번의 읽기에서 나온 바이트만 파싱해야 하기 때문입니다.
-- 환경 변수 펼치기(`${VAR}`)와 실행할 수 없는 항목 제거는 합친 뒤 매번 합니다.
+- There is one exception. When the same name has a local stdio definition and a remote (HTTP, SSE) definition, the stdio definition survives regardless of source order and a line is logged. A remote twin of a working local server usually needs its own login (issue #653).
+- User settings from other hosts (Claude Code, Codex) are off by default. Those servers were reviewed elsewhere, and loading them starts processes here. When an off file holds servers, each process logs one line with the count and the switch that turns it on. `HORON_AGENT_DISABLE_CLAUDE_MCP` keeps the Claude source unread even with `claude_user` on.
+- Codex configuration is read live every time. It is not copied into `~/.horon/mcp.json` on first run as it once was, so environment values (which may be secret) are not duplicated and a server removed in Codex disappears on the next load.
+- The project entry in `~/.claude.json` is selected by the canonical working folder path, so one project's servers never mix into another repository's session.
+- A user-level file is not re-parsed while its `FileStamp` holds; a process cache (up to 16 files) is used instead. A session start with no changed user settings reads no file at all. Working-folder files are not cached, because they must be parsed from the same single read that produced the trust decision.
+- Environment expansion (`${VAR}`) and removal of unlaunchable entries happen after merging, every time.
 
-## 큰 도구 출력과 컨텍스트 절약
+## Large tool output and context saving
 
-도구 출력이 모델 컨텍스트에 들어가는 양을 줄이는 장치 세 가지입니다. 셋 모두 원문을 버리지 않습니다. 모델은 줄어든 결과와 함께 원문을 다시 읽는 주소를 받습니다.
+Three devices reduce how much tool output enters the model's context. None of them discards the original. The model gets the reduced result together with an address for reading the original back.
 
-### 세션 아티팩트와 `artifact://`
+### Session artifacts and `artifact://`
 
-예산을 넘는 출력의 전체 본문은 `<에이전트 홈>/tool-artifacts/<세션 id>/<id>.txt`에 저장됩니다 (`crates/app-core/src/tool/artifacts.rs`). `id`는 본문 SHA-256의 앞 8바이트를 16진수로 쓴 값이라 같은 출력은 한 번만 저장됩니다. 디렉터리는 0700, 파일은 0600이고, 저장 전에 히스토리와 같은 비밀값 마스킹을 거칩니다.
+The full body of output over budget is saved under the agent home's `artifacts/<session id>/<id>.<tool>.log` (`crates/base/src/artifacts.rs`). The id is the next number above the largest id already in that directory, so a restart continues after existing artifacts instead of reusing an id a transcript may still point at. The session id is validated against the alphabet the session store uses. The text is masked with the same history secrets masking before it is written.
 
-- 모델은 `read file_path="artifact://<id>"`에 `start_line`/`end_line`을 주어 원문을 쪽 단위로 읽습니다. 다른 세션의 아티팩트는 읽지 못합니다.
-- 세션당 64 MiB를 넘으면 그 세션의 오래된 파일부터 지웁니다. 서버가 시작할 때 전체 512 MiB 상한을 같은 방식으로 맞추고 빈 세션 디렉터리를 지웁니다.
-- 세션 저장소(`sessions/<id>/`) 밖에 두는 이유는 그 디렉터리를 `doctor`와 복제가 고정 배치로 가정하기 때문입니다.
+- The model reads the original page by page with `read file_path="artifact://<id>"` plus `start_line`/`end_line`. Another session's artifacts cannot be read.
+- One artifact keeps the first and last 8 MiB; the elided middle is replaced by an `[ARTIFACT TRUNCATED: ...]` notice on a line boundary.
+- When a session's artifacts exceed 256 MiB, the lowest ids are deleted first until the session is back under the cap.
+- They sit outside the session store (`sessions/<id>/`), whose layout `doctor` and cloning assume is fixed.
 
-### 응축 규칙
+### Condensing rules
 
-예산을 넘는 출력은 앞부분, 생략 구간의 신호 줄, 뒷부분, 원문 주소로 바뀝니다. 앞뒤는 각각 예산의 40%이고 줄 경계에서 자릅니다. 생략 구간에서 `error`, `warning`, `failed`, `panic`, `exception`, `traceback`, `fatal`, `assert` 같은 단어가 있는 줄을 `L<원본 줄번호>: <줄>` 형식으로 남은 예산만큼 옮깁니다(줄당 300바이트).
+Output over budget becomes a head, a signal line for the omitted region, a tail, and the address of the original. Head and tail are 40% of the budget each and are cut on line boundaries. Lines in the omitted region that contain words such as `error`, `warning`, `failed`, `panic`, `exception`, `traceback`, `fatal`, or `assert` are carried over within the remaining budget as `L<original line>: <line>` (300 bytes per line).
 
-| 지점 | 예산 |
+| Point | Budget |
 | --- | --- |
-| `bash` | 30,000바이트 |
-| `webfetch` | 40,000바이트 (다운로드 상한 5 MB는 그대로) |
-| `read`의 PDF 텍스트 | 64 KiB |
-| 그 밖의 도구(MCP, `agentgrep` 등) | 48 KiB, `Registry::execute`에서 컨텍스트 가드 직전에 적용 |
+| `bash` | 30,000 bytes |
+| `webfetch` | 40,000 bytes (the 5 MB download cap is unchanged) |
+| PDF text from `read` | 64 KiB |
+| Other tools (MCP, `agentgrep`, and the rest) | 48 KiB, applied in `Registry::execute` just before the context guard |
 
-`accept_large_output: true`를 준 호출과 `read`의 텍스트 파일은 응축하지 않습니다. 텍스트 `read`는 대신 한 번에 64 KiB까지만 돌려주고, 다음 `start_line`(또는 `offset`)을 안내합니다. 파일은 디스크에 있으므로 따로 저장하지 않습니다. SDK 도구 결과는 레지스트리를 거치지 않으므로 히스토리 상한(512 KiB, 바이트 기준)만 받습니다.
+A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
 
-### `read` 중복 단락
+### `read` deduplication
 
-같은 세션에서 이미 읽은 파일을 다시 읽으면 내용 해시를 비교합니다 (`crates/app-core/src/tool/read_state.rs`).
+Reading a file that was already read in the same session compares content hashes (`crates/app-core/src/tool/read_state.rs`).
 
-- 내용이 같고 요청한 줄이 앞서 보여 준 범위 안에 있으면 본문 대신 `[read: <경로> lines a-b are unchanged since your earlier read (tool call <id>) ...]` 한 줄을 돌려줍니다.
-- 내용이 바뀌었고 앞서 파일 전체를 읽었으며 이번에도 전체를 읽으면, 앞선 읽기와의 unified diff를 돌려줍니다. diff가 파일의 40%보다 크면 전체를 보냅니다. 기준 스냅샷은 1 MiB 이하 파일만 남기고 `artifact://`로는 읽을 수 없습니다.
-- `full: true`를 주면 항상 본문을 보냅니다. `hashline` 형식이 앞선 읽기와 다르면 다시 그립니다.
-- 압축 적용, 대화 되감기·수정, 긴급 절단, 오래된 결과 축약, 세션 종료 때 그 세션의 기록을 지웁니다. 앞선 출력이 컨텍스트에 그대로 남아 있을 때만 단락이 맞기 때문입니다.
+- When the content matches and the requested lines are inside a range already shown, the body is replaced by one line: `[read: <path> lines a-b are unchanged since your earlier read (tool call <id>) ...]`.
+- When the content changed, the earlier read covered the whole file, and this read also covers the whole file, a unified diff against the earlier read is returned. If the diff is larger than 40% of the file, the whole file is sent. The baseline snapshot is kept only for files up to 1 MiB and is not readable through `artifact://`.
+- `full: true` always sends the body. When the `hashline` format differs from the earlier read, it is rendered again.
+- Applying compaction, rewinding or editing the conversation, urgent truncation, aging old results, and ending the session all drop that session's records. The deduplication is only correct while the earlier output is still in the context.
 
-설정은 `[tools] read_dedup = true`(기본값), 환경변수 `HORON_AGENT_READ_DEDUP`입니다.
+The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
 
-### 오래된 결과 묶음 축약
+### Aging batches of old results
 
-앞쪽 메시지를 고치면 그 지점부터 프롬프트 캐시가 깨지므로, 결과를 한 턴에 하나씩 줄이지 않고 한 번에 묶어 줄입니다 (`crates/app-core/src/agent/tool_result_aging.rs`). 대상은 최근 24개 메시지 밖, 압축 경계 뒤에 있는 8 KiB 초과 도구 결과입니다.
+Editing earlier messages breaks the prompt cache from that point on, so results are reduced in batches rather than one per turn (`crates/app-core/src/agent/tool_result_aging.rs`). Targets are tool results over 8 KiB that sit outside the most recent 24 messages and behind the compaction boundary.
 
-- 마지막 프로바이더 응답 뒤 캐시 수명(경로가 알려 주지 않으면 300초)이 지났으면 실행합니다. 캐시가 이미 식어 다시 쓰는 비용이 없습니다.
-- 캐시가 살아 있으면 컨텍스트가 압축 임계의 75% 이상이고 대상 합계가 64 KiB 이상일 때만 실행합니다.
-- 압축 작업이 진행 중이거나 프로바이더 고유 압축 경로이면 실행하지 않습니다.
+- The batch runs when the cache lifetime since the last provider response has passed (300 seconds when the path does not say). The cache is already cold, so there is no rewrite cost.
+- While the cache is alive it runs only when the context is at or above 75% of the compaction threshold and the targets total at least 64 KiB.
+- It does not run during a compaction or on a provider-specific compaction path.
 
-축약된 결과는 `[horon: condensed older tool output: ...]`로 시작하고 앞뒤 1 KiB와 원문 `artifact://` 주소를 남깁니다. 이 접두어가 있는 결과는 다시 축약하지 않습니다. 묶음마다 KV 캐시 모니터에 "tool result aging"을 문서화된 무효화로 기록하고 세션을 한 번 저장합니다. 설정은 `[tools] tool_result_aging = true`(기본값), 환경변수 `HORON_AGENT_TOOL_RESULT_AGING`입니다.
+An aged result starts with `[horon: condensed older tool output: ...]` and keeps 1 KiB at each end plus the `artifact://` address of the original. A result with this prefix is never aged again. Each batch records "tool result aging" as a documented invalidation in the KV cache monitor and saves the session once. The setting is `[tools] tool_result_aging = true` (the default), with environment override `HORON_AGENT_TOOL_RESULT_AGING`.
 
-### 계측
+### Instrumentation
 
-`horon-agent debug 'server:memory'`의 `process.stage_counters`에 `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, `tool_result_aged_bytes`가 나옵니다. 구조 게이트(`scripts/perf/check_structural.py`)의 `context` 섹션은 1 MiB 출력이 48 KiB 안에 들어오는지, 반복 읽기가 512바이트 미만인지, 압박 구간을 두 번 지나도 축약 묶음이 정확히 한 번인지 확인합니다.
+`process.stage_counters` in `horon-agent debug 'server:memory'` reports `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, and `tool_result_aged_bytes`. The `context` section of the structural gate (`scripts/perf/check_structural.py`) checks that a 1 MiB output lands inside 48 KiB, that a repeated read stays under 512 bytes, and that crossing the pressure band twice produces exactly one aging batch.
 
-## 보조 완료와 비밀값 왕복
+## Auxiliary completion and the secret round trip
 
-대화를 건드리지 않는 곁가지 호출 하나의 계약과, 자격증명이 프로바이더로 나갔다가 도구에서 실제 값으로 돌아오는 왕복을 설명합니다. 두 장치는 서로 다른 문제를 다루지만 경계를 긋는 방식이 같습니다. 호출자가 정할 수 있는 것과 정할 수 없는 것을 타입으로 가르고, 경계를 넘는 값은 이름이 붙은 오류로 거절합니다.
+This explains the contract of one side call that does not touch the conversation, and the round trip in which a credential leaves for the provider and returns to the tool as its real value. The two devices address different problems but draw their boundary the same way: what the caller may and may not decide is split by types, and values crossing the boundary are refused with named errors.
 
-### 보조 완료 계약
+### The auxiliary completion contract
 
-`CompletionRequest`는 필드 넷만 가집니다 (`crates/base/src/aux_completion.rs:90`). 프롬프트, 선택적 시스템 텍스트, 선택적 출력 토큰 상한, 선택적 응답 스키마입니다. 모델, 엔드포인트, 자격증명, 도구를 고르는 필드도 설정자도 인자도 없습니다. 그래서 호출자는 어느 모델이 도는지, 요청이 어디로 가는지, 누가 비용을 내는지, 모델이 행동할 수 있는지를 바꾸지 못합니다. 그 넷은 요청을 내보내는 세션에 남습니다.
+`CompletionRequest` has exactly four fields (`crates/base/src/aux_completion.rs:90`): the prompt, optional system text, an optional output token cap, and an optional response schema. There is no field, setter, or argument that picks a model, an endpoint, credentials, or tools. So the caller cannot change which model runs, where the request goes, who pays, or what the model can do. Those four stay with the session that dispatches the request.
 
-| 항목 | 상한 | 위치 |
+| Item | Limit | Location |
 | --- | --- | --- |
-| `prompt` | 65,536바이트 (64 KiB) | `crates/base/src/aux_completion.rs:70` |
-| `system` | 16,384바이트 (16 KiB) | `crates/base/src/aux_completion.rs:73` |
-| `max_tokens` | 1 이상 4,096 이하 | `crates/base/src/aux_completion.rs:76`, `:79` |
+| `prompt` | 65,536 bytes (64 KiB) | `crates/base/src/aux_completion.rs:70` |
+| `system` | 16,384 bytes (16 KiB) | `crates/base/src/aux_completion.rs:73` |
+| `max_tokens` | 1 to 4,096 inclusive | `crates/base/src/aux_completion.rs:76`, `:79` |
 
-상한은 글자 수가 아니라 바이트로 잽니다. 두 문자열 모두 `len()`으로 비교합니다 (`crates/base/src/aux_completion.rs:101`, `:118`). 한국어 프롬프트는 같은 글자 수에서 바이트가 세 배라, 글자로 재면 상한이 조용히 세 배가 됩니다.
+Limits are measured in bytes, not characters. Both strings are compared with `len()` (`crates/base/src/aux_completion.rs:101`, `:118`). A Korean prompt with the same character count is three times the bytes, so a character-based limit would quietly triple.
 
-계약을 벗어난 요청은 값이 만들어지는 자리에서 거절됩니다. 모델 호출이 이미 돈을 쓴 뒤에야 문제를 알게 되는 구조를 만들지 않으려는 선택입니다.
+A request outside the contract is refused where the value is built, so a problem never surfaces only after a model call has already been paid for.
 
-| 오류 접두사 | 언제 | 위치 |
+| Error prefix | When | Location |
 | --- | --- | --- |
-| `AUX_COMPLETION_INPUT` | 프롬프트나 시스템 텍스트가 상한을 넘거나 `max_tokens`가 범위 밖일 때 | `crates/base/src/aux_completion.rs:64` |
-| `AUX_COMPLETION_SCHEMA` | 스키마가 객체가 아니거나 응답이 스키마를 어겼을 때 | `crates/base/src/aux_completion.rs:67` |
+| `AUX_COMPLETION_INPUT` | The prompt or system text exceeds its limit, or `max_tokens` is out of range | `crates/base/src/aux_completion.rs:64` |
+| `AUX_COMPLETION_SCHEMA` | The schema is not an object, or the response violates the schema | `crates/base/src/aux_completion.rs:67` |
 
-시스템 텍스트를 주지 않으면 고정 문구가 대신 쓰입니다 (`crates/base/src/aux_completion.rs:82`). 그 문구는 텍스트로만 답하고 도구를 부르지 말라고 지시합니다. 호출자가 준 텍스트가 있으면 그것이 고정 문구를 대체합니다.
+Without system text, a fixed sentence is used instead (`crates/base/src/aux_completion.rs:82`). It instructs the model to answer in text only and call no tools. Caller-supplied text replaces it.
 
-### 스키마 부분집합
+### The schema subset
 
-스키마 검사는 JSON Schema 크레이트가 아니라 이 모듈 안의 작은 검증기입니다 (`crates/base/src/aux_completion.rs:207`). `base` 크레이트는 의존 그래프의 바닥이라 `agent-sdk`가 `base`를 의존하는 방향입니다. 여기에 전체 검증기를 들이면 그 방향이 뒤집히거나, 필드 하나 때문에 새 외부 의존성이 붙습니다.
+Schema checking is a small validator inside this module rather than the JSON Schema crate (`crates/base/src/aux_completion.rs:207`). The `base` crate is at the bottom of the dependency graph, with `agent-sdk` depending on `base`. Pulling in a full validator would reverse that direction or add a new external dependency for one field.
 
-지원하는 키워드는 정확히 다섯입니다.
+Exactly five keywords are supported.
 
-| 키워드 | 뜻 |
+| Keyword | Meaning |
 | --- | --- |
-| `type` | `object`, `array`, `string`, `number`, `integer`, `boolean`, `null`, 또는 그 이름들의 배열 |
-| `required` | 객체가 반드시 가져야 하는 속성 이름 |
-| `properties` | 속성별 하위 스키마. 그 속성이 있을 때만 검사합니다. |
-| `items` | 배열 원소마다 만족해야 하는 하위 스키마 |
-| `enum` | 응답이 가질 수 있는 값 |
+| `type` | `object`, `array`, `string`, `number`, `integer`, `boolean`, `null`, or an array of those names |
+| `required` | Property names an object must carry |
+| `properties` | Per-property subschemas, checked only when the property is present |
+| `items` | The subschema every array element must satisfy |
+| `enum` | The values a response may take |
 
-나머지 키워드는 무시합니다. `additionalProperties`, `minLength`, `pattern`, `format`, 숫자 범위, `oneOf`/`anyOf`/`allOf`, `$ref`가 모두 여기 들어갑니다. 그 키워드에 기대는 스키마는 보이는 것보다 약합니다. 그래서 부분집합을 암시하지 않고 문서에 적습니다.
+Every other keyword is ignored. `additionalProperties`, `minLength`, `pattern`, `format`, numeric ranges, `oneOf`/`anyOf`/`allOf`, and `$ref` all fall in that group. A schema relying on them is weaker than it looks, so the subset is documented rather than implied.
 
-### 도구 등록
+### Tool registration
 
-`aux_complete` 도구는 `[tools] aux_completion`이 켜져 있을 때만 등록됩니다 (`crates/app-core/src/tool/mod.rs:2425`). 등록 함수가 설정을 읽고 꺼져 있으면 곧바로 반환합니다. 꺼진 상태에서는 도구 목록에 나타나지 않고 이름으로도 찾히지 않습니다.
+The `aux_complete` tool is registered only when `[tools] aux_completion` is on (`crates/app-core/src/tool/mod.rs:2425`). The registration function reads the setting and returns immediately when it is off. Off means the tool does not appear in the tool list and cannot be found by name.
 
-`CORE_TOOLS`에는 없습니다 (`crates/base/src/config.rs:756`). 코어 프로필의 닫힌 목록은 넓어지지 않습니다. 호출마다 곁가지 모델 요청을 하나 더 쓴다는 점이 이 스위치를 기본 꺼짐으로 두는 이유입니다 (`crates/base/src/config.rs:930`).
+It is not in `CORE_TOOLS` (`crates/base/src/config.rs:756`). The core profile's closed list does not grow. Every call spends one more side model request, which is why the switch defaults to off (`crates/base/src/config.rs:930`).
 
-도구 자체는 얇은 어댑터입니다 (`crates/app-core/src/tool/aux_complete.rs:99`). 모델 인자를 계약 타입으로 바꿔 넘기고 텍스트를 돌려줄 뿐, 상한도 스키마 검사도 직접 하지 않습니다. 검사가 두 곳에 있으면 표면마다 규칙이 갈라지기 때문입니다.
+The tool is a thin adapter (`crates/app-core/src/tool/aux_complete.rs:99`). It converts model arguments into the contract type and returns text; it performs neither limit checks nor schema validation. Checks in two places would let rules diverge per surface.
 
-### 비밀값 자리표시자
+### Secret placeholders
 
-자격증명이 프로바이더로 나갈 때 실제 값 대신 자리표시자가 실립니다. 모양은 `«SECRET:<label>:<base>»`입니다. `label`은 검출 규칙의 이름이고, `base`는 실제 값 하나에 대응하는 12자 문자열입니다. `base`는 horon-agent 홈의 `secret-placeholder.key`에 저장된 32바이트 키로 계산한 HMAC-SHA256 앞 8바이트를 36진수(`A`–`Z`, `0`–`9`)로 적은 값입니다. 키 파일은 0600으로 만들고, 없으면 새로 만듭니다. 키 파일을 만들지 못하면 프로세스마다 새 임시 키를 쓰고 경고를 남깁니다.
+When a credential leaves for the provider, a placeholder goes instead of the real value. Its shape is `«SECRET:<label>:<base>»`. `label` is the detection rule's name, and `base` is a 12-character string that corresponds to one real value. `base` is the first 8 bytes of an HMAC-SHA256 computed with the 32-byte key stored in `secret-placeholder.key` in the horon-agent home, written in base 36 (`A`–`Z`, `0`–`9`). The key file is created with mode 0600 and recreated when missing. If it cannot be created, each process uses a new temporary key and logs a warning.
 
-같은 실제 값은 언제나 같은 자리표시자를 받습니다. 한 값이 대화에 여러 번 나와도 자리표시자가 바뀌지 않으므로, 캐시되는 프롬프트 접두사가 흔들리지 않습니다. 키가 파일에 남으므로 재시작 뒤 이어서 여는 세션도 예전 자리표시자를 그대로 복원합니다. 세션 보관함을 만들 때 이름이 `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASS`, `AUTH`, `CREDENTIAL`, `PRIVATE`에 해당하고 값이 8자 이상인 환경 변수를 미리 등록하므로, 환경 변수에서 온 자격증명의 자리표시자도 재시작 뒤에 풀립니다.
+The same real value always receives the same placeholder. A value appearing several times in a conversation keeps its placeholder, so the cached prompt prefix does not shift. Because the key stays on disk, a session reopened after a restart restores the earlier placeholders too. Building a session vault pre-registers environment variables whose names contain `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASS`, `AUTH`, `CREDENTIAL`, or `PRIVATE` and whose value is at least 8 characters, so credentials from the environment also resolve after a restart.
 
-세 모드가 있습니다 (`crates/config-types/src/lib.rs:556`).
+There are three modes (`crates/config-types/src/lib.rs:556`).
 
-| 모드 | 동작 |
+| Mode | Behaviour |
 | --- | --- |
-| `off` | 텍스트를 그대로 보냅니다. 기본값입니다. |
-| `obfuscate` | 검출된 자격증명을 안정된 자리표시자로 바꾸고, 실제 값이 필요한 도구에는 원래 값을 돌려줍니다. |
-| `block` | 자격증명이 바깥으로 나갈 호출을 거절합니다. |
+| `off` | Sends text unchanged. This is the default. |
+| `obfuscate` | Replaces detected credentials with stable placeholders and gives tools that need the real value that value back. |
+| `block` | Refuses calls that would send a credential outward. |
 
-모드 이름은 케밥 표기로 읽고, 모르는 값은 기본값으로 떨어집니다 (`crates/config-types/src/lib.rs:589`). 설정 파일의 다른 항목까지 못 읽게 되지 않도록 한 처리입니다. 설정 항목 이름은 `secrets_mode`이고 (`crates/base/src/config.rs:933`), 기본 설정 파일에도 `secrets_mode = "off"`로 적혀 있습니다 (`crates/base/src/config/default_file.rs:470`).
+Mode names are read in kebab case, and an unknown value falls back to the default (`crates/config-types/src/lib.rs:589`). That keeps one bad entry from making the rest of the configuration unreadable. The setting is `secrets_mode` (`crates/base/src/config.rs:933`), and the default configuration file also writes `secrets_mode = "off"` (`crates/base/src/config/default_file.rs:470`).
 
-검출 규칙은 새로 만들지 않고 기존 마스킹과 같은 표를 씁니다. 디스크 경로의 `redact_secrets`가 쓰는 패턴 목록이 그대로 와이어 경로의 목록입니다 (`crates/base/src/message.rs:51`). 표가 하나이므로 디스크를 위해 추가한 패턴이 와이어에도 자동으로 적용됩니다. 이미 마스킹된 텍스트를 다시 마스킹하지 않는 것도 규칙입니다. 자리표시자를 다른 패턴이 한 번 더 감싸면, 바깥것을 복원해도 안쪽 자리표시자만 돌아옵니다.
+Detection rules are not new: the same table as the existing masking is used. The pattern list behind `redact_secrets` on the disk path is the wire path's list (`crates/base/src/message.rs:51`). With one table, a pattern added for disk applies to the wire automatically. Already-masked text is never masked again, because wrapping a placeholder in another pattern means restoring the outer layer returns only the inner placeholder.
 
-### 세 배선 지점
+### Three wiring points
 
-왕복은 세 자리에서 일어납니다.
+The round trip happens in three places.
 
-1. 프로바이더로 나가는 메시지. 요청 사본에만 자리표시자가 실립니다. `off` 모드에서는 사본을 만들지 않고 들고 있던 메시지를 그대로 보냅니다.
-2. 도구 입력. 게이트에 닿기 전에 자리표시자를 실제 값으로 되돌립니다.
-3. 도구 출력. 이력에 들어가기 전에 다시 자리표시자로 가립니다.
+1. Messages leaving for the provider. Only the request copy carries placeholders. In `off` mode no copy is made and the held messages are sent unchanged.
+2. Tool input. Placeholders are restored to real values before reaching the gate.
+3. Tool output. Values are masked back into placeholders before entering history.
 
-복원이 게이트보다 앞이라는 점이 이 설계의 불변식입니다. 자리표시자를 본 승인자는 아무도 실행하지 않을 명령을 승인하게 됩니다. 도구는 복원된 입력을 받아 실행하므로, 게이트가 본 것과 실제로 실행되는 것이 같아야 합니다. 두 단계는 한 함수로 묶여 있어 호출 지점이 순서를 바꾸지 못합니다.
+Restoration running before the gate is the design's invariant. An approver who saw a placeholder would approve a command nobody will execute. The tool receives the restored input and executes it, so what the gate saw must equal what runs. The two steps are bound in one function so a call site cannot reorder them.
 
-자리표시자와 실제 값의 대응은 프로세스 메모리에만 있습니다. 세션별 보관함은 실제 값에서 자리표시자로 가는 표, 그 반대 표, 이름별 번호 카운터로 이루어지고 디스크에 쓰지 않습니다. 프로세스가 끝나면 사라집니다. 디버그 출력도 값을 찍지 않고 항목 수만 찍습니다. 로그 한 줄이나 크래시 번들이 보관함 자체를 통해 자격증명을 흘리지 않게 하려는 처리입니다.
+The mapping between placeholders and real values lives only in process memory. A per-session vault holds the real-to-placeholder table, the reverse table, and a per-name counter, and writes nothing to disk. It disappears when the process ends. Debug output prints item counts, not values, so a log line or a crash bundle cannot leak credentials through the vault itself.
 
-`block` 모드는 거절할 때 `SECRET_BLOCK`으로 시작하는 오류를 돌려주고, 몇 건이 어느 이름으로 걸렸는지와 `obfuscate`로 바꾸는 방법을 함께 적습니다.
+`block` mode refuses with an error starting `SECRET_BLOCK`, naming how many hits matched which label and how to switch to `obfuscate`.

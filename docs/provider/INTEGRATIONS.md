@@ -1,15 +1,17 @@
-# 외부 연동
+# External integrations
 
-원격 MCP 서버와 사용자 정의 웹 검색을 다룬다.
+Language: **English** | [한국어](INTEGRATIONS.ko.md)
 
-## 원격 MCP 서버
+Remote MCP servers and custom web search.
 
-HoronAgent는 로컬 stdio 서버, Streamable HTTP 서버, 레거시
-HTTP+SSE 서버에 연결한다. 기존 stdio 설정은 계속 동작한다.
+## Remote MCP servers
 
-### 설정
+HoronAgent connects to local stdio servers, Streamable HTTP servers, and legacy
+HTTP+SSE servers. Existing stdio configuration keeps working.
 
-원격 서버는 `~/.horon/mcp.json`이나 프로젝트의 `.mcp.json`에 추가한다.
+### Configuration
+
+Remote servers are added to `~/.horon/mcp.json` or a project's `.mcp.json`.
 
 ```json
 {
@@ -33,23 +35,23 @@ HTTP+SSE 서버에 연결한다. 기존 stdio 설정은 계속 동작한다.
 }
 ```
 
-`http`와 `streamable-http`는 Streamable HTTP를 고른다. URL만 있고
-command나 명시적 type이 없는 항목도 Streamable HTTP를 고른다. `sse`는
-레거시 전송을 명시적으로 고른다. 초기화 과정에서 엔드포인트가 Streamable
-HTTP를 지원하지 않는다고 나오면 HTTP 연결이 레거시 SSE로
-폴백할 수 있다. 알 수 없는 전송 타입과 URL이 없는 원격 항목은 실행하지 않는다.
+`http` and `streamable-http` select Streamable HTTP. An entry with only a URL and
+no command or explicit type selects Streamable HTTP as well. `sse` explicitly
+selects the legacy transport. If initialization shows that the endpoint does not
+support Streamable HTTP, the HTTP connection can fall back to legacy SSE. Unknown
+transport types and remote entries without a URL are not run.
 
-URL과 헤더는 stdio 설정과 같은 `${VARIABLE}` 및 `${VARIABLE:-default}`
-확장을 쓴다. Authorization 헤더를 설정하면 저장된 OAuth 자격 증명보다 우선한다.
-실제 자격 증명은 커밋되는
-설정 파일에 넣지 않는다.
+URLs and headers use the same `${VARIABLE}` and `${VARIABLE:-default}`
+expansion as stdio configuration. Setting an Authorization header takes precedence
+over stored OAuth credentials. Real credentials never go into a
+committed configuration file.
 
-HoronAgent는 지원되는 외부 MCP 설정 소스도 읽는다. 같은
-서버 이름에 로컬 stdio 정의와 원격 정의가 모두 있으면
-기존 로컬 정의를 유지한다. 원격 서버를 함께 설정하려면
-다른 이름을 쓴다.
+HoronAgent also reads supported external MCP configuration sources. When the same
+server name has both a local stdio definition and a remote definition,
+the existing local definition is kept. Use a different name to
+configure a remote server alongside it.
 
-### 명령
+### Commands
 
 ```sh
 horon-agent mcp list
@@ -59,107 +61,106 @@ horon-agent mcp login remote --no-browser
 horon-agent mcp logout remote
 ```
 
-`test`는 설정된 서버에 연결해 프로토콜을 초기화하고 도구를 나열한 뒤
-종료한다. 연결이나 핸드셰이크가 실패하면 실패로 종료한다. LLM을 호출하거나
-서버의 도구를 실행하지는 않는다.
+`test` connects to the configured server, initializes the protocol, lists tools, and
+exits. It exits with failure if the connection or handshake fails. It does not call an LLM
+or execute the server's tools.
 
-`login`은 명시적이고 대화형이다. OAuth 메타데이터를 찾고, 지원되면
-공개 클라이언트를 등록하며, PKCE와 루프백 콜백으로
-authorization-code 흐름을 마친다. `--no-browser`는 시스템 브라우저를 열지 않고
-인증 URL을 출력한다. 그래도 브라우저는 이 기기의
-루프백 콜백에 접근할 수 있어야 한다. 인증 서버가 동적 클라이언트
-등록을 지원하지 않으면 Authorization 헤더를 설정한다.
+`login` is explicit and interactive. It discovers OAuth metadata, registers a
+public client when supported, and completes the authorization-code flow
+with PKCE and a loopback callback. `--no-browser` prints the authorization URL
+instead of opening the system browser. The browser still has to be able to reach
+this machine's loopback callback. If the authorization server does not support
+dynamic client registration, set an Authorization header.
 
-토큰은 HoronAgent home 디렉터리의 `mcp-oauth.json`에 제한된
-권한으로 저장된다. 토큰은 원격 리소스 범위에 묶이고 브라우저를 열지 않고
-갱신된다. 백그라운드 시작과 일반 연결 시도는 대화형 로그인을
-시작하지 않는다. 자격 증명이 거부되거나 없으면 사람의 응답을 기다리지 않고
-해당하는 명시적 로그인 명령을 알려준다.
+Tokens are stored in `mcp-oauth.json` in the HoronAgent home directory with restricted
+permissions. Tokens are bound to the remote resource scope and
+refresh without opening a browser. Background startup and ordinary connection attempts do not
+start an interactive login. When credentials are refused or missing, it names
+the corresponding explicit login command instead of waiting for a human response.
 
-MCP 관리 도구는 `url`, `transport`, `headers`로 즉석 원격 연결을 받거나,
-그 필드 없이 이름이 지정된 설정 서버에 연결한다. `command`, `args`, `env`는
-여전히 로컬 stdio 연결 필드다.
+MCP management tools accept ad-hoc remote connections through `url`, `transport`, and `headers`,
+or connect to a named configured server without those fields. `command`, `args`, and `env` are
+still the local stdio connection fields.
 
-### 시작, 연결 대기, 프롬프트 캐싱
+### Startup, connection waits, and prompt caching
 
-세션 도구 등록은 원격 네트워크 트래픽을 기다리지 않는다. 관리,
-검색, 디스패치 도구는 즉시 등록된다. 유효한 캐시 도구 스키마는
-백그라운드 연결이 시작되기 전에 알려진다. 연결이 성공할 때마다 그 서버의 도구가
-독립적으로 게시되므로, 느린 서버가 빠른 피어의 도구를 가리거나
-그 피어에 대한 관리와 호출을 막을 수 없다.
-비어 있는 라이브 카탈로그는 다음 시작에서 삭제된 도구를 알리는 대신
-오래된 캐시 스키마를 교체하기도 한다.
+Session tool registration does not wait for remote network traffic. Management,
+search, and dispatch tools register immediately. Valid cached tool schemas are
+known before background connections start. Each successful connection publishes that
+server's tools independently, so a slow server cannot hide a fast peer's tools or
+block management and calls for that peer.
+An empty live catalog can also replace a stale cached schema instead of announcing
+deleted tools on the next start.
 
-원격 핸드셰이크 전체에는 30초 기한이 있다. 자격 증명
-갱신, 초기화, 레거시 폴백, 도구 나열이 모두 포함된다. 개별 도구
-요청도 기본 30초다. `timeout_secs`는 정당하게 느린
-도구 요청을 늘릴 수 있지만 원격 핸드셰이크 전체 기한은 늘리지 않는다. 오프라인 서버에 대한 첫
-호출은 연결을 최대 30초 기다린다. 취소와 종료는
-대기자를 제거하고 소유한 응답 스트림을 멈춘다. 일반 도구 호출이나
-시작 경로가 대화형 OAuth 로그인을 기다리는 일은 없다.
+The whole remote handshake has a 30-second deadline. It covers credential
+refresh, initialization, legacy fallback, and tool listing. Individual tool
+requests also default to 30 seconds. `timeout_secs` can raise a legitimately slow
+tool request, but it does not raise the overall remote handshake deadline. The first
+call to an offline server waits up to 30 seconds for a connection. Cancel and shutdown
+remove waiters and stop the response streams they own. No ordinary tool call or
+startup path waits for an interactive OAuth login.
 
-별도의 기존 headless 동작이 있다. `horon-agent run`은 첫 턴 전에
-유효한 캐시 스키마가 없는 활성 서버를 최대 5초 기다린다.
-웜 캐시면 이 대기를 건너뛴다. `HORON_AGENT_RUN_MCP_WAIT_MS=0`으로 끄거나 더
-작은 밀리초 예산을 정한다. 비활성 서버는 예산을 쓰지 않고,
-준비 판정은 정규화된 도구 이름 접두사가 아니라 정확한 서버 식별자를 쓴다.
+There is a separate existing headless behavior. Before the first turn, `horon-agent run`
+waits up to 5 seconds for active servers that have no valid cached schema.
+With a warm cache it skips that wait. `HORON_AGENT_RUN_MCP_WAIT_MS=0` turns it off, and a smaller
+millisecond budget can be set. Inactive servers consume no budget, and the
+readiness check uses the exact server identifier rather than a normalized tool-name prefix.
 
-`auto`와 `deferred` MCP 모드에서 연결, 연결 해제, 도구 발견은
-즉시 등록 도구 접두사와 정적 시스템 프롬프트를 안정적으로 유지한다. provider 고유의
-지연 정의는 그 접두사 밖에 있다. KV 캐시 텔레메트리는 이제 즉시 정의만 해시하고
-세므로, 지연 카탈로그 변경이 하네스가 만든 캐시 미스로
-잘못 나타나지 않는다. 스키마 캐시가 차갑거나 바뀐 상태의 명시적 `eager` 모드는
-여전히 의도적으로 도구 스냅숏을 다시 만들어
-프롬프트 캐시 미스를 일으킬 수 있다. 웜 캐시 스키마는 바뀌지 않았을 때 그 재구성을 피한다.
+In `auto` and `deferred` MCP modes, connect, disconnect, and tool discovery
+keep the immediately registered tool prefixes and the static system prompt stable.
+Provider-specific deferred definitions live outside those prefixes. KV cache telemetry now hashes and
+counts only the immediate definitions, so a deferred catalog change
+does not show up incorrectly as a harness-created cache miss. Explicit `eager` mode with a cold or
+changed schema cache still deliberately rebuilds the tool snapshot and
+can cause prompt cache misses. A warm cached schema avoids that rebuild when it has not changed.
 
-#### 2026-10-13에 수행한 검증
+#### Verification performed on 2026-10-13
 
-- 실제 TCP 테스트가 느린 서버의 initialize 응답을 붙잡아 두고, 그동안
-  등록이 반환되고 빠른 피어가 발견 가능해지며 관리, 검색,
-  빠른 도구 호출이 계속 쓸 수 있는지 단언한다. 공유 연결 경로와 소유 연결 경로를
-  모두 다루며, 명시적 eager 모드의 웜 캐시 재시작도 포함한다.
-- 두 서버 등록 측정값은 소유 연결이 콜드/웜 기준 357/241마이크로초,
-  공유 연결이 126/219마이크로초였다
-  (`justrust` 실행 `20261013-072941134-560607`). 이 값은 테스트 안의
-  레지스트리 작업을 잰 것이지 전체 애플리케이션 시작이나 인터넷 연결 지연이 아니다.
-- 이후 동시 CPU 부하가 심한 상태의 로컬 실행에서 소유 연결은 콜드/웜
-  7.159/0.565밀리초, 공유 연결은 15.871/0.521밀리초였다
-  (`20261013-074441115-730779`). 등록은 여전히
-  붙잡아 둔 네트워크 응답보다 먼저 반환됐다. 서로 다른 기기와 부하
-  조건은 구현 속도 향상이나 보편적 지연 상한이 아니다.
-- 격리된 HoronAgent home에서 실제 네이티브 Expo OAuth 로그인이 성공했다. 네이티브
-  initialize/list/shutdown 스모크 테스트가 2.404초에 도구 39개를 돌려줬다. 자격 증명이 없을 때
-  같은 엔드포인트는 브라우저를 열지 않고 0.228초에 로그인 안내를
-  돌려줬다.
-- 회귀 테스트는 실제 에이전트의 즉시 스키마, 정적 프롬프트,
-  대화, 캐시 추적기, KV 모니터를 네이티브 및 폴백 지연 provider의 HTTP 연결,
-  연결 해제, 재연결 전후로 비교한다. 이는 캐시와 관련된 요청 접두사를 검증하는 것이지
-  유료 provider의 캐시 적중 청구서를 검증하는 것이 아니다.
-- 고정된 최종 트리의 호스티드 리플레이가 base MCP 테스트 113개, app-core MCP
-  테스트 54개, 더 넓은 에이전트 테스트 79개, 루트 라이브러리 MCP CLI 테스트 11개, 실제
-  stdio 충돌 통합을 통과했다. 일부 스위트는 겹친다. 앞선 로컬 검증은
-  확인된 호스티드 파일 시스템 실패 뒤에 진행한 것이지
-  호스티드 빌드 회계를 우회하려는 시도가 아니었다.
-- 새로 빌드한 고정 바이너리는 공개 CLI HTTP/SSE/OAuth 열 건짜리
-  리플레이를 통과했고 실제 Expo HTTPS MCP 서비스에서 도구 39개를 발견했다. 격리된 음성 대조에서
-  안전 수정 다섯 개를 제거하자 기대한 회귀 단언이
-  실패했다. 되돌리자 같은 검사를 통과했다.
-  요구 사항 관찰 기록은 저장소에서 정리했고, 재현은 위 테스트로 한다.
+- A real TCP test holds back a slow server's initialize response, and during that time
+  asserts that registration returns, a fast peer becomes discoverable, and management, search, and
+  fast tool calls remain usable. It covers both the shared-connection and owned-connection paths
+  and includes a warm-cache restart in explicit eager mode.
+- Two-server registration measured 357/241 microseconds cold/warm for the owned connection
+  and 126/219 microseconds for the shared connection
+  (`justrust` run `20261013-072941134-560607`). These values measure
+  registry work inside the test, not full application startup or internet connection latency.
+- In a later local run under heavy concurrent CPU load, the owned connection measured 7.159/0.565
+  milliseconds cold/warm and the shared connection 15.871/0.521 milliseconds
+  (`20261013-074441115-730779`). Registration still returned
+  before the held-back network response. Different machines and load
+  conditions are not evidence of an implementation speedup or a universal latency ceiling.
+- A real native Expo OAuth login succeeded in an isolated HoronAgent home. A native
+  initialize/list/shutdown smoke test returned 39 tools in 2.404 seconds. With no credentials, the
+  same endpoint returned login guidance in 0.228 seconds without opening a browser.
+- Regression tests compare the real agent's immediate schemas, static prompt,
+  conversation, cache tracker, and KV monitor before and after HTTP connect,
+  disconnect, and reconnect for native and fallback deferred providers. This verifies the
+  request prefix relevant to caching, not a paid provider's cache-hit invoice.
+- A hosted replay of the pinned final tree passed 113 base MCP tests, 54 app-core MCP
+  tests, 79 broader agent tests, 11 root library MCP CLI tests, and a real
+  stdio collision integration. Some suites overlap. The earlier local verification
+  came after a confirmed hosted filesystem failure and was not an attempt
+  to bypass hosted build accounting.
+- A freshly built pinned binary passed a ten-case public CLI HTTP/SSE/OAuth
+  replay and discovered 39 tools from a real Expo HTTPS MCP service. In an isolated negative control,
+  removing five safety fixes made the expected regression assertions
+  fail. Restoring them passed the same checks.
+  The requirement observation record was cleaned up from the repository, and reproduction uses the tests above.
 
-### 수명 주기와 안전
+### Lifecycle and safety
 
-원격 요청은 JSON-RPC 요청 ID, 협상된 프로토콜 버전,
-서버가 지정한 세션 ID를 보존한다. 레거시 SSE 엔드포인트는
-설정된 서버의 origin에 남아야 한다. MCP 자격 증명을 붙여 HTTP 리다이렉트를 따라가지 않는다.
-종료는 대기 중 요청을 닫고 연결이 소유한 워커를 멈춘다.
+Remote requests preserve the JSON-RPC request ID, the negotiated protocol version,
+and the session ID the server assigns. A legacy SSE endpoint must stay on
+the configured server's origin. HTTP redirects are not followed with MCP credentials attached.
+Shutdown closes pending requests and stops the workers the connection owns.
 
-인증이 필요한 원격 서버에는 HTTPS를 쓴다. 루프백 HTTP는
-로컬 개발과 통합 테스트에 쓸 수 있다. OAuth 엔드포인트 발견과 콜백
-검증은 보안 URL, 리소스 바인딩, PKCE, state 검증을 강제한다.
+Use HTTPS for remote servers that require authentication. Loopback HTTP is
+acceptable for local development and integration tests. OAuth endpoint discovery and callback
+validation enforce secure URLs, resource binding, PKCE, and state validation.
 
-## 사용자 정의 HTTP JSON 웹 검색
+## Custom HTTP JSON web search
 
-JSON을 돌려주는 HTTP 엔드포인트는 무엇이든 `~/.horon/config.toml`에서 설정한다.
+Any HTTP endpoint that returns JSON is configured in `~/.horon/config.toml`.
 
 ```toml
 [websearch]
@@ -180,26 +181,26 @@ url_pointer = "/url"
 snippet_pointer = "/snippet"
 ```
 
-이 빌드에는 로컬 엔진을 프로바이더 네이티브 검색으로 넘기는 설정이 없다.
-`engine = "native"`는 선택 값으로만 남아 있고 검색 순서에서 빠진다. 그래서 그 값에
-`fallback_engines`까지 비어 있으면 기본 DuckDuckGo와 Bing으로 검색한다.
-`engine = "custom"`이면 설정한 엔드포인트로만 검색한다. 기존 DuckDuckGo와 Bing
-기본값은 그대로다. 오류가 나거나 결과가 비면 `fallback_engines`를 순서대로 시도한다.
-기본 대체 엔진은 Bing이다. 비공개 질의를 다른 곳으로 보내면 안 되면 `[]`로 둔다. 사용자
-정의 엔진을 대체 엔진으로 쓸 수도 있다.
+This build has no setting that routes a local engine to provider-native search.
+`engine = "native"` remains only as a selectable value and is left out of the search order. So with that value and
+an empty `fallback_engines`, search uses the default DuckDuckGo and Bing.
+`engine = "custom"` searches only the configured endpoint. The existing DuckDuckGo and Bing
+defaults stay the same. On error or an empty result, `fallback_engines` is tried in order.
+The default fallback engine is Bing. Set it to `[]` when private queries must not go anywhere else. A user-defined
+engine can also serve as a fallback engine.
 
-### 요청
+### Requests
 
-`endpoint`는 사용자 정보와 프래그먼트가 없는 절대 HTTP(S) URL이어야 한다.
-원격 서비스에는 HTTPS를 쓴다. GET과 POST만 지원하며 설정에서 대소문자를 가리지 않는다.
-기본은 GET이다. `params`는 두 방식 모두에 적용되는 정적 URL 질의 매개변수이고, 같은
-이름의 엔드포인트 질의 매개변수를 덮어쓴다. GET에서는 질의와 선택적인 개수가 URL
-매개변수가 된다. 동적 값은 정적 값과 같은 이름의 엔드포인트 매개변수를 덮어쓴다. 모든
-매개변수는 URL 인코딩한다.
+`endpoint` must be an absolute HTTP(S) URL without user information and without a fragment.
+Use HTTPS for remote services. Only GET and POST are supported, and the setting is case-insensitive.
+The default is GET. `params` are static URL query parameters that apply to both methods and override
+endpoint query parameters with the same name. For GET, the query and the optional count become URL
+parameters. Dynamic values override endpoint parameters with the same name as the static values. Every
+parameter is URL-encoded.
 
-POST에서 `body`는 정적 JSON 객체다(기본값 `{}`). 질의는 `query_param` 자리에 문자열로
-들어가고, 개수는 `count_param` 자리에 JSON 정수로 들어간다. 이 둘은 포인터가 아니라 본문
-최상위 키 그대로이며, 이미 있는 본문 키를 덮어쓴다. 예를 들면 다음과 같다.
+For POST, `body` is a static JSON object (default `{}`). The query goes into the `query_param` slot as a string
+and the count into the `count_param` slot as a JSON integer. These two are top-level keys of the body,
+not pointers, and they override body keys that already exist. For example:
 
 ```toml
 [websearch.custom]
@@ -211,29 +212,29 @@ params = { version = "1" }
 body = { options = { safe = true } }
 ```
 
-`query_param`의 기본값은 `q`다. 개수 매개변수를 보내지 않으려면 `count_param`을 생략한다.
-넣을 때는 비어 있지 않아야 하고 `query_param`과 달라야 한다. 결과는 여전히 `num_results`로
-로컬에서 제한한다(도구 기본값 8, 최대 20).
+`query_param` defaults to `q`. Omit `count_param` to send no count parameter.
+When present it must be non-empty and must differ from `query_param`. Results are still limited locally by
+`num_results` (tool default 8, maximum 20).
 
-`headers`는 정적 헤더 값을 넣는다. 자격 증명에는 `header_env`를 쓰는 편이 좋다. 헤더
-이름을 환경변수 이름에 대응시키고, 정적 헤더를 대소문자 구분 없이 덮어쓴다. 환경변수에는
-필요한 경우 `Bearer `를 포함한 **전체** 값이 들어간다. 변수가 없거나 비어 있으면, 또는
-헤더 값이 잘못되면 네트워크 접근 전에 실패한다. 자격 증명은 진단 정보에 복사하지 않는다.
-헤더 인증을 쓸 수 있으면 URL이나 본문에 자격 증명을 넣지 않는다.
+`headers` supplies static header values. For credentials, `header_env` is the better choice. It maps header
+names to environment variable names and overrides static headers case-insensitively. The environment variable holds the
+**full** value, including `Bearer ` where needed. A missing or empty variable, or a malformed
+header value, fails before any network access. Credentials are not copied into diagnostics.
+When header authentication is available, do not put credentials in the URL or the body.
 
-사용자 정의 요청의 제한 시간은 30초이고, 자격 증명이 다른 목적지로 전달되지 않도록 같은
-호스트 리다이렉트를 포함해 리다이렉트를 따라가지 않는다. 요청 오류에서는 reqwest URL을
-지운다. HTTP 오류는 상태만 보여주고 응답 본문, 설정한 URL, 헤더는 보여주지 않는다. 이런
-보호 장치는 설정한 엔드포인트를 신뢰하는 일을 대신하지 않는다. 평문 HTTP는 자격 증명을
-암호화하지 않고 보낸다.
+Custom requests time out at 30 seconds and do not follow redirects, including same-host
+redirects, so credentials are not passed to another destination. Request errors strip the reqwest URL.
+HTTP errors show only the status and do not show the response body, the configured URL, or the headers. These
+protections do not replace trusting the endpoint you configure. Plain HTTP sends credentials
+without encrypting them.
 
-### JSON 결과 매핑
+### JSON result mapping
 
-포인터는 JSON Pointer(RFC 6901)를 따른다. `/`는 `~1`로, `~`는 `~0`으로 이스케이프한다.
-`results_pointer`의 기본값은 `/results`이고 배열로 해석되어야 한다. 최상위 배열이면 `""`를
-쓴다. 제목, URL, 스니펫 포인터는 각 배열 항목 기준 상대 경로이고 기본값은 `/title`,
-`/url`, `/snippet`이다. `/link/href`처럼 중첩 경로도 지원한다. URL이 없거나 문자열이
-아니거나 비어 있으면 그 항목을 건너뛴다. 제목이 없거나 문자열이 아니거나 비면 URL을 대신
-쓰고, 스니펫이 없거나 문자열이 아니면 빈 값이 된다. JSON이 깨졌거나 포인터 문법이
-틀렸거나 결과 매핑이 없거나 배열이 아니면 분명하게 실패하고 설정한 대체 엔진을 쓴다.
-유효한 빈 배열은 결과 없음이다.
+Pointers follow JSON Pointer (RFC 6901). `/` is escaped as `~1` and `~` as `~0`.
+`results_pointer` defaults to `/results` and must resolve to an array. For a top-level array, use `""`.
+The title, URL, and snippet pointers are relative to each array item and default to `/title`,
+`/url`, and `/snippet`. Nested paths such as `/link/href` are supported too. An item whose URL is missing, is not a
+string, or is empty is skipped. When the title is missing, not a string, or empty, the URL is used instead;
+a snippet that is missing or not a string becomes empty. Broken JSON, a malformed pointer
+expression, a missing result mapping, or a mapping that is not an array fails clearly and the configured fallback
+engine is used. A valid empty array means no results.
