@@ -644,7 +644,7 @@ async fn gate_permit_is_released_after_completion_and_timeout() {
 }
 
 /// Manual QA runs share one process-global logger, so both QA tests must point
-/// `HORON_AGENT_HOME` at the same directory and read the file that logger opened.
+/// `HORON_HOME` at the same directory and read the file that logger opened.
 /// A per-test temp home would leave the second test reading a log the logger
 /// never wrote to.
 #[cfg(unix)]
@@ -654,11 +654,11 @@ fn manual_qa_log_file() -> std::path::PathBuf {
     let home = HOME.get_or_init(|| {
         let home = std::env::temp_dir().join(format!("horon-agent-manual-qa-{}", std::process::id()));
         std::fs::create_dir_all(&home).expect("create manual QA home");
-        crate::env::set_var("HORON_AGENT_HOME", &home);
+        crate::env::set_var("HORON_HOME", &home);
         crate::logging::init();
         home
     });
-    crate::env::set_var("HORON_AGENT_HOME", home);
+    crate::env::set_var("HORON_HOME", home);
     crate::logging::log_path().expect("manual QA log path")
 }
 

@@ -261,7 +261,7 @@ fixes: reinstall a platform wheel, install horon-agent, or pass `binary`.
 - The runtime directory is `HORON_AGENT_RUNTIME_DIR`, then `XDG_RUNTIME_DIR`,
   then `TMPDIR` on macOS, then a per-user temporary directory. The derivation
   matches the Rust side exactly, including the Windows pipe name.
-- `HORON_AGENT_HOME` names the state directory; `launch()` overrides it for its
+- `HORON_HOME` names the state directory; `launch()` overrides it for its
   private instance.
 
 ## Errors

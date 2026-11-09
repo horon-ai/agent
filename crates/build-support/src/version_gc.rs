@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn parses_version_from_binary_path() {
         assert_eq!(
-            version_from_binary_path(Path::new("/h/.horon-agent/builds/versions/abc123/horon-agent")),
+            version_from_binary_path(Path::new("/h/.horon/builds/versions/abc123/horon-agent")),
             Some("abc123".to_string())
         );
         assert_eq!(

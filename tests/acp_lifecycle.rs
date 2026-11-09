@@ -156,7 +156,7 @@ mod acp {
             command.env("PATH", path);
         }
         command
-            .env("HORON_AGENT_HOME", root.join("home"))
+            .env("HORON_HOME", root.join("home"))
             .env("HORON_AGENT_RUNTIME_DIR", root.join("rt"))
             .env("HOME", root)
             .env("XDG_CONFIG_HOME", root.join("config"))

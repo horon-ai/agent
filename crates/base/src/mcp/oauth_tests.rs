@@ -15,8 +15,8 @@ impl Sandbox {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().unwrap();
-        let saved = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let saved = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         Self {
             _lock: lock,
             temp,
@@ -32,9 +32,9 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         if let Some(value) = &self.saved {
-            crate::env::set_var("HORON_AGENT_HOME", value);
+            crate::env::set_var("HORON_HOME", value);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }

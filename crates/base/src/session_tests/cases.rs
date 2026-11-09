@@ -426,7 +426,7 @@ fn additional_dirs_pass_an_older_build_s_metadata_allow_list() -> Result<()> {
         .prefix("horon-agent-session-additional-dirs-extension-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let id = "session_additional_dirs_older_build";
     let mut session = Session::create_with_id(id.to_string(), None, Some("additional dirs across builds".to_string()));
@@ -609,7 +609,7 @@ fn load_startup_stub_preserves_metadata_but_skips_heavy_vectors() -> Result<()> 
         .prefix("horon-agent-startup-stub-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_startup_stub_roundtrip";
     let mut session = Session::create_with_id(
@@ -676,7 +676,7 @@ fn load_for_remote_startup_preserves_messages_and_replay_but_skips_heavy_vectors
         .prefix("horon-agent-remote-startup-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_remote_startup_roundtrip";
     let mut session = Session::create_with_id(
@@ -738,7 +738,7 @@ fn stream_rule_ledger_survives_a_reload() -> Result<()> {
         .prefix("horon-agent-session-stream-rule-ledger-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let id = "session_stream_rule_ledger";
     let mut session = Session::create_with_id(id.to_string(), None, Some("rules".to_string()));
@@ -780,7 +780,7 @@ fn test_recover_crashed_sessions_preserves_debug_flag() -> Result<()> {
         .prefix("horon-agent-recover-debug-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
     let _test_flag = EnvVarGuard::set("HORON_AGENT_TEST_SESSION", "0");
 
     let mut crashed = Session::create_with_id(
@@ -814,7 +814,7 @@ fn test_recover_crashed_sessions_by_ids_restores_only_selected_group() -> Result
         .prefix("horon-agent-recover-selected-crash-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
     let _test_flag = EnvVarGuard::set("HORON_AGENT_TEST_SESSION", "0");
 
     let now = Utc::now();
@@ -852,7 +852,7 @@ fn untouched_session_is_not_persisted_until_real_conversation_starts() -> Result
         .prefix("horon-agent-session-lazy-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let id = "session_untouched_lazy_save";
     let mut session = Session::create_with_id(id.to_string(), None, None);
@@ -876,7 +876,7 @@ fn untouched_session_is_not_persisted_until_real_conversation_starts() -> Result
 fn empty_fork_is_persisted_before_first_visible_message() -> Result<()> {
     let _env_lock = lock_env();
     let temp_home = tempfile::tempdir()?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
     let mut child = Session::create(Some("session_empty_parent".into()), None);
     child.append_fork_notice("session_empty_parent", "empty parent");
     assert_eq!(child.visible_conversation_message_count(), 0);
@@ -906,7 +906,7 @@ fn session_created_with_title_is_persisted_before_first_visible_message() -> Res
         .prefix("horon-agent-session-titled-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let id = "session_titled_eager_save";
     let mut session = Session::create_with_id(id.to_string(), None, Some("review".to_string()));
@@ -926,7 +926,7 @@ fn test_save_persists_full_session_content() -> Result<()> {
         .prefix("horon-agent-session-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_save_persist_test".to_string(),
@@ -989,7 +989,7 @@ fn test_save_persists_compaction_state() -> Result<()> {
         .prefix("horon-agent-session-compaction-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_compaction_persist_test".to_string(),
@@ -1021,7 +1021,7 @@ fn test_save_persists_provider_key() -> Result<()> {
         .prefix("horon-agent-session-provider-key-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_provider_key_persist_test".to_string(),
@@ -1046,7 +1046,7 @@ fn test_save_persists_plugin_id_and_absent_loads_none() -> Result<()> {
         .prefix("horon-agent-session-plugin-id-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_plugin_id_persist_test".to_string(),
@@ -1082,7 +1082,7 @@ fn test_save_persists_reasoning_effort() -> Result<()> {
         .prefix("horon-agent-session-reasoning-effort-save-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_reasoning_effort_persist_test".to_string(),
@@ -1107,7 +1107,7 @@ fn test_save_appends_journal_and_load_replays_it() -> Result<()> {
         .prefix("horon-agent-session-journal-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_journal_append_test".to_string(),
@@ -1156,7 +1156,7 @@ fn test_save_checkpoints_after_full_mutation_and_clears_journal() -> Result<()> 
         .prefix("horon-agent-session-checkpoint-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id(
         "session_journal_checkpoint_test".to_string(),
@@ -1206,7 +1206,7 @@ fn test_journal_replay_skips_corrupt_line_and_keeps_tail() -> Result<()> {
         .prefix("horon-agent-session-journal-corrupt-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_journal_corrupt_tail_test";
     let mut session = Session::create_with_id(session_id.to_string(), None, Some("corrupt journal test".to_string()));
@@ -1277,7 +1277,7 @@ fn test_interrupted_checkpoint_does_not_duplicate_journal_messages() -> Result<(
         .prefix("horon-agent-session-journal-interrupted-checkpoint-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_interrupted_checkpoint_test";
     let mut session = Session::create_with_id(session_id.to_string(), None, Some("t".into()));
@@ -1343,7 +1343,7 @@ fn test_load_repairs_snapshot_with_duplicated_message_ids() -> Result<()> {
         .prefix("horon-agent-session-duplicate-ids-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_duplicate_ids_test";
     let mut session = Session::create_with_id(session_id.to_string(), None, Some("t".into()));
@@ -1371,7 +1371,7 @@ fn test_journal_replay_salvages_glued_entries_on_torn_line() -> Result<()> {
         .prefix("horon-agent-session-journal-glued-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_journal_glued_test";
     let mut session = Session::create_with_id(session_id.to_string(), None, Some("glued journal test".to_string()));
@@ -1426,7 +1426,7 @@ fn test_corrupt_journal_heals_via_checkpoint_on_next_save() -> Result<()> {
         .prefix("horon-agent-session-journal-heal-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_journal_heal_test";
     let mut session = Session::create_with_id(session_id.to_string(), None, Some("heal journal test".to_string()));
@@ -2427,7 +2427,7 @@ fn reasoning_trace_survives_session_save_and_load() -> Result<()> {
         .prefix("horon-agent-reasoning-persist-test-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_reasoning_trace_roundtrip";
     let mut session = Session::create_with_id(session_id.to_string(), None, None);
@@ -2673,7 +2673,7 @@ fn fork_notice_is_model_visible_but_hidden_from_transcript() {
 fn streaming_guard_creates_visible_macos_sleep_assertion() {
     let _lock = lock_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set("HORON_HOME", temp.path());
 
     let reason = "HoronAgent streaming model response";
     // Other tests in this binary share the process; whatever matching rows
@@ -3126,7 +3126,7 @@ fn cache_prompt_totals_preserve_mixed_provider_accounting_and_legacy_unknown() {
 fn system_prompt_persists_before_first_message_and_across_metadata_updates() -> Result<()> {
     let _lock = lock_env();
     let home = tempfile::tempdir()?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", home.path());
+    let _home = EnvVarGuard::set("HORON_HOME", home.path());
     for prompt in ["custom system prompt", ""] {
         let mut session = Session::create(None, None);
         assert_eq!(session.system_prompt, None);

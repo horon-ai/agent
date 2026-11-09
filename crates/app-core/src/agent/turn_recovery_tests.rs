@@ -131,7 +131,7 @@ struct TurnRecoveryFlag;
 
 impl Drop for TurnRecoveryFlag {
     fn drop(&mut self) {
-        if let Ok(dir) = std::env::var("HORON_AGENT_HOME") {
+        if let Ok(dir) = std::env::var("HORON_HOME") {
             std::fs::write(
                 std::path::Path::new(&dir).join("config.toml"),
                 "[features]\nturn_recovery = \"conservative\"\nparallel_tools = true\n",

@@ -5,7 +5,7 @@ use crate::provider::EventStream;
 use async_trait::async_trait;
 use std::sync::Mutex as StdMutex;
 
-/// Isolated `HORON_AGENT_HOME`: the account pool, session store and settings
+/// Isolated `HORON_HOME`: the account pool, session store and settings
 /// file all resolve under it, so tests never touch the real machine.
 struct IsolatedHome {
     previous: Option<std::ffi::OsString>,
@@ -15,8 +15,8 @@ struct IsolatedHome {
 impl IsolatedHome {
     fn new() -> Self {
         let home = tempfile::TempDir::new().expect("isolated home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::Config::invalidate_cache();
         Self { previous, _home: home }
     }
@@ -39,8 +39,8 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(previous) => crate::env::set_var("HORON_HOME", previous),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

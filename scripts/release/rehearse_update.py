@@ -4,9 +4,9 @@
 Runs the genuine updater code path (check -> download -> checksum -> install ->
 channel symlinks -> graceful client reload -> shared-server catch-up) against a
 fake "latest release" served from localhost. Nothing outside the sandbox is
-touched: HORON_AGENT_HOME, the runtime/socket dir, and the launcher dir all live under
+touched: HORON_HOME, the runtime/socket dir, and the launcher dir all live under
 the sandbox, and the release-URL override is only honored by horon-agent when
-HORON_AGENT_HOME is sandboxed.
+HORON_HOME is sandboxed.
 
 Every run wipes the sandbox, so the experience is exactly repeatable.
 
@@ -334,8 +334,8 @@ def make_handler(sc: Scenario):
 
 
 def sandbox_pids(home: Path) -> list[int]:
-    """Processes whose environment points at this sandbox's HORON_AGENT_HOME."""
-    needle = f"HORON_AGENT_HOME={home}".encode()
+    """Processes whose environment points at this sandbox's HORON_HOME."""
+    needle = f"HORON_HOME={home}".encode()
     pids = []
     proc = Path("/proc")
     if not proc.exists():
@@ -376,7 +376,7 @@ def scrubbed_env(home: Path, run_dir: Path, release_url: str) -> dict[str, str]:
     }
     env.update(
         {
-            "HORON_AGENT_HOME": str(home),
+            "HORON_HOME": str(home),
             "HORON_AGENT_RUNTIME_DIR": str(run_dir),
             "HORON_AGENT_INSTALL_DIR": str(home / "bin"),
             "HORON_AGENT_UPDATE_RELEASE_URL": release_url,
@@ -530,7 +530,7 @@ def main() -> int:
 
     env = scrubbed_env(home, run_dir, release_url)
     if args.prepare_only:
-        log(f"prepared. run: env HORON_AGENT_HOME={home} HORON_AGENT_RUNTIME_DIR={run_dir} {launcher}")
+        log(f"prepared. run: env HORON_HOME={home} HORON_AGENT_RUNTIME_DIR={run_dir} {launcher}")
         server.shutdown()
         return 0
 

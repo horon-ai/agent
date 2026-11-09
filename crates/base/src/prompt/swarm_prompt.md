@@ -2,7 +2,7 @@
 This file IS the swarm config. Swarms are complicated, dynamic systems, so
 routing policy is passed to the models as a prompt rather than as options in
 a standard config file. Edit freely: override globally at
-~/.horon-agent/swarm-prompt.md or per-project at ./.horon-agent/swarm-prompt.md.
+~/.horon/swarm-prompt.md or per-project at ./.horon/swarm-prompt.md.
 -->
 
 Model routing guidance for spawned swarm agents. Pass `model` to choose a model

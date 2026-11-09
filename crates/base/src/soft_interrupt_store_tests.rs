@@ -4,8 +4,8 @@ use super::*;
 fn append_take_and_clear_round_trip() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().expect("temp dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let session_id = "ses_soft_interrupt_store";
     append(
@@ -81,8 +81,8 @@ fn append_take_and_clear_round_trip() {
     clear(session_id).expect("clear interrupts");
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }

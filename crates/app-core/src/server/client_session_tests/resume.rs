@@ -22,9 +22,9 @@ impl Drop for RuntimeRestore {
             crate::env::remove_var("HORON_AGENT_RUNTIME_DIR");
         }
         if let Some(prev_home) = self.prev_home.take() {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -42,9 +42,9 @@ fn setup_runtime_dir() -> Result<(IsolatedDirs, RuntimeRestore)> {
     let home = tempfile::TempDir::new().map_err(|e| anyhow!(e))?;
     crate::storage::create_store_dir(&home.path().join("sessions"), false).map_err(|e| anyhow!(e))?;
     let prev_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     Ok((
         IsolatedDirs {
             _runtime: runtime,

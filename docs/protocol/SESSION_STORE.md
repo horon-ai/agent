@@ -9,7 +9,7 @@
 `crates/session-store/src/schema.rs`에 있고, 이 문서는 그 타입을 설명하며 각 규칙을 소유한
 모듈을 밝힌다.
 
-저장소의 루트는 하나다. `$HORON_AGENT_HOME/sessions`(보통 `~/.horon-agent/sessions`)이다. 아래 경로는
+저장소의 루트는 하나다. `$HORON_HOME/sessions`(보통 `~/.horon/sessions`)이다. 아래 경로는
 모두 이 루트 기준이다. 모든 파일은 소유자 전용이며(디렉터리 `0700`, 파일 `0600`), 모든 접근자는 세션
 id를 다시 검증하고 루트 아래에서 심볼릭 링크, 디렉터리가 아닌 요소, 다른 소유자의 요소를 거부한다.
 그래서 형식이 올바른 id도 저장소 밖 경로를 가리킬 수 없다(`schema.rs::SessionPaths`). Windows에는

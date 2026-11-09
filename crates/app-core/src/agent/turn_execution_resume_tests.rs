@@ -47,9 +47,9 @@ impl ResumeTestEnv {
     fn new() -> Self {
         let home = tempfile::tempdir().expect("create temp home");
         let runtime = tempfile::tempdir().expect("create temp runtime dir");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let previous_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
         crate::storage::create_store_dir(&home.path().join("sessions"), false).expect("create sessions dir");
         Self {
@@ -64,7 +64,7 @@ impl ResumeTestEnv {
 impl Drop for ResumeTestEnv {
     fn drop(&mut self) {
         for (key, value) in [
-            ("HORON_AGENT_HOME", self.previous_home.take()),
+            ("HORON_HOME", self.previous_home.take()),
             ("HORON_AGENT_RUNTIME_DIR", self.previous_runtime.take()),
         ] {
             if let Some(value) = value {

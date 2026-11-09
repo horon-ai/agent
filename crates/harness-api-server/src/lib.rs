@@ -3,9 +3,9 @@
 //!
 //! Architecture (milestone 2 of docs/protocol/HARNESS_API.md; storage format in
 //! docs/protocol/SESSION_STORE.md):
-//! - Listens on `~/.horon-agent/horon-agent-api.sock` (or `HORON_AGENT_API_SOCKET`).
+//! - Listens on `~/.horon/horon-agent-api.sock` (or `HORON_AGENT_API_SOCKET`).
 //! - For each API client, dials the legacy daemon socket (`HORON_AGENT_SOCKET` or
-//!   `~/.horon-agent/horon-agent.sock`) and speaks `subscribe`/`message`/... on its
+//!   `~/.horon/horon-agent.sock`) and speaks `subscribe`/`message`/... on its
 //!   behalf.
 //! - Translation is JSON-to-JSON so this crate does not depend on the heavy
 //!   internal protocol types and cannot be broken by additive internal
@@ -911,8 +911,8 @@ mod public_acceptance_tests {
     impl Drop for HoronAgentHomeGuard {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-                None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+                Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+                None => unsafe { std::env::remove_var("HORON_HOME") },
             }
         }
     }
@@ -930,8 +930,8 @@ mod public_acceptance_tests {
                 % 1_000_000_000
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
-        unsafe { std::env::set_var("HORON_AGENT_HOME", &root) };
+        let previous_home = std::env::var_os("HORON_HOME");
+        unsafe { std::env::set_var("HORON_HOME", &root) };
         let _home_guard = HoronAgentHomeGuard(previous_home);
         let sessions = root.join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();

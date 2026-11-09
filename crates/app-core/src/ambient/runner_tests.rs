@@ -56,10 +56,10 @@ impl Drop for ResetConfigCache {
 #[test]
 fn ambient_gate_tracks_config_toggles_and_preserves_disabled_override() {
     let _guard = crate::storage::lock_test_env();
-    // Restore the process cache after HORON_AGENT_HOME is restored, including on panic.
+    // Restore the process cache after HORON_HOME is restored, including on panic.
     let _cache = ResetConfigCache;
     let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let _enabled = EnvVarGuard::unset("HORON_AGENT_AMBIENT_ENABLED");
     let path = Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config parent");
@@ -90,7 +90,7 @@ async fn running_loop_observes_enable_edit_without_cache_invalidation() {
     let _guard = crate::storage::lock_test_env();
     let _cache = ResetConfigCache;
     let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let _enabled = EnvVarGuard::unset("HORON_AGENT_AMBIENT_ENABLED");
     let path = Config::path().expect("config path");
     std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config parent");
@@ -199,7 +199,7 @@ impl Provider for StreamingTestProvider {
 async fn runner_stays_alive_to_service_schedules_when_ambient_disabled() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let provider: Arc<dyn Provider> = Arc::new(TestProvider);
     let runner = AmbientRunnerHandle::new(Arc::new(crate::safety::SafetySystem::new()));
@@ -219,7 +219,7 @@ async fn runner_stays_alive_to_service_schedules_when_ambient_disabled() {
 async fn spawn_target_creates_one_child_session_and_runs_task() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
     let provider = StreamingTestProvider::default();
     provider.queue_response(vec![

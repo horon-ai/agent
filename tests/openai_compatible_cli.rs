@@ -1,5 +1,5 @@
 //! `horon-agent run` against a direct OpenAI-compatible `/chat/completions`
-//! endpoint, driven through the real binary in an owned HORON_AGENT_HOME.
+//! endpoint, driven through the real binary in an owned HORON_HOME.
 //!
 //! The loopback mock scripts one tool-call round and then the final text, so a
 //! run that prints `pong` proves the binary reached the mock twice: once for the
@@ -48,7 +48,7 @@ default_model = \"qa-model\"\nmodels = [{{ id = \"qa-model\" }}]\n"
             .current_dir(self.path())
             .env_clear()
             .env("HOME", self.path())
-            .env("HORON_AGENT_HOME", self.path())
+            .env("HORON_HOME", self.path())
             .env("XDG_CONFIG_HOME", self.path().join("config"))
             .env("XDG_CACHE_HOME", self.path().join("cache"))
             .env("HORON_AGENT_NON_INTERACTIVE", "1")

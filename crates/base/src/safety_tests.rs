@@ -5,15 +5,15 @@ where
     F: FnOnce() -> T,
 {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("create temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
 
     match prev_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
 
     result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))

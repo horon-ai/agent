@@ -288,7 +288,7 @@ Next cycle: ~35 minutes
 #### 저장 위치
 
 ```
-~/.horon-agent/safety/
+~/.horon/safety/
 ├── queue.json              # Pending permission requests
 └── history.json            # Past decisions
 ```
@@ -515,7 +515,7 @@ pub enum Urgency {
 불리면 아무것도 추가하지 않습니다. 다만 키와 턴은 한 번의 ACK로 함께 내구화되지 않습니다. 키가 먼저
 내구화되고 턴은 그 뒤에 만들어지므로 "키는 있는데 턴이 없는" 상태가 실제로 생길 수 있고, 그 상태는
 exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 아니라 그 경로가 덮습니다. 자세한 내용과
-남는 창은 [한계](#한계)에 적었습니다). 시도 횟수는 두 종류의 claim 파일이 제한합니다. `~/.horon-agent/approvals/resume-claims/<request_id>.json`은
+남는 창은 [한계](#한계)에 적었습니다). 시도 횟수는 두 종류의 claim 파일이 제한합니다. `~/.horon/approvals/resume-claims/<request_id>.json`은
 턴 생성 시도를 2회로, `resume-exec-claims/<request_id>.json`은 이미 만들어진 턴의 실행 시도를 2회로
 묶습니다(실행 리스 기본 30분). 상한을 다 써도 끝나지 않으면 레코드는 `needs-human`으로 닫히고,
 `RunNeedsHumanResume` 이벤트와 `dispatch_needs_human_resume` 알림이 한 번 나갑니다. 조용히 버리지 않습니다.
@@ -528,7 +528,7 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
    자동 전환이 적용됩니다. 클라이언트가 붙어 있으면 `NotApplicable`로 빠져 원래 프로바이더 오류가
    그대로 턴에 돌아가고, 전환 여부는 클라이언트가 정합니다.
 3. **예산.** `crates/app-core/src/agent/failover_budget.rs`가
-   `~/.horon-agent/failover-budget/<safe-session-id>.json`에 시도 횟수를 적습니다. 예산의 단위는
+   `~/.horon/failover-budget/<safe-session-id>.json`에 시도 횟수를 적습니다. 예산의 단위는
    `chain_id`이고, 시도는 라우트를 바꾸기 **전에** 소비합니다. 전환이 거부돼도 시도가 남지 않게 하려는
    선택이며, 그 대신 대상이 모두 자격 밖인 세션은 전환 없이 예산만 씁니다.
 4. **라우트 변경.** `crates/app-core/src/server/provider_control.rs`의
@@ -537,7 +537,7 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
    자동 전환 풀 자격을 확인하고 라우트를 적용합니다.
 5. **재전송.** 전환이 적용되면 턴 루프는 `ProviderErrorAction::Resend`로 같은 턴을 다시 보냅니다.
    `FailoverSwitched { chain_id, from, to, reason, attempt, max }`는 세션 sink로 보내기 전에
-   `~/.horon-agent/failover-events.json`에 먼저 기록됩니다.
+   `~/.horon/failover-events.json`에 먼저 기록됩니다.
 
 새 사용자 프롬프트는 `begin_failover_chain_for_prompt`로 새 체인을 엽니다. 한 턴 안의 재시도는 그 체인을
 그대로 쓰므로, 상한은 프로세스가 아니라 프롬프트 하나가 여는 실행 체인에 걸립니다.
@@ -556,8 +556,8 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
 세션은 이번 변경 전과 같은 경로를 탑니다. 승인 대기 쪽 세 키는 `AmbientConfig`, 전환 쪽 두 키는
 `ProviderConfig`에 있습니다(`crates/config-types/src/lib.rs`).
 
-- **`config.toml`은 직접 만들어야 합니다.** 바이너리는 `~/.horon-agent/config.toml`(또는
-  `$HORON_AGENT_HOME/config.toml`)을 대신 만들어 주지 않습니다. `crates/base/src/config/default_file.rs`의
+- **`config.toml`은 직접 만들어야 합니다.** 바이너리는 `~/.horon/config.toml`(또는
+  `$HORON_HOME/config.toml`)을 대신 만들어 주지 않습니다. `crates/base/src/config/default_file.rs`의
   주석 템플릿이 아래 키들을 설명하지만, 그 템플릿을 디스크에 쓰는 명령은 없습니다(`create_default_config_file`은
   테스트에서만 호출됩니다). 그래서 템플릿은 참고 자료이고 `serve`가 만드는 파일이 아닙니다. 설정 파일을 새로
   만드는 명령도 없으므로 파일을 손으로 쓰고, 승인 관련 세 키는 `[ambient]`에, `retry_backoff_cap_secs`는
@@ -594,8 +594,8 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
   소비자는 승인 이벤트를 `request_id`로, 전환 이벤트를 `(session_id, chain_id, from, to, attempt)`로
   중복 제거해야 합니다. 이 빌드에는 ack을 자동으로 보내는 클라이언트가 없다는 점은 전환 ack과
   같습니다. `approval_ack` 태그를 모르는 옛 데몬은 그 요청을 `Invalid request` 오류로 답합니다.
-- **claim 파일은 `Done` 뒤에도 남습니다.** `~/.horon-agent/approvals/resume-claims/<request_id>.json`과
-  `~/.horon-agent/approvals/resume-exec-claims/<request_id>.json`은 재개를 정확히 한 번으로 묶고 시도
+- **claim 파일은 `Done` 뒤에도 남습니다.** `~/.horon/approvals/resume-claims/<request_id>.json`과
+  `~/.horon/approvals/resume-exec-claims/<request_id>.json`은 재개를 정확히 한 번으로 묶고 시도
   횟수를 세는 기록이라, 지우면 멱등성과 `RESUME_ATTEMPT_CAP` 판정이 함께 풀립니다. 그래서 러너는
   `Done`으로 상태만 바꾸고 파일은 지우지 않으며, 재개한 승인 하나당 한 쌍씩 쌓입니다. 다시 보지 않을
   요청이라면 운영자가 직접 지워도 되지만, 지운 요청은 시도 횟수가 0부터 다시 세어집니다.

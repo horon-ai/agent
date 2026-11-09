@@ -25,17 +25,17 @@ struct Home {
 impl Home {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let old = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let old = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         Self { _temp: temp, old }
     }
 }
 impl Drop for Home {
     fn drop(&mut self) {
         if let Some(old) = self.old.take() {
-            crate::env::set_var("HORON_AGENT_HOME", old);
+            crate::env::set_var("HORON_HOME", old);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -258,7 +258,7 @@ async fn target_subscribe_refused_by_a_busy_writer_sends_the_refusal() {
     let _home = Home::new();
     // Written through the store the way a prompted session is, with no read
     // cache, so restoring it needs the session's writer, which `held` owns.
-    let home = std::path::PathBuf::from(std::env::var_os("HORON_AGENT_HOME").unwrap());
+    let home = std::path::PathBuf::from(std::env::var_os("HORON_HOME").unwrap());
     let paths = store::SessionPaths::new(home.canonicalize().unwrap().join("sessions"));
     let id = "session_busybind_1700000000000_0123456789abcdef".to_string();
     let session_id = store::SessionId::parse(&id).unwrap();

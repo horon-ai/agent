@@ -28,7 +28,7 @@ fn session_dir(session: &Session) -> Result<std::path::PathBuf> {
 fn local_head_and_runtime_survive_reopen() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-local-state-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     // Given a committed session that then records a working directory and an
     // explicit head selection.
@@ -100,7 +100,7 @@ fn publication_token(path: &std::path::Path) -> Result<Vec<u8>> {
 fn local_runtime_skips_status_only_commits() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-local-runtime-skip-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     // Given a saved session whose runtime binding is on disk.
     let mut session = Session::create_with_id("runtime_skip".into(), None, None);
@@ -149,7 +149,7 @@ fn local_runtime_skips_status_only_commits() -> Result<()> {
 fn a_close_with_nothing_new_writes_only_the_runtime_binding() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-noop-close-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     // Given a session the turn has already saved.
     let mut session = Session::create_with_id("noop_close".into(), None, None);
@@ -190,7 +190,7 @@ fn a_close_with_nothing_new_writes_only_the_runtime_binding() -> Result<()> {
 fn skipped_binding_commits_keep_reader_visible_activity() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-runtime-clock-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     // Given an active session whose binding was published when its process took
     // it over, three hours before the work this turn does.
@@ -255,7 +255,7 @@ fn skipped_binding_commits_keep_reader_visible_activity() -> Result<()> {
 fn facade_cache_loss_rebuilds() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-facade-loss-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
     // Given a saved session whose derived facade cache carries its auxiliary state.
     let mut session = Session::create_with_id("facade_loss".into(), None, None);

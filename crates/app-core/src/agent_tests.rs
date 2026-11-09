@@ -51,8 +51,8 @@ impl IsolatedHome {
     fn new() -> Self {
         let home = tempfile::tempdir().expect("isolated agent home");
         crate::storage::create_store_dir(&home.path().join("sessions"), false).expect("create sessions dir");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::Config::invalidate_cache();
         Self { _home: home, previous }
     }
@@ -61,8 +61,8 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match &self.previous {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }
@@ -111,14 +111,14 @@ async fn saved_account_restore_mismatch_blocks_model_turn() {
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match &self.0 {
-                Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::Config::invalidate_cache();
         }
     }
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::Config::invalidate_cache();
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let mut agent = Agent::new(provider, Registry::empty());
@@ -206,16 +206,16 @@ async fn mpsc_preserves_signatures_and_never_rebinds_to_provider_session_id() {
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             if let Some(home) = &self.0 {
-                crate::env::set_var("HORON_AGENT_HOME", home);
+                crate::env::set_var("HORON_HOME", home);
             } else {
-                crate::env::remove_var("HORON_AGENT_HOME");
+                crate::env::remove_var("HORON_HOME");
             }
             crate::config::Config::invalidate_cache();
         }
     }
     let home = tempfile::tempdir().unwrap();
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::Config::invalidate_cache();
     let provider = Arc::new(SignatureSessionProvider::default());
     let mut agent = Agent::new(provider.clone(), Registry::empty());
@@ -1537,14 +1537,14 @@ async fn new_agent_registers_active_pid_and_clear_keeps_it() {
 #[tokio::test]
 async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let prev_tools = std::env::var_os("HORON_AGENT_TOOLS");
     let prev_disabled_tools = std::env::var_os("HORON_AGENT_DISABLED_TOOLS");
     let prev_tool_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
     let prev_disable_base_tools = std::env::var_os("HORON_AGENT_DISABLE_BASE_TOOLS");
     let temp_home = tempfile::TempDir::new().expect("temp home");
 
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    crate::env::set_var("HORON_HOME", temp_home.path());
     crate::env::remove_var("HORON_AGENT_TOOLS");
     crate::env::remove_var("HORON_AGENT_DISABLED_TOOLS");
     crate::env::remove_var("HORON_AGENT_TOOL_PROFILE");
@@ -1593,9 +1593,9 @@ async fn horon_agent_docs_is_exposed_by_default_and_can_be_explicitly_disabled()
     assert!(err.to_string().contains("disabled"));
 
     if let Some(previous) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous);
+        crate::env::set_var("HORON_HOME", previous);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
     if let Some(previous) = prev_tools {
         crate::env::set_var("HORON_AGENT_TOOLS", previous);
@@ -1794,15 +1794,15 @@ async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop(
         fn drop(&mut self) {
             crate::memory::clear_all_pending_memory();
             match &self.0 {
-                Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::Config::invalidate_cache();
         }
     }
     let home = tempfile::tempdir().expect("isolated memory home");
-    let _restore = RestoreMemoryHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreMemoryHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::Config::invalidate_cache();
     crate::memory::clear_all_pending_memory();
 
@@ -1938,8 +1938,8 @@ async fn memory_injection_message_can_persist_to_history() {
 async fn mark_closed_persists_soft_interrupts_for_restore_after_reload() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().expect("temp dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let registry = Registry::new(provider.clone()).await;
@@ -1976,9 +1976,9 @@ async fn mark_closed_persists_soft_interrupts_for_restore_after_reload() {
     );
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -2894,13 +2894,13 @@ fn system_prompt_override_restores_and_does_not_leak_across_sessions() {
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     for prompt in ["custom system prompt", ""] {
         let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
         let mut agent = Agent::new(provider.clone(), Registry::empty());
@@ -2988,17 +2988,17 @@ fn skill_installed_mid_session_keeps_system_prompt_stable_and_is_announced_once(
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
 
     let project = tempfile::tempdir().unwrap();
     let write_skill = |name: &str, description: &str| {
-        let dir = project.path().join(".horon-agent/skills").join(name);
+        let dir = project.path().join(".horon/skills").join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("SKILL.md"),
@@ -3495,7 +3495,7 @@ impl ParallelToolsFlag {
 
 impl Drop for ParallelToolsFlag {
     fn drop(&mut self) {
-        if let Ok(dir) = std::env::var("HORON_AGENT_HOME") {
+        if let Ok(dir) = std::env::var("HORON_HOME") {
             write_parallel_tools(std::path::Path::new(&dir), true);
         }
     }

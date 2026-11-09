@@ -1094,7 +1094,7 @@ jobs:
           installed=false
           for attempt in 1 2 3 4 5; do
             if HOME="$install_home" XDG_CONFIG_HOME="$install_home/.config" \
-              HORON_AGENT_HOME="$install_home/.horon-agent" HORON_AGENT_INSTALL_DIR="$install_home/.local/bin" \
+              HORON_HOME="$install_home/.horon" HORON_AGENT_INSTALL_DIR="$install_home/.local/bin" \
               HORON_AGENT_VERSION="$RELEASE_TAG" HORON_AGENT_SKIP_SERVER_RELOAD=1 HORON_AGENT_NO_TELEMETRY=1 \
               bash scripts/install/install.sh; then
               installed=true

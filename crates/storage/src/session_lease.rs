@@ -2,7 +2,7 @@
 //! (`horon-agent cloud move` / `horon-agent cloud return`).
 //!
 //! A conversation is a single linear transcript, so exactly one machine may run
-//! turns for it at a time. Each machine keeps `~/.horon-agent/session_leases/<id>.json`
+//! turns for it at a time. Each machine keeps `~/.horon/session_leases/<id>.json`
 //! recording the latest migration `epoch` it knows about and whether the session
 //! currently lives here or on another host. A session copy carries the epoch of
 //! the migration that delivered it (`Session::migration_epoch`). A copy may run
@@ -135,9 +135,9 @@ mod tests {
     fn with_home<T>(f: impl FnOnce() -> T) -> T {
         let _guard = crate::test_horon_agent_home_lock();
         let temp = tempfile::tempdir().unwrap();
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
         let out = f();
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
         out
     }
 

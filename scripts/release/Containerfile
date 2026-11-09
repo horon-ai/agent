@@ -25,7 +25,7 @@ RUN ln -s /opt/horon-agent/horon-agent /usr/local/bin/horon-agent
 
 USER horon
 WORKDIR /home/horon
-ENV HORON_AGENT_HOME=/home/horon/.horon-agent
+ENV HORON_HOME=/home/horon/.horon
 
 ENTRYPOINT ["horon-agent"]
 CMD ["--help"]

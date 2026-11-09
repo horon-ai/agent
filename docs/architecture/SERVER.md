@@ -13,7 +13,7 @@ TypeScript와 Rust SDK다. 이들은 Unix 소켓으로 서버에 붙고 연결�
 │  horon-agent serve                                                                │
 │  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
 │  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
-│  ├── Registry:     ~/.horon-agent/servers.json                                    │
+│  ├── Registry:     ~/.horon/servers.json                                    │
 │  ├── Provider (OpenAI-compatible, direct /chat/completions)                 │
 │  ├── MCP pool (shared across sessions)                                      │
 │  └── Sessions:                                                              │
@@ -44,7 +44,7 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 서버는 시작할 때 무작위 형용사나 동사 이름을 받는다(예: "blazing"). 세션마다 동물 명사를 받는다(예: "fox"). 둘이 합쳐져 화면에
 표시되는 자연스러운 구절이 된다: "🔥 blazing 🦊 fox".
 
-서버 이름은 레지스트리(`~/.horon-agent/servers.json`)를 통해 다시 읽힌 뒤에도 유지된다. 서버가 `/reload`에서 새
+서버 이름은 레지스트리(`~/.horon/servers.json`)를 통해 다시 읽힌 뒤에도 유지된다. 서버가 `/reload`에서 새
 바이너리로 exec하면 새 프로세스가 새 이름으로 등록한다. 낡은 항목은 자동으로 정리된다.
 
 ## 수명 주기
@@ -119,7 +119,7 @@ swarm 워커는 `spawn` 요청의 `spawn_mode`와 무관하게 이 프로세스 
 
 ### 세션 소유 표시 파일(`active_pids`)
 
-`~/.horon-agent/active_pids/<session_id>`에는 세션을 소유한 프로세스의 PID가 들어 있다. 서버 모드에서는 데몬
+`~/.horon/active_pids/<session_id>`에는 세션을 소유한 프로세스의 PID가 들어 있다. 서버 모드에서는 데몬
 PID이므로 여러 세션이 같은 PID를 공유할 수 있다. 디렉터리 이름과 달리 "활성"은 프로세스 소유를 뜻하지 클라이언트가
 붙어 있거나 모델이 생성을 돌리고 있다는 뜻이 아니다. 데몬이 쥔 세션은 클라이언트가 끊긴 뒤에도 등록된 채 남을 수 있다.
 

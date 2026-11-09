@@ -18,16 +18,16 @@ struct Home(Option<std::ffi::OsString>, #[allow(dead_code)] tempfile::TempDir);
 impl Drop for Home {
     fn drop(&mut self) {
         match &self.0 {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }
 
 fn temp_home() -> Home {
     let temp = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
     Home(previous, temp)
 }
 

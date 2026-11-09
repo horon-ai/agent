@@ -5,7 +5,7 @@
 //! registry without a manual reload, and a server that dies is reconnected by
 //! the background ladder rather than by the next tool call.
 //!
-//! Every case runs with a private `HORON_AGENT_HOME`/`HOME`, because the MCP
+//! Every case runs with a private `HORON_HOME`/`HOME`, because the MCP
 //! config is loaded from them; without isolation a developer's real
 //! `~/.claude.json` would inject servers into the test.
 
@@ -111,7 +111,7 @@ impl IsolatedEnv {
             .tempdir()
             .expect("a private runtime directory");
         let previous = [
-            "HORON_AGENT_HOME",
+            "HORON_HOME",
             "HORON_AGENT_RUNTIME_DIR",
             "HOME",
             "HORON_AGENT_DISABLE_CLAUDE_MCP",
@@ -119,7 +119,7 @@ impl IsolatedEnv {
         .into_iter()
         .map(|key| (key, std::env::var_os(key)))
         .collect();
-        horon_agent_app_core::env::set_var("HORON_AGENT_HOME", home.path());
+        horon_agent_app_core::env::set_var("HORON_HOME", home.path());
         horon_agent_app_core::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
         horon_agent_app_core::env::set_var("HOME", home.path());
         horon_agent_app_core::env::set_var("HORON_AGENT_DISABLE_CLAUDE_MCP", "1");

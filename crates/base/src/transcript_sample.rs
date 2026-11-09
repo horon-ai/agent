@@ -106,7 +106,7 @@ pub fn recent_external_transcripts_in(home: &Path, limit: usize) -> Vec<Transcri
         (Format::Codex, home.join(".codex/sessions"), "jsonl"),
         (Format::Cursor, home.join(".cursor/projects"), "jsonl"),
         (Format::Pi, home.join(".pi/agent/sessions"), "jsonl"),
-        (Format::HoronAgent, home.join(".horon-agent/sessions"), "json"),
+        (Format::HoronAgent, home.join(".horon/sessions"), "json"),
     ] {
         let mut candidates: Vec<(u64, std::time::SystemTime, std::path::PathBuf)> = Vec::new();
         for path in collect_recent_files_recursive(&dir, extension, SCAN_FILES) {
@@ -759,7 +759,7 @@ mod tests {
     #[test]
     fn horon_agent_sessions_replay_and_skip_debug_children_and_context() {
         let home = tempfile::tempdir().unwrap();
-        let dir = home.path().join(".horon-agent/sessions");
+        let dir = home.path().join(".horon/sessions");
         horon_agent_session(&dir, "session_a", 3, serde_json::json!({}));
         // Longer, but debug and subagent sessions never replay.
         horon_agent_session(&dir, "session_debug", 20, serde_json::json!({"is_debug": true}));
@@ -784,7 +784,7 @@ mod tests {
     fn the_longest_session_wins_over_the_newest_across_harnesses() {
         let home = tempfile::tempdir().unwrap();
         horon_agent_session(
-            &home.path().join(".horon-agent/sessions"),
+            &home.path().join(".horon/sessions"),
             "session_long",
             30,
             serde_json::json!({}),
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn showcase_spans_harnesses_before_repeating_one() {
         let home = tempfile::tempdir().unwrap();
-        let sessions = home.path().join(".horon-agent/sessions");
+        let sessions = home.path().join(".horon/sessions");
         horon_agent_session(&sessions, "session_long", 30, serde_json::json!({}));
         horon_agent_session(&sessions, "session_mid", 20, serde_json::json!({}));
         let mut lines = Vec::new();

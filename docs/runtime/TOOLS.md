@@ -405,11 +405,11 @@ config 하위 디렉터리 규칙 본문
 
 ### 경로 정책과의 관계
 
-경로 거부 정책(`path_policy`)은 `skill://` 글자 자체를 작업 폴더 경로로 해석하지 않습니다. 대신 `skill://<이름>/<경로>`가 가리키는 실제 파일에 기존 거부 규칙을 그대로 적용하므로, 정책이 막는 파일은 스킬 경로로도 읽을 수 없습니다. 작업 폴더 밖을 막는 정책을 둔 세션에서는 `~/.horon-agent/skills` 같은 사용자 수준 스킬의 하위 파일이 이 규칙에 걸립니다. 그런 세션은 사용자 수준 스킬을 `skill_manage`(action `load`)로 읽습니다.
+경로 거부 정책(`path_policy`)은 `skill://` 글자 자체를 작업 폴더 경로로 해석하지 않습니다. 대신 `skill://<이름>/<경로>`가 가리키는 실제 파일에 기존 거부 규칙을 그대로 적용하므로, 정책이 막는 파일은 스킬 경로로도 읽을 수 없습니다. 작업 폴더 밖을 막는 정책을 둔 세션에서는 `~/.horon/skills` 같은 사용자 수준 스킬의 하위 파일이 이 규칙에 걸립니다. 그런 세션은 사용자 수준 스킬을 `skill_manage`(action `load`)로 읽습니다.
 
 ## 스킬 관리
 
-`skill_manage`의 `create`, `update`, `delete`는 모델이 직접 쓴 스킬만 다룹니다. 그 스킬은 `~/.horon-agent/managed-skills/<이름>/SKILL.md`에 있고, 사람이 쓴 스킬과 이름이 겹치면 언제나 사람이 쓴 쪽이 이깁니다. 그래서 세 동작 모두 사람이 쓴 스킬을 고치거나 지우지 못합니다.
+`skill_manage`의 `create`, `update`, `delete`는 모델이 직접 쓴 스킬만 다룹니다. 그 스킬은 `~/.horon/managed-skills/<이름>/SKILL.md`에 있고, 사람이 쓴 스킬과 이름이 겹치면 언제나 사람이 쓴 쪽이 이깁니다. 그래서 세 동작 모두 사람이 쓴 스킬을 고치거나 지우지 못합니다.
 
 | 동작 | 하는 일 | 거절하는 경우 |
 | --- | --- | --- |
@@ -459,14 +459,14 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 | 순서 | 출처 | 파일 | 켜는 조건 |
 | --- | --- | --- | --- |
-| 1 | 작업 폴더 | `.horon-agent/mcp.json` > `.mcp.json` > `.claude/mcp.json` | 작업 폴더를 신뢰한 경우(`docs/safety/SECURITY.md`) |
-| 2 | horon-agent | `~/.horon-agent/mcp.json` | 항상 |
+| 1 | 작업 폴더 | `.horon/mcp.json` > `.mcp.json` > `.claude/mcp.json` | 작업 폴더를 신뢰한 경우(`docs/safety/SECURITY.md`) |
+| 2 | horon-agent | `~/.horon/mcp.json` | 항상 |
 | 3 | Claude Code | `~/.claude.json`(이 프로젝트 항목 > 전역 `mcpServers`) > `~/.claude/mcp.json` | `[mcp] claude_user = true` |
 | 4 | Codex CLI | `~/.codex/config.toml`의 `[mcp_servers.*]` | `[mcp] codex_user = true` |
 
 - 예외가 하나 있습니다. 같은 이름에 로컬 stdio 정의와 원격(HTTP, SSE) 정의가 함께 있으면 출처 순서와 상관없이 stdio 정의가 남고, 로그에 한 줄을 남깁니다. 잘 도는 로컬 서버의 원격 짝은 보통 따로 로그인이 필요하기 때문입니다(issue #653).
 - 다른 호스트의 사용자 설정(Claude Code, Codex)은 기본으로 꺼져 있습니다. 그 서버는 다른 호스트에서 검토한 것이고, 불러오면 여기서 프로세스가 뜹니다. 꺼진 파일에 서버가 있으면 프로세스마다 로그 한 줄로 개수와 켜는 설정을 알립니다. `HORON_AGENT_DISABLE_CLAUDE_MCP`가 있으면 `claude_user`가 켜져 있어도 Claude 출처를 읽지 않습니다.
-- Codex 설정은 매번 그 자리에서 읽습니다. 예전처럼 첫 실행 때 `~/.horon-agent/mcp.json`으로 복사하지 않으므로, 환경 값(비밀일 수 있음)이 복제되지 않고 Codex에서 지운 서버는 다음 로드에서 사라집니다.
+- Codex 설정은 매번 그 자리에서 읽습니다. 예전처럼 첫 실행 때 `~/.horon/mcp.json`으로 복사하지 않으므로, 환경 값(비밀일 수 있음)이 복제되지 않고 Codex에서 지운 서버는 다음 로드에서 사라집니다.
 - `~/.claude.json`의 프로젝트 항목은 정규화한 작업 폴더 경로로 고릅니다. 한 프로젝트의 서버가 다른 저장소 세션에 섞이지 않습니다.
 - 사용자 수준 파일은 `FileStamp`가 같은 동안 다시 파싱하지 않고 프로세스 캐시(최대 16개)를 씁니다. 세션이 시작될 때 바뀐 사용자 설정이 없으면 파일을 하나도 읽지 않습니다. 작업 폴더 파일은 캐시하지 않습니다. 신뢰 판정과 같은 한 번의 읽기에서 나온 바이트만 파싱해야 하기 때문입니다.
 - 환경 변수 펼치기(`${VAR}`)와 실행할 수 없는 항목 제거는 합친 뒤 매번 합니다.

@@ -1,4 +1,4 @@
-//! Background cleanup for `~/.horon-agent/scratch`.
+//! Background cleanup for `~/.horon/scratch`.
 //!
 //! The bash tool points `TMPDIR` and `HORON_AGENT_SCRATCH_DIR` at this directory and
 //! tells agents to put large temporary files there. Agents routinely clone
@@ -40,7 +40,7 @@ fn retention_from_env() -> Option<Duration> {
     (days > 0).then(|| Duration::from_secs(days * 24 * 60 * 60))
 }
 
-/// Remove stale entries from `~/.horon-agent/scratch`.
+/// Remove stale entries from `~/.horon/scratch`.
 ///
 /// Best-effort and rate limited to one pass per day per machine, so it is safe
 /// to call from a background thread on every startup. Only the default scratch

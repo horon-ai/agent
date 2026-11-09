@@ -84,7 +84,7 @@ fn assert_crash_recovers_with_one_turn(case: CrashCase) {
             "ambient::resume_tests::crash_tests::crash_child_resume",
             "--nocapture",
         ])
-        .env("HORON_AGENT_HOME", home.path())
+        .env("HORON_HOME", home.path())
         .env("HORON_AGENT_RESUME_FAILPOINT", case.failpoint)
         .env("HORON_AGENT_RESUME_REQUEST", &request_id)
         // A dead owner's execution lease must be reclaimable without waiting out

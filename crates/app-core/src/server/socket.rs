@@ -461,7 +461,7 @@ pub(super) async fn wait_for_existing_server(path: &std::path::Path, timeout: Du
 pub(super) fn format_server_start_error(status: std::process::ExitStatus, stderr_output: &str) -> String {
     if stderr_output.trim().is_empty() {
         format!(
-            "Server exited before signalling ready ({}). Check logs at ~/.horon-agent/logs/",
+            "Server exited before signalling ready ({}). Check logs at ~/.horon/logs/",
             status
         )
     } else {

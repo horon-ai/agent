@@ -132,7 +132,7 @@ HORON_AGENT_NO_AUTO_UPDATE=1 \
     --agent-version "$agent_version" \
     --source-binary "$bin"
 
-install_dir="${HORON_AGENT_INSTALL_DIR:-${HORON_AGENT_HOME:+$HORON_AGENT_HOME/bin}}"
+install_dir="${HORON_AGENT_INSTALL_DIR:-${HORON_HOME:+$HORON_HOME/bin}}"
 install_dir="${install_dir:-$HOME/.local/bin}"
 
 echo "Installed horon-agent $agent_version"

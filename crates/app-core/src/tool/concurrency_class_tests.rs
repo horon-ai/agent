@@ -35,8 +35,8 @@ struct HomeGuard {
 
 impl HomeGuard {
     fn new(path: &std::path::Path) -> Self {
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", path);
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", path);
         Self { previous }
     }
 }
@@ -44,9 +44,9 @@ impl HomeGuard {
 impl Drop for HomeGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            crate::env::set_var("HORON_AGENT_HOME", previous);
+            crate::env::set_var("HORON_HOME", previous);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -78,7 +78,7 @@ const ORDERED: [&str; 9] = [
 #[tokio::test]
 async fn concurrent_class_is_exactly_the_read_only_lookups() {
     let _env_lock = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let home = tempfile::tempdir().expect("create isolated HORON_HOME");
     let _home = HomeGuard::new(home.path());
     let registry = full_registry().await;
 
@@ -110,7 +110,7 @@ async fn concurrent_class_is_exactly_the_read_only_lookups() {
 #[tokio::test]
 async fn aliases_resolve_before_classification() {
     let _env_lock = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let home = tempfile::tempdir().expect("create isolated HORON_HOME");
     let _home = HomeGuard::new(home.path());
     let registry = full_registry().await;
 

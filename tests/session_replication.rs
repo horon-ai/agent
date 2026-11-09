@@ -138,7 +138,7 @@ fn spawn(home: &Path, runtime: &Path, args: &[&str]) -> Child {
     let errors = log.try_clone().expect("log clone");
     Command::new(BINARY)
         .args(args)
-        .env("HORON_AGENT_HOME", home)
+        .env("HORON_HOME", home)
         .env("HORON_AGENT_RUNTIME_DIR", runtime)
         .env("HORON_AGENT_NO_AUTO_UPDATE", "1")
         .env("HORON_AGENT_MEMORY_ENABLED", "0")

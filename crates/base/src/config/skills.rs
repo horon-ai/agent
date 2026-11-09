@@ -1,7 +1,7 @@
 //! `[skills]`: which skill collections beside horon-agent's own are read.
 //!
-//! horon-agent always reads its own skill directories (`~/.horon-agent/skills`
-//! and the workspace `.horon-agent/skills`). Directories owned by other tools
+//! horon-agent always reads its own skill directories (`~/.horon/skills`
+//! and the workspace `.horon/skills`). Directories owned by other tools
 //! are a separate decision: reading them imports another agent's instructions,
 //! so each collection has its own switch and every switch is off by default.
 //! The source table in `skill::sources` consults these values before it opens a

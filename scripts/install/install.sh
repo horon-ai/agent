@@ -104,8 +104,8 @@ fi
 # so the PATH setup below always points at the directory that receives it.
 if [ -n "${HORON_AGENT_INSTALL_DIR:-}" ]; then
   INSTALL_DIR="$HORON_AGENT_INSTALL_DIR"
-elif [ -n "${HORON_AGENT_HOME:-}" ]; then
-  INSTALL_DIR="$HORON_AGENT_HOME/bin"
+elif [ -n "${HORON_HOME:-}" ]; then
+  INSTALL_DIR="$HORON_HOME/bin"
 elif [ "$IS_WINDOWS" = true ]; then
   INSTALL_DIR="$LOCALAPPDATA/horon-agent/bin"
 else
@@ -114,12 +114,12 @@ fi
 launcher_path="$INSTALL_DIR/horon-agent${EXE}"
 
 # The immutable version store the installed executable activates into.
-if [ -n "${HORON_AGENT_HOME:-}" ]; then
-  builds_dir="$HORON_AGENT_HOME/builds"
+if [ -n "${HORON_HOME:-}" ]; then
+  builds_dir="$HORON_HOME/builds"
 elif [ "$IS_WINDOWS" = true ]; then
   builds_dir="$LOCALAPPDATA/horon-agent/builds"
 else
-  builds_dir="$HOME/.horon-agent/builds"
+  builds_dir="$HOME/.horon/builds"
 fi
 
 # Resolve the release from the canonical repository through GitHub's stable
@@ -342,6 +342,13 @@ unset LD_PRELOAD
 exec "$builds_dir/current/$bin_name" "\$@"
 EOF
   chmod +x "$launcher_path"
+  # Aliases must go through the same wrapper so LD_PRELOAD is cleared for them too.
+  for alias in horon hrn; do
+    alias_path="$INSTALL_DIR/$alias"
+    if [ ! -e "$alias_path" ] || [ -L "$alias_path" ]; then
+      ln -sf "$launcher_path" "$alias_path"
+    fi
+  done
 fi
 
 if [ "$OS" = "Darwin" ]; then

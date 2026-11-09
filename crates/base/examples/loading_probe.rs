@@ -2,7 +2,7 @@
 //! stage.
 //!
 //! ```text
-//! HORON_AGENT_HOME=<fixture home> \
+//! HORON_HOME=<fixture home> \
 //!   cargo run -p horon-agent-base --example loading_probe -- \
 //!   --session perf-events-1000 --expect-events 1000 --skill-count 200
 //! ```
@@ -16,7 +16,7 @@
 //! * `1` - counter or fixture mismatch: a stage's counts, the fixture shape, a
 //!   required counter, or the unchanged log did not match what the run expected.
 //! * `2` - preflight: bad arguments, an unresolvable or mismatched
-//!   `HORON_AGENT_HOME`, a path the session store refuses as unsafe or
+//!   `HORON_HOME`, a path the session store refuses as unsafe or
 //!   non-private, or counters disabled by `HORON_AGENT_PERF_COUNTERS` - a
 //!   disabled counter is "not measured", never "measured zero".
 //!
@@ -40,11 +40,11 @@ const USAGE: &str = "\
 loading_probe - loading and preparation baseline probe
 
 USAGE:
-    HORON_AGENT_HOME=<fixture home> loading_probe --session <id> [options]
+    HORON_HOME=<fixture home> loading_probe --session <id> [options]
 
 OPTIONS:
     --session <id>          session to load (required)
-    --home <path>           expected home; must equal HORON_AGENT_HOME
+    --home <path>           expected home; must equal HORON_HOME
     --expect-events <n>     records in the fixture log (default 0)
     --expect-messages <n>   messages the loading paths must return
                             (default: --expect-events - 1)
@@ -77,7 +77,7 @@ fn parse(args: &[String]) -> Result<steps::Options> {
     };
     let home = match argument(args, "--home") {
         Some(home) => PathBuf::from(home),
-        None => horon_agent_base::storage::horon_agent_dir().context("resolve HORON_AGENT_HOME")?,
+        None => horon_agent_base::storage::horon_agent_dir().context("resolve HORON_HOME")?,
     };
     let expect_events = argument(args, "--expect-events")
         .map(|value| value.parse::<usize>())

@@ -10,11 +10,11 @@
 
 게이트 대상은 워크스페이스에 있는 세 파일입니다 (`crates/base/src/workspace_trust.rs:22` `PROJECT_CONFIG_SURFACES`).
 
-- `.horon-agent/mcp.json`
+- `.horon/mcp.json`
 - `.mcp.json`
 - `.claude/mcp.json`
 
-사용자 수준 설정은 게이트하지 않습니다. `~/.horon-agent/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다.
+사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다.
 
 강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
 
@@ -62,7 +62,7 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 
 ### 위치
 
-번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:121` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon-agent`이고 `HORON_AGENT_HOME`으로 바꿀 수 있습니다.
+번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:121` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
 
 한 번들은 디렉터리 하나입니다.
 

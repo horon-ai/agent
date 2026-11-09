@@ -94,8 +94,8 @@ async fn receive_reload_signal_waits_for_future_value_when_initially_empty() {
 fn persist_reload_recovery_intents_records_running_peer_recovery() -> anyhow::Result<()> {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new()?;
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp_home.path());
 
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
 
@@ -133,9 +133,9 @@ fn persist_reload_recovery_intents_records_running_peer_recovery() -> anyhow::Re
     );
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
     Ok(())
 }

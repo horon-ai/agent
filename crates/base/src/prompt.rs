@@ -7,15 +7,15 @@ use std::process::Command;
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompt/system_prompt.md");
 
 /// Load the base system prompt, allowing the user to fully replace the built-in
-/// [`DEFAULT_SYSTEM_PROMPT`]. Precedence: project `./.horon-agent/system-prompt.md`,
-/// then global `~/.horon-agent/system-prompt.md`, then the built-in default.
+/// [`DEFAULT_SYSTEM_PROMPT`]. Precedence: project `./.horon/system-prompt.md`,
+/// then global `~/.horon/system-prompt.md`, then the built-in default.
 ///
 /// This is a *replacement* hook. To merely add guidance on top of the default,
-/// use `.horon-agent/prompt-overlay.md` instead.
+/// use `.horon/prompt-overlay.md` instead.
 pub fn load_base_system_prompt(working_dir: Option<&Path>) -> String {
     let project_dir = working_dir.unwrap_or(Path::new("."));
     let candidates = [
-        Some(project_dir.join(".horon-agent").join("system-prompt.md")),
+        Some(project_dir.join(".horon").join("system-prompt.md")),
         crate::storage::horon_agent_dir()
             .ok()
             .map(|dir| dir.join("system-prompt.md")),
@@ -71,17 +71,17 @@ fn foreign_rules_section(capabilities: PromptCapabilities, working_dir: Option<&
 
 /// Built-in default swarm prompt: model-routing guidance for spawned swarm
 /// agents (which model/effort to pick per task kind). Users can override it by
-/// creating `~/.horon-agent/swarm-prompt.md` (global) or `./.horon-agent/swarm-prompt.md`
+/// creating `~/.horon/swarm-prompt.md` (global) or `./.horon/swarm-prompt.md`
 /// (project). See [`load_swarm_prompt`].
 pub const DEFAULT_SWARM_PROMPT: &str = include_str!("prompt/swarm_prompt.md");
 
 /// Load the swarm prompt used to steer swarm model routing. Precedence:
-/// project `./.horon-agent/swarm-prompt.md`, then global `~/.horon-agent/swarm-prompt.md`,
+/// project `./.horon/swarm-prompt.md`, then global `~/.horon/swarm-prompt.md`,
 /// then the built-in [`DEFAULT_SWARM_PROMPT`].
 pub fn load_swarm_prompt(working_dir: Option<&Path>) -> String {
     let project_dir = working_dir.unwrap_or(Path::new("."));
     let candidates = [
-        Some(project_dir.join(".horon-agent").join("swarm-prompt.md")),
+        Some(project_dir.join(".horon").join("swarm-prompt.md")),
         crate::storage::horon_agent_dir()
             .ok()
             .map(|dir| dir.join("swarm-prompt.md")),
@@ -659,14 +659,14 @@ pub fn build_system_prompt_full_with_capabilities(
         parts.push(foreign_content);
     }
 
-    // Add optional prompt overlays from ~/.horon-agent/ and ./.horon-agent/
+    // Add optional prompt overlays from ~/.horon/ and ./.horon/
     let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
     if let Some(content) = overlay_content {
         info.prompt_overlay_chars = overlay_chars;
         parts.push(content);
     }
 
-    // Add optional preferred-tool guidance from ~/.horon-agent/ and ./.horon-agent/
+    // Add optional preferred-tool guidance from ~/.horon/ and ./.horon/
     let (preferred_tools_content, preferred_tools_chars) = load_preferred_tools_files_from_dir(working_dir);
     if let Some(content) = preferred_tools_content {
         info.preferred_tools_chars = preferred_tools_chars;
@@ -785,7 +785,7 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
         static_parts.push(foreign_content);
     }
 
-    // Add optional prompt overlays from ~/.horon-agent/ and ./.horon-agent/
+    // Add optional prompt overlays from ~/.horon/ and ./.horon/
     let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
     if let Some(content) = overlay_content {
         info.prompt_overlay_chars = overlay_chars;
@@ -1116,7 +1116,7 @@ pub fn load_agents_md_files_from_dir(working_dir: Option<&Path>) -> (Option<Stri
     load_agents_md_files_from_dirs(project_dir, global_agents_md.as_deref())
 }
 
-/// Load optional prompt overlay markdown from ~/.horon-agent/ and ./.horon-agent/
+/// Load optional prompt overlay markdown from ~/.horon/ and ./.horon/
 fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
     let mut contents = vec![];
     let mut total_chars = 0usize;
@@ -1134,21 +1134,15 @@ fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<Str
     };
 
     let project_dir = working_dir.unwrap_or(Path::new("."));
-    let project_overlay = project_dir.join(".horon-agent").join("prompt-overlay.md");
-    if let Some((content, size)) = load_file(
-        &project_overlay,
-        "Project Prompt Overlay (.horon-agent/prompt-overlay.md)",
-    ) {
+    let project_overlay = project_dir.join(".horon").join("prompt-overlay.md");
+    if let Some((content, size)) = load_file(&project_overlay, "Project Prompt Overlay (.horon/prompt-overlay.md)") {
         total_chars += size;
         contents.push(content);
     }
 
     if let Ok(global_overlay) = crate::storage::horon_agent_dir().map(|dir| dir.join("prompt-overlay.md"))
         && !same_canonical_path(&project_overlay, &global_overlay)
-        && let Some((content, size)) = load_file(
-            &global_overlay,
-            "Global Prompt Overlay (~/.horon-agent/prompt-overlay.md)",
-        )
+        && let Some((content, size)) = load_file(&global_overlay, "Global Prompt Overlay (~/.horon/prompt-overlay.md)")
     {
         total_chars += size;
         contents.push(content);
@@ -1161,7 +1155,7 @@ fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<Str
     }
 }
 
-/// Load optional preferred-tool guidance from ~/.horon-agent/ and ./.horon-agent/
+/// Load optional preferred-tool guidance from ~/.horon/ and ./.horon/
 fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
     let mut contents = vec![];
     let mut total_chars = 0usize;
@@ -1179,10 +1173,10 @@ fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<St
     };
 
     let project_dir = working_dir.unwrap_or(Path::new("."));
-    let project_preferred_tools = project_dir.join(".horon-agent").join("preferred-tools.md");
+    let project_preferred_tools = project_dir.join(".horon").join("preferred-tools.md");
     if let Some((content, size)) = load_file(
         &project_preferred_tools,
-        "Project Preferred Tools (.horon-agent/preferred-tools.md)",
+        "Project Preferred Tools (.horon/preferred-tools.md)",
     ) {
         total_chars += size;
         contents.push(content);
@@ -1192,7 +1186,7 @@ fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<St
         && !same_canonical_path(&project_preferred_tools, &global_preferred_tools)
         && let Some((content, size)) = load_file(
             &global_preferred_tools,
-            "Global Preferred Tools (~/.horon-agent/preferred-tools.md)",
+            "Global Preferred Tools (~/.horon/preferred-tools.md)",
         )
     {
         total_chars += size;

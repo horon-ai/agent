@@ -669,8 +669,8 @@ mod scoped_tests {
         fn drop(&mut self) {
             clear_all_pending_memory();
             match self.previous.take() {
-                Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
@@ -681,10 +681,10 @@ mod scoped_tests {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let home = HomeGuard {
-            previous: std::env::var_os("HORON_AGENT_HOME"),
+            previous: std::env::var_os("HORON_HOME"),
             _dir: tempfile::tempdir().expect("isolated memory home"),
         };
-        crate::env::set_var("HORON_AGENT_HOME", home._dir.path());
+        crate::env::set_var("HORON_HOME", home._dir.path());
         clear_all_pending_memory();
         test();
     }

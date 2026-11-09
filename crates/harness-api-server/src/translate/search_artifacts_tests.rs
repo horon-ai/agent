@@ -1,6 +1,6 @@
 //! Coverage for the two stored-record surfaces.
 //!
-//! Every case seeds its own `HORON_AGENT_HOME` and asks through
+//! Every case seeds its own `HORON_HOME` and asks through
 //! `BridgeState::api_request_to_legacy`, the same entry point the socket loop
 //! uses, so a passing test proves the dispatch arm as well as the worker.
 use super::*;
@@ -21,7 +21,7 @@ struct ScopedHome {
 impl ScopedHome {
     fn new(label: &str) -> Self {
         let guard = crate::translate::horon_agent_home_test_lock();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -39,8 +39,8 @@ impl ScopedHome {
                 .create(path.join("sessions"))
                 .expect("create private sessions dir");
         }
-        // SAFETY: every test that mutates HORON_AGENT_HOME holds this lock.
-        unsafe { std::env::set_var("HORON_AGENT_HOME", &path) };
+        // SAFETY: every test that mutates HORON_HOME holds this lock.
+        unsafe { std::env::set_var("HORON_HOME", &path) };
         Self {
             path,
             previous,
@@ -55,8 +55,8 @@ impl ScopedHome {
 impl Drop for ScopedHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-            None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+            Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+            None => unsafe { std::env::remove_var("HORON_HOME") },
         }
         let _ = std::fs::remove_dir_all(&self.path);
     }

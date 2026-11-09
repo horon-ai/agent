@@ -76,8 +76,8 @@ fn file_activity_scope_label_classifies_overlap() {
 #[tokio::test]
 async fn removing_server_session_clears_active_pid_marker() {
     let _guard = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("create temporary HORON_AGENT_HOME");
-    let _home_guard = ScopedEnvVar::set("HORON_AGENT_HOME", home.path());
+    let home = tempfile::tempdir().expect("create temporary HORON_HOME");
+    let _home_guard = ScopedEnvVar::set("HORON_HOME", home.path());
     let session_id = "session_marker_cleanup_test";
     crate::storage::register_active_pid(session_id, std::process::id());
 
@@ -134,9 +134,9 @@ fn server_identity_reads_name_from_env() {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(value) = &self.prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", value);
+            crate::env::set_var("HORON_HOME", value);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         if let Some(value) = &self.prev_runtime_dir {
             crate::env::set_var("HORON_AGENT_RUNTIME_DIR", value);
@@ -174,14 +174,14 @@ impl Drop for ScopedEnvVar {
 }
 
 fn configure_test_env(root: &tempfile::TempDir) -> EnvGuard {
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let prev_runtime_dir = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
     let prev_socket = std::env::var_os("HORON_AGENT_SOCKET");
     let home_dir = root.path().join("home");
     let runtime_dir = root.path().join("runtime");
     std::fs::create_dir_all(&home_dir).expect("create home dir");
     std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
-    crate::env::set_var("HORON_AGENT_HOME", &home_dir);
+    crate::env::set_var("HORON_HOME", &home_dir);
     crate::env::set_var("HORON_AGENT_RUNTIME_DIR", &runtime_dir);
     crate::env::remove_var("HORON_AGENT_SOCKET");
     EnvGuard {
@@ -769,7 +769,7 @@ async fn background_task_progress_notifies_attached_clients() {
 #[tokio::test]
 #[allow(
     clippy::await_holding_lock,
-    reason = "test intentionally serializes process-wide HORON_AGENT_HOME/env state across async recovery assertions"
+    reason = "test intentionally serializes process-wide HORON_HOME/env state across async recovery assertions"
 )]
 async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -> Result<()> {
     let _storage_guard = crate::storage::lock_test_env();
@@ -916,7 +916,7 @@ async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -
 #[tokio::test]
 #[allow(
     clippy::await_holding_lock,
-    reason = "test intentionally serializes process-wide HORON_AGENT_HOME/env state across async recovery assertions"
+    reason = "test intentionally serializes process-wide HORON_HOME/env state across async recovery assertions"
 )]
 async fn startup_recovery_preserves_headed_session_reload_context_for_later_reconnect() -> Result<()> {
     let _storage_guard = crate::storage::lock_test_env();
@@ -1026,7 +1026,7 @@ async fn startup_recovery_preserves_headed_session_reload_context_for_later_reco
 #[tokio::test]
 #[allow(
     clippy::await_holding_lock,
-    reason = "test intentionally serializes process-wide HORON_AGENT_HOME/env state across async startup assertions"
+    reason = "test intentionally serializes process-wide HORON_HOME/env state across async startup assertions"
 )]
 async fn startup_ready_signal_is_not_blocked_by_headless_recovery_delay() -> Result<()> {
     use std::os::unix::io::FromRawFd;

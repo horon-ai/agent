@@ -11,10 +11,10 @@ const OVERLAY: &str = "PROMPT_ACCEPTANCE_OVERLAY_MARKER\n";
 const TOOLS: &str = "PROMPT_ACCEPTANCE_TOOLS_MARKER\n";
 
 fn write_guidance(dir: &Path) {
-    std::fs::create_dir_all(dir.join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(dir.join(".horon")).unwrap();
     std::fs::write(dir.join("AGENTS.md"), AGENTS).unwrap();
-    std::fs::write(dir.join(".horon-agent/prompt-overlay.md"), OVERLAY).unwrap();
-    std::fs::write(dir.join(".horon-agent/preferred-tools.md"), TOOLS).unwrap();
+    std::fs::write(dir.join(".horon/prompt-overlay.md"), OVERLAY).unwrap();
+    std::fs::write(dir.join(".horon/preferred-tools.md"), TOOLS).unwrap();
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn public_prompt_builders_deduplicate_home_and_aliases_but_preserve_distinct_fil
     write_guidance(&home);
     write_guidance(&distinct);
     std::fs::create_dir(&alias).unwrap();
-    std::os::unix::fs::symlink(home.join(".horon-agent"), alias.join(".horon-agent")).unwrap();
+    std::os::unix::fs::symlink(home.join(".horon"), alias.join(".horon")).unwrap();
     std::os::unix::fs::symlink(home.join("AGENTS.md"), alias.join("AGENTS.md")).unwrap();
 
     for (case, cwd) in [("home", &home), ("alias", &alias), ("distinct", &distinct)] {
@@ -38,7 +38,7 @@ fn public_prompt_builders_deduplicate_home_and_aliases_but_preserve_distinct_fil
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_CACHE_HOME", home.join(".cache"))
-            .env_remove("HORON_AGENT_HOME")
+            .env_remove("HORON_HOME")
             .env("HORON_AGENT_PROMPT_ACCEPTANCE_CASE", case)
             .output()
             .unwrap();

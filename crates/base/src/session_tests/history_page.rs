@@ -39,7 +39,7 @@ fn expected_page(history: &[StoredMessage], before: Option<&str>, limit: usize) 
 fn first_middle_and_last_page_match_full_history() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-history-page-parity-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let session = long_session("page_parity", 240)?;
     let history = session.history_messages()?;
     assert_eq!(history.len(), 240);
@@ -75,7 +75,7 @@ fn first_middle_and_last_page_match_full_history() -> Result<()> {
 fn a_page_over_a_compacted_prefix_matches_full_history() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-history-page-compacted-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("page_compacted".into(), None, None);
     session.provider_key = Some("openai".into());
     session.model = Some("test-model".into());
@@ -114,7 +114,7 @@ fn a_page_over_a_compacted_prefix_matches_full_history() -> Result<()> {
 fn a_revised_message_is_paged_as_its_replacement() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-history-page-revision-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = long_session("page_revision", 30)?;
     let history = session.history_messages()?;
     let mut target = history[27].clone();
@@ -136,7 +136,7 @@ fn a_revised_message_is_paged_as_its_replacement() -> Result<()> {
 fn a_cursor_from_a_replaced_head_is_refused_by_name() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-history-page-rewind-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = long_session("page_rewind", 30)?;
     let history = session.history_messages()?;
     let late = history[25].id.clone();
@@ -160,7 +160,7 @@ fn a_cursor_from_a_replaced_head_is_refused_by_name() -> Result<()> {
 fn an_append_between_two_page_requests_keeps_the_older_page_identical() -> Result<()> {
     let _lock = tests::lock_env();
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-history-page-append-")?;
-    let _home = tests::EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = long_session("page_append", 60)?;
     let history = session.history_messages()?;
     let cursor = history[40].id.clone();

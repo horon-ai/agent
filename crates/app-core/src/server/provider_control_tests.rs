@@ -314,11 +314,11 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    /// Save and clear the given env vars, and redirect `HORON_AGENT_HOME` to a fresh
+    /// Save and clear the given env vars, and redirect `HORON_HOME` to a fresh
     /// empty temp dir for the lifetime of the guard.
     ///
     /// The temp home keeps these tests hermetic: provider activation reads
-    /// on-disk model catalog caches (`~/.horon-agent/cache/<profile>_models.json`) to
+    /// on-disk model catalog caches (`~/.horon/cache/<profile>_models.json`) to
     /// pick a profile's newest default model, so without an isolated home the
     /// host's real caches leak in and a stale or non-chat model (e.g. Groq's
     /// `canopylabs/orpheus-*` TTS) can be auto-selected, breaking the test on
@@ -326,15 +326,15 @@ impl EnvGuard {
     fn save(keys: &[&'static str]) -> Self {
         let lock = lock_env();
         let mut all_keys: Vec<&'static str> = keys.to_vec();
-        if !all_keys.contains(&"HORON_AGENT_HOME") {
-            all_keys.push("HORON_AGENT_HOME");
+        if !all_keys.contains(&"HORON_HOME") {
+            all_keys.push("HORON_HOME");
         }
         let saved = all_keys.iter().map(|key| (*key, std::env::var(key).ok())).collect();
         for key in &all_keys {
             crate::env::remove_var(key);
         }
-        let temp_home = tempfile::tempdir().expect("create temp HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+        let temp_home = tempfile::tempdir().expect("create temp HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp_home.path());
         Self {
             saved,
             _temp_home: temp_home,

@@ -889,8 +889,8 @@ fn session_list_filters_cwd_and_archived() {
 
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     let saved = (|| -> anyhow::Result<Vec<ListRow>> {
         use crate::message::{ContentBlock, Role};
         let text = |text: &str| {
@@ -916,8 +916,8 @@ fn session_list_filters_cwd_and_archived() {
         catalog_rows()
     })();
     match previous {
-        Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(previous) => crate::env::set_var("HORON_HOME", previous),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     let rows = saved.unwrap();
     assert_eq!(rows.len(), 3, "{rows:?}");
@@ -1207,8 +1207,8 @@ fn delete_lookup_treats_a_busy_writer_as_present() {
 
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     let observed = (|| -> anyhow::Result<Vec<CatalogLookup>> {
         use crate::message::{ContentBlock, Role};
         let mut session = crate::session::Session::create_with_id("session_acp_delete_busy".to_string(), None, None);
@@ -1228,8 +1228,8 @@ fn delete_lookup_treats_a_busy_writer_as_present() {
         Ok(seen)
     })();
     match previous {
-        Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(previous) => crate::env::set_var("HORON_HOME", previous),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     let seen = observed.unwrap();
     assert_eq!(
@@ -1723,9 +1723,9 @@ pub(super) mod connection_core {
         {
             let _guard = crate::storage::lock_test_env();
             let home = tempfile::tempdir().expect("tempdir");
-            let previous_home = std::env::var_os("HORON_AGENT_HOME");
+            let previous_home = std::env::var_os("HORON_HOME");
             let previous_env = std::env::var_os("HORON_AGENT_ACP_PROTOCOL_V2");
-            crate::env::set_var("HORON_AGENT_HOME", home.path());
+            crate::env::set_var("HORON_HOME", home.path());
             crate::env::remove_var("HORON_AGENT_ACP_PROTOCOL_V2");
             std::fs::write(home.path().join("config.toml"), "[acp]\nprotocol_v2 = false\n").expect("write config");
             crate::config::invalidate_config_cache();
@@ -1747,8 +1747,8 @@ pub(super) mod connection_core {
                 None => crate::env::remove_var("HORON_AGENT_ACP_PROTOCOL_V2"),
             }
             match previous_home {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::invalidate_config_cache();
         }

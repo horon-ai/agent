@@ -6,7 +6,7 @@ async fn communicate_list_and_await_members_work_end_to_end() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
     // Independently created root sessions own separate swarms (83dbc36dc);
@@ -139,7 +139,7 @@ async fn communicate_await_members_background_returns_immediately_and_notifies()
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
     // Independently created root sessions own separate swarms (83dbc36dc);
@@ -247,7 +247,7 @@ async fn communicate_run_plan_with_empty_plan_returns_inline_even_in_background_
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -304,7 +304,7 @@ async fn communicate_status_returns_busy_snapshot_for_running_member() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
     // Independently created root sessions own separate swarms (83dbc36dc);
@@ -391,7 +391,7 @@ async fn communicate_spawn_reports_completion_back_to_spawner() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -471,7 +471,7 @@ async fn communicate_spawn_with_prompt_and_summary_work_end_to_end() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
 
@@ -575,7 +575,7 @@ async fn communicate_message_routes_as_dm_while_broadcast_targets_swarm() {
     let socket_path = runtime_dir.path().join("horon-agent.sock");
     let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
     // Keep the developer's real config (agents.swarm_model, providers) out of spawns.
-    let _home = EnvGuard::set("HORON_AGENT_HOME", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
     let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
     let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
     // Independently created root sessions own separate swarms (83dbc36dc);

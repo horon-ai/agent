@@ -46,7 +46,7 @@ async fn test_agent() -> Arc<Mutex<Agent>> {
 /// A private temporary home for a test whose queue path persists state.
 ///
 /// `Agent::new` and the durable input journal resolve their directories under
-/// `HORON_AGENT_HOME`, so a test that accepts an interrupt writes into whatever
+/// `HORON_HOME`, so a test that accepts an interrupt writes into whatever
 /// home is current. Without this guard another test's swapped or deleted home
 /// makes the journal refuse the write ("unsafe or non-private path"), the accept
 /// returns `false`, and the test fails only in the parallel suite.
@@ -60,8 +60,8 @@ impl TestHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("temp home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         Self {
             previous,
             _dir: dir,
@@ -73,8 +73,8 @@ impl TestHome {
 impl Drop for TestHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }
@@ -155,8 +155,8 @@ async fn queue_soft_interrupt_for_session_registers_queue_on_fallback_lookup() {
 async fn queue_soft_interrupt_for_session_persists_when_live_queue_is_unavailable() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().expect("temp dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let agent = test_agent().await;
     let session_id = {
@@ -208,9 +208,9 @@ async fn queue_soft_interrupt_for_session_persists_when_live_queue_is_unavailabl
     );
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 

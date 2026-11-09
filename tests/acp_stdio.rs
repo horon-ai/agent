@@ -653,7 +653,7 @@ impl NoModelDaemon {
     fn env_for(root: &Path) -> Vec<(String, String)> {
         let path = |rel: &str| root.join(rel).display().to_string();
         vec![
-            ("HORON_AGENT_HOME".to_string(), path("home")),
+            ("HORON_HOME".to_string(), path("home")),
             ("HORON_AGENT_RUNTIME_DIR".to_string(), path("rt")),
             ("HOME".to_string(), root.display().to_string()),
             ("XDG_CONFIG_HOME".to_string(), path("config")),

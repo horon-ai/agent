@@ -590,7 +590,7 @@ impl SafetySystem {
     /// Record a user decision (approve / deny) for a pending request.
     ///
     /// Recording is serialized across processes through
-    /// `~/.horon-agent/approvals/.decisions.lock`, so a request carries exactly
+    /// `~/.horon/approvals/.decisions.lock`, so a request carries exactly
     /// one decision no matter how many writers race for it. The first recorded
     /// decision wins and is returned as [`RecordDecisionOutcome::AlreadyDecided`]
     /// to every later caller.
@@ -674,7 +674,7 @@ impl SafetySystem {
         lines.join("\n")
     }
 
-    /// Persist a transcript to ~/.horon-agent/ambient/transcripts/{timestamp}.json
+    /// Persist a transcript to ~/.horon/ambient/transcripts/{timestamp}.json
     pub fn save_transcript(&self, transcript: &AmbientTranscript) -> Result<()> {
         let dir = storage::horon_agent_dir()?.join("ambient").join("transcripts");
         storage::ensure_dir(&dir)?;
@@ -901,7 +901,7 @@ fn record_decision_on_disk(
 /// Record a permission decision by directly manipulating the queue/history JSON files.
 /// Used by callers that have no access to the live SafetySystem instance.
 ///
-/// Shares `~/.horon-agent/approvals/.decisions.lock` with
+/// Shares `~/.horon/approvals/.decisions.lock` with
 /// [`SafetySystem::record_decision`], so a request keeps exactly one decision
 /// even when both paths race for it.
 pub fn record_permission_via_file(request_id: &str, approved: bool, via: &str, message: Option<String>) -> Result<()> {

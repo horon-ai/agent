@@ -3,7 +3,7 @@
 //! A long tool result is kept whole on disk and identified by a small numeric
 //! id, so the transcript can carry a bounded head and tail plus a
 //! `artifact://{id}` pointer the model can read back with line selectors. Files
-//! live under `~/.horon-agent/artifacts/<session>/` and are bounded twice: one
+//! live under `~/.horon/artifacts/<session>/` and are bounded twice: one
 //! file is cut to its first and last 8 MiB, and a session's total is capped so
 //! a runaway command cannot fill the disk.
 

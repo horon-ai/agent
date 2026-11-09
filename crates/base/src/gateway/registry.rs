@@ -5,7 +5,7 @@ use crate::storage;
 use horon_agent_gateway_types::{PairedDevice, PairingCode};
 
 // ---------------------------------------------------------------------------
-// Device registry (persisted to ~/.horon-agent/devices.json)
+// Device registry (persisted to ~/.horon/devices.json)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -16,7 +16,7 @@ pub struct DeviceRegistry {
 }
 
 impl DeviceRegistry {
-    /// Load from ~/.horon-agent/devices.json
+    /// Load from ~/.horon/devices.json
     pub fn load() -> Self {
         let path = match storage::horon_agent_dir() {
             Ok(d) => d.join("devices.json"),
@@ -31,7 +31,7 @@ impl DeviceRegistry {
         }
     }
 
-    /// Save to ~/.horon-agent/devices.json
+    /// Save to ~/.horon/devices.json
     pub fn save(&self) -> Result<()> {
         let path = storage::horon_agent_dir()?.join("devices.json");
         let contents = serde_json::to_string_pretty(self)?;

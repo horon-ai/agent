@@ -4,8 +4,8 @@ use super::*;
 async fn completion_after_compacted_prefix_uses_global_history_indices() {
     let _lock = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     let mut session = Session::create_with_id("completion_coordinates".into(), None, None);
     session.provider_key = Some("openai".into());
     session.model = Some("test".into());
@@ -58,8 +58,8 @@ async fn completion_after_compacted_prefix_uses_global_history_indices() {
         Some("actual completion")
     );
     match previous {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
 }
 
@@ -71,14 +71,14 @@ async fn renderer_rewind_undo_and_restart_keep_original_events() {
     impl Drop for Restore {
         fn drop(&mut self) {
             match &self.0 {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::Config::invalidate_cache();
         }
     }
-    let _restore = Restore(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = Restore(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::Config::invalidate_cache();
     let mut agent = Agent::new(Arc::new(BoundSavedAccountProvider), Registry::empty());
     let text = |value: &str| {
@@ -142,8 +142,8 @@ async fn renderer_rewind_undo_and_restart_keep_original_events() {
 async fn a_live_turn_keeps_its_answer_across_a_resume_marker_and_status_reads() {
     let _lock = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::Config::invalidate_cache();
     let text = |s: &str| {
         vec![ContentBlock::Text {
@@ -195,8 +195,8 @@ async fn a_live_turn_keeps_its_answer_across_a_resume_marker_and_status_reads() 
     );
 
     match previous {
-        Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(home) => crate::env::set_var("HORON_HOME", home),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     crate::config::Config::invalidate_cache();
 }

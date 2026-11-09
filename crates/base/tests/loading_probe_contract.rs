@@ -33,7 +33,7 @@ const FIXTURE_SESSION: &str = "loading_probe_fixture";
 const FIXTURE_MESSAGES: usize = 40;
 const FIXTURE_SKILLS: usize = 3;
 
-/// Serializes tests that mutate `HORON_AGENT_HOME`. This test binary has its own
+/// Serializes tests that mutate `HORON_HOME`. This test binary has its own
 /// address space, so a file-local mutex is sufficient (and avoids depending on
 /// the `test-support`-gated `storage::lock_test_env`).
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -107,7 +107,7 @@ fn write_fixture(home: &Path) -> (usize, String) {
     // source table gates that read on `[mcp] claude_user`. Both belong to the
     // fixture so the stage has something real to parse.
     std::fs::write(home.join("config.toml"), "[mcp]\nclaude_user = true\n").expect("config file");
-    // `user_home_path` sandboxes user-level files under `<HORON_AGENT_HOME>/external`.
+    // `user_home_path` sandboxes user-level files under `<HORON_HOME>/external`.
     let external = home.join("external");
     std::fs::create_dir_all(&external).expect("external home");
     std::fs::write(
@@ -170,7 +170,7 @@ fn options(home: &Path, records: usize, skill_count: usize) -> steps::Options {
 fn loading_probe_contract() {
     let _env = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp = tempfile::TempDir::new().expect("temp home");
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let _real_home = EnvVarGuard::set_path("HOME", temp.path());
     let _claude_switch = EnvVarGuard::unset("HORON_AGENT_DISABLE_CLAUDE_MCP");
     write_skills(temp.path(), FIXTURE_SKILLS);
@@ -401,7 +401,7 @@ fn loading_probe_contract_exit_codes() {
     );
 
     let temp = tempfile::TempDir::new().expect("temp home");
-    let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+    let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
     let _real_home = EnvVarGuard::set_path("HOME", temp.path());
     write_skills(temp.path(), FIXTURE_SKILLS);
     let (records, _log_sha) = write_fixture(temp.path());

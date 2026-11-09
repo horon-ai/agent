@@ -1,6 +1,6 @@
 //! `[mcp]`: which MCP server configs beside horon-agent's own are read.
 //!
-//! horon-agent always reads `~/.horon-agent/mcp.json` and, in a trusted
+//! horon-agent always reads `~/.horon/mcp.json` and, in a trusted
 //! workspace, the project files. Another host's user-wide config is a separate
 //! decision: its servers were reviewed for that host, and loading them starts
 //! processes here. Each host therefore has its own switch, off by default. The

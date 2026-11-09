@@ -466,7 +466,7 @@ mod hardening_state_tests {
     fn first_path_starts_one_worker_and_repeated_paths_are_coalesced() {
         let mut state = SecretHardenState::default();
         let now = Instant::now();
-        let directory = Path::new(r"C:\Users\test\.horon-agent");
+        let directory = Path::new(r"C:\Users\test\.horon");
         let file = directory.join("auth.json");
 
         assert!(state.enqueue(directory, true, now));
@@ -481,7 +481,7 @@ mod hardening_state_tests {
     fn recently_attempted_paths_are_not_requeued() {
         let mut state = SecretHardenState::default();
         let attempted_at = Instant::now();
-        let file = PathBuf::from(r"C:\Users\test\.horon-agent\auth.json");
+        let file = PathBuf::from(r"C:\Users\test\.horon\auth.json");
         state
             .files
             .insert(file.clone(), SecretHardenAttempt::Succeeded(attempted_at));
@@ -495,7 +495,7 @@ mod hardening_state_tests {
     fn failed_paths_retry_after_shorter_backoff() {
         let mut state = SecretHardenState::default();
         let attempted_at = Instant::now();
-        let file = PathBuf::from(r"C:\Users\test\.horon-agent\auth.json");
+        let file = PathBuf::from(r"C:\Users\test\.horon\auth.json");
         state
             .files
             .insert(file.clone(), SecretHardenAttempt::Failed(attempted_at));
@@ -509,7 +509,7 @@ mod hardening_state_tests {
     fn in_flight_paths_are_not_requeued() {
         let mut state = SecretHardenState::default();
         let now = Instant::now();
-        let file = PathBuf::from(r"C:\Users\test\.horon-agent\auth.json");
+        let file = PathBuf::from(r"C:\Users\test\.horon\auth.json");
         state.files.insert(file.clone(), SecretHardenAttempt::InFlight);
 
         assert!(!state.enqueue(&file, false, now));

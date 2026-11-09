@@ -249,7 +249,7 @@ async fn archive_agent(session_id: &str, provider: Arc<dyn Provider>, persist: b
         // Archiving records an event at the session's current head, so the
         // session needs a durable event graph first. A plain save skips an
         // unchanged fresh session, so force the root event. Callers keep the
-        // isolated HORON_AGENT_HOME that this write lands in.
+        // isolated HORON_HOME that this write lands in.
         session
             .save_prepared()
             .expect("persist the session before archiving it");
@@ -652,9 +652,9 @@ impl IsolatedReloadRecoveryEnv {
     fn new() -> Self {
         let home = tempfile::TempDir::new().expect("horon-agent home");
         let runtime = tempfile::TempDir::new().expect("runtime dir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let prev_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
         crate::server::clear_reload_marker();
         Self {
@@ -670,9 +670,9 @@ impl Drop for IsolatedReloadRecoveryEnv {
     fn drop(&mut self) {
         crate::server::clear_reload_marker();
         if let Some(prev_home) = self.prev_home.take() {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         if let Some(prev_runtime) = self.prev_runtime.take() {
             crate::env::set_var("HORON_AGENT_RUNTIME_DIR", prev_runtime);

@@ -540,7 +540,7 @@ mod tests {
     fn the_sidecar_uses_the_active_provider() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("create temp horon-agent home");
-        let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
         let stub = Arc::new(RecordingStub::new("active-model", "[2,1]"));
         crate::provider::set_active_provider(stub.clone());
@@ -562,7 +562,7 @@ mod tests {
     fn session_sidecar_uses_session_memory_model_override() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("create temp horon-agent home");
-        let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
         std::fs::write(
             temp.path().join("config.toml"),
             "[agents]\nmemory_model = \"global-memory-model\"\n",
@@ -583,7 +583,7 @@ mod tests {
     fn inherited_sidecar_model_is_not_reparsed_as_a_user_selection() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("create temp horon-agent home");
-        let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
         std::fs::write(
             temp.path().join("config.toml"),
             "[agents]\nmemory_model = \"inherit\"\n",
@@ -601,7 +601,7 @@ mod tests {
     fn provider_sidecar_keeps_the_route_selected_at_construction() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("create temp horon-agent home");
-        let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
         crate::provider::set_active_provider(Arc::new(RecordingStub::new(
             "configured-profile-model",
@@ -625,7 +625,7 @@ mod tests {
     fn with_model_pins_the_model_and_reports_availability() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("create temp horon-agent home");
-        let _home = EnvVarGuard::set_path("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set_path("HORON_HOME", temp.path());
 
         crate::provider::set_active_provider(Arc::new(RecordingStub::new("coordinator-model", "ok")));
         let sidecar = Sidecar::with_model("judge-model", Some("none".to_string()));

@@ -124,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("paths", nargs="*", help="Specific JSONL files or directories to analyze")
     parser.add_argument(
         "--log-dir",
-        help="Directory containing runtime memory JSONL logs (default: ~/.horon-agent/logs/memory or $HORON_AGENT_HOME/logs/memory)",
+        help="Directory containing runtime memory JSONL logs (default: ~/.horon/logs/memory or $HORON_HOME/logs/memory)",
     )
     parser.add_argument("--days", type=int, default=None, help="Only include files from the last N daily logs")
     parser.add_argument("--top", type=int, default=DEFAULT_TOP_N, help="How many spikes/sessions/deltas to show")
@@ -154,10 +154,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def default_log_dir() -> Path:
-    horon_agent_home = os.environ.get("HORON_AGENT_HOME")
+    horon_agent_home = os.environ.get("HORON_HOME")
     if horon_agent_home:
         return Path(horon_agent_home).expanduser() / "logs" / "memory"
-    return Path.home() / ".horon-agent" / "logs" / "memory"
+    return Path.home() / ".horon" / "logs" / "memory"
 
 
 def resolve_paths(args: argparse.Namespace) -> list[Path]:

@@ -378,7 +378,7 @@ pub fn run_pair_command(list: bool, revoke: Option<String>) -> Result<()> {
     let gw_config = &crate::config::config().gateway;
 
     if !gw_config.enabled {
-        eprintln!("\x1b[33m⚠\x1b[0m  Gateway is disabled. Enable it in ~/.horon-agent/config.toml:\n");
+        eprintln!("\x1b[33m⚠\x1b[0m  Gateway is disabled. Enable it in ~/.horon/config.toml:\n");
         eprintln!("    \x1b[2m[gateway]\x1b[0m");
         eprintln!("    \x1b[2menabled = true\x1b[0m");
         eprintln!("    \x1b[2mport = {}\x1b[0m\n", gw_config.port);
@@ -892,7 +892,7 @@ pub async fn run_single_message_command(
 ) -> Result<()> {
     let provider = super::provider_init::init_provider_for_run(choice, model).await?;
     let registry = crate::tool::Registry::new(provider.clone()).await;
-    // Load MCP servers from ~/.horon-agent/mcp.json so headless `horon-agent run` has the
+    // Load MCP servers from ~/.horon/mcp.json so headless `horon-agent run` has the
     // same `mcp__*` tools as interactive/server sessions. This is non-blocking:
     // `register_mcp_tools` advertises cached tool schemas synchronously (so the
     // first locked tool snapshot already contains MCP tools, for zero
@@ -984,7 +984,7 @@ fn run_command_auto_poke_enabled() -> bool {
         .unwrap_or_else(|| crate::config::config().features.auto_poke)
 }
 
-/// Whether headless `horon-agent run` should load MCP servers from `~/.horon-agent/mcp.json`.
+/// Whether headless `horon-agent run` should load MCP servers from `~/.horon/mcp.json`.
 /// Enabled by default; set `HORON_AGENT_RUN_MCP=0` (or `false`/`off`/`no`) to skip MCP
 /// registration for latency-sensitive scripting. (#390)
 fn run_command_mcp_enabled() -> bool {

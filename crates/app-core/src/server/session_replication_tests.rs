@@ -27,8 +27,8 @@ impl Home {
     fn new() -> Self {
         let guard = crate::storage::lock_test_env();
         let directory = tempfile::tempdir().unwrap();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", directory.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", directory.path());
         Self {
             _guard: guard,
             previous,
@@ -72,8 +72,8 @@ impl Drop for Home {
             eprintln!("TASK9_EVIDENCE_ERROR {error}");
         }
         match &self.previous {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

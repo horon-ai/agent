@@ -328,7 +328,7 @@ SDK의 재시도 정책은 그 사유에서 포기하고
 
 ## 토글
 
-두 토글은 모두 `[features]`에 있고, 그 절은 `~/.horon-agent/config.toml`에
+두 토글은 모두 `[features]`에 있고, 그 절은 `~/.horon/config.toml`에
 있습니다. 기본값은 둘 다 `true`입니다.
 
 | 키 | 기본값 | 출처 |

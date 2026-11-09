@@ -1,6 +1,6 @@
 // The env lock is deliberately held across awaits: it serializes the process
 // environment for the whole test, and dropping it early would let another test
-// rewrite `HORON_AGENT_HOME` mid-run.
+// rewrite `HORON_HOME` mid-run.
 #![allow(clippy::await_holding_lock)]
 
 use super::*;
@@ -145,8 +145,8 @@ async fn an_answer_after_the_tool_stopped_waiting_is_refused_not_acked() {
 async fn a_permission_decision_is_recorded_where_the_waiting_tool_reads_it() {
     let _guard = crate::storage::lock_test_env();
     let dir = tempfile::tempdir().expect("temp home");
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", dir.path());
 
     for (decision, approved) in [
         (PermissionDecision::Allow, true),
@@ -171,8 +171,8 @@ async fn a_permission_decision_is_recorded_where_the_waiting_tool_reads_it() {
     }
 
     match previous {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
 }
 

@@ -7,7 +7,7 @@ fn session_replication_process_entry() {
     let Ok(root) = std::env::var("TASK9_CHILD_HOME") else {
         return;
     };
-    crate::env::set_var("HORON_AGENT_HOME", root);
+    crate::env::set_var("HORON_HOME", root);
     let session = seed("replica_process");
     let clone = session.clone();
     println!("READY_LOCK_HELD");

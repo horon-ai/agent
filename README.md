@@ -45,6 +45,12 @@ overwritten. `--source-binary <path>` installs a locally built executable
 through the same path. Details:
 [`docs/release/INSTALL.md`](docs/release/INSTALL.md).
 
+Besides `horon-agent`, the installer places two more launcher names next to it,
+`horon` and `hrn`. They run the same binary (symlinks on Unix, copies on
+Windows) and follow every update. A file with one of those names that is not
+ours is left alone. Data lives in `~/.horon` (`HORON_HOME` moves it), and
+project-level files in `.horon/`.
+
 ## Run
 
 ```bash
@@ -86,7 +92,7 @@ endpoint in `config.toml`; see
 ## Sessions
 
 History is an append-only event log at
-`~/.horon-agent/sessions/<id>/events.jsonl`, with large payloads in
+`~/.horon/sessions/<id>/events.jsonl`, with large payloads in
 content-addressed blobs. Archive, compaction, and rewind append records and
 never delete an original.
 
@@ -104,7 +110,7 @@ The default profile is `core`: file read/write/edit, shell, search, web fetch
 and search, skills, MCP, `undo`, and `ask`. Swarm, memory, and the other
 optional tools stay in the tree but off; enable them with
 `--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, or `[tools] profile` in
-`~/.horon-agent/config.toml`.
+`~/.horon/config.toml`.
 
 Agents in the same daemon and swarm can message each other with the `irc` tool
 (`send`, `wait`, `inbox`, `list`). It is off by default; set `irc = true` under

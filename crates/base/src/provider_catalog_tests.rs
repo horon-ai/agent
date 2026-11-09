@@ -183,9 +183,9 @@ fn auth_issue_profile_metadata_matches_direct_provider_endpoints() {
 #[test]
 fn resolved_named_profile_suggests_newest_cached_live_release() {
     let _lock = crate::storage::lock_test_env();
-    let _guard = EnvGuard::save(&["HORON_AGENT_HOME"]);
+    let _guard = EnvGuard::save(&["HORON_HOME"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::provider::catalog_cache::save_disk_cache_with_source_for_namespace(
         "cerebras",
         &[
@@ -222,9 +222,9 @@ fn resolved_named_profile_skips_non_chat_models_when_picking_newest_default() {
     // non-chat model (e.g. `canopylabs/orpheus-*` TTS) which previously won the
     // newest-by-created tiebreak and became the chat default.
     let _lock = crate::storage::lock_test_env();
-    let _guard = EnvGuard::save(&["HORON_AGENT_HOME"]);
+    let _guard = EnvGuard::save(&["HORON_HOME"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::provider::catalog_cache::save_disk_cache_with_source_for_namespace(
         "cerebras",
         &[
@@ -277,9 +277,9 @@ fn resolved_named_profile_skips_non_chat_models_when_picking_newest_default() {
 #[test]
 fn minimax_token_plan_keys_resolve_to_china_endpoint_without_changing_international_default() {
     let _lock = crate::storage::lock_test_env();
-    let _guard = EnvGuard::save(&["HORON_AGENT_HOME", "MINIMAX_API_KEY", "OPENAI_API_KEY"]);
-    let home = tempfile::tempdir().expect("temporary HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _guard = EnvGuard::save(&["HORON_HOME", "MINIMAX_API_KEY", "OPENAI_API_KEY"]);
+    let home = tempfile::tempdir().expect("temporary HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     crate::env::remove_var("MINIMAX_API_KEY");
     crate::env::remove_var("OPENAI_API_KEY");
 
@@ -524,9 +524,9 @@ fn named_anthropic_compatible_profile_maps_endpoint_auth_headers_and_model() {
         "HORON_AGENT_ANTHROPIC_MODEL",
         "HORON_AGENT_RUNTIME_PROVIDER",
     ]);
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::config::Config::invalidate_cache();
 
     let config_path = crate::config::Config::path().expect("config path");
@@ -578,9 +578,9 @@ fn named_anthropic_compatible_profile_maps_endpoint_auth_headers_and_model() {
     );
 
     if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
+        crate::env::set_var("HORON_HOME", previous_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
     crate::config::Config::invalidate_cache();
 }
@@ -780,13 +780,13 @@ fn matrix_openai_compatible_profile_overrides_read_from_env_file() {
     std::fs::create_dir_all(&config_root).expect("config dir");
 
     let _guard = EnvGuard::save(&[
-        "HORON_AGENT_HOME",
+        "HORON_HOME",
         "HORON_AGENT_OPENAI_COMPAT_API_BASE",
         "HORON_AGENT_OPENAI_COMPAT_API_KEY_NAME",
         "HORON_AGENT_OPENAI_COMPAT_ENV_FILE",
         "HORON_AGENT_OPENAI_COMPAT_DEFAULT_MODEL",
     ]);
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::remove_var("HORON_AGENT_OPENAI_COMPAT_API_BASE");
     crate::env::remove_var("HORON_AGENT_OPENAI_COMPAT_API_KEY_NAME");
     crate::env::remove_var("HORON_AGENT_OPENAI_COMPAT_ENV_FILE");
@@ -837,8 +837,8 @@ fn matrix_load_api_key_from_env_or_config_prefers_env() {
     let config_root = temp.path().join("config").join("horon-agent");
     std::fs::create_dir_all(&config_root).expect("config dir");
 
-    let _guard = EnvGuard::save(&["HORON_AGENT_HOME", "OPENCODE_API_KEY"]);
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let _guard = EnvGuard::save(&["HORON_HOME", "OPENCODE_API_KEY"]);
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::set_var("OPENCODE_API_KEY", "env-secret");
     std::fs::write(config_root.join("opencode.env"), "OPENCODE_API_KEY=file-secret\n").expect("env file");
 
@@ -855,8 +855,8 @@ fn matrix_load_api_key_from_env_or_config_reads_config_file() {
     let config_root = temp.path().join("config").join("horon-agent");
     std::fs::create_dir_all(&config_root).expect("config dir");
 
-    let _guard = EnvGuard::save(&["HORON_AGENT_HOME", "OPENCODE_API_KEY"]);
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let _guard = EnvGuard::save(&["HORON_HOME", "OPENCODE_API_KEY"]);
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::remove_var("OPENCODE_API_KEY");
     std::fs::write(config_root.join("opencode.env"), "OPENCODE_API_KEY=file-secret\n").expect("env file");
 
@@ -873,8 +873,8 @@ fn load_api_key_accepts_legacy_zai_key_name() {
     let config_root = temp.path().join("config").join("horon-agent");
     std::fs::create_dir_all(&config_root).expect("config dir");
 
-    let _guard = EnvGuard::save(&["HORON_AGENT_HOME", "ZHIPU_API_KEY", "ZAI_API_KEY"]);
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let _guard = EnvGuard::save(&["HORON_HOME", "ZHIPU_API_KEY", "ZAI_API_KEY"]);
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::remove_var("ZHIPU_API_KEY");
     crate::env::remove_var("ZAI_API_KEY");
     std::fs::write(config_root.join("zai.env"), "ZAI_API_KEY=legacy-secret\n").expect("env file");
@@ -919,9 +919,9 @@ fn quality_tier_ranks_flagship_above_bare_above_cheap() {
 fn newest_release_picker_prefers_strongest_tier_over_newest_cheap() {
     use crate::provider::catalog_cache::ModelInfo;
     let _lock = crate::storage::lock_test_env();
-    let _env = EnvGuard::save(&["HORON_AGENT_HOME"]);
+    let _env = EnvGuard::save(&["HORON_HOME"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let mk = |id: &str, created: u64| ModelInfo {
         id: id.to_string(),
@@ -956,9 +956,9 @@ fn newest_release_picker_prefers_strongest_tier_over_newest_cheap() {
 fn newest_release_picker_uses_recency_within_a_tier() {
     use crate::provider::catalog_cache::ModelInfo;
     let _lock = crate::storage::lock_test_env();
-    let _env = EnvGuard::save(&["HORON_AGENT_HOME"]);
+    let _env = EnvGuard::save(&["HORON_HOME"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let mk = |id: &str, created: u64| ModelInfo {
         id: id.to_string(),
@@ -1083,7 +1083,7 @@ fn minimax_default_provider_applies_minimax_api_key_env_not_openrouter() {
     // otherwise decide this assertion. Guard both and sandbox the config dir the env file is
     // read from.
     let _guard = EnvGuard::save(&[
-        "HORON_AGENT_HOME",
+        "HORON_HOME",
         "MINIMAX_API_KEY",
         "OPENAI_API_KEY",
         "HORON_AGENT_OPENROUTER_API_KEY_NAME",
@@ -1105,8 +1105,8 @@ fn minimax_default_provider_applies_minimax_api_key_env_not_openrouter() {
     ] {
         crate::env::remove_var(v);
     }
-    let home = tempfile::tempdir().expect("temporary HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let home = tempfile::tempdir().expect("temporary HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
 
     let selection = resolve_openai_compatible_profile_selection("minimax");
     assert_eq!(

@@ -296,12 +296,12 @@ pub fn records_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// `~/.horon-agent/approvals/blocked_approvals.json`
+/// `~/.horon/approvals/blocked_approvals.json`
 pub fn blocked_approvals_path() -> Result<PathBuf> {
     Ok(records_dir()?.join("blocked_approvals.json"))
 }
 
-/// `~/.horon-agent/approvals/.records.lock`.
+/// `~/.horon/approvals/.records.lock`.
 ///
 /// A dedicated lock file for approval records. [`AmbientLock`] is the ambient
 /// runner's process-wide single-instance guard and is held for a whole run, so
@@ -874,18 +874,18 @@ mod blocked_approval_tests {
 
     /// Point the process at a throwaway home for the duration of `f`. The
     /// process-wide env lock keeps this test from racing the crate's other
-    /// `HORON_AGENT_HOME` tests.
+    /// `HORON_HOME` tests.
     fn with_temp_home<T>(f: impl FnOnce() -> T) -> T {
         let _guard = crate::storage::lock_test_env();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let temp = tempfile::TempDir::new().expect("temp dir");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
 
         match previous {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
 
         result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
@@ -903,7 +903,7 @@ mod blocked_approval_tests {
     #[test]
     fn records_live_under_the_approvals_directory() {
         with_temp_home(|| {
-            let home = std::env::var_os("HORON_AGENT_HOME").expect("temp home");
+            let home = std::env::var_os("HORON_HOME").expect("temp home");
             let home = PathBuf::from(home);
             assert_eq!(
                 blocked_approvals_path().unwrap(),

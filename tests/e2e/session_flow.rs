@@ -112,7 +112,7 @@ async fn resume_session_restores_persisted_compaction_for_provider_context() -> 
         // The same session exists as originals in the event log, and the store
         // carries no SQLite database: the session survives on the event log
         // alone, so a restart can replay it.
-        let home = std::env::var("HORON_AGENT_HOME").expect("HORON_AGENT_HOME");
+        let home = std::env::var("HORON_HOME").expect("HORON_HOME");
         let store_dir = std::path::Path::new(&home).join("sessions");
         let log = store_dir
             .join("session_resume_compaction_restore_test")

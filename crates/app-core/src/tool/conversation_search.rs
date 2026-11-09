@@ -364,8 +364,8 @@ mod tests {
         let _ = std::fs::create_dir_all(&base);
         let _ = crate::storage::create_store_dir(&base.join("sessions"), false);
 
-        let previous_home = std::env::var("HORON_AGENT_HOME").ok();
-        crate::env::set_var("HORON_AGENT_HOME", &base);
+        let previous_home = std::env::var("HORON_HOME").ok();
+        crate::env::set_var("HORON_HOME", &base);
 
         let session_id = format!("test-session-{}", nonce);
         let mut session = Session::create_with_id(session_id.clone(), None, None);
@@ -389,9 +389,9 @@ mod tests {
 
     fn restore_env(base: std::path::PathBuf, previous_home: Option<String>) {
         if let Some(prev) = previous_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         let _ = std::fs::remove_dir_all(base);
     }

@@ -482,7 +482,7 @@ fn test_ambient_config_defaults() {
 #[test]
 fn test_ambient_lock() {
     use horon_agent::ambient::AmbientLock;
-    let _env = setup_test_env().expect("failed to setup isolated HORON_AGENT_HOME");
+    let _env = setup_test_env().expect("failed to setup isolated HORON_HOME");
 
     // First acquisition should succeed
     let lock1 = AmbientLock::try_acquire();

@@ -11,8 +11,8 @@ impl TestHome {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = temp.path().join("repo");
         std::fs::create_dir_all(&project).expect("project dir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         Self {
             _temp: temp,
             project,
@@ -24,9 +24,9 @@ impl TestHome {
 impl Drop for TestHome {
     fn drop(&mut self) {
         if let Some(prev_home) = self.prev_home.take() {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -194,9 +194,9 @@ fn completed_todo(id: &str, content: &str) -> crate::todo::TodoItem {
 
 fn restore_home(prev_home: Option<std::ffi::OsString>) {
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -206,8 +206,8 @@ async fn goal_create_attaches_the_goal_to_the_session() {
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path().join("repo");
     std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let tool = InitiativeTool::new();
     let ctx = goal_ctx("ses_goal_attach", &project);
@@ -235,8 +235,8 @@ async fn goal_update_to_completed_is_refused_while_todos_are_open() {
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path().join("repo");
     std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let goal = crate::goal::create_goal(
         crate::goal::GoalCreateInput {
@@ -286,8 +286,8 @@ async fn goal_update_to_completed_succeeds_without_open_todos() {
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path().join("repo");
     std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let goal = crate::goal::create_goal(
         crate::goal::GoalCreateInput {
@@ -336,8 +336,8 @@ async fn goal_completion_is_allowed_with_an_empty_todo_list() {
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path().join("repo");
     std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let goal = crate::goal::create_goal(
         crate::goal::GoalCreateInput {
@@ -371,8 +371,8 @@ async fn goal_completion_is_allowed_with_only_cancelled_todos() {
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path().join("repo");
     std::fs::create_dir_all(&project).expect("project dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let goal = crate::goal::create_goal(
         crate::goal::GoalCreateInput {

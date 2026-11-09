@@ -8,7 +8,7 @@
 //! Plan mode is checked through the registry gate, because a deletion is a
 //! write effect and a planning session must never reach the disk.
 //!
-//! Every test here writes below one private `HORON_AGENT_HOME`, so they share
+//! Every test here writes below one private `HORON_HOME`, so they share
 //! the storage test lock instead of running in parallel over the real home.
 
 use super::SkillTool;
@@ -28,8 +28,8 @@ struct IsolatedHome {
 impl IsolatedHome {
     fn new() -> Self {
         let temp = tempfile::tempdir().expect("isolated agent home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         std::fs::write(temp.path().join("config.toml"), "[tools]\nmanaged_skills = true\n").unwrap();
         crate::config::Config::invalidate_cache();
         Self { previous, _temp: temp }
@@ -39,15 +39,15 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match &self.previous {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }
 }
 
 /// Run `body` on its own runtime while holding the process-wide storage test
-/// lock, which is what keeps the `HORON_AGENT_HOME` change of one test out of
+/// lock, which is what keeps the `HORON_HOME` change of one test out of
 /// another test's read.
 fn run_isolated(body: impl Future<Output = ()>) {
     let _guard = crate::storage::lock_test_env();

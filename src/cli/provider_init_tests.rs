@@ -73,7 +73,7 @@ async fn auto_model_init_without_a_configured_provider_names_openai_compatible()
     let _env_guard = crate::storage::lock_test_env();
     let dir = TempDir::new().expect("temp dir");
     let saved: Vec<(String, Option<String>)> = [
-        "HORON_AGENT_HOME",
+        "HORON_HOME",
         "HORON_AGENT_NON_INTERACTIVE",
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
@@ -85,7 +85,7 @@ async fn auto_model_init_without_a_configured_provider_names_openai_compatible()
     .iter()
     .map(|k| (k.to_string(), std::env::var(k).ok()))
     .collect();
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     for key in saved.iter().skip(1) {
         crate::env::remove_var(&key.0);
     }
@@ -133,8 +133,8 @@ async fn a_malformed_named_profile_is_a_named_configuration_error() {
     let _guard = lock_env();
     let _env_guard = crate::storage::lock_test_env();
     let dir = TempDir::new().expect("temp dir");
-    let saved_home = std::env::var("HORON_AGENT_HOME").ok();
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    let saved_home = std::env::var("HORON_HOME").ok();
+    crate::env::set_var("HORON_HOME", dir.path());
     for key in [
         "HORON_AGENT_PROVIDER_PROFILE_ACTIVE",
         "HORON_AGENT_PROVIDER_PROFILE_NAME",
@@ -174,8 +174,8 @@ async fn a_malformed_named_profile_is_a_named_configuration_error() {
     assert!(message.contains("[providers.missing]"), "{message}");
 
     match saved_home {
-        Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(home) => crate::env::set_var("HORON_HOME", home),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     crate::config::invalidate_config_cache();
 }
@@ -290,8 +290,8 @@ fn pending_external_auth_review_candidates_report_supported_api_key_sources() {
     let _guard = lock_env();
     let _env_guard = crate::storage::lock_test_env();
     let dir = TempDir::new().expect("temp dir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", dir.path());
 
     let opencode_path = crate::auth::external::ExternalAuthSource::OpenCode
         .path()
@@ -330,8 +330,8 @@ fn pending_external_auth_review_candidates_report_supported_api_key_sources() {
     }
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }

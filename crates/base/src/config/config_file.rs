@@ -375,7 +375,7 @@ impl Config {
         }
 
         // The global config snapshot can be initialized before an auth flow saves
-        // a new path-bound trust decision, or before tests switch HORON_AGENT_HOME. Fall
+        // a new path-bound trust decision, or before tests switch HORON_HOME. Fall
         // back to a fresh read on cache misses so fast auth probes remain correct
         // without penalizing the common already-trusted path. The memo re-stats
         // config.toml, so it is as fresh as a full reload.
@@ -491,7 +491,7 @@ mod issue_1056_tests {
     fn effort_update_preserves_profile_with_capitalized_bearer_auth() {
         let _lock = crate::storage::lock_test_env();
         let home = tempfile::tempdir().unwrap();
-        let _home = EnvGuard::set("HORON_AGENT_HOME", home.path());
+        let _home = EnvGuard::set("HORON_HOME", home.path());
         let path = home.path().join("config.toml");
         std::fs::write(
             &path,
@@ -528,7 +528,7 @@ reasoning_effort = "max"
     fn effort_update_refuses_to_overwrite_malformed_config() {
         let _lock = crate::storage::lock_test_env();
         let home = tempfile::tempdir().unwrap();
-        let _home = EnvGuard::set("HORON_AGENT_HOME", home.path());
+        let _home = EnvGuard::set("HORON_HOME", home.path());
         let path = home.path().join("config.toml");
         let original = "[providers.broken]\nauth = \"invalid-auth-mode\"\n";
         std::fs::write(&path, original).unwrap();

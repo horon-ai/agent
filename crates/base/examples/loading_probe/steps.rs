@@ -245,13 +245,13 @@ impl Stages {
 
 /// Run every step once and return the probe report.
 ///
-/// The caller must have `HORON_AGENT_HOME` pointing at the fixture home; that is
+/// The caller must have `HORON_HOME` pointing at the fixture home; that is
 /// what the loading APIs read.
 pub fn run(options: &Options) -> Result<Value> {
     let home = horon_agent_base::storage::horon_agent_dir()?;
     ensure!(
         home == options.home,
-        "HORON_AGENT_HOME resolves to {} but the probe was told {}",
+        "HORON_HOME resolves to {} but the probe was told {}",
         home.display(),
         options.home.display()
     );
@@ -420,7 +420,7 @@ pub fn run(options: &Options) -> Result<Value> {
 /// carries both sets, and the directory is reset on every run so a stale file
 /// from an earlier run cannot decide this run's measurements.
 fn prepare_overlay_project(project: &Path, count: usize) -> Result<()> {
-    let root = project.join(".horon-agent").join("skills");
+    let root = project.join(".horon").join("skills");
     std::fs::create_dir_all(project).context("create the probe project directory")?;
     if root.exists() {
         std::fs::remove_dir_all(&root).context("reset the probe project skills")?;

@@ -517,7 +517,7 @@ jobs:
         # rather than a silent skip.
         run: |
           set -euo pipefail
-          model_dir="$HOME/.horon-agent/models/all-MiniLM-L6-v2"
+          model_dir="$HOME/.horon/models/all-MiniLM-L6-v2"
           mkdir -p "$model_dir"
           base="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"
           curl -sSfL --retry 3 -o "$model_dir/model.onnx" "$base/onnx/model.onnx"

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 fn create_test_tool() -> McpManagementTool {
     // Use an explicit empty config so tests are hermetic: McpManager::new()
-    // would load the developer's real ~/.horon-agent/mcp.json, and list output
+    // would load the developer's real ~/.horon/mcp.json, and list output
     // now includes configured-but-not-connected servers (issue #436).
     let manager = Arc::new(RwLock::new(McpManager::with_config(crate::mcp::McpConfig::default())));
     McpManagementTool::new(manager)
@@ -31,7 +31,7 @@ struct LocalMcpConfigGuard {
 
 impl LocalMcpConfigGuard {
     fn new(content: &str) -> std::io::Result<Self> {
-        let path = PathBuf::from(".horon-agent/mcp.json");
+        let path = PathBuf::from(".horon/mcp.json");
         let dir = path.parent().ok_or_else(|| std::io::Error::other("missing parent"))?;
         let created_dir = if !dir.exists() {
             fs::create_dir_all(dir)?;
@@ -294,7 +294,7 @@ async fn test_unknown_action() {
 
 #[tokio::test]
 async fn test_reload_empty_config() {
-    let _guard = LocalMcpConfigGuard::new("{\"servers\":{}}").expect("create temporary .horon-agent/mcp.json");
+    let _guard = LocalMcpConfigGuard::new("{\"servers\":{}}").expect("create temporary .horon/mcp.json");
     let tool = create_test_tool();
     let ctx = create_test_context();
     let input = json!({"action": "reload"});

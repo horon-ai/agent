@@ -522,7 +522,7 @@ impl McpConfig {
     }
 
     /// Parse the project-local config bytes an authorization decision covered,
-    /// highest priority first: `.horon-agent/mcp.json`, then `.mcp.json`
+    /// highest priority first: `.horon/mcp.json`, then `.mcp.json`
     /// (Claude Code project config), then `.claude/mcp.json` (legacy
     /// compatibility). An earlier file keeps a same-named server.
     fn parse_project_locals(files: &[crate::workspace_trust::ProjectConfigFile]) -> Self {
@@ -564,7 +564,7 @@ impl McpConfig {
     }
 
     /// Load from default locations, resolving project-local config
-    /// (`.horon-agent/mcp.json`, `.mcp.json`, `.claude/mcp.json`, and the per-project
+    /// (`.horon/mcp.json`, `.mcp.json`, `.claude/mcp.json`, and the per-project
     /// entries in `~/.claude.json`) against `project_dir` instead of the
     /// process working directory when provided.
     ///

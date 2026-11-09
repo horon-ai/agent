@@ -8,12 +8,12 @@ struct ProfileEnv {
 
 impl ProfileEnv {
     fn new(profile: &str, config_toml: Option<&str>) -> Self {
-        let previous = ["HORON_AGENT_HOME", "HORON_AGENT_TOOL_PROFILE", "HORON_AGENT_TOOLS"]
+        let previous = ["HORON_HOME", "HORON_AGENT_TOOL_PROFILE", "HORON_AGENT_TOOLS"]
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
             .collect();
         let home = tempfile::tempdir().expect("temp home");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         crate::env::set_var("HORON_AGENT_TOOL_PROFILE", profile);
         crate::env::remove_var("HORON_AGENT_TOOLS");
         if let Some(config) = config_toml {

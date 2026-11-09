@@ -695,7 +695,7 @@ fn read_effects_claim_network_only_for_a_remote_path() {
     );
 }
 
-/// Isolated `HORON_AGENT_HOME` (diff snapshots live there) plus a session id
+/// Isolated `HORON_HOME` (diff snapshots live there) plus a session id
 /// no other test shares, so read memory cannot leak between tests.
 struct DedupFixture {
     temp: tempfile::TempDir,
@@ -709,7 +709,7 @@ impl DedupFixture {
     fn new(session_id: &str) -> Self {
         let lock = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let home = EnvGuard::set("HORON_AGENT_HOME", temp.path().join("home").to_str().unwrap());
+        let home = EnvGuard::set("HORON_HOME", temp.path().join("home").to_str().unwrap());
         crate::tool::read_state::forget_session(session_id);
         Self {
             temp,
@@ -998,15 +998,15 @@ async fn artifact_urls_require_a_numeric_id() {
     }
 }
 
-/// Restores `HORON_AGENT_HOME` and the config cache no matter how a test ends.
+/// Restores `HORON_HOME` and the config cache no matter how a test ends.
 struct HomeGuard {
     previous: Option<std::ffi::OsString>,
 }
 
 impl HomeGuard {
     fn set(home: &std::path::Path) -> Self {
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home);
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home);
         crate::config::invalidate_config_cache();
         Self { previous }
     }
@@ -1015,14 +1015,14 @@ impl HomeGuard {
 impl Drop for HomeGuard {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::invalidate_config_cache();
     }
 }
 
-/// Points the process at a temporary `HORON_AGENT_HOME` with the given config.
+/// Points the process at a temporary `HORON_HOME` with the given config.
 struct ConfigHome {
     _home: tempfile::TempDir,
     previous: Option<std::ffi::OsString>,
@@ -1031,8 +1031,8 @@ struct ConfigHome {
 impl ConfigHome {
     fn with_config(contents: &str) -> Self {
         let home = tempfile::tempdir().expect("config home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         std::fs::write(home.path().join("config.toml"), contents).expect("write config");
         crate::config::invalidate_config_cache();
         Self { _home: home, previous }
@@ -1042,8 +1042,8 @@ impl ConfigHome {
 impl Drop for ConfigHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::invalidate_config_cache();
     }
@@ -1173,7 +1173,7 @@ async fn structural_summary_elides_long_bodies_when_enabled() {
 async fn history_url_renders_the_stored_transcript_and_pages_it() {
     let _guard = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let _home = EnvGuard::set("HORON_AGENT_HOME", home.path().to_str().unwrap());
+    let _home = EnvGuard::set("HORON_HOME", home.path().to_str().unwrap());
     std::fs::write(home.path().join("config.toml"), "[tools]\ncontext_notes = true\n").unwrap();
     crate::config::invalidate_config_cache();
 

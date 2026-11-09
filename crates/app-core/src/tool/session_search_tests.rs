@@ -9,8 +9,8 @@ use std::time::Instant;
 fn with_temp_home<T>(f: impl FnOnce(&Path) -> T) -> T {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().expect("create temp dir");
-    let previous_home = std::env::var("HORON_AGENT_HOME").ok();
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let previous_home = std::env::var("HORON_HOME").ok();
+    crate::env::set_var("HORON_HOME", temp.path());
     // The store refuses any directory under the agent home that is not 0700,
     // and create_dir_all would leave this one at the umask default (0755).
     crate::storage::create_store_dir(&temp.path().join("sessions"), false).expect("create sessions dir");
@@ -18,9 +18,9 @@ fn with_temp_home<T>(f: impl FnOnce(&Path) -> T) -> T {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(temp.path())));
 
     if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
+        crate::env::set_var("HORON_HOME", previous_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 
     result.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
@@ -182,7 +182,7 @@ fn timestamped_session_collection_respects_recent_limit_without_mtime_stat() {
 }
 
 #[test]
-#[ignore = "local performance benchmark over the real ~/.horon-agent session corpus"]
+#[ignore = "local performance benchmark over the real ~/.horon session corpus"]
 fn bench_real_session_search_corpus() {
     if std::env::var("HORON_AGENT_SESSION_SEARCH_BENCH_REAL").ok().as_deref() != Some("1") {
         eprintln!("set HORON_AGENT_SESSION_SEARCH_BENCH_REAL=1 to run against the real session corpus");

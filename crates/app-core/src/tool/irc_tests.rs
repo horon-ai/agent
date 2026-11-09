@@ -23,8 +23,8 @@ struct HomeGuard {
 impl HomeGuard {
     fn with_config(contents: &str) -> Self {
         let home = tempfile::tempdir().expect("isolated agent home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::Config::invalidate_cache();
         let path = crate::config::Config::path().expect("config path");
         std::fs::create_dir_all(path.parent().expect("config parent")).expect("create config parent");
@@ -37,8 +37,8 @@ impl HomeGuard {
 impl Drop for HomeGuard {
     fn drop(&mut self) {
         match &self.previous {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

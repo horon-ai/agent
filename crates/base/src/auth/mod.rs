@@ -26,9 +26,9 @@ pub struct AuthStatus {
     pub openai_compatible_any: AuthState,
 }
 
-/// Cached auth status plus the `HORON_AGENT_HOME` it was computed under.
+/// Cached auth status plus the `HORON_HOME` it was computed under.
 ///
-/// Probes read credential files relative to `HORON_AGENT_HOME`. Tests swap that
+/// Probes read credential files relative to `HORON_HOME`. Tests swap that
 /// home to per-test temp dirs, and a status computed under one home must never
 /// be served for another.
 type CachedAuthStatus = (AuthStatus, Instant, Option<std::ffi::OsString>);
@@ -39,7 +39,7 @@ static AUTH_STATUS_FAST_CACHE: std::sync::LazyLock<std::sync::RwLock<Option<Cach
     std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
 
 fn auth_cache_home_key() -> Option<std::ffi::OsString> {
-    std::env::var_os("HORON_AGENT_HOME")
+    std::env::var_os("HORON_HOME")
 }
 
 const AUTH_STATUS_CACHE_TTL_SECS: u64 = 30;
@@ -200,7 +200,7 @@ impl AuthStatus {
     /// Serves the freshest cached snapshot (even if expired) and refreshes the
     /// cache on a detached background thread, bumping the auth generation when
     /// the refreshed snapshot actually differs. Tests always take the blocking
-    /// path: background refreshes racing per-test `HORON_AGENT_HOME` swaps would
+    /// path: background refreshes racing per-test `HORON_HOME` swaps would
     /// poison the shared cache.
     pub fn check_fast_nonblocking() -> Self {
         if running_in_test_harness() {

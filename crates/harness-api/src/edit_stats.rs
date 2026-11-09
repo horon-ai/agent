@@ -66,10 +66,10 @@ fn canonical_stats(paths: &store::SessionPaths, id: &store::SessionId) -> Option
 }
 
 fn sessions_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HORON_AGENT_HOME").map(PathBuf::from).or_else(|| {
+    let home = std::env::var_os("HORON_HOME").map(PathBuf::from).or_else(|| {
         std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(|home| PathBuf::from(home).join(".horon-agent"))
+            .map(|home| PathBuf::from(home).join(".horon"))
     })?;
     Some(home.join("sessions"))
 }
@@ -284,7 +284,7 @@ struct Cache {
 static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(Cache::default()));
 
 /// Opt-in enrichment for a LOCAL daemon, including older running daemons.
-/// Never call this for remote sessions. Uses HORON_AGENT_HOME or ~/.horon-agent. Exact
+/// Never call this for remote sessions. Uses HORON_HOME or ~/.horon. Exact
 /// sidecars are cheap and read immediately. Legacy estimates load in background
 /// (one background worker, 32 MiB per session, 512 queued/cached entries), so
 /// callers should invoke this on periodic refresh. Missing, malformed, oversized

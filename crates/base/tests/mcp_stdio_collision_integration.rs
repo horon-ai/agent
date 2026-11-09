@@ -81,7 +81,7 @@ fn real_stdio_collision_aliases_preserve_original_targets() {
         }
         let status = child
             .env(CHILD_MARKER, "1")
-            .env("HORON_AGENT_HOME", sandbox.path().join("horon-agent"))
+            .env("HORON_HOME", sandbox.path().join("horon-agent"))
             .env("HORON_AGENT_RUNTIME_DIR", sandbox.path().join("runtime"))
             .current_dir(sandbox.path())
             .args(["--exact", TEST_NAME, "--nocapture"])
