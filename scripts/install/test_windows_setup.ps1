@@ -12,7 +12,7 @@ $envNames = @(
     'LOCALAPPDATA',
     'APPDATA',
     'USERPROFILE',
-    'HORON_AGENT_HOME',
+    'HORON_HOME',
     'TEMP',
     'TMP',
     'PATH',
@@ -91,7 +91,7 @@ function New-IsolatedWindowsProfile([string]$Name) {
     $local = Join-Path $root 'Local App Data'
     $profile = Join-Path $root 'User Profile'
     $appData = Join-Path $profile 'AppData\Roaming'
-    # The uninstaller's purge guard only accepts a dedicated `.horon-agent` or
+    # The uninstaller's purge guard only accepts a dedicated `.horon` or
     # `horon-agent-*` directory, and `-Purge` targets this configured home, so the
     # isolated home must satisfy that contract.
     $horonAgentHome = Join-Path $root 'horon-agent home'
@@ -103,7 +103,7 @@ function New-IsolatedWindowsProfile([string]$Name) {
     $env:LOCALAPPDATA = $local
     $env:USERPROFILE = $profile
     $env:APPDATA = $appData
-    $env:HORON_AGENT_HOME = $horonAgentHome
+    $env:HORON_HOME = $horonAgentHome
     $env:TEMP = $temp
     $env:TMP = $temp
 

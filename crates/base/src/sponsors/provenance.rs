@@ -212,7 +212,7 @@ mod tests {
 
     /// A private home and the shared test-env lock, restored on drop.
     ///
-    /// `HORON_AGENT_HOME` is process-global: leaving it pointed at the deleted
+    /// `HORON_HOME` is process-global: leaving it pointed at the deleted
     /// temp directory poisoned every later test that resolved a config path.
     struct SponsorsHome {
         previous: Option<std::ffi::OsString>,
@@ -224,13 +224,13 @@ mod tests {
         fn new(enabled: bool) -> Self {
             let lock = crate::storage::lock_test_env();
             let dir = tempfile::tempdir().unwrap();
-            let previous = std::env::var_os("HORON_AGENT_HOME");
+            let previous = std::env::var_os("HORON_HOME");
             std::fs::write(
                 dir.path().join("config.toml"),
                 format!("[sponsors]\nenabled = {enabled}\n"),
             )
             .unwrap();
-            crate::env::set_var("HORON_AGENT_HOME", dir.path());
+            crate::env::set_var("HORON_HOME", dir.path());
             crate::config::Config::invalidate_cache();
             Self {
                 previous,
@@ -243,8 +243,8 @@ mod tests {
     impl Drop for SponsorsHome {
         fn drop(&mut self) {
             match &self.previous {
-                Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(previous) => crate::env::set_var("HORON_HOME", previous),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::Config::invalidate_cache();
         }

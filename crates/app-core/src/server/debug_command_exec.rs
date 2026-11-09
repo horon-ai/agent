@@ -669,7 +669,7 @@ mod tests {
     /// Env vars are per-process, so a private mutex here would only exclude
     /// other tests in this module while racing every other test that mutates
     /// the environment (notably the `IsolatedHome` users in `reload_recovery`,
-    /// which set `HORON_AGENT_HOME` under `storage::lock_test_env`). Two mutexes
+    /// which set `HORON_HOME` under `storage::lock_test_env`). Two mutexes
     /// guarding one global serialize nothing, which showed up as a rotating set
     /// of failures under `cargo test` that all passed with `--test-threads=1`
     /// (issue #593). Everything touching the environment must share one lock.
@@ -729,7 +729,7 @@ mod tests {
     async fn debug_agent_context_inspects_modes_without_inference_or_locking() {
         let _env_lock = lock_env();
         let home = tempfile::tempdir().unwrap();
-        let _home = EnvGuard::set("HORON_AGENT_HOME", home.path().to_str().unwrap());
+        let _home = EnvGuard::set("HORON_HOME", home.path().to_str().unwrap());
         let provider: Arc<dyn Provider> = Arc::new(TestProvider);
         let registry = Registry::new(provider.clone()).await;
         let mut agent = Agent::new_with_initial_working_dir(provider, registry, home.path().to_str());

@@ -1,7 +1,7 @@
 use super::*;
 use tokio_tungstenite::tungstenite::handshake::server::Request;
 
-/// `pair_device` persists the registry to `HORON_AGENT_HOME`, so a test that pairs
+/// `pair_device` persists the registry to `HORON_HOME`, so a test that pairs
 /// must hold the shared test-env lock and point the process at a private home;
 /// otherwise it races the gateway control tests and rewrites the real user home.
 struct IsolatedHome {
@@ -14,8 +14,8 @@ impl IsolatedHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("tempdir");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         Self {
             previous,
             _dir: dir,
@@ -27,8 +27,8 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match &self.previous {
-            Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(previous) => crate::env::set_var("HORON_HOME", previous),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

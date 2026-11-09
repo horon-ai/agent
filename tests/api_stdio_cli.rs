@@ -29,7 +29,7 @@ fn exercise_stdio(close_daemon_first: bool) {
             .current_dir(root.path())
             .env_clear()
             .env("HOME", root.path())
-            .env("HORON_AGENT_HOME", &home)
+            .env("HORON_HOME", &home)
             .env("HORON_AGENT_RUNTIME_DIR", &runtime)
             .env("XDG_RUNTIME_DIR", &runtime)
             .env("HORON_AGENT_SOCKET", &socket)

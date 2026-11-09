@@ -153,16 +153,16 @@ mod tests {
     #[test]
     fn claim_check_reserves_the_window() {
         let _guard = crate::storage::lock_test_env();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let temp = tempfile::TempDir::new().expect("create temp dir");
-        horon_agent_base::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_base::env::set_var("HORON_HOME", temp.path());
 
         let first = UpdateMetadata::claim_check();
         let second = UpdateMetadata::claim_check();
 
         match previous {
-            Some(value) => horon_agent_base::env::set_var("HORON_AGENT_HOME", value),
-            None => horon_agent_base::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => horon_agent_base::env::set_var("HORON_HOME", value),
+            None => horon_agent_base::env::remove_var("HORON_HOME"),
         }
         assert!(first, "an empty metadata file must allow the first check");
         assert!(!second, "the first claim must block a second check in the same window");

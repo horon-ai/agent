@@ -1037,8 +1037,8 @@ mod lightweight_swarm_member_tests {
     impl Drop for HomeGuard {
         fn drop(&mut self) {
             match self.prev.take() {
-                Some(prev) => crate::env::set_var("HORON_AGENT_HOME", prev),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(prev) => crate::env::set_var("HORON_HOME", prev),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
@@ -1046,8 +1046,8 @@ mod lightweight_swarm_member_tests {
     fn isolated_home() -> HomeGuard {
         let lock = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        let prev = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", temp.path());
         HomeGuard {
             prev,
             _temp: temp,

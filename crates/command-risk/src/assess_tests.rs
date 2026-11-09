@@ -419,7 +419,7 @@ fn ordinary_wrapped_commands_still_run_immediately() {
 
 #[test]
 fn read_only_find_with_stderr_redirect_is_safe() {
-    let command = "find ~/.horon-agent -maxdepth 3 -type f \\
+    let command = "find ~/.horon -maxdepth 3 -type f \\
                    \\( -name '*.log' -o -name '*events*' \\) \\
                    -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -20";
     let assessment = assess(command, &ctx());
@@ -430,7 +430,7 @@ fn read_only_find_with_stderr_redirect_is_safe() {
 #[test]
 fn harmless_command_operands_are_not_redirect_targets() {
     for command in [
-        "grep needle /home/u/.horon-agent/config 2>/dev/null",
+        "grep needle /home/u/.horon/config 2>/dev/null",
         "find / -name '*.conf' 2>/dev/null",
         "printf '%s\\n' /home/u/.ssh/id_ed25519 >/tmp/list",
     ] {

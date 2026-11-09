@@ -151,7 +151,7 @@ fn owned_server_argv_requests_the_temporary_lifecycle() {
 fn resolve_resume_id_imports_raw_codex_session_ids() {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let codex_dir = temp.path().join("external/.codex/sessions/2026/04/16");
     std::fs::create_dir_all(&codex_dir).expect("create codex dir");
@@ -172,7 +172,7 @@ fn resolve_resume_id_imports_raw_codex_session_ids() {
     let session = crate::session::Session::load(&resolved).expect("load imported session");
     assert_eq!(session.active_context().len(), 2);
 
-    crate::env::remove_var("HORON_AGENT_HOME");
+    crate::env::remove_var("HORON_HOME");
 }
 
 #[test]
@@ -371,7 +371,7 @@ auth = "none"
     ));
 }
 
-/// Isolates `~/.horon-agent` for one test and serializes env mutation.
+/// Isolates `~/.horon` for one test and serializes env mutation.
 ///
 /// `resolve_blocked_approval` writes the decision history, so a test that calls
 /// it without this would write into the real home.
@@ -385,8 +385,8 @@ impl TestHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("temp home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         crate::config::Config::invalidate_cache();
         Self {
             previous,
@@ -399,8 +399,8 @@ impl TestHome {
 impl Drop for TestHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

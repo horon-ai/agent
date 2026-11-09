@@ -8,8 +8,8 @@ struct IsolatedHomeEnv {
 impl IsolatedHomeEnv {
     fn new() -> Self {
         let home = tempfile::tempdir().unwrap();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         Self {
             _home: home,
             previous_home,
@@ -20,8 +20,8 @@ impl IsolatedHomeEnv {
 impl Drop for IsolatedHomeEnv {
     fn drop(&mut self) {
         match self.previous_home.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }

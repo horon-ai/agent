@@ -1244,7 +1244,7 @@ mod utf8_truncation_tests {
         if !horon_agent_platform::term::passes_scratch_dir_to_shell() {
             return;
         }
-        // Keep HORON_AGENT_HOME stable until the final directory assertion. Running
+        // Keep HORON_HOME stable until the final directory assertion. Running
         // synchronously avoids holding the environment MutexGuard across await.
         let _env_lock = crate::storage::lock_test_env();
         let expected = super::tool_scratch_dir().expect("horon-agent scratch directory");

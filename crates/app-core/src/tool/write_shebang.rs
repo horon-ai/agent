@@ -61,9 +61,9 @@ mod tests {
 
     fn restore_home(previous: Option<std::ffi::OsString>) {
         if let Some(value) = previous {
-            crate::env::set_var("HORON_AGENT_HOME", value);
+            crate::env::set_var("HORON_HOME", value);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 
@@ -88,10 +88,10 @@ mod tests {
     #[tokio::test]
     async fn write_shebang_create_makes_the_file_executable() {
         let _lock = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let temp = tempfile::tempdir().expect("tempdir");
         let home = tempfile::tempdir().expect("home dir");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         let output = WriteTool::new()
             .execute(
                 serde_json::json!({"file_path": "run.sh", "content": "#!/bin/sh\necho hi\n"}),

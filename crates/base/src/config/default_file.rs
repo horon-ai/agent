@@ -20,7 +20,7 @@ impl Config {
     /// parses and documents the options it claims to.
     pub fn default_config_file_contents() -> String {
         let default_content = r##"# horon-agent configuration file
-# Location: ~/.horon-agent/config.toml
+# Location: ~/.horon/config.toml
 #
 # Environment variables override these settings.
 # Run `/config` in horon-agent to see current settings.
@@ -30,7 +30,7 @@ impl Config {
 #       background task artifacts when the byte or file budget is full; "preserve"
 #       refuses to start a new background task instead.
 #   HORON_AGENT_WORKSPACE_TRUST - "trust" or "deny" for this process only. Project-local
-#       MCP config (.horon-agent/mcp.json, .mcp.json, .claude/mcp.json) is skipped
+#       MCP config (.horon/mcp.json, .mcp.json, .claude/mcp.json) is skipped
 #       unless its current digest was trusted; --trust-workspace records that decision.
 
 [display]
@@ -242,7 +242,7 @@ edit_fuzzy = false
 # the first call and shuts down after ten idle minutes.
 lsp = false
 # Opt-in managed skills: let `skill_manage create`/`update` write skill files
-# into ~/.horon-agent/managed-skills/. An authored skill of the same name always
+# into ~/.horon/managed-skills/. An authored skill of the same name always
 # wins, and descriptions are sanitized before they reach the prompt.
 managed_skills = false
 # Opt-in `context_notes`: exposes a tool that keeps a small notes file per
@@ -322,7 +322,7 @@ dual_confirm_classes = []
 
 [skills]
 # Skill collections beside horon-agent's own that are read too. horon-agent
-# always reads ~/.horon-agent/skills and, per workspace, .horon-agent/skills,
+# always reads ~/.horon/skills and, per workspace, .horon/skills,
 # .claude/skills and .agents/skills. The switches below cover the directories
 # other tools own; each one starts off, because reading another agent's skills
 # puts its instructions in front of this agent.
@@ -334,8 +334,8 @@ codex_user = false
 
 [mcp]
 # MCP server configs beside horon-agent's own that are read too. horon-agent
-# always reads ~/.horon-agent/mcp.json and, in a trusted workspace,
-# .horon-agent/mcp.json, .mcp.json and .claude/mcp.json. When two sources name
+# always reads ~/.horon/mcp.json and, in a trusted workspace,
+# .horon/mcp.json, .mcp.json and .claude/mcp.json. When two sources name
 # the same server the higher one wins: project, then horon-agent, then Claude
 # Code, then Codex. A local stdio entry is kept over a remote one of the same
 # name. The switches below start off, because loading another host's servers
@@ -527,7 +527,7 @@ immune_turns = 3
 # Synchronous tool-input transformers. Each receives the tool input JSON on
 # stdin and may print replacement JSON on stdout. Failures and empty output
 # retain the original input. Transformers run before pre_tool policy gates.
-# pre_tool_transform = ["~/.horon-agent/plugins/rtk-transform"]
+# pre_tool_transform = ["~/.horon/plugins/rtk-transform"]
 # pre_tool_transform_timeout_ms = 500
 # Lifecycle hooks: external commands horon-agent runs at well-defined points so other
 # programs can observe or gate agent behavior. Commands are parsed shell-style

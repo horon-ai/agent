@@ -754,7 +754,7 @@ pub(super) struct ScopedHoronAgentHome {
 impl ScopedHoronAgentHome {
     pub(super) fn new(label: &str) -> Self {
         let guard = horon_agent_home_test_lock();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -763,14 +763,14 @@ impl ScopedHoronAgentHome {
             "horon-agent-harness-api-{label}-{}-{unique}",
             std::process::id()
         ));
-        std::fs::create_dir_all(&path).expect("create isolated HORON_AGENT_HOME");
+        std::fs::create_dir_all(&path).expect("create isolated HORON_HOME");
         // The session store's safe-path check refuses any symlinked component, and
         // `std::env::temp_dir()` is `/var/folders/...` on macOS, where `/var` is a
         // symlink to `private/var`. Hand the store the canonical spelling.
-        let path = path.canonicalize().expect("canonicalize isolated HORON_AGENT_HOME");
-        // SAFETY: all tests in this module that mutate HORON_AGENT_HOME share `LOCK`,
+        let path = path.canonicalize().expect("canonicalize isolated HORON_HOME");
+        // SAFETY: all tests in this module that mutate HORON_HOME share `LOCK`,
         // and this guard restores the prior value before it is released.
-        unsafe { std::env::set_var("HORON_AGENT_HOME", &path) };
+        unsafe { std::env::set_var("HORON_HOME", &path) };
         Self {
             path,
             previous,
@@ -782,8 +782,8 @@ impl ScopedHoronAgentHome {
 impl Drop for ScopedHoronAgentHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-            None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+            Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+            None => unsafe { std::env::remove_var("HORON_HOME") },
         }
         let _ = std::fs::remove_dir_all(&self.path);
     }
@@ -2451,7 +2451,7 @@ fn a_plain_session_id_still_resolves() {
 
 /// Session records must be read from the *instance's* home, not the user's.
 ///
-/// `launch()` gives an embedded instance its own `HORON_AGENT_HOME` precisely so it
+/// `launch()` gives an embedded instance its own `HORON_HOME` precisely so it
 /// cannot see the user's work. Reading the user's home directly made
 /// `peek_session` return the real transcripts of the horon-agent the user runs
 /// interactively, from a client that was supposed to be sandboxed.
@@ -2462,7 +2462,7 @@ fn session_records_are_read_from_the_instance_home() {
     let path = path.expect("a normal session id must resolve");
     assert!(
         path.starts_with(&home.path),
-        "HORON_AGENT_HOME must scope session records, got {}",
+        "HORON_HOME must scope session records, got {}",
         path.display()
     );
 }
@@ -4391,8 +4391,8 @@ fn todo_state_is_served_from_the_session_home_and_acked() {
         r#"[{"kind":"closed_feedback_loop"}]"#,
     )
     .unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    unsafe { std::env::set_var("HORON_AGENT_HOME", &home) };
+    let previous = std::env::var_os("HORON_HOME");
+    unsafe { std::env::set_var("HORON_HOME", &home) };
 
     let mut state = state_with_session();
     let event = only_reply_event(state.api_request_to_legacy(&json!({
@@ -4423,8 +4423,8 @@ fn todo_state_is_served_from_the_session_home_and_acked() {
     ));
 
     match previous {
-        Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-        None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+        Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+        None => unsafe { std::env::remove_var("HORON_HOME") },
     }
     let _ = std::fs::remove_dir_all(&home);
 }

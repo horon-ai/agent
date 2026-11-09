@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// `CREDENTIAL_FILES` of crates/agent-sdk/src/launch.rs: the stores the
-/// product keeps directly under HORON_AGENT_HOME. The list is private there, so
+/// product keeps directly under HORON_HOME. The list is private there, so
 /// it is copied and `credential_lists_match_the_shipped_code` fails the moment
 /// the two drift apart.
 const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 5] = [
@@ -21,7 +21,7 @@ const SHIPPED_HOME_CREDENTIAL_FILES: [&str; 5] = [
     "config.toml",
 ];
 
-/// Further stores under HORON_AGENT_HOME that are not in launch.rs: the MCP
+/// Further stores under HORON_HOME that are not in launch.rs: the MCP
 /// OAuth store (`STORE_FILE` of crates/base/src/mcp/oauth.rs).
 const EXTRA_HOME_CREDENTIAL_FILES: [&str; 1] = ["mcp-oauth.json"];
 
@@ -55,14 +55,14 @@ const SHIPPED_EXTERNAL_CREDENTIAL_FILES: [&str; 20] = [
 const OPENCLAW_AGENT_CREDENTIAL_FILES: [&str; 2] = ["auth-profiles.json", "auth.json"];
 
 /// Every credential location the product reads or writes for a daemon whose
-/// HORON_AGENT_HOME is `home`, HOME is `user_home` and XDG_CONFIG_HOME is
+/// HORON_HOME is `home`, HOME is `user_home` and XDG_CONFIG_HOME is
 /// `xdg_config`, with its bytes or `None` when absent, so a credential that
 /// appears, disappears or changes alters the snapshot. Two copies of each
 /// external store and each provider env file are watched:
-/// - where the daemon itself resolves them under HORON_AGENT_HOME, which the
+/// - where the daemon itself resolves them under HORON_HOME, which the
 ///   test daemon always sets: `crate::storage::user_home_path(rel)` is
-///   `$HORON_AGENT_HOME/external/<rel>` and `app_config_dir()` is
-///   `$HORON_AGENT_HOME/config/horon-agent` (crates/storage/src/lib.rs), which
+///   `$HORON_HOME/external/<rel>` and `app_config_dir()` is
+///   `$HORON_HOME/config/horon-agent` (crates/storage/src/lib.rs), which
 ///   are also the instance paths launch.rs links the stores to;
 /// - where launch.rs reads them from the user's HOME: `$HOME/<rel>`, and
 ///   `user_app_config_dir()`, which is `$HOME/Library/Application Support/horon-agent`
@@ -169,7 +169,7 @@ fn credential_lists_match_the_shipped_code() {
     assert!(
         storage.contains(r#"return Ok(PathBuf::from(path).join("external").join(relative));"#)
             && storage.contains(r#"return Ok(PathBuf::from(path).join("config").join("horon-agent"));"#),
-        "under HORON_AGENT_HOME the daemon resolves user_home_path to $HORON_AGENT_HOME/external/<rel> and app_config_dir to $HORON_AGENT_HOME/config/horon-agent"
+        "under HORON_HOME the daemon resolves user_home_path to $HORON_HOME/external/<rel> and app_config_dir to $HORON_HOME/config/horon-agent"
     );
     let oauth = include_str!("../../crates/base/src/mcp/oauth.rs");
     assert!(

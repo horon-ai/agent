@@ -4,17 +4,17 @@ use super::*;
 /// Point the process at a temp horon-agent home and return it with a restore guard.
 fn temp_horon_agent_home() -> (tempfile::TempDir, Option<std::ffi::OsString>) {
     let dir = tempfile::TempDir::new().expect("tempdir");
-    let prev = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    let prev = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", dir.path());
     crate::config::Config::invalidate_cache();
     (dir, prev)
 }
 
 fn restore_horon_agent_home(prev: Option<std::ffi::OsString>) {
     if let Some(prev) = prev {
-        crate::env::set_var("HORON_AGENT_HOME", prev);
+        crate::env::set_var("HORON_HOME", prev);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
     crate::config::Config::invalidate_cache();
 }

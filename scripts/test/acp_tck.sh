@@ -395,7 +395,7 @@ note "scripted provider on $BASE_URL"
 
 # The same isolated environment every child gets, as `--agent-env K=V` pairs for the TCK.
 ENV_PAIRS=(
-    "HORON_AGENT_HOME=$HOME_DIR"
+    "HORON_HOME=$HOME_DIR"
     "HORON_AGENT_RUNTIME_DIR=$RUNTIME_DIR"
     "HOME=$SCRATCH"
     "XDG_CONFIG_HOME=$SCRATCH/config"

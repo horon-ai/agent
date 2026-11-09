@@ -19,7 +19,7 @@ pub use session_lease::{
     write_session_lease,
 };
 
-/// Serialize this crate's tests that mutate `HORON_AGENT_HOME`.
+/// Serialize this crate's tests that mutate `HORON_HOME`.
 #[cfg(test)]
 pub(crate) fn test_horon_agent_home_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -62,24 +62,24 @@ fn ensure_private_runtime_dir(path: &Path) {
 }
 
 pub fn horon_agent_dir() -> Result<PathBuf> {
-    if let Ok(path) = std::env::var("HORON_AGENT_HOME") {
+    if let Ok(path) = std::env::var("HORON_HOME") {
         return Ok(PathBuf::from(path));
     }
 
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("No home directory"))?;
-    Ok(home.join(".horon-agent"))
+    Ok(home.join(".horon"))
 }
 
-/// Whether `HORON_AGENT_HOME` redirects this process away from the user's real
-/// `~/.horon-agent` directory.
+/// Whether `HORON_HOME` redirects this process away from the user's real
+/// `~/.horon` directory.
 ///
 /// Sandboxed runs must not consult machine-global resources, such as the macOS
-/// Keychain, that cannot be redirected beneath `HORON_AGENT_HOME`.
+/// Keychain, that cannot be redirected beneath `HORON_HOME`.
 pub fn running_with_sandboxed_home() -> bool {
-    let Some(configured) = std::env::var_os("HORON_AGENT_HOME").map(PathBuf::from) else {
+    let Some(configured) = std::env::var_os("HORON_HOME").map(PathBuf::from) else {
         return false;
     };
-    let Some(default) = dirs::home_dir().map(|home| home.join(".horon-agent")) else {
+    let Some(default) = dirs::home_dir().map(|home| home.join(".horon")) else {
         return true;
     };
 
@@ -99,7 +99,7 @@ pub fn logs_dir() -> Result<PathBuf> {
 /// `/run/user/<uid>` on Linux) that is wiped on reboot, so it must only hold
 /// sockets and truly ephemeral state. State that has to outlive a reboot,
 /// such as swarm plans and member records, belongs here instead: it resolves
-/// to `~/.horon-agent/state` (respecting `HORON_AGENT_HOME`).
+/// to `~/.horon/state` (respecting `HORON_HOME`).
 ///
 /// When `HORON_AGENT_RUNTIME_DIR` is set (tests and sandboxed temp servers), it
 /// takes precedence so isolated runs never touch the real horon-agent home.
@@ -116,11 +116,11 @@ pub fn durable_state_dir() -> PathBuf {
 /// Resolve horon-agent's app-owned config directory.
 ///
 /// Default location is the platform config dir + `horon-agent` (for example
-/// `~/.config/horon-agent` on Linux). When `HORON_AGENT_HOME` is set, sandbox this under
-/// `$HORON_AGENT_HOME/config/horon-agent` so self-dev/tests do not leak into the user's
+/// `~/.config/horon-agent` on Linux). When `HORON_HOME` is set, sandbox this under
+/// `$HORON_HOME/config/horon-agent` so self-dev/tests do not leak into the user's
 /// real config directory.
 pub fn app_config_dir() -> Result<PathBuf> {
-    if let Ok(path) = std::env::var("HORON_AGENT_HOME") {
+    if let Ok(path) = std::env::var("HORON_HOME") {
         return Ok(PathBuf::from(path).join("config").join("horon-agent"));
     }
 
@@ -129,7 +129,7 @@ pub fn app_config_dir() -> Result<PathBuf> {
 }
 
 /// Resolve a path under the user's home directory, but sandbox it under
-/// `$HORON_AGENT_HOME/external/` when `HORON_AGENT_HOME` is set.
+/// `$HORON_HOME/external/` when `HORON_HOME` is set.
 ///
 /// This keeps external provider auth files isolated during tests and sandboxed
 /// runs without changing default on-disk locations for normal users.
@@ -139,7 +139,7 @@ pub fn user_home_path(relative: impl AsRef<Path>) -> Result<PathBuf> {
         anyhow::bail!("user_home_path expects a relative path, got {}", relative.display());
     }
 
-    if let Ok(path) = std::env::var("HORON_AGENT_HOME") {
+    if let Ok(path) = std::env::var("HORON_HOME") {
         return Ok(PathBuf::from(path).join("external").join(relative));
     }
 

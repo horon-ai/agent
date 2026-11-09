@@ -232,7 +232,7 @@ impl ParallelToolsFlag {
 
 impl Drop for ParallelToolsFlag {
     fn drop(&mut self) {
-        if let Ok(dir) = std::env::var("HORON_AGENT_HOME") {
+        if let Ok(dir) = std::env::var("HORON_HOME") {
             write_parallel_tools(std::path::Path::new(&dir), true);
         }
     }

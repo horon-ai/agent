@@ -7,7 +7,7 @@ horon-agent는 잘 정의된 생명주기 지점에서 외부 명령을 실행�
 ## 설정
 
 ```toml
-# ~/.horon-agent/config.toml
+# ~/.horon/config.toml
 [hooks]
 turn_start    = "~/bin/horon-agent-turn-busy"       # observer
 turn_end      = "~/bin/horon-agent-turn-notify"     # observer
@@ -215,7 +215,7 @@ exit 0
 
 ```toml
 [hooks]
-pre_tool_transform = ["~/.horon-agent/plugins/rtk-transform"]
+pre_tool_transform = ["~/.horon/plugins/rtk-transform"]
 pre_tool_transform_timeout_ms = 500
 ```
 

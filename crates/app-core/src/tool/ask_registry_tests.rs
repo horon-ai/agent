@@ -33,8 +33,8 @@ struct HomeGuard {
 
 impl HomeGuard {
     fn new(path: &std::path::Path) -> Self {
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", path);
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", path);
         Self { previous }
     }
 }
@@ -42,9 +42,9 @@ impl HomeGuard {
 impl Drop for HomeGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            crate::env::set_var("HORON_AGENT_HOME", previous);
+            crate::env::set_var("HORON_HOME", previous);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }

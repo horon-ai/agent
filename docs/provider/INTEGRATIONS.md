@@ -9,7 +9,7 @@ HTTP+SSE 서버에 연결한다. 기존 stdio 설정은 계속 동작한다.
 
 ### 설정
 
-원격 서버는 `~/.horon-agent/mcp.json`이나 프로젝트의 `.mcp.json`에 추가한다.
+원격 서버는 `~/.horon/mcp.json`이나 프로젝트의 `.mcp.json`에 추가한다.
 
 ```json
 {
@@ -159,7 +159,7 @@ MCP 관리 도구는 `url`, `transport`, `headers`로 즉석 원격 연결을 �
 
 ## 사용자 정의 HTTP JSON 웹 검색
 
-JSON을 돌려주는 HTTP 엔드포인트는 무엇이든 `~/.horon-agent/config.toml`에서 설정한다.
+JSON을 돌려주는 HTTP 엔드포인트는 무엇이든 `~/.horon/config.toml`에서 설정한다.
 
 ```toml
 [websearch]

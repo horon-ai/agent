@@ -368,7 +368,7 @@ mod tests {
             "Update failed: Update check failed: error sending request for url (https://api.github.com/repos/horon-ai/agent/releases/latest)\n\nCaused by:\n    dns error: failed to lookup address information",
             "cargo build failed: error[E0308]: mismatched types\n  --> src/lib.rs:1:1",
             "Checksum mismatch for horon-agent-linux-x86_64.tar.gz: expected aaa, got bbb",
-            "Failed to install /home/u/.horon-agent/builds/versions/0.1.0/horon-agent: Permission denied (os error 13)",
+            "Failed to install /home/u/.horon/builds/versions/0.1.0/horon-agent: Permission denied (os error 13)",
             "a very long single clause with no recognizable cause that just keeps going and going well past any sensible terminal width",
             "",
         ];

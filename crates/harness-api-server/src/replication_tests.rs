@@ -28,14 +28,14 @@ fn home_lock() -> MutexGuard<'static, ()> {
 impl ScopedHome {
     fn new(label: &str) -> Self {
         let guard = home_lock();
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("horon-api-replication-{label}-{}-{unique}", std::process::id()));
-        std::fs::create_dir_all(&path).expect("create isolated HORON_AGENT_HOME");
-        unsafe { std::env::set_var("HORON_AGENT_HOME", &path) };
+        std::fs::create_dir_all(&path).expect("create isolated HORON_HOME");
+        unsafe { std::env::set_var("HORON_HOME", &path) };
         Self {
             path,
             previous,
@@ -51,8 +51,8 @@ impl ScopedHome {
 impl Drop for ScopedHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-            None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+            Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+            None => unsafe { std::env::remove_var("HORON_HOME") },
         }
         let _ = std::fs::remove_dir_all(&self.path);
     }
@@ -374,12 +374,12 @@ fn export_import_roundtrip_is_idempotent_and_preserves_canonical_bytes() {
         "blob_refs":page.blob_refs,"record_refs":page.record_refs
     });
     let mut state = BridgeState::default();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    unsafe { std::env::set_var("HORON_AGENT_HOME", &destination) };
+    let previous = std::env::var_os("HORON_HOME");
+    unsafe { std::env::set_var("HORON_HOME", &destination) };
     let outbound = state.api_request_to_legacy(&import_request);
     match previous {
-        Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-        None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+        Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+        None => unsafe { std::env::remove_var("HORON_HOME") },
     }
     assert_eq!(outbound.len(), 1);
     let imported = match outbound.into_iter().next().unwrap() {
@@ -410,14 +410,14 @@ fn export_import_roundtrip_is_idempotent_and_preserves_canonical_bytes() {
     assert_eq!(destination_page.events[0].canonical_json, page.events[0].canonical_json);
 
     let mut state = BridgeState::default();
-    unsafe { std::env::set_var("HORON_AGENT_HOME", &destination) };
+    unsafe { std::env::set_var("HORON_HOME", &destination) };
     let outbound = state.api_request_to_legacy(&json!({
         "req":"import_session_events","id":3,"session_id":id,
         "protocol_version":REPLICATION_PROTOCOL_VERSION,
         "heads":page.heads,"events":page.events,
         "blob_refs":page.blob_refs,"record_refs":page.record_refs
     }));
-    unsafe { std::env::remove_var("HORON_AGENT_HOME") };
+    unsafe { std::env::remove_var("HORON_HOME") };
     let again = match outbound.into_iter().next().unwrap() {
         Outbound::Reply(frame) | Outbound::Serialized { frame, .. } => import_of(frame.event),
         other => panic!("expected reply, got {other:?}"),
@@ -521,8 +521,8 @@ fn payload_blob_roundtrip_and_status_resume() {
     let _scratch = ScratchGuard(destination.clone());
     let destination_paths = store::SessionPaths::new(destination.join("sessions"));
     seed_session(&destination_paths, "repl_blob", 1);
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    unsafe { std::env::set_var("HORON_AGENT_HOME", &destination) };
+    let previous = std::env::var_os("HORON_HOME");
+    unsafe { std::env::set_var("HORON_HOME", &destination) };
     let status = match request(json!({
         "req":"import_session_blob","id":2,"session_id":id,"chunk":chunk
     })) {
@@ -557,8 +557,8 @@ fn payload_blob_roundtrip_and_status_resume() {
     };
     unsafe {
         match previous {
-            Some(value) => std::env::set_var("HORON_AGENT_HOME", value),
-            None => std::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => std::env::set_var("HORON_HOME", value),
+            None => std::env::remove_var("HORON_HOME"),
         }
     }
     assert_eq!(resumed, (bytes.len() as u64, true));
@@ -646,8 +646,8 @@ fn canonical_record_reference_roundtrips_whole_record_bytes() {
     let _scratch = ScratchGuard(destination.clone());
     let destination_paths = store::SessionPaths::new(destination.join("sessions"));
     seed_session(&destination_paths, "repl_record", 1);
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    unsafe { std::env::set_var("HORON_AGENT_HOME", &destination) };
+    let previous = std::env::var_os("HORON_HOME");
+    unsafe { std::env::set_var("HORON_HOME", &destination) };
     let status = match request(json!({
         "req":"import_session_record_blob","id":2,"session_id":id,
         "reference":reference,"chunk":chunk
@@ -673,8 +673,8 @@ fn canonical_record_reference_roundtrips_whole_record_bytes() {
     };
     unsafe {
         match previous {
-            Some(value) => std::env::set_var("HORON_AGENT_HOME", value),
-            None => std::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => std::env::set_var("HORON_HOME", value),
+            None => std::env::remove_var("HORON_HOME"),
         }
     }
     assert_eq!(status, (reference.size, reference.size, true));

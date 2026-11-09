@@ -9,13 +9,13 @@ async fn handle_clear_session_keeps_identity_and_replaces_runtime_handles() -> R
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match &self.0 {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
 
     let old_session_id = "session_before_clear";
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);

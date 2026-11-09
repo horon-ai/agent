@@ -5,7 +5,7 @@ use std::fs;
 
 use tempfile::TempDir;
 
-/// Point `HORON_AGENT_HOME` at a fresh directory so the home import root is
+/// Point `HORON_HOME` at a fresh directory so the home import root is
 /// this test's own sandbox, and restore the previous value on drop.
 struct SandboxHome {
     previous: Option<std::ffi::OsString>,
@@ -14,13 +14,13 @@ struct SandboxHome {
 
 impl SandboxHome {
     fn new() -> Self {
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let dir = TempDir::new().expect("sandbox home temp dir");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        crate::env::set_var("HORON_HOME", dir.path());
         Self { previous, dir }
     }
 
-    /// `$HORON_AGENT_HOME/external`, the directory `~/` imports resolve under.
+    /// `$HORON_HOME/external`, the directory `~/` imports resolve under.
     fn external(&self) -> std::path::PathBuf {
         let external = self.dir.path().join("external");
         fs::create_dir_all(&external).expect("create external dir");
@@ -31,8 +31,8 @@ impl SandboxHome {
 impl Drop for SandboxHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(previous) => crate::env::set_var("HORON_HOME", previous),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }

@@ -39,8 +39,8 @@ struct HomeGuard {
 impl HomeGuard {
     fn new() -> Self {
         let home = tempfile::tempdir().expect("home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::Config::invalidate_cache();
         Self { _home: home, previous }
     }
@@ -49,9 +49,9 @@ impl HomeGuard {
 impl Drop for HomeGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            crate::env::set_var("HORON_AGENT_HOME", previous);
+            crate::env::set_var("HORON_HOME", previous);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         crate::config::Config::invalidate_cache();
     }

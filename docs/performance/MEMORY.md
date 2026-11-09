@@ -269,7 +269,7 @@ horon-agent debug 'server:memory-incident'
 런타임 메모리 로깅은 기본으로 켜져 있고 매일 JSONL 파일을 다음 경로에 쓴다.
 
 ```text
-~/.horon-agent/logs/memory/
+~/.horon/logs/memory/
 ```
 
 가장 최근 서버 프로세스 수명 구간을 분석한다.

@@ -6,10 +6,11 @@ mod types;
 mod version_gc;
 
 pub use paths::{
-    binary_name, binary_stem, client_update_candidate, current_binary_build_time_string, current_binary_built_at,
-    find_repo_in_ancestors, get_repo_dir, is_horon_agent_repo, launcher_binary_path, launcher_dir,
-    preferred_reload_candidate, release_binary_path, resolve_binary_payload, shared_server_update_candidate,
-    update_launcher_symlink_to_current, update_launcher_symlink_to_stable, version_matches_installed_channel,
+    LAUNCHER_ALIASES, binary_name, binary_stem, client_update_candidate, current_binary_build_time_string,
+    current_binary_built_at, find_repo_in_ancestors, get_repo_dir, is_horon_agent_repo, launcher_alias_paths,
+    launcher_binary_path, launcher_dir, preferred_reload_candidate, release_binary_path, resolve_binary_payload,
+    shared_server_update_candidate, update_launcher_symlink_to_current, update_launcher_symlink_to_stable,
+    version_matches_installed_channel,
 };
 pub use source_state::{
     current_build_info, current_git_diff, current_git_hash, current_git_hash_full, current_source_state,

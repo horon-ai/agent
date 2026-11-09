@@ -26,7 +26,7 @@ pub(crate) use tokio_tungstenite::connect_async;
 pub(crate) use tokio_tungstenite::tungstenite::Message as WsMessage;
 pub(crate) use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-static HORON_AGENT_HOME_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+static HORON_HOME_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 
 pub(crate) fn short_runtime_dir(name: String) -> std::path::PathBuf {
     #[cfg(unix)]
@@ -40,7 +40,7 @@ pub(crate) fn short_runtime_dir(name: String) -> std::path::PathBuf {
 }
 
 fn lock_horon_agent_home() -> std::sync::MutexGuard<'static, ()> {
-    let mutex = HORON_AGENT_HOME_LOCK.get_or_init(|| Mutex::new(()));
+    let mutex = HORON_HOME_LOCK.get_or_init(|| Mutex::new(()));
     // Recover from poisoned state if a previous test panicked
     match mutex.lock() {
         Ok(guard) => guard,
@@ -64,7 +64,7 @@ impl TestEnvGuard {
     pub(crate) fn new() -> Result<Self> {
         let lock = lock_horon_agent_home();
         let temp_home = tempfile::Builder::new().prefix("horon-agent-e2e-home-").tempdir()?;
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let prev_runtime_dir = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
         let prev_test_session = std::env::var_os("HORON_AGENT_TEST_SESSION");
         let prev_debug_control = std::env::var_os("HORON_AGENT_DEBUG_CONTROL");
@@ -74,7 +74,7 @@ impl TestEnvGuard {
         let runtime_dir = temp_home.path().join("runtime");
         std::fs::create_dir_all(&runtime_dir)?;
 
-        horon_agent::env::set_var("HORON_AGENT_HOME", temp_home.path());
+        horon_agent::env::set_var("HORON_HOME", temp_home.path());
         horon_agent::env::set_var("HORON_AGENT_RUNTIME_DIR", &runtime_dir);
         horon_agent::env::set_var("HORON_AGENT_TEST_SESSION", "1");
         horon_agent::env::set_var("HORON_AGENT_DEBUG_CONTROL", "1");
@@ -105,9 +105,9 @@ impl TestEnvGuard {
 impl Drop for TestEnvGuard {
     fn drop(&mut self) {
         if let Some(prev_home) = &self.prev_home {
-            horon_agent::env::set_var("HORON_AGENT_HOME", prev_home);
+            horon_agent::env::set_var("HORON_HOME", prev_home);
         } else {
-            horon_agent::env::remove_var("HORON_AGENT_HOME");
+            horon_agent::env::remove_var("HORON_HOME");
         }
 
         if let Some(prev_runtime_dir) = &self.prev_runtime_dir {
@@ -566,7 +566,7 @@ pub(crate) async fn run_unix_transport_scenario() -> Result<TransportScenarioRes
                 let state = debug_run_command(debug_socket_path.clone(), "state", None)
                     .await
                     .unwrap_or_else(|e| format!("<state error: {e}>"));
-                let logs = std::env::var_os("HORON_AGENT_HOME")
+                let logs = std::env::var_os("HORON_HOME")
                     .and_then(|home| latest_log_excerpt(std::path::Path::new(&home)));
                 let seen = message_events
                     .iter()

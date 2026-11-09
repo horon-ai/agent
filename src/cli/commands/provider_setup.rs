@@ -619,7 +619,7 @@ mod tests {
     fn provider_add_writes_named_profile_env_file_and_default() {
         let _lock = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("temp dir");
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set("HORON_HOME", temp.path());
         let _key = EnvVarGuard::remove("HORON_AGENT_PROVIDER_MY_API_API_KEY");
         let config_path = temp.path().join("config.toml");
         std::fs::write(
@@ -664,7 +664,7 @@ mod tests {
     fn provider_add_rejects_remote_without_api_key_source() {
         let _lock = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("temp dir");
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set("HORON_HOME", temp.path());
         let mut options = base_options();
         options.api_key = None;
         options.set_default = false;
@@ -677,7 +677,7 @@ mod tests {
     fn provider_add_allows_localhost_without_api_key() {
         let _lock = crate::storage::lock_test_env();
         let temp = tempfile::TempDir::new().expect("temp dir");
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp.path());
+        let _home = EnvVarGuard::set("HORON_HOME", temp.path());
         let mut options = base_options();
         options.base_url = "http://localhost:8000/v1".to_string();
         options.api_key = None;

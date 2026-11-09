@@ -13,21 +13,21 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
    파일로 재정의할 수 있다(아래 참고).
 2. 기능 모듈(예: `[[stream_rules]]` 안내, 아래 참고).
 3. `AGENTS.md`: 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.md`](TOOLS.md)).
-4. 프롬프트 오버레이: `./.horon-agent/prompt-overlay.md`와 `~/.horon-agent/prompt-overlay.md`.
-5. 선호 도구: `./.horon-agent/preferred-tools.md`와 `~/.horon-agent/preferred-tools.md`.
+4. 프롬프트 오버레이: `./.horon/prompt-overlay.md`와 `~/.horon/prompt-overlay.md`.
+5. 선호 도구: `./.horon/preferred-tools.md`와 `~/.horon/preferred-tools.md`.
 6. 메모리와 활성 스킬 프롬프트(동적이며 캐시하지 않는다). 스킬 목록이 어디서 오는지는 아래 "스킬" 절에 있다.
 
 ### 안내 추가 (가장 흔한 작업)
 
 기본 프롬프트를 건드리지 않고 지시를 덧붙인다.
 
-- `~/.horon-agent/prompt-overlay.md`: 모든 곳에 적용된다.
-- `./.horon-agent/prompt-overlay.md`: 프로젝트 하나에 적용된다.
+- `~/.horon/prompt-overlay.md`: 모든 곳에 적용된다.
+- `./.horon/prompt-overlay.md`: 프로젝트 하나에 적용된다.
 
 둘 다 있으면 함께 포함된다. 4~6 계층에서 프로젝트 경로와 전역 경로가 같은 정규 경로로
 해석되면(예: `$HOME`에서 작업하거나 심링크 별칭을 쓰는 경우) 파일은 프로젝트 제목 아래에
-한 번만 포함된다. 서로 다른 파일은 내용이 같더라도 둘 다 포함된다. 전역 `.horon-agent`
-디렉터리는 `HORON_AGENT_HOME`이 설정되어 있으면 그 값을 따른다. 4 계층은 작업 디렉터리와
+한 번만 포함된다. 서로 다른 파일은 내용이 같더라도 둘 다 포함된다. 전역 `.horon`
+디렉터리는 `HORON_HOME`이 설정되어 있으면 그 값을 따른다. 4 계층은 작업 디렉터리와
 전역 파일만 넣고, 그 아래 디렉터리의 `AGENTS.md`는 프롬프트가 아니라 `read` 결과에 붙는다
 (`[tools] nested_agents_md`, 기본값 켜짐, `HORON_AGENT_NESTED_AGENTS_MD`로 덮어씀).
 
@@ -45,8 +45,8 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 ```
 
 - 상대 경로는 그 줄이 들어 있는 파일의 디렉터리를 기준으로 푼다.
-- `~/`로 시작하는 경로는 사용자 홈 기준이다. `HORON_AGENT_HOME`이 설정된 실행에서는 전역
-  파일과 같은 규칙으로 `$HORON_AGENT_HOME/external/` 아래를 기준으로 삼는다.
+- `~/`로 시작하는 경로는 사용자 홈 기준이다. `HORON_HOME`이 설정된 실행에서는 전역
+  파일과 같은 규칙으로 `$HORON_HOME/external/` 아래를 기준으로 삼는다.
 - 가져오기는 최대 5단계까지 이어진다. 원본 파일이 0단계이고, 5단계 파일 안의 가져오기 줄은
   여섯 번째라 확장하지 않고 그대로 둔다.
 - 이미 현재 가져오기 사슬에 있는 파일을 다시 참조하면 내용은 넣지 않고
@@ -64,8 +64,8 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 
 1 계층을 완전히 교체하려면 다음 파일 중 하나를 만든다.
 
-- `./.horon-agent/system-prompt.md`(프로젝트, 가장 높은 우선순위)
-- `~/.horon-agent/system-prompt.md`(전역)
+- `./.horon/system-prompt.md`(프로젝트, 가장 높은 우선순위)
+- `~/.horon/system-prompt.md`(전역)
 
 비어 있지 않은 첫 파일이 이긴다. 없으면 내장 기본값을 쓴다. 비어 있거나 공백만 있는 파일은
 기본값으로 돌아가므로 실수로 빈 프롬프트를 배포할 수 없다.
@@ -134,7 +134,7 @@ Copilot instructions, Windsurf rules, `GEMINI.md`를 읽는다. 기본 `foreign_
   유지한다.
 - 내장 `system_prompt.md`를 편집하려면 다시 빌드해야 한다. `include_str!`로 내장되기
   때문이다.
-- Swarm 모델 라우팅 안내에는 비슷한 전용 파일이 있다. `.horon-agent/swarm-prompt.md`다.
+- Swarm 모델 라우팅 안내에는 비슷한 전용 파일이 있다. `.horon/swarm-prompt.md`다.
   `/swarm-prompt`로 활성 프로젝트 파일이나 전역 파일을 편집한다. 새 에이전트는 최신 내용을
   즉시 읽고, 이미 실행 중인 에이전트는 세션 생성 시 캡처한 프롬프트를 유지해 도구 정의와
   컨텍스트 캐시가 안정적으로 남는다.
@@ -169,16 +169,16 @@ Rust 호출자는 `create_session_with_options(CreateSessionOptions { working_di
 
 | 수준 | 출처 id | 폴더 | 우선순위 | 켜는 조건 |
 | --- | --- | --- | --- | --- |
-| 작업 폴더 | `horon-agent` | `./.horon-agent/skills` | 100 | 항상 |
+| 작업 폴더 | `horon-agent` | `./.horon/skills` | 100 | 항상 |
 | 작업 폴더 | `claude` | `./.claude/skills` | 80 | 항상 |
 | 작업 폴더 | `agents` | `./.agents/skills` | 70 | 항상 |
-| 사용자 | `horon-agent` | `~/.horon-agent/skills` | 100 | 항상 |
+| 사용자 | `horon-agent` | `~/.horon/skills` | 100 | 항상 |
 | 사용자 | `claude` | `~/.claude/skills`, 설치된 Claude Code 플러그인의 스킬 | 80 | `[skills] claude_user = true` |
 | 사용자 | `agents` | `~/.agents/skills` | 70 | 항상 |
 | 사용자 | `codex` | `~/.codex/skills` | 70 | `[skills] codex_user = true` |
-| 사용자 | `managed` | `~/.horon-agent/managed-skills` (모델이 만든 스킬) | 5 | `[tools] managed_skills = true` |
+| 사용자 | `managed` | `~/.horon/managed-skills` (모델이 만든 스킬) | 5 | `[tools] managed_skills = true` |
 
-다른 도구가 소유한 사용자 폴더는 기본으로 읽지 않는다. 그 폴더를 읽으면 다른 에이전트의 지시가 이 에이전트 앞에 놓이기 때문이다. 스위치가 꺼진 폴더에 스킬이 있으면 시작할 때 몇 개가 기다리는지 로그 한 줄로 알린다. 예전처럼 첫 실행 때 다른 도구의 스킬을 `~/.horon-agent/skills`로 복사하는 일은 없다. 출처들은 동시에 읽고, 합치는 순서만 표를 따른다.
+다른 도구가 소유한 사용자 폴더는 기본으로 읽지 않는다. 그 폴더를 읽으면 다른 에이전트의 지시가 이 에이전트 앞에 놓이기 때문이다. 스위치가 꺼진 폴더에 스킬이 있으면 시작할 때 몇 개가 기다리는지 로그 한 줄로 알린다. 예전처럼 첫 실행 때 다른 도구의 스킬을 `~/.horon/skills`로 복사하는 일은 없다. 출처들은 동시에 읽고, 합치는 순서만 표를 따른다.
 
 ### 앞머리만 읽기와 지연 본문
 

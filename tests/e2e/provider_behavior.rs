@@ -321,7 +321,7 @@ async fn test_resume_session_with_local_history_uses_metadata_only_history() -> 
         debug_run_command(debug_socket_path.clone(), "history", Some(&session.id))
             .await
             .unwrap_or_else(|err| format!("<history error: {err}>")),
-        std::env::var_os("HORON_AGENT_HOME")
+        std::env::var_os("HORON_HOME")
             .and_then(|home| latest_log_excerpt(std::path::Path::new(&home)))
             .unwrap_or_else(|| "<no logs>".to_string())
     );

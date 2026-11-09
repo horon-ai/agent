@@ -1000,7 +1000,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
     PARENT_LEAKS = ToolEnvIsolationTests.PARENT_LEAKS
 
     REQUIRED_KEYS = {
-        "HoronRunner": ("HOME", "XDG_CONFIG_HOME", "HORON_AGENT_HOME"),
+        "HoronRunner": ("HOME", "XDG_CONFIG_HOME", "HORON_HOME"),
         "JcodeRunner": ("HOME", "XDG_CONFIG_HOME", "JCODE_HOME"),
         "ClaudeRunner": ("HOME", "XDG_CONFIG_HOME", "CLAUDE_CONFIG_DIR"),
         "CodexRunner": ("HOME", "XDG_CONFIG_HOME", "CODEX_HOME"),
@@ -1011,7 +1011,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
                       "OMO_CODING_AGENT_DIR", "SENPI_CODING_AGENT_DIR"),
     }
     GUARDED_KEYS = ("HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME", "JCODE_HOME",
-                    "HORON_AGENT_HOME", "PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR",
+                    "HORON_HOME", "PI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR",
                     "SENPI_CODING_AGENT_DIR")
     RUNNERS = (bench.HoronRunner, bench.JcodeRunner, bench.ClaudeRunner, bench.CodexRunner,
                bench.OpencodeRunner, bench.PiRunner, bench.OmpRunner, bench.OmoRunner)
@@ -1085,7 +1085,7 @@ class ScenarioEnvIsolationTests(unittest.TestCase):
             _result, captured = self._capture(bench.HoronRunner("/bin/horon"), "mcp", root)
             env = captured[0]["env"]
             self.assertEqual(env["HORON_AGENT_RUN_MCP"], "1")
-            path = os.path.join(env["HORON_AGENT_HOME"], "mcp.json")
+            path = os.path.join(env["HORON_HOME"], "mcp.json")
             with open(path, encoding="utf-8") as fh:
                 config = json.load(fh)
         self.assertIn("bench", config["servers"])

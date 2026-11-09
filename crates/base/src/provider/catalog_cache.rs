@@ -109,7 +109,7 @@ fn sanitize_cache_namespace(raw: &str) -> String {
 
 fn cache_path_for_namespace(namespace: &str) -> PathBuf {
     let namespace = sanitize_cache_namespace(namespace);
-    if let Ok(path) = std::env::var("HORON_AGENT_HOME") {
+    if let Ok(path) = std::env::var("HORON_HOME") {
         return PathBuf::from(path)
             .join("cache")
             .join(format!("{}_models.json", namespace));
@@ -117,7 +117,7 @@ fn cache_path_for_namespace(namespace: &str) -> PathBuf {
 
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".horon-agent")
+        .join(".horon")
         .join("cache")
         .join(format!("{}_models.json", namespace))
 }

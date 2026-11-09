@@ -22,7 +22,7 @@
 
 // The tests hold the process-wide test-env lock across awaits, the same
 // allowance `tool/read.rs` takes for the same pattern: the file tools read the
-// active config, and a test that rewrites `HORON_AGENT_HOME` concurrently would
+// active config, and a test that rewrites `HORON_HOME` concurrently would
 // otherwise hand these reads another test's configuration.
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
@@ -339,12 +339,12 @@ mod tests {
     use std::time::Duration;
 
     /// A per-test environment: the process-wide env lock plus a private
-    /// `HORON_AGENT_HOME`.
+    /// `HORON_HOME`.
     ///
     /// Every mutation is accounted through `edit_stats::record`, which resolves
     /// `horon_agent_dir()`. Without this, running the tests writes the counters
     /// of these sessions into the user's real
-    /// `~/.horon-agent/sessions/edit-stats`. The lock is the one the hook and
+    /// `~/.horon/sessions/edit-stats`. The lock is the one the hook and
     /// tool tests take, and the home is restored while it is still held.
     struct TestEnv {
         /// Kept only so the redirected home outlives the test.
@@ -358,8 +358,8 @@ mod tests {
         fn new() -> Self {
             let lock = crate::storage::lock_test_env();
             let home = tempfile::tempdir().expect("temp home");
-            let previous = std::env::var_os("HORON_AGENT_HOME");
-            crate::env::set_var("HORON_AGENT_HOME", home.path());
+            let previous = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", home.path());
             Self {
                 home,
                 previous,
@@ -373,8 +373,8 @@ mod tests {
             // Runs before the lock guard field is dropped, so no test observes
             // the redirected home after it is gone.
             match self.previous.take() {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }

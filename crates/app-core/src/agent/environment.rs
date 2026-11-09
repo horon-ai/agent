@@ -164,7 +164,7 @@ mod tests {
     #[tokio::test]
     async fn log_context_names_the_profile_not_the_transport_slot() {
         // `Agent::new` only builds in-memory session state, so the test needs
-        // no `HORON_AGENT_HOME`, and it must not set one either: the crate's tests
+        // no `HORON_HOME`, and it must not set one either: the crate's tests
         // run in parallel.
         let provider: Arc<dyn Provider> = Arc::new(MultiplexedSlotProvider);
         let registry = Registry::new(provider.clone()).await;

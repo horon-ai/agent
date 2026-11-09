@@ -2893,7 +2893,7 @@ impl BridgeState {
     /// Path of a session's persisted record, or `None` if the id is not a
     /// plain session id.
     ///
-    /// One funnel for three reasons. It honours `HORON_AGENT_HOME`, without which a
+    /// One funnel for three reasons. It honours `HORON_HOME`, without which a
     /// launched instance reads the *user's* sessions: `peek_session` served
     /// the real transcripts of the horon-agent the user runs interactively, which
     /// defeats the isolation an embedded instance exists to provide. It
@@ -2913,9 +2913,9 @@ impl BridgeState {
         {
             return None;
         }
-        let home = match std::env::var_os("HORON_AGENT_HOME") {
+        let home = match std::env::var_os("HORON_HOME") {
             Some(home) => std::path::PathBuf::from(home),
-            None => std::path::Path::new(&std::env::var_os("HOME")?).join(".horon-agent"),
+            None => std::path::Path::new(&std::env::var_os("HOME")?).join(".horon"),
         };
         Some(home.join("sessions").join(format!("{session_id}.json")))
     }
@@ -3041,9 +3041,9 @@ impl BridgeState {
     }
 
     pub(crate) fn horon_agent_home() -> Option<std::path::PathBuf> {
-        std::env::var_os("HORON_AGENT_HOME")
+        std::env::var_os("HORON_HOME")
             .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".horon-agent")))
+            .or_else(|| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".horon")))
     }
 
     /// Name sessions recorded before first-prompt titles existed. Each
@@ -3390,7 +3390,7 @@ impl BridgeState {
     }
 
     fn app_config_dir() -> Option<std::path::PathBuf> {
-        if let Some(home) = std::env::var_os("HORON_AGENT_HOME") {
+        if let Some(home) = std::env::var_os("HORON_HOME") {
             return Some(std::path::Path::new(&home).join("config/horon-agent"));
         }
         horon_agent_platform::paths::user_config_dir("horon-agent")

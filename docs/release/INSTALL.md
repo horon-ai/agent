@@ -49,7 +49,7 @@ Windows 설치 경로와 서명 절차는 [`WINDOWS.md`](WINDOWS.md)에 있다.
 
 TTY, 화면, `XDG_RUNTIME_DIR`이 필요 없다. `XDG_RUNTIME_DIR`이 없으면 `HORON_AGENT_RUNTIME_DIR`을 먼저 보고, 그것도 없으면 임시 디렉터리 아래 `horon-agent-<사용자 구분자>`를 쓴다 (`crates/harness-api/src/sockets.rs:16-31`). 사용자 구분자는 `UID`, `USER` 순으로 읽어 영숫자와 `-`, `_`만 남기고 64자로 자른다. 남는 글자가 없으면 `user`다.
 
-provider 프로파일을 `config.toml`에 둔다. 위치는 `HORON_AGENT_HOME`이 있으면 `$HORON_AGENT_HOME/config.toml`, 없으면 `~/.horon-agent/config.toml`이다. 키와 파일 위치는 [`../provider/MODEL.md`](../provider/MODEL.md)에 있다.
+provider 프로파일을 `config.toml`에 둔다. 위치는 `HORON_HOME`이 있으면 `$HORON_HOME/config.toml`, 없으면 `~/.horon/config.toml`이다. 키와 파일 위치는 [`../provider/MODEL.md`](../provider/MODEL.md)에 있다.
 
 ```toml
 [provider]
@@ -105,3 +105,12 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 ```bash
 docker run --rm ghcr.io/horon-ai/agent:latest --version
 ```
+
+## 런처 별칭 (`horon`, `hrn`)
+
+`horon-agent` 런처와 같은 디렉터리에 `horon`과 `hrn`도 만든다. 셋 다 같은 채널 실행 파일을 가리키며, 유닉스에서는 심볼릭 링크, Windows에서는 복사본이다 (`crates/build-support/src/paths.rs` `update_launcher_symlink`). 업데이트 때마다 런처와 함께 바뀐다. Termux에서는 `install.sh`가 별칭도 `LD_PRELOAD`를 지우는 래퍼로 연결한다.
+
+- 같은 이름의 다른 프로그램은 덮어쓰지 않는다. 유닉스는 `horon-agent`를 가리키는 심볼릭 링크만, Windows는 이전 런처와 바이트가 같은 복사본만 우리 것으로 보고 교체한다. 그 밖의 파일이 있으면 별칭 없이 설치가 끝난다.
+- `uninstall.sh`와 `uninstall.ps1`도 같은 기준으로 별칭만 지운다.
+- 도움말과 `--version`은 어느 이름으로 실행해도 `horon-agent`로 표시한다(`#[command(name = "horon-agent")]`).
+- 데이터 디렉터리는 `~/.horon`(`HORON_HOME`)이고 프로젝트 안 설정은 `.horon/`이다. 옛 `~/.horon-agent`는 읽지 않는다.

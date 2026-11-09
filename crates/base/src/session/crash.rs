@@ -247,7 +247,7 @@ pub fn detect_crashed_sessions() -> Result<Option<CrashedSessionsInfo>> {
 
 /// Find recent crashed sessions for showing resume hints.
 ///
-/// Uses a fast O(n) scan of `~/.horon-agent/active_pids/` (typically 0-5 files)
+/// Uses a fast O(n) scan of `~/.horon/active_pids/` (typically 0-5 files)
 /// instead of scanning the full sessions directory (tens of thousands).
 /// Each file in active_pids/ contains a PID; if that PID is dead, the
 /// session crashed. We then load only those specific session files.
@@ -453,7 +453,7 @@ pub(super) fn is_pid_running(pid: u32) -> bool {
 // ---------------------------------------------------------------------------
 // Active PID tracking
 // ---------------------------------------------------------------------------
-// Lightweight files in ~/.horon-agent/active_pids/<session_id> containing the PID.
+// Lightweight files in ~/.horon/active_pids/<session_id> containing the PID.
 // Written on mark_active(), removed on mark_closed()/mark_crashed().
 // On startup we only need to scan this tiny directory (usually 0-5 files)
 // instead of the entire sessions/ directory (tens of thousands of files).
@@ -483,7 +483,7 @@ fn session_matches_resume_title(session: &Session, normalized_query: &str) -> bo
 /// resolved by re-importing from the external tool's own storage. Once the user
 /// removed or reinstalled that tool, the re-import failed and resume hard-exited
 /// with "No session found matching 'ses_...'" even though the imported snapshot
-/// was still sitting in `~/.horon-agent/sessions` (issue #336).
+/// was still sitting in `~/.horon/sessions` (issue #336).
 ///
 /// Pi sessions are intentionally excluded: their imported id is a hash of the
 /// session *path*, not the provider id, so there is no bare-id mapping.
@@ -608,7 +608,7 @@ mod batch_crash_tests {
         let guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         crate::storage::create_store_dir(&temp.path().join("sessions"), true).expect("sessions dir");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         (temp, guard)
     }
 
@@ -670,7 +670,7 @@ mod batch_crash_tests {
             "raw fallback must not rewrite an unreadable original"
         );
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 
     #[test]
@@ -720,7 +720,7 @@ mod batch_crash_tests {
             "the scan reports the short name the snapshot carries"
         );
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 
     #[test]
@@ -730,13 +730,13 @@ mod batch_crash_tests {
         // close, not crash. Daemon restarts must not stamp idle sessions.
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let dir = storage::streaming_pids_dir().expect("streaming dir");
         std::fs::create_dir_all(&dir).expect("marker dir");
         assert!(!had_streaming_marker("session_idle_1"), "no marker file means idle");
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 
     #[test]
@@ -745,7 +745,7 @@ mod batch_crash_tests {
         // orderly exit) proves the owner died mid-turn — genuine crash.
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let dir = storage::streaming_pids_dir().expect("streaming dir");
         std::fs::create_dir_all(&dir).expect("marker dir");
@@ -756,14 +756,14 @@ mod batch_crash_tests {
         );
         assert!(!had_streaming_marker("session_other_1"), "other sessions unaffected");
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 
     #[test]
     fn find_session_by_name_or_id_matches_custom_title() {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let session_id = "session_renamecli_1770000000000";
         let mut session = Session::create_with_id(
@@ -807,14 +807,14 @@ mod batch_crash_tests {
         );
         assert_eq!(std::fs::read(legacy_path).expect("preserved legacy"), original);
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 
     #[test]
     fn find_session_by_name_or_id_accepts_imported_session_ids() -> anyhow::Result<()> {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir()?;
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let imported_id = "imported_codex_test_resume";
         let mut session = Session::create_with_id(imported_id.to_string(), None, Some("Imported".to_string()));
@@ -824,7 +824,7 @@ mod batch_crash_tests {
         let resolved = find_session_by_name_or_id(imported_id)?;
         assert_eq!(resolved, imported_id);
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
         Ok(())
     }
 
@@ -836,7 +836,7 @@ mod batch_crash_tests {
     fn find_session_by_name_or_id_resolves_bare_opencode_id_to_imported_snapshot() -> anyhow::Result<()> {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir()?;
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let provider_id = "ses_2c72f8f4cffee6Qh7GId7D81Se";
         let imported_id = crate::import::imported_opencode_session_id(provider_id);
@@ -850,12 +850,12 @@ mod batch_crash_tests {
         session.provider_key = Some("opencode".to_string());
         session.save()?;
 
-        // No external OpenCode store exists under HORON_AGENT_HOME/external, so the only
+        // No external OpenCode store exists under HORON_HOME/external, so the only
         // way to resolve the bare id is via the local imported snapshot.
         let resolved = find_session_by_name_or_id(provider_id)?;
         assert_eq!(resolved, imported_id);
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
         Ok(())
     }
 
@@ -865,7 +865,7 @@ mod batch_crash_tests {
     fn find_session_by_name_or_id_bare_id_without_snapshot_still_errors() -> anyhow::Result<()> {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir()?;
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         // The store refuses any directory under the agent home that is not 0700
         // on unix, and create_dir_all would leave this one at the umask default.
         crate::storage::create_store_dir(&temp.path().join("sessions"), false)?;
@@ -873,7 +873,7 @@ mod batch_crash_tests {
         let err = find_session_by_name_or_id("ses_does_not_exist_anywhere");
         assert!(err.is_err(), "expected unknown bare id to error");
 
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
         Ok(())
     }
 }

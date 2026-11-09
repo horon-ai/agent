@@ -6,7 +6,7 @@ use super::*;
 use crate::tool::{Tool, ToolContext, ToolExecutionMode};
 use serde_json::json;
 
-/// Points `HORON_AGENT_HOME` at a fresh directory for one test and restores it.
+/// Points `HORON_HOME` at a fresh directory for one test and restores it.
 pub(super) struct IsolatedHome {
     /// Holds the temporary directory alive for the test's whole scope.
     pub(super) _dir: tempfile::TempDir,
@@ -18,8 +18,8 @@ impl IsolatedHome {
     pub(super) fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let dir = tempfile::tempdir().expect("tempdir");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         crate::config::Config::invalidate_cache();
         Self {
             _dir: dir,
@@ -32,8 +32,8 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }

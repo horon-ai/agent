@@ -1132,7 +1132,7 @@ impl LoopGuardFlag {
 
 impl Drop for LoopGuardFlag {
     fn drop(&mut self) {
-        if let Ok(dir) = std::env::var("HORON_AGENT_HOME") {
+        if let Ok(dir) = std::env::var("HORON_HOME") {
             write_loop_guard(std::path::Path::new(&dir), true);
         }
     }

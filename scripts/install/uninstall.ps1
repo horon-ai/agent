@@ -4,14 +4,14 @@
 .DESCRIPTION
     Removes the per-user launcher at %LOCALAPPDATA%\horon-agent\bin\horon-agent.exe,
     installed build binaries, and the horon-agent launcher directory from the user PATH.
-    By default user data under %USERPROFILE%\.horon-agent is kept.
+    By default user data under %USERPROFILE%\.horon is kept.
 
     One-liner uninstall:
       irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/uninstall.ps1 | iex
 .PARAMETER InstallDir
     Override the launcher directory (default: $env:LOCALAPPDATA\horon-agent\bin)
 .PARAMETER Purge
-    Also delete user data in $env:HORON_AGENT_HOME or %USERPROFILE%\.horon-agent.
+    Also delete user data in $env:HORON_HOME or %USERPROFILE%\.horon.
 .PARAMETER DryRun
     Print what would be removed without deleting anything.
 .PARAMETER Yes
@@ -280,12 +280,12 @@ if (-not $InstallDir) { $InstallDir = Get-DefaultHoronAgentInstallDir }
 $localHoronAgentRoot = Join-Path (Get-HoronAgentLocalAppDataDir) "horon-agent"
 $launcherPath = Join-Path $InstallDir "horon-agent.exe"
 $buildsDir = Join-Path $localHoronAgentRoot "builds"
-$userDataDir = if ($env:HORON_AGENT_HOME) {
-    $env:HORON_AGENT_HOME
+$userDataDir = if ($env:HORON_HOME) {
+    $env:HORON_HOME
 } elseif ($env:USERPROFILE) {
-    Join-Path $env:USERPROFILE ".horon-agent"
+    Join-Path $env:USERPROFILE ".horon"
 } else {
-    Join-Path ([Environment]::GetFolderPath("UserProfile")) ".horon-agent"
+    Join-Path ([Environment]::GetFolderPath("UserProfile")) ".horon"
 }
 $startupShortcutPath = Get-HoronAgentStartupShortcutPath
 $hotkeyArtifactPaths = @(Get-HoronAgentHotkeyArtifactPaths -UserDataDir $userDataDir)
@@ -296,7 +296,7 @@ $launcherBackupPaths = if (Test-Path -LiteralPath $InstallDir) {
     @()
 }
 if ($Purge -and -not (Test-HoronAgentSafePurgePath $userDataDir)) {
-    Write-Err "Refusing to purge unsafe HORON_AGENT_HOME path '$userDataDir'. Use a dedicated .horon-agent or horon-agent-* directory."
+    Write-Err "Refusing to purge unsafe HORON_HOME path '$userDataDir'. Use a dedicated .horon or horon-agent-* directory."
 }
 
 $targets = @()
@@ -370,6 +370,16 @@ if (-not $Purge) {
     Clear-HoronAgentHotkeySetupState -UserDataDir $userDataDir
 }
 
+# Alias launchers (horon.exe, hrn.exe) are copies of the launcher; remove only
+# byte-identical ones so an unrelated program with the same name survives.
+foreach ($alias in @("horon.exe", "hrn.exe")) {
+    $aliasPath = Join-Path $InstallDir $alias
+    if ((Test-Path -LiteralPath $aliasPath) -and (Test-Path -LiteralPath $launcherPath) -and
+        ((Get-FileHash -LiteralPath $aliasPath).Hash -eq (Get-FileHash -LiteralPath $launcherPath).Hash)) {
+        Remove-Item -LiteralPath $aliasPath -Force
+        Write-Info "Removed $aliasPath"
+    }
+}
 if (Test-Path -LiteralPath $launcherPath) {
     Remove-Item -LiteralPath $launcherPath -Force
     Write-Info "Removed $launcherPath"

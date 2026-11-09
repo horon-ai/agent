@@ -2,7 +2,7 @@
 
 //! Server registry for multi-server architecture
 //!
-//! Tracks running servers in `~/.horon-agent/servers.json` for discovery by clients.
+//! Tracks running servers in `~/.horon/servers.json` for discovery by clients.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

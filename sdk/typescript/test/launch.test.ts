@@ -139,7 +139,7 @@ test("login inheritance creates file links, never credential directory links", (
     process.platform === "darwin"
       ? path.join(home, "Library", "Application Support", "horon-agent")
       : path.join(config, "horon-agent");
-  const from = path.join(home, ".horon-agent");
+  const from = path.join(home, ".horon");
   const to = path.join(sandbox, "instance");
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   fs.mkdirSync(userConfig, { recursive: true });

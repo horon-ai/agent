@@ -3,7 +3,7 @@
  *
  * `launch()` promises an instance that cannot see the user's work. That is a
  * property of the bridge's session-record lookups, not of the SDK, and it was
- * broken: `peek_session` read `~/.horon-agent/sessions` directly, so an "isolated"
+ * broken: `peek_session` read `~/.horon/sessions` directly, so an "isolated"
  * instance returned the real transcripts of the horon-agent the user runs
  * interactively.
  *

@@ -599,8 +599,8 @@ mod tests {
     impl IsolatedHome {
         fn new() -> Self {
             let temp = tempfile::TempDir::new().expect("horon-agent home");
-            let prev_home = std::env::var_os("HORON_AGENT_HOME");
-            crate::env::set_var("HORON_AGENT_HOME", temp.path());
+            let prev_home = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", temp.path());
             Self { prev_home, _temp: temp }
         }
     }
@@ -608,9 +608,9 @@ mod tests {
     impl Drop for IsolatedHome {
         fn drop(&mut self) {
             if let Some(prev) = self.prev_home.take() {
-                crate::env::set_var("HORON_AGENT_HOME", prev);
+                crate::env::set_var("HORON_HOME", prev);
             } else {
-                crate::env::remove_var("HORON_AGENT_HOME");
+                crate::env::remove_var("HORON_HOME");
             }
         }
     }

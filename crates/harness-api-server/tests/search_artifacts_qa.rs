@@ -12,9 +12,9 @@ use horon_agent_harness_api_server::translate::{BridgeState, Outbound};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-/// `HORON_AGENT_HOME` is process-global and the tests in this binary run in
+/// `HORON_HOME` is process-global and the tests in this binary run in
 /// parallel, so a test that changed it while another was seeding wrote its
-/// fixture into the real `~/.horon-agent`. Serialize every case here.
+/// fixture into the real `~/.horon`. Serialize every case here.
 static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Home {
@@ -26,7 +26,7 @@ struct Home {
 impl Home {
     fn new() -> Self {
         let guard = HOME_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = std::env::var_os("HORON_AGENT_HOME");
+        let previous = std::env::var_os("HORON_HOME");
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -41,7 +41,7 @@ impl Home {
                 .expect("private sessions dir");
         }
         // SAFETY: the guard above is the only writer of this variable here.
-        unsafe { std::env::set_var("HORON_AGENT_HOME", &path) };
+        unsafe { std::env::set_var("HORON_HOME", &path) };
         Self {
             path,
             previous,
@@ -53,8 +53,8 @@ impl Home {
 impl Drop for Home {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-            None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+            Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+            None => unsafe { std::env::remove_var("HORON_HOME") },
         }
         let _ = std::fs::remove_dir_all(&self.path);
     }

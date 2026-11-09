@@ -2084,9 +2084,9 @@ mod tests {
     #[tokio::test]
     async fn execute_records_off_catalog_selection_without_provider_information() {
         let _guard = crate::storage::lock_test_env();
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let temp = tempfile::tempdir().unwrap();
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let body = json!({
             "category": "web-data",
@@ -2129,9 +2129,9 @@ mod tests {
         assert!(request.contains("tool=firecrawl"), "{request}");
 
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         crate::config::Config::invalidate_cache();
     }
@@ -2139,9 +2139,9 @@ mod tests {
     #[tokio::test]
     async fn details_executes_through_public_tool_interface() {
         let _guard = crate::storage::lock_test_env();
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let temp = tempfile::tempdir().unwrap();
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         let body = json!({
             "tool": "Stripe",
             "fit": "strong",
@@ -2203,9 +2203,9 @@ mod tests {
         assert!(request.contains("\"work_relevance\":\"core_requirement\""), "{request}");
 
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         crate::config::Config::invalidate_cache();
     }
@@ -2213,9 +2213,9 @@ mod tests {
     #[tokio::test]
     async fn git_category_executes_end_to_end_with_enabled_config_and_local_server() {
         let _guard = crate::storage::lock_test_env();
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let temp = tempfile::tempdir().unwrap();
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
 
         let body = json!({"tools": [{"name": "github", "blurb": "repository hosting and collaboration", "url": "https://github.com", "setup": "MCP server: npx github-mcp"}]}).to_string();
         let (endpoint, server) = one_shot_server("HTTP/1.1 200 OK", body).await;
@@ -2268,9 +2268,9 @@ mod tests {
         assert!(err.to_string().contains("disabled"));
 
         if let Some(prev) = prev_home {
-            crate::env::set_var("HORON_AGENT_HOME", prev);
+            crate::env::set_var("HORON_HOME", prev);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         crate::config::Config::invalidate_cache();
     }

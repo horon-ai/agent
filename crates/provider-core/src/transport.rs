@@ -165,7 +165,7 @@ mod tests {
         assert!(!is_transient_transport_error("invalid x-api-key"));
     }
 
-    /// Real transport-error shapes harvested from ~/.horon-agent/logs.
+    /// Real transport-error shapes harvested from ~/.horon/logs.
     #[test]
     fn real_world_transport_errors_are_transient() {
         let real_errors = [

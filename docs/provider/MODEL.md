@@ -79,8 +79,8 @@ input = ["text", "image"]
 
 | 파일 | 위치 |
 | --- | --- |
-| `config.toml` | `HORON_AGENT_HOME`이 있으면 `<홈>/config.toml`, 없으면 `~/.horon-agent/config.toml` |
-| 키 파일 | `HORON_AGENT_HOME`이 있으면 `<홈>/config/horon-agent/<env_file>`, 없으면 플랫폼 설정 디렉터리 아래 `horon-agent/<env_file>`(macOS는 `~/Library/Application Support/horon-agent/`, Linux는 `~/.config/horon-agent/`) |
+| `config.toml` | `HORON_HOME`이 있으면 `<홈>/config.toml`, 없으면 `~/.horon/config.toml` |
+| 키 파일 | `HORON_HOME`이 있으면 `<홈>/config/horon-agent/<env_file>`, 없으면 플랫폼 설정 디렉터리 아래 `horon-agent/<env_file>`(macOS는 `~/Library/Application Support/horon-agent/`, Linux는 `~/.config/horon-agent/`) |
 
 키 파일은 읽을 때 권한을 좁힌다. 키 값을 `config.toml`의 `api_key`에 직접 적을 수도 있지만, 파일이 그대로 복사되기 쉬우므로 `provider add --api-key-stdin`으로 키 파일에 저장하는 편을 권한다.
 
@@ -135,7 +135,7 @@ horon-agent provider current --json
 
 ## 이전 릴리스 정리
 
-예전 릴리스가 내려받던 네이티브 플러그인 번들 폴더 `~/.horon-agent/native-plugin-bundles/`는 이제 쓰지 않으므로 직접 지워도 된다.
+예전 릴리스가 내려받던 네이티브 플러그인 번들 폴더 `~/.horon/native-plugin-bundles/`는 이제 쓰지 않으므로 직접 지워도 된다.
 
 ## 모델 사용 메타데이터
 
@@ -173,7 +173,7 @@ horon-agent provider current --json
 - `usage`가 없으면 메타데이터를 알 수 없다는 뜻이며 구버전 서버도 여기에 해당한다.
   이를 "한 번도 쓰지 않음"으로 표시하면 안 된다.
 
-원장은 `HORON_AGENT_HOME`(보통 `~/.horon-agent`) 아래 `model-usage-v1.sqlite3`에
+원장은 `HORON_HOME`(보통 `~/.horon`) 아래 `model-usage-v1.sqlite3`에
 저장된다. SQLite가 동시 쓰기를 직렬화한다. 기본 키는 영구 세션/입력 턴 ID와 라우트
 정체성을 합치므로 도구 이어하기가 반복되어도 count가 늘지 않는다. 읽기는 원장을
 만들거나 바꾸지 않는다. 런타임 기록은 스트리밍 경로와 블로킹 경로가 함께 쓰며,

@@ -1,4 +1,4 @@
-//! Session process-ownership markers under the historical `~/.horon-agent/active_pids` name.
+//! Session process-ownership markers under the historical `~/.horon/active_pids` name.
 //!
 //! “Active” means a process owns the session, not that a window is open, a client
 //! is connected, or a model is generating. In server mode, the owning PID is the
@@ -15,7 +15,7 @@
 use crate::horon_agent_dir;
 use std::path::PathBuf;
 
-/// Directory holding one ownership marker per session ID (`~/.horon-agent/active_pids`).
+/// Directory holding one ownership marker per session ID (`~/.horon/active_pids`).
 /// Each file contains the owning process PID, not a client/window PID in server mode.
 pub fn active_pids_dir() -> Option<PathBuf> {
     horon_agent_dir().ok().map(|d| d.join("active_pids"))
@@ -312,7 +312,7 @@ pub fn find_active_session_id_by_pid(pid: u32) -> Option<String> {
     None
 }
 
-/// List session IDs with ownership markers in `~/.horon-agent/active_pids`.
+/// List session IDs with ownership markers in `~/.horon/active_pids`.
 /// Does not check PID liveness or whether a client/window is connected.
 pub fn active_session_ids() -> Vec<String> {
     let Some(dir) = active_pids_dir() else {
@@ -454,7 +454,7 @@ pub fn user_session_counts() -> SessionCounts {
 mod tests {
     use super::*;
 
-    /// Serialize tests that mutate `HORON_AGENT_HOME`.
+    /// Serialize tests that mutate `HORON_HOME`.
     fn lock_env() -> std::sync::MutexGuard<'static, ()> {
         crate::test_horon_agent_home_lock()
     }
@@ -463,7 +463,7 @@ mod tests {
     fn session_counts_counts_live_and_streaming_only() {
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let live = std::process::id();
         // Pick a PID that is almost certainly dead.
@@ -516,14 +516,14 @@ mod tests {
         unregister_active_pid("session_epsilon");
         assert_eq!(session_counts().streaming, 0);
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     #[test]
     fn streaming_guard_marks_and_clears_on_drop() {
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         register_active_pid("session_guard", std::process::id());
         assert_eq!(session_counts().streaming, 0);
@@ -533,7 +533,7 @@ mod tests {
         }
         assert_eq!(session_counts().streaming, 0);
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     /// Issue #508: internal (debug/child) sessions stay in the raw registry
@@ -542,7 +542,7 @@ mod tests {
     fn user_session_counts_exclude_internal_sessions() {
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let live = std::process::id();
         register_active_pid("session_user", live);
@@ -572,7 +572,7 @@ mod tests {
         unregister_active_pid("session_worker");
         assert!(!session_is_internal("session_worker"));
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     /// Regression for stale markers left by an exec-based reload: markers that
@@ -582,7 +582,7 @@ mod tests {
     fn prune_active_pids_owned_by_removes_only_that_pid_and_companions() {
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let me = std::process::id();
         let other = 999_999u32;
@@ -605,7 +605,7 @@ mod tests {
         // Idempotent: nothing left to prune on a second pass.
         assert_eq!(prune_active_pids_owned_by(me), (0, 0));
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     /// A marker that cannot be unlinked must not be reported as pruned, since
@@ -621,7 +621,7 @@ mod tests {
             return;
         }
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let me = std::process::id();
         register_active_pid("session_mine", me);
@@ -636,7 +636,7 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("restore write access");
         assert_eq!(prune_active_pids_owned_by(me), (1, 0));
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     /// A marker whose owner process is gone and which is older than the
@@ -647,7 +647,7 @@ mod tests {
 
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let dead = 999_999u32;
         register_active_pid("session_dead_old", dead);
@@ -693,7 +693,7 @@ mod tests {
             (0, 0)
         );
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     /// An unreadable marker is preserved: its owner is unknown, so it cannot be
@@ -704,7 +704,7 @@ mod tests {
 
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let dir = active_pids_dir().expect("active_pids dir");
         std::fs::create_dir_all(&dir).expect("create active_pids dir");
@@ -714,7 +714,7 @@ mod tests {
         assert_eq!((removed, failed), (0, 1));
         assert!(dir.join("session_garbage").exists());
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 
     /// The startup reap is destructive, so it must delete only markers that name
@@ -727,7 +727,7 @@ mod tests {
 
         let _guard = lock_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        horon_agent_core::env::set_var("HORON_AGENT_HOME", temp.path());
+        horon_agent_core::env::set_var("HORON_HOME", temp.path());
 
         let me = std::process::id();
         let other = 999_999u32;
@@ -769,6 +769,6 @@ mod tests {
         // Idempotent: a second pass has nothing left that predates the cutoff.
         assert_eq!(prune_active_pids_owned_by_before(me, cutoff), (0, 0));
 
-        horon_agent_core::env::remove_var("HORON_AGENT_HOME");
+        horon_agent_core::env::remove_var("HORON_HOME");
     }
 }

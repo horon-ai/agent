@@ -3,9 +3,9 @@
 //! Sources are merged highest priority first, and the first definition of a
 //! name wins:
 //!
-//! 1. the workspace (`.horon-agent/mcp.json` > `.mcp.json` > `.claude/mcp.json`),
+//! 1. the workspace (`.horon/mcp.json` > `.mcp.json` > `.claude/mcp.json`),
 //!    only when workspace trust allows it;
-//! 2. horon-agent's own `~/.horon-agent/mcp.json`;
+//! 2. horon-agent's own `~/.horon/mcp.json`;
 //! 3. Claude Code's `~/.claude.json` (this project's entry, then the global
 //!    servers) and `~/.claude/mcp.json`, when `[mcp] claude_user` is on;
 //! 4. Codex CLI's `[mcp_servers.*]` in `~/.codex/config.toml`, when

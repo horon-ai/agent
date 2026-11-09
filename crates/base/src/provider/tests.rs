@@ -5,7 +5,7 @@ mod tool_tiers;
 fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
     let _guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let mut profile_env_keys = vec![
         "OPENROUTER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -47,7 +47,7 @@ fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
         .into_iter()
         .map(|key| (key, std::env::var_os(key)))
         .collect::<Vec<_>>();
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     for (key, _) in &saved_profile_env {
         crate::env::remove_var(key);
     }
@@ -61,9 +61,9 @@ fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
 
     crate::provider::models::reset_model_catalog_services_for_tests();
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
     for (key, value) in saved_profile_env {
         if let Some(value) = value {

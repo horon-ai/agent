@@ -2,7 +2,7 @@
 //! removes with `skill_manage delete`.
 //!
 //! Managed skills live beside the authored ones but in a directory of their
-//! own (`~/.horon-agent/managed-skills/<name>/SKILL.md`), so an authored skill
+//! own (`~/.horon/managed-skills/<name>/SKILL.md`), so an authored skill
 //! always wins a name collision and deleting the directory removes everything
 //! the model wrote. Only [`sanitize_description`]d text is ever persisted: the
 //! description reaches the system prompt verbatim, so markup characters and

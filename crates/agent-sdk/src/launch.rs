@@ -227,7 +227,7 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
                 .as_deref()
                 .unwrap_or_else(|| Path::new(".")),
         )
-        .env("HORON_AGENT_HOME", &horon_agent_home)
+        .env("HORON_HOME", &horon_agent_home)
         .env("HORON_AGENT_RUNTIME_DIR", &runtime_dir)
         .env("HORON_AGENT_API_SOCKET", &socket_path)
         .env("HORON_AGENT_SOCKET", runtime_dir.join("horon-agent.sock"))
@@ -350,9 +350,9 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
 
 /// Resolve the user's normal horon-agent home before a private instance overrides it.
 pub fn user_horon_agent_home() -> PathBuf {
-    std::env::var_os("HORON_AGENT_HOME")
+    std::env::var_os("HORON_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".horon-agent"))
+        .unwrap_or_else(|| home_dir().join(".horon"))
 }
 
 /// Share rotating login records with an instance and copy mutable config.
@@ -888,7 +888,7 @@ mod tests {
     }
 
     /// Registers the stand-in daemon for this runtime, as a real bridge's daemon would.
-    const REGISTER_DAEMON: &str = r#"printf '{"x":{"socket":"%s","pid":%s}}' "$HORON_AGENT_RUNTIME_DIR/horon-agent.sock" "$DAEMON_PID" > "$HORON_AGENT_HOME/servers.json""#;
+    const REGISTER_DAEMON: &str = r#"printf '{"x":{"socket":"%s","pid":%s}}' "$HORON_AGENT_RUNTIME_DIR/horon-agent.sock" "$DAEMON_PID" > "$HORON_HOME/servers.json""#;
 
     /// Launch a fake `horon-agent` whose body is `script`; `DAEMON_PID` names `daemon`.
     fn launch_with_fake_runtime(

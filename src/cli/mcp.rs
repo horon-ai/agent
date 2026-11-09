@@ -66,7 +66,7 @@ fn server_rows(config: &McpConfig) -> Result<Vec<Value>> {
 
 fn render_list(rows: &[Value]) -> String {
     if rows.is_empty() {
-        return "No MCP servers configured. Add servers to ~/.horon-agent/mcp.json or .horon-agent/mcp.json.\n".into();
+        return "No MCP servers configured. Add servers to ~/.horon/mcp.json or .horon/mcp.json.\n".into();
     }
     let mut output = String::from("Configured MCP servers (not a connection check):\n");
     for row in rows {

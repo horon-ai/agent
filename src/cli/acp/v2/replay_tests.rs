@@ -875,13 +875,13 @@ impl crate::provider::Provider for AnswerProvider {
 #[tokio::test]
 #[expect(
     clippy::await_holding_lock,
-    reason = "HORON_AGENT_HOME is process-global; the guard serializes every test that sets it"
+    reason = "HORON_HOME is process-global; the guard serializes every test that sets it"
 )]
 async fn every_turn_path_replays_under_its_own_start_id() {
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", home.path());
     let provider: Arc<dyn crate::provider::Provider> = Arc::new(AnswerProvider);
     let registry = crate::tool::Registry::new(provider.clone()).await;
     let mut agent = crate::agent::Agent::new(provider, registry);
@@ -894,8 +894,8 @@ async fn every_turn_path_replays_under_its_own_start_id() {
     }
     .await;
     match previous {
-        Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(previous) => crate::env::set_var("HORON_HOME", previous),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     let rows = ran.unwrap();
     let starts: Vec<String> = rows

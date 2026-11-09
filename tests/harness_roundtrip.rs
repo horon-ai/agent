@@ -92,7 +92,7 @@ impl Provider for StubProvider {
     }
 }
 
-/// Serializes the two tests: they mutate process-global env (HORON_AGENT_HOME and
+/// Serializes the two tests: they mutate process-global env (HORON_HOME and
 /// friends) and global config caches, so they must not run concurrently.
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -124,7 +124,7 @@ impl TestEnv {
             previous.push((key, std::env::var_os(key)));
         };
         for key in [
-            "HORON_AGENT_HOME",
+            "HORON_HOME",
             "HORON_AGENT_RUNTIME_DIR",
             "HORON_AGENT_TEST_SESSION",
             "HORON_AGENT_DEBUG_CONTROL",
@@ -137,7 +137,7 @@ impl TestEnv {
             remember(key);
         }
 
-        horon_agent::env::set_var("HORON_AGENT_HOME", home.path());
+        horon_agent::env::set_var("HORON_HOME", home.path());
         horon_agent::env::set_var("HORON_AGENT_RUNTIME_DIR", &runtime_dir);
         horon_agent::env::set_var("HORON_AGENT_TEST_SESSION", "1");
         horon_agent::env::set_var("HORON_AGENT_DEBUG_CONTROL", "1");
@@ -364,7 +364,7 @@ async fn serve_api_bridge_ndjson_roundtrip_reaches_turn_done() -> Result<()> {
         // The turn is durable in the session event log read straight from the
         // store, and the session store holds no SQLite database: history is the
         // append-only originals plus the index, not a second copy.
-        let home = std::env::var_os("HORON_AGENT_HOME").context("HORON_AGENT_HOME")?;
+        let home = std::env::var_os("HORON_HOME").context("HORON_HOME")?;
         let store_dir = Path::new(&home).join("sessions");
         let log = store_dir.join(&session_id).join("events.jsonl");
         assert!(

@@ -29,7 +29,7 @@ impl AuthTestSandbox {
 
         std::fs::create_dir_all(temp.path().join("config").join("horon-agent"))?;
         std::fs::create_dir_all(temp.path().join("external"))?;
-        crate::env::set_var("HORON_AGENT_HOME", temp.path());
+        crate::env::set_var("HORON_HOME", temp.path());
         crate::provider_catalog::force_apply_openai_compatible_profile_env(None);
         reset_global_auth_state();
 
@@ -96,7 +96,7 @@ fn reset_global_auth_state() {
 
 fn tracked_env_vars() -> Vec<String> {
     let mut keys = [
-        "HORON_AGENT_HOME",
+        "HORON_HOME",
         "XDG_CONFIG_HOME",
         "HORON_AGENT_OPENROUTER_API_BASE",
         "HORON_AGENT_OPENROUTER_API_KEY_NAME",
@@ -159,7 +159,7 @@ mod tests {
         let sandbox = AuthTestSandbox::new().expect("sandbox");
 
         assert_eq!(
-            std::env::var("HORON_AGENT_HOME").ok().as_deref(),
+            std::env::var("HORON_HOME").ok().as_deref(),
             Some(sandbox.root().to_str().unwrap())
         );
         assert_eq!(crate::storage::app_config_dir().unwrap(), sandbox.config_dir());

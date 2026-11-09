@@ -155,7 +155,7 @@ fn load_save_roundtrip_via_temp_home() {
     let tmp = tempfile::tempdir().unwrap();
     // Point the horon-agent dir at a temp location.
     unsafe {
-        std::env::set_var("HORON_AGENT_HOME", tmp.path());
+        std::env::set_var("HORON_HOME", tmp.path());
     }
 
     let mut cache = McpSchemaCache::default();
@@ -169,7 +169,7 @@ fn load_save_roundtrip_via_temp_home() {
     assert_eq!(tools[0].name, "alpha");
 
     unsafe {
-        std::env::remove_var("HORON_AGENT_HOME");
+        std::env::remove_var("HORON_HOME");
     }
 }
 
@@ -181,7 +181,7 @@ fn load_cached_reuses_the_parsed_copy_until_the_file_changes() {
     let _guard = crate::storage::lock_test_env();
     let tmp = tempfile::tempdir().unwrap();
     unsafe {
-        std::env::set_var("HORON_AGENT_HOME", tmp.path());
+        std::env::set_var("HORON_HOME", tmp.path());
     }
     McpSchemaCache::invalidate_cached();
 
@@ -210,7 +210,7 @@ fn load_cached_reuses_the_parsed_copy_until_the_file_changes() {
 
     McpSchemaCache::invalidate_cached();
     unsafe {
-        std::env::remove_var("HORON_AGENT_HOME");
+        std::env::remove_var("HORON_HOME");
     }
 }
 
@@ -223,7 +223,7 @@ fn load_cached_reuses_the_empty_cache_while_the_file_is_absent() {
     let _guard = crate::storage::lock_test_env();
     let tmp = tempfile::tempdir().unwrap();
     unsafe {
-        std::env::set_var("HORON_AGENT_HOME", tmp.path());
+        std::env::set_var("HORON_HOME", tmp.path());
     }
     McpSchemaCache::invalidate_cached();
 
@@ -255,6 +255,6 @@ fn load_cached_reuses_the_empty_cache_while_the_file_is_absent() {
 
     McpSchemaCache::invalidate_cached();
     unsafe {
-        std::env::remove_var("HORON_AGENT_HOME");
+        std::env::remove_var("HORON_HOME");
     }
 }

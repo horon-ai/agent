@@ -50,9 +50,9 @@ fn server_reload_report_preserves_json_fields_and_exit_status_contract() {
 #[tokio::test]
 async fn server_reload_without_listener_is_a_successful_json_noop() {
     let _env_lock = crate::storage::lock_test_env();
-    let _saved = SavedEnv::capture(&["HORON_AGENT_HOME", "HORON_AGENT_SOCKET"]);
+    let _saved = SavedEnv::capture(&["HORON_HOME", "HORON_AGENT_SOCKET"]);
     let home = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     crate::env::set_var("HORON_AGENT_SOCKET", home.path().join("isolated.sock"));
 
     let mut output = Vec::new();
@@ -75,9 +75,9 @@ async fn server_reload_without_listener_is_a_successful_json_noop() {
 #[tokio::test]
 async fn memory_cli_project_import_uses_explicit_directory_and_persists() {
     let _guard = crate::storage::lock_test_env();
-    let _saved = SavedEnv::capture(&["HORON_AGENT_HOME"]);
+    let _saved = SavedEnv::capture(&["HORON_HOME"]);
     let temp = tempfile::tempdir().expect("temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path().join("home"));
+    crate::env::set_var("HORON_HOME", temp.path().join("home"));
     let project = temp.path().join("project");
     std::fs::create_dir_all(&project).expect("create project");
 
@@ -137,7 +137,7 @@ async fn memory_cli_project_import_fails_without_durable_project_store() {
 async fn memory_cli_semantic_requires_jev_but_keyword_search_remains_local() {
     let _guard = crate::storage::lock_test_env();
     let keys = [
-        "HORON_AGENT_HOME",
+        "HORON_HOME",
         "OPENROUTER_API_KEY",
         "TYPESAFE_API_KEY",
         "AIMLAPI_API_KEY",
@@ -145,7 +145,7 @@ async fn memory_cli_semantic_requires_jev_but_keyword_search_remains_local() {
     ];
     let _saved = SavedEnv::capture(&keys);
     let temp = tempfile::tempdir().expect("temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path().join("home"));
+    crate::env::set_var("HORON_HOME", temp.path().join("home"));
     for key in &keys[1..] {
         crate::env::remove_var(key);
     }
@@ -602,9 +602,9 @@ fn run_auto_poke_prefers_incomplete_todos_over_the_gate_digest() {
 #[test]
 fn open_todos_do_not_consume_the_pending_gate_digest() {
     let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     let session = "run-gate-digest-open-todos";
 
     crate::todo::append_gate_observations(
@@ -661,8 +661,8 @@ fn open_todos_do_not_consume_the_pending_gate_digest() {
     );
 
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
 }
 
@@ -671,9 +671,9 @@ fn open_todos_do_not_consume_the_pending_gate_digest() {
 #[test]
 fn take_run_gate_digest_consumes_the_log_and_respects_delivery() {
     let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let dir = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", dir.path());
+    crate::env::set_var("HORON_HOME", dir.path());
     let session = "run-gate-digest";
 
     crate::todo::append_gate_observations(
@@ -697,8 +697,8 @@ fn take_run_gate_digest_consumes_the_log_and_respects_delivery() {
     assert!(take_run_gate_digest(session, false).is_none());
 
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
 }
 
@@ -838,9 +838,9 @@ async fn restore_agent_session_if_requested_restores_resumed_session() {
 #[tokio::test]
 async fn one_shot_output_modes_close_sessions_and_clear_active_pid_markers() {
     let _guard = crate::storage::lock_test_env();
-    let _saved = SavedEnv::capture(&["HORON_AGENT_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
+    let _saved = SavedEnv::capture(&["HORON_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::set_var("HORON_AGENT_RUN_AUTO_POKE", "0");
 
     for (mode, emit_json, emit_ndjson) in [("plain", false, false), ("json", true, false), ("ndjson", false, true)] {
@@ -883,9 +883,9 @@ async fn one_shot_output_modes_close_sessions_and_clear_active_pid_markers() {
 #[tokio::test]
 async fn resumed_one_shot_closes_the_restored_session() {
     let _guard = crate::storage::lock_test_env();
-    let _saved = SavedEnv::capture(&["HORON_AGENT_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
+    let _saved = SavedEnv::capture(&["HORON_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::set_var("HORON_AGENT_RUN_AUTO_POKE", "0");
 
     let provider: Arc<dyn Provider> = Arc::new(TestProvider);
@@ -930,9 +930,9 @@ async fn resumed_one_shot_closes_the_restored_session() {
 #[tokio::test]
 async fn one_shot_cleanup_preserves_the_original_command_error() {
     let _guard = crate::storage::lock_test_env();
-    let _saved = SavedEnv::capture(&["HORON_AGENT_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
+    let _saved = SavedEnv::capture(&["HORON_HOME", "HORON_AGENT_RUN_AUTO_POKE"]);
     let temp = tempfile::tempdir().expect("tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     crate::env::set_var("HORON_AGENT_RUN_AUTO_POKE", "0");
 
     for (mode, emit_json, emit_ndjson) in [("plain", false, false), ("json", true, false), ("ndjson", false, true)] {

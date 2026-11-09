@@ -1,6 +1,6 @@
 //! Logging infrastructure for horon-agent
 //!
-//! Logs to ~/.horon-agent/logs/ with automatic rotation
+//! Logs to ~/.horon/logs/ with automatic rotation
 //!
 //! Supports thread-local context for server, session, provider, and model info.
 //!

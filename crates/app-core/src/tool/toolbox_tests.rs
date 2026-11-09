@@ -1,6 +1,6 @@
 // Every async test here holds the process-wide environment lock while it
 // awaits a tool call. The lock is the point: it serializes tests that mutate
-// `HORON_AGENT_HOME` and the hook variables. The same allowance is used by
+// `HORON_HOME` and the hook variables. The same allowance is used by
 // `concurrency_class_tests.rs` and `hook_serialization_tests.rs`.
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
@@ -481,9 +481,9 @@ async fn toolbox_manual_qa_transcript() {
 
     let _guard = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("temp home");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     crate::env::set_var("HORON_AGENT_TOOL_PROFILE", "full");
     crate::config::invalidate_config_cache();
 
@@ -556,8 +556,8 @@ async fn toolbox_manual_qa_transcript() {
 
     clear_session_tool_policy(SESSION);
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     match previous_profile {
         Some(value) => crate::env::set_var("HORON_AGENT_TOOL_PROFILE", value),
@@ -595,9 +595,9 @@ async fn toolbox_describe_reaches_the_goal_tool_under_full() {
 
     let _guard = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("temp home");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     crate::env::set_var("HORON_AGENT_TOOL_PROFILE", "full");
     crate::config::invalidate_config_cache();
 
@@ -636,8 +636,8 @@ async fn toolbox_describe_reaches_the_goal_tool_under_full() {
 
     clear_session_tool_policy(SESSION);
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     match previous_profile {
         Some(value) => crate::env::set_var("HORON_AGENT_TOOL_PROFILE", value),
@@ -681,10 +681,10 @@ async fn enabled_allow_list_exposes_the_goal_tool() {
 
     let _guard = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("temp home");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
     let previous_enabled = std::env::var_os("HORON_AGENT_TOOLS");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     crate::env::remove_var("HORON_AGENT_TOOL_PROFILE");
     crate::env::remove_var("HORON_AGENT_TOOLS");
 
@@ -746,8 +746,8 @@ async fn enabled_allow_list_exposes_the_goal_tool() {
     );
 
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     match previous_profile {
         Some(value) => crate::env::set_var("HORON_AGENT_TOOL_PROFILE", value),
@@ -791,10 +791,10 @@ struct CoreHome {
 
 impl CoreHome {
     fn new() -> Self {
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
         let home = tempfile::tempdir().expect("temp home");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         crate::env::set_var("HORON_AGENT_TOOL_PROFILE", "core");
         crate::config::invalidate_config_cache();
         Self {
@@ -809,8 +809,8 @@ impl Drop for CoreHome {
     fn drop(&mut self) {
         clear_session_tool_policy(SESSION);
         match self.previous_home.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         match self.previous_profile.take() {
             Some(value) => crate::env::set_var("HORON_AGENT_TOOL_PROFILE", value),

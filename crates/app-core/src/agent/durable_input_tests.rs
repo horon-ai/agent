@@ -43,7 +43,7 @@ impl Sandbox {
     fn new() -> Self {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let home = dir.path().to_path_buf();
-        crate::env::set_var("HORON_AGENT_HOME", &home);
+        crate::env::set_var("HORON_HOME", &home);
         Self { _dir: dir, home }
     }
 

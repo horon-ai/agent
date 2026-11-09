@@ -13,7 +13,7 @@ if [[ ! "$sandbox_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$sandbox_name" == ".
   echo "Invalid onboarding sandbox name: $sandbox_name" >&2
   exit 2
 fi
-scratch_root=${HORON_AGENT_SCRATCH_DIR:-$HOME/.horon-agent/scratch}
+scratch_root=${HORON_AGENT_SCRATCH_DIR:-$HOME/.horon/scratch}
 sandbox_parent="$scratch_root/onboarding"
 sandbox_root_default="$sandbox_parent/$sandbox_name"
 sandbox_root=${HORON_AGENT_ONBOARDING_DIR:-$sandbox_root_default}
@@ -32,7 +32,7 @@ run_in_sandbox() {
   ensure_dirs
   (
     cd "$repo_root"
-    HORON_AGENT_HOME="$horon_agent_home" \
+    HORON_HOME="$horon_agent_home" \
       HORON_AGENT_RUNTIME_DIR="$runtime_dir" \
       "$@"
   )
@@ -88,7 +88,7 @@ EOF
 print_env() {
   ensure_dirs
   cat <<EOF
-export HORON_AGENT_HOME="$horon_agent_home"
+export HORON_HOME="$horon_agent_home"
 export HORON_AGENT_RUNTIME_DIR="$runtime_dir"
 EOF
 }
@@ -97,7 +97,7 @@ status() {
   ensure_dirs
   echo "Sandbox name: $sandbox_name"
   echo "Sandbox root: $sandbox_root"
-  echo "HORON_AGENT_HOME:   $horon_agent_home"
+  echo "HORON_HOME:   $horon_agent_home"
   echo "RUNTIME_DIR:  $runtime_dir"
   echo
 
@@ -144,9 +144,9 @@ purge_external() {
 open_shell() {
   ensure_dirs
   echo "Opening sandbox shell"
-  echo "  HORON_AGENT_HOME=$horon_agent_home"
+  echo "  HORON_HOME=$horon_agent_home"
   echo "  HORON_AGENT_RUNTIME_DIR=$runtime_dir"
-  env HORON_AGENT_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" bash --noprofile --norc
+  env HORON_HOME="$horon_agent_home" HORON_AGENT_RUNTIME_DIR="$runtime_dir" bash --noprofile --norc
 }
 
 run_horon-agent() {
@@ -177,7 +177,7 @@ run_auth_fixture() {
 
 # Copy one real file from $HOME into the sandbox's external/ tree, preserving its
 # relative path. horon-agent resolves every external credential/transcript lookup to
-# $HORON_AGENT_HOME/external/<same-relative-path-as-$HOME> when HORON_AGENT_HOME is set, so
+# $HORON_HOME/external/<same-relative-path-as-$HOME> when HORON_HOME is set, so
 # seeding here makes your real logins/transcripts visible to the onboarding
 # import + continue steps. Copies (never symlinks: horon-agent rejects symlinked auth
 # files) and never touches the originals.

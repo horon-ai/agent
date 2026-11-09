@@ -208,9 +208,9 @@ fn dispatch(request: ApiRequest) -> Result<ApiEvent, store::StoreError> {
 }
 
 fn home_paths() -> Result<store::SessionPaths, store::StoreError> {
-    let home = std::env::var_os("HORON_AGENT_HOME")
+    let home = std::env::var_os("HORON_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".horon-agent")))
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".horon")))
         .ok_or_else(|| {
             store::StoreError::internal(store::StoreErrorCode::Internal, "no horon-agent home is configured")
         })?;

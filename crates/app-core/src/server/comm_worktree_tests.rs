@@ -290,8 +290,8 @@ async fn swarm_worktree_cancelled_child_leaves_no_half_merge() {
 async fn swarm_default_isolation_unchanged() {
     let _env = crate::storage::lock_test_env();
     let temp = tempfile::TempDir::new().unwrap();
-    let previous = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let repo = ScratchRepo::new();
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
@@ -341,9 +341,9 @@ async fn swarm_default_isolation_unchanged() {
     assert!(!temp.path().join("project-worktrees").exists());
 
     if let Some(previous) = previous {
-        crate::env::set_var("HORON_AGENT_HOME", previous);
+        crate::env::set_var("HORON_HOME", previous);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 

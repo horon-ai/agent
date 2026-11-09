@@ -213,7 +213,7 @@ fn resolve_import(raw: &str, source: &Path, roots: &AllowedRoots) -> Resolved {
 /// The root a `~/` path resolves under.
 ///
 /// This follows [`crate::storage::user_home_path`] so a sandboxed run
-/// (`HORON_AGENT_HOME`) never reaches the real home directory.
+/// (`HORON_HOME`) never reaches the real home directory.
 fn home_root() -> Option<PathBuf> {
     let Ok(path) = crate::storage::user_home_path("") else {
         return None;

@@ -27,17 +27,17 @@ fn harden_secret_file_permissions_sets_owner_only_modes() {
 #[test]
 fn user_home_path_uses_external_dir_under_horon_agent_home() {
     let _guard = lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("create temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let resolved = user_home_path(".codex/auth.json").expect("resolve user home path");
     assert_eq!(resolved, temp.path().join("external").join(".codex").join("auth.json"));
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -59,17 +59,17 @@ fn validate_external_auth_file_rejects_symlink() {
 #[test]
 fn app_config_dir_uses_horon_agent_home_when_set() {
     let _guard = lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().expect("create temp dir");
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
 
     let resolved = app_config_dir().expect("resolve app config dir");
     assert_eq!(resolved, temp.path().join("config").join("horon-agent"));
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 

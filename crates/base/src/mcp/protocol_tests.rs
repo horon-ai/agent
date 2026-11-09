@@ -11,8 +11,8 @@ impl HomeSandbox {
     fn new() -> Self {
         let guard = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("home tempdir");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::workspace_trust::set_trust_file_for_tests(home.path().join("workspace-trust.json"));
         Self {
             _guard: guard,
@@ -25,8 +25,8 @@ impl HomeSandbox {
 impl Drop for HomeSandbox {
     fn drop(&mut self) {
         match &self.previous {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }
@@ -41,11 +41,11 @@ fn load_trusted_project_locals(project: &std::path::Path) -> McpConfig {
 fn issue_790_load_uses_process_cwd_while_unbound_load_for_dir_does_not() {
     let _guard = crate::storage::lock_test_env();
     let original_cwd = std::env::current_dir().expect("current cwd");
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let home = tempfile::tempdir().expect("home tempdir");
     let project = tempfile::tempdir().expect("project tempdir");
     let other_project = tempfile::tempdir().expect("other project tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     std::env::set_current_dir(project.path()).expect("set project cwd");
     std::fs::write(
         project.path().join(".mcp.json"),
@@ -80,9 +80,9 @@ fn issue_790_load_uses_process_cwd_while_unbound_load_for_dir_does_not() {
 
     std::env::set_current_dir(original_cwd).expect("restore cwd");
     if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_AGENT_HOME", previous_home);
+        crate::env::set_var("HORON_HOME", previous_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
     result.expect("MCP cwd isolation assertions");
 }
@@ -262,10 +262,10 @@ fn remote_display_target_does_not_expose_url_credentials() {
 #[test]
 fn merged_config_retains_remote_servers_and_expands_headers() {
     let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     std::fs::write(project.path().join(".mcp.json"), r#"{
         "mcpServers": {
             "remote-http": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ${MCP_TEST_TOKEN_MISSING:-fixture-token}"}},
@@ -277,8 +277,8 @@ fn merged_config_retains_remote_servers_and_expands_headers() {
     crate::workspace_trust::trust_for_tests(project.path());
     let config = McpConfig::load_for_dir(Some(project.path()));
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     assert_eq!(config.servers.len(), 2);
     assert!(config.servers["remote-http"].is_remote());
@@ -370,11 +370,11 @@ fn expansion_after_merge_ignores_shadowed_references() {
 #[test]
 fn load_for_dir_expands_the_winning_merged_definition() {
     let _guard = crate::storage::lock_test_env();
-    let previous_home = std::env::var_os("HORON_AGENT_HOME");
+    let previous_home = std::env::var_os("HORON_HOME");
     let previous_value = std::env::var_os("HORON_AGENT_MCP_EXPANSION_TEST_VALUE");
     let home = tempfile::tempdir().expect("home tempdir");
     let project = tempfile::tempdir().expect("project tempdir");
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    crate::env::set_var("HORON_HOME", home.path());
     crate::env::set_var("HORON_AGENT_MCP_EXPANSION_TEST_VALUE", "expanded-value");
 
     std::fs::write(
@@ -397,8 +397,8 @@ fn load_for_dir_expands_the_winning_merged_definition() {
     });
 
     match previous_home {
-        Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-        None => crate::env::remove_var("HORON_AGENT_HOME"),
+        Some(value) => crate::env::set_var("HORON_HOME", value),
+        None => crate::env::remove_var("HORON_HOME"),
     }
     match previous_value {
         Some(value) => crate::env::set_var("HORON_AGENT_MCP_EXPANSION_TEST_VALUE", value),
@@ -461,14 +461,14 @@ fn test_load_project_locals_resolves_against_given_dir_not_cwd() {
 #[test]
 fn test_load_project_locals_merge_order() {
     let _home = HomeSandbox::new();
-    // Highest priority first: `.horon-agent/mcp.json`, then `.mcp.json`, then
+    // Highest priority first: `.horon/mcp.json`, then `.mcp.json`, then
     // `.claude/mcp.json`. An earlier file keeps a same-named server.
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
-    std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project.join(".horon")).unwrap();
     std::fs::create_dir_all(project.join(".claude")).unwrap();
     std::fs::write(
-        project.join(".horon-agent/mcp.json"),
+        project.join(".horon/mcp.json"),
         r#"{"servers":{"shared-name":{"command":"horon-agent-bin"},"horon-agent-only":{"command":"a"}}}"#,
     )
     .unwrap();
@@ -488,7 +488,7 @@ fn test_load_project_locals_merge_order() {
     assert_eq!(
         config.servers.get("shared-name").unwrap().command,
         "horon-agent-bin",
-        ".horon-agent/mcp.json must win over .mcp.json for same-named servers"
+        ".horon/mcp.json must win over .mcp.json for same-named servers"
     );
     assert!(config.servers.contains_key("horon-agent-only"));
     assert!(config.servers.contains_key("legacy-only"));
@@ -609,9 +609,9 @@ fn http_entry_does_not_displace_a_working_stdio_server_of_the_same_name() {
     // losing a working server (issue #653).
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
-    std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project.join(".horon")).unwrap();
     std::fs::write(
-        project.join(".horon-agent/mcp.json"),
+        project.join(".horon/mcp.json"),
         r#"{"servers":{"github":{"type":"stdio","command":"npx","args":["-y","mcp-remote"]}}}"#,
     )
     .unwrap();
@@ -637,9 +637,9 @@ fn stdio_entry_still_overrides_an_existing_http_entry() {
     // lower-priority stdio entry still replaces a higher-priority http entry.
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
-    std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project.join(".horon")).unwrap();
     std::fs::write(
-        project.join(".horon-agent/mcp.json"),
+        project.join(".horon/mcp.json"),
         r#"{"servers":{"github":{"type":"http","url":"https://example.invalid/mcp/"}}}"#,
     )
     .unwrap();
@@ -659,9 +659,9 @@ fn same_transport_collision_keeps_the_higher_priority_entry() {
     // Same-transport collisions keep the first, highest-priority definition.
     let temp = tempfile::tempdir().expect("tempdir");
     let project = temp.path();
-    std::fs::create_dir_all(project.join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project.join(".horon")).unwrap();
     std::fs::write(
-        project.join(".horon-agent/mcp.json"),
+        project.join(".horon/mcp.json"),
         r#"{"servers":{"github":{"command":"old-bin"}}}"#,
     )
     .unwrap();

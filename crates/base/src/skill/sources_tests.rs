@@ -3,7 +3,7 @@
 use super::{SkillRegistry, sources};
 use std::path::{Path, PathBuf};
 
-/// A sandboxed `HORON_AGENT_HOME` for one test.
+/// A sandboxed `HORON_HOME` for one test.
 ///
 /// `user_home_path` resolves other tools' directories under
 /// `<home>/external`, so a test never reads or writes the real `~/.claude`,
@@ -17,9 +17,9 @@ impl Sandbox {
     /// `config` is written as `<home>/config.toml` when it is not empty.
     fn with_config(config: &str) -> Self {
         // The environment and the cached config are process-global.
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let home = tempfile::tempdir().expect("sandbox home");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        crate::env::set_var("HORON_HOME", home.path());
         if !config.is_empty() {
             std::fs::write(home.path().join("config.toml"), config).expect("write sandbox config");
         }
@@ -41,8 +41,8 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         match self.previous_home.take() {
-            Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(previous) => crate::env::set_var("HORON_HOME", previous),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }
@@ -117,7 +117,7 @@ fn sources_load_in_priority_order() {
 
     write_skill(&sandbox.agent("skills"), "user-skill");
     write_skill(&sandbox.user(".claude/skills"), "claude-skill");
-    write_skill(&workspace.path().join(".horon-agent/skills"), "project-skill");
+    write_skill(&workspace.path().join(".horon/skills"), "project-skill");
 
     let registry = SkillRegistry::load_for_working_dir(Some(workspace.path())).expect("load skills");
     for name in ["user-skill", "claude-skill", "project-skill"] {
@@ -205,7 +205,7 @@ fn source_table_lists_the_documented_rows() {
     );
     assert_eq!(
         super::project_skill_paths(),
-        vec![".horon-agent/skills", ".claude/skills", ".agents/skills"]
+        vec![".horon/skills", ".claude/skills", ".agents/skills"]
     );
 }
 
@@ -253,7 +253,7 @@ fn claude_user_off_by_default() {
 
 /// The startup load has to leave a real log line, and the logger's file is
 /// fixed when it initialises. The assertion therefore runs in a child of this
-/// same test binary, where the logger is fresh and `HORON_AGENT_HOME` is the
+/// same test binary, where the logger is fresh and `HORON_HOME` is the
 /// sandbox that child creates.
 #[test]
 fn claude_user_off_by_default_writes_a_log_line() {
@@ -327,7 +327,7 @@ fn no_first_run_copy() {
     SkillRegistry::load_global().expect("load global skills");
     assert!(
         !sandbox.agent("skills").exists(),
-        "loading must not create ~/.horon-agent/skills from another tool's directory"
+        "loading must not create ~/.horon/skills from another tool's directory"
     );
 }
 
@@ -412,11 +412,11 @@ fn a_differing_skill_keeps_its_name_under_the_source_namespace() {
 #[test]
 fn reloading_a_namespaced_entry_keeps_its_own_path_and_body() {
     let _env_guard = crate::storage::lock_test_env();
-    // Only isolates `HORON_AGENT_HOME`; the skills come from the workspace.
+    // Only isolates `HORON_HOME`; the skills come from the workspace.
     let _sandbox = Sandbox::with_config("");
     let workspace = tempfile::tempdir().expect("workspace");
 
-    write_skill_with_body(&workspace.path().join(".horon-agent/skills"), "shared", "Mine.");
+    write_skill_with_body(&workspace.path().join(".horon/skills"), "shared", "Mine.");
     write_skill_with_body(&workspace.path().join(".claude/skills"), "shared", "Theirs.");
 
     let mut registry = SkillRegistry::load_for_working_dir(Some(workspace.path())).expect("load skills");
@@ -431,7 +431,7 @@ fn reloading_a_namespaced_entry_keeps_its_own_path_and_body() {
     assert!(registry.reload("shared").expect("reload bare"));
 
     let bare = registry.get("shared").expect("bare entry");
-    assert_eq!(bare.path, workspace.path().join(".horon-agent/skills/shared/SKILL.md"));
+    assert_eq!(bare.path, workspace.path().join(".horon/skills/shared/SKILL.md"));
     assert_eq!(bare.description, "Skill shared");
     assert!(bare.body().expect("bare body").contains("Mine."));
 

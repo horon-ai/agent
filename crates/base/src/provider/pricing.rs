@@ -150,17 +150,17 @@ mod tests {
     fn with_clean_provider_test_env<T>(f: impl FnOnce() -> T) -> T {
         let _guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let prev_openai_api_key = std::env::var_os("OPENAI_API_KEY");
-        env::set_var("HORON_AGENT_HOME", temp.path());
+        env::set_var("HORON_HOME", temp.path());
         env::remove_var("OPENAI_API_KEY");
 
         let result = f();
 
         if let Some(prev_home) = prev_home {
-            env::set_var("HORON_AGENT_HOME", prev_home);
+            env::set_var("HORON_HOME", prev_home);
         } else {
-            env::remove_var("HORON_AGENT_HOME");
+            env::remove_var("HORON_HOME");
         }
         if let Some(prev_openai_api_key) = prev_openai_api_key {
             env::set_var("OPENAI_API_KEY", prev_openai_api_key);

@@ -128,8 +128,8 @@ async fn handle_get_history_falls_back_to_persisted_snapshot_when_agent_is_busy(
 async fn handle_get_history_busy_fresh_session_returns_empty_without_waiting() {
     let _env_guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().unwrap();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp_home.path());
     // The event store owns `sessions/` and refuses any directory that is not
     // owner-private, so create it here instead of letting `create_dir_all`
     // leave it at the umask default.
@@ -235,9 +235,9 @@ async fn handle_get_history_busy_fresh_session_returns_empty_without_waiting() {
         }
     }
     if let Some(home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", home);
+        crate::env::set_var("HORON_HOME", home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -249,8 +249,8 @@ async fn handle_get_history_busy_fresh_session_returns_empty_without_waiting() {
 async fn handle_get_history_busy_session_without_store_root_stays_connected() {
     let _env_guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().unwrap();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp_home.path());
     // A home that never saved a session has no `sessions/` store root. The store
     // reports that as `unsafe_path` ("store root is not usable") rather than an
     // io NotFound, and a live session must not lose its connection over it.
@@ -324,9 +324,9 @@ async fn handle_get_history_busy_session_without_store_root_stays_connected() {
         other => panic!("expected history, got {other:?}"),
     }
     if let Some(home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", home);
+        crate::env::set_var("HORON_HOME", home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -347,8 +347,8 @@ async fn history_guard_survives_racing_turn_and_is_released_before_write() {
 async fn assert_history_service_tier(tier: Option<&'static str>, busy: bool, racing_turn: bool) {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("create temp home");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp_home.path());
 
     let session_id = "session_busy_history_fallback";
     let mut session =
@@ -509,9 +509,9 @@ async fn assert_history_service_tier(tier: Option<&'static str>, busy: bool, rac
     }
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -536,8 +536,8 @@ async fn handle_get_model_catalog_preserves_live_service_tier() {
 async fn assert_model_catalog_service_tier(tier: Option<&'static str>, busy: bool) {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("create temp home");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
-    crate::env::set_var("HORON_AGENT_HOME", temp_home.path());
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp_home.path());
 
     let session_id = "session_busy_model_catalog_fallback";
     let mut session =
@@ -603,9 +603,9 @@ async fn assert_model_catalog_service_tier(tier: Option<&'static str>, busy: boo
     }
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -616,9 +616,9 @@ struct ReloadHistoryEnvGuard {
 
 impl ReloadHistoryEnvGuard {
     fn new(home: &std::path::Path, runtime: &std::path::Path) -> Self {
-        let prev_home = std::env::var_os("HORON_AGENT_HOME");
+        let prev_home = std::env::var_os("HORON_HOME");
         let prev_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
-        crate::env::set_var("HORON_AGENT_HOME", home);
+        crate::env::set_var("HORON_HOME", home);
         crate::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime);
         Self {
             prev_home,
@@ -631,9 +631,9 @@ impl Drop for ReloadHistoryEnvGuard {
     fn drop(&mut self) {
         crate::server::clear_reload_marker();
         if let Some(prev_home) = self.prev_home.take() {
-            crate::env::set_var("HORON_AGENT_HOME", prev_home);
+            crate::env::set_var("HORON_HOME", prev_home);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
         if let Some(prev_runtime) = self.prev_runtime.take() {
             crate::env::set_var("HORON_AGENT_RUNTIME_DIR", prev_runtime);
@@ -764,7 +764,7 @@ fn history_reload_recovery_does_not_mark_delivered_until_continuation_is_accepte
 // ---------------------------------------------------------------------------
 
 fn live_resume_history_home(temp_home: &std::path::Path) {
-    crate::env::set_var("HORON_AGENT_HOME", temp_home);
+    crate::env::set_var("HORON_HOME", temp_home);
     // The event store owns `sessions/` and refuses a directory that is not
     // owner-private, so create it instead of letting `create_dir_all` leave it
     // at the umask default.
@@ -855,7 +855,7 @@ async fn loading_live_resume_history_reads_overrides_from_live_state_without_rel
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("create temp home");
     let empty_home = tempfile::TempDir::new().expect("create empty home");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     live_resume_history_home(temp_home.path());
 
     let session_id = "session_loading_live_resume_live_history";
@@ -894,7 +894,7 @@ async fn loading_live_resume_history_reads_overrides_from_live_state_without_rel
     );
 
     // Phase 2: nothing on disk can answer for this session any more.
-    crate::env::set_var("HORON_AGENT_HOME", empty_home.path());
+    crate::env::set_var("HORON_HOME", empty_home.path());
     let event = run_history_request(session_id, &agent, &provider, &sessions).await;
     assert_eq!(
         history_agent_model_overrides(event),
@@ -903,9 +903,9 @@ async fn loading_live_resume_history_reads_overrides_from_live_state_without_rel
     );
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -919,7 +919,7 @@ async fn loading_live_resume_history_reads_overrides_from_live_state_without_rel
 async fn loading_live_resume_disk_fallback_reports_persisted_overrides() {
     let _guard = crate::storage::lock_test_env();
     let temp_home = tempfile::TempDir::new().expect("create temp home");
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     live_resume_history_home(temp_home.path());
 
     let session_id = "session_loading_live_resume_disk_fallback";
@@ -951,8 +951,8 @@ async fn loading_live_resume_disk_fallback_reports_persisted_overrides() {
     drop(busy_guard);
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }

@@ -462,8 +462,8 @@ impl AmbientHome {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("isolated agent home");
         crate::storage::create_store_dir(&dir.path().join("sessions"), false).expect("create sessions dir");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         Self { _dir: dir, previous }
     }
 }
@@ -471,8 +471,8 @@ impl AmbientHome {
 impl Drop for AmbientHome {
     fn drop(&mut self) {
         match &self.previous {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }

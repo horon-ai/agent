@@ -44,7 +44,7 @@ fn computer_use_screenshots_stay_bounded_in_saved_transcript() -> Result<()> {
         .prefix("horon-agent-tool-image-decay-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let session_id = "session_tool_image_decay";
     let mut session = Session::create_with_id(session_id.to_string(), None, None);
@@ -113,7 +113,7 @@ fn loading_legacy_transcript_decays_old_screenshots() -> Result<()> {
         .prefix("horon-agent-tool-image-legacy-")
         .tempdir()
         .map_err(|e| anyhow!(e))?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     // Simulate a transcript written before decay existed by appending the raw
     // messages without going through the decaying append path.

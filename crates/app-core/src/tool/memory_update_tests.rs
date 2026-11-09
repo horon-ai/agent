@@ -1,7 +1,7 @@
 //! Issue #63: `memory` action `update` rewrites one record in place.
 //!
 //! Each test drives the real `MemoryTool` against an isolated
-//! `HORON_AGENT_HOME` and a temporary working directory, so the assertions are
+//! `HORON_HOME` and a temporary working directory, so the assertions are
 //! about what a caller observes, not about a helper's internals.
 
 use super::*;
@@ -31,8 +31,8 @@ impl IsolatedHome {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
         let home = tempfile::tempdir().expect("home");
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", home.path());
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
         crate::config::invalidate_config_cache();
         Self {
             _home: home,
@@ -45,8 +45,8 @@ impl IsolatedHome {
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
         match self.previous.take() {
-            Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::invalidate_config_cache();
     }

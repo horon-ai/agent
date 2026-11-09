@@ -185,9 +185,9 @@ struct TestEnv {
 impl TestEnv {
     fn new() -> Self {
         let lock = crate::storage::lock_test_env();
-        let dir = tempfile::tempdir().expect("isolated HORON_AGENT_HOME");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", dir.path());
+        let dir = tempfile::tempdir().expect("isolated HORON_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", dir.path());
         Self {
             _lock: lock,
             previous_home,
@@ -203,8 +203,8 @@ impl TestEnv {
 impl Drop for TestEnv {
     fn drop(&mut self) {
         match self.previous_home.take() {
-            Some(previous) => crate::env::set_var("HORON_AGENT_HOME", previous),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(previous) => crate::env::set_var("HORON_HOME", previous),
+            None => crate::env::remove_var("HORON_HOME"),
         }
     }
 }

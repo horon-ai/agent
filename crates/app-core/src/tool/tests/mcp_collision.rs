@@ -170,7 +170,7 @@ fn mcp_collision_manual_lifecycle_real_stdio() {
         }
         let status = child
             .env(MARKER, "1")
-            .env("HORON_AGENT_HOME", home.path().join("horon-agent"))
+            .env("HORON_HOME", home.path().join("horon-agent"))
             .env("HORON_AGENT_RUNTIME_DIR", home.path().join("runtime"))
             .current_dir(home.path())
             .args([

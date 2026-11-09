@@ -398,7 +398,7 @@ mod tests {
     fn counted_record_length_equals_its_canonical_length() -> Result<()> {
         let _lock = lock_env();
         let (_home_dir, home_path) = canonical_tempdir("horon-agent-facade-length-")?;
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+        let _home = EnvVarGuard::set("HORON_HOME", &home_path);
         let mut session = new_session("facade_length");
         set_pad(&mut session, 4096);
         session.save()?;
@@ -435,7 +435,7 @@ mod tests {
     fn facade_caches_just_under_the_limit_and_skips_just_over_it() -> Result<()> {
         let _lock = lock_env();
         let (_home_dir, home_path) = canonical_tempdir("horon-agent-facade-threshold-")?;
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+        let _home = EnvVarGuard::set("HORON_HOME", &home_path);
 
         let (under, under_pad) = fit_record(new_session("facade_under"), FACADE_LIMIT - 1)?;
         assert_eq!(record_canonical_len(&under)?, FACADE_LIMIT - 1);
@@ -528,7 +528,7 @@ mod tests {
     fn facade_drops_the_entry_when_the_auxiliary_grows_past_the_limit() -> Result<()> {
         let _lock = lock_env();
         let (_home_dir, home_path) = canonical_tempdir("horon-agent-facade-stale-")?;
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+        let _home = EnvVarGuard::set("HORON_HOME", &home_path);
 
         let (small, _) = fit_record(new_session("facade_stale"), FACADE_LIMIT / 2)?;
         assert!(cache_file(&small)?.exists(), "the small record must be cached");
@@ -555,7 +555,7 @@ mod tests {
     fn restore_rebuilds_a_missing_checkpoint_while_the_catalog_is_owned_elsewhere() -> Result<()> {
         let _lock = lock_env();
         let (_home_dir, home_path) = canonical_tempdir("horon-agent-catalog-contended-")?;
-        let _home = EnvVarGuard::set("HORON_AGENT_HOME", &home_path);
+        let _home = EnvVarGuard::set("HORON_HOME", &home_path);
         let mut session = new_session("catalog_contended_restore");
         session.save()?;
         let session_id = session.id.clone();

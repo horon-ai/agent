@@ -14,8 +14,8 @@ struct HomeVar(Option<std::ffi::OsString>);
 
 impl HomeVar {
     fn set(path: &Path) -> Self {
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        unsafe { std::env::set_var("HORON_AGENT_HOME", path) };
+        let previous = std::env::var_os("HORON_HOME");
+        unsafe { std::env::set_var("HORON_HOME", path) };
         Self(previous)
     }
 }
@@ -23,8 +23,8 @@ impl HomeVar {
 impl Drop for HomeVar {
     fn drop(&mut self) {
         match self.0.take() {
-            Some(value) => unsafe { std::env::set_var("HORON_AGENT_HOME", value) },
-            None => unsafe { std::env::remove_var("HORON_AGENT_HOME") },
+            Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+            None => unsafe { std::env::remove_var("HORON_HOME") },
         }
     }
 }

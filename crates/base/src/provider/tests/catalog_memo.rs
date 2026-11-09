@@ -19,12 +19,12 @@ fn catalog_sharing_identity_accepts_non_utf8_home() {
         let rt = enter_test_runtime();
         let _runtime_guard = rt.enter();
         let provider = test_multi_provider_with_openai();
-        let old_home = std::env::var_os("HORON_AGENT_HOME").unwrap();
+        let old_home = std::env::var_os("HORON_HOME").unwrap();
         let mut bytes = old_home.clone().into_vec();
         bytes.extend_from_slice(b"/non-utf8-\xff");
-        crate::env::set_var("HORON_AGENT_HOME", std::ffi::OsString::from_vec(bytes));
+        crate::env::set_var("HORON_HOME", std::ffi::OsString::from_vec(bytes));
         assert!(provider.catalog_sharing_identity().is_some());
-        crate::env::set_var("HORON_AGENT_HOME", old_home);
+        crate::env::set_var("HORON_HOME", old_home);
     });
 }
 
@@ -131,10 +131,10 @@ fn catalog_sharing_identity_tracks_auth_catalog_home_and_fork_scope() {
         bump_catalog_generation();
         let catalog = provider.catalog_sharing_identity();
         assert_ne!(auth, catalog);
-        let old_home = std::env::var_os("HORON_AGENT_HOME").unwrap();
+        let old_home = std::env::var_os("HORON_HOME").unwrap();
         let alternate = tempfile::tempdir().unwrap();
-        crate::env::set_var("HORON_AGENT_HOME", alternate.path());
+        crate::env::set_var("HORON_HOME", alternate.path());
         assert_ne!(catalog, provider.catalog_sharing_identity());
-        crate::env::set_var("HORON_AGENT_HOME", old_home);
+        crate::env::set_var("HORON_HOME", old_home);
     });
 }

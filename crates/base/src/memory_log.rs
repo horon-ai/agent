@@ -1,7 +1,7 @@
 //! Persistent memory event log for post-session analysis.
 //!
 //! Writes structured JSONL (one JSON object per line) to:
-//!   `~/.horon-agent/logs/memory-events-YYYY-MM-DD.jsonl`
+//!   `~/.horon/logs/memory-events-YYYY-MM-DD.jsonl`
 //!
 //! Every memory pipeline event - embedding search, sidecar verification,
 //! injection, extraction, maintenance, tool actions - is captured with
@@ -45,7 +45,7 @@ impl MemoryLogger {
 }
 
 fn log_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".horon-agent").join("logs"))
+    dirs::home_dir().map(|h| h.join(".horon").join("logs"))
 }
 
 fn ensure_logger(date: &str) -> bool {

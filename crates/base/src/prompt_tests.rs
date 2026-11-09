@@ -295,9 +295,9 @@ fn skill_snapshot_budget_bounded_section_reaches_both_prompt_builders() {
 #[test]
 fn test_load_agents_md_files_uses_sandboxed_global_files() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     std::fs::create_dir_all(temp.path().join("external")).unwrap();
 
     std::fs::write(
@@ -325,9 +325,9 @@ fn test_load_agents_md_files_uses_sandboxed_global_files() {
     assert_eq!(content.matches("sandboxed global agents instructions").count(), 1);
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -366,7 +366,7 @@ fn agents_md_distinct_project_and_global_files_are_both_loaded() {
 
 #[test]
 fn captured_agents_md_keeps_split_prompt_stable_after_file_write() {
-    // The prompt reads `HORON_AGENT_HOME` and `HOME`; tests that repoint them
+    // The prompt reads `HORON_HOME` and `HOME`; tests that repoint them
     // hold this lock, so reading without it sees another test's home.
     let _guard = crate::storage::lock_test_env();
     let project_dir = tempfile::TempDir::new().unwrap();
@@ -489,9 +489,9 @@ fn sponsored_discovery_is_not_injected_into_the_system_prompt() {
 #[test]
 fn test_prompt_overlay_files_are_loaded_from_project_and_global_horon_agent_dirs() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     std::fs::create_dir_all(temp.path()).unwrap();
     std::fs::write(
         temp.path().join("prompt-overlay.md"),
@@ -500,9 +500,9 @@ fn test_prompt_overlay_files_are_loaded_from_project_and_global_horon_agent_dirs
     .unwrap();
 
     let project_dir = tempfile::TempDir::new().unwrap();
-    std::fs::create_dir_all(project_dir.path().join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project_dir.path().join(".horon")).unwrap();
     std::fs::write(
-        project_dir.path().join(".horon-agent/prompt-overlay.md"),
+        project_dir.path().join(".horon/prompt-overlay.md"),
         "project prompt overlay instructions",
     )
     .unwrap();
@@ -526,18 +526,18 @@ fn test_prompt_overlay_files_are_loaded_from_project_and_global_horon_agent_dirs
     assert!(info.prompt_overlay_chars > 0);
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
 #[test]
 fn test_preferred_tools_files_are_loaded_from_project_and_global_horon_agent_dirs() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     std::fs::create_dir_all(temp.path()).unwrap();
     std::fs::write(
         temp.path().join("preferred-tools.md"),
@@ -546,9 +546,9 @@ fn test_preferred_tools_files_are_loaded_from_project_and_global_horon_agent_dir
     .unwrap();
 
     let project_dir = tempfile::TempDir::new().unwrap();
-    std::fs::create_dir_all(project_dir.path().join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project_dir.path().join(".horon")).unwrap();
     std::fs::write(
-        project_dir.path().join(".horon-agent/preferred-tools.md"),
+        project_dir.path().join(".horon/preferred-tools.md"),
         "project preferred tools instructions",
     )
     .unwrap();
@@ -558,7 +558,7 @@ fn test_preferred_tools_files_are_loaded_from_project_and_global_horon_agent_dir
     assert!(direct.0.is_some(), "expected preferred tools content");
     let direct_content = direct.0.unwrap();
     assert!(
-        direct_content.contains("Project Preferred Tools (.horon-agent/preferred-tools.md)"),
+        direct_content.contains("Project Preferred Tools (.horon/preferred-tools.md)"),
         "expected project preferred tools section heading"
     );
     assert!(
@@ -566,7 +566,7 @@ fn test_preferred_tools_files_are_loaded_from_project_and_global_horon_agent_dir
         "expected project preferred tools content"
     );
     assert!(
-        direct_content.contains("Global Preferred Tools (~/.horon-agent/preferred-tools.md)"),
+        direct_content.contains("Global Preferred Tools (~/.horon/preferred-tools.md)"),
         "expected global preferred tools section heading"
     );
     assert!(
@@ -585,18 +585,18 @@ fn test_preferred_tools_files_are_loaded_from_project_and_global_horon_agent_dir
     assert!(split_info.preferred_tools_chars > 0);
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
 #[test]
 fn test_swarm_prompt_prefers_project_then_global_then_default() {
     let _guard = crate::storage::lock_test_env();
-    let prev_home = std::env::var_os("HORON_AGENT_HOME");
+    let prev_home = std::env::var_os("HORON_HOME");
     let temp = tempfile::TempDir::new().unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", temp.path());
+    crate::env::set_var("HORON_HOME", temp.path());
     std::fs::create_dir_all(temp.path()).unwrap();
 
     let project_dir = tempfile::TempDir::new().unwrap();
@@ -611,9 +611,9 @@ fn test_swarm_prompt_prefers_project_then_global_then_default() {
     assert_eq!(prompt, "global swarm routing");
 
     // Project override wins over global.
-    std::fs::create_dir_all(project_dir.path().join(".horon-agent")).unwrap();
+    std::fs::create_dir_all(project_dir.path().join(".horon")).unwrap();
     std::fs::write(
-        project_dir.path().join(".horon-agent/swarm-prompt.md"),
+        project_dir.path().join(".horon/swarm-prompt.md"),
         "project swarm routing",
     )
     .unwrap();
@@ -621,14 +621,14 @@ fn test_swarm_prompt_prefers_project_then_global_then_default() {
     assert_eq!(prompt, "project swarm routing");
 
     // A blank project file falls through to global instead of going empty.
-    std::fs::write(project_dir.path().join(".horon-agent/swarm-prompt.md"), "   \n").unwrap();
+    std::fs::write(project_dir.path().join(".horon/swarm-prompt.md"), "   \n").unwrap();
     let prompt = load_swarm_prompt(Some(project_dir.path()));
     assert_eq!(prompt, "global swarm routing");
 
     if let Some(prev_home) = prev_home {
-        crate::env::set_var("HORON_AGENT_HOME", prev_home);
+        crate::env::set_var("HORON_HOME", prev_home);
     } else {
-        crate::env::remove_var("HORON_AGENT_HOME");
+        crate::env::remove_var("HORON_HOME");
     }
 }
 
@@ -719,7 +719,7 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
     use crate::prompt::load_base_system_prompt;
 
     let dir = std::env::temp_dir().join(format!("horon-agent-sysprompt-{}", std::process::id()));
-    let horon_agent_dir = dir.join(".horon-agent");
+    let horon_agent_dir = dir.join(".horon");
     std::fs::create_dir_all(&horon_agent_dir).unwrap();
     std::fs::write(horon_agent_dir.join("system-prompt.md"), "You are a custom agent.\n").unwrap();
 
@@ -736,23 +736,23 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// Restore HORON_AGENT_HOME even when a regression assertion panics.
+// Restore HORON_HOME even when a regression assertion panics.
 fn with_prompt_guidance_home(test: impl FnOnce(&Path)) {
     let _guard = crate::storage::lock_test_env();
     struct RestoreHome(Option<std::ffi::OsString>);
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match self.0.take() {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
-    let _restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
     let home = tempfile::TempDir::new().unwrap();
-    let horon_agent_dir = home.path().join(".horon-agent");
+    let horon_agent_dir = home.path().join(".horon");
     std::fs::create_dir(&horon_agent_dir).unwrap();
-    crate::env::set_var("HORON_AGENT_HOME", &horon_agent_dir);
+    crate::env::set_var("HORON_HOME", &horon_agent_dir);
     test(home.path());
 }
 
@@ -761,8 +761,8 @@ fn prompt_guidance_same_project_and_global_paths_are_loaded_once() {
     with_prompt_guidance_home(|home| {
         let overlay = "shared overlay marker\n";
         let tools = "shared preferred tools marker\n";
-        std::fs::write(home.join(".horon-agent/prompt-overlay.md"), overlay).unwrap();
-        std::fs::write(home.join(".horon-agent/preferred-tools.md"), tools).unwrap();
+        std::fs::write(home.join(".horon/prompt-overlay.md"), overlay).unwrap();
+        std::fs::write(home.join(".horon/preferred-tools.md"), tools).unwrap();
 
         let (full, full_info) = build_system_prompt_full(None, &[], None, Some(home));
         let (split, split_info) = build_system_prompt_split(None, &[], None, Some(home));
@@ -786,11 +786,11 @@ fn prompt_guidance_same_project_and_global_paths_are_loaded_once() {
 fn prompt_guidance_symlink_aliases_are_loaded_once() {
     with_prompt_guidance_home(|home| {
         let project = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(project.path().join(".horon-agent")).unwrap();
+        std::fs::create_dir(project.path().join(".horon")).unwrap();
         for name in ["prompt-overlay.md", "preferred-tools.md"] {
-            let global = home.join(".horon-agent").join(name);
+            let global = home.join(".horon").join(name);
             std::fs::write(&global, "shared symlink guidance").unwrap();
-            std::os::unix::fs::symlink(&global, project.path().join(".horon-agent").join(name)).unwrap();
+            std::os::unix::fs::symlink(&global, project.path().join(".horon").join(name)).unwrap();
         }
         for (content, size) in [
             load_prompt_overlay_files_from_dir(Some(project.path())),
@@ -809,10 +809,10 @@ fn prompt_guidance_symlink_aliases_are_loaded_once() {
 fn prompt_guidance_distinct_files_with_identical_contents_are_both_loaded() {
     with_prompt_guidance_home(|home| {
         let project = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(project.path().join(".horon-agent")).unwrap();
+        std::fs::create_dir(project.path().join(".horon")).unwrap();
         for name in ["prompt-overlay.md", "preferred-tools.md"] {
             for root in [home, project.path()] {
-                std::fs::write(root.join(".horon-agent").join(name), "identical guidance").unwrap();
+                std::fs::write(root.join(".horon").join(name), "identical guidance").unwrap();
             }
         }
         for (content, size) in [
@@ -831,14 +831,14 @@ fn prompt_guidance_distinct_files_with_identical_contents_are_both_loaded() {
 fn prompt_guidance_missing_or_unreadable_project_keeps_global_content() {
     with_prompt_guidance_home(|home| {
         let project = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(project.path().join(".horon-agent")).unwrap();
+        std::fs::create_dir(project.path().join(".horon")).unwrap();
         for name in ["prompt-overlay.md", "preferred-tools.md"] {
-            std::fs::write(home.join(".horon-agent").join(name), "global only").unwrap();
+            std::fs::write(home.join(".horon").join(name), "global only").unwrap();
         }
         for unreadable in [false, true] {
             if unreadable {
                 for name in ["prompt-overlay.md", "preferred-tools.md"] {
-                    std::fs::write(project.path().join(".horon-agent").join(name), [0xff]).unwrap();
+                    std::fs::write(project.path().join(".horon").join(name), [0xff]).unwrap();
                 }
             }
             for (content, size) in [

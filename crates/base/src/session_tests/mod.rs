@@ -54,7 +54,7 @@ fn legacy_plugin_id_session_loads() -> anyhow::Result<()> {
     let temp_home = tempfile::Builder::new()
         .prefix("horon-agent-session-legacy-plugin-id-")
         .tempdir()?;
-    let _home = EnvVarGuard::set("HORON_AGENT_HOME", temp_home.path().as_os_str());
+    let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
 
     let mut session = Session::create_with_id("legacy_plugin_id_session".to_string(), None, None);
     session.plugin_id = Some("router".to_string());

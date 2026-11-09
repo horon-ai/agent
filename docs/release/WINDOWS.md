@@ -58,7 +58,7 @@ $script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
 - 런처: `%LOCALAPPDATA%\horon-agent\bin\horon-agent.exe`
 - 안정 바이너리: `%LOCALAPPDATA%\horon-agent\builds\stable\horon-agent.exe`
 - 버전별 바이너리: `%LOCALAPPDATA%\horon-agent\builds\versions\<version>\horon-agent.exe`
-- 사용자 데이터와 설정: `%USERPROFILE%\.horon-agent`
+- 사용자 데이터와 설정: `%USERPROFILE%\.horon`
 
 ### 설치 검증
 
@@ -146,7 +146,7 @@ Windows는 다음으로 덮는다.
 
 Unix 도메인 소켓은 `crates/transport/src/windows.rs`의 Windows 명명된 파이프로 대체된다. 파일 시스템, 프로세스, 업데이트, 교체 동작 중 플랫폼별 부분은 `#[cfg(windows)]`로 컴파일 시점에 선택하므로, Windows 지원 때문에 Unix 빌드에 런타임 분기가 늘지 않는다.
 
-세션 기록은 Unix와 같은 `crates/session-store` 이벤트 로그에 남는다. Windows에는 `O_NOFOLLOW`와 권한 비트가 없으므로, 잠금 파일과 원본 파일은 연 뒤에 일반 파일인지와 생성 시각이 열린 핸들과 같은지로 확인하고 소유자 전용 권한은 `%USERPROFILE%\.horon-agent`의 상속 ACL이 맡는다. 디렉터리 항목 자체는 flush하지 않는다. Windows에서는 디렉터리를 `FlushFileBuffers`용으로 열 수 없고 NTFS가 디렉터리 메타데이터를 직접 저널링하므로, 내구성 경계는 파일 자체의 `sync_all`이다.
+세션 기록은 Unix와 같은 `crates/session-store` 이벤트 로그에 남는다. Windows에는 `O_NOFOLLOW`와 권한 비트가 없으므로, 잠금 파일과 원본 파일은 연 뒤에 일반 파일인지와 생성 시각이 열린 핸들과 같은지로 확인하고 소유자 전용 권한은 `%USERPROFILE%\.horon`의 상속 ACL이 맡는다. 디렉터리 항목 자체는 flush하지 않는다. Windows에서는 디렉터리를 `FlushFileBuffers`용으로 열 수 없고 NTFS가 디렉터리 메타데이터를 직접 저널링하므로, 내구성 경계는 파일 자체의 `sync_all`이다.
 
 ## Windows 문제 보고
 
@@ -161,4 +161,4 @@ GitHub 이슈에 다음을 적는다.
 - `Get-FileHash`로 구한 SHA-256
 - `Get-AuthenticodeSignature`로 확인한 Authenticode 상태
 
-비공개 설정, 자격 증명, 세션 기록, `.horon-agent` 인증 파일은 올리지 않는다.
+비공개 설정, 자격 증명, 세션 기록, `.horon` 인증 파일은 올리지 않는다.

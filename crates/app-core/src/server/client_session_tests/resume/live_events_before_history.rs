@@ -6,13 +6,13 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
     impl Drop for RestoreHome {
         fn drop(&mut self) {
             match &self.0 {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
         }
     }
-    let _restore_home = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let _restore_home = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     let (_runtime, prev_runtime) = setup_runtime_dir()?;
 
     let target_session_id = "session_restore_target";

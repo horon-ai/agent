@@ -1,7 +1,7 @@
 //! Durable per-chain budget for automatic provider failover.
 //!
 //! One record per session lives at
-//! `~/.horon-agent/failover-budget/<safe-session-id>.json`. `chain_id` is the
+//! `~/.horon/failover-budget/<safe-session-id>.json`. `chain_id` is the
 //! unit of the budget (C6): a new run chain starts at zero and an attempt
 //! counter never carries across chains, while the same chain keeps its count
 //! across a process restart (IS-4).
@@ -456,7 +456,7 @@ mod tests {
     use std::ffi::OsString;
     use std::sync::Arc;
 
-    /// Serialize this module's tests and sandbox `HORON_AGENT_HOME`.
+    /// Serialize this module's tests and sandbox `HORON_HOME`.
     ///
     /// `HORON_AGENT_QA_HOME` points the sandbox at a directory that is kept on
     /// disk, so a manual QA run can inspect the persisted record; otherwise a
@@ -485,8 +485,8 @@ mod tests {
                     (path, Some(dir))
                 }
             };
-            let previous = std::env::var_os("HORON_AGENT_HOME");
-            crate::env::set_var("HORON_AGENT_HOME", &home);
+            let previous = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", &home);
             crate::config::Config::invalidate_cache();
             Self {
                 previous,
@@ -499,8 +499,8 @@ mod tests {
     impl Drop for TestHome {
         fn drop(&mut self) {
             match &self.previous {
-                Some(value) => crate::env::set_var("HORON_AGENT_HOME", value),
-                None => crate::env::remove_var("HORON_AGENT_HOME"),
+                Some(value) => crate::env::set_var("HORON_HOME", value),
+                None => crate::env::remove_var("HORON_HOME"),
             }
             crate::config::Config::invalidate_cache();
         }

@@ -108,8 +108,8 @@ struct RestoreHome(Option<std::ffi::OsString>);
 impl Drop for RestoreHome {
     fn drop(&mut self) {
         match &self.0 {
-            Some(home) => crate::env::set_var("HORON_AGENT_HOME", home),
-            None => crate::env::remove_var("HORON_AGENT_HOME"),
+            Some(home) => crate::env::set_var("HORON_HOME", home),
+            None => crate::env::remove_var("HORON_HOME"),
         }
         crate::config::Config::invalidate_cache();
     }
@@ -117,8 +117,8 @@ impl Drop for RestoreHome {
 
 fn isolated_home() -> (tempfile::TempDir, RestoreHome) {
     let home = tempfile::tempdir().expect("tempdir");
-    let restore = RestoreHome(std::env::var_os("HORON_AGENT_HOME"));
-    crate::env::set_var("HORON_AGENT_HOME", home.path());
+    let restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
     crate::config::Config::invalidate_cache();
     (home, restore)
 }

@@ -182,7 +182,7 @@ pub fn launcher_dir() -> Result<PathBuf> {
         return Ok(custom);
     }
 
-    if let Some(sandbox_home) = non_empty_env_path("HORON_AGENT_HOME") {
+    if let Some(sandbox_home) = non_empty_env_path("HORON_HOME") {
         return Ok(sandbox_home.join("bin"));
     }
 

@@ -14,8 +14,8 @@ struct TestHomeGuard {
 
 impl TestHomeGuard {
     fn new(path: &std::path::Path) -> Self {
-        let previous = std::env::var_os("HORON_AGENT_HOME");
-        crate::env::set_var("HORON_AGENT_HOME", path);
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", path);
         Self { previous }
     }
 }
@@ -23,9 +23,9 @@ impl TestHomeGuard {
 impl Drop for TestHomeGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            crate::env::set_var("HORON_AGENT_HOME", previous);
+            crate::env::set_var("HORON_HOME", previous);
         } else {
-            crate::env::remove_var("HORON_AGENT_HOME");
+            crate::env::remove_var("HORON_HOME");
         }
     }
 }
@@ -82,7 +82,7 @@ async fn register_empty_mcp_tools(registry: &Registry, working_dir: &std::path::
 #[tokio::test]
 async fn mcp_list_remains_available_while_background_connect_is_handshaking() {
     let _env_lock = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let home = tempfile::tempdir().expect("create isolated HORON_HOME");
     let _home_guard = TestHomeGuard::new(home.path());
     let working_dir = tempfile::tempdir().expect("create isolated MCP working directory");
 
@@ -126,7 +126,7 @@ async fn mcp_list_remains_available_while_background_connect_is_handshaking() {
 #[tokio::test]
 async fn real_mcp_registration_does_not_retain_registry_tool_map() {
     let _env_lock = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let home = tempfile::tempdir().expect("create isolated HORON_HOME");
     let _home_guard = TestHomeGuard::new(home.path());
     let working_dir = tempfile::tempdir().expect("create isolated MCP working directory");
     let registry = Registry::empty();
@@ -146,7 +146,7 @@ async fn real_mcp_registration_does_not_retain_registry_tool_map() {
 #[tokio::test]
 async fn mcp_management_upgrades_registry_through_surviving_clone() {
     let _env_lock = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().expect("create isolated HORON_AGENT_HOME");
+    let home = tempfile::tempdir().expect("create isolated HORON_HOME");
     let _home_guard = TestHomeGuard::new(home.path());
     let working_dir = tempfile::tempdir().expect("create isolated MCP working directory");
     let registry = Registry::empty();
@@ -746,7 +746,7 @@ async fn manual_qa_dispatch_stage_breakdown() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join(format!("horon-agent-qa-{}", std::process::id())));
     std::fs::create_dir_all(&home).expect("create QA home");
-    crate::env::set_var("HORON_AGENT_HOME", &home);
+    crate::env::set_var("HORON_HOME", &home);
     crate::logging::init();
 
     let dir = tempfile::TempDir::new().expect("temp dir");

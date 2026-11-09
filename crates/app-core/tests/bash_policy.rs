@@ -2,7 +2,7 @@
 //!
 //! Each case drives `Registry::execute`, so the approval gate, the interceptor,
 //! the shared-checkout guard and the background manager run where they actually
-//! run. `HORON_AGENT_HOME` and `HORON_AGENT_RUNTIME_DIR` point at per-case temp
+//! run. `HORON_HOME` and `HORON_AGENT_RUNTIME_DIR` point at per-case temp
 //! directories; the cases hold one mutex because both are process-global.
 
 use async_trait::async_trait;
@@ -56,9 +56,9 @@ impl IsolatedEnv {
             .prefix(&format!("horon-bash-policy-{label}-runtime-"))
             .tempdir()
             .expect("a private runtime directory");
-        let previous_home = std::env::var_os("HORON_AGENT_HOME");
+        let previous_home = std::env::var_os("HORON_HOME");
         let previous_runtime = std::env::var_os("HORON_AGENT_RUNTIME_DIR");
-        horon_agent_app_core::env::set_var("HORON_AGENT_HOME", home.path());
+        horon_agent_app_core::env::set_var("HORON_HOME", home.path());
         horon_agent_app_core::env::set_var("HORON_AGENT_RUNTIME_DIR", runtime.path());
         let config = if tools_table.is_empty() {
             String::new()
@@ -83,8 +83,8 @@ impl IsolatedEnv {
 impl Drop for IsolatedEnv {
     fn drop(&mut self) {
         match self.previous_home.take() {
-            Some(value) => horon_agent_app_core::env::set_var("HORON_AGENT_HOME", value),
-            None => horon_agent_app_core::env::remove_var("HORON_AGENT_HOME"),
+            Some(value) => horon_agent_app_core::env::set_var("HORON_HOME", value),
+            None => horon_agent_app_core::env::remove_var("HORON_HOME"),
         }
         match self.previous_runtime.take() {
             Some(value) => horon_agent_app_core::env::set_var("HORON_AGENT_RUNTIME_DIR", value),

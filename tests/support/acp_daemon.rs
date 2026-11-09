@@ -1,7 +1,7 @@
 //! An isolated `horon-agent serve` daemon for the ACP conformance tests.
 //!
 //! The daemon owns its scratch root, HOME, runtime dir, socket and scripted
-//! provider, so a test never touches the developer's `~/.horon-agent` or a real
+//! provider, so a test never touches the developer's `~/.horon` or a real
 //! daemon: `HORON_AGENT_SOCKET`/`HORON_AGENT_API_SOCKET` are removed from the
 //! child environment and replaced with the isolated socket, and the child is
 //! killed and its scratch root removed on drop.
@@ -106,7 +106,7 @@ impl Drop for AcpDaemon {
 
 fn isolated_env(root: &Path, home: &Path, runtime: &Path, socket: &Path, profile: &str) -> Vec<(String, String)> {
     vec![
-        ("HORON_AGENT_HOME".to_string(), home.display().to_string()),
+        ("HORON_HOME".to_string(), home.display().to_string()),
         ("HORON_AGENT_RUNTIME_DIR".to_string(), runtime.display().to_string()),
         ("HOME".to_string(), root.display().to_string()),
         ("XDG_CONFIG_HOME".to_string(), root.join("config").display().to_string()),
