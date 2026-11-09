@@ -12,7 +12,7 @@ HoronAgent는 Windows를 정식 지원 플랫폼으로 다룬다. Windows 구현
 | Windows 11 ARM64 | 배포 빌드와 자동 설치 검사를 수행한다 |
 | PowerShell 설치 스크립트 | Windows CI에서 검증했다 |
 | 네이티브 IPC와 프로세스 수명 주기 | Windows 대상 테스트와 종단 테스트로 덮는다 |
-| `horon-agent update` | SHA-256 검증과 함께 지원한다 |
+| `horon update` | SHA-256 검증과 함께 지원한다 |
 | `horon-agent install-release` | 설치 스크립트가 릴리스 자산 검증과 채널 활성화를 맡기는 경로다 |
 | 배포 자산 | x64와 ARM64용 `.exe` 및 `.tar.gz` 자산 |
 | Authenticode 서명 | 배포 파이프라인은 준비됐고, 아래 Azure 설정을 한 번 해 두어야 한다 |
@@ -65,7 +65,7 @@ $script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
 ### 설치 검증
 
 ```powershell
-horon-agent --version
+horon --version
 Get-Command horon-agent
 Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
 ```
@@ -155,7 +155,7 @@ Unix 도메인 소켓은 `crates/platform-windows/src/ipc.rs`의 Windows 명명�
 GitHub 이슈에 다음을 적는다.
 
 - Windows 에디션, 버전, 아키텍처
-- `horon-agent --version`으로 확인한 HoronAgent 버전
+- `horon --version`으로 확인한 HoronAgent 버전
 - 설치 방법
 - 터미널과 PowerShell 버전(`$PSVersionTable.PSVersion`)
 - Defender 또는 SmartScreen 메시지 원문

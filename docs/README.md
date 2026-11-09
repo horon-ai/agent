@@ -13,7 +13,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | Requirement | What it means | Current state |
 | --- | --- | --- |
 | No TUI | The binary never opens a screen. `ratatui`, `crossterm`, and `horon-agent-tui*` must not appear in the dependency graph. | Met |
-| ACP v1 and v2 support | `horon-agent acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
+| ACP v1 and v2 support | `horon acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
 | No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
 
 ## Folder layout

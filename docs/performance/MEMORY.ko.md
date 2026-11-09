@@ -249,7 +249,7 @@ hibernation의 몫은 도구 인덱스 + 다시 만들어진 projection이며, `
 다음을 실행한다.
 
 ```bash
-horon-agent debug 'server:memory-incident'
+horon debug 'server:memory-incident'
 ```
 
 인시던트 때 가장 먼저 실행하는 명령이다. 일부러 가볍게 만들었다. 모든 Agent 기록을 잠그거나 직렬화하지 않으므로 세션이 수천 개 떠 있어도 쓸 수 있다.
@@ -323,7 +323,7 @@ python scripts/perf/analyze_memory_log.py --days 1 --json > /tmp/horon-agent-mem
 조치:
 
 1. 세션을 만드는 쪽을 멈추거나 상한을 건다.
-2. `horon-agent debug 'swarm:list'`를 실행하고 가장 큰 live 스웜을 살펴본다.
+2. `horon debug 'swarm:list'`를 실행하고 가장 큰 live 스웜을 살펴본다.
 3. 소유 코디네이터에서 `swarm list`와 `swarm cleanup`으로 더 이상 필요 없는 워커를 제거한다.
 4. 세션을 무작정 없애지 않는다. 진행 중인 작업을 버려도 되는지 먼저 확인한다.
 5. `server:memory-incident`를 다시 실행한다. live 세션, 할당자 live 바이트, PSS가 함께 줄어야 한다.
@@ -342,9 +342,9 @@ python scripts/perf/analyze_memory_log.py --days 1 --json > /tmp/horon-agent-mem
 조치:
 
 ```bash
-horon-agent debug 'server:memory-incident' > /tmp/before.json
-horon-agent debug 'allocator:purge'
-horon-agent debug 'server:memory-incident' > /tmp/after.json
+horon debug 'server:memory-incident' > /tmp/before.json
+horon debug 'allocator:purge'
+horon debug 'server:memory-incident' > /tmp/after.json
 ```
 
 PSS가 크게 떨어지면 할당자가 붙들고 있던 메모리였다는 뜻이다. 다시 반복해서 늘어나면 메모리 예산을 올리지 말고 할당 churn과 할당자 감쇠를 살펴본다.
@@ -358,7 +358,7 @@ PSS가 크게 떨어지면 할당자가 붙들고 있던 메모리였다는 뜻�
 
 조치:
 
-1. `horon-agent debug 'server:memory'`를 실행해 전체 귀속 내역을 본다.
+1. `horon debug 'server:memory'`를 실행해 전체 귀속 내역을 본다.
 2. 제공자 캐시, 도구 결과, 큰 blob, 페이로드 텍스트를 살펴본다.
 3. 압축, 요약, 잘라내기, 또는 큰 산출물을 본문 밖으로 옮기기 중 하나를 한다.
 4. 더 큰 안정 상태를 받아들이기 전에 하드 상한을 추가하거나 조인다.
@@ -378,8 +378,8 @@ PSS가 크게 떨어지면 할당자가 붙들고 있던 메모리였다는 뜻�
 3. 그래도 소유 관계가 불분명하면 `jemalloc-prof` 빌드를 쓴다.
 
 ```bash
-horon-agent debug 'allocator:profile:on'
-horon-agent debug 'allocator:profile:dump /tmp/horon-agent-server.heap'
+horon debug 'allocator:profile:on'
+horon debug 'allocator:profile:dump /tmp/horon-agent-server.heap'
 ```
 
 일반 시스템 할당자 빌드는 할당 스택 프로필을 만들지 못한다. RSS만 보고 힙 소유 관계를 단정하지 않는다.

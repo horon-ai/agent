@@ -2,12 +2,12 @@
 
 Language: **English** | [한국어](ACP.ko.md)
 
-The horon agent supports Agent Client Protocol (ACP) v1 and v2 together on one endpoint so an editor can attach it as an external agent. Running `horon-agent acp` turns it into an ACP agent that exchanges JSON-RPC messages over standard input and output. v1 is the stable version and its messages follow the official `schema-v1.26.0`. v2 follows the stable portion of `schema-v2.0.0-alpha.13`. The v1 sections of this document describe how a v1 connection behaves; the v2 differences are collected in [ACP v2](#acp-v2).
+The horon agent supports Agent Client Protocol (ACP) v1 and v2 together on one endpoint so an editor can attach it as an external agent. Running `horon acp` turns it into an ACP agent that exchanges JSON-RPC messages over standard input and output. v1 is the stable version and its messages follow the official `schema-v1.26.0`. v2 follows the stable portion of `schema-v2.0.0-alpha.13`. The v1 sections of this document describe how a v1 connection behaves; the v2 differences are collected in [ACP v2](#acp-v2).
 
 ## Running
 
 ```bash
-horon-agent acp            # handle ACP v1 over standard input and output
+horon acp            # handle ACP v1 over standard input and output
 ```
 
 `acp` writes nothing but ACP messages to stdout (line-delimited UTF-8 JSON). Logs go to stderr, and the process exits as soon as stdin closes. A request still being handled never gets its response.
@@ -18,7 +18,7 @@ Model calls go straight to the `/chat/completions` endpoint of the OpenAI-compat
 
 ### Editor setup
 
-Every editor puts the setting somewhere else and names the keys differently. What they share is registering the command `horon-agent` with the arguments `["acp"]` as an external agent. Below are examples for Zed and JetBrains. Check each editor's documentation for the exact key names.
+Every editor puts the setting somewhere else and names the keys differently. What they share is registering the command `horon` (or `horon-agent`) with the arguments `["acp"]` as an external agent. Below are examples for Zed and JetBrains. Check each editor's documentation for the exact key names.
 
 Zed (`settings.json`):
 
@@ -57,7 +57,7 @@ The `authMethods` in the `initialize` response are:
 |---|---|---|
 | `horon-agent-credentials` | Always | Checks whether the credentials of a `[providers.<name>]` profile can be used to call models |
 
-Register a profile with `horon-agent provider add`. Even when the client advertises `auth.terminal`, there is only one method. This build has no login command for the editor to run in a terminal.
+Register a profile with `horon provider add`. Even when the client advertises `auth.terminal`, there is only one method. This build has no login command for the editor to run in a terminal.
 
 `authenticate` succeeds with `{}` when the daemon reports a usable model. With no model it returns `-32000`. `session/new` also returns `-32000` when no model is usable. An unknown `methodId` is `-32602`.
 
@@ -151,7 +151,7 @@ During a turn, these flow out as `session/update`.
 
 There are three slash commands: `/model`, `/models` and `/effort`. With one leading space the line is not interpreted as a command and goes to the model untouched.
 
-`plan` appears only when the `todo` tool is available. Under default settings that tool exists only when `horon-agent acp` started the daemon with the `acp` profile. A daemon started first by the desktop app or by `serve` runs the `core` profile, so no plan updates appear.
+`plan` appears only when the `todo` tool is available. Under default settings that tool exists only when `horon acp` started the daemon with the `acp` profile. A daemon started first by the desktop app or by `serve` runs the `core` profile, so no plan updates appear.
 
 ### The acp tool profile
 
@@ -216,7 +216,7 @@ ACP-only events (client requests, permission questions, plans, diffs) leave only
 
 ## ACP v2
 
-v2 ships through the same `horon-agent acp` as v1. There is no separate command or port. Each connection picks v1 or v2 from `protocolVersion` in `initialize`, and only that side's messages travel on the connection. A v1 client receives the same responses as before v2 existed.
+v2 ships through the same `horon acp` as v1. There is no separate command or port. Each connection picks v1 or v2 from `protocolVersion` in `initialize`, and only that side's messages travel on the connection. A v1 client receives the same responses as before v2 existed.
 
 ### Version negotiation
 
@@ -239,7 +239,7 @@ If v2 negotiation causes problems, you can fall back to v1 only.
 protocol_v2 = false
 ```
 
-The environment variable `HORON_AGENT_ACP_PROTOCOL_V2=0` does the same. Use `1` or `true` to turn it on. When it is off, every request is answered as a v1 request. Sending 0 or 65535 still returns `protocolVersion: 1`. A new `horon-agent acp` has to be started for a changed setting to apply.
+The environment variable `HORON_AGENT_ACP_PROTOCOL_V2=0` does the same. Use `1` or `true` to turn it on. When it is off, every request is answered as a v1 request. Sending 0 or 65535 still returns `protocolVersion: 1`. A new `horon acp` has to be started for a changed setting to apply.
 
 ### Advertised capabilities (v2)
 

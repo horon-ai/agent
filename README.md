@@ -20,7 +20,7 @@
 `horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. It never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
 - **Headless by contract.** `ratatui`, `crossterm` and `horon-agent-tui*` are not in the dependency graph.
-- **ACP v1 and v2.** `horon-agent acp` answers `initialize` with the highest protocol version both sides support.
+- **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
 - **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 69.8 ms on Linux and 104.7 ms on macOS ([numbers and caveats](#benchmarks)).
 
@@ -53,7 +53,7 @@ cargo build --release -p horon-agent
 ./target/release/horon-agent --version
 ```
 
-Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows (x86_64, aarch64) and FreeBSD (x86_64). The launcher is `horon-agent`; on `dev` it also creates the short aliases `horon` and `hrn`, which ship with the next release. Data lives in `~/.horon` (override with `HORON_HOME`); releases up to v0.1.1 use `~/.horon-agent`.
+Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows (x86_64, aarch64) and FreeBSD (x86_64). The launcher is `horon-agent`, and since v0.1.3 the installer also creates the aliases `horon` (the command used throughout these docs) and `hrn` (shorter); all three run the same binary. Data lives in `~/.horon` (override with `HORON_HOME`); releases up to v0.1.1 use `~/.horon-agent`.
 
 ## Quick start
 
@@ -74,8 +74,8 @@ default_model = "my-model"
 For a hosted endpoint, set `auth = "bearer"` and `api_key_env = "MY_API_KEY"` instead. Then check readiness and run a turn:
 
 ```sh
-horon-agent provider current --json   # "ready": true when a profile resolves
-horon-agent run "summarize this repo"
+horon provider current --json   # "ready": true when a profile resolves
+horon run "summarize this repo"
 ```
 
 <p align="center">
@@ -90,15 +90,15 @@ With no profile configured, a model call stops before the network and names the 
 
 | Command | What it does |
 | --- | --- |
-| `horon-agent run "<message>"` | Send one message, run tools until the turn ends, exit. |
-| `horon-agent repl` | Simple line-based REPL (no TUI). |
-| `horon-agent serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
-| `horon-agent api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
-| `horon-agent acp` | ACP v1/v2 adapter on stdio for editors. |
+| `horon run "<message>"` | Send one message, run tools until the turn ends, exit. |
+| `horon repl` | Simple line-based REPL (no TUI). |
+| `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
+| `horon api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
+| `horon acp` | ACP v1/v2 adapter on stdio for editors. |
 
 ### Editors (ACP)
 
-Register `horon-agent` with the argument `acp` as an external agent. In Zed (`settings.json`):
+Register `horon` (or `horon-agent`) with the argument `acp` as an external agent. In Zed (`settings.json`):
 
 ```json
 {
@@ -134,10 +134,10 @@ Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](
 ## Features
 
 - **A core tool set of 15.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo` and `ask`. A core session sends seven of them up front plus `toolbox`, names the other eight in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
-- **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon-agent session inspect|doctor|export|import|migrate|recover-to` work on the store ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
+- **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon session inspect|doctor|export|import|migrate|recover-to` work on the store ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
 - **Edit safety.** A journal backs `undo` for file edits, and `redo` and hashline anchors are opt-in ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
-- **MCP and skills.** `horon-agent mcp` lists configured MCP servers and manages remote-server OAuth credentials; skills are read through `skill://` and managed with `skill_manage`.
-- **Unattended runs.** Turn recovery, `horon-agent runtime-state` (inspect and settle durable pending inputs) and `horon-agent approvals` (record a human verdict for a run that stopped waiting on a person) support runs with no one at the keyboard ([docs/safety/SAFETY.md](docs/safety/SAFETY.md)).
+- **MCP and skills.** `horon mcp` lists configured MCP servers and manages remote-server OAuth credentials; skills are read through `skill://` and managed with `skill_manage`.
+- **Unattended runs.** Turn recovery, `horon runtime-state` (inspect and settle durable pending inputs) and `horon approvals` (record a human verdict for a run that stopped waiting on a person) support runs with no one at the keyboard ([docs/safety/SAFETY.md](docs/safety/SAFETY.md)).
 - **Agent-to-agent messaging.** An opt-in `irc` mailbox bus (`[tools] irc = true`) lets agents in one daemon `send`, `wait`, `inbox` and `list` ([docs/runtime/IRC.md](docs/runtime/IRC.md)).
 - **Workspace trust.** Project-local MCP config is skipped until its digest is trusted; `--trust-workspace` records the decision ([docs/safety/SECURITY.md](docs/safety/SECURITY.md)).
 - **TLS without OpenSSL.** rustls with the union of bundled webpki roots and the OS trust store; the Linux binary needs only glibc, libm and libgcc_s ([docs/release/INSTALL.md](docs/release/INSTALL.md)).

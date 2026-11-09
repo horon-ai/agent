@@ -54,11 +54,11 @@ configure a remote server alongside it.
 ### Commands
 
 ```sh
-horon-agent mcp list
-horon-agent mcp test remote
-horon-agent mcp login remote
-horon-agent mcp login remote --no-browser
-horon-agent mcp logout remote
+horon mcp list
+horon mcp test remote
+horon mcp login remote
+horon mcp login remote --no-browser
+horon mcp logout remote
 ```
 
 `test` connects to the configured server, initializes the protocol, lists tools, and
@@ -100,7 +100,7 @@ call to an offline server waits up to 30 seconds for a connection. Cancel and sh
 remove waiters and stop the response streams they own. No ordinary tool call or
 startup path waits for an interactive OAuth login.
 
-There is a separate existing headless behavior. Before the first turn, `horon-agent run`
+There is a separate existing headless behavior. Before the first turn, `horon run`
 waits up to 5 seconds for active servers that have no valid cached schema.
 With a warm cache it skips that wait. `HORON_AGENT_RUN_MCP_WAIT_MS=0` turns it off, and a smaller
 millisecond budget can be set. Inactive servers consume no budget, and the

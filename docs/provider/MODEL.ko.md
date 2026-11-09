@@ -104,14 +104,14 @@ printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
 만든 프로파일은 다음처럼 바로 확인한다.
 
 ```bash
-horon-agent --provider-profile my-gw --model my-model run "hello"
-horon-agent --provider-profile my-gw auth-test --prompt "Reply exactly OK"
+horon --provider-profile my-gw --model my-model run "hello"
+horon --provider-profile my-gw auth-test --prompt "Reply exactly OK"
 ```
 
 ## 준비 상태 확인
 
 ```bash
-horon-agent provider current --json
+horon provider current --json
 ```
 
 출력 필드는 `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, 그리고 준비가 안 됐을 때의 `unavailable_reason`이다(`src/cli/commands/report_info.rs`). `ready`가 `true`면 지금 설정으로 `/chat/completions`를 부를 수 있다는 뜻이다.
@@ -208,7 +208,7 @@ horon-agent provider current --json
 
 데스크톱 핫 리로드만으로는 데몬이 갱신되지 않는다. 먼저 격리된 소켓에서 런타임을
 빌드하고 검증한다. 검증한 소스 빌드를 발행한 뒤 안전한 유휴 시간에
-`horon-agent server promote <installed-version>`과 `horon-agent server reload --json`을
+`horon server promote <installed-version>`과 `horon server reload --json`을
 쓴다. `server stop --force`를 쓰거나 kill 신호를 보내면 안 된다. 지원되는 재적재는
 세션을 체크포인트하지만 진행 중인 모델 생성에는 여전히 신호를 보낸다. 세션이
 처리 중이면 활성화를 미룬다.

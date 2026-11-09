@@ -64,15 +64,15 @@ new process registers under a new name. Stale entries are cleaned up automatical
 
 ### Server start
 
-Running `horon-agent` checks whether a server is already up.
+Running `horon` checks whether a server is already up.
 
 1. **A server exists:** connect to it directly as a client
-2. **No server:** start `horon-agent serve` as a detached daemon under `setsid`, wait for the socket, then connect
+2. **No server:** start `horon serve` as a detached daemon under `setsid`, wait for the socket, then connect
 
 The server is fully detached from the client that started it through `setsid()`, so killing any client affects neither the server nor the
 other clients.
 
-For long-running deployments, `horon-agent serve --server-name <name>` or the `HORON_AGENT_SERVER_NAME` environment variable gives the daemon a
+For long-running deployments, `horon serve --server-name <name>` or the `HORON_AGENT_SERVER_NAME` environment variable gives the daemon a
 stable identity that clients can address. An optional `HORON_AGENT_SERVER_DISPLAY_NAME` environment variable exists for service managers that
 prefer a display name. CLI input beats environment input. Names are normalized to a lowercase label that is safe for the registry, so
 `mount-cloud/fabian` shows up as `mount-cloud-fabian`.
@@ -88,7 +88,7 @@ The debug control server turns the shared-server idle watcher off. Temporary ser
 
 ### Headless `run` sessions and the temporary server
 
-`horon-agent run` uses no server at all. It builds an `Agent` in-process, sends one message, and exits.
+`horon run` uses no server at all. It builds an `Agent` in-process, sends one message, and exits.
 `--socket <path>` only chooses which socket the tools dial, so in most runs nothing listens on that path.
 
 One tool genuinely needs a server. `swarm` talks to the daemon over the socket because workers are headless sessions the server owns. A `run`
@@ -97,18 +97,18 @@ session used to fail these requests outright ("horon-agent server is not running
 server starts one. On the shared socket it becomes an ordinary long-lived daemon; on a user-supplied `--socket` the server belongs to that run.
 
 ```
-horon-agent run --socket /tmp/run.sock "spawn a worker that ..."
+horon run --socket /tmp/run.sock "spawn a worker that ..."
    │
    ├─▶ agent runs in-process; no server started
    ├─▶ swarm tool dials /tmp/run.sock → not found
-   ├─▶ spawn `horon-agent serve --temporary-server --owner-pid <run pid>`
+   ├─▶ spawn `horon serve --temporary-server --owner-pid <run pid>`
    │      on /tmp/run.sock, using the *current* executable
    └─▶ retry the request; the server exits within ~10s of the run
 ```
 
 Properties worth knowing:
 
-- **Lazy.** A run that never uses `swarm` pays nothing. `horon-agent run` start stays as it was.
+- **Lazy.** A run that never uses `swarm` pays nothing. `horon run` start stays as it was.
 - **Follows the socket.** A temporary server belongs to the run only on a user-supplied `--socket`. Without `--socket` the run prepares the ordinary shared daemon. Putting a temporary server on the shared path would hold the socket every later client uses and then vanish when the run ends.
 - **Owned.** The temporary lifetime watcher shuts the server down when `--owner-pid` disappears, so a one-off run leaves no daemon behind. The socket, debug socket, daemon lock, build-hash sidecar, and metadata files are all removed. Workers live only as long as the run that spawned them. A `run` that spawns a worker and exits without waiting loses the worker by design.
 - **Current binary.** The owning path starts `std::env::current_exe()` instead of the shared-server update candidate, so a locally built binary exercised through `--socket` answers (see "Verifying a change at runtime" in AGENTS.md).
@@ -135,7 +135,7 @@ By default a client sends its current working directory when it subscribes and t
 forwarding wrapper for a remote daemon can separate the client path from the server path with `--remote-working-dir`.
 
 ```bash
-horon-agent --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /remote/checkout
+horon --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /remote/checkout
 ```
 
 The `-C` path must exist on the client. `--remote-working-dir` must be an absolute path on the server.
@@ -173,18 +173,18 @@ lock was always socket-scoped; the daemon lock now matches.
 
 ## Reload
 
-`/reload` and `horon-agent server reload` exec the server into a new binary and clients reconnect. The reload checkpoint is the `shared-server`
+`/reload` and `horon server reload` exec the server into a new binary and clients reconnect. The reload checkpoint is the `shared-server`
 channel and uses the same path for every session. A session interrupted mid-reload continues with a `reload_recovery` directive.
 
 ## Key behaviors
 
 | Situation | Behavior |
 |----------|----------|
-| First `horon-agent` run | Starts the server daemon and connects |
-| Later `horon-agent` runs | Connect to the existing server |
+| First `horon` run | Starts the server daemon and connects |
+| Later `horon` runs | Connect to the existing server |
 | Kill one client | The server and the other clients are unaffected |
 | `/reload` | The server execs into the new binary and clients reconnect |
 | Close every client | The shared server exits on the idle deadline after five minutes without live headless swarm workers (unless debug control is on) |
-| Resume a session | `horon-agent --resume fox` reconnects to the existing session |
-| `horon-agent run` | The agent runs in-process and uses no server unless a tool needs one |
-| `horon-agent run` + `swarm` | Prepares the shared daemon, or a temporary server owned by that run when `--socket` is user-supplied |
+| Resume a session | `horon --resume fox` reconnects to the existing session |
+| `horon run` | The agent runs in-process and uses no server unless a tool needs one |
+| `horon run` + `swarm` | Prepares the shared daemon, or a temporary server owned by that run when `--socket` is user-supplied |

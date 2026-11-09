@@ -242,7 +242,7 @@ holds, and non-heap mappings.
 Run this.
 
 ```bash
-horon-agent debug 'server:memory-incident'
+horon debug 'server:memory-incident'
 ```
 
 It is the first command to run during an incident. It is deliberately light. It does not lock or serialize every Agent record, so it works
@@ -319,7 +319,7 @@ Evidence:
 Actions:
 
 1. Stop whatever creates sessions or put a cap on it.
-2. Run `horon-agent debug 'swarm:list'` and look at the largest live swarm.
+2. Run `horon debug 'swarm:list'` and look at the largest live swarm.
 3. Remove workers that are no longer needed with `swarm list` and `swarm cleanup` on the owning coordinator.
 4. Do not delete sessions blindly. First check whether discarding in-progress work is acceptable.
 5. Run `server:memory-incident` again. Live sessions, allocator live bytes, and PSS must fall together.
@@ -338,9 +338,9 @@ Evidence:
 Actions:
 
 ```bash
-horon-agent debug 'server:memory-incident' > /tmp/before.json
-horon-agent debug 'allocator:purge'
-horon-agent debug 'server:memory-incident' > /tmp/after.json
+horon debug 'server:memory-incident' > /tmp/before.json
+horon debug 'allocator:purge'
+horon debug 'server:memory-incident' > /tmp/after.json
 ```
 
 If PSS drops a lot, that memory was held by the allocator. If it grows back repeatedly, look at allocation churn and allocator decay instead of
@@ -355,7 +355,7 @@ Evidence:
 
 Actions:
 
-1. Run `horon-agent debug 'server:memory'` to see the full attribution.
+1. Run `horon debug 'server:memory'` to see the full attribution.
 2. Look at the provider cache, tool results, large blobs, and payload text.
 3. Do one of compaction, summarization, pruning, or moving large outputs out of the body.
 4. Add or tighten a hard cap before accepting a larger steady state.
@@ -375,8 +375,8 @@ Actions:
 3. If ownership is still unclear, use a `jemalloc-prof` build.
 
 ```bash
-horon-agent debug 'allocator:profile:on'
-horon-agent debug 'allocator:profile:dump /tmp/horon-agent-server.heap'
+horon debug 'allocator:profile:on'
+horon debug 'allocator:profile:dump /tmp/horon-agent-server.heap'
 ```
 
 A stock system-allocator build cannot produce allocation stack profiles. Do not conclude heap ownership from RSS alone.

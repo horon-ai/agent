@@ -64,14 +64,14 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 
 ### 서버 시작
 
-`horon-agent`를 실행하면 서버가 이미 도는지 확인한다.
+`horon`을 실행하면 서버가 이미 도는지 확인한다.
 
 1. **서버가 있으면:** 클라이언트로 바로 연결한다
-2. **서버가 없으면:** `horon-agent serve`를 `setsid`로 분리된 데몬으로 띄우고, 소켓을 기다린 뒤 연결한다
+2. **서버가 없으면:** `horon serve`를 `setsid`로 분리된 데몬으로 띄우고, 소켓을 기다린 뒤 연결한다
 
 서버는 `setsid()`로 띄운 클라이언트에서 완전히 분리되므로 어떤 클라이언트를 죽여도 서버나 다른 클라이언트에 영향이 없다.
 
-오래 도는 배포에서는 `horon-agent serve --server-name <name>`이나 `HORON_AGENT_SERVER_NAME`
+오래 도는 배포에서는 `horon serve --server-name <name>`이나 `HORON_AGENT_SERVER_NAME`
 환경변수로 데몬에 클라이언트가 볼 수 있는 안정적인 정체성을 줄 수 있다. 표시용 이름을 선호하는 서비스 관리자를 위해 선택적
 `HORON_AGENT_SERVER_DISPLAY_NAME` 환경변수도 받는다. CLI 입력이 환경변수 입력을 이긴다. 이름은 레지스트리에 안전한 소문자
 이름표로 정규화되므로 `mount-cloud/fabian`은 `mount-cloud-fabian`으로 표시된다.
@@ -87,7 +87,7 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 
 ### 헤드리스 `run` 세션과 임시 서버
 
-`horon-agent run`은 서버를 전혀 쓰지 않는다. 프로세스 안에서 `Agent`를 만들고 메시지 하나를 보낸 뒤 끝난다.
+`horon run`은 서버를 전혀 쓰지 않는다. 프로세스 안에서 `Agent`를 만들고 메시지 하나를 보낸 뒤 끝난다.
 `--socket <path>`는 도구가 어느 소켓으로 접속할지만 고르므로 대부분의 실행에서는 그 경로를 아무도 열지 않는다.
 
 정말로 서버가 필요한 도구가 하나 있다. `swarm`은 워커가 서버가 맡는 헤드리스 세션이기 때문에 소켓으로 데몬과 이야기한다. 예전에는 `run`
@@ -97,18 +97,18 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 요청이 서버를 하나 띄운다. 공유 소켓에서는 평범한 오래 사는 데몬이 되고, 사용자 지정 `--socket`에서는 그 실행이 소유하는 서버가 된다.
 
 ```
-horon-agent run --socket /tmp/run.sock "spawn a worker that ..."
+horon run --socket /tmp/run.sock "spawn a worker that ..."
    │
    ├─▶ agent runs in-process; no server started
    ├─▶ swarm tool dials /tmp/run.sock → not found
-   ├─▶ spawn `horon-agent serve --temporary-server --owner-pid <run pid>`
+   ├─▶ spawn `horon serve --temporary-server --owner-pid <run pid>`
    │      on /tmp/run.sock, using the *current* executable
    └─▶ retry the request; the server exits within ~10s of the run
 ```
 
 알아 둘 만한 성질은 다음과 같다.
 
-- **게으르다.** `swarm`을 쓰지 않는 실행은 비용을 치르지 않는다. `horon-agent run` 시작은 그대로다.
+- **게으르다.** `swarm`을 쓰지 않는 실행은 비용을 치르지 않는다. `horon run` 시작은 그대로다.
 - **소켓을 따른다.** 사용자 지정 `--socket`에만 그 실행이 소유하는 임시 서버가 붙는다. `--socket`이 없으면 실행은 평범한 공유 데몬을 준비한다. 공유 경로에 임시 서버를 두면 뒤에 오는 모든 클라이언트가 쓰는 소켓을 점유했다가 실행이 끝날 때 사라지기 때문이다.
 - **소유한다.** 임시 수명 감시자는 `--owner-pid`가 사라지면 서버를 종료하므로 일회성 실행이 데몬을 남기지 않는다. 소켓, 디버그 소켓, 데몬 잠금, 빌드 해시 곁파일, 메타데이터 파일이 모두 제거된다. 워커는 그것을 띄운 실행이 사는 동안만 산다. 워커를 띄우고 기다리지 않고 끝나는 `run`은 설계상 워커를 잃는다.
 - **현재 바이너리.** 소유 경로는 공유 서버 갱신 후보가 아니라 `std::env::current_exe()`를 띄우므로, 로컬에서 빌드한 바이너리를 `--socket`으로 분리해 확인하면 그 바이너리가 응답한다(AGENTS.md의 "Verifying a change at runtime" 참고).
@@ -136,7 +136,7 @@ PID이므로 여러 세션이 같은 PID를 공유할 수 있다. 디렉터리 �
 `--remote-working-dir`로 클라이언트 경로와 서버 경로를 분리할 수 있다.
 
 ```bash
-horon-agent --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /remote/checkout
+horon --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /remote/checkout
 ```
 
 `-C` 경로는 클라이언트에 있어야 한다. `--remote-working-dir`은 서버에 있는 절대 경로여야 한다.
@@ -174,7 +174,7 @@ horon-agent --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-d
 
 ## 재적재
 
-`/reload`와 `horon-agent server reload`는 서버를 새 바이너리로 exec하고 클라이언트가 다시
+`/reload`와 `horon server reload`는 서버를 새 바이너리로 exec하고 클라이언트가 다시
 연결한다. 재적재 지점은 `shared-server` 채널이며, 세션 구분 없이 같은 경로를 쓴다. 재적재
 도중 중단된 세션은 `reload_recovery` 안내로 이어서 진행한다.
 
@@ -182,11 +182,11 @@ horon-agent --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-d
 
 | 상황 | 동작 |
 |----------|----------|
-| 첫 `horon-agent` 실행 | 서버 데몬을 띄우고 연결한다 |
-| 이후 `horon-agent` 실행 | 이미 있는 서버에 연결한다 |
+| 첫 `horon` 실행 | 서버 데몬을 띄우고 연결한다 |
+| 이후 `horon` 실행 | 이미 있는 서버에 연결한다 |
 | 클라이언트 하나 죽이기 | 서버와 다른 클라이언트는 영향받지 않는다 |
 | `/reload` | 서버가 새 바이너리로 exec하고 클라이언트가 다시 연결한다 |
 | 모든 클라이언트 닫기 | 살아 있는 헤드리스 swarm 워커 없이 5분이 지나면 공유 서버가 유휴 기한으로 종료한다(디버그 제어가 켜져 있으면 예외) |
-| 세션 재개 | `horon-agent --resume fox`가 기존 세션에 다시 연결한다 |
-| `horon-agent run` | 에이전트가 프로세스 안에서 돌고 도구가 서버를 필요로 하지 않으면 서버를 쓰지 않는다 |
-| `horon-agent run` + `swarm` | 공유 데몬을 준비하거나, `--socket`이 사용자 지정이면 그 실행이 소유한 임시 서버를 띄운다 |
+| 세션 재개 | `horon --resume fox`가 기존 세션에 다시 연결한다 |
+| `horon run` | 에이전트가 프로세스 안에서 돌고 도구가 서버를 필요로 하지 않으면 서버를 쓰지 않는다 |
+| `horon run` + `swarm` | 공유 데몬을 준비하거나, `--socket`이 사용자 지정이면 그 실행이 소유한 임시 서버를 띄운다 |
