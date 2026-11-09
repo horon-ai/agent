@@ -123,6 +123,8 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `request_offsets_ms` | 실행 기록(JSON)마다 남는, 프로세스 시작부터 각 모델 요청이 도착할 때까지의 시간. 간격으로 기동, 도구 왕복, 종료 구간을 OS마다 나눠 본다 |
 | `thread_names` | 데몬 세션 측정의 각 세션 수마다, 턴 직후 데몬 프로세스의 스레드를 이름별로 센 값(Linux `/proc/<pid>/task/*/comm`). 세션 수에 따라 어느 스레드가 느는지 본다. 다른 OS는 `null` |
 | `live_heap_bytes` | 데몬 세션 측정에서 idle과 턴 직후에 잰, malloc 영역이 실제로 쥐고 있는 바이트(macOS `heap(1)`의 "All zones" 합계). RSS 기울기와 나란히 보면 세션당 증가가 살아 있는 데이터인지 할당자가 붙든 메모리인지 갈린다. 턴 직후 값은 RSS를 잰 뒤에 재고, 다른 OS는 `null` |
+| `post_turn_rss_anon_bytes`, `post_turn_rss_file_bytes` | 턴 직후 데몬 트리 RSS를 익명 메모리(힙·스택)와 파일 매핑(실행 파일·라이브러리)으로 나눈 값(Linux `/proc/<pid>/status`의 `RssAnon`, `RssFile`). 세션당 증가가 어느 쪽에서 오는지 본다. 다른 OS는 `null` |
+| `post_turn_allocator_live_bytes`, `post_purge_rss_bytes` | horon 데몬에서만 잰다. 앞은 할당자가 살아 있다고 보고하는 바이트(glibc `mallinfo2`), 뒤는 `allocator:purge`로 해제된 페이지를 돌려준 뒤의 트리 RSS다. RSS에서 반환 후 RSS를 빼면 할당자가 해제 뒤에도 쥐고 있던 몫이고, 반환 후 RSS에서 살아 있는 바이트를 빼면 둘 다 설명하지 못하는 몫(스택, 매핑, 단편화)이다. 반환이 프로세스를 바꾸므로 다른 표본을 모두 잰 뒤 마지막에 잰다. 반환 수단이 없는 OS(macOS, Windows의 시스템 할당자)는 `diagnostic_error`에 이유가 남는다 |
 | `log_tail`, `exit_local_time` | horon 실행 기록마다 남는, 이번 실행이 쓴 로그 줄(턴 완료 줄부터 최대 40줄)과 프로세스가 끝난 현지 시각. 마지막 모델 요청부터 종료까지의 시간이 어느 단계에 쓰이는지 OS마다 본다. 다른 도구는 빈 목록 |
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
