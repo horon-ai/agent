@@ -66,9 +66,9 @@ default_model = "my-model"
 
 | 하려는 일 | 명령 |
 | --- | --- |
-| 한 번 묻고 끝내기 | `horon-agent --no-update run "..."` |
-| 데몬으로 상주 | `horon-agent serve` |
-| SDK 소켓 열기 | `horon-agent api-bridge` |
+| 한 번 묻고 끝내기 | `horon --no-update run "..."` |
+| 데몬으로 상주 | `horon serve` |
+| SDK 소켓 열기 | `horon api-bridge` |
 
 TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직접 띄운다. 미리 `serve`를 실행해 둘 필요가 없다 (`sdk/typescript/README.md`).
 
@@ -110,7 +110,7 @@ docker run --rm ghcr.io/horon-ai/agent:latest --version
 
 ## 런처 별칭 (`horon`, `hrn`)
 
-`horon-agent` 런처와 같은 디렉터리에 `horon`과 `hrn`도 만든다. 이 별칭은 v0.1.1 이후에 들어가서 다음 릴리스부터 배포된다. 셋 다 같은 채널 실행 파일을 가리키며, 유닉스에서는 심볼릭 링크, Windows에서는 복사본이다 (`crates/build-support/src/paths.rs` `update_launcher_symlink`). 업데이트 때마다 런처와 함께 바뀐다. Termux에서는 `install.sh`가 별칭도 `LD_PRELOAD`를 지우는 래퍼로 연결한다.
+`horon-agent` 런처와 같은 디렉터리에 `horon`과 `hrn`도 만든다. 이 별칭은 v0.1.3부터 설치된다. 문서와 예시는 `horon`을 쓰고, `hrn`은 더 짧은 형태다. 셋 다 같은 채널 실행 파일을 가리키며, 유닉스에서는 심볼릭 링크, Windows에서는 복사본이다 (`crates/build-support/src/paths.rs` `update_launcher_symlink`). 업데이트 때마다 런처와 함께 바뀐다. Termux에서는 `install.sh`가 별칭도 `LD_PRELOAD`를 지우는 래퍼로 연결한다.
 
 - 같은 이름의 다른 프로그램은 덮어쓰지 않는다. 유닉스는 `horon-agent`를 가리키는 심볼릭 링크만, Windows는 이전 런처와 바이트가 같은 복사본만 우리 것으로 보고 교체한다. 그 밖의 파일이 있으면 별칭 없이 설치가 끝난다.
 - `uninstall.sh`와 `uninstall.ps1`도 같은 기준으로 별칭만 지운다.

@@ -202,6 +202,27 @@ and do not merge or report success before then.
   current); `release.yml`, `release-tag.yml` and the publish workflows are not
   part of this gating. `actionlint` must report nothing (`Workflow Lint`).
 
+## Release and branch sync: dev into main, then main back into dev
+
+`dev` is where work lands; `main` is what ships. Merging into `main` publishes a
+release, so do it only when the owner asks. The two branches differ by merge
+commits and automatic `docs(perf)` commits, which is why a release is followed by
+a sync back.
+
+1. **Release.** Check the latest `dev` CI run with `scripts/ci/run_warnings.py`
+   (zero warnings, all jobs green). Open a PR with base `main`, head `dev`, titled
+   `Release: dev into main (vX.Y.Z)`, `Refs` the issues it carries, and list what
+   it ships. Merge it with a merge commit, never squash. After the CI push run on
+   `main` succeeds, `release-tag.yml` tags the merge commit, runs `release.yml`
+   and pushes `ghcr.io/horon-ai/agent`; watch `gh run list --branch main` until
+   the release run ends.
+2. **Sync back.** When the release has finished, open a PR with base `dev`, head
+   `main`, titled `Sync: main into dev`, and merge it with a merge commit so `dev`
+   holds every commit `main` has. It needs a linked issue like any PR.
+3. **Confirm.** `git rev-list --left-right --count origin/dev...origin/main` shows
+   `0` commits missing on each side except the sync merge itself, and
+   `git diff origin/dev origin/main` is empty.
+
 ## Docs
 
 `docs/` is grouped by topic into `architecture/`, `protocol/`, `runtime/`,

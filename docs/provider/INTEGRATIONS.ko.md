@@ -54,11 +54,11 @@ HoronAgent는 지원되는 외부 MCP 설정 소스도 읽는다. 같은
 ### 명령
 
 ```sh
-horon-agent mcp list
-horon-agent mcp test remote
-horon-agent mcp login remote
-horon-agent mcp login remote --no-browser
-horon-agent mcp logout remote
+horon mcp list
+horon mcp test remote
+horon mcp login remote
+horon mcp login remote --no-browser
+horon mcp logout remote
 ```
 
 `test`는 설정된 서버에 연결해 프로토콜을 초기화하고 도구를 나열한 뒤
@@ -100,7 +100,7 @@ MCP 관리 도구는 `url`, `transport`, `headers`로 즉석 원격 연결을 �
 대기자를 제거하고 소유한 응답 스트림을 멈춘다. 일반 도구 호출이나
 시작 경로가 대화형 OAuth 로그인을 기다리는 일은 없다.
 
-별도의 기존 headless 동작이 있다. `horon-agent run`은 첫 턴 전에
+별도의 기존 headless 동작이 있다. `horon run`은 첫 턴 전에
 유효한 캐시 스키마가 없는 활성 서버를 최대 5초 기다린다.
 웜 캐시면 이 대기를 건너뛴다. `HORON_AGENT_RUN_MCP_WAIT_MS=0`으로 끄거나 더
 작은 밀리초 예산을 정한다. 비활성 서버는 예산을 쓰지 않고,

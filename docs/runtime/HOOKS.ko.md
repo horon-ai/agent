@@ -87,7 +87,7 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
 ### `turn_end`
 
 에이전트 턴이 끝날 때 발생한다(스트리밍 턴 경로는 데스크톱, swarm 워커, headless
-세션을 포함하며, 일회성 `horon-agent run`도 여기에 해당한다).
+세션을 포함하며, 일회성 `horon run`도 여기에 해당한다).
 
 추가 필드는 `HORON_AGENT_HOOK_STATUS`(`ok`/`error`), `HORON_AGENT_HOOK_DURATION_MS`,
 `HORON_AGENT_HOOK_MODEL`, `HORON_AGENT_HOOK_LAST_ASSISTANT_TEXT`(앞 4000자),

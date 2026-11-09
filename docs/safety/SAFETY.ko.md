@@ -40,7 +40,7 @@ Review Queue (queue.json)
 Transcript Logger -> Session Reporter
 ```
 
-검토 화면은 이 빌드에 없다. TUI 검토 패널은 TUI 크레이트와 함께 삭제됐고(`AGENTS.md`의 삭제 목록), `horon-agent safety review` 같은 CLI 하위 명령도 없다. 사용자는 알림에 답하거나 `SafetySystem::record_decision`을 부르는 경로로 결정을 낸다(`crates/base/src/safety.rs:597`).
+검토 화면은 이 빌드에 없다. TUI 검토 패널은 TUI 크레이트와 함께 삭제됐고(`AGENTS.md`의 삭제 목록), `horon safety review` 같은 CLI 하위 명령도 없다. 사용자는 알림에 답하거나 `SafetySystem::record_decision`을 부르는 경로로 결정을 낸다(`crates/base/src/safety.rs:597`).
 
 ---
 
@@ -307,7 +307,7 @@ Next cycle: ~35 minutes
 
 `SafetySystem::record_decision`은 프로세스 안에서 결정을 기록하고 대기 중인 호출자를 깨운다(`crates/base/src/safety.rs:597`).
 
-이 빌드에는 TUI 검토 패널도, `horon-agent safety review` 계열 CLI도 없다.
+이 빌드에는 TUI 검토 패널도, `horon safety review` 계열 CLI도 없다.
 
 #### 결정 이력
 
@@ -463,7 +463,7 @@ pub enum Urgency {
 
 #### 3단계: 검토 인터페이스
 - [ ] 데스크톱 검토 패널
-- [ ] CLI 명령(`horon-agent safety review/list/approve/deny/log`)
+- [ ] CLI 명령(`horon safety review/list/approve/deny/log`)
 
 #### 4단계: 설정
 - [x] `[safety]` 설정 구역(`crates/base/src/config/default_file.rs:817`)
