@@ -564,6 +564,7 @@ impl McpClient {
         Ok(client)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_handle(
         name: &str,
         config: &McpServerConfig,

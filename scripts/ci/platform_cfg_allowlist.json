@@ -197,7 +197,7 @@
       "reason": "tests for the Linux-only live-Claude takeover: they fabricate /proc records and pidfd hand-offs."
     },
     "crates/base/src/mcp/client.rs": {
-      "count": 1,
+      "count": 2,
       "reason": "the whole test module drives a stdio MCP server through a POSIX shell script."
     },
     "crates/base/src/mcp/manager.rs": {
@@ -367,6 +367,14 @@
     "src/cli/proctitle.rs": {
       "count": 1,
       "reason": "one match arm labelling the Unix-only `api-bridge` command."
+    },
+    "crates/app-core/src/tool/mcp.rs": {
+      "count": 1,
+      "reason": "one #[cfg(all(test, unix))]#[path = \"mcp_resources_tests.rs\"] mod resources_tests; line (unix-gated resource tests)"
+    },
+    "crates/base/src/mcp/manager_tests.rs": {
+      "count": 1,
+      "reason": "one #[cfg(unix)] line (unix-gated manager tests)"
     }
   },
   "version": 1
