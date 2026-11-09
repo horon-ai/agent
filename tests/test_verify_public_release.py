@@ -67,6 +67,16 @@ class PublicReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verifier.verify_metadata(data, TAG, allow_draft=True)
 
+    def test_draft_is_found_in_the_paginated_release_list(self):
+        # `releases/tags/<tag>` returns 404 for a draft, so the staged check
+        # reads the release list; the tag must name exactly one release.
+        draft = dict(metadata(), draft=True)
+        other = dict(metadata(), tag_name="v0.97.0")
+        self.assertIs(verifier.select_release([[other], [draft]], TAG), draft)
+        for pages in ([[other]], [[draft], [draft]], []):
+            with self.subTest(pages=len(pages)), self.assertRaises(ValueError):
+                verifier.select_release(pages, TAG)
+
     def test_workflow_verifies_public_assets_then_smoke_tests_installer(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         publish = workflow.index("      - name: Publish completed release")
