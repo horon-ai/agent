@@ -12,7 +12,7 @@ HoronAgent treats Windows as a fully supported platform. The Windows implementat
 | Windows 11 ARM64 | Release builds and automated install checks run for it |
 | PowerShell install script | Verified in Windows CI |
 | Native IPC and process lifecycle | Covered by Windows-targeted tests and end-to-end tests |
-| `horon-agent update` | Supported, with SHA-256 verification |
+| `horon update` | Supported, with SHA-256 verification |
 | `horon-agent install-release` | The path the install script hands release asset verification and channel activation to |
 | Distribution assets | `.exe` and `.tar.gz` assets for x64 and ARM64 |
 | Authenticode signing | The pipeline is ready; the Azure setup below has to be done once |
@@ -65,7 +65,7 @@ A source build needs Git, Rust and Visual Studio 2022 Build Tools with the **Des
 ### Verifying an installation
 
 ```powershell
-horon-agent --version
+horon --version
 Get-Command horon-agent
 Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
 ```
@@ -155,7 +155,7 @@ Session records go to the same `crates/session-store` event log as on Unix. Wind
 Include the following in a GitHub issue:
 
 - Windows edition, version and architecture
-- The HoronAgent version from `horon-agent --version`
+- The HoronAgent version from `horon --version`
 - How it was installed
 - The terminal and the PowerShell version (`$PSVersionTable.PSVersion`)
 - The exact Defender or SmartScreen message

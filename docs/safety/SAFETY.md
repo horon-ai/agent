@@ -40,7 +40,7 @@ Review Queue (queue.json)
 Transcript Logger -> Session Reporter
 ```
 
-There is no review screen in this build. The TUI review panel was deleted with the TUI crate (the deletion list in `AGENTS.md`), and there is no CLI subcommand such as `horon-agent safety review`. The user decides by answering a notification or by calling `SafetySystem::record_decision` (`crates/base/src/safety.rs:597`).
+There is no review screen in this build. The TUI review panel was deleted with the TUI crate (the deletion list in `AGENTS.md`), and there is no CLI subcommand such as `horon safety review`. The user decides by answering a notification or by calling `SafetySystem::record_decision` (`crates/base/src/safety.rs:597`).
 
 ---
 
@@ -307,7 +307,7 @@ When an external tool records a decision, it uses `record_permission_via_file` (
 
 `SafetySystem::record_decision` records a decision inside the process and wakes a waiting caller (`crates/base/src/safety.rs:597`).
 
-This build has no TUI review panel and no `horon-agent safety review` CLI.
+This build has no TUI review panel and no `horon safety review` CLI.
 
 #### Decision history
 
@@ -463,7 +463,7 @@ This section is the plan from design time. It splits what is in the tree now fro
 
 #### Stage 3: review interface
 - [ ] Desktop review panel
-- [ ] CLI commands (`horon-agent safety review/list/approve/deny/log`)
+- [ ] CLI commands (`horon safety review/list/approve/deny/log`)
 
 #### Stage 4: configuration
 - [x] `[safety]` config section (`crates/base/src/config/default_file.rs:817`)

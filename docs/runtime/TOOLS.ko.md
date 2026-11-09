@@ -522,7 +522,7 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 ### 계측
 
-`horon-agent debug 'server:memory'`의 `process.stage_counters`에 `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, `tool_result_aged_bytes`가 나옵니다. 구조 게이트(`scripts/perf/check_structural.py`)의 `context` 섹션은 1 MiB 출력이 48 KiB 안에 들어오는지, 반복 읽기가 512바이트 미만인지, 압박 구간을 두 번 지나도 축약 묶음이 정확히 한 번인지 확인합니다.
+`horon debug 'server:memory'`의 `process.stage_counters`에 `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, `tool_result_aged_bytes`가 나옵니다. 구조 게이트(`scripts/perf/check_structural.py`)의 `context` 섹션은 1 MiB 출력이 48 KiB 안에 들어오는지, 반복 읽기가 512바이트 미만인지, 압박 구간을 두 번 지나도 축약 묶음이 정확히 한 번인지 확인합니다.
 
 ## 보조 완료와 비밀값 왕복
 

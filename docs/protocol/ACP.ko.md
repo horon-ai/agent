@@ -2,12 +2,12 @@
 
 언어: [English](ACP.md) | **한국어**
 
-horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent Client Protocol(ACP) v1과 v2를 한 엔드포인트에서 함께 지원한다. `horon-agent acp`를 실행하면 표준 입출력으로 JSON-RPC 메시지를 주고받는 ACP 에이전트가 된다. v1은 안정판이고 메시지는 공식 `schema-v1.26.0`에 맞춘다. v2는 `schema-v2.0.0-alpha.13`의 안정(stable) 부분에 맞춘다. 이 문서의 v1 절은 v1 연결의 동작을 설명하고, v2 연결의 차이는 [ACP v2](#acp-v2) 절에 모았다.
+horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent Client Protocol(ACP) v1과 v2를 한 엔드포인트에서 함께 지원한다. `horon acp`를 실행하면 표준 입출력으로 JSON-RPC 메시지를 주고받는 ACP 에이전트가 된다. v1은 안정판이고 메시지는 공식 `schema-v1.26.0`에 맞춘다. v2는 `schema-v2.0.0-alpha.13`의 안정(stable) 부분에 맞춘다. 이 문서의 v1 절은 v1 연결의 동작을 설명하고, v2 연결의 차이는 [ACP v2](#acp-v2) 절에 모았다.
 
 ## 실행
 
 ```bash
-horon-agent acp            # 표준 입출력으로 ACP v1을 처리한다
+horon acp            # 표준 입출력으로 ACP v1을 처리한다
 ```
 
 `acp`는 stdout에 ACP 메시지(줄 단위 UTF-8 JSON)만 쓴다. 로그는 stderr로 나가고, stdin이 닫히면 바로 종료한다. 처리 중이던 요청은 응답을 받지 못한다.
@@ -18,7 +18,7 @@ horon-agent acp            # 표준 입출력으로 ACP v1을 처리한다
 
 ### 에디터 설정
 
-에디터마다 설정 위치와 키 이름이 다르다. 공통점은 명령어 `horon-agent`와 인자 `["acp"]`를 외부 에이전트로 등록한다는 것이다. 아래는 Zed와 JetBrains 예시다. 키 이름은 각 에디터 문서에서 확인한다.
+에디터마다 설정 위치와 키 이름이 다르다. 공통점은 명령어 `horon`(또는 `horon-agent`)과 인자 `["acp"]`를 외부 에이전트로 등록한다는 것이다. 아래는 Zed와 JetBrains 예시다. 키 이름은 각 에디터 문서에서 확인한다.
 
 Zed(`settings.json`):
 
@@ -57,7 +57,7 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 |---|---|---|
 | `horon-agent-credentials` | 항상 | `[providers.<name>]` 프로파일의 자격 증명으로 모델을 쓸 수 있는지 확인한다 |
 
-프로파일은 `horon-agent provider add`로 등록한다. 클라이언트가 `auth.terminal`을 알려도 방식은 하나뿐이다. 이 빌드에는 에디터가 터미널에서 실행할 로그인 명령이 없다.
+프로파일은 `horon provider add`로 등록한다. 클라이언트가 `auth.terminal`을 알려도 방식은 하나뿐이다. 이 빌드에는 에디터가 터미널에서 실행할 로그인 명령이 없다.
 
 `authenticate`는 데몬이 쓸 수 있는 모델을 보고하면 `{}`로 성공한다. 모델이 없으면 `-32000`을 돌려준다. `session/new`도 쓸 수 있는 모델이 없으면 `-32000`이다. 모르는 `methodId`는 `-32602`다.
 
@@ -151,7 +151,7 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 
 슬래시 명령은 `/model`, `/models`, `/effort` 세 가지다. 문장 맨 앞에 공백을 하나 두면 명령으로 해석하지 않고 모델에 그대로 보낸다.
 
-계획(`plan`)은 `todo` 도구가 있어야 나온다. 기본 설정에서는 `horon-agent acp`가 `acp` 프로필로 데몬을 띄운 경우에만 이 도구가 있다. 데스크톱이나 `serve`가 먼저 띄운 데몬은 `core` 프로필이라 계획 업데이트가 나오지 않는다.
+계획(`plan`)은 `todo` 도구가 있어야 나온다. 기본 설정에서는 `horon acp`가 `acp` 프로필로 데몬을 띄운 경우에만 이 도구가 있다. 데스크톱이나 `serve`가 먼저 띄운 데몬은 `core` 프로필이라 계획 업데이트가 나오지 않는다.
 
 ### acp 도구 프로필
 
@@ -216,7 +216,7 @@ ACP 전용 이벤트(클라이언트 요청, 권한 질문, 계획, diff)는 ACP
 
 ## ACP v2
 
-v2는 `horon-agent acp` 하나로 v1과 같이 제공한다. 별도 명령이나 포트는 없다. 연결마다 `initialize`의 `protocolVersion`으로 v1과 v2 중 하나를 고르고, 한 연결 안에서는 고른 쪽의 메시지만 오간다. v1 클라이언트가 받는 응답은 v2를 넣기 전과 같다.
+v2는 `horon acp` 하나로 v1과 같이 제공한다. 별도 명령이나 포트는 없다. 연결마다 `initialize`의 `protocolVersion`으로 v1과 v2 중 하나를 고르고, 한 연결 안에서는 고른 쪽의 메시지만 오간다. v1 클라이언트가 받는 응답은 v2를 넣기 전과 같다.
 
 ### 버전 협상
 
@@ -239,7 +239,7 @@ v2 협상이 문제를 일으키면 v1만 쓰게 되돌릴 수 있다.
 protocol_v2 = false
 ```
 
-환경 변수 `HORON_AGENT_ACP_PROTOCOL_V2=0`도 같다. 켜면 `1`이나 `true`를 쓴다. 꺼 두면 모든 요청에 v1처럼 답한다. 0이나 65535를 보내도 `protocolVersion: 1`이 돌아온다. 설정을 바꾼 뒤에는 `horon-agent acp`를 새로 띄워야 적용된다.
+환경 변수 `HORON_AGENT_ACP_PROTOCOL_V2=0`도 같다. 켜면 `1`이나 `true`를 쓴다. 꺼 두면 모든 요청에 v1처럼 답한다. 0이나 65535를 보내도 `protocolVersion: 1`이 돌아온다. 설정을 바꾼 뒤에는 `horon acp`를 새로 띄워야 적용된다.
 
 ### 광고하는 기능 (v2)
 

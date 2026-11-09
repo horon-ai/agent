@@ -91,7 +91,7 @@ values. Those names in the stale config comment are not a runtime guarantee.
 ### `turn_end`
 
 Fires when an agent turn ends (the streaming turn path covers desktop, swarm
-worker, and headless sessions, and a one-shot `horon-agent run` counts here too).
+worker, and headless sessions, and a one-shot `horon run` counts here too).
 
 Extra fields are `HORON_AGENT_HOOK_STATUS` (`ok`/`error`),
 `HORON_AGENT_HOOK_DURATION_MS`, `HORON_AGENT_HOOK_MODEL`,

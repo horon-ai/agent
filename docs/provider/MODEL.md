@@ -104,14 +104,14 @@ printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
 Check the new profile right away like this.
 
 ```bash
-horon-agent --provider-profile my-gw --model my-model run "hello"
-horon-agent --provider-profile my-gw auth-test --prompt "Reply exactly OK"
+horon --provider-profile my-gw --model my-model run "hello"
+horon --provider-profile my-gw auth-test --prompt "Reply exactly OK"
 ```
 
 ## Checking readiness
 
 ```bash
-horon-agent provider current --json
+horon provider current --json
 ```
 
 The output fields are `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, and `unavailable_reason` when it is not ready (`src/cli/commands/report_info.rs`). `ready` being `true` means the current configuration can call `/chat/completions`.
@@ -205,6 +205,6 @@ back within one tracking epoch.
 
 Desktop hot reload alone does not update the daemon. First build and verify the runtime on an isolated socket. After
 publishing the verified source build, run
-`horon-agent server promote <installed-version>` and `horon-agent server reload --json` during a safe idle period.
+`horon server promote <installed-version>` and `horon server reload --json` during a safe idle period.
 Do not use `server stop --force` or send a kill signal. A supported reload checkpoints sessions but still signals
 in-progress model generation. If a session is processing, activation is deferred.

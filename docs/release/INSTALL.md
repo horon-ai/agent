@@ -67,9 +67,9 @@ default_model = "my-model"
 
 | Task | Command |
 | --- | --- |
-| Ask once and exit | `horon-agent --no-update run "..."` |
-| Stay resident as a daemon | `horon-agent serve` |
-| Open the SDK socket | `horon-agent api-bridge` |
+| Ask once and exit | `horon --no-update run "..."` |
+| Stay resident as a daemon | `horon serve` |
+| Open the SDK socket | `horon api-bridge` |
 
 The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. There is no need to run `serve` first (`sdk/typescript/README.md`).
 
@@ -111,7 +111,7 @@ docker run --rm ghcr.io/horon-ai/agent:latest --version
 
 ## Launcher aliases (`horon`, `hrn`)
 
-`horon` and `hrn` are created in the same directory as the `horon-agent` launcher. The aliases landed after v0.1.1 and ship with the next release. All three point at the same channel executable, as symbolic links on Unix and as copies on Windows (`crates/build-support/src/paths.rs` `update_launcher_symlink`). They change with the launcher on every update. On Termux, `install.sh` wires the aliases as wrappers that clear `LD_PRELOAD` as well.
+`horon` and `hrn` are created in the same directory as the `horon-agent` launcher. The aliases are installed from v0.1.3 on; docs and examples use `horon`, and `hrn` is the shorter form. All three point at the same channel executable, as symbolic links on Unix and as copies on Windows (`crates/build-support/src/paths.rs` `update_launcher_symlink`). They change with the launcher on every update. On Termux, `install.sh` wires the aliases as wrappers that clear `LD_PRELOAD` as well.
 
 - A different program with the same name is never overwritten. On Unix only a symbolic link pointing at `horon-agent` counts as ours, on Windows only a copy whose bytes match the previous launcher; when another file is present the install finishes without aliases.
 - `uninstall.sh` and `uninstall.ps1` remove only aliases by the same rule.
