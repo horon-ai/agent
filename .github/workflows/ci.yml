@@ -35,6 +35,10 @@ env:
   # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
+  # Registry and toolchain downloads are the usual source of a one-off red run.
+  # Cargo and rustup retry them on their own when asked to.
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
   # A rustc or build-script warning in a workspace crate fails the build. CI must
   # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
   # merging. Warnings in registry dependencies are never reported by cargo.
@@ -60,16 +64,44 @@ env:
 # to `ubuntu-24.04` otherwise. The GitHub-hosted-only jobs use the negated
 # condition so a fork PR still gets them.
 jobs:
+  # Decides which gates a pull request needs. Every uncertainty (a push, a
+  # dispatch, an unreadable diff) resolves to the full run: the release gate
+  # accepts only a fully successful push run (scripts/release/check_ci.py).
+  changes:
+    name: Changed Paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      docs: ${{ steps.classify.outputs.docs }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The three-dot diff needs the merge base, which a shallow clone lacks.
+          fetch-depth: 0
+
+      - name: Classifier contract test
+        run: python3 -m unittest -v scripts/ci/test_classify_changes.py
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"
   quality:
     name: Quality Guardrails
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
       # shared script is not on disk until the workspace exists. It renames the
       # unused toolchains and returns before the deletion, which continues in
       # the background while the toolchain installs (#21).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
 
@@ -82,12 +114,14 @@ jobs:
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           # Keyed by runner OS: with CI_SELF_HOSTED this job runs on macOS, and a
           # macOS cache restored on Linux (same branch) carries unusable artifacts.
           key: quality-${{ runner.os }}
@@ -118,7 +152,7 @@ jobs:
       # continue-on-error below.
       - name: Setup sccache
         if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           disable_annotations: true
 
@@ -233,7 +267,9 @@ jobs:
         # run costs minutes and hundreds of MB on a job that already has the
         # largest build. install-action downloads the release binary instead.
         if: ${{ !cancelled() }}
-        uses: taiki-e/install-action@cargo-machete
+        uses: taiki-e/install-action@c5695724643db014337e10f479712023ee658d78 # cargo-machete
+        with:
+          tool: cargo-machete
 
       - name: Enforce no unused dependencies
         if: ${{ !cancelled() }}
@@ -252,10 +288,12 @@ jobs:
 
   release-automation:
     name: Release Automation
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Test justrust release installation and routing
         run: |
@@ -271,6 +309,8 @@ jobs:
 
   build:
     name: Build & Test (${{ matrix.os }})
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || matrix.runner }}
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
@@ -279,7 +319,7 @@ jobs:
     # concurrency cancellation, so the old cap made healthy commits look red.
     # A hosted 4 vCPU runner with no cache at all needs more still: this job
     # builds release, test, and e2e artifacts from scratch in one target dir.
-    timeout-minutes: 120
+    timeout-minutes: 60
     # Some dependencies (e.g. convert_case 0.10.0 via derive_more/crossterm, and
     # proc-macro2/quote) accidentally ship a `rust-toolchain.toml` *inside their
     # published crate*. When cargo builds such a crate its CWD is that crate dir,
@@ -308,7 +348,7 @@ jobs:
       # The Linux cleanup runs after checkout because it is the shared script in
       # the repository; it renames the unused toolchains and deletes them in the
       # background (#21).
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
 
@@ -331,8 +371,9 @@ jobs:
             "$HOME/Library/Caches/Homebrew"
           df -h /
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
           # Pre-install rust-src in the (serial) toolchain step. Some build-script
           # / proc-macro units trigger an on-demand `rustup component add rust-src`,
@@ -342,8 +383,9 @@ jobs:
           # removes the race. (Was failing every Build & Test job.)
           components: rust-src${{ runner.os == 'macOS' && ', llvm-tools' || '' }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
@@ -365,7 +407,7 @@ jobs:
       # install or start a cache on it.
       - name: Setup sccache
         if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           disable_annotations: true
         continue-on-error: true
@@ -393,11 +435,19 @@ jobs:
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -qq
           # clang is the linker driver named in .cargo/config.toml below; the
           # image ships it, but not as a documented contract, so install it
           # explicitly rather than depending on an image update's default.
-          sudo apt-get install -y -qq clang mold
+          # A mirror hiccup is the usual failure here, so retry before failing.
+          installed=0
+          for attempt in 1 2 3; do
+            if sudo apt-get update -qq && sudo apt-get install -y -qq clang mold; then
+              installed=1
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+          [ "$installed" = 1 ]
 
       - name: Build
         shell: bash
@@ -529,8 +579,8 @@ jobs:
           model_dir="$HOME/.horon/models/all-MiniLM-L6-v2"
           mkdir -p "$model_dir"
           base="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"
-          curl -sSfL --retry 3 -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
-          curl -sSfL --retry 3 -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
+          curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/model.onnx" "$base/onnx/model.onnx"
+          curl -sSfL --retry 5 --retry-all-errors -o "$model_dir/tokenizer.json" "$base/tokenizer.json"
           # Fail loudly if the fetch produced something unusable, so this cannot
           # degrade back into a silent skip.
           test -s "$model_dir/model.onnx"
@@ -773,7 +823,9 @@ jobs:
         if: runner.os == 'Linux'
         # Pre-built binary: building cargo-audit from source costs 5-10 minutes
         # on a job that already has a full target dir.
-        uses: taiki-e/install-action@cargo-audit
+        uses: taiki-e/install-action@f84dff0ad3f25ff0e5dc531e626734a4e7d11ac7 # cargo-audit
+        with:
+          tool: cargo-audit
 
       - name: Security preflight (Linux)
         if: runner.os == 'Linux'
@@ -790,9 +842,10 @@ jobs:
 
   windows-build-test:
     name: Build & Test (windows-latest)
+    needs: changes
     runs-on: windows-latest
-    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
-    timeout-minutes: 150
+    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 75
     steps:
       - name: Report free disk space
         # D: carries the workspace and target dir on the Windows image. Logged,
@@ -801,7 +854,7 @@ jobs:
         shell: pwsh
         run: Get-PSDrive D | Format-Table -AutoSize
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
 
@@ -809,8 +862,9 @@ jobs:
         with:
           arch: amd64
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-msvc
 
       # Job-wide, before the first cargo call: a wrapper applied to one step
@@ -827,7 +881,7 @@ jobs:
       # the step out of any other environment.
       - name: Setup sccache
         if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           disable_annotations: true
         continue-on-error: true
@@ -851,8 +905,9 @@ jobs:
             Write-Host 'sccache failed to start; this job builds without a wrapper'
           }
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           key: windows-latest
           cache-all-crates: "true"
 
@@ -963,7 +1018,7 @@ jobs:
 
       - name: Upload Windows e2e diagnostics
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-e2e-diagnostics
           path: ${{ runner.temp }}/horon-agent-windows-e2e-logs
@@ -992,10 +1047,12 @@ jobs:
 
   fmt:
     name: Format
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install the pinned toolchain
         # `cargo fmt` runs under the toolchain rust-toolchain.toml pins. Installing
@@ -1014,19 +1071,21 @@ jobs:
 
   typescript-sdk:
     name: TypeScript SDK
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # `scripts/sdk/test_package.sh` packs and installs the tarball with npm,
       # so the npm major decides what a consumer receives. Pin Node instead of
       # inheriting whatever the image ships that week.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.3
 
@@ -1051,6 +1110,8 @@ jobs:
 
   python-sdk:
     name: Python SDK (${{ matrix.python }})
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
@@ -1062,9 +1123,9 @@ jobs:
       run:
         working-directory: sdk/python
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: ${{ matrix.python }}
 
@@ -1089,11 +1150,12 @@ jobs:
 
   setup-friction:
     name: Setup Friction Eval (Linux installer)
+    needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install probe shells
         run: sudo apt-get update && sudo apt-get install -y fish zsh
@@ -1106,11 +1168,12 @@ jobs:
 
   powershell-syntax:
     name: PowerShell Syntax
+    needs: changes
     runs-on: windows-latest
-    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check PowerShell script syntax (Windows PowerShell 5.1)
         shell: powershell
@@ -1124,9 +1187,10 @@ jobs:
 
   windows-arm64-check:
     name: Windows ARM64 Release Configuration
+    needs: changes
     runs-on: windows-latest
-    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
-    timeout-minutes: 50
+    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 30
     env:
       # `dtolnay/rust-toolchain` installs components into the `stable` toolchain
       # by name, while anything run inside the checkout resolves the repository's
@@ -1142,7 +1206,7 @@ jobs:
       JUSTRUST_NO_TELEMETRY: "1"
       JUSTRUST_DISABLE: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
 
@@ -1150,12 +1214,14 @@ jobs:
         with:
           arch: amd64_arm64
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: aarch64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           key: windows-arm64-release-check
           cache-all-crates: "true"
 
@@ -1176,15 +1242,16 @@ jobs:
 
   windows-cross-check:
     name: Windows Cross-Target Check (Linux)
+    needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
-    timeout-minutes: 50
+    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    timeout-minutes: 30
     env:
       # The two Windows targets are installed into `stable`; the same pin makes
       # `cargo xwin` resolve that toolchain instead of rust-toolchain.toml's.
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
 
@@ -1198,12 +1265,14 @@ jobs:
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
+          save-if: ${{ github.event_name != 'pull_request' }}
           key: windows-cross-check
           cache-all-crates: "true"
 
@@ -1215,7 +1284,9 @@ jobs:
       - name: Install cargo-xwin
         # Pre-built release binary; building it from the git source cost several
         # minutes on every run.
-        uses: taiki-e/install-action@cargo-xwin
+        uses: taiki-e/install-action@f6388b110b375c1334ce32dc42cd2f78cb5b016d # cargo-xwin
+        with:
+          tool: cargo-xwin
 
       - name: Resolve cargo-xwin version and cache directory
         # XWIN_CACHE_DIR is the environment form of `--xwin-cache-dir`, "xwin
@@ -1235,7 +1306,7 @@ jobs:
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
           echo "XWIN_CACHE_DIR=$dir" >> "$GITHUB_ENV"
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         # The CRT and SDK archives are the 14.5 minutes of run 42373575639. The
         # key carries the cargo-xwin version and both cross targets because the
         # cached files are version-pinned and target-pinned.
@@ -1253,3 +1324,124 @@ jobs:
           cargo xwin check --locked --target x86_64-pc-windows-msvc
           # Shows the CRT and SDK landed in the cached directory.
           du -sh "$XWIN_CACHE_DIR"
+
+  # Documentation-only pull requests run this instead of the code gates.
+  docs:
+    name: Documentation Checks
+    needs: changes
+    if: ${{ needs.changes.outputs.docs == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check relative links and UTF-8
+        run: python3 scripts/ci/check_docs_links.py
+
+      - name: Check English/Korean documentation pairs
+        # Present once the bilingual documentation lands; until then there is no
+        # pair set to check.
+        if: ${{ !cancelled() && hashFiles('scripts/ci/check_docs_pairs.py') != '' }}
+        run: python3 scripts/ci/check_docs_pairs.py
+
+      - name: Documentation benchmark block contract
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest -v scripts/perf/test_bench_docs.py
+
+  # `docs/` and README.md are compiled into the binary (crates/app-core/build.rs)
+  # and the `horon_agent_docs` tests read them, so a documentation-only change
+  # still proves the corpus builds and those tests pass, without the release
+  # build, the cross-platform matrix or the structural performance run.
+  docs-corpus:
+    name: Documentation Corpus Test
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: ubuntu-latest-stablepin
+          save-if: false
+
+      - name: Run the embedded documentation tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p horon-agent-app-core --lib horon_agent_docs 2>&1 | tee "$RUNNER_TEMP/docs-corpus.log"
+          # A filter that matches nothing reports a green "0 passed".
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/docs-corpus.log"
+
+  workflow-lint:
+    name: Workflow Lint
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Run actionlint
+        # Pinned to a release; actionlint also runs the preinstalled shellcheck
+        # over every `run:` script. Zero findings is the standing requirement.
+        run: |
+          set -euo pipefail
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  # The one check a branch rule needs. Gates that a documentation-only change
+  # skips by design stay "skipped" and would leave a required check pending;
+  # this job always finishes and fails only when a gate failed, was cancelled,
+  # or the path classification itself broke.
+  ci-required:
+    name: CI Required
+    if: ${{ always() }}
+    needs:
+      - changes
+      - quality
+      - release-automation
+      - build
+      - windows-build-test
+      - fmt
+      - typescript-sdk
+      - python-sdk
+      - setup-friction
+      - powershell-syntax
+      - windows-arm64-check
+      - windows-cross-check
+      - docs
+      - docs-corpus
+      - workflow-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every gate that ran to have passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' | sort
+          if [ "$(echo "$NEEDS" | jq -r '.changes.result')" != success ]; then
+            echo "::error::path classification did not succeed"
+            exit 1
+          fi
+          failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
+          if [ -n "$failed" ]; then
+            echo "::error::failed or cancelled: $failed"
+            exit 1
+          fi

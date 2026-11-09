@@ -11,6 +11,8 @@ env:
   # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
   # The gate reads stage counters, so recording must not be turned off: with it
   # off every counter reads 0, which the gate treats as "not measured", not as
   # "measured zero".
@@ -42,14 +44,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Same classification as ci.yml: a documentation-only pull request has no
+  # counter to measure. Pushes and dispatches always run the gate.
+  changes:
+    name: Changed Paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"
+
   structural-perf:
     name: Structural performance gate
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     # CI_SELF_HOSTED (repository variable) moves the gate to the self-hosted
     # macOS runner, as in ci.yml. A pull request from a fork runs the workflow
     # file it carries, so it must never reach that persistent machine; fork PRs
     # fall back to the GitHub-hosted runner.
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
-    timeout-minutes: 75
+    timeout-minutes: 40
     env:
       # Some dependencies ship a `rust-toolchain.toml` inside their published
       # crate, so the rustup proxy would honour it from that crate's CWD. Pin the
@@ -68,13 +92,16 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: structural-perf-${{ runner.os }}
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Contract test the structural gate
         # Fast and compile-free: proves the bounds file, the report template and
@@ -89,3 +116,22 @@ jobs:
         # Independent of the steps above, so one failure does not hide the rest.
         if: ${{ !cancelled() }}
         run: python3 scripts/perf/check_structural.py
+
+  # Always finishes: a documentation-only pull request skips the gate by design
+  # and must not leave a required check pending.
+  structural-perf-required:
+    name: Structural performance required
+    if: ${{ always() }}
+    needs: [changes, structural-perf]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the gate to have passed or been skipped by design
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
+          [ "$(echo "$NEEDS" | jq -r '.changes.result')" = success ]
+          [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != failure ]
+          [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != cancelled ]
