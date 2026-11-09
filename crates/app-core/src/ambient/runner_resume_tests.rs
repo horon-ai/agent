@@ -22,7 +22,6 @@ use crate::session::{Session, SessionStatus};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -52,7 +51,7 @@ impl TestHome {
     }
 
     #[cfg(unix)]
-    fn path(&self) -> PathBuf {
+    fn path(&self) -> std::path::PathBuf {
         self._dir.path().to_path_buf()
     }
 }
