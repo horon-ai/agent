@@ -103,6 +103,7 @@ jobs:
         # Every README and docs/ page has an English X.md and a Korean X.ko.md
         # with the same structure, valid relative links and a language switch.
         # Python standard library only; takes well under a second.
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/check_docs_pairs.py
 
       # sccache is enabled once for the whole job and never for a single step:
