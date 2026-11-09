@@ -622,7 +622,6 @@ fn repair_never_downgrades_when_stable_is_older() {
     });
 }
 
-#[cfg(unix)]
 #[test]
 fn launcher_update_installs_horon_and_hrn_aliases_for_the_same_binary() {
     with_temp_horon_agent_home(|| {
@@ -638,18 +637,18 @@ fn launcher_update_installs_horon_and_hrn_aliases_for_the_same_binary() {
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
             .collect();
-        assert_eq!(names, ["horon", "hrn"]);
+        let suffix = std::env::consts::EXE_SUFFIX;
+        assert_eq!(names, [format!("horon{suffix}"), format!("hrn{suffix}")]);
         for alias in aliases {
             assert_eq!(alias.parent(), launcher.parent());
             assert_eq!(
-                std::fs::canonicalize(&alias).expect("canonical alias"),
-                std::fs::canonicalize(&version_binary).expect("canonical version binary")
+                std::fs::read(&alias).expect("alias"),
+                std::fs::read(&version_binary).expect("version binary")
             );
         }
     });
 }
 
-#[cfg(unix)]
 #[test]
 fn launcher_update_never_replaces_an_unrelated_program_named_like_an_alias() {
     with_temp_horon_agent_home(|| {
@@ -658,7 +657,8 @@ fn launcher_update_never_replaces_an_unrelated_program_named_like_an_alias() {
         update_current_symlink(version).expect("update current symlink");
         let bin = launcher_dir().expect("launcher dir");
         std::fs::create_dir_all(&bin).expect("bin dir");
-        let foreign = bin.join("horon");
+        let suffix = std::env::consts::EXE_SUFFIX;
+        let foreign = bin.join(format!("horon{suffix}"));
         std::fs::write(&foreign, "#!/bin/sh\necho other\n").expect("foreign file");
 
         update_launcher_symlink_to_current().expect("update launcher");
@@ -667,11 +667,6 @@ fn launcher_update_never_replaces_an_unrelated_program_named_like_an_alias() {
             std::fs::read_to_string(&foreign).expect("foreign intact"),
             "#!/bin/sh\necho other\n"
         );
-        assert!(
-            std::fs::symlink_metadata(bin.join("hrn"))
-                .expect("hrn")
-                .file_type()
-                .is_symlink()
-        );
+        assert!(bin.join(format!("hrn{suffix}")).exists());
     });
 }
