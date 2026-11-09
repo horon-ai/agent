@@ -181,6 +181,27 @@ and do not merge or report success before then.
   change; triage it the same way. `notice`-level annotations (the macOS runner
   capacity notice) are GitHub's and are not warnings.
 
+## CI gates by change type
+
+`ci.yml` and `structural-perf.yml` start with a `Changed Paths` job
+(`scripts/ci/classify_changes.py`) that classifies a pull request by its files.
+
+- **Documentation only** (README, `docs/`, `AGENTS.md`, templates): runs
+  `Documentation Checks` (links, UTF-8, English/Korean pairs) and
+  `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
+  `horon_agent_docs` tests still run). The release build, the three-OS test
+  matrix, the SDK jobs and the structural performance gate are skipped.
+- **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
+  gate runs.
+- **Pushes and manual dispatches always run everything.** Release evidence
+  (`scripts/release/check_ci.py`) accepts only a fully successful push run.
+- `CI Required` and `Structural performance required` always finish and fail
+  only when a gate failed or was cancelled; use them as the required checks so
+  a skipped gate never leaves a check pending.
+- Every action is pinned to a commit with a `# vX` comment (Dependabot keeps them
+  current); `release.yml`, `release-tag.yml` and the publish workflows are not
+  part of this gating. `actionlint` must report nothing (`Workflow Lint`).
+
 ## Docs
 
 `docs/` is grouped by topic into `architecture/`, `protocol/`, `runtime/`,
