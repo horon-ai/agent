@@ -182,6 +182,7 @@ async fn plan_refuses_a_missing_file() {
     let edit = edit_at(&dir.path().join("absent.rs"), vec![edit(0, 0, 0, 0, "x")]);
     let error = plan(&edit, dir.path())
         .await
-        .expect_err("a missing file must be refused");
+        .err()
+        .expect("a missing file must be refused");
     assert!(format!("{error:#}").contains("does not exist"), "{error:#}");
 }
