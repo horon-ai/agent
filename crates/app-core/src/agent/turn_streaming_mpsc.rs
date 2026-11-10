@@ -2666,7 +2666,7 @@ impl Agent {
                             }
 
                             let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
-                            crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
+                            crate::tool::repair_event::send(event_tx, &self.session.id, &tc.id, &tc.name);
                             self.add_message_with_duration(Role::User, blocks, Some(tool_elapsed.as_millis() as u64));
                             *tool_results_dirty = true;
                         }
@@ -2678,7 +2678,7 @@ impl Agent {
                                 output: error_msg.clone(),
                                 error: Some(error_msg.clone()),
                             });
-                            crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
+                            crate::tool::repair_event::send(event_tx, &self.session.id, &tc.id, &tc.name);
                             self.add_message_with_duration(
                                 Role::User,
                                 vec![ContentBlock::ToolResult {
