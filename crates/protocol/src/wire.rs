@@ -986,8 +986,11 @@ pub enum Request {
 pub mod acp_v2_events;
 pub mod event_types;
 mod events;
+mod model_identity;
 pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
-pub use events::{FileDiffWire, PlanEntryWire, ServerEvent};
+pub use event_types::{FileDiffWire, PlanEntryWire};
+pub use events::ServerEvent;
+pub use model_identity::RuntimeModelIdentity;
 
 /// One question's chosen option labels, as answered by a client.
 ///

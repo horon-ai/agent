@@ -5,6 +5,12 @@
 //! stale anchor refuses the whole call and leaves the file untouched. The write
 //! path is `edit`'s: per-path lock, one undo-journal mutation unit, and the same
 //! file-touch bus event.
+//!
+//! A call may also name a file-level effect, `move_to` or `delete`, which is
+//! applied after its line ops. Both run the path policy and the generated-file
+//! guard on every path they touch, a move refuses an existing destination rather
+//! than overwriting it, and the line ops plus the file-level effect share one
+//! undo unit, so one `undo` restores the file and its old path.
 
 use super::{ConcurrencyClass, Tool, ToolContext, ToolOutput};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
@@ -47,6 +53,37 @@ struct HashlineEditInput {
     file_path: String,
     #[serde(default)]
     ops: Vec<HashlineOp>,
+    /// Move the file (after any line ops) to this path, then remove the source.
+    #[serde(default)]
+    move_to: Option<String>,
+    /// Delete the whole file after any line ops.
+    #[serde(default)]
+    delete: bool,
+}
+
+/// The file-level effect of one call, applied after its line ops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FileLevelOp {
+    None,
+    Move(String),
+    Delete,
+}
+
+impl HashlineEditInput {
+    /// The file-level effect, or the reason the call names an impossible pair.
+    fn file_level_op(&self) -> Result<FileLevelOp> {
+        match (&self.move_to, self.delete) {
+            (Some(_), true) => anyhow::bail!(
+                "`move_to` and `delete` cannot be combined: a file is either moved to a new path or removed."
+            ),
+            (Some(destination), false) if destination.trim().is_empty() => {
+                anyhow::bail!("`move_to` is empty; name the destination path.")
+            }
+            (Some(destination), false) => Ok(FileLevelOp::Move(destination.clone())),
+            (None, true) => Ok(FileLevelOp::Delete),
+            (None, false) => Ok(FileLevelOp::None),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -453,22 +490,30 @@ impl Tool for HashlineEditTool {
     }
 
     fn description(&self) -> &str {
-        "Replace line spans named by hashline anchors. Every anchor is validated before anything is written."
+        "Replace line spans named by hashline anchors, and optionally move or delete the whole file. Every anchor is validated before anything is written."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["file_path", "ops"],
+            "required": ["file_path"],
             "properties": {
                 "intent": super::intent_schema_property(),
                 "file_path": {
                     "type": "string",
                     "description": "File path."
                 },
+                "move_to": {
+                    "type": "string",
+                    "description": "After the line ops, move the file to this path and remove the source. The destination must not exist. Cannot be combined with `delete`."
+                },
+                "delete": {
+                    "type": "boolean",
+                    "description": "After the line ops, delete the whole file. Cannot be combined with `move_to`."
+                },
                 "ops": {
                     "type": "array",
-                    "description": "Anchored replacements, applied as one all-or-nothing call. Spans may not overlap.",
+                    "description": "Anchored replacements, applied as one all-or-nothing call. Spans may not overlap. Omit only when `move_to` or `delete` names the call's whole effect.",
                     "minItems": 1,
                     "items": {
                         "type": "object",
@@ -507,9 +552,11 @@ impl Tool for HashlineEditTool {
     }
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+        super::path_policy::enforce("hashline_edit", &input, &ctx)?;
         let mut params: HashlineEditInput = serde_json::from_value(input)?;
-        if params.ops.is_empty() {
-            anyhow::bail!("`ops` must contain at least one anchored edit.");
+        let file_op = params.file_level_op()?;
+        if params.ops.is_empty() && file_op == FileLevelOp::None {
+            anyhow::bail!("`ops` must contain at least one anchored edit, or name `move_to` or `delete`.");
         }
         let path = ctx.resolve_path(Path::new(&params.file_path));
         if !path.exists() {
@@ -518,6 +565,34 @@ impl Tool for HashlineEditTool {
         if let Some(refusal) = super::generated_guard::refusal(&path, &params.file_path) {
             anyhow::bail!(refusal);
         }
+        if params.delete
+            && let Some(refusal) = super::path_policy::catastrophic_delete_refusal(&path, &params.file_path, &ctx)
+        {
+            anyhow::bail!(refusal);
+        }
+        // A move is decided before any write: an existing destination is
+        // refused rather than overwritten, because moving onto a file the model
+        // has not read would lose it, and `apply_patch` remains the way to
+        // replace a destination's contents deliberately.
+        let move_destination = match &file_op {
+            FileLevelOp::Move(destination) => {
+                let resolved = ctx.resolve_path(Path::new(destination));
+                if resolved == path {
+                    anyhow::bail!("`move_to` names the file itself: {destination}");
+                }
+                if let Some(refusal) = super::generated_guard::refusal(&resolved, destination) {
+                    anyhow::bail!(refusal);
+                }
+                if resolved.exists() {
+                    anyhow::bail!(
+                        "`move_to` destination already exists: {destination}. Choose a new path; `hashline_edit` never overwrites a destination."
+                    );
+                }
+                Some(resolved)
+            }
+            FileLevelOp::Delete | FileLevelOp::None => None,
+        };
+
         let mut stripped_prefix_lines = 0usize;
         for op in &mut params.ops {
             let (stripped, count) = super::write::strip_hashline_prefixes(&op.new_text);
@@ -527,17 +602,27 @@ impl Tool for HashlineEditTool {
             }
         }
 
-        let _lock = super::file_lock::lock(&path).await;
+        let _locks =
+            super::file_lock::lock_all(std::iter::once(path.clone()).chain(move_destination.iter().cloned())).await;
         let content = tokio::fs::read_to_string(&path)
             .await
             .map_err(|error| anyhow::anyhow!("cannot read {} as UTF-8 text: {error}", params.file_path))?;
 
         let lines: Vec<&str> = content.lines().collect();
         let parts: Vec<String> = content.split('\n').map(str::to_string).collect();
-        let ops = resolve_ops(&params.ops, &content, &lines, &params.file_path)?;
-        let new_content = render(&parts, &ops);
+        let ops = if params.ops.is_empty() {
+            Vec::new()
+        } else {
+            resolve_ops(&params.ops, &content, &lines, &params.file_path)?
+        };
+        let new_content = if ops.is_empty() {
+            content.clone()
+        } else {
+            render(&parts, &ops)
+        };
+        let content_changed = new_content != content;
 
-        if new_content == content {
+        if !content_changed && file_op == FileLevelOp::None {
             let streak = record_noop(&ctx.session_id, &path, &content);
             if streak >= 3 {
                 return Ok(ToolOutput::new(format!(
@@ -553,39 +638,116 @@ impl Tool for HashlineEditTool {
         clear_noop(&ctx.session_id, &path);
 
         let before = super::undo::capture(&path).await;
-        tokio::fs::write(&path, &new_content).await?;
-        super::undo::record(
-            &ctx,
-            vec![super::undo::PendingFile {
-                path: path.clone(),
-                before,
-                after: super::undo::bytes(new_content.as_bytes()),
-            }],
-        );
+        let mut pending: Vec<super::undo::PendingFile> = Vec::new();
+        match &file_op {
+            FileLevelOp::None => {
+                tokio::fs::write(&path, &new_content).await?;
+                pending.push(super::undo::PendingFile {
+                    path: path.clone(),
+                    before,
+                    after: super::undo::bytes(new_content.as_bytes()),
+                });
+            }
+            FileLevelOp::Delete => {
+                tokio::fs::remove_file(&path)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("cannot delete {}: {error}", params.file_path))?;
+                pending.push(super::undo::PendingFile {
+                    path: path.clone(),
+                    before,
+                    after: super::undo::ABSENT,
+                });
+            }
+            FileLevelOp::Move(destination) => {
+                let Some(dest) = &move_destination else {
+                    anyhow::bail!("`move_to` is missing its destination path.");
+                };
+                if let Some(parent) = dest.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                let dest_before = super::undo::capture(dest).await;
+                tokio::fs::write(dest, &new_content).await?;
+                if let Err(error) = tokio::fs::remove_file(&path).await {
+                    // Leave one file, not two: drop the copy we just wrote.
+                    if let Err(rollback) = tokio::fs::remove_file(dest).await {
+                        crate::logging::warn(&format!(
+                            "hashline_edit: cannot roll back {} after a failed move: {rollback}",
+                            dest.display()
+                        ));
+                    }
+                    anyhow::bail!(
+                        "cannot remove {} after writing {destination}: {error}",
+                        params.file_path
+                    );
+                }
+                pending.push(super::undo::PendingFile {
+                    path: dest.clone(),
+                    before: dest_before,
+                    after: super::undo::bytes(new_content.as_bytes()),
+                });
+                pending.push(super::undo::PendingFile {
+                    path: path.clone(),
+                    before,
+                    after: super::undo::ABSENT,
+                });
+            }
+        }
+        // One mutation unit for the whole call, so `undo` reverses the edits and
+        // the file-level effect together.
+        super::undo::record(&ctx, pending);
         super::edit_stats::record(&ctx, &content, &new_content, false).await;
 
         let intent = params.intent.clone().filter(|value| !value.trim().is_empty());
-        let diff = super::file_diff::unified(&params.file_path, &params.file_path, &content, &new_content);
+        let diff = match &file_op {
+            FileLevelOp::None => {
+                super::file_diff::unified(&params.file_path, &params.file_path, &content, &new_content)
+            }
+            FileLevelOp::Delete => super::file_diff::unified(&params.file_path, "/dev/null", &content, ""),
+            FileLevelOp::Move(destination) => {
+                super::file_diff::unified(&params.file_path, destination, &content, &new_content)
+            }
+        };
+        let summary = match &file_op {
+            FileLevelOp::None => format!(
+                "applied {} anchored edit{} ({})",
+                ops.len(),
+                if ops.len() == 1 { "" } else { "s" },
+                ops.iter().map(ResolvedOp::describe).collect::<Vec<_>>().join(", ")
+            ),
+            FileLevelOp::Delete => "deleted the file".to_string(),
+            FileLevelOp::Move(destination) => format!("moved the file to {destination}"),
+        };
         Bus::global().publish(BusEvent::FileTouch(FileTouch {
             session_id: ctx.session_id.clone(),
             path: path.to_path_buf(),
             op: FileOp::Edit,
             intent,
-            summary: Some(format!(
-                "applied {} anchored edit{} ({})",
-                ops.len(),
-                if ops.len() == 1 { "" } else { "s" },
-                ops.iter().map(ResolvedOp::describe).collect::<Vec<_>>().join(", ")
-            )),
+            summary: Some(summary),
             detail: build_file_touch_preview(&diff),
         }));
+        if let FileLevelOp::Move(destination) = &file_op {
+            Bus::global().publish(BusEvent::FileTouch(FileTouch {
+                session_id: ctx.session_id.clone(),
+                path: move_destination
+                    .clone()
+                    .unwrap_or_else(|| Path::new(destination).to_path_buf()),
+                op: FileOp::Write,
+                intent: None,
+                summary: Some(format!("moved here from {}", params.file_path)),
+                detail: None,
+            }));
+        }
 
-        let mut body = format!(
-            "Edited {}: applied {} anchored edit{}\n",
-            params.file_path,
-            ops.len(),
-            if ops.len() == 1 { "" } else { "s" }
-        );
+        let mut body = match &file_op {
+            FileLevelOp::None => format!(
+                "Edited {}: applied {} anchored edit{}\n",
+                params.file_path,
+                ops.len(),
+                if ops.len() == 1 { "" } else { "s" }
+            ),
+            FileLevelOp::Delete => format!("Deleted {}.\n", params.file_path),
+            FileLevelOp::Move(destination) => format!("Moved {} to {destination}.\n", params.file_path),
+        };
         for op in &ops {
             let from = if op.start_anchor == op.end_anchor {
                 format!("`{}`", op.start_anchor)
@@ -619,6 +781,9 @@ impl Tool for HashlineEditTool {
                 body.push('\n');
             }
         }
+        if !ops.is_empty() && file_op == FileLevelOp::Delete {
+            body.push_str("  (the file is gone, so these line edits were not kept)\n");
+        }
         if !diff.trim().is_empty() && diff.trim_start().starts_with("---") {
             body.push_str("\nDiff:\n");
             body.push_str(diff.trim_end());
@@ -628,9 +793,11 @@ impl Tool for HashlineEditTool {
                 "\n(Stripped read-output line prefixes from {stripped_prefix_lines} lines before writing.)"
             ));
         }
-        super::config_edit_notice::append_config_edit_notice(&mut body, &path, &content, &new_content);
-        if let Some(extra) = super::nested_agents::inject_rules_for_path(&path, &ctx) {
-            body.push_str(&extra);
+        if file_op == FileLevelOp::None {
+            super::config_edit_notice::append_config_edit_notice(&mut body, &path, &content, &new_content);
+            if let Some(extra) = super::nested_agents::inject_rules_for_path(&path, &ctx) {
+                body.push_str(&extra);
+            }
         }
 
         Ok(super::file_diff::attach(

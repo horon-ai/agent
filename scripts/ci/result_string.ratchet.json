@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "result-string",
+  "description": "Public and internal Rust signatures that return `Result<_, String>`. A string error carries no type, so a caller cannot branch on the cause and every new one widens the surface issue #156 closed at the SDK boundary. The count may fall but not rise; converting a function to a typed error needs no edit here, adding one does.",
+  "counter": {
+    "kind": "regex_lines",
+    "pattern": "Result\\s*<(?:[^<>]|<[^<>]*>)*,\\s*String\\s*>",
+    "case_insensitive": true,
+    "roots": [
+      "src",
+      "crates"
+    ],
+    "extensions": [
+      ".rs"
+    ]
+  },
+  "ceiling": 142
+}

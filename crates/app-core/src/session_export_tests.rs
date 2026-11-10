@@ -10,6 +10,8 @@ use crate::session_export::{MAX_TOOL_RESULT_BYTES, render_markdown};
 
 fn message(role: Role, content: Vec<ContentBlock>) -> StoredMessage {
     StoredMessage {
+        original_input: None,
+        arg_repairs: None,
         id: "m1".to_string(),
         role,
         content,

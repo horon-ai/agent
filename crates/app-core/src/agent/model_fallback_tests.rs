@@ -261,3 +261,31 @@ async fn model_fallback_restores_the_session_model_when_the_turn_fails() {
         "a failed turn puts the session's model back"
     );
 }
+
+#[tokio::test]
+async fn runtime_info_reports_the_model_fallback_list_and_the_serving_model() {
+    let (_home, _provider, mut agent) = setup(Behavior::UnavailableOnce, Some("[\"m2\"]"), false);
+    assert_eq!(agent.fallback_models(), vec![FALLBACK_MODEL.to_string()]);
+    assert_eq!(agent.last_serving_model(), None, "nothing has answered yet");
+
+    agent.run_turn(false).await.expect("the turn completes on the fallback");
+
+    assert_eq!(
+        agent.fallback_models(),
+        vec![FALLBACK_MODEL.to_string()],
+        "the configured list is reported as configured"
+    );
+    assert_eq!(
+        agent.last_serving_model().as_deref(),
+        Some(FALLBACK_MODEL),
+        "runtime info names the model that answered, not the restored one"
+    );
+}
+
+#[tokio::test]
+async fn runtime_info_omits_the_model_fallback_list_when_none_is_configured() {
+    let (_home, _provider, agent) = setup(Behavior::UnavailableOnce, None, false);
+
+    assert!(agent.fallback_models().is_empty(), "no list, no reported entries");
+    assert_eq!(agent.last_serving_model(), None);
+}

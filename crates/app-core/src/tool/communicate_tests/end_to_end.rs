@@ -27,16 +27,9 @@ async fn communicate_list_and_await_members_work_end_to_end() {
         .await
         .expect("server socket should be ready");
 
-    let mut watcher = RawClient::connect(&socket_path)
-        .await
-        .expect("watcher should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
-    watcher
-        .subscribe(&repo_dir)
-        .await
-        .expect("watcher subscribe");
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    let mut peer = RawClient::connect(&socket_path).await.expect("peer should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
     peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
@@ -60,10 +53,9 @@ async fn communicate_list_and_await_members_work_end_to_end() {
         .await
         .expect("peer message request should send");
 
-    let running_members =
-        wait_for_member_status(&mut watcher, &watcher_session, &peer_session, "running")
-            .await
-            .expect("peer should enter running state");
+    let running_members = wait_for_member_status(&mut watcher, &watcher_session, &peer_session, "running")
+        .await
+        .expect("peer should enter running state");
     let running_peer = running_members
         .iter()
         .find(|member| member.session_id == peer_session)
@@ -87,8 +79,7 @@ async fn communicate_list_and_await_members_work_end_to_end() {
     .expect("legacy blocking request should return promptly")
     .expect("await_members should start");
     assert!(
-        await_output.output.contains("no longer supported")
-            && await_output.output.contains("asynchronously"),
+        await_output.output.contains("no longer supported") && await_output.output.contains("asynchronously"),
         "expected compatibility hand-off output, got: {}",
         await_output.output
     );
@@ -118,10 +109,9 @@ async fn communicate_list_and_await_members_work_end_to_end() {
         message
     );
 
-    let ready_members =
-        wait_for_member_status(&mut watcher, &watcher_session, &peer_session, "ready")
-            .await
-            .expect("peer should return to ready state");
+    let ready_members = wait_for_member_status(&mut watcher, &watcher_session, &peer_session, "ready")
+        .await
+        .expect("peer should return to ready state");
     let ready_peer = ready_members
         .iter()
         .find(|member| member.session_id == peer_session)
@@ -160,16 +150,9 @@ async fn communicate_await_members_background_returns_immediately_and_notifies()
         .await
         .expect("server socket should be ready");
 
-    let mut watcher = RawClient::connect(&socket_path)
-        .await
-        .expect("watcher should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
-    watcher
-        .subscribe(&repo_dir)
-        .await
-        .expect("watcher subscribe");
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    let mut peer = RawClient::connect(&socket_path).await.expect("peer should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
     peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
@@ -265,9 +248,7 @@ async fn communicate_run_plan_with_empty_plan_returns_inline_even_in_background_
         .await
         .expect("server socket should be ready");
 
-    let mut client = RawClient::connect(&socket_path)
-        .await
-        .expect("client should connect");
+    let mut client = RawClient::connect(&socket_path).await.expect("client should connect");
     client.subscribe(&repo_dir).await.expect("subscribe");
     let session = client.session_id().await.expect("session id");
 
@@ -324,16 +305,9 @@ async fn communicate_status_returns_busy_snapshot_for_running_member() {
         .await
         .expect("server socket should be ready");
 
-    let mut watcher = RawClient::connect(&socket_path)
-        .await
-        .expect("watcher should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
-    watcher
-        .subscribe(&repo_dir)
-        .await
-        .expect("watcher subscribe");
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    let mut peer = RawClient::connect(&socket_path).await.expect("peer should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
     peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
@@ -409,13 +383,8 @@ async fn communicate_spawn_reports_completion_back_to_spawner() {
         .await
         .expect("server socket should be ready");
 
-    let mut watcher = RawClient::connect(&socket_path)
-        .await
-        .expect("watcher should connect");
-    watcher
-        .subscribe(&repo_dir)
-        .await
-        .expect("watcher subscribe");
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
     let tool = CommunicateTool::new();
@@ -489,13 +458,8 @@ async fn communicate_spawn_with_prompt_and_summary_work_end_to_end() {
         .await
         .expect("server socket should be ready");
 
-    let mut watcher = RawClient::connect(&socket_path)
-        .await
-        .expect("watcher should connect");
-    watcher
-        .subscribe(&repo_dir)
-        .await
-        .expect("watcher subscribe");
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
 
     let watcher_session = watcher.session_id().await.expect("watcher session id");
     let tool = CommunicateTool::new();
@@ -518,10 +482,7 @@ async fn communicate_spawn_with_prompt_and_summary_work_end_to_end() {
         .expect("spawn output should include session id")
         .trim()
         .to_string();
-    assert!(
-        !spawned_session.is_empty(),
-        "spawned session id should not be empty"
-    );
+    assert!(!spawned_session.is_empty(), "spawned session id should not be empty");
 
     wait_for_member_presence(&mut watcher, &watcher_session, &spawned_session)
         .await
@@ -542,8 +503,7 @@ async fn communicate_spawn_with_prompt_and_summary_work_end_to_end() {
             {
                 Ok(output) => break output,
                 Err(err)
-                    if (err.to_string().contains("Unknown session")
-                        || err.to_string().contains(" is busy;"))
+                    if (err.to_string().contains("Unknown session") || err.to_string().contains(" is busy;"))
                         && tokio::time::Instant::now() < deadline =>
                 {
                     tokio::time::sleep(Duration::from_millis(25)).await;
@@ -595,12 +555,8 @@ async fn communicate_message_routes_as_dm_while_broadcast_targets_swarm() {
         .await
         .expect("server socket should be ready");
 
-    let mut sender = RawClient::connect(&socket_path)
-        .await
-        .expect("sender should connect");
-    let mut peer = RawClient::connect(&socket_path)
-        .await
-        .expect("peer should connect");
+    let mut sender = RawClient::connect(&socket_path).await.expect("sender should connect");
+    let mut peer = RawClient::connect(&socket_path).await.expect("peer should connect");
     sender.subscribe(&repo_dir).await.expect("sender subscribe");
     peer.subscribe(&repo_dir).await.expect("peer subscribe");
 
@@ -714,4 +670,242 @@ async fn communicate_message_routes_as_dm_while_broadcast_targets_swarm() {
     );
 
     server_task.abort();
+}
+
+#[tokio::test]
+async fn communicate_spawn_many_starts_three_children_in_input_order() {
+    let _env_lock = crate::storage::lock_test_env();
+    let runtime_dir = tempfile::TempDir::new().expect("runtime tempdir");
+    let repo_dir = std::env::current_dir().expect("repo cwd");
+    let socket_path = runtime_dir.path().join("horon-agent.sock");
+    let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
+    let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
+    let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
+
+    let provider: Arc<dyn Provider> = Arc::new(DelayedTestProvider {
+        delay: Duration::from_millis(50),
+    });
+    let server = Arc::new(Server::new(provider));
+    let mut server_task = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move { server.run().await })
+    };
+    let socket_path = runtime_dir.path().join("horon-agent.sock");
+    wait_for_server_socket(&socket_path, &mut server_task)
+        .await
+        .expect("server socket should be ready");
+
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
+    let watcher_session = watcher.session_id().await.expect("watcher session id");
+
+    let tool = CommunicateTool::new();
+    let ctx = test_ctx(&watcher_session, &repo_dir);
+    let output = tool
+        .execute(
+            json!({
+                "action": "spawn_many",
+                "context": "You are one of three workers on the same repository.",
+                "tasks": [
+                    {"label": "first", "prompt": "Reply with FIRST."},
+                    {"label": "second", "prompt": "Reply with SECOND."},
+                    {"label": "third", "prompt": "Reply with THIRD."}
+                ]
+            }),
+            ctx,
+        )
+        .await
+        .expect("spawn_many with three valid tasks should succeed");
+
+    assert!(
+        output.output.starts_with("Spawned 3 of 3 agent(s):"),
+        "unexpected spawn_many output: {}",
+        output.output
+    );
+    let ids: Vec<&str> = output
+        .output
+        .lines()
+        .filter_map(|line| line.strip_prefix("- "))
+        .map(|line| line.rsplit_once(": ").expect("label: id").1)
+        .collect();
+    assert_eq!(ids.len(), 3, "one entry per task: {}", output.output);
+    assert!(
+        ids.iter().all(|id| !id.is_empty()),
+        "every task should report a session id: {ids:?}"
+    );
+    let mut unique = ids.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), 3, "each child needs its own session: {ids:?}");
+    let labels: Vec<&str> = output
+        .output
+        .lines()
+        .filter_map(|line| line.strip_prefix("- "))
+        .map(|line| line.split_once(':').expect("label: id").0)
+        .collect();
+    assert_eq!(labels, ["first", "second", "third"], "input order is preserved");
+
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn communicate_spawn_many_reports_a_failed_task_and_starts_the_rest() {
+    let _env_lock = crate::storage::lock_test_env();
+    let runtime_dir = tempfile::TempDir::new().expect("runtime tempdir");
+    let repo_dir = std::env::current_dir().expect("repo cwd");
+    let socket_path = runtime_dir.path().join("horon-agent.sock");
+    let _runtime = EnvGuard::set("HORON_AGENT_RUNTIME_DIR", runtime_dir.path());
+    let _home = EnvGuard::set("HORON_HOME", runtime_dir.path());
+    let _socket = EnvGuard::set("HORON_AGENT_SOCKET", &socket_path);
+    let _debug = EnvGuard::set("HORON_AGENT_DEBUG_CONTROL", "1");
+
+    let provider: Arc<dyn Provider> = Arc::new(DelayedTestProvider {
+        delay: Duration::from_millis(50),
+    });
+    let server = Arc::new(Server::new(provider));
+    let mut server_task = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move { server.run().await })
+    };
+    let socket_path = runtime_dir.path().join("horon-agent.sock");
+    wait_for_server_socket(&socket_path, &mut server_task)
+        .await
+        .expect("server socket should be ready");
+
+    let mut watcher = RawClient::connect(&socket_path).await.expect("watcher should connect");
+    watcher.subscribe(&repo_dir).await.expect("watcher subscribe");
+    let watcher_session = watcher.session_id().await.expect("watcher session id");
+
+    let tool = CommunicateTool::new();
+    let ctx = test_ctx(&watcher_session, &repo_dir);
+    let output = tool
+        .execute(
+            json!({
+                "action": "spawn_many",
+                "tasks": [
+                    {"label": "kept-one", "prompt": "Reply with ONE."},
+                    {"label": "broken", "agent": "no-such-definition", "prompt": "Never starts."},
+                    {"label": "kept-two", "prompt": "Reply with TWO."}
+                ]
+            }),
+            ctx,
+        )
+        .await
+        .expect("one failed task must not fail the whole call");
+
+    assert!(
+        output.output.starts_with("Spawned 2 of 3 agent(s):"),
+        "unexpected spawn_many output: {}",
+        output.output
+    );
+    let broken = output
+        .output
+        .lines()
+        .find(|line| line.starts_with("- broken:"))
+        .expect("the failed task keeps its own entry");
+    assert!(
+        broken.contains("no-such-definition"),
+        "the failure should name the unknown definition: {broken}"
+    );
+    let kept = output
+        .output
+        .lines()
+        .filter(|line| line.starts_with("- kept-"))
+        .filter(|line| !line.contains("failed:"))
+        .count();
+    assert_eq!(kept, 2, "the other tasks still start: {}", output.output);
+
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn communicate_spawn_many_rejects_duplicate_labels_before_spawning() {
+    let tool = CommunicateTool::new();
+    let ctx = test_ctx("dup-check", &std::env::current_dir().expect("repo cwd"));
+    let error = tool
+        .execute(
+            json!({
+                "action": "spawn_many",
+                "tasks": [
+                    {"label": "Worker", "prompt": "one"},
+                    {"label": "worker", "prompt": "two"}
+                ]
+            }),
+            ctx,
+        )
+        .await
+        .expect_err("labels that differ only in case are duplicates");
+    assert!(error.to_string().contains("unique labels"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn communicate_spawn_many_rejects_an_empty_task_list() {
+    let tool = CommunicateTool::new();
+    let ctx = test_ctx("empty-check", &std::env::current_dir().expect("repo cwd"));
+    let error = tool
+        .execute(json!({"action": "spawn_many", "tasks": []}), ctx)
+        .await
+        .expect_err("an empty task list has nothing to spawn");
+    assert!(
+        error.to_string().contains("must not be empty"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn communicate_spawn_many_prepends_the_shared_context_and_task_overrides() {
+    let params: CommunicateInput = serde_json::from_value(json!({
+        "action": "spawn_many",
+        "context": "Shared repository background.",
+        "model": "default-model"
+    }))
+    .expect("params");
+    let ctx = test_ctx("prepare-check", &std::env::current_dir().expect("repo cwd"));
+    let with_override: super::agent_spawn::SpawnBatchTask = serde_json::from_value(json!({
+        "label": " task ",
+        "prompt": "Do the task.",
+        "model": "task-model"
+    }))
+    .expect("task");
+    let (label, request) = super::agent_spawn::prepare_task(&ctx, &params, &with_override).expect("prepared");
+    assert_eq!(label, "task", "labels are trimmed");
+    match request {
+        crate::protocol::Request::CommSpawn {
+            initial_message,
+            model,
+            label: request_label,
+            ..
+        } => {
+            let message = initial_message.expect("the first message is set");
+            assert!(
+                message.starts_with("Shared repository background."),
+                "shared context leads the first message: {message}"
+            );
+            assert!(
+                message.ends_with("Do the task."),
+                "the task message follows the context: {message}"
+            );
+            assert_eq!(model.as_deref(), Some("task-model"), "a task override wins");
+            assert_eq!(request_label.as_deref(), Some("task"));
+        }
+        other => panic!("expected a spawn request, got {other:?}"),
+    }
+
+    let inherited: super::agent_spawn::SpawnBatchTask = serde_json::from_value(json!({
+        "label": "plain",
+        "prompt": "Do the other task."
+    }))
+    .expect("task");
+    let (_, request) = super::agent_spawn::prepare_task(&ctx, &params, &inherited).expect("prepared");
+    match request {
+        crate::protocol::Request::CommSpawn { model, .. } => {
+            assert_eq!(
+                model.as_deref(),
+                Some("default-model"),
+                "the call-level model is a default"
+            );
+        }
+        other => panic!("expected a spawn request, got {other:?}"),
+    }
 }

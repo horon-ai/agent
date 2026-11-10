@@ -21,6 +21,7 @@ pub mod allocator;
 pub mod background_progress;
 pub mod replication;
 pub mod session_prefix;
+mod tool_args_repaired;
 pub mod translate;
 mod writer;
 

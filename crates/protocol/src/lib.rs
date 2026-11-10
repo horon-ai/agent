@@ -188,7 +188,7 @@ pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 mod wire;
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
-    FileDiffWire, PermissionDecision, PlanEntryWire, Request, ServerEvent, SessionMcpServer,
+    FileDiffWire, PermissionDecision, PlanEntryWire, Request, RuntimeModelIdentity, ServerEvent, SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 

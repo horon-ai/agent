@@ -26,6 +26,7 @@ pub(super) fn available_models_dedup_key(event: &ServerEvent) -> String {
         provider_model,
         available_models,
         available_model_routes,
+        identity,
     } = event
     else {
         return crate::protocol::encode_event(event);
@@ -57,7 +58,7 @@ pub(super) fn available_models_dedup_key(event: &ServerEvent) -> String {
             )
         })
         .collect();
-    serde_json::to_string(&(provider_name, provider_model, available_models, routes))
+    serde_json::to_string(&(provider_name, provider_model, available_models, routes, identity))
         .unwrap_or_else(|_| crate::protocol::encode_event(event))
 }
 
