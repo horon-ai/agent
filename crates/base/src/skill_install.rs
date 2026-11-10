@@ -105,17 +105,17 @@ pub fn install(source: &str, git_ref: Option<&str>, name_hint: Option<&str>) -> 
 /// the first token is the repository; anything else is reported as a catalog
 /// entry this action cannot install rather than guessed at.
 pub fn install_endorsed(entry: &crate::skill::EndorsedSkill) -> Result<InstalledSkill> {
-    let repo = endorsed_repo(entry).ok_or_else(|| {
-            anyhow::anyhow!(
-                "The endorsed skill '{}' names the source \"{}\", which is not a git repository this action can install. {}",
-                entry.name,
-                entry.source,
-                match entry.install {
-                    Some(command) => format!("Install it with `{command}`."),
-                    None => "Install it by hand into ~/.horon/managed-skills/.".to_string(),
-                }
-            )
-        })?;
+    let Some(repo) = endorsed_repo(entry) else {
+        let hint = match entry.install {
+            Some(command) => format!("Install it with `{command}`."),
+            None => "Install it by hand into ~/.horon/managed-skills/.".to_string(),
+        };
+        anyhow::bail!(
+            "The endorsed skill '{}' names the source \"{}\", which is not a git repository this action can install. {hint}",
+            entry.name,
+            entry.source
+        );
+    };
     install(&repo, None, Some(entry.name))
 }
 
@@ -126,8 +126,10 @@ pub fn install_endorsed(entry: &crate::skill::EndorsedSkill) -> Result<Installed
 /// and the caller reports the entry instead of guessing.
 pub fn endorsed_repo(entry: &crate::skill::EndorsedSkill) -> Option<String> {
     let repo = entry.source.split_whitespace().next()?;
-    (repo.split('/').count() == 2 && !repo.contains("://") && !repo.starts_with('.'))
-        .then(|| format!("https://github.com/{repo}.git"))
+    if repo.split('/').count() != 2 || repo.contains("://") || repo.starts_with('.') {
+        return None;
+    }
+    Some(format!("https://github.com/{repo}.git"))
 }
 
 /// Looks up an endorsed skill by name.
