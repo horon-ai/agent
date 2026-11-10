@@ -24,6 +24,7 @@ import fcntl
 import json
 import os
 import pty
+import re
 import select
 import shutil
 import signal
@@ -54,6 +55,22 @@ TOOL_DONE = "tui-smoke-done"
 
 class Failure(RuntimeError):
     """A step that did not show up on screen."""
+
+
+# A full-screen client positions each word with a cursor move (`ESC[row;colH`)
+# instead of writing spaces, so raw PTY output never holds a sentence verbatim.
+# Matching therefore runs on a copy where every escape sequence counts as a word
+# break and whitespace runs collapse; the raw transcript is kept for reports.
+ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+WHITESPACE = re.compile(r"\s+")
+
+
+def screen_text(raw: str) -> str:
+    return WHITESPACE.sub(" ", ESCAPE.sub(" ", raw))
+
+
+def contains(raw: str, needle: str) -> bool:
+    return WHITESPACE.sub(" ", needle) in screen_text(raw)
 
 
 def log(message: str) -> None:
@@ -188,7 +205,7 @@ class Terminal:
     def read_until(self, needle: str, timeout: float, what: str) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if needle in self.transcript:
+            if contains(self.transcript, needle):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -199,7 +216,7 @@ class Terminal:
                 if not chunk:
                     break
                 self.transcript += chunk.decode("utf-8", "replace")
-        if needle not in self.transcript:
+        if not contains(self.transcript, needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
     def send(self, keys: str) -> None:
@@ -315,9 +332,9 @@ def headless_case(agent: str, tui: str | None, root: str, base_url: str, label: 
         code = completed.returncode
         transcript = completed.stdout or ""
 
-    if HEADLESS_MESSAGE not in transcript:
+    if not contains(transcript, HEADLESS_MESSAGE):
         raise Failure(f"{label}: headless message missing\n--- transcript ---\n{transcript}")
-    if INSTALL_HINT not in transcript:
+    if not contains(transcript, INSTALL_HINT):
         raise Failure(f"{label}: install hint missing\n--- transcript ---\n{transcript}")
     if code != 1:
         raise Failure(f"{label}: expected exit 1, got {code}\n--- transcript ---\n{transcript}")
