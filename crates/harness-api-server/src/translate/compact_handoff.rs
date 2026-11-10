@@ -47,10 +47,7 @@ pub(super) fn result_reply(state: &mut BridgeState, event: &Value) -> Vec<Server
     vec![ServerFrame::reply(
         api_id,
         ApiEvent::Compacted {
-            session_id: match &state.session_id {
-                Some(session_id) => session_id.clone(),
-                None => String::new(),
-            },
+            session_id: state.session_id.as_deref().unwrap_or("").to_string(),
             message,
             handoff,
         },
