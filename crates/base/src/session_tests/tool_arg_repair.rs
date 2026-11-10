@@ -2,6 +2,7 @@
 //! it must not add a single write or flush to the way a session is saved, because
 //! a repair is bookkeeping about the call and nothing about durability.
 
+use super::tests::cases::canonical_tempdir;
 use super::*;
 use horon_agent_session_types::repair_record::{self, ArgRepairRecord};
 use std::sync::{Arc, Mutex};
