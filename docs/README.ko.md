@@ -33,7 +33,7 @@
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
-| `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 사용 메타데이터 |
+| `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 모델 사용 메타데이터 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
