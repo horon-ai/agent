@@ -905,8 +905,6 @@ impl Agent {
         Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None)
     }
 
-    /// A spawned child's tool surface may be narrowed by a named agent definition. The list is
-    /// explicit, so the default `core` profile never widens it.
     pub(crate) fn new_with_parent_and_initial_working_dir(
         provider: Arc<dyn Provider>,
         registry: Registry,
@@ -917,9 +915,8 @@ impl Agent {
         Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools)
     }
 
-    /// Whether a session's allow-list is the untouched default `core` profile.
-    ///
-    /// An explicit list, `disable_base_tools`, or another profile is the operator's own choice.
+    /// Whether a session's allow-list is the untouched default `core` profile. An explicit list,
+    /// `disable_base_tools`, or another profile is the operator's own choice.
     fn default_core_profile(tools: &crate::config::ToolConfig) -> bool {
         tools
             .profile
