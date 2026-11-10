@@ -538,7 +538,7 @@ transcript by hand. `swarm spawn` accepts `source_session: "<id>"`:
   client naming a source session directly cannot widen it.
 - An unknown id fails before a child session exists. So does an id outside the
   caller's spawn tree: that tree is the set of sessions sharing a top-most
-  ancestor, and the same rule is what a `history://<id>` read will use.
+  ancestor, and a `history://<id>` read uses the same rule (8e).
 - Plan mode needs no rule of its own. `swarm` declares no effects of its own,
   so it keeps the default write barrier and a read-only plan state already
   refuses the spawn.
@@ -546,6 +546,28 @@ transcript by hand. `swarm spawn` accepts `source_session: "<id>"`:
 The fork names the source as its parent rather than the caller, so the child sits
 in the source's tree. Its model, effort and tool policy still come from the spawn
 parameters, not from the source session.
+
+## 8e. Child results and `history://<id>`
+
+`agent://` answers from the in-memory cache first and from a durable copy second.
+When a child completes, its rendered result is written atomically to
+`<owning-session>/child-results/<child>.md`, plus `<child>.json` when the child
+yielded structured output. Both are redacted with the same `redact_secrets` pass
+the cache read applies, so a secret a child echoed is no more readable from the
+file than from the cache. The copy outlives the process and the retention bound:
+an id the cache evicted still answers, and `agent://` lists it as `stored`.
+
+The copies belong to the session that spawned the children, so removing that
+session's directory removes them with it. The child's own event log stays the
+authoritative record; the stored result is only the projection written at
+completion, and a read never serves bytes that disagree with it.
+
+`history://<session-id>` renders the stored transcript of a session in this
+session's spawn tree: the same boundary a consult fork uses, so a coordinator can
+re-read a child's conversation after it finished without being able to browse
+anyone else's. `history://current` and `history://<id>` both follow
+`[tools] context_notes`, and a selector applies to either, so `history://<id>:40-80`
+is a bounded peek.
 
 ---
 

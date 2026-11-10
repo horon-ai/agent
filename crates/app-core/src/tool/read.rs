@@ -619,6 +619,8 @@ fn remember_read(
 mod agent_url_tests;
 #[path = "read_archive.rs"]
 mod read_archive;
+#[cfg(test)]
+mod history_tests;
 #[path = "read_memory_url.rs"]
 mod read_memory_url;
 #[path = "read_skill.rs"]
@@ -725,16 +727,33 @@ fn is_history_url(path: &str) -> bool {
 /// compacted-away message is still here. Selectors and offset/limit apply to
 /// the rendered text exactly as they do to a file read, so `history://current:1-5`
 /// is a bounded peek rather than a whole-transcript dump.
+///
+/// `history://<session-id>` reads a session in this session's spawn tree: the
+/// same boundary a consult fork uses, so a coordinator can re-read a child's
+/// transcript after it finished without being able to browse anyone else's.
 fn read_history_url(params: &ReadInput, ctx: &ToolContext) -> Result<ToolOutput> {
     if !crate::config::config().tools.context_notes {
         return Err(anyhow::anyhow!(
-            "history://current is available when [tools] context_notes is on."
+            "history:// is available when [tools] context_notes is on."
         ));
     }
     let (target, selector) = super::read_selector::split_uri_and_selector(&params.file_path)?;
-    if !target.eq_ignore_ascii_case("history://current") {
-        return Err(anyhow::anyhow!("Only history://current is supported, got: {target}"));
-    }
+    // The scheme is matched case-insensitively, exactly as the dispatch that
+    // routed here did.
+    let scheme = "history://";
+    let requested = (target.len() >= scheme.len() && target.is_char_boundary(scheme.len()))
+        .then(|| target.get(..scheme.len()))
+        .flatten()
+        .filter(|prefix| prefix.eq_ignore_ascii_case(scheme))
+        .map(|_| &target[scheme.len()..])
+        .ok_or_else(|| {
+            anyhow::anyhow!("Only history://current and history://<session-id> are supported, got: {target}")
+        })?;
+    let session_id = if requested.eq_ignore_ascii_case("current") {
+        ctx.session_id.clone()
+    } else {
+        requested.to_string()
+    };
 
     let explicit_range =
         params.start_line.is_some() || params.end_line.is_some() || params.offset.is_some() || params.limit.is_some();
@@ -745,7 +764,12 @@ fn read_history_url(params: &ReadInput, ctx: &ToolContext) -> Result<ToolOutput>
     }
 
     let unavailable = || anyhow::anyhow!("No stored history for this session yet.");
-    let session = crate::session::Session::load(&ctx.session_id).map_err(|_| unavailable())?;
+    let session = crate::session::Session::load(&session_id).map_err(|_| unavailable())?;
+    // One rule decides who may read another session's records: the same spawn
+    // tree boundary a consult fork uses, applied here to stored transcripts.
+    if session_id != ctx.session_id {
+        crate::session_scope::ensure_visible(&ctx.session_id, &session)?;
+    }
     let stored = session.history_messages().map_err(|_| unavailable())?;
     if stored.is_empty() {
         return Err(unavailable());
@@ -785,7 +809,11 @@ fn read_history_url(params: &ReadInput, ctx: &ToolContext) -> Result<ToolOutput>
         output.push_str(&format!("(no messages at or after line {last_line})"));
     }
 
-    Ok(ToolOutput::new(output).with_title("history://current"))
+    Ok(ToolOutput::new(output).with_title(if session_id == ctx.session_id {
+        "history://current".to_string()
+    } else {
+        format!("history://{session_id}")
+    }))
 }
 
 /// Plain-text rendering of the stored transcript.
