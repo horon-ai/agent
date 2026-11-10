@@ -455,6 +455,17 @@ Memory injected into the prompt is truncated, and seeing the full content used t
 - The body goes through secrets masking before it is stored, with the same rules as saving session history.
 - An unknown id returns `Not found: <id>`. Supplying no field, or a whitespace-only body, is refused as a tool error.
 
+### `memory` action `learn`
+
+- `{"action": "learn", "memory": "...", "context": "...", "scope": "project" | "global", "skill": {...}}` records one lesson: a non-obvious fix, a procedure, a project convention worth reusing. It is the same call omp's `learn` makes.
+- The lesson text goes in `memory`, not `lesson`. A call that sends `lesson` is refused ("Unknown field: `lesson`. The lesson text goes in `memory`."), because serde would otherwise ignore the field and store nothing.
+- `memory` is capped at 2,000 characters and `context` at 400; over the cap is a tool error. `context` is stored with the lesson as a `Context:` line.
+- `scope` is `project` (default) or `global`, landing in the same stores as `remember`. `all` is a read scope and is refused.
+- The record's category is `lesson`, not `fact`, so recall can surface it as a lesson and rank it above a fact of the same age. `from_extracted` maps `lesson` and `learning` to that category too, so an extracted lesson is no longer folded into `fact`.
+- The text is masked with the same secret rules as saved history before it is stored, and the repeat of an identical lesson reinforces the stored record instead of adding a second one.
+- With `skill` given, `{"action": "create" | "update", "name": "...", "description": "...", "body": "..."}` writes a managed skill through the same code as `skill_manage create`/`update`. A skill failure is reported on a second line of the result and never rolls back the lesson: the lesson is already stored. Unlike `skill_manage`, the skills list is not reloaded, so a new skill appears after the next `reload_all` or restart.
+- Authoring a skill still requires `[tools] managed_skills = true`; with it off, the lesson is stored and the result says the skill was not written.
+
 ## Where MCP server configuration comes from
 
 MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.

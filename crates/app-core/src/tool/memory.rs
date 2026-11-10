@@ -84,7 +84,42 @@ struct MemoryInput {
     /// For recall action: retrieval mode
     #[serde(default)]
     mode: Option<String>,
+    /// For learn action: the lesson itself (issue #61). Named `memory` to match
+    /// the tool it mirrors, not `lesson`.
+    #[serde(default)]
+    memory: Option<String>,
+    /// For learn action: optional context for the lesson.
+    #[serde(default)]
+    context: Option<String>,
+    /// For learn action: optionally codify the lesson as a managed skill.
+    #[serde(default)]
+    skill: Option<LearnSkillInput>,
+    /// Rejected spelling of `memory`. It is declared only so a call that uses
+    /// the wrong field name fails loudly instead of storing nothing, because
+    /// serde ignores fields it does not know.
+    #[serde(default)]
+    lesson: Option<String>,
 }
+
+/// The optional managed-skill write of a `learn` call (issue #61).
+#[derive(Debug, Deserialize)]
+struct LearnSkillInput {
+    /// `create` or `update`, with the same meaning as in `skill_manage`.
+    action: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+/// Longest lesson one `learn` call stores. A lesson is a procedure, not a
+/// document: anything longer belongs in a skill body (issue #61).
+const MAX_LESSON_CHARS: usize = 2_000;
+
+/// Longest `context` a `learn` call stores alongside the lesson.
+const MAX_LESSON_CONTEXT_CHARS: usize = 400;
 
 #[async_trait]
 impl Tool for MemoryTool {
@@ -103,13 +138,13 @@ impl Tool for MemoryTool {
                 "intent": super::intent_schema_property(),
                 "action": {
                     "type": "string",
-                    "enum": ["remember", "recall", "search", "list", "forget", "update", "tag", "link", "related"],
+                    "enum": ["remember", "recall", "search", "list", "forget", "update", "tag", "link", "related", "learn"],
                     "description": "Action."
                 },
                 "content": { "type": "string" },
                 "category": {
                     "type": "string",
-                    "enum": ["fact", "preference", "entity", "correction"]
+                    "enum": ["fact", "preference", "entity", "correction", "lesson"]
                 },
                 "query": { "type": "string" },
                 "id": { "type": "string" },
@@ -117,7 +152,28 @@ impl Tool for MemoryTool {
                 "scope": { "type": "string", "enum": ["project", "global", "all"] },
                 "from_id": { "type": "string" },
                 "to_id": { "type": "string" },
-                "limit": { "type": "integer", "minimum": 0, "description": "Max results for recall, search, or list. Zero returns no results. Recall defaults to 10." }
+                "limit": { "type": "integer", "minimum": 0, "description": "Max results for recall, search, or list. Zero returns no results. Recall defaults to 10." },
+                "memory": {
+                    "type": "string",
+                    "maxLength": MAX_LESSON_CHARS,
+                    "description": "learn: the lesson to store, up to 2000 characters. The field is named memory, not lesson."
+                },
+                "context": {
+                    "type": "string",
+                    "maxLength": MAX_LESSON_CONTEXT_CHARS,
+                    "description": "learn: optional context for the lesson, up to 400 characters."
+                },
+                "skill": {
+                    "type": "object",
+                    "description": "learn: optionally create or update a managed skill that carries the lesson.",
+                    "properties": {
+                        "action": { "type": "string", "enum": ["create", "update"] },
+                        "name": { "type": "string", "description": "Managed skill name: lowercase letters, digits, and hyphens." },
+                        "description": { "type": "string", "description": "One-line description shown in the skills list." },
+                        "body": { "type": "string", "description": "Markdown body of the skill." }
+                    },
+                    "required": ["action", "name"]
+                }
             },
             "required": ["action"]
         })
@@ -173,6 +229,77 @@ impl Tool for MemoryTool {
                     "Remembered {} ({}): \"{}\" [id: {}]",
                     category, scope, content, id
                 )))
+            }
+            "learn" => {
+                anyhow::ensure!(
+                    input.lesson.is_none(),
+                    "Unknown field: `lesson`. The lesson text goes in `memory`."
+                );
+                let raw = input
+                    .memory
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("memory required for learn"))?;
+                anyhow::ensure!(
+                    raw.chars().count() <= MAX_LESSON_CHARS,
+                    "A lesson is at most {MAX_LESSON_CHARS} characters; this one is {}.",
+                    raw.chars().count()
+                );
+                let context = input.context.as_deref().map(str::trim).filter(|text| !text.is_empty());
+                if let Some(context) = context {
+                    anyhow::ensure!(
+                        context.chars().count() <= MAX_LESSON_CONTEXT_CHARS,
+                        "A lesson context is at most {MAX_LESSON_CONTEXT_CHARS} characters; this one is {}.",
+                        context.chars().count()
+                    );
+                }
+                // `all` is a read scope; a lesson lands in exactly one store.
+                let (scope, scope_label) = match input.scope.as_deref() {
+                    None | Some("project") => (MemoryScope::Project, "project"),
+                    Some("global") => (MemoryScope::Global, "global"),
+                    Some(other) => anyhow::bail!("Unknown scope: {other}. learn stores to project or global"),
+                };
+
+                // A lesson is often a command or an error message, which is
+                // exactly where a key appears. The stored copy is redacted, so
+                // recall can never hand back a credential.
+                let lesson = crate::message::redact_secrets(raw);
+                let mut content = lesson.clone();
+                if let Some(context) = context {
+                    content.push_str("\nContext: ");
+                    content.push_str(&crate::message::redact_secrets(context));
+                }
+
+                memory::set_state(MemoryState::ToolAction {
+                    action: "learn".into(),
+                    detail: truncate_for_widget(&lesson, 40),
+                });
+                let entry = MemoryEntry::new(MemoryCategory::Lesson, &content).with_source(ctx.session_id);
+                let id = match scope {
+                    MemoryScope::Global => manager.remember_global(entry)?,
+                    _ => manager.remember_project(entry)?,
+                };
+                // Same reasoning as `remember`: the lesson is already in the
+                // transcript, so auto-recall must not inject it back.
+                memory::mark_memories_known(
+                    &session_id,
+                    std::slice::from_ref(&id),
+                    "learned via memory tool in this session",
+                );
+                memory::add_event(MemoryEventKind::ToolRemembered {
+                    content: truncate_for_widget(&lesson, 60),
+                    scope: scope_label.to_string(),
+                    category: MemoryCategory::Lesson.to_string(),
+                });
+                memory::set_state(MemoryState::Idle);
+
+                let mut output = format!("Learned lesson ({}): \"{}\" [id: {}]", scope_label, lesson, id);
+                if let Some(skill) = input.skill {
+                    output.push('\n');
+                    output.push_str(&learn_skill(skill));
+                }
+                Ok(ToolOutput::new(output))
             }
             "recall" => {
                 let limit = input.limit.unwrap_or(10);
@@ -467,9 +594,40 @@ fn truncate_for_widget(s: &str, max: usize) -> String {
     }
 }
 
+/// Write the optional managed skill of a `learn` call and describe the result.
+///
+/// The write goes through the same code as `skill_manage create|update`, but a
+/// failure here is a sentence in the tool result rather than a failed call: the
+/// lesson is already stored, and losing it because a skill name was malformed
+/// would be the worse outcome (issue #61). The skills list is deliberately not
+/// reloaded, matching the tool this mirrors.
+fn learn_skill(skill: LearnSkillInput) -> String {
+    if !super::skill::managed_skills_enabled() {
+        return "Skill not written: managed skills are disabled. Set [tools] managed_skills = true to let the model create skills.".to_string();
+    }
+    match super::skill::write_managed_skill_file(
+        &skill.action,
+        skill.name.as_deref().unwrap_or_default(),
+        skill.description,
+        skill.body,
+    ) {
+        Ok(write) => format!(
+            "{} managed skill '{}' at {}",
+            write.verb,
+            write.name,
+            write.path.display()
+        ),
+        Err(err) => format!("Skill not written: {err}"),
+    }
+}
+
 #[cfg(test)]
 #[path = "memory_update_tests.rs"]
 mod memory_update_tests;
+
+#[cfg(test)]
+#[path = "memory_learn_tests.rs"]
+mod memory_learn_tests;
 
 #[cfg(test)]
 mod tests {
