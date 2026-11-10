@@ -344,7 +344,7 @@ impl Tool for LspTool {
                     if edits == 1 { "" } else { "s" },
                     if files == 1 { "" } else { "s" }
                 );
-                let plans = lsp_edit::plan(&edit, &base)?;
+                let plans = lsp_edit::plan(&edit, &base).await?;
                 if !params.apply {
                     return Ok(ToolOutput::new(lsp_edit::render_plan(&plans, &intro)));
                 }
@@ -421,7 +421,7 @@ impl Tool for LspTool {
                         action.title
                     );
                 };
-                let plans = lsp_edit::plan(edit, &base)?;
+                let plans = lsp_edit::plan(edit, &base).await?;
                 if !lsp_edit::any_change(&plans) {
                     return Ok(ToolOutput::new(format!(
                         "Action '{0}' changes nothing: the edit reproduces the current content.",

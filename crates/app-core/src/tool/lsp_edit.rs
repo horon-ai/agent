@@ -33,7 +33,7 @@ impl PlannedFile {
 }
 
 /// Read and transform every file the edit names, without writing anything.
-pub(super) fn plan(edit: &WorkspaceEdit, base: &Path) -> Result<Vec<PlannedFile>> {
+pub(super) async fn plan(edit: &WorkspaceEdit, base: &Path) -> Result<Vec<PlannedFile>> {
     if edit.files.len() > MAX_FILES {
         bail!(
             "the language server's edit touches {} files, more than the {MAX_FILES} this tool applies in one call",
