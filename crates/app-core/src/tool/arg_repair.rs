@@ -93,17 +93,39 @@ fn prepare(schema: &Value) -> Prepared {
     }
 }
 
-/// Repair `input` against `schema`, returning the repaired value and one note
-/// per change. No notes means the input was already valid or could not be
-/// improved.
-pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
+/// What a repair did to one call's arguments.
+pub(crate) struct Repaired {
+    /// The arguments the tool will run with.
+    pub(crate) input: Value,
+    /// The arguments as the model sent them, present only when a repair was
+    /// applied and the result validated. This is the same clone `repair` already
+    /// takes to fall back on, so recording costs no extra copy.
+    pub(crate) original: Option<Value>,
+    /// One note per change, empty when nothing was repaired.
+    pub(crate) changes: Vec<String>,
+}
+
+/// Repair `input` against `schema`, keeping what the model originally sent.
+///
+/// The stored call record and the SDK event both want the original arguments and
+/// the change list; the plain [`repair`] entry point exists for callers that only
+/// need the value that runs.
+pub(crate) fn repair_recorded(schema: &Value, input: Value) -> Repaired {
     let prepared = prepared(schema);
     let Some(validator) = prepared.validator.as_ref() else {
-        return (input, Vec::new());
+        return Repaired {
+            input,
+            original: None,
+            changes: Vec::new(),
+        };
     };
     // The common case: valid input needs no copy and no error walk.
     if validator.is_valid(&input) {
-        return (input, Vec::new());
+        return Repaired {
+            input,
+            original: None,
+            changes: Vec::new(),
+        };
     }
     let schema = &prepared.schema;
 
@@ -134,10 +156,26 @@ pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
     }
 
     if validator.is_valid(&current) {
-        (current, changes)
+        Repaired {
+            input: current,
+            original: Some(original),
+            changes,
+        }
     } else {
-        (original, Vec::new())
+        Repaired {
+            input: original,
+            original: None,
+            changes: Vec::new(),
+        }
     }
+}
+
+/// Repair `input` against `schema`, returning the repaired value and one note
+/// per change. No notes means the input was already valid or could not be
+/// improved.
+pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
+    let repaired = repair_recorded(schema, input);
+    (repaired.input, repaired.changes)
 }
 
 /// One validation failure reduced to owned data, so the input can be mutated

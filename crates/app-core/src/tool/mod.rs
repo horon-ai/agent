@@ -4,6 +4,7 @@ pub mod ambient;
 mod apply_patch;
 pub(crate) mod approval_override;
 mod arg_repair;
+mod arg_repair_record;
 pub(crate) mod artifacts;
 mod ask;
 pub(crate) mod ask_bridge;
@@ -2107,13 +2108,11 @@ impl Registry {
         // Repair against the tool's own schema before the gates read the input,
         // so an approval decision is made on what will actually run. Anything
         // the schema cannot prove is left alone and still fails in the tool.
-        let input = {
-            let (repaired, changes) = arg_repair::repair(&tool.parameters_schema(), input);
-            if !changes.is_empty() {
-                crate::logging::debug(&format!("[tool:{resolved_name}] repaired arguments: {changes:?}"));
-            }
-            repaired
-        };
+        let input = arg_repair_record::record(
+            &ctx.tool_call_id,
+            resolved_name,
+            arg_repair::repair_recorded(&tool.parameters_schema(), input),
+        );
 
         // Approval mode: the user's configured floor on friction, checked before
         // the `pre_tool` hook so a call that must ask is never observed by an

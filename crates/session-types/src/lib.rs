@@ -3,6 +3,7 @@ use horon_agent_message_types::{ContentBlock, Message, Role, ToolCall};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+pub mod repair_record;
 mod stored_message;
 mod title;
 mod transcription;
