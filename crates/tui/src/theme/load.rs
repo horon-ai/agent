@@ -28,10 +28,15 @@ struct Request {
 }
 
 /// Size and modification time of a theme file.
+///
+/// A filesystem that cannot report a modification time reports the epoch; the
+/// length still changes when a rewritten theme has a different size, and a
+/// theme edited to the same length on such a filesystem is re-read on the next
+/// settings change rather than never.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Stamp {
     len: u64,
-    modified: Option<SystemTime>,
+    modified: SystemTime,
 }
 
 impl Stamp {
@@ -39,13 +44,9 @@ impl Stamp {
         let Ok(metadata) = std::fs::metadata(path) else {
             return None;
         };
-        let modified = match metadata.modified() {
-            Ok(modified) => Some(modified),
-            Err(_) => None,
-        };
         Some(Self {
             len: metadata.len(),
-            modified,
+            modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
         })
     }
 }
