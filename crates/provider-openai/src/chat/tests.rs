@@ -1023,3 +1023,66 @@ async fn split_completion_with_context_sends_the_key_and_plain_completion_does_n
     .await
     .expect("prompt cache request checks finish within the deadline");
 }
+
+// ---------------------------------------------------------------------------
+// Per-turn effort keyword override
+
+/// A context override wins over the stored effort for exactly that request,
+/// and the request body leaves the stored effort untouched.
+#[test]
+fn effort_keywords_context_override_wins_and_leaves_stored_effort() {
+    let provider = openai_provider_for_effort("gpt-5.1");
+    provider.set_reasoning_effort("medium").expect("set stored effort");
+    assert_eq!(
+        provider.reasoning_effort().as_deref(),
+        Some("medium"),
+        "stored effort before the request"
+    );
+
+    let context = horon_agent_provider_core::ProviderRequestContext {
+        reasoning_effort: Some("high".to_string()),
+        ..Default::default()
+    };
+    let body: Value =
+        serde_json::from_slice(&provider.build_body(&[Message::user("ultrathink")], &[], "system", Some(&context)))
+            .expect("body is JSON");
+
+    assert_eq!(
+        body.get("reasoning_effort").and_then(Value::as_str),
+        Some("high"),
+        "the per-call override reaches the wire"
+    );
+    assert_eq!(
+        provider.reasoning_effort().as_deref(),
+        Some("medium"),
+        "the override never mutates the stored effort"
+    );
+}
+
+/// With no context override the body keeps using the stored effort.
+#[test]
+fn effort_keywords_absent_context_override_uses_stored_effort() {
+    let provider = openai_provider_for_effort("gpt-5.1");
+    provider.set_reasoning_effort("low").expect("set stored effort");
+
+    let context = horon_agent_provider_core::ProviderRequestContext {
+        reasoning_effort: None,
+        ..Default::default()
+    };
+    let body: Value =
+        serde_json::from_slice(&provider.build_body(&[Message::user("hello")], &[], "system", Some(&context)))
+            .expect("body is JSON");
+
+    assert_eq!(body.get("reasoning_effort").and_then(Value::as_str), Some("low"));
+}
+
+fn openai_provider_for_effort(model: &str) -> OpenAiCompatibleProvider {
+    OpenAiCompatibleProvider::new(
+        "https://api.openai.com/v1",
+        ChatAuth::Bearer,
+        Some("sk-test-secret".to_string()),
+        model,
+        vec![model.to_string()],
+    )
+    .expect("provider")
+}

@@ -12,12 +12,14 @@ pub mod models;
 pub mod openai_schema;
 pub mod pricing;
 pub mod reasoning;
+mod request_context;
 pub mod retry_after;
 pub mod selection;
 pub mod service_tier;
 pub mod transport;
 
 pub use horon_agent_usage_types::{ModelUsage, compare_model_usage};
+pub use request_context::ProviderRequestContext;
 pub use transport::is_transient_transport_error;
 
 pub use anthropic::{
@@ -68,28 +70,6 @@ use std::time::Duration;
 
 /// Stream of events from a provider.
 pub type EventStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
-
-/// Per-call session identity a provider may forward to its backend.
-///
-/// It exists so a provider can pin a request to the session lineage it belongs to,
-/// without writing anything into the shared provider state: two concurrent turns of
-/// different sessions must never see each other's identity.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ProviderRequestContext {
-    /// The session issuing this call.
-    pub session_id: Option<String>,
-    /// The session this one was forked from, when it was forked.
-    pub parent_session_id: Option<String>,
-    /// The lineage root shared by a whole fork family.
-    pub cache_root_id: Option<String>,
-}
-
-impl ProviderRequestContext {
-    /// True when at least one identity member is present.
-    pub fn is_present(&self) -> bool {
-        self.session_id.is_some() || self.parent_session_id.is_some() || self.cache_root_id.is_some()
-    }
-}
 
 /// Provider trait for LLM backends.
 #[async_trait]

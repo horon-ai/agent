@@ -74,6 +74,10 @@ persist_memory_injections = false
 # prompt, read-only. AGENTS.md and CLAUDE.md are skipped because they are injected
 # natively.
 foreign_rules = false
+# Recognize per-turn effort keywords in user messages: `ultrathink` raises to
+# the highest supported effort and `chillax` lowers to the lowest for that one
+# turn. Code spans, fences, comments, tags, and URLs are ignored.
+effort_keywords = true
 # How imported foreign rules reach the prompt. "inline" appends every rule body
 # to the system prompt. "rulebook" inlines only always-on rules and lists the
 # rest, so a rule is read only when its globs match a file the session touches.

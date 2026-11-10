@@ -29,6 +29,9 @@ use uuid::Uuid;
 
 use crate::error::{StoreError, StoreErrorCode};
 
+mod provenance;
+pub use provenance::ResetProvenance;
+
 /// The schema version this build writes.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
@@ -686,19 +689,6 @@ impl CanonicalEventRecord {
     }
 }
 
-/// Provenance of an explicit session reset (Clear) that starts a fresh branch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResetProvenance {
-    /// When the reset was recorded.
-    pub reset_at: DateTime<Utc>,
-    /// The head that was active when the reset happened, for audit only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cleared_head_event_id: Option<EventId>,
-    /// Why the reset happened.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
 /// Durable session display and setting metadata. Excludes messages, compaction,
 /// environment snapshots, memory injections, replay events, and every runtime
 /// cache, PID, or socket field; unknown older keys are preserved in
@@ -738,6 +728,8 @@ pub struct SessionMetadata {
     pub route_api_method: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reasoning_effort_pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_model: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

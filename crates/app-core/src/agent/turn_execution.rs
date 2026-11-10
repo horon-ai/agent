@@ -2,6 +2,8 @@ use super::*;
 use crate::{terminal_eprintln as eprintln, terminal_println as println};
 
 pub(in crate::agent) mod audio;
+mod turn_token_usage;
+use turn_token_usage::*;
 
 impl Agent {
     /// Refuse to run a model turn when this session moved to another machine
@@ -37,6 +39,7 @@ impl Agent {
 
     /// Run a single turn with the given user message
     pub async fn run_once(&mut self, user_message: &str) -> Result<()> {
+        self.resolve_armed_effort(false, None);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
         let input_id = self.add_turn_start_message(
@@ -73,6 +76,7 @@ impl Agent {
         user_message: &str,
         display_role: Option<crate::session::StoredDisplayRole>,
     ) -> Result<String> {
+        self.resolve_armed_effort(false, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
         let input_id = self.add_turn_start_message(
@@ -152,6 +156,7 @@ impl Agent {
         };
         self.current_turn_system_reminder = system_reminder;
 
+        self.resolve_armed_effort(continues_turn, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
         let stored_as_user = display_role.is_none();
@@ -1611,6 +1616,7 @@ impl Agent {
                     println!("{}\n", skill.description);
                     self.active_skill = Some(invocation.name.to_string());
                     if let Some(prompt) = invocation.prompt {
+                        self.arm_effort_keywords(prompt);
                         if let Err(e) = self.run_once(prompt).await {
                             eprintln!("\nError: {}\n", e);
                         }
@@ -1632,6 +1638,7 @@ impl Agent {
                 }
             }
 
+            self.arm_effort_keywords(input);
             if let Err(e) = self.run_once(input).await {
                 eprintln!("\nError: {}\n", e);
             }
@@ -1753,61 +1760,6 @@ impl Agent {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TurnTokenUsage {
-    prompt_tokens: Option<u64>,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_input_tokens: Option<u64>,
-    cache_creation_input_tokens: Option<u64>,
-}
-
-fn session_turn_token_usage_after(session: &Session, start_message_index: usize) -> Option<TurnTokenUsage> {
-    let history = session
-        .history_messages()
-        .map_err(|error| {
-            logging::warn(&format!("Cannot read turn usage history: {error}"));
-        })
-        .ok()?;
-    turn_token_usage_after(&history, start_message_index)
-}
-
-fn turn_token_usage_after(
-    messages: &[crate::session::StoredMessage],
-    start_message_index: usize,
-) -> Option<TurnTokenUsage> {
-    let mut usage = TurnTokenUsage {
-        prompt_tokens: None,
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_read_input_tokens: None,
-        cache_creation_input_tokens: None,
-    };
-    let mut saw_usage = false;
-
-    for message in messages.iter().skip(start_message_index) {
-        if !matches!(&message.role, Role::Assistant) {
-            continue;
-        }
-        let Some(message_usage) = message.token_usage.as_ref() else {
-            continue;
-        };
-
-        saw_usage = true;
-        let add = |acc: Option<u64>, v: Option<u64>| v.map(|v| acc.unwrap_or(0).saturating_add(v)).or(acc);
-        usage.prompt_tokens = add(usage.prompt_tokens, message_usage.prompt_tokens);
-        usage.input_tokens = usage.input_tokens.saturating_add(message_usage.input_tokens);
-        usage.output_tokens = usage.output_tokens.saturating_add(message_usage.output_tokens);
-        usage.cache_read_input_tokens = add(usage.cache_read_input_tokens, message_usage.cache_read_input_tokens);
-        usage.cache_creation_input_tokens = add(
-            usage.cache_creation_input_tokens,
-            message_usage.cache_creation_input_tokens,
-        );
-    }
-
-    saw_usage.then_some(usage)
 }
 
 /// Cap on tools listed in one late-MCP transcript announcement.

@@ -170,6 +170,7 @@ fn create_coordinator_session(parent: &Session, mission: &Option<String>) -> Res
     child.provider_key = parent.provider_key.clone();
     child.route_api_method = parent.route_api_method.clone();
     child.reasoning_effort = parent.reasoning_effort.clone();
+    child.reasoning_effort_pinned = parent.reasoning_effort_pinned;
     child.subagent_model = parent.subagent_model.clone();
     child.improve_mode = parent.improve_mode;
     child.autoreview_enabled = Some(false);

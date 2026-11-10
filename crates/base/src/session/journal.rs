@@ -27,6 +27,8 @@ pub(super) struct SessionJournalMeta {
     pub(super) model: Option<String>,
     #[serde(default)]
     pub(super) reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub(super) reasoning_effort_pinned: bool,
     pub(super) subagent_model: Option<String>,
     #[serde(default)]
     pub(super) agent_model_overrides: super::AgentModelOverrides,
