@@ -265,6 +265,22 @@ jobs:
         shell: bash
         run: python3 scripts/ci/check_swallowed_errors.py
 
+      - name: Growth ratchet contract tests
+        # The gate discovers its own ceiling files by shape, so a new ratchet
+        # (the `Result<_, String>` count of #156, model names) needs no step
+        # here. These tests are what keeps that discovery honest.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_check_growth_ratchets.py
+
+      - name: Enforce growth ratchets
+        # Cargo.lock package count and internal legacy markers: both may fall
+        # but not rise. Ceilings live in `scripts/ci/*.json` objects that
+        # declare `counter` and `ceiling`; adding one needs no edit here.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_growth_ratchets.py
+
       - name: Enforce crate dependency boundaries
         if: ${{ !cancelled() }}
         shell: bash

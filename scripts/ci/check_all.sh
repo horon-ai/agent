@@ -87,6 +87,11 @@ run_ratchet "oversized-file ratchet" check_code_size.py
 run_ratchet "oversized-test ratchet" check_test_size.py
 run_ratchet "panic-prone usage ratchet" check_panics.py
 run_ratchet "swallowed-error usage ratchet" check_swallowed_errors.py
+# Every `scripts/ci/*.json` object declaring `counter` and `ceiling` is one
+# ratchet: Cargo.lock package count, internal legacy markers, and later counts
+# (#156's `Result<_, String>`) with no edit here. `--fix` re-pins all of them.
+run_gate "growth ratchet contract tests" python3 -m unittest scripts/ci/test_check_growth_ratchets.py
+run_ratchet "growth ratchets" check_growth_ratchets.py
 run_gate "crate dependency boundaries" python3 scripts/ci/check_dependency_boundaries.py
 run_gate "headless dependency graph" python3 scripts/ci/check_headless_graph.py
 run_gate "headless graph contract tests" python3 -m unittest scripts/ci/test_check_headless_graph.py
