@@ -9,8 +9,9 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// `skill_manage delete` (issue #62): the managed directory is the only one the
+/// `skill_manage install` (issue #79): the managed directory is the only one the
 /// action reaches, and plan mode never reaches it at all.
+#[path = "skill_install_action.rs"]
 mod skill_install_action;
 
 #[cfg(test)]
