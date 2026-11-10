@@ -44,7 +44,7 @@ impl Agent {
     pub async fn prepare_debug_context(&mut self) -> serde_json::Value {
         let prepared_tools = self.tool_definitions().await;
         let mut context = self.debug_context().await;
-        context["prepared_tools"] = serde_json::json!(prepared_tools);
+        context["prepared_tools"] = serde_json::json!(&prepared_tools[..]);
         context
     }
 
@@ -54,7 +54,7 @@ impl Agent {
         self.ensure_listed_tools_index().await;
         let prompt = self.build_system_prompt_split(None);
         let current_tools = self.tool_definitions_for_debug().await;
-        let effective_tools = self.locked_tools.as_ref().unwrap_or(&current_tools);
+        let effective_tools: &[ToolDefinition] = self.locked_tools.as_deref().unwrap_or(&current_tools);
         let locked_tool_names = self
             .locked_tools
             .as_ref()

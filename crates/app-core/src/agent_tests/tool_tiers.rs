@@ -799,7 +799,7 @@ async fn the_listed_tools_index_is_frozen_for_the_session() {
     let env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
     let mut agent = agent_with_mcp_management_tool().await;
 
-    let first_tools = serde_json::to_string(&agent.tool_definitions().await).expect("serialize");
+    let first_tools = serde_json::to_string(&agent.tool_definitions().await[..]).expect("serialize");
     let first_prompt = without_clock(&agent.build_system_prompt_split(None).static_part);
     assert!(first_prompt.contains("# Additional tools"), "{first_prompt}");
 
@@ -807,7 +807,7 @@ async fn the_listed_tools_index_is_frozen_for_the_session() {
     agent.unlock_tools();
     agent.note_compaction_applied();
 
-    let second_tools = serde_json::to_string(&agent.tool_definitions().await).expect("serialize");
+    let second_tools = serde_json::to_string(&agent.tool_definitions().await[..]).expect("serialize");
     let second_prompt = without_clock(&agent.build_system_prompt_split(None).static_part);
     assert_eq!(second_tools, first_tools, "the tool list survives the unlock");
     assert_eq!(second_prompt, first_prompt, "the static part survives the unlock");
