@@ -645,3 +645,28 @@ Restoration running before the gate is the design's invariant. An approver who s
 The mapping between placeholders and real values lives only in process memory. A per-session vault holds the real-to-placeholder table, the reverse table, and a per-name counter, and writes nothing to disk. It disappears when the process ends. Debug output prints item counts, not values, so a log line or a crash bundle cannot leak credentials through the vault itself.
 
 `block` mode refuses with an error starting `SECRET_BLOCK`, naming how many hits matched which label and how to switch to `obfuscate`.
+## Language server (lsp)
+
+The `lsp` tool asks the project's language server what the compiler knows, and can apply the edits the server computes. Actions are `diagnostics`, `definition`, `references`, `hover`, `symbols`, `status`, `rename`, and `code_actions`.
+
+`file` is resolved against the working directory, `line` and `character` are 1-based, and with `character` omitted the first occurrence of `symbol` on that line is used.
+
+### rename
+
+`rename` takes `new_name` and `apply` (default `false`).
+
+- A dry run returns the planned edits per file and writes nothing; `apply: true` writes them.
+- A server that declines the position, or an edit that reproduces the current content, reports that and writes nothing.
+- Positions in the server's answer are 0-based and counted in UTF-16 code units, so the applier converts them against the file's own text before slicing.
+
+### code_actions
+
+`code_actions` takes a position (`line`/`character`) or a range (also `end_line`/`end_character`) and lists what the server offers, numbered from 1.
+
+- `action_id` applies that action's edit; the id is the number in the list.
+- An action whose only effect is a command is listed and never executed.
+- A disabled action reports the server's reason instead of being applied.
+
+### Write path
+
+An applied edit goes through the same path as `edit`: path policy and the generated-file guard on every file, per-path locks, and one undo unit for the whole call, so one `undo` restores every file. Content is compared against the bytes the plan was computed from before anything is written, and a file that changed since then fails the call with no file written. Only the applying calls (`rename` with `apply: true`, `code_actions` with `action_id`) declare a write effect.

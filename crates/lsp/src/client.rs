@@ -21,7 +21,9 @@ use tokio::sync::{Mutex, Notify, mpsc, oneshot};
 use url::Url;
 
 use crate::server::ServerSpec;
-use crate::{ClientStatus, Diagnostic, DiagnosticSeverity, Location, Symbol};
+use crate::{
+    ClientStatus, CodeAction, Diagnostic, DiagnosticSeverity, FileEdit, Location, Symbol, TextEdit, WorkspaceEdit,
+};
 
 /// A server with no request for this long is shut down.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
@@ -270,6 +272,82 @@ impl Client {
                 })
                 .collect(),
         })
+    }
+
+    /// The workspace edit that renames the symbol at `line`/`column` (both
+    /// 1-based) to `new_name`.
+    ///
+    /// `None` means the server declined to rename, which is how it reports a
+    /// position that names no renameable symbol.
+    pub async fn rename(
+        &self,
+        path: &Path,
+        line: u32,
+        column: u32,
+        new_name: &str,
+        timeout: Duration,
+    ) -> Result<Option<WorkspaceEdit>> {
+        let path = canonical(path);
+        self.touch();
+        self.ensure_open(&path).await?;
+        let mut params = position_params(&path, line, column);
+        params["newName"] = Value::String(new_name.to_string());
+        let value = self.request("textDocument/rename", params, timeout).await?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(parse_workspace_edit(&value)?))
+    }
+
+    /// The code actions the server offers for a 0-based range.
+    pub async fn code_actions(
+        &self,
+        path: &Path,
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+        timeout: Duration,
+    ) -> Result<Vec<CodeAction>> {
+        let path = canonical(path);
+        self.touch();
+        self.ensure_open(&path).await?;
+        let params = json!({
+            "textDocument": { "uri": path_to_uri(&path) },
+            "range": {
+                "start": { "line": start_line, "character": start_character },
+                "end": { "line": end_line, "character": end_character },
+            },
+            "context": { "diagnostics": [] },
+        });
+        let value = self.request("textDocument/codeAction", params, timeout).await?;
+        let Some(actions) = value.as_array() else {
+            return Ok(Vec::new());
+        };
+        let mut parsed = Vec::with_capacity(actions.len());
+        for action in actions {
+            let Some(title) = action.get("title").and_then(Value::as_str) else {
+                continue;
+            };
+            let edit = action
+                .get("edit")
+                .filter(|edit| edit.is_object())
+                .map(parse_workspace_edit)
+                .transpose()?;
+            let disabled = action
+                .get("disabled")
+                .and_then(|disabled| disabled.get("reason"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            parsed.push(CodeAction {
+                title: title.to_string(),
+                kind: action.get("kind").and_then(Value::as_str).map(str::to_string),
+                command_only: edit.is_none() && action.get("command").is_some_and(|command| command.is_object()),
+                edit,
+                disabled,
+            });
+        }
+        Ok(parsed)
     }
 
     /// Ask the server to exit, then make sure the process and its children are
@@ -862,6 +940,91 @@ fn language_id(path: &Path) -> &'static str {
         Some("py") => "python",
         _ => "plaintext",
     }
+}
+
+/// Read a `WorkspaceEdit` from a server response.
+///
+/// `changes` (a URI map) and `documentChanges` (an ordered list) may both be
+/// present; edits for the same file are merged in the order they were listed.
+/// Resource operations inside `documentChanges` name no text edit and are
+/// skipped, because the tool only applies text edits.
+fn parse_workspace_edit(value: &Value) -> Result<WorkspaceEdit> {
+    let mut edit = WorkspaceEdit::default();
+    if let Some(changes) = value.get("changes").and_then(Value::as_object) {
+        for (uri, edits) in changes {
+            let Some(path) = uri_to_path(uri) else {
+                continue;
+            };
+            push_file_edits(&mut edit, path, edits)?;
+        }
+    }
+    if let Some(changes) = value.get("documentChanges").and_then(Value::as_array) {
+        for change in changes {
+            let Some(uri) = change
+                .get("textDocument")
+                .and_then(|document| document.get("uri"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(path) = uri_to_path(uri) else {
+                continue;
+            };
+            if let Some(edits) = change.get("edits") {
+                push_file_edits(&mut edit, path, edits)?;
+            }
+        }
+    }
+    Ok(edit)
+}
+
+fn push_file_edits(edit: &mut WorkspaceEdit, path: PathBuf, edits: &Value) -> Result<()> {
+    let Some(edits) = edits.as_array() else {
+        return Ok(());
+    };
+    let mut text_edits = Vec::with_capacity(edits.len());
+    for entry in edits {
+        // An `AnnotatedTextEdit` wraps the real edit under `textEdit`.
+        let entry = entry.get("textEdit").unwrap_or(entry);
+        let Some(range) = entry.get("range") else {
+            continue;
+        };
+        let (start_line, start_character) = parse_position(range.get("start"));
+        let (end_line, end_character) = parse_position(range.get("end"));
+        text_edits.push(TextEdit {
+            start_line,
+            start_character,
+            end_line,
+            end_character,
+            new_text: match entry.get("newText").and_then(Value::as_str) {
+                Some(text) => text.to_string(),
+                None => String::new(),
+            },
+        });
+    }
+    if let Some(existing) = edit.files.iter_mut().find(|file| file.path == path) {
+        existing.edits.extend(text_edits);
+    } else {
+        edit.files.push(FileEdit {
+            path,
+            edits: text_edits,
+        });
+    }
+    Ok(())
+}
+
+/// A 0-based LSP position as `(line, character)`. A missing or oversized value
+/// reads as zero, which no real edit uses.
+fn parse_position(value: Option<&Value>) -> (u32, u32) {
+    fn unit(value: Option<&Value>) -> u32 {
+        value
+            .and_then(Value::as_u64)
+            .map_or(0, |value| u32::try_from(value).unwrap_or(u32::MAX))
+    }
+    (
+        unit(value.and_then(|position| position.get("line"))),
+        unit(value.and_then(|position| position.get("character"))),
+    )
 }
 
 fn canonical(path: &Path) -> PathBuf {
