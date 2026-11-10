@@ -1023,6 +1023,14 @@ jobs:
         # libtest run that matched nothing; here the count is read back from the
         # run so a silently empty executable still fails.
         run: |
+          # The compile runs under the timeout wrapper: it is the expensive part
+          # of this step, and an unwrapped hang would sit here until the job
+          # limit. Afterwards the executable exists, so the `--list` call below
+          # only starts it and is safe to run outside the wrapper.
+          & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'compile horon-tui tests' `
+            -TimeoutSeconds 600 `
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib', '--no-run')
           # The timeout helper launches cargo as a child process, so its output
           # never reaches a captured variable. The count therefore comes from a
           # separate `--list` invocation of the same already-compiled test
