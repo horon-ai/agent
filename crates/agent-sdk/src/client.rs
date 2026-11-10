@@ -1940,7 +1940,7 @@ impl HoronAgentClient {
         }
     }
 
-    fn require_capability(&self, capability: &str, surface: &str) -> Result<()> {
+    pub(crate) fn require_capability(&self, capability: &str, surface: &str) -> Result<()> {
         if self.supports(capability) {
             return Ok(());
         }
@@ -1952,7 +1952,7 @@ impl HoronAgentClient {
         ))
     }
 
-    fn replication_request(&self, request: ApiRequest) -> Result<ApiEvent> {
+    pub(crate) fn replication_request(&self, request: ApiRequest) -> Result<ApiEvent> {
         let frame = self.request_with_limit(request, MAX_REPLICATION_WIRE_BYTES)?;
         match frame.event {
             ApiEvent::Error { code, message, details } => {
@@ -2707,7 +2707,7 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> Error {
     Error::new(ErrorKind::Transport, "harness client state was poisoned")
 }
 
-fn unexpected(want: &str, got: &ApiEvent) -> Error {
+pub(crate) fn unexpected(want: &str, got: &ApiEvent) -> Error {
     Error::new(ErrorKind::UnexpectedReply, format!("expected {want}, got {got:?}"))
 }
 

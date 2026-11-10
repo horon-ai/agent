@@ -136,6 +136,7 @@ mod client;
 pub mod collections;
 mod diagnostics;
 mod errors;
+mod export;
 mod launch;
 mod ssh;
 mod structured;

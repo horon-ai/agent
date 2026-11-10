@@ -342,6 +342,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             commands::run_memory_command(map_memory_subcommand(subcmd)).await?;
         }
         Some(Command::Session(subcmd)) => commands::run_session_command(subcmd)?,
+        Some(Command::Export { session, out, json }) => {
+            super::sessions::export_markdown(&session, out.as_deref(), json)?;
+        }
         Some(Command::Ambient(subcmd)) => {
             commands::run_ambient_command(map_ambient_subcommand(subcmd)).await?;
         }

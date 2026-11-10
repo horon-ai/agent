@@ -2256,6 +2256,19 @@ class HoronAgentClient:
                 page[key] = frame[key]
         return page
 
+    async def export_session_markdown(
+        self,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Export the conversation as a Markdown transcript.
+
+        Requires ``session_replication_v1``.
+        """
+        self._require_capability("session_replication_v1", "export_session_markdown")
+        request: dict[str, Any] = {"req": "export_session_markdown", "session_id": session_id}
+        frame = await self._replication_reply(request, "session_markdown")
+        return {"session_id": frame.get("session_id"), "markdown": frame.get("markdown", "")}
+
     async def import_session_events(
         self,
         page: dict[str, Any],

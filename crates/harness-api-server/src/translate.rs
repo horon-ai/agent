@@ -772,11 +772,11 @@ impl BridgeState {
             | "get_session_blob_status"
             | "export_session_record_blob"
             | "import_session_record_blob"
-            | "get_session_record_blob_status" => crate::replication::handle(request, self.request_envelope_bytes),
-            // Answered from the stored record rather than the daemon: the
-            // legacy protocol can only speak about the attached session, and
-            // attaching to a session merely to read it would disturb the very
-            // thing being previewed.
+            | "get_session_record_blob_status"
+            | "export_session_markdown" => crate::replication::handle(request, self.request_envelope_bytes),
+            // Answered from the stored record rather than the daemon: the legacy
+            // protocol can only speak about the attached session, and attaching
+            // merely to read it would disturb the very thing being previewed.
             "peek_session" => {
                 let session_id = request["session_id"].as_str().unwrap_or_default();
                 let limit = request["limit"].as_u64().unwrap_or(PEEK_LIMIT) as usize;

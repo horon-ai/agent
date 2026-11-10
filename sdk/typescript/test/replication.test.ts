@@ -50,6 +50,7 @@ test("replication capabilities gate the new methods", async () => {
     () => client.selectSessionHead("s1", "h1"),
     () => client.getHistoryPage("s1"),
     () => client.exportSessionEvents("s1"),
+    () => client.exportSessionMarkdown("s1"),
     () => client.importSessionEvents({ session_id: "s1", heads: [], events: [] }),
     () => client.exportSessionBlob("s1", "a".repeat(64), 1, 0),
     () => client.sessionBlobStatus("s1", "a".repeat(64), 1),
@@ -263,6 +264,24 @@ test("a replication request above the wire envelope is refused locally", async (
       return true;
     },
   );
+  client.close();
+  await server.close();
+});
+
+test("the markdown export returns the server's transcript verbatim", async () => {
+  const markdown = "### User\n\nhello\n\n### Assistant\n\nhi\n";
+  const server = await startMockHarness({
+    capabilities: REPLICATION_CAPABILITIES,
+    onRequest(request, send) {
+      if (request.req === "export_session_markdown") {
+        send({ v: 1, reply_to: request.id, ev: "session_markdown", session_id: request.session_id, markdown });
+        return;
+      }
+      send({ v: 1, reply_to: request.id, ev: "error", code: "unknown_request", message: "unexpected request" });
+    },
+  });
+  const client = await HoronAgentClient.connect({ socketPath: server.socketPath });
+  assert.equal(await client.exportSessionMarkdown("s1"), markdown);
   client.close();
   await server.close();
 });

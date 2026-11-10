@@ -92,6 +92,12 @@ A session can hold several heads after a rewind or a branched import. The select
 
 `export_session_events` returns the origin for a pinned head, one bounded page at a time with parents first. `import_session_events` validates the whole page before committing and answers with `accepted_ids`, `heads`, `retry_cursor` and `conflict_heads`. Original blobs move separately in 1 MiB chunks and are verified by SHA-256 and size before publication. An interrupted transfer continues from `get_session_blob_status`.
 
+### Markdown transcript
+
+`export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
+
+The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon-agent export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+
 Two rules a client must not break:
 
 - **Never re-serialize `canonical_json`.** An event's canonical JSON travels as a string. `u64` values above 2^53, `1.0` and `-0.0` do not survive a round trip through JavaScript numbers. Pass the string through untouched.

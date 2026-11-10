@@ -179,6 +179,14 @@ pub enum ApiRequest {
     /// attach and restart. A record that no longer exists is not an error.
     ApprovalAck { session_id: String, request_id: String },
 
+    /// Export the conversation as a Markdown transcript.
+    ///
+    /// Returns the full markdown text for the given session. An unknown
+    /// session returns the existing unknown-session error. The existing
+    /// redaction mechanism redacts secrets; tool outputs longer than 4 KiB
+    /// are truncated with a marker.
+    ExportSessionMarkdown { session_id: String },
+
     /// Answer an `AskRequested` event.
     ///
     /// `ask_id` echoes the event. A reply for an id that is no longer pending

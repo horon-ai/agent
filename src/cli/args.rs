@@ -283,6 +283,24 @@ pub(crate) enum Command {
     /// Model management commands
     #[command(subcommand)]
     Model(ModelCommand),
+    /// Export a session transcript as Markdown
+    ///
+    /// Prints the transcript to stdout, or writes it to a file with `--out`.
+    /// The text matches the `export_session_markdown` harness API reply:
+    /// secrets are redacted and tool results over 4 KiB are truncated.
+    Export {
+        /// Session ID to export
+        session: String,
+
+        /// Write the transcript to this file instead of stdout
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+
+        /// Emit JSON instead of the raw transcript
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Serve the stable harness API on a Unix socket, for SDK clients.
     ///
     /// This is the endpoint the TypeScript SDK (`@horon-ai/agent-sdk`) connects to. It

@@ -92,66 +92,11 @@ impl Agent {
 
 impl Agent {
     /// Export the full conversation as a markdown transcript.
+    ///
+    /// Delegates to [`crate::session_export::export_session_markdown`] so the
+    /// CLI, the harness API, and the ambient runner share one renderer.
     pub fn export_conversation_markdown(&self) -> Result<String> {
-        let mut md = String::new();
-        for msg in &self.session.history_messages()? {
-            let role_label = match msg.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-            };
-            md.push_str(&format!("### {}\n\n", role_label));
-            for block in &msg.content {
-                match block {
-                    ContentBlock::Text { text, .. } => {
-                        md.push_str(text);
-                        md.push_str("\n\n");
-                    }
-                    ContentBlock::Reasoning { text } => {
-                        md.push_str(&format!("*Thinking:* {}\n\n", text));
-                    }
-                    ContentBlock::ReasoningTrace { text } => {
-                        md.push_str(&format!("*Thinking:* {}\n\n", text));
-                    }
-                    ContentBlock::AnthropicThinking { thinking, .. } => {
-                        md.push_str(&format!("*Thinking:* {}\n\n", thinking));
-                    }
-                    ContentBlock::OpenAIReasoning { summary, .. } => {
-                        if !summary.is_empty() {
-                            md.push_str(&format!("*Thinking:* {}\n\n", summary.join("\n")));
-                        }
-                    }
-                    ContentBlock::ToolUse { name, input, .. } => {
-                        let input_str = serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
-                        md.push_str(&format!("**Tool: `{}`**\n```json\n{}\n```\n\n", name, input_str));
-                    }
-                    ContentBlock::ToolResult { content, is_error, .. } => {
-                        let label = if is_error == &Some(true) { "Error" } else { "Result" };
-                        // Truncate very long results
-                        let display = if content.len() > 2000 {
-                            format!(
-                                "{}... (truncated, {} chars total)",
-                                crate::util::truncate_str(content, 2000),
-                                content.len()
-                            )
-                        } else {
-                            content.clone()
-                        };
-                        md.push_str(&format!("**{}:**\n```\n{}\n```\n\n", label, display));
-                    }
-                    ContentBlock::Image { .. } => {
-                        md.push_str("[Image]\n\n");
-                    }
-                    ContentBlock::Audio { .. } => {
-                        md.push_str("[audio]\n\n");
-                    }
-                    ContentBlock::OpenAICompaction { .. } => {
-                        md.push_str("[OpenAI native compaction]\n\n");
-                    }
-                    ContentBlock::ToolReference { .. } | ContentBlock::ProviderNative { .. } => {}
-                }
-            }
-        }
-        Ok(md)
+        crate::session_export::export_session_markdown(&self.session)
     }
 }
 

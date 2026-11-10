@@ -200,6 +200,16 @@ fn dispatch(request: ApiRequest) -> Result<ApiEvent, store::StoreError> {
             let (paths, id) = existing_session_dir(&paths, &session_id)?;
             record_blob_status(&paths, &id, reference)
         }
+        ApiRequest::ExportSessionMarkdown { session_id } => {
+            // Validates the id and that an event log exists under this home, so an
+            // unknown session is the same typed error the other reads return.
+            existing_session(&paths, &session_id)?;
+            let session = horon_agent_app_core::session::Session::load(&session_id)
+                .map_err(|e| store::StoreError::internal(store::StoreErrorCode::Internal, e.to_string()))?;
+            let markdown = horon_agent_app_core::session_export::export_session_markdown(&session)
+                .map_err(|e| store::StoreError::internal(store::StoreErrorCode::Internal, e.to_string()))?;
+            Ok(ApiEvent::SessionMarkdown { session_id, markdown })
+        }
         _ => Err(store::StoreError::internal(
             store::StoreErrorCode::Internal,
             "replication dispatcher received another request",

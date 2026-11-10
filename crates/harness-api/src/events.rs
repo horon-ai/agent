@@ -588,6 +588,14 @@ pub enum ApiEvent {
         next_cursor: Option<String>,
     },
 
+    /// Reply to `ExportSessionMarkdown`.
+    SessionMarkdown {
+        session_id: String,
+        /// Full Markdown transcript: secrets redacted, long tool results
+        /// truncated with a marker.
+        markdown: String,
+    },
+
     /// Reply to `ExportSessionEvents`.
     SessionEventPage {
         session_id: String,
