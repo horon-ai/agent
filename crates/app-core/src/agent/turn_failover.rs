@@ -1,5 +1,11 @@
 use super::*;
 
+#[path = "model_fallback.rs"]
+mod model_fallback;
+#[cfg(test)]
+#[path = "model_fallback_tests.rs"]
+mod model_fallback_tests;
+
 /// What the turn loop should do after a provider error.
 pub(super) enum ProviderErrorAction {
     /// Resend the request: the route changed, or a bounded rate-limit wait
