@@ -290,6 +290,47 @@ install the new runtime candidate, then use the existing graceful server upgrade
 It preserves session state and does not kill the live daemon or the harness bridge. The
 feature stays unusable until both sides run the new code.
 
+## Model-requested context rollover
+
+`context_notes` gives the model a small notes file. `new_context` lets it decide
+that those notes are enough and start the next turn from a clean active context.
+The tool is registered only while `[tools] context_notes` is on
+(`crates/app-core/src/tool/mod.rs:1095`), because the rollover keeps exactly the
+notes the dynamic system prompt carries.
+
+The call itself only records a pending request keyed by session
+(`crates/app-core/src/tool/new_context.rs`), so two calls in one turn queue one
+rollover. A tool round cannot rebuild its own context: the assistant message that
+called `new_context` and the results still to come belong to the same turn, and
+moving the boundary there would orphan them.
+
+Both turn loops apply the request once the turn's transcript is final, from the
+turn settle step they share
+(`crates/app-core/src/agent/interrupts.rs:364`), through
+`Agent::apply_pending_context_rollover`
+(`crates/app-core/src/agent/compaction.rs:49`). That records a compaction
+boundary over every message before the newest user turn. No summary is generated:
+the boundary carries a one-line marker (`compaction.rs:9`), with a text summary
+the session already had left in front of it. A provider-native window is dropped
+instead, because advancing the boundary past it would replay a payload the server
+built for the earlier coverage. The next request is then the dynamic system
+prompt (with the working notes), that user message, and the marker naming
+`history://current`. Nothing is deleted: `history://current` still serves the full
+transcript, including the tool results the rollover dropped.
+
+The boundary never lands on a tool-result message (`compaction.rs:17`). The call
+that produced a result sits before the boundary, so a boundary on the result
+would replay as an orphan pair and the session projection would reject the
+transcript.
+
+The tool declares a write effect, so plan mode refuses it like any other
+mutation and approval treats it as one.
+
+Tests: `crates/app-core/src/agent/context_rollover_tests.rs` covers the rebuilt
+request, the stored transcript, and one rollover per request;
+`crates/app-core/src/tool/new_context_tests.rs` covers the plan-mode refusal, the
+registration gate, and one pending request per turn.
+
 ## `--resume` behaviour
 
 This build has no interactive session picker. Session resume is a single global `--resume`
