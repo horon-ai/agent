@@ -124,7 +124,7 @@ impl Tool for ReadTool {
     fn description(&self) -> &str {
         // Always-on prompt cost: the selector syntax and the `agent://` shapes
         // live in the `file_path` parameter description and the tool's docs.
-        "Read a file (text, image, PDF), an archive member, a SQLite table, or `agent://` child result."
+        "Read a file (text, image, PDF) or `agent://` child result."
     }
 
     fn effects(&self) -> ToolEffects {
@@ -151,7 +151,7 @@ impl Tool for ReadTool {
                 "intent": super::intent_schema_property(),
                 "file_path": {
                     "type": "string",
-                    "description": "Path to a file; a line selector like `path:10-40` reads part. An archive lists members, and `bundle.zip:dir/a.txt` reads one; a `.db` lists tables, and `app.db:users?limit=20&offset=40` reads rows. Also artifact:// ids and memory:// references."
+                    "description": "Path to a file; `p:10-40` lines, `a.zip:m` a member, `d.db:t` rows. Also artifact:// and memory://."
                 },
                 "start_line": {
                     "type": "integer",
