@@ -20,6 +20,7 @@ mod goal_continuation;
 #[cfg(test)]
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
+mod handoff_compaction;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -77,10 +78,12 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+mod usage;
 mod utils;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
+pub use usage::TokenUsage;
 
 use self::streaming::{send_stream_keepalive_mpsc, stream_keepalive_ticker};
 #[cfg(test)]
@@ -350,15 +353,6 @@ fn log_agent_provider_stream_lifecycle(
     ];
     owned.extend(fields.into_iter().map(|(key, value)| (key.to_string(), value)));
     logging::event(level, "AGENT_PROVIDER_STREAM_LIFECYCLE", owned);
-}
-
-/// Token usage from the last API request
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: Option<u64>,
-    pub cache_creation_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
