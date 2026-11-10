@@ -262,6 +262,16 @@ jobs:
         shell: bash
         run: python3 scripts/ci/check_dependency_boundaries.py
 
+      - name: Enforce headless dependency graph
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_headless_graph.py
+
+      - name: Headless graph gate contract tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_check_headless_graph.py
+
       - name: Enforce Rust and TypeScript SDK surface parity
         if: ${{ !cancelled() }}
         shell: bash

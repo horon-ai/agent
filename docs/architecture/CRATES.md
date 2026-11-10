@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](CRATES.ko.md)
 
-> This document mentions "TUI". That is the earlier client surface deleted in the headless transition and no such crate exists in the current tree. The name is here to explain the boundary criteria, not to name a component that exists today.
+> This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. An interactive terminal client, when one ships, is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
 This document defines the target structure that keeps `horon-agent` modular without turning shared crates into a dumping ground. It carries the practical decision rules. Use it when deciding whether to move a type, helper, or behavior out of the root crate.
 
 ## Goals
@@ -166,7 +166,8 @@ A root module keeps ownership of behavior when it needs:
 - `crate::storage`, `crate::config`, `crate::logging`, `crate::server`, or process execution.
 - Provider HTTP clients and authentication managers.
 - The Tokio runtime, background jobs, channels, global caches, file locks, PID registries.
-- TUI rendering and crossterm/ratatui state.
+
+Terminal rendering and crossterm/ratatui state are not root concerns: the interactive client is the separate `horon-tui` package and reaches the daemon through `horon-agent-sdk`.
 
 If a type's inherent methods need these APIs, keep the type in the root or move the behavior and its dependencies together into a domain crate. Do not move only the struct and leave a root-side inherent impl that violates the rules.
 

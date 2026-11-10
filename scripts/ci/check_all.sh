@@ -88,6 +88,8 @@ run_ratchet "oversized-test ratchet" check_test_size.py
 run_ratchet "panic-prone usage ratchet" check_panics.py
 run_ratchet "swallowed-error usage ratchet" check_swallowed_errors.py
 run_gate "crate dependency boundaries" python3 scripts/ci/check_dependency_boundaries.py
+run_gate "headless dependency graph" python3 scripts/ci/check_headless_graph.py
+run_gate "headless graph contract tests" python3 -m unittest scripts/ci/test_check_headless_graph.py
 run_gate "wildcard re-export ratchet" python3 scripts/ci/check_wildcard_reexports.py
 run_gate "platform cfg contract tests" python3 -m unittest scripts/ci/test_check_platform_cfg.py
 run_ratchet "platform cfg allowlist" check_platform_cfg.py
