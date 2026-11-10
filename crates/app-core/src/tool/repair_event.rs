@@ -5,7 +5,7 @@
 //! under that key bridges them, so this stays a lookup rather than a parameter
 //! threaded through every dispatch path.
 
-use horon_agent_protocol::ServerEvent;
+use crate::protocol::ServerEvent;
 use horon_agent_session_types::repair_record::peek;
 
 /// Send `tool_args_repaired` for `call_id` of `session_id` if its arguments
