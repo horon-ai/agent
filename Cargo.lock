@@ -2384,6 +2384,7 @@ dependencies = [
 name = "horon-tui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crossterm",
  "horon-agent-sdk",
  "horon-agent-tool-types",
