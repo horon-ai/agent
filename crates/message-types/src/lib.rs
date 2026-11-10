@@ -1,3 +1,4 @@
+pub mod degradation;
 pub mod provider_native;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

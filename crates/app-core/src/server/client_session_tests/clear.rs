@@ -27,6 +27,7 @@ async fn handle_clear_session_keeps_identity_and_replaces_runtime_handles() -> R
         vec![crate::session::StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             turn_start: false,
             id: "clear-original".into(),
             role: crate::message::Role::User,

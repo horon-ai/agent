@@ -122,6 +122,18 @@ pub enum ServerEvent {
         changes: Vec<String>,
     },
 
+    /// The request that produced this assistant message lost part of the tool
+    /// catalog or its guarantees to provider schema constraints: a schema
+    /// keyword or string format was dropped, a tool was sent without strict
+    /// mode, or a duplicate definition was not sent. One entry per distinct
+    /// loss in the session. Additive: a client that does not know this event
+    /// ignores it.
+    #[serde(rename = "degradation_receipts")]
+    DegradationReceipts {
+        id: String,
+        receipts: Vec<horon_agent_message_types::degradation::DegradationReceipt>,
+    },
+
     /// Rendered images produced during the live turn, including image-bearing
     /// tool results and provider-native image generation. Lets remote clients
     /// render them inline immediately instead of waiting for History reload.

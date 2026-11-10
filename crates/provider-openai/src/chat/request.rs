@@ -6,6 +6,7 @@
 //! same information in its own shape, so this module is the single translation
 //! point for a request body.
 
+use horon_agent_message_types::degradation::{DegradationKind, DegradationReceipt};
 use horon_agent_message_types::{Message, ToolDefinition, sanitize_tool_id};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -26,8 +27,21 @@ pub fn build_chat_completions_request(
     system: &str,
     reasoning_effort: Option<&str>,
 ) -> Value {
+    build_chat_completions_request_reporting(model, messages, tools, system, reasoning_effort, None)
+}
+
+/// [`build_chat_completions_request`], also reporting every degradation the
+/// tool catalog suffered on the way into the body.
+pub fn build_chat_completions_request_reporting(
+    model: &str,
+    messages: &[Message],
+    tools: &[ToolDefinition],
+    system: &str,
+    reasoning_effort: Option<&str>,
+    mut sink: Option<&mut Vec<DegradationReceipt>>,
+) -> Value {
     let input = crate::request::build_responses_input(messages);
-    let tool_definitions = build_chat_tools(tools);
+    let tool_definitions = build_chat_tools_reporting(tools, sink.as_deref_mut());
 
     let mut chat_messages = Vec::with_capacity(input.len() + 1);
     if !system.trim().is_empty() {
@@ -110,16 +124,40 @@ pub fn responses_input_to_chat_messages(input: &[Value]) -> Vec<Value> {
 /// Convert the Responses tool definitions built by [`crate::request::build_tools`]
 /// into Chat Completions `tools[].function` entries.
 pub fn build_chat_tools(tools: &[ToolDefinition]) -> Vec<Value> {
+    build_chat_tools_reporting(tools, None)
+}
+
+/// [`build_chat_tools`], also reporting the definitions a chat endpoint cannot
+/// carry.
+///
+/// Two losses are possible here beyond the schema narrowing [`crate::request::build_tools`]
+/// already reports: a definition with no name, and a second definition of a name
+/// an earlier entry claimed. Only a duplicate is attributable to a tool, so only
+/// a duplicate is reported.
+pub fn build_chat_tools_reporting(
+    tools: &[ToolDefinition],
+    mut sink: Option<&mut Vec<DegradationReceipt>>,
+) -> Vec<Value> {
+    let declared = crate::request::build_tools_reporting(tools, sink.as_deref_mut());
     let mut seen = HashSet::new();
-    crate::request::build_tools(tools)
-        .iter()
-        .filter_map(chat_tool_definition)
-        .filter(|tool| {
-            tool["function"]["name"]
-                .as_str()
-                .is_some_and(|name| seen.insert(name.to_string()))
-        })
-        .collect()
+    let mut out = Vec::with_capacity(declared.len());
+    for definition in declared.iter().filter_map(chat_tool_definition) {
+        let Some(name) = definition["function"]["name"].as_str().map(str::to_string) else {
+            continue;
+        };
+        if !seen.insert(name.clone()) {
+            if let Some(receipts) = sink.as_deref_mut() {
+                receipts.push(DegradationReceipt::new(
+                    DegradationKind::DuplicateToolDropped,
+                    name.clone(),
+                    name,
+                ));
+            }
+            continue;
+        }
+        out.push(definition);
+    }
+    out
 }
 
 /// Convert one Responses tool declaration into a Chat Completions tool entry.

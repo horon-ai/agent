@@ -6,6 +6,7 @@ mod advisor;
 mod advisor_tests;
 mod compaction;
 mod conversation_reset;
+mod degradation_event;
 #[cfg(test)]
 #[path = "agent/durable_input_tests.rs"]
 mod durable_input_tests;

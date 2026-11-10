@@ -20,8 +20,12 @@ mod tests;
 #[path = "prompt_cache_tests.rs"]
 mod prompt_cache_tests;
 
+#[cfg(test)]
+#[path = "degradation_tests.rs"]
+mod degradation_tests;
+
 use crate::chat::prompt_cache_memo::PromptCacheKeyMemo;
-use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request};
+use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request_reporting};
 use crate::chat::stream::ChatCompletionsStream;
 use crate::chat::transport::{
     ChatAuth, INITIAL_RESPONSE_TIMEOUT, apply_auth, http_response_error, redact_secret, transport_error_message,
@@ -217,7 +221,24 @@ impl OpenAiCompatibleProvider {
             Some(effort) if !effort.is_empty() => Some(effort.to_string()),
             _ => configured,
         };
-        let mut body = build_chat_completions_request(&self.model(), messages, tools, system, reasoning.as_deref());
+        // A request that narrowed the tool catalog leaves a receipt per loss so
+        // the turn that carried it can record what the model never saw. The
+        // request itself is built the same way either way, and a session id is
+        // the only thing that can key the receipt, so a contextless call sends
+        // exactly the bytes it sent before receipts existed.
+        let session_id = context.and_then(|c| c.session_id.as_deref());
+        let mut receipts = Vec::new();
+        let mut body = build_chat_completions_request_reporting(
+            &self.model(),
+            messages,
+            tools,
+            system,
+            reasoning.as_deref(),
+            session_id.map(|_| &mut receipts),
+        );
+        if let Some(session_id) = session_id {
+            horon_agent_provider_core::degradation::record(session_id, &receipts);
+        }
         self.apply_prompt_cache(&mut body, context);
         if let Some(extra) = &self.extra_body
             && let (Some(target), Some(source)) = (body.as_object_mut(), extra.as_object())

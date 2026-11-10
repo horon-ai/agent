@@ -19,6 +19,8 @@
 
 pub mod allocator;
 pub mod background_progress;
+mod degradation_receipts;
+mod message_content;
 pub mod replication;
 mod tool_args_repaired;
 pub mod translate;

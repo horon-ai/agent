@@ -36,6 +36,7 @@ fn stored(id: &str, text: &str) -> StoredMessage {
     StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: id.to_string(),
         role: Role::User,
