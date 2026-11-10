@@ -634,6 +634,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "tool_input_delta",
     "tool_exec",
     "tool_done",
+    "tool_args_repaired",
     "token_usage",
     "kv_cache_miss",
     "turn_done",
