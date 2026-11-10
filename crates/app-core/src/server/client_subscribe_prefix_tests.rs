@@ -1,7 +1,7 @@
 //! Session id prefix resolution on the daemon's Subscribe path.
 //!
 //! The bridge resolves a prefix for the harness API (see
-//! `harness-api-server/src/session_prefix.rs`); these cover the legacy daemon
+//! `harness-api-server/src/session_prefix.rs`); these cover the daemon's own
 //! path that ACP and direct clients use, so a prefix attaches correctly with
 //! either protocol version.
 

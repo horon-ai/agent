@@ -109,7 +109,7 @@ pub fn choose_session_prefix_match(
 ///
 /// A candidate is a `sessions/<id>/` directory holding an `events.jsonl`, the
 /// same predicate the store's own catalog listing applies, so a leftover
-/// directory, the `edit-stats` sibling or a preserved legacy file is never
+/// directory, the `edit-stats` sibling or a preserved older-format file is never
 /// offered as a session. Nothing is opened, so a prefix query costs one
 /// directory listing rather than one transcript parse per session.
 ///
@@ -148,7 +148,7 @@ pub fn stored_session_id_prefix_matches(query: &str) -> Vec<String> {
         }
         // Only names the store accepts are sessions, and only a directory that
         // the store wrote an event log into is one; a project pair or a
-        // preserved legacy file can share the prefix without being a session.
+        // preserved older-format file can share the prefix without being a session.
         if horon_agent_session_store::SessionId::parse(name).is_err() {
             continue;
         }
