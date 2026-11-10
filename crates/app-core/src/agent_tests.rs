@@ -1992,8 +1992,6 @@ async fn env_snapshot_detail_is_minimal_for_empty_sessions_and_full_after_histor
     assert!(minimal.working_git.is_none());
 
     agent.session.append_stored_message(crate::session::StoredMessage {
-        original_input: None,
-        arg_repairs: None,
         turn_start: false,
         id: "msg_env_snapshot_detail".to_string(),
         role: crate::message::Role::User,
@@ -2005,6 +2003,7 @@ async fn env_snapshot_detail_is_minimal_for_empty_sessions_and_full_after_histor
         timestamp: None,
         tool_duration_ms: None,
         token_usage: None,
+        ..crate::session::StoredMessage::default()
     });
 
     assert_eq!(agent.env_snapshot_detail(), EnvSnapshotDetail::Full);

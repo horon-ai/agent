@@ -8,12 +8,18 @@ use serde_json::Value;
 
 /// Frame for a call whose arguments a schema repair rewrote.
 pub(crate) fn frames(session_id: String, event: &Value) -> Vec<ServerFrame> {
+    // A malformed list still sends the event: it reports the original arguments
+    // and claims nothing about what changed.
+    let changes = match serde_json::from_value(event["changes"].clone()) {
+        Ok(changes) => changes,
+        Err(_) => Vec::new(),
+    };
     vec![ServerFrame::event(ApiEvent::ToolArgsRepaired {
         session_id,
         call_id: event["id"].as_str().unwrap_or("").to_string(),
         name: event["name"].as_str().unwrap_or("").to_string(),
         original_input: event["original_input"].clone(),
-        changes: serde_json::from_value(event["changes"].clone()).unwrap_or_default(),
+        changes,
     })]
 }
 
