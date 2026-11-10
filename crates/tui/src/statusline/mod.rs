@@ -493,7 +493,7 @@ fn context_text(data: &StatusData<'_>, window: u64) -> String {
 
 /// Width of one side's spans, separators included.
 fn side_width(entries: &[Entry], separator: &Span<'static>) -> usize {
-    let mut width = 0;
+    let mut width: usize = 0;
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
             width = width.saturating_add(separator.width());
