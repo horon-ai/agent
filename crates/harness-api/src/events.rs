@@ -146,6 +146,20 @@ pub enum ApiEvent {
         images: Vec<RenderedImage>,
     },
 
+    /// A tool call's arguments were rewritten before the tool ran, because the
+    /// model's JSON writer did not match the tool's schema. Sent just before the
+    /// call's `ToolDone`. Additive: a client that does not know this event
+    /// ignores it, and the call finishes either way.
+    ToolArgsRepaired {
+        session_id: String,
+        call_id: String,
+        name: String,
+        /// The arguments exactly as the model sent them.
+        original_input: serde_json::Value,
+        /// One line per repair applied, in the order they were applied.
+        changes: Vec<String>,
+    },
+
     /// Usage for the latest provider call, not cumulative session or turn totals.
     /// Input/cache accounting is provider-specific: Anthropic reports cache
     /// reads and writes separately, while OpenAI includes cache reads in input.

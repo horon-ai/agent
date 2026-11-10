@@ -105,6 +105,38 @@ The request itself has no cancel signal. One bounded completion decides it, so a
 client that stops waiting leaves the generation running; it does not roll back a
 boundary that is already committed.
 
+## Tool argument repair (protocol 1.16)
+
+A provider's JSON writer sometimes types a tool argument wrong: `"5000"` where a
+number belongs, `1` where a boolean does. The dispatcher repairs those before the
+tool runs, and the repair is now visible three ways. Everything here is
+additive: a client that predates it sends the same requests and reads the same
+events as before.
+
+### Event: `tool_args_repaired`
+
+Sent immediately before the call's `tool_done`, once per repaired call. A client
+that does not know the event ignores it, and the call finishes either way.
+
+```json
+{"ev":"tool_args_repaired","session_id":"s-1","call_id":"call-9","name":"bash",
+ "original_input":{"command":"ls","timeout":"5000"},"changes":["coerced `timeout` to a number"]}
+```
+
+`original_input` is the arguments exactly as the model sent them, and `changes`
+is one line per repair, in the order the repairs were applied.
+
+### Stored record
+
+The stored tool result carries the same two values as `original_input` and
+`arg_repairs`. Both are omitted when the call needed no repair, so every other
+record keeps exactly the bytes it had before.
+
+### Counter
+
+`snapshot().tool_arg_repairs` counts repaired calls per tool, when
+`HORON_AGENT_PERF_COUNTERS=1`.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -157,7 +189,7 @@ The full storage format, limits and legacy migration rules are in `docs/protocol
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 
-This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, and the last part covers the four durable runtime surfaces of 1.14. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
+This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, the next covers the four durable runtime surfaces of 1.14, and the part after that covers the argument repair of 1.16. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
 
 All three requests are additive. A client that sends none of them keeps working, and the bridge advertises `usage_report`, `session_search` and `artifacts` in the `capabilities` of `hello_ok` (`BRIDGE_CAPABILITIES` in `crates/harness-api-server/src/lib.rs`).
 

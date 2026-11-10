@@ -13,7 +13,7 @@ mod collision;
 #[cfg(test)]
 #[path = "skill/collision_tests.rs"]
 mod collision_tests;
-mod frontmatter;
+pub(crate) mod frontmatter;
 #[cfg(test)]
 #[path = "skill/frontmatter_tests.rs"]
 mod frontmatter_tests;
