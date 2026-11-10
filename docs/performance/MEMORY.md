@@ -224,6 +224,22 @@ index plus a rebuilt projection, and in a session where `server:memory`'s
 `session_provider_cache_*` is already 0 only the tool index entry count is observable. Both values are confirmed through the log line above
 and `server:memory`.
 
+## Allocator A/B: glibc stays the Linux default
+
+Measured on 2026-11-10 with the `compare` suite in GitHub Actions (run 42748612662, Linux x86_64, 4 CPUs, 5 samples per cell). `horon` was built with `--features jemalloc` and `horon-base` was the same commit with the default glibc allocator, both in the same job (`docs/performance/BENCHMARK.md`, "Allocator A/B").
+
+| Cell | glibc (`horon-base`) | jemalloc (`horon`) | Reading |
+|---|---|---|---|
+| One-shot time (median) | 65.3 ms | 64.6 ms | tie (ranges overlap) |
+| One-shot peak tree RSS | 31.8 MB | 37.8 MB | jemalloc 1.19× more |
+| MCP call time (median) | 86.0 ms | 84.4 ms | tie |
+| First session RSS (idle) | 36.8 MB | 39.2 MB | jemalloc more |
+| Each additional session (idle) | 75.2 KB | 268.7 KB | jemalloc more |
+| Each additional session (post-turn) | 354.5 KB | 487.2 KB | jemalloc more |
+| Install size | 110.9 MB | 111.4 MB | jemalloc more |
+
+Time is a tie and every memory cell is worse with jemalloc, so the Linux default stays glibc. The `jemalloc` feature remains available for profiling (`jemalloc-prof`). Re-run the A/B before revisiting this.
+
 ## HoronAgent server memory incident runbook
 
 Status: the runbook in use today
