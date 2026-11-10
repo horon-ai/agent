@@ -259,13 +259,14 @@ def happy_path(agent: str, tui: str, root: str, base_url: str) -> str:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
 
         terminal.send("ping\r")
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
-
-        # `approval_mode = "write"` parks the shell call; the model retries it
-        # only after a refusal, so this line proves the prompt reached the UI.
+        # The default mock plan starts with a shell call, and
+        # `approval_mode = "write"` parks that call: the prompt arrives before
+        # any reply text, so the answer has to come first.
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         terminal.send("y")
         terminal.read_until(TOOL_DONE, STEP_TIMEOUT, "tool result after approval")
+
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
