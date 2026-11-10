@@ -38,6 +38,7 @@ impl Drop for EnvVarGuard {
 pub(super) mod cases;
 
 #[path = "tool_image_decay.rs"]
+mod tool_arg_repair;
 mod tool_image_decay;
 
 #[path = "durability.rs"]
