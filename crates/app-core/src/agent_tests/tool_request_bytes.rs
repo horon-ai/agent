@@ -22,7 +22,10 @@ async fn core_profile_request_prefix_is_measured() {
     let agent = agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions_for_debug().await;
-    let eager = definitions.iter().filter(|definition| !definition.defer_loading).count();
+    let eager = definitions
+        .iter()
+        .filter(|definition| !definition.defer_loading)
+        .count();
     let catalog = crate::provider::openai_request::build_tools(&definitions);
     let bytes = serde_json::to_vec(&catalog).expect("the tool catalog serializes");
 
