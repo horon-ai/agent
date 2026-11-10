@@ -145,6 +145,17 @@ The five stable `ErrorCode` values are unchanged, so older clients keep decoding
 
 `runtime_info` builds liveness from the current host runtime. A PID recorded in stale session metadata is historical side information, not a live process, and no client should display it as running.
 
+### Runtime identity fields
+
+`get_runtime_info` answers with the session's identity. Two of its fields exist because the model that answered a turn is not always the model the session selected.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `fallback_models` | `array<string>` | Fallback model ids the active named provider profile is configured with, in the order a turn tries them. The key is absent when the list is empty. |
+| `serving_model` | `string` | Model that produced the most recent assistant response. After a fallback answered it differs from `model`, which returns to the session's own selection once the turn ends. Absent when no response has been named yet. |
+
+Both fields are optional. An older daemon omits them, and a client that ignores them keeps working. Once the catalog and one identity report have arrived, the bridge answers `get_runtime_info` from its cache when no fallback list is configured, because the serving model can then only be the session's own. With a fallback list configured, or before the first identity report, it asks the daemon for the catalog on every `get_runtime_info`, because the serving model can change without the catalog changing.
+
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime

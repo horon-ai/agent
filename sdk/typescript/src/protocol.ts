@@ -859,6 +859,8 @@ export type ApiEvent =
       model?: string;
       reasoning_effort?: string;
       auth_method?: string;
+      fallback_models?: string[];
+      serving_model?: string;
       routes: ModelRouteInfo[];
     }
   | { ev: "credential_updated"; provider: string; configured: boolean }
