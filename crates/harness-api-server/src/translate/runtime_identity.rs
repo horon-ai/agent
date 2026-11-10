@@ -11,7 +11,7 @@ use serde_json::Value;
 impl BridgeState {
     pub(super) fn runtime_info(&self) -> ApiEvent {
         ApiEvent::RuntimeInfo {
-            session_id: self.session_id.clone().unwrap_or_else(String::new),
+            session_id: self.session_id.as_deref().unwrap_or("").to_string(),
             provider: self.current_provider.clone(),
             model: self.current_model.clone(),
             reasoning_effort: self.current_effort.clone(),
