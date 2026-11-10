@@ -20,14 +20,17 @@ Linux and macOS only: the script needs `pty` plus the POSIX executable bit.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import pty
 import select
 import shutil
 import signal
+import struct
 import subprocess
 import sys
+import termios
 import tempfile
 import time
 import traceback
@@ -167,6 +170,9 @@ class Terminal:
         self.argv = argv
         self.transcript = ""
         self.master, slave = pty.openpty()
+        # A fresh PTY reports a 0x0 window, and a full-screen client draws
+        # nothing into a zero area, so the size is set before the child starts.
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
         self.process = subprocess.Popen(
             argv,
             cwd=cwd,
