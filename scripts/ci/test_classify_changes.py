@@ -188,9 +188,18 @@ class DevPushResolutionTests(unittest.TestCase):
 
 class CommandLineTests(unittest.TestCase):
     def run_main(self, *argv, fetch=lambda r, w: None):
+        # Outside any repository and without $GITHUB_OUTPUT, so the CI step that
+        # runs these tests neither diffs its own checkout nor writes outputs.
         out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = main(list(argv), fetch=fetch)
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as empty:
+            os.chdir(empty)
+            try:
+                with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": ""}), \
+                        contextlib.redirect_stdout(out):
+                    code = main(list(argv), fetch=fetch)
+            finally:
+                os.chdir(cwd)
         return code, out.getvalue().splitlines()
 
     def test_one_notice_and_success_exit_on_every_path(self):
