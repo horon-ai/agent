@@ -168,15 +168,17 @@ pub fn resolve(name: &str, working_dir: Option<&Path>) -> Result<AgentDefinition
 
 fn search_dirs(working_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    let project_root = working_dir.map(Path::to_path_buf).or_else(|| match std::env::current_dir() {
-        Ok(directory) => Some(directory),
-        Err(error) => {
-            crate::logging::debug(&format!(
-                "Agent definitions: the working directory is unavailable: {error}"
-            ));
-            None
-        }
-    });
+    let project_root = working_dir
+        .map(Path::to_path_buf)
+        .or_else(|| match std::env::current_dir() {
+            Ok(directory) => Some(directory),
+            Err(error) => {
+                crate::logging::debug(&format!(
+                    "Agent definitions: the working directory is unavailable: {error}"
+                ));
+                None
+            }
+        });
     if let Some(root) = project_root {
         dirs.push(root.join(PROJECT_DIR));
     }
@@ -220,10 +222,7 @@ fn read_dir(directory: &Path) -> Vec<AgentDefinition> {
         .filter_map(|path| match parse_definition(path) {
             Ok(definition) => Some(definition),
             Err(error) => {
-                crate::logging::debug(&format!(
-                    "Agent definitions: {} is not usable: {error}",
-                    path.display()
-                ));
+                crate::logging::debug(&format!("Agent definitions: {} is not usable: {error}", path.display()));
                 None
             }
         })

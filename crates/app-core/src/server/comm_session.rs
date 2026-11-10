@@ -679,7 +679,10 @@ pub(super) async fn handle_comm_spawn(
                 .as_ref()
                 .map(|schema| schema.to_string())
                 .unwrap_or_default(),
-            extras.allowed_tools.as_ref().map_or_else(String::new, |tools| tools.join(",")),
+            extras
+                .allowed_tools
+                .as_ref()
+                .map_or_else(String::new, |tools| tools.join(",")),
         ],
     );
     let Some(mutation_state) = begin_or_replay(

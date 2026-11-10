@@ -912,8 +912,7 @@ impl Agent {
         let start = Instant::now();
         let tool_selection = crate::config::config().tools.selection();
         let narrowed = narrowed_tools.is_some();
-        let default_core_profile =
-            !narrowed && Self::default_core_profile(&crate::config::config().tools);
+        let default_core_profile = !narrowed && Self::default_core_profile(&crate::config::config().tools);
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
@@ -923,7 +922,7 @@ impl Agent {
             registry,
             session,
             narrowed_tools.or(tool_selection.allowed_tools),
-            if narrowed { HashSet::new() } else { tool_selection.disabled_tools },
+            tool_selection.disabled_tools,
             default_core_profile,
         );
         let model = agent.provider_model();
