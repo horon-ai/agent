@@ -42,7 +42,7 @@ impl Agent {
         // Loop detection is per turn, and a reminder this turn's guard set must
         // not reach the next turn.
         self.loop_guard.reset();
-        self.turn_state = TurnState::new();
+        self.begin_turn_state();
         // Register this turn's cancel signal for the whole turn, including the
         // outcome bookkeeping below: the guard resets the signal when it drops,
         // so a scope that ended before the outcome was named would report every

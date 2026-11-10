@@ -525,7 +525,7 @@ impl Agent {
         // point cleared the reminder before this change; the non-streaming one
         // never did, which leaked a warn message across turns.
         self.loop_guard.reset();
-        self.turn_state = TurnState::new();
+        self.begin_turn_state();
         // A new run begins only here, where new external input starts executing.
         // Provider retries, failover switches, and automatic continuations stay
         // inside `run_turn_inner`, so they keep this id.

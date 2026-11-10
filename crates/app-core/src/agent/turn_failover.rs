@@ -1,5 +1,11 @@
 use super::*;
 
+#[path = "model_fallback.rs"]
+mod model_fallback;
+#[cfg(test)]
+#[path = "model_fallback_tests.rs"]
+mod model_fallback_tests;
+
 /// What the turn loop should do after a provider error.
 pub(super) enum ProviderErrorAction {
     /// Resend the request: the route changed, or a bounded rate-limit wait
@@ -31,6 +37,7 @@ impl Agent {
     /// written: no attempt can be spent and every turn would otherwise pay for
     /// a state file it never reads.
     pub(super) fn begin_failover_chain_for_prompt(&mut self) {
+        self.restore_model_fallback();
         if crate::config::config().provider.autonomous_failover {
             let _ = self.begin_failover_chain();
         }
@@ -78,6 +85,9 @@ impl Agent {
         // usually quotes the provider reason ("429 ..."), so classifying it as
         // a rate limit would add a wait the attended countdown path never had.
         if crate::provider::failover_required_from_error(error).is_some() {
+            if let Some(action) = self.try_model_fallback(error) {
+                return action;
+            }
             return match self.attempt_autonomous_failover(error, attached_client).await {
                 FailoverAttempt::Retried { attempt, max } => ProviderErrorAction::Resend { attempt, max },
                 FailoverAttempt::Exhausted(error) => ProviderErrorAction::Stop(error),
@@ -85,12 +95,19 @@ impl Agent {
             };
         }
         let Some(decision) = Self::rate_limit_decision(error) else {
-            return ProviderErrorAction::Proceed;
+            // Not a rate limit: the provider runtime already spent its own
+            // retry budget before surfacing this, so the model list is next.
+            return self.model_fallback_or_proceed(error);
         };
         let provider = &crate::config::config().provider;
         let wait = match decision {
             crate::network_retry::RetryAfterDecision::Wait(delay) => Some(delay),
             crate::network_retry::RetryAfterDecision::FailoverInstead => {
+                // The next model is a cheaper move than another account or
+                // provider: it resends the same input to the same endpoint.
+                if let Some(action) = self.try_model_fallback(error) {
+                    return action;
+                }
                 match self.attempt_autonomous_failover(error, attached_client).await {
                     FailoverAttempt::Retried { attempt, max } => {
                         return ProviderErrorAction::Resend { attempt, max };
@@ -104,7 +121,9 @@ impl Agent {
             crate::network_retry::RetryAfterDecision::Backoff => None,
         };
         match wait {
-            Some(_) if self.turn_state.rate_limit_retries() >= provider.max_retries => ProviderErrorAction::Proceed,
+            Some(_) if self.turn_state.rate_limit_retries() >= provider.max_retries => {
+                self.model_fallback_or_proceed(error)
+            }
             Some(delay) => {
                 let attempt = self.turn_state.record_rate_limit_retry();
                 logging::info(&format!(
