@@ -57,13 +57,17 @@ const SDK_DEFAULT_OFF_TOOLS: &[&str] = &["session_search", "swarm"];
 /// same overlay, so a tool the client did not name is unreachable everywhere
 /// rather than only in the list.
 fn apply_defaults(mut config: SessionToolConfig) -> SessionToolConfig {
+    // Collect the names first: the `disabled` push below mutates `config`.
+    let named: Vec<String> = config
+        .enabled
+        .iter()
+        .flatten()
+        .chain(config.custom.iter().map(|tool| &tool.name))
+        .cloned()
+        .collect();
     for name in SDK_DEFAULT_OFF_TOOLS {
-        let named = config
-            .enabled
-            .as_ref()
-            .is_some_and(|enabled| enabled.iter().any(|tool| tool == name))
-            || config.custom.iter().any(|tool| tool.name == *name);
-        if !named && !config.disabled.iter().any(|tool| tool == name) {
+        let requested = named.iter().any(|tool| tool == name) || config.disabled.iter().any(|tool| tool == name);
+        if !requested {
             config.disabled.push((*name).to_string());
         }
     }
