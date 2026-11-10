@@ -192,10 +192,9 @@ impl DurableRuntimeStore {
         Self::open_inner(root, session_id, options.limits, options.hooks)
     }
 
-    fn open_inner(root: &Path, session_id: &str, limits: JournalLimits, hooks: HookSlot) -> JournalResult<Self> {
+    fn open_inner(root: &Path, session_id: &str, limits: JournalLimits, mut hooks: HookSlot) -> JournalResult<Self> {
         validate_session_id(session_id)?;
         let dir = root.join(session_id);
-        let mut hooks = hooks;
         ensure_private_dir(&dir, &mut hooks)?;
         let mut store = Self {
             session_id: session_id.to_string(),
