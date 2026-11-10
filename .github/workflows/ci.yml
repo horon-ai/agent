@@ -500,6 +500,12 @@ jobs:
           export RUSTC
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --locked --release --target ${{ matrix.target }}
+          # Separate invocation: `-p horon-tui` must not unify features with the
+          # headless package. The headless graph gate proves the two never meet;
+          # this proves the separate interactive binary actually links on this
+          # target, which is the only place crossterm's platform backends are
+          # exercised.
+          "$CARGO_BIN" build --locked --target ${{ matrix.target }} -p horon-tui
 
       - name: Benchmark script smoke
         # The benchmark workflow runs on demand and after a push to `main`, so
@@ -539,7 +545,7 @@ jobs:
           set -euo pipefail
           TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
           echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-tui)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -548,6 +554,16 @@ jobs:
             "${packages[@]}" --lib --bins --test e2e --no-run \
             --message-format=json-render-diagnostics \
             > "$TEST_ARTIFACTS"
+
+      - name: Run horon-tui tests
+        shell: bash
+        # No filter: the whole crate is the surface under test. `--min-passed 1`
+        # is the guard against a libtest run that silently matched nothing and
+        # reported `0 passed` with exit 0.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-tui \
+            --min-passed 1 --timeout 600
 
       - name: Run deterministic retention-readiness cohort
         shell: bash
@@ -965,12 +981,42 @@ jobs:
             throw 'Windows release build failed'
           }
 
+      - name: Build horon-tui binary
+        shell: pwsh
+        # A separate package from the headless binary on purpose: the graph gate
+        # forbids any path from `horon-agent` to a terminal library, so the two
+        # are built by separate cargo invocations.
+        run: |
+          & cargo build --locked --target x86_64-pc-windows-msvc -p horon-tui
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Windows horon-tui build failed'
+          }
+
       - name: Compile library and binary tests
         shell: pwsh
         run: |
           & cargo test --locked --target x86_64-pc-windows-msvc --lib --bins --no-run
           if ($LASTEXITCODE -ne 0) {
             throw 'Windows library/binary test compilation failed'
+          }
+
+      - name: Run horon-tui tests
+        shell: pwsh
+        # No filter: the whole crate runs. The Linux and macOS jobs additionally
+        # go through `run_lib_tests.py --min-passed 1`, which is what catches a
+        # libtest run that matched nothing; here the count is read back from the
+        # run so a silently empty executable still fails.
+        run: |
+          $log = & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'horon-tui tests' `
+            -TimeoutSeconds 600 `
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib', '--', '--nocapture') 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw 'horon-tui tests failed'
+          }
+          $result = $log | Select-String -Pattern 'test result: ok\. (\d+) passed'
+          if ($null -eq $result) {
+            throw 'horon-tui produced no test result line'
           }
 
       - name: Run targeted Windows validation tests

@@ -1,0 +1,24 @@
+[package]
+name = "horon-tui"
+version = "0.1.0"
+description = "Terminal client for the horon-agent harness, built on the agent SDK"
+edition = "2024"
+publish = false
+autobins = false
+
+[lib]
+name = "horon_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "horon-tui"
+path = "src/main.rs"
+
+[dependencies]
+horon-agent-sdk = { path = "../agent-sdk" }
+# Default features are off so the binary pulls only the widgets and backend it
+# uses: the crossterm 0.29 backend (matching the direct dependency below) and
+# the layout cache. `all-widgets` would add the calendar widget and its date
+# stack to every build for nothing.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
+crossterm = "0.29"
