@@ -637,7 +637,7 @@ where
                             - usize::from(api_frame.last() == Some(&b'\n'));
                         api_frame.clear();
                         release_large_frame(&mut api_frame);
-                        let request: Value = match parsed {
+                        let mut request: Value = match parsed {
                             Ok(value) => value,
                             Err(error) => {
                                 // No `reply_to`: the id lived in the frame that failed
