@@ -18,6 +18,7 @@ pub(super) fn cache_context(root: &str) -> ProviderRequestContext {
         session_id: Some(format!("{root}-session")),
         parent_session_id: None,
         cache_root_id: Some(root.to_string()),
+        ..Default::default()
     }
 }
 
@@ -113,6 +114,7 @@ fn prompt_cache_key_differs_between_lineages_and_scope_kinds() {
         session_id: Some("session-1".to_string()),
         parent_session_id: None,
         cache_root_id: None,
+        ..Default::default()
     };
     let by_session = build_body(&provider, &messages, &tools, "s", Some(&session_only));
     assert!(is_prompt_cache_key(&by_session["prompt_cache_key"]));

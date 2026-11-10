@@ -3796,6 +3796,7 @@ async fn start_processing_message(
                     (agent.message_count(), agent.soft_interrupt_queue())
                 }
             };
+            agent.arm_effort_keywords(content);
             // Ownership is claimed only once this turn holds the agent, and the
             // guard drops before that lock is released. Claiming earlier left a
             // window in which a daemon wake turn could take the idle agent and
