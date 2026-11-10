@@ -615,6 +615,18 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-tui \
             --min-passed 1 --timeout 600
 
+      - name: Run CLI handoff cohort
+        shell: bash
+        # The bare command's handoff decision is the only thing that sends a
+        # terminal launch into `horon-tui`, and no other step runs `horon-agent`
+        # lib tests at all, so a filter that matched nothing would look green.
+        # `--min-passed 1` fails the step when the filter selects no test.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- tui_handoff --nocapture
+
       - name: Run deterministic retention-readiness cohort
         shell: bash
         # The helper runs the already compiled lib test executable, so this
