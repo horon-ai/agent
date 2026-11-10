@@ -1,19 +1,25 @@
 //! Emitting the repair event an API client sees.
 //!
 //! The dispatcher knows a call was repaired but has no event sender, and the
-//! turn loop has the sender but only the call id. The record left under that id
-//! bridges them, so this stays a lookup rather than a parameter threaded through
-//! every dispatch path.
+//! turn loop has the sender but only the session and call id. The record left
+//! under that key bridges them, so this stays a lookup rather than a parameter
+//! threaded through every dispatch path.
 
 use horon_agent_protocol::ServerEvent;
 use horon_agent_session_types::repair_record::peek;
 
-/// Send `tool_args_repaired` for `call_id` if its arguments were repaired.
+/// Send `tool_args_repaired` for `call_id` of `session_id` if its arguments
+/// were repaired.
 ///
 /// Called next to the append of the call's result, so it must not consume the
 /// record: the session takes it a moment later.
-pub(crate) fn send(event_tx: &tokio::sync::mpsc::UnboundedSender<ServerEvent>, call_id: &str, name: &str) {
-    let Some(record) = peek(call_id) else {
+pub(crate) fn send(
+    event_tx: &tokio::sync::mpsc::UnboundedSender<ServerEvent>,
+    session_id: &str,
+    call_id: &str,
+    name: &str,
+) {
+    let Some(record) = peek(session_id, call_id) else {
         return;
     };
     let _ = event_tx.send(ServerEvent::ToolArgsRepaired {
@@ -34,6 +40,7 @@ mod tests {
     fn a_repaired_call_sends_one_event_and_leaves_the_record_for_the_session() {
         // Given a call whose arguments a repair rewrote.
         remember(
+            "session-a",
             "call-event",
             ArgRepairRecord {
                 original_input: json!({"flag": "true"}),
@@ -42,7 +49,7 @@ mod tests {
         );
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         // When the turn loop announces it.
-        send(&tx, "call-event", "bash");
+        send(&tx, "session-a", "call-event", "bash");
         // Then one event goes out carrying the original and the change list...
         match rx.try_recv().expect("one event") {
             ServerEvent::ToolArgsRepaired {
@@ -60,7 +67,7 @@ mod tests {
         }
         assert!(rx.try_recv().is_err());
         // ...and the record is still there for the stored message to claim.
-        assert!(take("call-event").is_some());
+        assert!(take("session-a", "call-event").is_some());
     }
 
     #[test]
@@ -68,7 +75,7 @@ mod tests {
         // Given an unrepaired call.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         // When the turn loop announces it.
-        send(&tx, "call-clean", "bash");
+        send(&tx, "session-a", "call-clean", "bash");
         // Then nothing is emitted at all.
         assert!(rx.try_recv().is_err());
     }

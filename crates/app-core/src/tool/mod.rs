@@ -113,6 +113,7 @@ pub(crate) fn forget_session_caches(session_id: &str) {
     monitor::forget_session(session_id);
     ask_bridge::forget_session(session_id);
     read_state::forget_session(session_id);
+    horon_agent_session_types::repair_record::forget_session(session_id);
     // A structured-result child that never reached the completion path (or whose
     // last status update was missed) must not leave its schema slot behind.
     yield_result::discard(session_id);
@@ -2110,11 +2111,10 @@ impl Registry {
         // so an approval decision is made on what will actually run. Anything
         // the schema cannot prove is left alone and still fails in the tool.
         let input = arg_repair_record::record(
-            &ctx.tool_call_id,
+            ctx,
             resolved_name,
             arg_repair::repair_recorded(&tool.parameters_schema(), input),
         );
-
         // Approval mode: the user's configured floor on friction, checked before
         // the `pre_tool` hook so a call that must ask is never observed by an
         // external gate as if it had been dispatched. The command-risk hard

@@ -3,6 +3,7 @@
 
 use serde_json::Value;
 
+use super::ToolContext;
 use super::arg_repair;
 use horon_agent_session_types::repair_record::{ArgRepairRecord, remember};
 
@@ -11,7 +12,7 @@ use horon_agent_session_types::repair_record::{ArgRepairRecord, remember};
 ///
 /// An unrepaired call takes the first branch and nothing else: no log line, no
 /// counter touch, no allocation.
-pub(crate) fn record(tool_call_id: &str, tool_name: &str, repaired: arg_repair::Repaired) -> Value {
+pub(crate) fn record(ctx: &ToolContext, tool_name: &str, repaired: arg_repair::Repaired) -> Value {
     if repaired.changes.is_empty() {
         return repaired.input;
     }
@@ -22,7 +23,8 @@ pub(crate) fn record(tool_call_id: &str, tool_name: &str, repaired: arg_repair::
     horon_agent_perf_counters::record_tool_arg_repair(tool_name);
     if let Some(original) = repaired.original {
         remember(
-            tool_call_id,
+            &ctx.session_id,
+            &ctx.tool_call_id,
             ArgRepairRecord {
                 original_input: original,
                 changes: repaired.changes,
@@ -47,6 +49,20 @@ mod tests {
         })
     }
 
+    const SESSION: &str = "repair-record-tests";
+
+    fn ctx(call_id: &str) -> ToolContext {
+        ToolContext {
+            session_id: SESSION.to_string(),
+            message_id: "repair-record-tests-message".to_string(),
+            tool_call_id: call_id.to_string(),
+            working_dir: None,
+            stdin_request_tx: None,
+            graceful_shutdown_signal: None,
+            execution_mode: crate::tool::ToolExecutionMode::AgentTurn,
+        }
+    }
+
     fn tool_result(call_id: &str) -> ContentBlock {
         ContentBlock::ToolResult {
             tool_use_id: call_id.to_string(),
@@ -61,18 +77,18 @@ mod tests {
         let input = json!({"command": "ls", "timeout": "5000"});
         // When it is repaired and recorded.
         let stored = record(
-            "call-repaired",
+            &ctx("call-repaired"),
             "bash",
             arg_repair::repair_recorded(&schema(), input.clone()),
         );
         // Then the tool ran on the coerced value...
         assert_eq!(stored["timeout"], json!(5000));
         // ...and the session takes the original and the change list exactly once.
-        let taken = repair_record::take_in(&[tool_result("call-repaired")]).expect("record");
+        let taken = repair_record::take_in(SESSION, &[tool_result("call-repaired")]).expect("record");
         assert_eq!(taken.original_input, input);
         assert_eq!(taken.changes.len(), 1);
         assert!(taken.changes[0].contains("timeout"));
-        assert!(repair_record::take_in(&[tool_result("call-repaired")]).is_none());
+        assert!(repair_record::take_in(SESSION, &[tool_result("call-repaired")]).is_none());
     }
 
     #[test]
@@ -81,13 +97,13 @@ mod tests {
         let input = json!({"command": "ls", "timeout": 5000});
         // When they pass through the same path.
         let stored = record(
-            "call-clean",
+            &ctx("call-clean"),
             "bash",
             arg_repair::repair_recorded(&schema(), input.clone()),
         );
         // Then the value is unchanged and no record is left for the session.
         assert_eq!(stored, input);
-        assert!(repair_record::peek("call-clean").is_none());
+        assert!(repair_record::peek(SESSION, "call-clean").is_none());
     }
 
     #[test]
@@ -95,13 +111,13 @@ mod tests {
         // Given a message that bundles a clean result and a repaired one.
         let input = json!({"command": "ls", "timeout": "5000"});
         record(
-            "call-second",
+            &ctx("call-second"),
             "bash",
             arg_repair::repair_recorded(&schema(), input.clone()),
         );
         // When the session looks through the blocks.
         let blocks = [tool_result("call-first"), tool_result("call-second")];
-        let taken = repair_record::take_in(&blocks).expect("record");
+        let taken = repair_record::take_in(SESSION, &blocks).expect("record");
         // Then the repaired call answers for the message.
         assert_eq!(taken.original_input, input);
     }
