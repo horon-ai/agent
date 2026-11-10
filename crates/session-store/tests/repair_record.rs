@@ -3,39 +3,35 @@
 
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
-use serde_json::json;
+use serde_json::{Value, json};
 
-/// A message payload with the two repair fields left at their default, which is
-/// the shape every record had before the fields existed.
-fn legacy_payload() -> serde_json::Value {
+/// The bytes an untouched record has always had: the two repair fields are
+/// absent, and so is every other field that is empty.
+fn untouched_bytes() -> Value {
     json!({
         "message": {
-            "original_input": null,
-            "arg_repairs": null,
-            "turn_start": false,
             "id": "m-1",
             "role": "user",
-            "content": [{"type": "text", "text": "hello"}],
-            "display_role": null,
-            "timestamp": null,
-            "tool_duration_ms": null,
-            "token_usage": null
+            "content": [{"type": "text", "text": "hello"}]
         }
     })
 }
 
-/// The same record as it was written by a version that did not know the fields.
-fn written_earlier() -> serde_json::Value {
+/// The same record spelled with an explicit null for every field that is empty,
+/// which is the other shape a writer can produce for it.
+fn spelled_with_nulls() -> Value {
     json!({
         "message": {
-            "turn_start": false,
             "id": "m-1",
             "role": "user",
             "content": [{"type": "text", "text": "hello"}],
             "display_role": null,
+            "turn_start": false,
             "timestamp": null,
             "tool_duration_ms": null,
-            "token_usage": null
+            "token_usage": null,
+            "original_input": null,
+            "arg_repairs": null
         }
     })
 }
@@ -43,7 +39,7 @@ fn written_earlier() -> serde_json::Value {
 #[test]
 fn a_record_written_before_the_fields_existed_still_loads() {
     // Given the bytes of a session written by an earlier version.
-    let earlier = written_earlier();
+    let earlier = untouched_bytes();
     // When it is read back through the payload the store decodes.
     let payload: MessageAppendedPayload =
         serde_json::from_value(earlier.clone()).expect("an earlier record still decodes");
@@ -56,7 +52,7 @@ fn a_record_written_before_the_fields_existed_still_loads() {
 
 #[test]
 fn a_repaired_record_holds_the_original_arguments_and_the_change_list() {
-    // Given a record for a call whose arguments a repair rewrote.
+    // Given a call whose arguments were rewritten before they ran.
     let original = json!({"command": "ls", "timeout": "5000"});
     let changes = vec!["coerced `timeout` to a number".to_string()];
     let payload = MessageAppendedPayload {
@@ -90,16 +86,15 @@ fn an_unrepaired_record_omits_both_fields() {
 
 #[test]
 fn a_payload_with_the_fields_at_null_matches_one_that_omits_them() {
-    // Given two spellings of the same untouched record: one from `json!` in a
-    // test fixture with explicit nulls, one with the keys absent.
-    let with_nulls = legacy_payload();
-    let mut without = with_nulls.clone();
-    without["message"].as_object_mut().unwrap().remove("original_input");
-    without["message"].as_object_mut().unwrap().remove("arg_repairs");
+    // Given two spellings of the same untouched record: explicit nulls, and the
+    // absent keys an earlier writer produced.
+    let with_nulls = spelled_with_nulls();
+    let without = untouched_bytes();
     // When both are decoded and re-encoded.
     let a: MessageAppendedPayload = serde_json::from_value(with_nulls).unwrap();
     let b: MessageAppendedPayload = serde_json::from_value(without.clone()).unwrap();
-    // Then they decode to the same record and the re-encoding drops the nulls.
+    // Then they decode to the same record and re-encode to the same bytes, so a
+    // record that was never repaired keeps the bytes it already had.
     assert_eq!(a.message.id, b.message.id);
     assert_eq!(a.message.role, b.message.role);
     assert_eq!(
