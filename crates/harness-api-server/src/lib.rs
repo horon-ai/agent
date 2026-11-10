@@ -20,6 +20,7 @@
 pub mod allocator;
 pub mod background_progress;
 pub mod replication;
+pub mod session_prefix;
 pub mod translate;
 mod writer;
 
@@ -654,6 +655,14 @@ where
                             state.user_connected_sessions = if user_connections_supported {
                                 daemon_user_connections(&legacy_socket).await
                             } else { Default::default() };
+                        }
+                        // A session id prefix names one session when it is
+                        // unique, so an operator does not have to paste all of
+                        // an id. This runs before translation because every
+                        // session-addressed request forwards its id verbatim.
+                        if let Some(frame) = state.resolve_session_prefix(&mut request) {
+                            send_frame!('translate, frame);
+                            continue;
                         }
                         // Translation may inspect persisted session/archive files. Tell
                         // Tokio before entering that synchronous region so it can keep

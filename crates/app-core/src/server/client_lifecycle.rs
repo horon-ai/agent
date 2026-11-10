@@ -554,25 +554,24 @@ pub(super) async fn handle_client(
         }
     };
 
-    let initial_working_dir =
-        match resolve_target_subscribe_working_dir(&mut initial_request, &sessions, &swarm_members)
-            .await
-            .and_then(|()| initial_subscribe_working_dir(&initial_request))
-        {
-            Ok(working_dir) => working_dir,
-            Err(message) => {
-                write_direct_event(
-                    &writer,
-                    &ServerEvent::Error {
-                        id: initial_request.id(),
-                        message,
-                        retry_after_secs: None,
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
-        };
+    let initial_working_dir = match resolve_subscribe_target(&mut initial_request, &sessions, &swarm_members)
+        .await
+        .and_then(|()| initial_subscribe_working_dir(&initial_request))
+    {
+        Ok(working_dir) => working_dir,
+        Err(message) => {
+            write_direct_event(
+                &writer,
+                &ServerEvent::Error {
+                    id: initial_request.id(),
+                    message,
+                    retry_after_secs: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+    };
     let mut active_terminal_env = initial_subscribe_terminal_env(&initial_request);
 
     // Per-client state
@@ -1269,7 +1268,7 @@ pub(super) async fn handle_client(
             provisional_session = false;
         }
 
-        if let Err(message) = resolve_target_subscribe_working_dir(
+        if let Err(message) = resolve_subscribe_target(
             &mut request, &sessions, &swarm_members,
         ).await {
             let _ = client_event_tx.send(ServerEvent::Error {

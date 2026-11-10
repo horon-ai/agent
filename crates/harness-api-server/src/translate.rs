@@ -198,7 +198,7 @@ pub struct BridgeState {
     /// full set on every `state` event, so the bridge remembers it rather than
     /// answering `list_sessions` with only the one session this connection
     /// happens to be attached to.
-    known_sessions: Vec<String>,
+    pub(crate) known_sessions: Vec<String>,
     /// Working directory per session, as far as it is known.
     session_dirs: std::collections::BTreeMap<String, String>,
     /// Directory sent with an in-flight `create_session` subscribe. A fresh

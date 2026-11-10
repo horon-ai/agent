@@ -22,9 +22,67 @@ pub(super) fn initial_subscribe_working_dir(request: &Request) -> std::result::R
     }
 }
 
+/// Expand a unique `target_session_id` prefix to the session it names.
+///
+/// An operator attaching from a list can paste only the distinguishing head of
+/// an id. Live sessions in this daemon count as candidates too, because an idle
+/// session that has never persisted exists only in memory. A query that names
+/// no session is left untouched so the existing unknown-session error is what
+/// the client receives, and an ambiguous prefix is an error here rather than a
+/// silent pick: attaching to the wrong conversation is worse than retyping.
+pub(super) async fn resolve_target_subscribe_prefix(
+    request: &mut Request,
+    sessions: &SessionAgents,
+) -> std::result::Result<(), String> {
+    let Request::Subscribe {
+        target_session_id: Some(target),
+        ..
+    } = request
+    else {
+        return Ok(());
+    };
+    if target.is_empty() || crate::session::session_exists(target) || sessions.read().await.contains_key(target) {
+        return Ok(());
+    }
+    let mut candidates = crate::session::stored_session_id_prefix_matches(target).unwrap_or_default();
+    for live in sessions.read().await.keys() {
+        if live.starts_with(target.as_str()) && !candidates.iter().any(|seen| seen == live) {
+            candidates.push(live.clone());
+        }
+    }
+    match crate::session::choose_session_prefix_match(target, candidates) {
+        Ok(full_id) => {
+            if let Request::Subscribe { target_session_id, .. } = request {
+                *target_session_id = Some(full_id);
+            }
+            Ok(())
+        }
+        Err(error @ crate::session::SessionPrefixError::Ambiguous { .. }) => Err(format!(
+            "Subscribe target_session_id {error}; send a longer prefix or the full id"
+        )),
+        // Nothing on disk or in memory matches this prefix: keep the daemon's
+        // own unknown-session answer rather than inventing a second message.
+        Err(_) => Ok(()),
+    }
+}
+
 /// A reattachment names an existing session, not a new client working directory.
 /// Resolve an omitted cwd before provisional initialization, never from the
 /// daemon/bridge process cwd. Idle empty sessions may exist only in memory.
+/// Resolve a session id prefix, then the working directory.
+///
+/// A target id prefix names a session only when it is unique, so pasting the
+/// distinguishing head of an id attaches to the right conversation. The prefix
+/// runs first because the working-dir lookup matches on the resolved id.
+pub(super) async fn resolve_subscribe_target(
+    request: &mut Request,
+    sessions: &SessionAgents,
+    members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+) -> std::result::Result<(), String> {
+    resolve_target_subscribe_prefix(request, sessions).await?;
+    resolve_target_subscribe_working_dir(request, sessions, members).await
+}
+
 pub(super) async fn resolve_target_subscribe_working_dir(
     request: &mut Request,
     sessions: &SessionAgents,
@@ -165,3 +223,7 @@ pub(super) async fn initial_prewarm_task(
     }
     Some(spawn_deferred_prewarm(agent))
 }
+
+#[cfg(test)]
+#[path = "client_subscribe_prefix_tests.rs"]
+mod subscribe_prefix_tests;
