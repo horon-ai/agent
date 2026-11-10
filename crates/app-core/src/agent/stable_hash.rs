@@ -9,8 +9,10 @@ pub(crate) fn stable_hash_str(value: &str) -> u64 {
 }
 
 pub(crate) fn stable_hash_json<T: serde::Serialize + ?Sized>(value: &T) -> u64 {
-    let encoded = serde_json::to_string(value).map_or_else(|_| String::new(), |encoded| encoded);
-    stable_hash_str(&encoded)
+    match serde_json::to_string(value) {
+        Ok(encoded) => stable_hash_str(&encoded),
+        Err(_) => stable_hash_str(""),
+    }
 }
 
 pub(crate) fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {

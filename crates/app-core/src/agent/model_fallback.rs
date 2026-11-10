@@ -89,7 +89,10 @@ impl Agent {
     /// The configured fallback entries of the active named provider profile,
     /// in the order a turn tries them. Empty when no profile is active.
     pub fn fallback_models(&self) -> Vec<String> {
-        active_profile_fallback_models().unwrap_or_else(Vec::new)
+        match active_profile_fallback_models() {
+            Some(models) => models,
+            None => Vec::new(),
+        }
     }
 }
 

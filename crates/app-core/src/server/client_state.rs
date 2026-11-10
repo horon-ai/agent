@@ -273,7 +273,10 @@ pub(super) async fn handle_get_model_catalog(
                     provider.service_tier(),
                     provider.reasoning_effort(),
                     "fallback",
-                    crate::agent::active_profile_fallback_models().unwrap_or_else(Vec::new),
+                    match crate::agent::active_profile_fallback_models() {
+                        Some(models) => models,
+                        None => Vec::new(),
+                    },
                     None,
                 )
             }
