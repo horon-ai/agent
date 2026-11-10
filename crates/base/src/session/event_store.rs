@@ -110,6 +110,10 @@ pub(super) struct EventState {
     pub metadata: Option<store::SessionMetadata>,
     pub source_metadata: Option<store::SessionMetadata>,
     pub local_binding: Option<super::event_wire::LocalRuntime>,
+    /// The newest session binding the runtime journal carries, read at load or
+    /// recorded when a run row carrying it is durable. A mirror publish of this
+    /// binding takes its `rev` and needs no flush.
+    pub confirmed_binding: Option<crate::durable_runtime::Binding>,
     pub blocked: Option<store::StoreError>,
     pub reset_requested: bool,
     pub generation: u64,

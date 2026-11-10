@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use horon_agent_session_types::SessionStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -331,17 +332,101 @@ pub struct InputInDoubt {
     pub cause: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The host-local session binding a run row or a checkpoint carries.
+///
+/// The fields mirror `session::event_wire::LocalRuntime` exactly, including its
+/// serialization (`last_pid` and `last_active_at` stay `null` rather than
+/// disappearing), so one `local-runtime.json` shape serves both files. The
+/// journal owns this copy instead of importing the session type: `session` will
+/// read the journal, and pointing the journal back at `session` would make the
+/// two modules depend on each other. Building one from a `LocalRuntime` is a
+/// field-by-field struct literal, which keeps that direction one-way.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Binding {
+    /// Monotonic version. The highest `rev` observed wins on read; an equal
+    /// `rev` is won by the later row.
+    pub rev: u64,
+    pub status: SessionStatus,
+    pub last_pid: Option<u32>,
+    pub last_active_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub migration_epoch: Option<u64>,
+    #[serde(default)]
+    pub provider_session_id: Option<String>,
+}
+
+impl Binding {
+    /// A binding at `rev` with every resume-relevant field unset.
+    pub fn new(rev: u64, status: SessionStatus) -> Self {
+        Self {
+            rev,
+            status,
+            last_pid: None,
+            last_active_at: None,
+            working_dir: None,
+            migration_epoch: None,
+            provider_session_id: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunStarted {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_id: Option<String>,
+    /// The session binding this run started with. Absent on every row an older
+    /// build wrote, so its bytes stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<Binding>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+impl RunStarted {
+    /// A start row without a binding, which is what every caller written before
+    /// the journal carried one records.
+    pub fn new(input_id: Option<String>) -> Self {
+        Self {
+            input_id,
+            binding: None,
+        }
+    }
+
+    /// The same row carrying the session binding.
+    pub fn with_binding(input_id: Option<String>, binding: Option<Binding>) -> Self {
+        Self { input_id, binding }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunStopped {
     pub cause: StopCause,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_id: Option<String>,
+    /// The session binding this run ended with, for the same reason as
+    /// `RunStarted::binding`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<Binding>,
+}
+
+impl RunStopped {
+    /// A stop row without a binding.
+    pub fn new(cause: StopCause, input_id: Option<String>) -> Self {
+        Self {
+            cause,
+            input_id,
+            binding: None,
+        }
+    }
+
+    /// The same row carrying the session binding.
+    pub fn with_binding(cause: StopCause, input_id: Option<String>, binding: Option<Binding>) -> Self {
+        Self {
+            cause,
+            input_id,
+            binding,
+        }
+    }
 }
 
 /// Why a run stopped, recorded as observed and never inferred.
@@ -519,9 +604,32 @@ pub struct RuntimeState {
     pub monitors: BTreeMap<String, MonitorEntry>,
     #[serde(default)]
     pub wakes: BTreeMap<String, WakeEntry>,
+    /// The newest session binding any run row carried.
+    ///
+    /// Absent from every checkpoint an older build wrote, and unchanged in
+    /// bytes when no run row carried a binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<Binding>,
 }
 
 impl RuntimeState {
+    /// Record a binding seen on a row, keeping the highest `rev`.
+    ///
+    /// Rows apply in `seq` order, so an equal `rev` is won by the later row: the
+    /// stop row that follows a start row carries the closed state, which is what
+    /// a restart should read.
+    pub fn observe_binding(&mut self, binding: Binding) {
+        let replace = self.binding.as_ref().is_none_or(|current| binding.rev >= current.rev);
+        if replace {
+            self.binding = Some(binding);
+        }
+    }
+
+    /// The newest binding this state observed, if any run row carried one.
+    pub fn latest_binding(&self) -> Option<&Binding> {
+        self.binding.as_ref()
+    }
+
     /// Inputs that still hold work: accepted, returned, started, or sealed in
     /// doubt.
     pub fn live_inputs(&self) -> impl Iterator<Item = (&String, &InputEntry)> {
