@@ -570,7 +570,7 @@ impl ApiRequest {
             // Only the optional field is gated: an `ask_response` without an
             // `answer_id` is the legacy request and needs no negotiation.
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),
-            Self::ExportSessionMarkdown { .. } => None,
+            _ => None,
         }
     }
 
