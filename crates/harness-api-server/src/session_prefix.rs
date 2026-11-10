@@ -82,7 +82,8 @@ pub(crate) fn resolve(request: &mut Value, attached: Option<&str>, known: &[Stri
                         store_code: "ambiguous_session".into(),
                         retryable: false,
                         accepted_ids: candidates,
-                        ..StoreErrorDetail::default()
+                        retry_cursor: None,
+                        conflict_heads: Vec::new(),
                     }),
                 },
             ))
