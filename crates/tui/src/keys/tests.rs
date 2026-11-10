@@ -46,7 +46,8 @@ fn loader_with(contents: &str) -> (tempfile::TempDir, Loader) {
 
 #[test]
 fn keys_normalize_names_case_order_and_aliases() {
-    assert_eq!(parse("Shift+Ctrl+Return"), parse("ctrl+enter"));
+    assert_eq!(parse("Shift+Ctrl+Return"), parse("ctrl+shift+enter"));
+    assert_eq!(parse("Return"), parse("enter"));
     assert_eq!(parse("  CONTROL + J "), parse("ctrl+j"));
     assert_eq!(parse("Escape"), parse("esc"));
     assert_eq!(parse("SPACE"), parse("space"));
