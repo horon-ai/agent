@@ -584,3 +584,193 @@ async fn hashline_edit_reports_a_noop_and_escalates_after_three() {
     assert!(third.output.starts_with("STOP."), "{}", third.output);
     assert_eq!(std::fs::read_to_string(&file).expect("unchanged"), original);
 }
+
+#[tokio::test]
+async fn hashline_edit_moves_a_file_after_its_line_edits() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original = "alpha\nbeta\n";
+    let file = seed(dir.path(), "moved.txt", original);
+    let ctx = context(dir.path(), "hashline-move", "hashline-1");
+
+    let output = HashlineEditTool::new()
+        .execute(
+            json!({
+                "file_path": "moved.txt",
+                "move_to": "nested/moved.txt",
+                "ops": [{
+                    "start_anchor": anchor(original, 1),
+                    "new_text": "ALPHA",
+                    "kind": "replace"
+                }]
+            }),
+            ctx,
+        )
+        .await
+        .expect("move after edits");
+
+    assert!(!file.exists(), "the source must be gone after a move");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("nested/moved.txt")).expect("destination"),
+        "ALPHA\nbeta\n",
+        "the destination holds the edited content and its parent was created"
+    );
+    assert!(
+        output.output.contains("Moved moved.txt to nested/moved.txt"),
+        "{}",
+        output.output
+    );
+}
+
+#[tokio::test]
+async fn hashline_edit_moves_without_any_line_ops() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = seed(dir.path(), "plain.txt", "body\n");
+
+    HashlineEditTool::new()
+        .execute(
+            json!({"file_path": "plain.txt", "move_to": "renamed.txt"}),
+            context(dir.path(), "hashline-move-only", "hashline-1"),
+        )
+        .await
+        .expect("move without ops");
+
+    assert!(!file.exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("renamed.txt")).expect("destination"),
+        "body\n"
+    );
+}
+
+#[tokio::test]
+async fn hashline_edit_refuses_an_existing_move_destination() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let source = seed(dir.path(), "source.txt", "source\n");
+    let destination = seed(dir.path(), "taken.txt", "taken\n");
+
+    let error = HashlineEditTool::new()
+        .execute(
+            json!({"file_path": "source.txt", "move_to": "taken.txt"}),
+            context(dir.path(), "hashline-move-taken", "hashline-1"),
+        )
+        .await
+        .expect_err("an existing destination must be refused");
+    let message = format!("{error:#}");
+
+    assert!(message.contains("already exists"), "{message}");
+    assert_eq!(std::fs::read_to_string(&source).expect("source"), "source\n");
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("destination"),
+        "taken\n",
+        "the destination must not be overwritten"
+    );
+}
+
+#[tokio::test]
+async fn hashline_edit_deletes_a_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = seed(dir.path(), "gone.txt", "bye\n");
+
+    let output = HashlineEditTool::new()
+        .execute(
+            json!({"file_path": "gone.txt", "delete": true}),
+            context(dir.path(), "hashline-delete", "hashline-1"),
+        )
+        .await
+        .expect("delete");
+
+    assert!(!file.exists(), "the file must be gone");
+    assert!(output.output.contains("Deleted gone.txt"), "{}", output.output);
+}
+
+#[tokio::test]
+async fn hashline_edit_refuses_move_and_delete_together() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = seed(dir.path(), "both.txt", "one\n");
+
+    let error = HashlineEditTool::new()
+        .execute(
+            json!({"file_path": "both.txt", "move_to": "other.txt", "delete": true}),
+            context(dir.path(), "hashline-both", "hashline-1"),
+        )
+        .await
+        .expect_err("move and delete in one call must be refused");
+    let message = format!("{error:#}");
+
+    assert!(message.contains("cannot be combined"), "{message}");
+    assert_eq!(std::fs::read_to_string(&file).expect("unchanged"), "one\n");
+}
+
+#[tokio::test]
+async fn hashline_edit_refuses_a_missing_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    let error = HashlineEditTool::new()
+        .execute(
+            json!({"file_path": "absent.txt", "delete": true}),
+            context(dir.path(), "hashline-missing", "hashline-1"),
+        )
+        .await
+        .expect_err("a missing file must be reported");
+    let message = format!("{error:#}");
+
+    assert!(message.contains("File not found"), "{message}");
+}
+
+#[tokio::test]
+async fn undo_reverses_a_move_as_one_unit() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original = "alpha\nbeta\n";
+    let file = seed(dir.path(), "journal.txt", original);
+    let ctx = context(dir.path(), "hashline-undo-move", "hashline-1");
+
+    HashlineEditTool::new()
+        .execute(
+            json!({
+                "file_path": "journal.txt",
+                "move_to": "archived/journal.txt",
+                "ops": [{
+                    "start_anchor": anchor(original, 2),
+                    "new_text": "BETA",
+                    "kind": "replace"
+                }]
+            }),
+            ctx.clone(),
+        )
+        .await
+        .expect("move with edits");
+    let moved = dir.path().join("archived/journal.txt");
+    assert!(moved.exists());
+
+    crate::tool::undo::UndoTool::new()
+        .execute(json!({"force": false}), ctx)
+        .await
+        .expect("undo");
+
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("restored source"),
+        original,
+        "undo must restore the source content"
+    );
+    assert!(!moved.exists(), "undo must remove the moved copy");
+}
+
+#[tokio::test]
+async fn undo_reverses_a_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original = "kept\n";
+    let file = seed(dir.path(), "revived.txt", original);
+    let ctx = context(dir.path(), "hashline-undo-delete", "hashline-1");
+
+    HashlineEditTool::new()
+        .execute(json!({"file_path": "revived.txt", "delete": true}), ctx.clone())
+        .await
+        .expect("delete");
+    assert!(!file.exists());
+
+    crate::tool::undo::UndoTool::new()
+        .execute(json!({"force": false}), ctx)
+        .await
+        .expect("undo");
+
+    assert_eq!(std::fs::read_to_string(&file).expect("restored"), original);
+}
