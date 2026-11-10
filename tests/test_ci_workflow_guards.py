@@ -161,8 +161,12 @@ class WorkflowGuardTests(unittest.TestCase):
         gate = text.split('\n  structural-perf:\n', 1)[1].split(
             '\n  structural-perf-required:\n', 1)[0]
         self.assertIn('run: bash scripts/ci/free_disk_space.sh', gate)
-        self.assertIn("runner.environment == 'github-hosted' && runner.os == 'Linux'",
-                      gate)
+        # The condition is matched as the step's own `if:` line, so the same text
+        # in a comment cannot stand in for it on the self-hosted macOS runner.
+        self.assertRegex(
+            gate,
+            re.compile(r"^        if: \$\{\{ runner\.environment == 'github-hosted'"
+                       r" && runner\.os == 'Linux' \}\}$", re.MULTILINE))
         self.assertNotIn('sudo rm -rf /usr/share/dotnet', gate)
         self.assertLess(gate.index('- uses: actions/checkout@'),
                         gate.index('- name: Free disk space'),
