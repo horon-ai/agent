@@ -16,6 +16,7 @@ here are the ones whose failure would damage the document or hide a gap:
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
+import bench_charts  # noqa: E402
 import bench_docs  # noqa: E402
 
 DOC = (
@@ -183,6 +185,117 @@ class CommandLine(unittest.TestCase):
             )
             self.assertEqual(code, 1)
             self.assertEqual(doc.read_text(encoding="utf-8"), "# 성능\n")
+
+
+def compare_result(name: str, label: str, ms: float | None, rss: float | None, roundtrip: bool = True,
+                   fsync: float | None = None) -> dict:
+    oneshot = None if ms is None else {"ms": ms, "peak_rss_bytes": rss, "tool_roundtrip": roundtrip,
+                                       "fsync_calls": fsync}
+    return {"name": name, "label": label, "version_ms": {"summary": {"median": 3.0}},
+            "oneshot": oneshot, "install_size_bytes": 50 * 1024 * 1024, "error": None,
+            "sessions_memory": {"points": [{"sessions": 1, "post_turn_rss_bytes": 40e6},
+                                           {"sessions": 10, "post_turn_rss_bytes": 45e6}],
+                                "first_session_post_turn_rss_bytes": 40e6,
+                                "each_additional_post_turn_rss_bytes": 400e3}}
+
+
+def compare_json(*results: dict, skipped: list | None = None) -> str:
+    return json.dumps({"suite": "compare", "started_at": "2026-11-10T00:03:56Z",
+                       "results": list(results), "skipped": skipped or []})
+
+
+CHART_DOC = (
+    "# 성능\n\n## 차트\n\n<!-- bench-charts:start -->\n<!-- bench-charts:end -->\n\n## 자동 측정\n\n"
+    "<!-- bench-auto:start -->\n\n아직 없음.\n\n<!-- bench-auto:end -->\n"
+)
+
+
+class Charts(unittest.TestCase):
+    """Charts are committed by CI, so the same input must give the same bytes,
+    and a value the table blanks must never become a zero-length bar."""
+
+    def make_results(self, results: Path) -> None:
+        job_dir(results, "l", "linux", files={"compare.json": compare_json(
+            compare_result("jcode", "jcode", 150.0, 38e6, fsync=5),
+            compare_result("horon", "horon", 60.0, 37e6, fsync=14),
+            compare_result("pi", "pi", 400.0, 90e6, roundtrip=False),
+        )})
+        job_dir(results, "m", "macos", files={"compare.json": compare_json(
+            compare_result("horon", "horon", 200.0, 30e6),
+            compare_result("jcode", "jcode", 100.0, 31e6),
+            skipped=[{"name": "syscalls", "reason": "strace not available"}],
+        )})
+
+    def test_same_input_gives_identical_svg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.make_results(results)
+            dirs = bench_docs.find_platform_dirs(results)
+            first = bench_charts.render_charts(dirs, "abc1234", "en", "42")
+            second = bench_charts.render_charts(dirs, "abc1234", "en", "42")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), len(bench_charts.METRICS) + 1)
+        for name, svg in first.items():
+            with self.subTest(chart=name):
+                self.assertTrue(svg.startswith("<svg "))
+                self.assertIn("abc1234", svg)
+
+    def test_unmeasured_values_are_labelled_not_drawn_as_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.make_results(results)
+            files = bench_charts.render_charts(bench_docs.find_platform_dirs(results), "abc1234", "en")
+        oneshot = files["03-oneshot-time.svg"]
+        # pi's round trip failed: no bar value, an explicit label instead.
+        self.assertIn("not measured", oneshot)
+        self.assertNotIn(">400", oneshot)
+        # Windows produced nothing at all.
+        self.assertIn("This run has no comparison result for Windows.", oneshot)
+        fsync = files["09-fsync-calls.svg"]
+        self.assertIn("(strace is not available on this runner.)", fsync)
+        # horon is drawn first and in blue on every chart.
+        self.assertIn(bench_charts.BLUE, oneshot)
+        summary = files["00-summary.svg"]
+        self.assertIn("60.0 ms · #1 of 2", summary)  # pi has no comparable value, so it is not ranked
+        self.assertIn("200 ms · #2 of 2", summary)
+
+    def test_render_writes_charts_only_when_the_document_has_the_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "bench-results"
+            results.mkdir()
+            self.make_results(results)
+            with_block = root / "a" / "RESULTS.ko.md"
+            without = root / "b" / "RESULTS.md"
+            for doc, text in ((with_block, CHART_DOC), (without, DOC)):
+                doc.parent.mkdir()
+                doc.write_text(text, encoding="utf-8")
+            for doc, lang in ((with_block, "ko"), (without, "en")):
+                code = bench_docs.main(["render", "--doc", str(doc), "--results", str(results),
+                                        "--commit", "abc1234", "--lang", lang])
+                self.assertEqual(code, 0)
+            text = with_block.read_text(encoding="utf-8")
+            self.assertIn("![벤치마크 요약](charts/00-summary.ko.svg)", text)
+            self.assertTrue((with_block.parent / "charts" / "03-oneshot-time.ko.svg").is_file())
+            self.assertFalse((without.parent / "charts").exists())
+            # A second run rewrites the block instead of growing it.
+            bench_docs.main(["render", "--doc", str(with_block), "--results", str(results),
+                             "--commit", "abc1234", "--lang", "ko"])
+            self.assertEqual(with_block.read_text(encoding="utf-8"), text)
+
+    def test_no_comparison_gives_a_note_and_no_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_dir(root, "l", "linux")
+            doc = root / "RESULTS.md"
+            out = bench_docs.write_charts(CHART_DOC, doc, root, "abc1234")
+        self.assertIn("has no competitor comparison", out)
+        self.assertFalse((root / "charts").exists())
+
+    def test_doubled_chart_markers_are_errors(self) -> None:
+        with self.assertRaises(bench_docs.DocError):
+            bench_docs.charts_span(CHART_DOC + "<!-- bench-charts:start -->\n")
+
 
 
 if __name__ == "__main__":

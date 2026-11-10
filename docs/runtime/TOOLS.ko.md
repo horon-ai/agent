@@ -455,6 +455,17 @@ config 하위 디렉터리 규칙 본문
 - 본문은 저장 전에 비밀값 마스킹을 거칩니다. 세션 기록을 저장할 때와 같은 규칙입니다.
 - 없는 id는 `Not found: <id>`를 돌려줍니다. 아무 필드도 주지 않거나 본문이 공백뿐이면 도구 오류로 거부합니다.
 
+### `memory` 액션 `learn`
+
+- `{"action": "learn", "memory": "...", "context": "...", "scope": "project" | "global", "skill": {...}}`는 교훈 한 건을 기록합니다. 쉽게 알기 어려웠던 수정, 재사용할 절차, 프로젝트 관례가 여기에 해당합니다. omp의 `learn`과 같은 호출입니다.
+- 교훈 본문은 `lesson`이 아니라 `memory`에 넣습니다. `lesson`을 보내면 "Unknown field: `lesson`. The lesson text goes in `memory`."로 거부합니다. serde가 모르는 필드를 무시해서 아무것도 저장하지 않고 성공으로 보이는 일을 막으려는 것입니다.
+- `memory`는 2,000자, `context`는 400자까지입니다. 넘으면 도구 오류입니다. `context`는 교훈과 함께 `Context:` 줄로 저장됩니다.
+- `scope`는 `project`(기본) 또는 `global`이고, `remember`와 같은 저장소에 들어갑니다. `all`은 읽기 범위라 거부합니다.
+- 기록의 범주는 `fact`가 아니라 `lesson`입니다. 그래야 recall이 교훈으로 보여 주고 같은 시기의 사실보다 앞에 둡니다. `from_extracted`도 `lesson`과 `learning`을 이 범주로 옮기므로, 추출된 교훈이 더 이상 `fact`로 접히지 않습니다.
+- 본문은 세션 기록을 저장할 때와 같은 비밀값 마스킹을 거친 뒤 저장되고, 같은 교훈을 다시 보내면 새 기록을 만들지 않고 저장된 기록을 보강합니다.
+- `skill`을 주면 `{"action": "create" | "update", "name": "...", "description": "...", "body": "..."}`로 `skill_manage create`/`update`와 같은 코드를 거쳐 관리형 스킬을 씁니다. `name`은 필수라, `skill` 객체에 `name`이 없으면 "`skill.name` is required"로 알리고 아무것도 쓰지 않습니다. 스킬 쓰기가 실패하면 결과 둘째 줄에 알리고 교훈은 되돌리지 않습니다. 교훈은 이미 저장됐기 때문입니다. `skill_manage`와 달리 스킬 목록은 다시 읽지 않으므로, 새 스킬은 다음 `reload_all`이나 재시작 뒤에 보입니다.
+- 스킬 작성에는 여전히 `[tools] managed_skills = true`가 필요합니다. 꺼져 있으면 교훈만 저장하고 스킬을 쓰지 않았다고 결과에 적습니다.
+
 ## MCP 서버 설정 출처
 
 MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니다. 위쪽 출처가 먼저이고, 같은 이름은 먼저 온 정의가 이깁니다.
@@ -472,6 +483,21 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 - `~/.claude.json`의 프로젝트 항목은 정규화한 작업 폴더 경로로 고릅니다. 한 프로젝트의 서버가 다른 저장소 세션에 섞이지 않습니다.
 - 사용자 수준 파일은 `FileStamp`가 같은 동안 다시 파싱하지 않고 프로세스 캐시(최대 16개)를 씁니다. 세션이 시작될 때 바뀐 사용자 설정이 없으면 파일을 하나도 읽지 않습니다. 작업 폴더 파일은 캐시하지 않습니다. 신뢰 판정과 같은 한 번의 읽기에서 나온 바이트만 파싱해야 하기 때문입니다.
 - 환경 변수 펼치기(`${VAR}`)와 실행할 수 없는 항목 제거는 합친 뒤 매번 합니다.
+
+### 리소스와 프롬프트
+
+리소스나 프롬프트를 공개하는 서버도 같은 `mcp` 도구로 다룹니다. 그래서 코어 도구 목록과 지연 로딩 구성이 달라지지 않습니다.
+
+| 액션 | 인자 | 결과 |
+| --- | --- | --- |
+| `resources` | 선택 `server` | 리소스마다 한 줄(URI, 이름, MIME 타입, 설명). 서버 이름을 주면 그 서버만, 빼면 연결된 모든 서버를 봅니다. |
+| `read_resource` | `server`, `uri` | 리소스 본문. 텍스트는 도구 결과와 같은 비밀 마스킹을 거치고 `accept_large_output: true`가 아니면 MCP 결과 예산에 맞춰 줄입니다. 바이너리 본문은 MIME 타입과 디코딩한 크기로 요약합니다. |
+| `prompts` | 선택 `server` | 프롬프트마다 인자와 함께 한 줄. 필수 인자는 이름 뒤에 `*`를 붙입니다. |
+| `get_prompt` | `server`, `name`, 선택 `arguments` | 서버가 펼친 프롬프트를 텍스트로 돌려줍니다. 다른 도구 출력처럼 호출자에게 반환할 뿐 대화에 자동으로 넣지 않습니다. |
+
+- `resources`나 `prompts` 기능을 알리지 않은 서버에는 `MCP resources are not supported by '<server>' …`를 돌려주고 JSON-RPC 요청을 보내지 않습니다.
+- `notifications/resources/list_changed`와 `notifications/prompts/list_changed`는 캐시한 목록을 버리므로 다음 `resources`나 `prompts` 호출이 다시 받아 옵니다. 캐시는 연결에 속하고 재연결 뒤에는 빈 상태로 시작합니다.
+- 리소스 구독(`resources/subscribe`), 샘플링, 루트는 구현하지 않았습니다.
 
 ## 큰 도구 출력과 컨텍스트 절약
 

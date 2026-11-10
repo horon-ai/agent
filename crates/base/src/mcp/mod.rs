@@ -17,7 +17,9 @@ mod sources;
 mod tool;
 
 pub use client::{
-    DEFAULT_MCP_REQUEST_TIMEOUT, McpClient, McpHandle, TRANSPORT_CLOSED_NOTIFICATION, request_timeout_for,
+    DEFAULT_MCP_REQUEST_TIMEOUT, McpClient, McpHandle, PROMPTS_LIST_CHANGED_NOTIFICATION,
+    RESOURCES_LIST_CHANGED_NOTIFICATION, TRANSPORT_CLOSED_NOTIFICATION, request_timeout_for,
+    unsupported_capability_message,
 };
 pub use manager::McpManager;
 pub use pool::{SharedMcpPool, get_shared_pool, init_shared_pool};
@@ -25,5 +27,5 @@ pub use protocol::*;
 pub use schema_cache::{McpSchemaCache, fingerprint_config};
 pub use tool::{
     McpTool, create_mcp_tools, create_mcp_tools_from_cached, create_mcp_tools_from_cached_many, dispatch_name,
-    dispatch_names, render_resource_content, take_accept_large_output,
+    dispatch_names, render_prompt_result, render_resource_body, render_resource_content, take_accept_large_output,
 };

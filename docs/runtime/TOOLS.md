@@ -455,6 +455,17 @@ Memory injected into the prompt is truncated, and seeing the full content used t
 - The body goes through secrets masking before it is stored, with the same rules as saving session history.
 - An unknown id returns `Not found: <id>`. Supplying no field, or a whitespace-only body, is refused as a tool error.
 
+### `memory` action `learn`
+
+- `{"action": "learn", "memory": "...", "context": "...", "scope": "project" | "global", "skill": {...}}` records one lesson: a non-obvious fix, a procedure, a project convention worth reusing. It is the same call omp's `learn` makes.
+- The lesson text goes in `memory`, not `lesson`. A call that sends `lesson` is refused ("Unknown field: `lesson`. The lesson text goes in `memory`."), because serde would otherwise ignore the field and store nothing.
+- `memory` is capped at 2,000 characters and `context` at 400; over the cap is a tool error. `context` is stored with the lesson as a `Context:` line.
+- `scope` is `project` (default) or `global`, landing in the same stores as `remember`. `all` is a read scope and is refused.
+- The record's category is `lesson`, not `fact`, so recall can surface it as a lesson and rank it above a fact of the same age. `from_extracted` maps `lesson` and `learning` to that category too, so an extracted lesson is no longer folded into `fact`.
+- The text is masked with the same secret rules as saved history before it is stored, and the repeat of an identical lesson reinforces the stored record instead of adding a second one.
+- With `skill` given, `{"action": "create" | "update", "name": "...", "description": "...", "body": "..."}` writes a managed skill through the same code as `skill_manage create`/`update`. `name` is required: a `skill` object without it is reported as "`skill.name` is required" and nothing is written. A skill failure is reported on a second line of the result and never rolls back the lesson: the lesson is already stored. Unlike `skill_manage`, the skills list is not reloaded, so a new skill appears after the next `reload_all` or restart.
+- Authoring a skill still requires `[tools] managed_skills = true`; with it off, the lesson is stored and the result says the skill was not written.
+
 ## Where MCP server configuration comes from
 
 MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.
@@ -472,6 +483,21 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 - The project entry in `~/.claude.json` is selected by the canonical working folder path, so one project's servers never mix into another repository's session.
 - A user-level file is not re-parsed while its `FileStamp` holds; a process cache (up to 16 files) is used instead. A session start with no changed user settings reads no file at all. Working-folder files are not cached, because they must be parsed from the same single read that produced the trust decision.
 - Environment expansion (`${VAR}`) and removal of unlaunchable entries happen after merging, every time.
+
+### Resources and prompts
+
+Servers that publish resources or prompts are reached through the same `mcp` tool, so the core tool list and the deferred-loading layout do not change.
+
+| Action | Arguments | Result |
+| --- | --- | --- |
+| `resources` | optional `server` | One line per resource (URI, name, MIME type, description) for the named server, or for every connected server when no name is given. |
+| `read_resource` | `server`, `uri` | The resource body. Text goes through the same secret redaction as tool results and is fitted to the MCP result budget unless `accept_large_output: true`; a binary body is summarized by MIME type and decoded size. |
+| `prompts` | optional `server` | One line per prompt with its arguments; a trailing `*` marks a required argument. |
+| `get_prompt` | `server`, `name`, optional `arguments` | The prompt expanded by the server, as text. It is returned to the caller like any tool output and is not injected into the conversation. |
+
+- A server that did not advertise the `resources` or `prompts` capability gets `MCP resources are not supported by '<server>' …` and no JSON-RPC request is written for it.
+- `notifications/resources/list_changed` and `notifications/prompts/list_changed` drop the cached list, so the next `resources` or `prompts` call refetches it. The cache belongs to the connection and starts empty again after a reconnect.
+- Resource subscriptions (`resources/subscribe`), sampling, and roots are not implemented.
 
 ## Large tool output and context saving
 

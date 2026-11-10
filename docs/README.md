@@ -12,7 +12,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 
 | Requirement | What it means | Current state |
 | --- | --- | --- |
-| No TUI | The binary never opens a screen. `ratatui`, `crossterm`, and `horon-agent-tui*` must not appear in the dependency graph. | Met |
+| No TUI in `horon-agent` | The headless binary (`serve`, `run`, `api-bridge`, `acp`) never opens a screen, and its dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate. A terminal client, when one ships, is the separate `horon-tui` package on `horon-agent-sdk`. | Met. `scripts/ci/check_headless_graph.py` walks the resolved graph |
 | ACP v1 and v2 support | `horon acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
 | No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
 
@@ -33,7 +33,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
 | | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
-| `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to OpenAI-compatible endpoints, provider profiles and API keys, model usage metadata |
+| `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to OpenAI-compatible endpoints, provider profiles and API keys, model roles and their fallback order, model usage metadata |
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | Remote MCP, user-defined web search |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
 | | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |

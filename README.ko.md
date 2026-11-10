@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>헤드리스 코딩 에이전트. Rust 실행 파일 하나, 터미널 UI 없음, OpenAI 호환 엔드포인트라면 무엇이든.</strong>
+  <strong>헤드리스 코딩 에이전트. Rust 실행 파일 하나, OpenAI 호환 엔드포인트라면 무엇이든.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 세 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP)이다. 터미널 UI는 열지 않고 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
+`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 세 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP)이다. 헤드리스 실행 파일은 터미널 UI를 열지 않고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
 
-- **계약으로 보장하는 헤드리스.** `ratatui`, `crossterm`, `horon-agent-tui*`는 의존성 그래프에 없다.
+- **계약으로 보장하는 헤드리스.** `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 대화형 터미널 클라이언트가 나오면 에이전트 SDK를 쓰는 별도 `horon-tui` 패키지다.
 - **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
 - **모델 직접 호출.** 에이전트가 엔드포인트로 바로 POST한다. 사이에 라우터 프로세스나 플러그인 호스트가 없다.
 - **가볍고 빠른 시작.** GitHub 호스티드 러너에서 한 턴 실행이 Linux 69.8 ms, macOS 104.7 ms 걸렸다([수치와 한계](#벤치마크)).
@@ -193,7 +193,7 @@ macOS에서는 한 턴(104.7 ms 대 361.6 ms), 스킬(118.4 ms 대 270.0 ms), MC
 
 ## 기여
 
-먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. TUI 없음, ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
+먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. `horon-agent` 패키지에 터미널 UI 없음, ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
 
 - `dev`에서 브랜치를 만들고 `dev`로 풀 리퀘스트를 연다. 모든 풀 리퀘스트는 이 저장소의 실제 이슈를 연결해야 한다(`Closes #123`). `Require Linked Issue` 검사가 이를 확인한다.
 - 푸시하기 전에 검사를 돌린다.

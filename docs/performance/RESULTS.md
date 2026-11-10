@@ -6,6 +6,29 @@ This document records the measurements the `agent-runtime-performance-2` plan le
 
 All raw artifacts live under `.omo/evidence/agent-runtime-performance-2/`, a path ignored by `.gitignore:26`. The plan asked for the key numbers to be copied into the PR bodies, but in practice most PR bodies were one line. So anyone who clones this repository today cannot see a single measurement from this work. This page moves that record somewhere tracked; every number is copied verbatim from the evidence files above.
 
+## Charts: latest automatic measurement
+
+<!-- bench-charts:start -->
+
+`.github/workflows/benchmark-docs.yml` redraws these charts from the competitor comparison of the automatic measurement below. Do not edit this section by hand. Lower is better in every chart, and horon is the blue bar.
+
+![Benchmark summary](charts/00-summary.svg)
+
+| Metric | Chart |
+| --- | --- |
+| `--version` time | [01-version.svg](charts/01-version.svg) |
+| Install size | [02-install-size.svg](charts/02-install-size.svg) |
+| One-shot prompt time | [03-oneshot-time.svg](charts/03-oneshot-time.svg) |
+| One-shot prompt memory | [04-oneshot-memory.svg](charts/04-oneshot-memory.svg) |
+| Skill invocation time | [05-skill-time.svg](charts/05-skill-time.svg) |
+| MCP tool call time | [06-mcp-time.svg](charts/06-mcp-time.svg) |
+| Memory with the most sessions | [07-sessions-memory.svg](charts/07-sessions-memory.svg) |
+| Memory per additional session | [08-per-session-memory.svg](charts/08-per-session-memory.svg) |
+| fsync calls per one-shot prompt | [09-fsync-calls.svg](charts/09-fsync-calls.svg) |
+| First session memory | [10-first-session-memory.svg](charts/10-first-session-memory.svg) |
+
+<!-- bench-charts:end -->
+
 ## Measured results
 
 Dimension labels follow this rule. `MEMORY` is allocation and memory, `TIME` is wall-clock time, `WORK` is iteration counts and byte volumes, and `RESOURCES` is file descriptor, thread and task counts. Dimensions are listed separately so that an improvement in one is not read as an improvement in another.

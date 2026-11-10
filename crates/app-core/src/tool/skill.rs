@@ -311,11 +311,6 @@ impl SkillTool {
         }
     }
 
-    /// Whether `[tools] managed_skills` lets the model author skills.
-    fn managed_skills_enabled() -> bool {
-        crate::config::config().tools.managed_skills
-    }
-
     /// `create`: writes a new managed skill, refusing any existing name.
     ///
     /// An authored skill — global or project-local — always wins a collision:
@@ -328,14 +323,14 @@ impl SkillTool {
         description: Option<String>,
         body: Option<String>,
     ) -> Result<ToolOutput> {
-        if !Self::managed_skills_enabled() {
+        if !managed_skills_enabled() {
             return Ok(ToolOutput::new(MANAGED_SKILLS_DISABLED));
         }
         let name = crate::managed_skills::validate_name(name.as_deref().unwrap_or_default())?;
-        if self.effective_registry(working_dir).await.get(&name).is_some() || crate::managed_skills::exists(&name)? {
+        if self.effective_registry(working_dir).await.get(&name).is_some() {
             anyhow::bail!("A skill named '{name}' already exists; managed skills cannot override authored ones.");
         }
-        self.write_managed_skill(&name, description, body, "Created").await
+        self.write_managed_skill("create", name, description, body).await
     }
 
     /// `update`: replaces an existing managed skill's description and body.
@@ -345,15 +340,11 @@ impl SkillTool {
         description: Option<String>,
         body: Option<String>,
     ) -> Result<ToolOutput> {
-        if !Self::managed_skills_enabled() {
+        if !managed_skills_enabled() {
             return Ok(ToolOutput::new(MANAGED_SKILLS_DISABLED));
         }
         let name = crate::managed_skills::validate_name(name.as_deref().unwrap_or_default())?;
-        anyhow::ensure!(
-            crate::managed_skills::exists(&name)?,
-            "Managed skill '{name}' does not exist. Use action=create to add it."
-        );
-        self.write_managed_skill(&name, description, body, "Updated").await
+        self.write_managed_skill("update", name, description, body).await
     }
 
     /// `delete`: removes a skill the agent wrote itself.
@@ -410,22 +401,24 @@ impl SkillTool {
         }
     }
 
+    /// Write one managed skill, then reload the shared registry.
     async fn write_managed_skill(
         &self,
-        name: &str,
+        action: &str,
+        name: String,
         description: Option<String>,
         body: Option<String>,
-        verb: &str,
     ) -> Result<ToolOutput> {
-        let description = description.unwrap_or_default();
-        let path = crate::managed_skills::write(name, &description, body.as_deref().unwrap_or_default())?;
-        let reload_note = self.reload_after_managed_change(name).await;
-        let description = crate::managed_skills::sanitize_description(&description);
+        let write = write_managed_skill_file(action, &name, description, body)?;
+        let reload_note = self.reload_after_managed_change(&write.name).await;
         Ok(ToolOutput::new(format!(
-            "{verb} managed skill '{name}'\n\nPath: {}\nDescription: {description}{reload_note}",
-            path.display()
+            "{} managed skill '{}'\n\nPath: {}\nDescription: {}{reload_note}",
+            write.verb,
+            write.name,
+            write.path.display(),
+            write.description
         ))
-        .with_title(format!("Skills: {verb} {name}")))
+        .with_title(format!("Skills: {} {}", write.verb, write.name)))
     }
 
     async fn read_skill(&self, name: Option<String>, working_dir: Option<&std::path::Path>) -> Result<ToolOutput> {
@@ -455,6 +448,64 @@ impl SkillTool {
             .with_title("Skills: Not found"))
         }
     }
+}
+
+/// Whether `[tools] managed_skills` lets the model author skills.
+pub(crate) fn managed_skills_enabled() -> bool {
+    crate::config::config().tools.managed_skills
+}
+
+/// One managed-skill file write, described for a tool result.
+pub(crate) struct ManagedSkillWrite {
+    /// `Created` or `Updated`.
+    pub(crate) verb: &'static str,
+    /// The validated name, which is also the directory name.
+    pub(crate) name: String,
+    pub(crate) path: std::path::PathBuf,
+    /// The stored description, sanitized the same way the file stores it.
+    pub(crate) description: String,
+}
+
+/// The file half of `skill_manage create|update`.
+///
+/// `action` is `create` (refuses a name the managed directory already holds)
+/// or `update` (refuses a name it does not hold). The two differ only in that
+/// existence rule, so the memory tool's `learn` action shares this code path
+/// instead of writing `SKILL.md` itself (issue #61). Callers keep what
+/// surrounds it: `skill_manage` also refuses a name an authored skill owns and
+/// reloads the skills list afterwards, and `learn` deliberately does neither.
+pub(crate) fn write_managed_skill_file(
+    action: &str,
+    name: &str,
+    description: Option<String>,
+    body: Option<String>,
+) -> Result<ManagedSkillWrite> {
+    let name = crate::managed_skills::validate_name(name)?;
+    let verb = match action {
+        "create" => {
+            anyhow::ensure!(
+                !crate::managed_skills::exists(&name)?,
+                "A skill named '{name}' already exists; managed skills cannot override authored ones."
+            );
+            "Created"
+        }
+        "update" => {
+            anyhow::ensure!(
+                crate::managed_skills::exists(&name)?,
+                "Managed skill '{name}' does not exist. Use action=create to add it."
+            );
+            "Updated"
+        }
+        other => anyhow::bail!("Unknown skill action for a lesson: {other}. Use create or update."),
+    };
+    let description = description.unwrap_or_default();
+    let path = crate::managed_skills::write(&name, &description, body.as_deref().unwrap_or_default())?;
+    Ok(ManagedSkillWrite {
+        verb,
+        name,
+        path,
+        description: crate::managed_skills::sanitize_description(&description),
+    })
 }
 
 /// Where skills are read from, highest priority first.

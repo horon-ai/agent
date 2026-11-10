@@ -355,18 +355,28 @@ impl Agent {
     /// `committed` is true only for a turn that finished normally; a failed or
     /// cancelled turn restores. Either way the guard is disarmed afterwards, so
     /// its drop cannot restore a second time.
+    ///
+    /// This is also the turn's single settle point shared by both turn loops,
+    /// so a context rollover the model asked for with `new_context` is committed
+    /// here: the transcript is final, and a later turn can no longer land it on
+    /// a transcript the model never saw. A turn that failed or was cancelled
+    /// drops the request instead of carrying it into an unrelated turn.
     pub(super) async fn settle_soft_interrupt_turn(&mut self, in_flight: &mut Option<InFlightGuard>, committed: bool) {
-        let Some(mut guard) = in_flight.take() else {
-            return;
-        };
-        if committed {
-            self.commit_soft_interrupt_turn().await;
-        } else {
-            let appended = guard.take_appended();
-            self.restore_soft_interrupt_turn("turn_failed_or_cancelled", &appended)
-                .await;
+        if let Some(mut guard) = in_flight.take() {
+            if committed {
+                self.commit_soft_interrupt_turn().await;
+            } else {
+                let appended = guard.take_appended();
+                self.restore_soft_interrupt_turn("turn_failed_or_cancelled", &appended)
+                    .await;
+            }
+            guard.disarm();
         }
-        guard.disarm();
+        if committed {
+            self.apply_pending_context_rollover();
+        } else {
+            crate::tool::new_context::clear_rollover(&self.session.id);
+        }
     }
 
     /// This turn's run id, so a durable transition can name it.

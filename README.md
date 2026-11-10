@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A headless coding agent. One Rust binary, no terminal UI, any OpenAI-compatible endpoint.</strong>
+  <strong>A headless coding agent. One Rust binary, any OpenAI-compatible endpoint.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. It never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
+`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. The headless binary never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
-- **Headless by contract.** `ratatui`, `crossterm` and `horon-agent-tui*` are not in the dependency graph.
+- **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. An interactive terminal client, when one ships, is the separate `horon-tui` package on the agent SDK.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
 - **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 69.8 ms on Linux and 104.7 ms on macOS ([numbers and caveats](#benchmarks)).
@@ -193,7 +193,7 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no TUI, ACP v1 and v2 both served, and no measured performance regression against the recorded baseline.
+Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no terminal UI in the `horon-agent` package, ACP v1 and v2 both served, and no measured performance regression against the recorded baseline.
 
 - Branch from `dev` and open the pull request against `dev`. Every pull request must link a real issue in this repository (`Closes #123`); the `Require Linked Issue` check enforces it.
 - Run the checks before pushing:

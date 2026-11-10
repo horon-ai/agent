@@ -51,7 +51,7 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
         # The only allowed conditions are the path classification (a
-        # documentation-only pull request skips the job) and the negation of the
+        # documentation-only pull request or dev push skips the job) and the negation of the
         # repository-wide switch to the self-hosted macOS runner, which cannot
         # run Windows jobs at all. The negation keeps fork pull requests on
         # hosted runners.
@@ -133,13 +133,19 @@ class WorkflowGuardTests(unittest.TestCase):
 
     def test_ci_dispatch_and_cancellation_keep_release_evidence(self):
         # `scripts/release/check_ci.py` accepts only a successful push run for the
-        # tagged SHA, so a push run must never be superseded by the next one, and
-        # a lost run must be recreatable for the same commit.
+        # tagged SHA, so a push run on `main` must never be superseded by the next
+        # one, and a lost run must be recreatable for the same commit. Everywhere
+        # else a newer run replaces the older one; a manual dispatch is diagnosis
+        # only and never counts as release evidence.
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('workflow_dispatch:', workflow)
-        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        # One group per ref: a shared group would let a `dev` run cancel `main`.
+        self.assertIn('group: ci-${{ github.workflow }}-${{ github.ref }}', workflow)
+        self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}",
                       workflow)
         self.assertNotIn('cancel-in-progress: true', workflow)
+        self.assertNotIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+                         workflow)
 
     def test_every_job_has_a_hosted_sized_timeout(self):
         for name in ('ci.yml', 'structural-perf.yml'):
@@ -154,12 +160,23 @@ class WorkflowGuardTests(unittest.TestCase):
 
     def test_linux_rust_jobs_free_disk_before_building(self):
         # A hosted ubuntu runner has ~14 GB on `/`; the workspace's cold builds do
-        # not fit while the pre-installed toolchains are there.
+        # not fit while the pre-installed toolchains are there. structural-perf
+        # calls the same shared script as ci.yml, after the checkout that puts it
+        # on disk, and never deletes inline again (#21).
         text = (ROOT / '.github/workflows/structural-perf.yml').read_text()
-        self.assertIn('sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc',
-                      text)
-        self.assertIn('/opt/hostedtoolcache/CodeQL', text)
-        self.assertIn('df -h /', text)
+        gate = text.split('\n  structural-perf:\n', 1)[1].split(
+            '\n  structural-perf-required:\n', 1)[0]
+        self.assertIn('run: bash scripts/ci/free_disk_space.sh', gate)
+        # The condition is matched as the step's own `if:` line, so the same text
+        # in a comment cannot stand in for it on the self-hosted macOS runner.
+        self.assertRegex(
+            gate,
+            re.compile(r"^        if: \$\{\{ runner\.environment == 'github-hosted'"
+                       r" && runner\.os == 'Linux' \}\}$", re.MULTILINE))
+        self.assertNotIn('sudo rm -rf /usr/share/dotnet', gate)
+        self.assertLess(gate.index('- uses: actions/checkout@'),
+                        gate.index('- name: Free disk space'),
+                        'the shared script must be checked out before it runs')
 
         # ci.yml delegates to one script so the four steps cannot drift apart
         # (#21). Every Linux cleanup step must call it and stay off a
@@ -232,10 +249,37 @@ class WorkflowGuardTests(unittest.TestCase):
                 for job in names:
                     if job != aggregate:
                         self.assertRegex(needs, rf'\b{re.escape(job)}\b', job)
-        # A push or dispatch must never be classified as documentation-only,
+                # An empty or malformed classification must fail the aggregate
+                # instead of passing with every gate skipped.
+                self.assertIn(".changes.outputs.code // \"\"", block)
+                self.assertRegex(block, r'if \[ "\$code" != true \] && \[ "\$code" != false \]; then\n'
+                                        r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+                # The dev push lookup reads the run list with the job's own token.
+                changes = re.split(r'\n  [A-Za-z0-9_-]+:\n', jobs.split('\n  changes:\n', 1)[1], maxsplit=1)[0]
+                self.assertIn('      actions: read', changes)
+                self.assertIn('GH_TOKEN: ${{ github.token }}', changes)
+                self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
+                self.assertIn('HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}', changes)
+                self.assertIn('fetch-depth: 0', changes)
+                self.assertIn(f'run: python3 scripts/ci/classify_changes.py --workflow {name} '
+                              '--base "$BASE_SHA" --head "$HEAD_SHA"', changes)
+        ci_block = (ROOT / '.github/workflows/ci.yml').read_text().split('\n  ci-required:\n', 1)[1]
+        self.assertRegex(ci_block, r'if \[ "\$code" != true \] && \[ "\$docs_only" != true \]; then\n'
+                                   r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+        # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
-        script = (ROOT / 'scripts/ci/classify_changes.py').read_text()
-        self.assertIn('if event != "pull_request"', script)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'classify_changes', ROOT / 'scripts/ci/classify_changes.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        full = {'code': True, 'docs': False, 'docs_only': False}
+        for event, ref, attempt in (('push', 'refs/heads/main', 1),
+                                    ('push', 'refs/tags/v1.0.0', 1),
+                                    ('workflow_dispatch', 'refs/heads/dev', 1),
+                                    ('push', 'refs/heads/dev', 2)):
+            with self.subTest(event=event, ref=ref, attempt=attempt):
+                self.assertEqual(mod.classify(event, ['README.md'], ref=ref, attempt=attempt), full)
 
     def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
         # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by
@@ -251,6 +295,24 @@ class WorkflowGuardTests(unittest.TestCase):
             with self.subTest(job=job):
                 self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
                 self.assertIn('targets: ', block)
+
+    def test_benchmark_docs_push_through_the_ruleset_without_restarting_ci(self):
+        # The ruleset on main and dev requires CI checks and only lets the
+        # Horon AI Bot (and admins) push directly. GITHUB_TOKEN pushes would be
+        # rejected, and an app-token push without [skip ci] would start CI (and
+        # release-tag.yml) on every docs commit.
+        workflow = (ROOT / '.github/workflows/benchmark-docs.yml').read_text()
+        docs = workflow.split('\n  docs:\n', 1)[1]
+        self.assertIn('uses: actions/create-github-app-token@', docs)
+        self.assertIn('app-id: ${{ secrets.HORON_AI_BOT_APP_ID }}', docs)
+        self.assertIn('private-key: ${{ secrets.HORON_AI_BOT_PRIVATE_KEY }}', docs)
+        self.assertIn('token: ${{ steps.bot.outputs.token }}', docs)
+        self.assertLess(docs.index('id: bot'), docs.index('actions/checkout@'))
+        self.assertIn('\n    permissions:\n      contents: read\n', docs)
+        commits = re.findall(r'git commit [^\n]*-m "([^"]*)"', docs)
+        self.assertTrue(commits)
+        for message in commits:
+            self.assertIn('[skip ci]', message)
 
 
 if __name__ == '__main__':

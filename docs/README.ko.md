@@ -12,7 +12,7 @@
 
 | 요구사항 | 내용 | 현재 상태 |
 | --- | --- | --- |
-| TUI 제외 | 바이너리는 화면을 열지 않는다. `ratatui`, `crossterm`, `horon-agent-tui*`가 의존성 그래프에 없어야 한다. | 충족 |
+| `horon-agent` TUI 제외 | 헤드리스 실행 파일(`serve`, `run`, `api-bridge`, `acp`)은 화면을 열지 않고, 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없어야 한다. 터미널 클라이언트가 나오면 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지다. | 충족. `scripts/ci/check_headless_graph.py`가 해석된 그래프를 따라 확인한다 |
 | ACP v1·v2 지원 | `horon acp`가 `protocolVersion` 1과 2를 모두 처리하고, 양쪽이 지원하는 가장 높은 버전으로 답한다. v2를 더하면서 v1을 깨지 않는다. | 충족. v2 협상은 `src/cli/acp/v2/negotiate.rs`, v1은 `src/cli/acp/util.rs` |
 | 성능 회귀 방지 | 같은 기계·빌드 프로필·작업에서 기록된 기준선과 같거나 빨라야 한다. 느려지는 변경은 병합하지 않는다. | 측정 방법과 기록된 수치가 있음(`performance/BENCHMARK.md`, `performance/RESULTS.md`). 기록된 수치가 기준선이다 |
 
@@ -33,7 +33,7 @@
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
-| `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 사용 메타데이터 |
+| `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 모델 사용 메타데이터 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |

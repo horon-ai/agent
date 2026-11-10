@@ -61,6 +61,71 @@ input = ["text", "image"]
 
 A single `default_model` line is enough to make calls. The `models` array tells the agent context size and input modalities, which helps model selection and compaction estimates.
 
+## Model roles
+
+A model role is a named workload-to-model mapping shared by every feature that needs a model other than the session's own. Roles are configuration only: a file without a role table resolves models exactly as this build does today.
+
+### Role names
+
+| Role | Workload that uses it | Written as |
+| --- | --- | --- |
+| `default` | Every turn of the session unless a more specific role applies. A bare `--model` or `/model` names this role for the run. | `default` |
+| `plan` | Planning turns: the model that writes a plan before execution hands off (#70). | `plan` |
+| `aux` | Cheap auxiliary work: compaction summaries, titles, classification, memory extraction. | `aux` |
+
+No other role exists. A new role is added only together with the workload that calls it. Reason: a role with no named caller is a second spelling of `default`, and a role that appears before its consumer cannot be reviewed for the model it should point at.
+
+### Where roles live
+
+Roles are a sub-table of the profile that serves them.
+
+```toml
+[providers.my-gw]
+default_model = "my-model"
+
+[providers.my-gw.roles]
+default = "my-model"
+plan = "my-planner"
+aux = "my-small-model"
+```
+
+A role value is a bare model id inside that profile. It is not a route spec: `openai:`, `openai-api:`, `openai-oauth:`, and `<profile>:` prefixes are refused with a configuration error naming the role. A role never selects a second profile, endpoint, or credential, and `[provider] default_provider` and `--provider-profile` stay the only way to choose those. Reason: one session keeps one endpoint and one credential, so a role cannot move a request to another account behind the caller's back, and the fallback order below remains a single chain.
+
+The endpoint stays the only authority on whether a model id exists. The role layer does not check ids against `[[providers.<name>.models]]`, which is metadata for context size and model pickers and already accepts a `default_model` it does not list (`crates/base/src/provider/external.rs`). A role that names an unlisted model is used as written, and the generic context default applies until the array lists it.
+
+### Existing per-workload keys
+
+`[compaction] summary_model`, `[agents] swarm_model`, and `[agents] memory_model` keep their current meaning and are not aliases of a role. Reason: each resolves through its own path and understands values that are not model ids — `inherit` for the two agents keys (`crates/base/src/session/agent_models.rs` `effective_agent_model`, `crates/base/src/sidecar.rs`) — so reading them as role names would turn a sentinel into a model id. When a workload has both its own key and a role, the workload key wins and `roles.aux` fills only workloads whose own key is unset. A configuration file that never mentions `roles` behaves exactly as this build does today.
+
+### Resolution order
+
+A workload that asks for a role resolves it in this order, and the first step that yields a non-empty value wins.
+
+1. The override for this run or turn (`--model` names `default`; a handoff sets `plan` through the existing model switch).
+2. The role's own entry under `[providers.<name>.roles]`.
+3. The `default` role's entry.
+4. The profile's `default_model`.
+5. `[provider] default_model`.
+6. An error that names the workload and the keys that were empty.
+
+An empty string counts as unset at every step. `aux` walks the same chain, so a profile with only `default_model` uses today's model for auxiliary work. Reason: steps 1, 4, and 5 are the order the agent already resolves one model today; roles slot in above them, so every existing file resolves to the same model it resolves to now, and an unset role inherits instead of failing.
+
+### Fallback and failover order
+
+The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
+
+1. Model fallback: the next entry of `fallback_models`, once per entry, after the retry budget for a retryable error is spent.
+2. Same-provider account failover (`same_provider_account_failover`, default `true`).
+3. Cross-provider failover (`cross_provider_failover`, default `countdown`; unattended runs need `autonomous_failover`, default `false`).
+
+The switch lasts for the rest of the turn and the next turn starts again from the role's model. Non-retryable errors (401, invalid request, context overflow) never start the chain. Reason: the steps differ in what they cost to take. A model switch keeps the endpoint, the credential, and the cache host; an account switch changes the credential; a provider switch changes the endpoint. Cheapest first means a rate limit is absorbed without losing prompt-cache locality, and putting the list on the profile keeps it from naming a model on another endpoint, which the placement rule above forbids.
+
+### Who implements it
+
+#73 writes the shared type: the `roles` table on `NamedProviderConfig` in `crates/config-types/src/lib.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
+
+An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
+
 ## Prompt cache key
 
 A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 24 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.

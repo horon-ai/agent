@@ -44,12 +44,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Same classification as ci.yml: a documentation-only pull request has no
-  # counter to measure. Pushes and dispatches always run the gate.
+  # Same classification as ci.yml: a documentation-only pull request or
+  # first-attempt `dev` push has no counter to measure. A push to `main`, a
+  # dispatch, a re-run of a `dev` push and every lookup or diff failure run the
+  # gate.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
     steps:
@@ -60,9 +65,10 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
+          GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci/classify_changes.py --workflow structural-perf.yml --base "$BASE_SHA" --head "$HEAD_SHA"
 
   structural-perf:
     name: Structural performance gate
@@ -80,19 +86,19 @@ jobs:
       # job's own toolchain, as the Build & Test job does.
       RUSTUP_TOOLCHAIN: stable
     steps:
+      # The cleanup lives in the repository, so the checkout comes first: the
+      # shared script is not on disk until the workspace exists.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Free disk space
         # The gate cold-compiles several `cargo test` binaries on a hosted ubuntu
-        # runner with about 14 GB free. Remove the pre-installed toolchains this
-        # job never uses; skip on the self-hosted macOS machine, whose toolchains
-        # are its owner's.
+        # runner with about 14 GB free. The shared script renames the unused
+        # pre-installed toolchains and returns before the deletion, which
+        # continues in the background while the toolchain installs; skip on the
+        # self-hosted macOS machine, whose toolchains are its owner's.
         if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' }}
         shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        run: bash scripts/ci/free_disk_space.sh
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -117,8 +123,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/perf/check_structural.py
 
-  # Always finishes: a documentation-only pull request skips the gate by design
-  # and must not leave a required check pending.
+  # Always finishes: a documentation-only pull request or `dev` push skips the
+  # gate by design and must not leave a required check pending.
   structural-perf-required:
     name: Structural performance required
     if: ${{ always() }}
@@ -133,5 +139,10 @@ jobs:
           set -euo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
           [ "$(echo "$NEEDS" | jq -r '.changes.result')" = success ]
+          code="$(echo "$NEEDS" | jq -r '.changes.outputs.code // ""')"
+          if [ "$code" != true ] && [ "$code" != false ]; then
+            echo "::error::Changed Paths gave code='$code'; expected true or false"
+            exit 1
+          fi
           [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != failure ]
           [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != cancelled ]

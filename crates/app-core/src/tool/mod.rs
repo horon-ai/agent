@@ -42,6 +42,7 @@ mod minimizer;
 mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
+pub(crate) mod new_context;
 mod patch;
 pub mod path_policy;
 mod path_suffix;
@@ -1088,6 +1089,10 @@ impl Registry {
         // section, not just this tool.
         if context_notes::enabled() {
             Self::insert_tool(&mut tools_map, "context_notes", context_notes::ContextNotesTool::new());
+            // The rollover keeps the notes and the latest user message, so it
+            // is offered only where the notes exist and `history://current` can
+            // serve the transcript it hides.
+            Self::insert_tool(&mut tools_map, "new_context", new_context::NewContextTool::new());
         }
         if toolbox::enabled() {
             Self::insert_tool(

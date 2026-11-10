@@ -10,10 +10,14 @@ wins.
 Every change in this tree keeps all three. A change that breaks one is not
 done, regardless of what else it fixes.
 
-1. **No TUI.** The binary is headless and never opens a terminal. The
-   dependency graph stays free of `ratatui`, `crossterm`, and any
-   `horon-agent-tui*` crate. Do not bring back the TUI or the crossterm login
-   presenter.
+1. **No TUI in the headless package.** The `horon-agent` package (`serve`,
+   `run`, `api-bridge`, `acp` — the headless binary) never opens a terminal UI,
+   and its dependency graph stays free of `ratatui`, `crossterm`, `horon-tui`,
+   and any `horon-agent-tui*` crate. An interactive terminal client may exist
+   only as the separate package and binary `horon-tui` (planned), which talks
+   to the daemon through `horon-agent-sdk` and never moves the terminal stack
+   into `horon-agent`. `scripts/ci/check_headless_graph.py` enforces the graph
+   rule in CI.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
    both sides support. Current state: both are implemented — v2 negotiates in
@@ -60,6 +64,8 @@ direction (faster and smaller than jcode).
 - One headless binary, `horon-agent`. Working subcommands: `serve` (agent
   daemon), `run` (send one message and exit), `api-bridge` (alias `api`;
   harness API on a Unix socket, Unix only), and `acp` (ACP adapter on stdio).
+  A terminal client is not part of this package: when one ships it is the
+  separate `horon-tui` package and binary on `horon-agent-sdk`.
 - One model path: the agent POSTs `/chat/completions` to the OpenAI-compatible
   endpoint of the profile named by `[provider] default_provider` or
   `--provider-profile`. A profile is a `[providers.<name>]` table with
@@ -139,13 +145,20 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-Requirement 1 check. Each command must fail with "did not match any packages":
+Requirement 1 check. Each `cargo tree` command must print "did not match any
+packages", and the graph gate must exit 0:
 
 ```bash
 cargo tree -p horon-agent -i ratatui
 cargo tree -p horon-agent -i crossterm
+cargo tree -p horon-agent -i horon-tui
 cargo tree -p horon-agent -i horon-agent-tui
+python3 scripts/ci/check_headless_graph.py
 ```
+
+The `cargo tree` lines cover those names only; `check_headless_graph.py` walks
+every package reachable from `horon-agent` and fails on the `horon-agent-tui*`
+prefix too.
 
 Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 `src/cli/acp.rs`). Requirement 3 check: the structural gate and A/B runner in
@@ -184,7 +197,9 @@ and do not merge or report success before then.
 ## CI gates by change type
 
 `ci.yml` and `structural-perf.yml` start with a `Changed Paths` job
-(`scripts/ci/classify_changes.py`) that classifies a pull request by its files.
+(`scripts/ci/classify_changes.py`) that classifies a change by its files: a pull
+request against its base, and a first-attempt push to `dev` against the head of
+the last successful `dev` push run of the same workflow (two-dot diff).
 
 - **Documentation only** (README, `docs/`, `AGENTS.md`, templates): runs
   `Documentation Checks` (links, UTF-8, English/Korean pairs) and
@@ -193,14 +208,26 @@ and do not merge or report success before then.
   matrix, the SDK jobs and the structural performance gate are skipped.
 - **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
   gate runs.
-- **Pushes and manual dispatches always run everything.** Release evidence
-  (`scripts/release/check_ci.py`) accepts only a fully successful push run.
+- **Pushes to `main`, manual dispatches and re-runs of a `dev` push always run
+  everything.** A `dev` push whose head is already in `origin/main`, and any
+  lookup or diff failure, also runs everything. Release evidence
+  (`scripts/release/check_ci.py`) accepts only a fully successful push run; a
+  documentation-only `dev` run is not release evidence, and `Re-run all jobs` on
+  that run produces a full run.
 - `CI Required` and `Structural performance required` always finish and fail
   only when a gate failed or was cancelled; use them as the required checks so
   a skipped gate never leaves a check pending.
 - Every action is pinned to a commit with a `# vX` comment (Dependabot keeps them
   current); `release.yml`, `release-tag.yml` and the publish workflows are not
   part of this gating. `actionlint` must report nothing (`Workflow Lint`).
+- **Superseded runs are cancelled outside `main`.** A newer run on the same ref
+  cancels the older one on every ref except `main`, whose push runs are release
+  evidence: a running one is never cancelled, though GitHub can still replace a
+  run that is only pending. On `dev` a push and a manual dispatch share the
+  group and cancel each other; after a cancelled `dev` push run, use `Re-run all
+  jobs` on that run. Never fast-forward `dev` to a `main` commit (the sync is the
+  merge-commit PR): a cancelled `dev` run would then be the newest push run for a
+  release commit, and `scripts/release/check_ci.py` rejects it.
 
 ## Release and branch sync: dev into main, then main back into dev
 
@@ -209,13 +236,16 @@ release, so do it only when the owner asks. The two branches differ by merge
 commits and automatic `docs(perf)` commits, which is why a release is followed by
 a sync back.
 
-1. **Release.** Check the latest `dev` CI run with `scripts/ci/run_warnings.py`
-   (zero warnings, all jobs green). Open a PR with base `main`, head `dev`, titled
-   `Release: dev into main (vX.Y.Z)`, `Refs` the issues it carries, and list what
-   it ships. Merge it with a merge commit, never squash. After the CI push run on
-   `main` succeeds, `release-tag.yml` tags the merge commit, runs `release.yml`
-   and pushes `ghcr.io/horon-ai/agent`; watch `gh run list --branch main` until
-   the release run ends.
+1. **Release.** Check the newest `dev` CI run in which the code gates ran with
+   `scripts/ci/run_warnings.py` (zero warnings, all jobs green, not cancelled);
+   if the latest `dev` run is documentation-only, check the newest one before it
+   that ran the code gates, or use `Re-run all jobs` on the latest. Open a PR with
+   base `main`, head `dev`, titled `Release: dev into main (vX.Y.Z)`, `Refs` the
+   issues it carries, and list what it ships. Merge it with a merge commit,
+   never squash. After the CI push run on `main` succeeds, `release-tag.yml`
+   tags the merge commit, runs `release.yml` and pushes
+   `ghcr.io/horon-ai/agent`; watch `gh run list --branch main` until the release
+   run ends.
 2. **Sync back.** When the release has finished, open a PR with base `dev`, head
    `main`, titled `Sync: main into dev`, and merge it with a merge commit so `dev`
    holds every commit `main` has. It needs a linked issue like any PR.

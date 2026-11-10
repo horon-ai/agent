@@ -1,7 +1,7 @@
 //! MCP Tool - wraps MCP server tools for horon-agent's tool system
 
 use super::manager::McpManager;
-use super::protocol::{ContentBlock, McpToolDef, ResourceContent};
+use super::protocol::{ContentBlock, GetPromptResult, McpToolDef, ResourceContent};
 use anyhow::Result;
 use async_trait::async_trait;
 use horon_agent_tool_core::{Tool, ToolContext};
@@ -113,6 +113,54 @@ pub fn render_resource_content(resource: ResourceContent) -> String {
         Some(blob) => format!("[Resource: {} ({} bytes)]", uri, blob.len()),
         None => format!("[Resource: {}]", uri),
     }
+}
+
+/// Render one resource body fetched by `resources/read`.
+///
+/// Text goes through the same secret-redaction pass as tool results. A binary
+/// body is summarized by MIME type and decoded size instead of putting a
+/// base64 payload into the conversation.
+pub fn render_resource_body(resource: &ResourceContent) -> String {
+    if let Some(text) = &resource.text {
+        return crate::message::redact_secrets(text);
+    }
+    let mime = resource.mime_type.as_deref().unwrap_or("application/octet-stream");
+    match &resource.blob {
+        Some(blob) => format!(
+            "[Binary resource: {} ({}, ~{} bytes)]",
+            resource.uri,
+            mime,
+            base64_decoded_len(blob)
+        ),
+        None => format!("[Empty resource: {} ({})]", resource.uri, mime),
+    }
+}
+
+/// Decoded byte length of a standard base64 payload, without decoding it.
+fn base64_decoded_len(encoded: &str) -> usize {
+    let padding = encoded.bytes().rev().take_while(|byte| *byte == b'=').count();
+    (encoded.len() / 4 * 3).saturating_sub(padding.min(2))
+}
+
+/// Render one `prompts/get` result as text: the optional description, then each
+/// message prefixed with its role. The caller decides where the text goes; it
+/// is never injected into the conversation on its own.
+pub fn render_prompt_result(result: &GetPromptResult) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(description) = &result.description {
+        parts.push(description.clone());
+    }
+    for message in &result.messages {
+        let body = match &message.content {
+            ContentBlock::Text { text } => text.clone(),
+            ContentBlock::Image { data, mime_type } => {
+                format!("[Image: {mime_type} ({} bytes)]", data.len())
+            }
+            ContentBlock::Resource { resource } => render_resource_body(resource),
+        };
+        parts.push(format!("{}: {body}", message.role));
+    }
+    parts.join("\n")
 }
 
 /// Remove horon-agent's `accept_large_output` flag from MCP arguments, returning
