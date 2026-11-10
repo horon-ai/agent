@@ -182,6 +182,14 @@ impl Agent {
             .unwrap_or(model)
     }
 
+    /// Model id that produced the most recent stored assistant response.
+    ///
+    /// Unlike [`Self::provider_model`], this survives the per-turn restore of
+    /// a model fallback, so it names the model that actually answered.
+    pub fn last_serving_model(&self) -> Option<String> {
+        self.last_serving_model.clone()
+    }
+
     pub(super) fn provider_key_for_new_session(&self) -> Option<String> {
         if let Some(label) = self.provider.oauth_account_label() {
             let method = if self.provider.name().eq_ignore_ascii_case("openai") {

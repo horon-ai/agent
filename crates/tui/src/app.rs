@@ -14,6 +14,7 @@ use crate::input::Input;
 use crate::keys::{self, Bindings, Key};
 use crate::prompts::{Prompt, Response};
 use crate::sdk_bridge::Incoming;
+use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
 use crate::transcript::Transcript;
 
@@ -67,6 +68,16 @@ pub struct App {
     pub provider: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
+    /// Session the client is attached to, from the last event that named it.
+    pub session_id: Option<String>,
+    /// Working directory the `path` segment shows.
+    pub cwd: Option<String>,
+    /// The user's home directory, shortened to `~` by the `path` segment.
+    pub home: Option<String>,
+    /// Latest token totals the daemon reported.
+    pub tokens: Option<TokenTotals>,
+    /// How the bottom line is arranged, replaced when `tui.toml` changes.
+    pub statusline: Layout,
     /// Colours the renderer uses, replaced when the theme loader resolves a
     /// new theme.
     pub theme: Theme,
@@ -93,6 +104,11 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            session_id: None,
+            cwd: None,
+            home: home_directory(),
+            tokens: None,
+            statusline: Layout::default(),
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
@@ -117,6 +133,11 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            session_id: None,
+            cwd: None,
+            home: home_directory(),
+            tokens: None,
+            statusline: Layout::default(),
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
@@ -167,6 +188,34 @@ impl App {
         };
         parts.push(state.to_string());
         parts
+    }
+
+    /// The state the status-line segments read.
+    ///
+    /// The clock is left empty here: the renderer fills it once per frame, so
+    /// the app state never holds a time that goes stale.
+    pub fn status_data(&self) -> StatusData<'_> {
+        StatusData {
+            provider: self.provider.as_deref(),
+            model: self.model.as_deref(),
+            session_id: self.session_id.as_deref(),
+            pending_turn: self.pending_turn,
+            session_status: self.session_status.as_deref(),
+            prompt: self.prompt_label(),
+            cwd: self.cwd.as_deref(),
+            home: self.home.as_deref(),
+            tokens: self.tokens,
+            now: None,
+        }
+    }
+
+    /// The pending-decision wording for the `pending` segment.
+    fn prompt_label(&self) -> Option<&'static str> {
+        match &self.prompt {
+            Some(Prompt::Approval(_)) => Some("approval needed"),
+            Some(Prompt::Ask(_)) => Some("question waiting"),
+            None => None,
+        }
     }
 
     /// Fold one protocol event into the state.
@@ -220,7 +269,13 @@ impl App {
             ApiEvent::AskRequested { ask_id, questions, .. } => {
                 self.prompt = Some(Prompt::ask(ask_id.clone(), questions.clone()));
             }
-            ApiEvent::ModelInfo { provider, model, .. } => {
+            ApiEvent::ModelInfo {
+                session_id,
+                provider,
+                model,
+                ..
+            } => {
+                self.session_id = Some(session_id.clone());
                 if let Some(model) = model {
                     self.model = Some(model.clone());
                 }
@@ -228,8 +283,25 @@ impl App {
                     self.provider = Some(provider.clone());
                 }
             }
-            ApiEvent::SessionStatus { status, .. } => {
+            ApiEvent::SessionStatus { session_id, status, .. } => {
+                self.session_id = Some(session_id.clone());
                 self.session_status = Some(status.clone());
+            }
+            ApiEvent::TokenUsage {
+                session_id,
+                input,
+                output,
+                cache_read_input,
+                cache_creation_input,
+                ..
+            } => {
+                self.session_id = Some(session_id.clone());
+                self.tokens = Some(TokenTotals {
+                    input: *input,
+                    output: *output,
+                    cache_read: optional_count(cache_read_input),
+                    cache_creation: optional_count(cache_creation_input),
+                });
             }
             ApiEvent::Error { message, .. } => {
                 self.pending_turn = false;
@@ -305,6 +377,26 @@ impl App {
             _ => {}
         }
         None
+    }
+}
+
+/// The home directory the `path` segment shortens to `~`.
+///
+/// `HOME` is read first and `USERPROFILE` second, which covers Unix and
+/// Windows without an OS-specific block.
+fn home_directory() -> Option<String> {
+    let value = match std::env::var_os("HOME") {
+        Some(home) => home,
+        None => std::env::var_os("USERPROFILE")?,
+    };
+    Some(value.to_string_lossy().into_owned())
+}
+
+/// A token count the protocol left optional.
+fn optional_count(value: &Option<u64>) -> u64 {
+    match value {
+        Some(value) => *value,
+        None => 0,
     }
 }
 

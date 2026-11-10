@@ -63,6 +63,10 @@ export interface RuntimeInfo {
   sessionId: string;
   provider?: string;
   model?: string;
+  /** Configured fallback model ids, in the order a turn tries them. */
+  fallbackModels?: string[];
+  /** Model that produced the most recent response, which differs from `model` after a fallback. */
+  servingModel?: string;
   providers: string[];
   routes: ModelRouteInfo[];
 }
@@ -1139,6 +1143,8 @@ export class HoronAgentClient extends EventEmitter {
       sessionId: frame.session_id,
       provider: frame.provider,
       model: frame.model,
+      fallbackModels: frame.fallback_models,
+      servingModel: frame.serving_model,
       providers: [
         ...new Set(
           [frame.provider, ...routes.map((route) => route.provider)].filter(

@@ -1,3 +1,11 @@
+// Apple's linker reports that the `__eh_frame` section of the unoptimized
+// `horon-agent` binary passes its 16 MB limit for the compact unwind table, so
+// a panic in a debug build unwinds through the slower DWARF path. The section
+// size is the linker's format limit, not something a source change here fixes;
+// optimized builds stay under it. Scoped to unoptimized macOS links only, like
+// the lib-test allow in `crates/app-core/src/lib.rs`.
+#![cfg_attr(all(debug_assertions, target_os = "macos"), allow(linker_messages))]
+
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;

@@ -58,6 +58,7 @@ fn available_models_snapshot_into_event(snapshot: ModelCatalogSnapshot) -> Serve
         provider_model: snapshot.provider_model,
         available_models: snapshot.available_models,
         available_model_routes: snapshot.model_routes,
+        identity: None,
     }
 }
 

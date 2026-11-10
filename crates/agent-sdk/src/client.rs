@@ -92,8 +92,9 @@ impl UnixTransport {
         // cause: the bridge is not running. Connecting is the first thing
         // anyone does with this SDK, so say what to do about it.
         let stream = PlatformUnixStream::connect(path).map_err(|cause| {
-            Error::new(
-                ErrorKind::ConnectFailed,
+            Error::connect_failed(
+                Some(path),
+                &cause,
                 match cause.kind() {
                     std::io::ErrorKind::NotFound => format!(
                         "harness not running (no socket at {}). Start `horon-agent-harness-api-bridge` \
@@ -876,9 +877,7 @@ impl HoronAgentClient {
                 client.capabilities = capabilities;
                 Ok(client)
             }
-            ApiEvent::Error { code, message, details } => {
-                Err(Error::new(ErrorKind::Harness(code), message).with_details(details))
-            }
+            ApiEvent::Error { code, message, details } => Err(Error::from_handshake(code, message, details)),
             other => Err(Error::new(
                 ErrorKind::HandshakeFailed,
                 format!("unexpected reply to hello: {other:?}"),
@@ -960,10 +959,11 @@ impl HoronAgentClient {
 
     /// Send a request, failing when the server replies with an error frame.
     pub(crate) fn request_ok(&self, request: ApiRequest) -> Result<ServerFrame> {
+        let session_id = request.session_id().map(str::to_owned);
         let frame = self.request(request)?;
         match frame.event {
             ApiEvent::Error { code, message, details } => {
-                Err(Error::new(ErrorKind::Harness(code), message).with_details(details))
+                Err(Error::from_frame(code, message, details, session_id.as_deref()))
             }
             _ => Ok(frame),
         }
@@ -1463,45 +1463,13 @@ impl HoronAgentClient {
 
     pub fn get_runtime_info(&self, session_id: &str) -> Result<RuntimeInfo> {
         self.ping()?;
-        match self
+        let event = self
             .request_ok(ApiRequest::GetRuntimeInfo {
                 session_id: session_id.to_string(),
             })?
-            .event
-        {
-            ApiEvent::RuntimeInfo {
-                session_id,
-                provider,
-                model,
-                reasoning_effort,
-                auth_method,
-                routes,
-            } => {
-                let mut providers = Vec::new();
-                if let Some(provider) = provider.as_ref() {
-                    providers.push(provider.clone());
-                }
-                for route in &routes {
-                    if !providers.contains(&route.provider) {
-                        providers.push(route.provider.clone());
-                    }
-                }
-                Ok(RuntimeInfo {
-                    server: self.server.clone(),
-                    protocol_version: API_VERSION_MAJOR,
-                    capabilities: self.capabilities.clone(),
-                    healthy: true,
-                    session_id,
-                    provider,
-                    model,
-                    reasoning_effort,
-                    auth_method,
-                    providers,
-                    routes,
-                })
-            }
-            other => Err(unexpected("runtime_info", &other)),
-        }
+            .event;
+        RuntimeInfo::from_reply(&event, self.server.clone(), self.capabilities.clone())
+            .ok_or_else(|| unexpected("runtime_info", &event))
     }
 
     /// Persist an API key in horon-agent's owner-only provider store and hot-reload
@@ -1939,10 +1907,11 @@ impl HoronAgentClient {
     }
 
     pub(crate) fn replication_request(&self, request: ApiRequest) -> Result<ApiEvent> {
+        let session_id = request.session_id().map(str::to_owned);
         let frame = self.request_with_limit(request, MAX_REPLICATION_WIRE_BYTES)?;
         match frame.event {
             ApiEvent::Error { code, message, details } => {
-                Err(Error::new(ErrorKind::Harness(code), message).with_details(details))
+                Err(Error::from_frame(code, message, details, session_id.as_deref()))
             }
             event => Ok(event),
         }
@@ -2354,7 +2323,7 @@ impl HoronAgentClient {
                     return Ok(result);
                 }
                 ApiEvent::Error { code, message, details } => {
-                    return Err(Error::new(ErrorKind::Harness(code), message).with_details(details));
+                    return Err(Error::from_frame(code, message, details, Some(session_id)));
                 }
                 _ => {}
             }
@@ -2505,10 +2474,7 @@ fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventContro
     };
     let stream = child.events(Some(&session_id));
     if let Err(error) = child.attach_session(&session_id) {
-        if !matches!(
-            error.kind,
-            ErrorKind::Harness(horon_agent_harness_api::ErrorCode::UnknownSession)
-        ) {
+        if !error.is_unknown_session() {
             stop_global_stream(control, Some(error));
         }
         return;

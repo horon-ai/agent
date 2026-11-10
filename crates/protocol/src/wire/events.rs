@@ -2,8 +2,6 @@
 
 use super::*;
 
-pub use super::event_types::{FileDiffWire, PlanEntryWire};
-
 /// Server event sent to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -748,8 +746,9 @@ pub enum ServerEvent {
         available_models: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         available_model_routes: Vec<horon_agent_provider_core::ModelRoute>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        identity: Option<RuntimeModelIdentity>,
     },
-
     /// Notification from another agent (file conflict, message, shared context)
     #[serde(rename = "notification")]
     Notification {

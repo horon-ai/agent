@@ -73,6 +73,8 @@ class RuntimeInfo(TypedDict, total=False):
     session_id: str
     provider: str
     model: str
+    fallback_models: list[str]
+    serving_model: str
     providers: list[str]
     routes: list[dict[str, Any]]
 
@@ -1831,6 +1833,11 @@ class HoronAgentClient:
             info["provider"] = provider
         if isinstance(frame.get("model"), str):
             info["model"] = frame["model"]
+        fallbacks = frame.get("fallback_models")
+        if isinstance(fallbacks, list):
+            info["fallback_models"] = [model for model in fallbacks if isinstance(model, str)]
+        if isinstance(frame.get("serving_model"), str):
+            info["serving_model"] = frame["serving_model"]
         return info
 
     # --- credentials --------------------------------------------------------
