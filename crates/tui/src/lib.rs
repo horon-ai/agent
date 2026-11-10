@@ -358,7 +358,7 @@ where
 }
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-    let theme = app.theme.clone();
+    let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
     let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
@@ -408,7 +408,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 
     let status_area = areas[index];
-    frame.render_widget(status_widget(app, &theme, symbols), status_area);
+    frame.render_widget(status_widget(app, theme, symbols), status_area);
     index += 1;
 
     let input_area = areas[index];
