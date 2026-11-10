@@ -221,17 +221,26 @@ impl Prompt {
                 })
             }
             Self::Ask(ask) => {
-                if key.code == KeyCode::Esc {
-                    return None;
-                }
-                if let KeyCode::Char(character) = key.code
-                    && !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && let Some(digit) = character.to_digit(10)
-                {
-                    ask.choose(digit.saturating_sub(1) as usize);
-                    if !ask.question().is_some_and(|question| question.multi) {
+                let multi = ask.question().is_some_and(|question| question.multi);
+                match key.code {
+                    KeyCode::Esc => return None,
+                    // A multi-select question toggles digits and confirms with
+                    // Enter; a single-choice one is settled by its digit.
+                    KeyCode::Enter if multi => {}
+                    KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let Some(digit) = character.to_digit(10) else {
+                            return None;
+                        };
+                        let Some(index) = digit.checked_sub(1) else {
+                            return None;
+                        };
+                        ask.choose(index as usize);
+                        if multi {
+                            return None;
+                        }
                         ask.current = ask.current.saturating_add(1);
                     }
+                    _ => return None,
                 }
                 if !ask.advance() {
                     return None;

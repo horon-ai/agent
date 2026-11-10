@@ -77,7 +77,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         .socket_path
         .clone()
         .unwrap_or_else(horon_agent_sdk::api::api_socket_path);
-    let client = HoronAgentClient::connect(options).map_err(|error| error.to_string())?;
+    let client = HoronAgentClient::connect(options).map_err(|error| format!("cannot reach the harness: {error}"))?;
     let session = match attach {
         Some(session_id) => client
             .attach_session(session_id)

@@ -5,7 +5,7 @@
 //! a whole conversation with fake events and draw the result into a
 //! `TestBackend`. Only [`crate::run`] touches a real terminal.
 
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::{ApiEvent, AskSelection};
@@ -62,9 +62,6 @@ pub struct App {
     pub provider: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
-    /// Kept so a headless app's event channel stays open instead of
-    /// disconnecting on the first drain.
-    keepalive: Option<Sender<Incoming>>,
 }
 
 impl App {
@@ -84,14 +81,13 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
-            keepalive: None,
         }
     }
 
     /// An app that could not connect: the banner carries the reason and the
     /// process exits non-zero once it has been drawn.
     pub fn failure(message: &str) -> Self {
-        let (sender, receiver) = mpsc::channel();
+        let (_sender, receiver) = mpsc::channel();
         Self {
             transcript: Transcript::new(),
             input: Input::new(),
@@ -106,7 +102,6 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
-            keepalive: Some(sender),
         }
     }
 
@@ -161,7 +156,10 @@ impl App {
                 self.transcript.text_replace(message_id.as_deref(), text);
             }
             ApiEvent::ToolStart { name, .. } => self.transcript.tool_start(name),
-            ApiEvent::ToolExec { name, .. } => self.transcript.tool_start(name),
+            // `ToolExec` follows `ToolStart` for the same call, so its line is
+            // already in the transcript; a call that starts execution without
+            // a start event still gets a line when it finishes.
+            ApiEvent::ToolExec { .. } => {}
             ApiEvent::ToolDone { name, error, .. } => {
                 self.transcript.tool_done(name, error.as_deref());
             }
@@ -177,8 +175,7 @@ impl App {
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::ApprovalPending { request_id, action, .. } => {
                 self.prompt = Some(Prompt::approval(request_id.clone(), action.clone()));
-                self.transcript
-                    .push_notice(format!("a tool call needs approval: {action}"));
+                self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
                 request_id,
@@ -230,9 +227,7 @@ impl App {
                     approved,
                     always,
                 }) => {
-                    if !always {
-                        self.prompt = None;
-                    }
+                    self.prompt = None;
                     return Some(Action::Approval {
                         request_id,
                         approved,
