@@ -101,6 +101,10 @@ fn a_payload_with_the_fields_at_null_matches_one_that_omits_them() {
     let b: MessageAppendedPayload = serde_json::from_value(without.clone()).unwrap();
     // Then they decode to the same record and the re-encoding drops the nulls.
     assert_eq!(a.message.id, b.message.id);
-    assert_eq!(a.message.content, b.message.content);
+    assert_eq!(a.message.role, b.message.role);
+    assert_eq!(
+        serde_json::to_value(&a.message.content).unwrap(),
+        serde_json::to_value(&b.message.content).unwrap()
+    );
     assert_eq!(serde_json::to_value(&a).unwrap(), without);
 }
