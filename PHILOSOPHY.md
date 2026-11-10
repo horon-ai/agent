@@ -18,7 +18,7 @@ A headless agent engine: the agent loop (model calls, tools, sessions, MCP) behi
 | 4 | ACP v1 and v2 both | `initialize` answers with the highest version both sides support; adding v2 never breaks v1 | `AGENTS.md` (Fixed requirement 2), `docs/protocol/ACP.md` |
 | 5 | Headless and TUI, one engine | The headless package has no terminal stack in its dependency graph; the TUI is a separate package on the SDK | `AGENTS.md` (Fixed requirement 1), `scripts/ci/check_headless_graph.py` |
 | 6 | SDK-first | The harness API is the contract between the engine and any client, including the TUI and server code | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
-| 7 | Tools cost tokens | The `core` profile sends 7 of its 17 tools every request and reaches the rest through `toolbox`; schema bytes are a budget, not free | `AGENTS.md` (What this build is), `docs/runtime/TOOLS.md` |
+| 7 | Tools cost tokens | The `core` profile sends 7 of its 18 tools every request and reaches the rest through `toolbox`; schema bytes are a budget, not free | `AGENTS.md` (What this build is), `docs/runtime/TOOLS.md` |
 | 8 | One model path | OpenAI-compatible `/chat/completions` only; no second provider runtime, router process, or plugin host. External tools arrive over MCP | `AGENTS.md` (What this build is) |
 | 9 | Clean cutover | Surface that stopped earning its place is deleted with every caller migrated, not kept behind an alias. The home directory moved to `~/.horon` with no compatibility path | commits `738712a2` (#7), `d6a0f81b` (#9), `a3a70db7` (#88) |
 | 10 | Zero CI warnings | A run with warnings is not finished; the cause is fixed, not silenced | `AGENTS.md` (CI warnings), `scripts/ci/run_warnings.py` |

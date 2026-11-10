@@ -858,7 +858,7 @@ async fn toolbox_list_names_the_listed_core_tools_under_core() {
         .filter(|name| !ESSENTIAL_TOOLS.contains(name))
         .collect();
     expected.sort_unstable();
-    assert_eq!(expected.len(), 10, "seventeen core tools minus the seven essential ones");
+    assert_eq!(expected.len(), 11, "eighteen core tools minus the seven essential ones");
 
     let rows: Vec<&str> = output
         .output

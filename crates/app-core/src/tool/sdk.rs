@@ -46,9 +46,9 @@ pub(crate) fn remove_session(session: &str) {
 /// A harness API client owns its tool surface: it names the tools it wants in
 /// `enabled` (or ships a custom definition), so everything here stays off until
 /// then. `session_search` is on this list because the session index costs a
-/// cold-start scan of the session store, which an SDK session should only pay
-/// for when it actually asks to search.
-const SDK_DEFAULT_OFF_TOOLS: &[&str] = &["session_search"];
+/// cold-start scan of the session store, and `swarm` because its workers are
+/// server sessions a client-driven process does not host.
+const SDK_DEFAULT_OFF_TOOLS: &[&str] = &["session_search", "swarm"];
 
 /// Turn the default-off built-ins into explicit `disabled` entries.
 ///
