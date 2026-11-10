@@ -21,7 +21,7 @@ impl HoronAgentClient {
             session_id: session_id.to_string(),
         })? {
             ApiEvent::SessionMarkdown { markdown, .. } => Ok(markdown),
-            other => Err(crate::unexpected("session_markdown", &other)),
+            other => Err(unexpected("session_markdown", &other)),
         }
     }
 }
