@@ -15,9 +15,10 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   # A newer run on the same ref cancels the older one everywhere except `main`: a
-  # push run on `main` is release evidence, so it is never cancelled. On `dev` a
-  # push and a manual dispatch share the group and cancel each other; a cancelled
-  # `dev` push run is recovered with `Re-run all jobs` on that run.
+  # push run on `main` is release evidence, so a running one is never cancelled
+  # (GitHub can still replace a run that is only pending with a newer one). On
+  # `dev` a push and a manual dispatch share the group and cancel each other; a
+  # cancelled `dev` push run is recovered with `Re-run all jobs` on that run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Read-only for every job here: the workflow builds, tests, and uploads

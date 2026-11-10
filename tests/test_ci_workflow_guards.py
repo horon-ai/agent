@@ -139,6 +139,8 @@ class WorkflowGuardTests(unittest.TestCase):
         # only and never counts as release evidence.
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('workflow_dispatch:', workflow)
+        # One group per ref: a shared group would let a `dev` run cancel `main`.
+        self.assertIn('group: ci-${{ github.workflow }}-${{ github.ref }}', workflow)
         self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}",
                       workflow)
         self.assertNotIn('cancel-in-progress: true', workflow)

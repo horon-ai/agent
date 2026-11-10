@@ -203,7 +203,8 @@ and do not merge or report success before then.
   part of this gating. `actionlint` must report nothing (`Workflow Lint`).
 - **Superseded runs are cancelled outside `main`.** A newer run on the same ref
   cancels the older one on every ref except `main`, whose push runs are release
-  evidence and always finish. On `dev` a push and a manual dispatch share the
+  evidence: a running one is never cancelled, though GitHub can still replace a
+  run that is only pending. On `dev` a push and a manual dispatch share the
   group and cancel each other; after a cancelled `dev` push run, use `Re-run all
   jobs` on that run. Never fast-forward `dev` to a `main` commit (the sync is the
   merge-commit PR): a cancelled `dev` run would then be the newest push run for a
