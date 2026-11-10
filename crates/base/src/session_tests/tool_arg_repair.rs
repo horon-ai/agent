@@ -4,6 +4,7 @@
 
 use super::tests::cases::canonical_tempdir;
 use super::*;
+use anyhow::Result;
 use horon_agent_session_types::repair_record::{self, ArgRepairRecord};
 use std::sync::{Arc, Mutex};
 
