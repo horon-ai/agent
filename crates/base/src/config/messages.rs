@@ -80,3 +80,50 @@ impl MessagesConfig {
         matches!(self.interrupt_mode, InterruptMode::Immediate)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(source: &str) -> crate::config::Config {
+        toml::from_str(source).expect("config parses")
+    }
+
+    #[test]
+    fn a_config_without_the_table_keeps_the_shipped_defaults() {
+        let messages = config("").messages;
+
+        assert_eq!(messages.follow_up_mode, MessageDeliveryMode::All);
+        assert_eq!(messages.steering_mode, MessageDeliveryMode::All);
+        assert_eq!(messages.interrupt_mode, InterruptMode::Wait);
+        assert!(
+            !messages.interrupts_running_tools(),
+            "wait is the timing horon already had, so an unconfigured daemon behaves as before"
+        );
+    }
+
+    #[test]
+    fn the_kebab_case_values_parse() {
+        let messages = config(
+            r#"[messages]
+follow_up_mode = "one-at-a-time"
+steering_mode = "one-at-a-time"
+interrupt_mode = "immediate"
+"#,
+        )
+        .messages;
+
+        assert_eq!(messages.follow_up_mode.batch_limit(), Some(1));
+        assert_eq!(messages.steering_mode.batch_limit(), Some(1));
+        assert!(messages.interrupts_running_tools());
+    }
+
+    #[test]
+    fn all_delivers_every_queued_message() {
+        assert_eq!(MessageDeliveryMode::All.batch_limit(), None);
+        assert_eq!(MessageDeliveryMode::All.as_str(), "all");
+        assert_eq!(MessageDeliveryMode::OneAtATime.as_str(), "one-at-a-time");
+        assert_eq!(InterruptMode::Wait.as_str(), "wait");
+        assert_eq!(InterruptMode::Immediate.as_str(), "immediate");
+    }
+}
