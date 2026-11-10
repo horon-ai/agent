@@ -140,7 +140,7 @@ impl ReadOnlyDb {
 
     /// Column names in declaration order, for the row header.
     pub fn columns(&self, table: &str) -> Result<Vec<String>> {
-        let mut statement = self
+        let statement = self
             .conn
             .prepare(&format!("SELECT * FROM {} LIMIT 0", quote_ident(table)))?;
         Ok(statement.column_names().into_iter().map(str::to_string).collect())
