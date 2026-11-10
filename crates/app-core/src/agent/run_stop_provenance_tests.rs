@@ -423,7 +423,7 @@ async fn run_stop_provenance_late_stop_from_an_older_run_goes_to_history() {
 async fn run_stop_provenance_failed_stop_write_leaves_persisted_false() {
     let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let (provider, _failing) = ProvenanceProvider::scripted(vec![completed_round("done")]);
-    let agent = probe_agent(provider);
+    let mut agent = probe_agent(provider);
     let session_id = agent.session.id.clone();
 
     // Every write to the journal fails, so the stop row cannot land while the

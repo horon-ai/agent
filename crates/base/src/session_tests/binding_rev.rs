@@ -281,3 +281,71 @@ fn listing_and_crash_scan_tolerate_a_stale_mirror() -> Result<()> {
     }
     Ok(())
 }
+
+/// The shape the run wiring uses: a row takes the binding the session is about
+/// to publish, the session adopts it, and the close lands by rename.
+#[test]
+fn run_boundary_binding_publishes_without_a_flush() -> Result<()> {
+    let _lock = tests::lock_env();
+    let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-binding-run-")?;
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
+
+    // Given a saved session whose mirror is at rev 1.
+    let (mut session, _) = saved_session("run_boundary")?;
+    let _ = mirror_writes::take("run_boundary");
+
+    // The binding a start row takes sits one above both copies.
+    let started = session.next_journal_binding()?;
+    assert_eq!(started.rev, 2, "one above the mirror's rev");
+    assert_eq!(started.status, session.status);
+    let root = home_path.join(crate::durable_runtime::JOURNAL_DIR_NAME);
+    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_started("run-1", None, Some(started.clone()))?;
+
+    // And the close states the same fields at the next version.
+    let closed = session.closing_journal_binding()?;
+    assert_eq!(closed.status, SessionStatus::Closed);
+    assert_eq!(closed.last_pid, started.last_pid);
+    assert_eq!(closed.rev, 3, "one above the row the start wrote");
+    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_stopped(
+        "run-1",
+        crate::durable_runtime::StopCause::Completed,
+        None,
+        Some(closed.clone()),
+    )?;
+
+    // When the row is durable and the session adopts it, the close renames.
+    session.note_journal_binding(closed.clone());
+    session.mark_closed();
+    session.save()?;
+    assert_eq!(
+        mirror_writes::take("run_boundary"),
+        vec![MirrorWrite::Renamed],
+        "a binding the journal row already states must not spend a flush"
+    );
+    assert_eq!(read_mirror(&session)?["rev"], serde_json::json!(closed.rev));
+    Ok(())
+}
+
+/// A row that never landed confirms nothing, so the same close flushes.
+#[test]
+fn run_boundary_binding_that_never_landed_flushes() -> Result<()> {
+    let _lock = tests::lock_env();
+    let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-binding-run-lost-")?;
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
+
+    let (mut session, _) = saved_session("run_lost")?;
+    let _ = mirror_writes::take("run_lost");
+    let unlanded = session.closing_journal_binding()?;
+
+    // The write failed, so the value is never adopted.
+    assert_eq!(session.next_journal_binding()?.rev, unlanded.rev);
+    session.mark_closed();
+    session.save()?;
+    assert_eq!(
+        mirror_writes::take("run_lost"),
+        vec![MirrorWrite::Flushed],
+        "a value no row states must be flushed"
+    );
+    assert_eq!(read_mirror(&session)?["rev"], serde_json::json!(unlanded.rev));
+    Ok(())
+}

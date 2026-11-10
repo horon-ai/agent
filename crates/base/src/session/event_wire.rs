@@ -214,6 +214,19 @@ impl LocalRuntime {
         }
     }
 
+    /// The journal's copy of this binding at `rev`.
+    fn into_binding(self, rev: u64) -> Binding {
+        Binding {
+            rev,
+            status: self.status,
+            last_pid: self.last_pid,
+            last_active_at: self.last_active_at,
+            working_dir: self.working_dir,
+            migration_epoch: self.migration_epoch,
+            provider_session_id: self.provider_session_id,
+        }
+    }
+
     /// Adopt these fields as the session's execution binding.
     fn apply(&self, session: &mut Session) {
         session.status = self.status.clone();
@@ -330,6 +343,38 @@ impl Session {
     /// alone, because the journal already answers the same value after a crash.
     pub fn note_journal_binding(&mut self, binding: Binding) {
         self.event_state.confirmed_binding = Some(binding);
+    }
+
+    /// The binding a run row for this session should carry.
+    ///
+    /// Sampled from the session as it stands and numbered one above the newest
+    /// version either the mirror or the journal states, so a run boundary never
+    /// hands out a version one of the copies already used, even after a
+    /// compaction dropped the journal's own copy.
+    pub fn next_journal_binding(&self) -> Result<Binding> {
+        let rev = self.next_binding_rev()?;
+        Ok(LocalRuntime::capture(self).into_binding(rev))
+    }
+
+    /// The binding closing this session publishes, at the same next version.
+    ///
+    /// Closing is the one state change [`Session::mark_closed`] makes, so a stop
+    /// row that carries this value states exactly what that close publishes.
+    pub fn closing_journal_binding(&self) -> Result<Binding> {
+        let mut binding = self.next_journal_binding()?;
+        binding.status = super::SessionStatus::Closed;
+        Ok(binding)
+    }
+
+    /// The version the next binding takes, from both copies as they are on disk.
+    fn next_binding_rev(&self) -> Result<u64> {
+        let paths = match &self.event_state.paths {
+            Some(paths) => paths.clone(),
+            None => super::event_store::paths()?,
+        };
+        let id = SessionId::parse(&self.id)?;
+        let disk = DiskBinding::read(&paths, &id, journal_binding(&paths, &id))?;
+        Ok(disk.next_rev())
     }
 
     /// Restore the execution binding from the newest of its two copies.
