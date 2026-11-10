@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{CORE_TOOL_PROFILE, CORE_TOOLS, ESSENTIAL_TOOLS, LoadMode, TOOLBOX_TOOL};
 
-struct ProfileEnv {
+pub(super) struct ProfileEnv {
     _home: tempfile::TempDir,
     previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
@@ -42,7 +42,7 @@ impl Drop for ProfileEnv {
     }
 }
 
-async fn agent_with_mcp_management_tool() -> Agent {
+pub(super) async fn agent_with_mcp_management_tool() -> Agent {
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let registry = Registry::new(provider.clone()).await;
     registry

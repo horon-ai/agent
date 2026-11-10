@@ -2976,6 +2976,9 @@ mod deferred_tools;
 #[path = "agent_tests/tool_tiers.rs"]
 mod tool_tiers;
 
+#[path = "agent_tests/tool_request_bytes.rs"]
+mod tool_request_bytes;
+
 #[test]
 fn skill_installed_mid_session_keeps_system_prompt_stable_and_is_announced_once() {
     let _lock = crate::storage::lock_test_env();

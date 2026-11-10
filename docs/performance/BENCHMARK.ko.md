@@ -230,12 +230,13 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | IRC 메일박스 | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | 상한 100 이하, 1000건 유입에 드롭 900, 브로드캐스트당 본문 할당 1회, 정리 뒤 대기자 0, 동시 브로드캐스트 16 이하 |
 | 스킬 목록과 작업 폴더 스킬 | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | 스킬 200개 목록에서 스킬당 파일 읽기 1회 이하·8 KiB 이하(본문 32 KiB를 통째로 읽으면 실패), 바뀌지 않은 작업 폴더 요청 9회의 파일·폴더 읽기 0, 예열 읽기 1 이상 |
 | MCP 사용자 설정 | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 예열 읽기 1 이상, 예열 뒤 바뀌지 않은 사용자 설정을 다시 읽는 횟수 0 |
+| 요청 프리픽스 | `tools_bytes`, `tool_count` | `core` 프로필의 도구 카탈로그가 1바이트 이상이고 커밋된 상한 이하이며, 도구 수가 그 카탈로그를 만든 즉시 사용 정의 수와 같다 |
 
 각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # 전체
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix
 python3 scripts/perf/check_structural.py --print-plan    # 실행할 cargo 명령만 보기
 python3 -m unittest -v scripts/perf/test_check_structural.py   # 게이트의 계약 테스트
 ```
