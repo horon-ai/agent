@@ -19,7 +19,7 @@
 
 `horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. The headless binary never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
-- **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. An interactive terminal client, when one ships, is the separate `horon-tui` package on the agent SDK.
+- **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the separate `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
 - **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 69.8 ms on Linux and 104.7 ms on macOS ([numbers and caveats](#benchmarks)).
