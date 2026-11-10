@@ -21,6 +21,7 @@ mod goal_continuation;
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
 mod handoff_compaction;
+mod hashing;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -105,13 +106,13 @@ use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use anyhow::Result;
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+use hashing::{projected_message_hash, stable_hash_json, stable_hash_str, stable_json_len};
 pub use horon_agent_agent_runtime::{
     BackgroundToolSignal, GracefulShutdownSignal, InterruptSignal, SoftInterruptMessage, SoftInterruptQueue,
     SoftInterruptSource, StreamError, TurnOutcome, TurnState, outcome_for_stop_reason,
@@ -133,36 +134,6 @@ static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> =
 static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<HashMap<PathBuf, Option<GitState>>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 const STREAM_KEEPALIVE_PONG_ID: u64 = 0;
-
-fn stable_hash_str(value: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn stable_hash_json<T: serde::Serialize + ?Sized>(value: &T) -> u64 {
-    let encoded = serde_json::to_string(value).unwrap_or_default();
-    stable_hash_str(&encoded)
-}
-
-fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
-    serde_json::to_string(value)
-        .map(|encoded| encoded.len())
-        .unwrap_or_default()
-}
-
-/// Hash the cache-relevant projection, not the raw `Message`.
-///
-/// Raw hashing keys off non-transmitted metadata (timestamp,
-/// `tool_duration_ms`, `ReasoningTrace` blocks, `cache_control` markers), which
-/// triggers spurious `harness:_prefix_changed` KV-cache miss reports when the
-/// same message is re-serialized with backfilled metadata on the next turn.
-fn projected_message_hash(projected: &serde_json::Value) -> u64 {
-    let encoded = serde_json::to_string(projected).unwrap_or_default();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&encoded, &mut hasher);
-    std::hash::Hasher::finish(&hasher)
-}
 
 /// Slice-based form of [`kv_cache_request_event_ref`], kept as the reference
 /// implementation the request-preparation tests compare against.
@@ -469,11 +440,14 @@ pub struct Agent {
     locked_tools: Option<Arc<[ToolDefinition]>>,
     /// One-shot guard for the async MCP-registration race (#206).
     ///
-    /// MCP servers register `mcp__*` tools seconds after the session starts, so
-    /// the first turn locks a snapshot without them. We allow exactly one
-    /// rebuild to pick them up — an intentional, one-time prompt-cache miss —
-    /// then set this so the per-turn registry scan stops. Reset whenever the
-    /// tool list is intentionally unlocked.
+    /// MCP servers connect on a background task and register `mcp__*` tools
+    /// seconds after the session starts (we deliberately do NOT block the first
+    /// turn on MCP connection, so the user can talk to the agent immediately).
+    /// The first turn therefore locks a snapshot without MCP tools. We allow
+    /// exactly one rebuild to pick them up — an intentional, one-time provider
+    /// prompt-cache miss. Once that rebuild happens (or we confirm there are no
+    /// MCP tools to wait for), this is set so the per-turn registry scan stops.
+    /// Reset whenever the tool list is intentionally unlocked.
     mcp_late_register_resolved: bool,
     /// Whether `locked_tools` was built for provider-native deferred MCP
     /// loading. A mid-session model/provider switch can change that

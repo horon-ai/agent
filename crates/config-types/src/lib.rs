@@ -8,6 +8,7 @@ pub mod model_roles;
 mod power;
 mod serde_lenient;
 mod storage;
+mod swarm_spawn;
 pub use {
     display::DisplayConfig,
     feature::FeatureConfig,
@@ -15,6 +16,7 @@ pub use {
     irc::IrcConfig,
     power::PowerConfig,
     storage::{StorageConfig, StorageSyncMode},
+    swarm_spawn::SwarmSpawnMode,
 };
 
 /// Compaction mode
@@ -49,9 +51,13 @@ impl CompactionMode {
     }
 }
 
-/// Which compaction engine owns a session. Exactly one owns it: `structured`
-/// is horon's summarizer, `handoff` commits a generated document, and
-/// `openai_*` gives ownership to the provider so the two never both fire.
+/// Which compaction engine owns a session.
+///
+/// Exactly one strategy owns compaction at a time. `structured` is horon's own
+/// summarizer; the `openai_*` variants hand ownership to the provider's native
+/// compaction so both never trigger for the same turn.
+///
+/// `handoff` commits a generated handoff document as the boundary instead.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionStrategy {
@@ -158,9 +164,11 @@ impl UpdateChannel {
 }
 
 /// Config deserialization is deliberately lenient: an unknown or removed
-/// channel name falls back to the default channel instead of failing the whole
-/// parse. A strict enum here once made the freshly exec'd server die during the
-/// reload handoff, leaving clients re-requesting the reload forever (#349).
+/// channel name (e.g. a stale `update_channel = "manual"` left in
+/// config.toml) falls back to the default channel instead of failing the
+/// entire config parse. A strict enum here once made the freshly exec'd
+/// server die during the reload handoff, leaving the handoff marker stuck
+/// in `starting` and clients re-requesting the reload forever (issue #349).
 impl<'de> Deserialize<'de> for UpdateChannel {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -247,37 +255,44 @@ pub struct CompactionConfig {
     /// the model's advertised context window. 0 = no cap (use the model window).
     ///
     /// Every turn re-sends the whole transcript, so on a 1M-window model the
-    /// default 80%-of-window trigger lets a session reach ~800k tokens before
-    /// anything folds. Set this to e.g. 200000 to compact earlier on
-    /// large-window providers. This bounds the trigger budget, not the final
-    /// request size when recent messages cannot be compacted.
+    /// default 80%-of-window trigger lets a session reach ~800k tokens per
+    /// request before anything folds. Set this to e.g. 200000 to compact earlier
+    /// on large-window providers. This bounds the compaction trigger budget,
+    /// not the final request size when recent messages cannot be compacted.
     pub max_context_tokens: usize,
 
-    /// Which engine owns compaction: `structured` (default), `handoff`,
-    /// `openai_auto`, or `openai_explicit`. Left unset, it is derived from an
-    /// explicitly-written `[provider] openai_native_compaction_mode`; an
-    /// explicitly-set strategy always wins over that legacy key.
+    /// Which engine owns compaction: `structured` (default), `openai_auto`, or
+    /// `openai_explicit`.
+    ///
+    /// Left unset, the strategy is derived from an explicitly-written
+    /// `[provider] openai_native_compaction_mode`. An explicitly-set strategy
+    /// always wins over that legacy key.
+    ///
+    /// `handoff` is also selectable and commits a generated document.
     pub strategy: Option<CompactionStrategy>,
 
-    /// Headroom below the compaction trigger, raised to
+    /// Headroom kept free below the compaction trigger. Raised to
     /// `min(window * 0.04, 49152)` when the window needs more room.
     pub reserve_tokens: usize,
 
-    /// Token allowance for the verbatim recent tail, lowered when the window
+    /// Token allowance for the verbatim recent tail. Lowered when the window
     /// cannot spare it (`window * (1 - ratio - 0.05)`, floor 1024).
     pub recent_tokens: usize,
 
-    /// Run proactive and idle compaction in the background; off leaves
-    /// threshold compaction and `/compact`, and never blocks a request.
+    /// Run proactive and idle compaction jobs in the background. Turning this
+    /// off leaves threshold (reactive) compaction and manual `/compact`
+    /// available; it never blocks a provider request.
     pub background: bool,
 
     /// Model for structured compaction summaries. Unset or empty uses the
     /// session model. Ignored by provider-native strategies.
     pub summary_model: Option<String>,
     /// Replace stale tool results with a short marker on the provider request.
-    /// The stored transcript is untouched: a superseded or empty `read` result
-    /// costs one line instead of its full text until the next compaction. Off
-    /// by default because it changes what the model sees.
+    ///
+    /// The stored transcript is untouched: an older `read` superseded by a
+    /// newer one, or a result that reported nothing, costs one line instead of
+    /// its full text until the conversation is compacted. Off by default
+    /// because it changes what the model sees.
     pub prune_tool_results: bool,
 }
 
@@ -780,57 +795,18 @@ impl AgentsConfig {
     }
 }
 
-/// How swarm-created agents should be spawned.
-///
-/// Every mode runs the worker in this process; the agent never opens a terminal
-/// window. The mode names how the coordinator surfaces the worker.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum SwarmSpawnMode {
-    /// Create the worker in-process.
-    Headless,
-    /// Like headless, but the coordinator renders a live inline gallery
-    /// viewport of each worker's streaming output.
-    #[default]
-    #[serde(alias = "visible", alias = "headed")]
-    Inline,
-    /// Historical "try visible first" mode. Resolves to the configured mode,
-    /// which is in-process, so an old config keeps working unchanged.
-    Auto,
-}
-
-impl SwarmSpawnMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            // `visible`/`headed` selected the removed terminal-window spawn;
-            // they now mean in-process like `inline`.
-            "visible" | "headed" => Some(Self::Inline),
-            "headless" => Some(Self::Headless),
-            "inline" => Some(Self::Inline),
-            "auto" => Some(Self::Auto),
-            _ => None,
-        }
-    }
-
-    /// Canonical lowercase string for this mode (matches the config/env values).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Headless => "headless",
-            Self::Inline => "inline",
-            Self::Auto => "auto",
-        }
-    }
-}
-
 /// Lifecycle hooks: external commands horon-agent runs at well-defined points.
 ///
 /// Hook commands are parsed shell-style (quotes work) but executed directly,
-/// with `HORON_AGENT_HOOK_*` env vars describing the event. Hook processes get
+/// with `HORON_AGENT_HOOK_*` env vars describing the event (`HORON_AGENT_HOOK_EVENT`,
+/// `HORON_AGENT_HOOK_SESSION_ID`, `HORON_AGENT_HOOK_CWD`, event-specific fields, and a
+/// `HORON_AGENT_HOOK_PAYLOAD` JSON mirror). Hook processes get
 /// `HORON_AGENT_HOOKS_DISABLED=1` so nested horon-agent invocations don't recurse.
 ///
 /// All hooks except `pre_tool` are observers: detached, fire-and-forget,
-/// failures only logged. `pre_tool` is a gate: horon-agent waits for it and
-/// exit code 2 blocks the tool call; exit 0 allows; anything else fails open.
+/// failures only logged. `pre_tool` is a gate: horon-agent waits for it and exit
+/// code 2 blocks the tool call (stderr becomes the error shown to the model);
+/// exit 0 allows; anything else fails open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookCommands(Vec<String>);
 

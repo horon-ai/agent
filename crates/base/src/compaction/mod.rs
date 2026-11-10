@@ -46,11 +46,14 @@ pub use horon_agent_compaction_core::{
 };
 use horon_agent_config_types::CompactionStrategy;
 
+mod active_char_estimate;
 pub mod handoff;
 pub mod jobs;
 pub mod recovery;
 pub mod source_projection;
 pub mod summary;
+
+use active_char_estimate::ActiveCharEstimate;
 
 const HARD_THRESHOLD_PENDING_WAIT_MS: u64 = 15_000;
 const HARD_THRESHOLD_PENDING_POLL_MS: u64 = 50;
@@ -118,61 +121,6 @@ struct HardThresholdWait {
     waited_ms: u64,
     applied: bool,
     timed_out: bool,
-}
-
-/// Rolling character-count estimate for the active (non-compacted) message
-/// suffix.
-///
-/// Token estimation needs the size of the live tail without rescanning the
-/// whole history on every call, so this caches that sum beside a dirty flag.
-/// The value and the flag must move together; keeping both private and forcing
-/// every mutation through these named operations makes a corrupted accounting
-/// unrepresentable.
-#[derive(Debug, Clone, Default)]
-struct ActiveCharEstimate {
-    chars: usize,
-    dirty: bool,
-}
-
-impl ActiveCharEstimate {
-    /// The currently cached character count. Only trustworthy when not dirty;
-    /// readers must consult [`Self::is_dirty`] (and any external invariants)
-    /// before relying on it.
-    fn value(&self) -> usize {
-        self.chars
-    }
-
-    /// Whether the cached value is stale and must be recomputed from history.
-    fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// Mark the cached value stale so the next read recomputes from history.
-    fn invalidate(&mut self) {
-        self.dirty = true;
-    }
-
-    /// Record an exact, freshly computed count as the trusted value.
-    fn set_exact(&mut self, chars: usize) {
-        self.chars = chars;
-        self.dirty = false;
-    }
-
-    /// Extend a trusted count by a newly appended message's characters.
-    ///
-    /// Mirrors the append-only fast path: the prior value is assumed accurate,
-    /// so the running sum stays trusted (dirty cleared).
-    fn append_exact(&mut self, chars: usize) {
-        self.chars = self.chars.saturating_add(chars);
-        self.dirty = false;
-    }
-
-    /// Reset to zero after a restore/clamp. Stays dirty when there may be active
-    /// messages whose characters have not been measured yet.
-    fn reset_pending(&mut self, maybe_has_active: bool) {
-        self.chars = 0;
-        self.dirty = maybe_has_active;
-    }
 }
 
 /// Manages background compaction of conversation context.
@@ -529,8 +477,9 @@ impl CompactionManager {
     /// A native window is opaque and bound to the model and credential route
     /// that produced it. Replaying it elsewhere would send the provider a
     /// payload it never created, and keeping the boundary would hide the
-    /// originals from the summarizer that has to rebuild them. The window is
-    /// discarded and the boundary resets to zero.
+    /// originals from the summarizer that has to rebuild them. So the window is
+    /// discarded and the boundary resets to zero: the originals become the
+    /// active context again, and no compacted count is advanced.
     ///
     /// Returns true when the persisted view changed.
     pub fn discard_foreign_openai_native_compaction(&mut self) -> bool {
@@ -717,10 +666,11 @@ impl CompactionManager {
     /// Point the manager at the engine the active provider reports as owner.
     ///
     /// Exactly one engine may compact a turn. The provider knows whether it
-    /// owns compaction natively; the configured strategy only decides the case
-    /// where the provider says nothing. Reconciling here keeps a stale config
-    /// from starting a structured summary while the provider is already
-    /// compacting the same turn.
+    /// owns compaction natively (`auto`/`explicit`) or leaves it to horon; the
+    /// configured strategy only decides the case where the provider says
+    /// nothing. Reconciling here keeps a stale config from starting a structured
+    /// summary while the provider is already compacting the same turn (duplicate
+    /// compaction and double billing).
     ///
     /// Returns true when ownership changed.
     pub fn reconcile_strategy(&mut self, provider_owned: Option<CompactionStrategy>) -> bool {
@@ -1350,9 +1300,11 @@ impl CompactionManager {
     /// Returns `true` if the semantic strategy detects a topic shift or
     /// predicts we should compact now.
     ///
-    /// Topic-shift detection compares the mean embedding of the oldest half of
-    /// the history window against the newest half: a low cosine similarity
-    /// means a topic boundary was crossed and the previous topic is complete.
+    /// Topic-shift detection: compares the mean embedding of the oldest half
+    /// of the history window against the newest half. A low cosine similarity
+    /// between the two clusters indicates a topic boundary was crossed —
+    /// the previous topic is complete and safe to summarize.
+    ///
     /// Falls back to proactive logic if embeddings are unavailable.
     fn should_compact_semantic(&self, all_messages: &[Message]) -> bool {
         if self.anti_signals_block(all_messages) {
@@ -1398,10 +1350,12 @@ impl CompactionManager {
     ///
     /// Embeds the last `goal_window_turns` messages to represent the current
     /// goal, then scores all active messages by cosine similarity. Returns the
-    /// cutoff index: messages before it are summarized, messages at or after
-    /// it are kept verbatim. Messages above `relevance_keep_threshold` anywhere
-    /// in the history are pulled out of the summarize set. Falls back to the
-    /// standard recency cutoff if embeddings fail.
+    /// cutoff index: messages before the cutoff will be summarized, messages at
+    /// or after are kept verbatim.
+    ///
+    /// Messages above `relevance_keep_threshold` anywhere in the history are
+    /// pulled out of the summarize set. Falls back to the standard recency
+    /// cutoff if embeddings fail.
     fn semantic_cutoff(&mut self, active: &[Message]) -> usize {
         let goal_window_turns = self.compaction_config.goal_window_turns;
         let relevance_keep_threshold = self.compaction_config.relevance_keep_threshold;
@@ -2635,11 +2589,15 @@ impl CompactionManager {
             return Err("Cannot compact — would split tool call/result pairs".to_string());
         }
 
-        // This hard compact advances `compacted_count` and supersedes any
-        // in-flight background compaction. That task summarized against the old
-        // count, so a late result would add a stale cutoff on top and
-        // double-compact every live message. Cancel it and bump the generation
-        // so a result that still slips through is discarded.
+        // This hard compact will advance `compacted_count` and supersede any
+        // in-flight background (reactive/proactive/semantic) compaction. That
+        // background task summarized messages relative to the *old*
+        // `compacted_count`; if it completed afterwards, `check_and_apply_*`
+        // would add its stale cutoff on top of the already-advanced
+        // `compacted_count`, double-compacting and wiping out all live messages
+        // (observed as "kept 0 recent messages"). Cancel it now that we're
+        // committed to the hard compact, and bump the generation so any result
+        // that still slips through is discarded.
         if self.pending_task.is_some() {
             crate::logging::warn(&format!(
                 "[compaction] Aborting in-flight background compaction (pending_cutoff={}, trigger={:?}) — superseded by hard compact",
@@ -2726,10 +2684,14 @@ impl CompactionManager {
     /// This is the shared escalation policy used by every emergency-recovery
     /// caller: drop old turns via [`hard_compact_with`], then — only if the
     /// context is *still* over budget — shorten oversized tool results via
-    /// [`emergency_truncate_with`]. Centralizing it keeps every caller on the
-    /// same escalation order.
+    /// [`emergency_truncate_with`]. Previously each caller open-coded this
+    /// sequence with subtly different escalation (one retried after a hard
+    /// compact without re-checking the budget), so centralizing it both removes
+    /// the duplication and guarantees consistent behavior.
     ///
-    /// Returns a structured outcome so callers can render their own message.
+    /// Returns a structured outcome so callers can render their own
+    /// user-facing message. `pre_usage` is the context usage fraction observed
+    /// before recovery (captured here so the report matches what triggered it).
     pub fn recover_within_budget(&mut self, all_messages: &mut [Message]) -> EmergencyRecovery {
         let pre_usage = self.context_usage_with(all_messages);
 
@@ -3011,11 +2973,11 @@ async fn generate_compaction_artifact(
 /// The ordered window to replay for a native compaction result, or why it
 /// cannot be replayed.
 ///
-/// A result that carries only `encrypted_content` is promoted to a single-item
-/// window so every native state has one representation. A window is replayable
-/// only when it holds the compaction item, that payload is within [OI]'s
-/// per-string limit, and every retained item is an object with a string
-/// `type`.
+/// A result that carries only `encrypted_content` is promoted to a
+/// single-item window, so every native state has one representation. A window
+/// is replayable only when it contains the compaction item, that payload is
+/// within [OI]'s per-string limit, and every retained item is an object with a
+/// string `type`.
 pub fn native_replayable_window(
     native: &horon_agent_provider_core::NativeCompactionResult,
 ) -> std::result::Result<Vec<serde_json::Value>, String> {

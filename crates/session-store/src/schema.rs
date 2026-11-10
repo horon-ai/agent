@@ -787,13 +787,15 @@ pub struct MessageRevisedPayload {
 pub struct MetadataChangedPayload {
     pub metadata: SessionMetadata,
     /// Set when this event also records that a resume turn was created for the
-    /// named request. It is not session metadata, but it has to become durable
+    /// named request.
+    ///
+    /// The resume marker is not session metadata, but it has to become durable
     /// in the same append a normal save already performs, and a dedicated event
     /// kind would make every older build refuse to project the session. The
     /// field is therefore additive and optional: a reader that does not know it
-    /// ignores it, and a marker event carries the session's metadata unchanged
-    /// beside it. `resume_key_recorded_at` reads the earliest such event per
-    /// key, so a repeated append cannot move the recorded moment.
+    /// ignores it, and a marker event carries the session's own metadata
+    /// unchanged beside it. `resume_key_recorded_at` reads the earliest such
+    /// event per key, so a repeated append cannot move the recorded moment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_key: Option<String>,
 }
