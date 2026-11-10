@@ -41,6 +41,35 @@ pub(crate) fn remove_session(session: &str) {
     state.pending.retain(|_, pending| pending.session != session);
 }
 
+/// Built-ins a client-driven session keeps off unless the client names them.
+///
+/// A harness API client owns its tool surface: it names the tools it wants in
+/// `enabled` (or ships a custom definition), so everything here stays off until
+/// then. `session_search` is on this list because the session index costs a
+/// cold-start scan of the session store, which an SDK session should only pay
+/// for when it actually asks to search.
+const SDK_DEFAULT_OFF_TOOLS: &[&str] = &["session_search"];
+
+/// Turn the default-off built-ins into explicit `disabled` entries.
+///
+/// Normalising at configure time means every reader — the definition filter,
+/// the execution allow check, and the `toolbox` reachability policy — sees the
+/// same overlay, so a tool the client did not name is unreachable everywhere
+/// rather than only in the list.
+fn apply_defaults(mut config: SessionToolConfig) -> SessionToolConfig {
+    for name in SDK_DEFAULT_OFF_TOOLS {
+        let named = config
+            .enabled
+            .as_ref()
+            .is_some_and(|enabled| enabled.iter().any(|tool| tool == name))
+            || config.custom.iter().any(|tool| tool.name == *name);
+        if !named && !config.disabled.iter().any(|tool| tool == name) {
+            config.disabled.push((*name).to_string());
+        }
+    }
+    config
+}
+
 pub(crate) fn configure(
     session: &str,
     owner: &str,
@@ -66,6 +95,7 @@ pub(crate) fn configure(
     for name in config.enabled.iter().flatten().chain(config.disabled.iter()) {
         anyhow::ensure!(valid_name(name), "Invalid tool name: {name}");
     }
+    let config = apply_defaults(config);
     let mut state = STATE.write().unwrap_or_else(|e| e.into_inner());
     if let Some(previous) = state.overlays.get(session) {
         anyhow::ensure!(

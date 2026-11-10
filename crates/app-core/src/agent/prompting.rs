@@ -252,6 +252,15 @@ impl Agent {
     /// session-start tool selection, so the hint is stable for the session.
     fn append_todo_hint(&self, split: &mut crate::prompt::SplitSystemPrompt) {
         const TODO_TOOL: &str = "todo";
+        // An SDK `enabled` list is the client's exact tool surface; a client
+        // that did not name `todo` gets no hint about it.
+        if crate::tool::sdk::config(&self.session.id).is_some_and(|config| {
+            config
+                .enabled
+                .is_some_and(|enabled| !enabled.iter().any(|tool| tool == TODO_TOOL))
+        }) {
+            return;
+        }
         let allowed = self
             .allowed_tools
             .as_ref()

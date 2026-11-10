@@ -114,13 +114,14 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `auth`, `default_model`, and optional `[[providers.<name>.models]]`. Nothing
   else serves models in this build: no second provider runtime, no router
   process, no plugin host. External tools come in over MCP, which stays.
-- Core tool profile, the headless default (15 tools): `bash`, `read`, `write`,
+- Core tool profile, the headless default (17 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
-  `skill_manage`, `mcp`, `monitor`, `undo`, `ask`. `skill_manage` and `mcp` stay
-  registered. A `core` session sends seven of them eagerly (`read`, `write`,
-  `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) plus `toolbox`, names the
-  other eight in the system prompt, and the model reaches them through
-  `toolbox` (`docs/runtime/TOOLS.md`).
+  `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`.
+  `skill_manage` and `mcp` stay registered. A `core` session sends seven of them
+  eagerly (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)
+  plus `toolbox`, names the other ten in the system prompt, and the model
+  reaches them through `toolbox` (`docs/runtime/TOOLS.md`). An SDK-driven
+  session keeps `session_search` off unless its `enabled` list names it.
 
 ## Configuration that must keep its default
 
@@ -156,15 +157,14 @@ without a disk read; `docs/performance/MEMORY.md` lists what is released and
 what stays. `0` disables the sweep, and the daemon checks every ten seconds, so
 the release lands up to one tick after the threshold passes.
 
-Tools outside the core set (swarm, memory, session search, todo, irc) stay in
-the tree but off.
+Tools outside the core set (swarm, memory, irc) stay in the tree but off.
 `irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
 it to every non-empty allow list, and with the switch off it refuses to run
 even under `full` (`docs/runtime/IRC.md`). Under `full`, the optional tools
 load as deferred definitions behind `toolbox`
 (`docs/runtime/TOOLS.md`). `[tools.load_mode]` overrides one tool's tier
 (`essential`, `discoverable`, `off`). `ask = "essential"` sends a listed core
-tool eagerly again, and `toolbox = "off"` turns listing off so all 15 core
+tool eagerly again, and `toolbox = "off"` turns listing off so all 17 core
 tools are eager. Sessions under `acp`, `minimal`, and `none`, one with an
 explicit `enabled` list, and a `core` session with an SDK `enabled` list send
 every tool they allow eagerly and get no index. Under `full`, an SDK list keeps
