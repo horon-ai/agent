@@ -632,6 +632,7 @@ export type ApiRequest =
       known_ids?: string[];
       cursor?: string;
     }
+  | { req: "export_session_markdown"; session_id: string }
   | {
       req: "import_session_events";
       session_id: string;
