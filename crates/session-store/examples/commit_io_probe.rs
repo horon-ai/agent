@@ -43,6 +43,8 @@ fn run(batched: bool, trial: usize) -> Result<Value, Box<dyn std::error::Error>>
     let mut head = created;
     for role in [Role::User, Role::Assistant] {
         let message = StoredMessage {
+            original_input: None,
+            arg_repairs: None,
             turn_start: false,
             id: uuid::Uuid::new_v4().to_string(),
             role,

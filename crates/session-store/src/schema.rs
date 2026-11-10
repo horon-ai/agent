@@ -810,6 +810,8 @@ pub enum CompactionOutcome {
     Native,
     /// A deterministic fallback ran and the lost context is surfaced.
     LossyEmergency,
+    /// A generated handoff document was committed as the boundary.
+    Handoff,
 }
 
 /// One restored file or skill reference carried by a compacted event.
