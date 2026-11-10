@@ -224,8 +224,8 @@ class GrowthRatchetTests(unittest.TestCase):
         self.write_lockfile(2)
         self.write_ratchet("lockfile.ratchet.json", ceiling=2, name="lockfile-packages")
         self.write_source("crates/base/src/x.rs", "fn f() -> Result<(), String> {}\n")
-        # A later ratchet such as #156's `Result<_, String>` count: the suffix is
-        # not `*.ratchet.json`, and it is still discovered.
+        # A later ratchet such as #156's `Result<_, String>` count: this name is
+        # not `*.ratchet.json`, and its keys still make it a ratchet.
         self.write_ratchet(
             "result_string_budget.json",
             ceiling=1,
@@ -236,6 +236,24 @@ class GrowthRatchetTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("lockfile-packages OK: 2/2", out)
         self.assertIn("result-strings OK: 1/1", out)
+
+    def test_suffixed_ratchet_missing_its_counter_fails_instead_of_skipping(self):
+        # The suffix is a promise: a file that lost its keys must fail loudly,
+        # not quietly stop being a ratchet.
+        self.write_lockfile(1)
+        path = self.root / "scripts" / "ci" / "broken.ratchet.json"
+        path.write_text(
+            json.dumps({
+                "version": 1,
+                "name": "broken",
+                "description": "lost its counter",
+                "ceiling": 1,
+            }),
+            encoding="utf-8",
+        )
+        code, _out, err = self.run_gate()
+        self.assertEqual(code, 1)
+        self.assertIn("counter must be an object", err)
 
     def test_sibling_budget_files_are_not_treated_as_growth_ratchets(self):
         self.write_lockfile(1)

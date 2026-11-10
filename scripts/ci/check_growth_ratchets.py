@@ -7,16 +7,18 @@ from multiplying, and a cleanup that is not finished cannot be prevented from
 coming back one commit at a time. This gate records each count on the current
 tree and fails on any increase.
 
-Naming rule: **a growth ratchet is any `scripts/ci/*.json` file whose top-level
-object declares `counter` or `ceiling`.** The gate discovers them itself, so a
-later ratchet (the `Result<_, String>` count of #156, model-name branches, a
-future count) adds one JSON file and no workflow or `check_all.sh` edit. The
-two files here use the `*.ratchet.json` suffix as the recommended name, but a
-name is not the contract: the shape is, so a file called
-`result_string_budget.json` is picked up the same way. The sibling per-gate
-budgets (`panic_budget.json`, `code_size_budget.json`, ...) declare neither key
-and stay owned by their own scripts. Every discovered file is validated and
-evaluated; a malformed one is a failure, never a skip.
+Naming rule: **a growth ratchet is any `scripts/ci/*.json` file that either
+ends in `.ratchet.json` or has a top-level object declaring `counter` or
+`ceiling`.** The gate discovers them itself, so a later ratchet (the
+`Result<_, String>` count of #156, model-name branches, a future count) adds
+one JSON file and no workflow or `check_all.sh` edit. Both spellings work: the
+`.ratchet.json` suffix is the recommended name, and a sibling-shaped file such
+as `result_string_budget.json` is recognised by its keys. The per-gate budgets
+that predate this gate (`panic_budget.json`, `code_size_budget.json`, ...) use
+neither spelling and stay owned by their own scripts. Every discovered file is
+validated and evaluated; a malformed one is a failure, never a skip - including
+a `.ratchet.json` that lost its `counter`, which would otherwise read as "no
+ratchet declared".
 
 File format:
 
@@ -82,6 +84,7 @@ from pathlib import Path
 from typing import Any
 
 RATCHET_DIR = Path("scripts") / "ci"
+RATCHET_SUFFIX = ".ratchet.json"
 RATCHET_KEYS = ("counter", "ceiling")
 LOCKFILE_COUNTER = "cargo_lock_packages"
 REGEX_COUNTER = "regex_lines"
@@ -94,19 +97,26 @@ class RatchetError(Exception):
     """A ratchet file the gate cannot evaluate, reported as a failure."""
 
 
-def declares_ratchet(path: Path) -> bool:
-    """Whether this JSON object claims to be a growth ratchet.
+def declares_ratchet(path: Path, data: Any) -> bool:
+    """Whether this file is a growth ratchet.
 
-    Shape, not file name, decides: a later ratchet may be called
-    `result_string_budget.json` and is picked up without an edit here. A file
-    that cannot be parsed under the ratchet directory is a failure, because a
-    typo in a ceiling would otherwise read as "no ratchet declared".
+    Two spellings are accepted, so a later ratchet is discovered without an
+    edit here: the `.ratchet.json` suffix, or a top-level object declaring
+    `counter` or `ceiling` (which is how `result_string_budget.json` and
+    friends are recognised). A `.ratchet.json` that lost its keys is still
+    discovered, and then fails validation, because silently skipping it would
+    turn a typo into "no ratchet declared".
     """
+    if path.name.endswith(RATCHET_SUFFIX):
+        return True
+    return isinstance(data, dict) and any(key in data for key in RATCHET_KEYS)
+
+
+def read_json(path: Path) -> Any:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RatchetError(f"{path.as_posix()}: cannot read JSON: {error}") from error
-    return isinstance(data, dict) and any(key in data for key in RATCHET_KEYS)
 
 
 def ratchet_files(root: Path) -> list[Path]:
@@ -114,7 +124,12 @@ def ratchet_files(root: Path) -> list[Path]:
     directory = root / RATCHET_DIR
     if not directory.is_dir():
         raise RatchetError(f"ratchet directory missing: {directory}")
-    return [path for path in sorted(directory.glob("*.json")) if declares_ratchet(path)]
+    found: list[Path] = []
+    for path in sorted(directory.glob("*.json")):
+        data = read_json(path)
+        if declares_ratchet(path, data):
+            found.append(path)
+    return found
 
 
 def require(condition: bool, message: str) -> None:
@@ -180,10 +195,7 @@ def parse_counter(raw: Any, where: str) -> dict[str, Any]:
 
 def load_ratchet(path: Path) -> dict[str, Any]:
     where = path.as_posix()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RatchetError(f"{where}: cannot read ratchet file: {error}") from error
+    data = read_json(path)
     require(isinstance(data, dict), f"{where}: ratchet file must be a JSON object")
     require(data.get("version") == 1, f"{where}: unsupported version {data.get('version')!r}")
     name = data.get("name")
@@ -213,7 +225,7 @@ def load_ratchets(root: Path) -> list[dict[str, Any]]:
     require(
         bool(files),
         f"no growth ratchet file under {root / RATCHET_DIR} "
-        f"(an object declaring {' or '.join(RATCHET_KEYS)})",
+        f"(a *{RATCHET_SUFFIX} file, or an object declaring {' or '.join(RATCHET_KEYS)})",
     )
     ratchets = [load_ratchet(path) for path in files]
     names = [ratchet["name"] for ratchet in ratchets]

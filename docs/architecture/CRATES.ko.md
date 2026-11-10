@@ -240,7 +240,7 @@ python3 scripts/ci/check_growth_ratchets.py --list
 | `Cargo.lock` 패키지 | `Cargo.lock`의 `[[package]]` 항목. 같은 크레이트의 두 버전은 두 번 센다 | `scripts/ci/lockfile_packages.ratchet.json` |
 | 내부 레거시 표시자 | 제외 하위 트리 밖에서 `legacy`, `deprecated`, `compat_alias`, `back.?compat`에 맞는 Rust 줄 | `scripts/ci/internal_legacy_markers.ratchet.json` |
 
-래칫 파일은 `counter`와 `ceiling`을 선언한 `scripts/ci/*.json` 객체다. 그래서 나중에 추가할 래칫(`Result<_, String>` 개수, 모델 이름 분기)은 파일 하나만 더하면 되고 워크플로나 `check_all.sh`를 고치지 않는다. `counter.kind`는 `cargo_lock_packages` 또는 `regex_lines`이고, 후자는 `pattern`, `roots`, `extensions`, `exclude`를 받는다. 옆에 있는 게이트별 예산 파일(`panic_budget.json`, `code_size_budget.json`)은 두 키를 선언하지 않으므로 각자 스크립트가 계속 소유한다.
+래칫 파일은 이름이 `.ratchet.json`으로 끝나거나, 최상위 객체가 `counter`와 `ceiling`을 선언한 `scripts/ci/*.json` 파일이다. 그래서 나중에 추가할 래칫(`Result<_, String>` 개수, 모델 이름 분기)은 파일 하나만 더하면 되고 워크플로나 `check_all.sh`를 고치지 않는다. `.ratchet.json`인데 두 키를 잃은 파일은 건너뛰지 않고 실패한다. `counter.kind`는 `cargo_lock_packages` 또는 `regex_lines`이고, 후자는 `pattern`, `roots`, `extensions`, `exclude`를 받는다. 옆에 있는 게이트별 예산 파일(`panic_budget.json`, `code_size_budget.json`)은 두 키를 선언하지 않으므로 각자 스크립트가 계속 소유한다.
 
 레거시 표시자 래칫은 외부 계약을 구현하는 하위 트리를 파일에 사유와 함께 제외한다. `crates/harness-api-server`(하네스 API v1 브리지와 변환 계층), `crates/harness-api`(공개된 v1 표면과 스키마 스냅숏), `crates/session-store`(v0.1.x가 쓴 세션을 읽는 저장소 이관·재생 리더)다. 존재하지 않는 경로를 제외하면 실패하므로 낡은 항목이 구멍을 넓히지 못한다. 나머지는 내부 잔여물이며 줄어들 수는 있어도 늘어날 수는 없다.
 
