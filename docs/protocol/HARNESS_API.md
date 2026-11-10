@@ -149,7 +149,7 @@ The full storage format, limits and legacy migration rules are in `docs/protocol
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 
-This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, and the last part covers the four durable runtime surfaces of 1.14. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
+This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, the next covers the four durable runtime surfaces of 1.14, and the part after that covers the argument repair of 1.16. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
 
 All three requests are additive. A client that sends none of them keeps working, and the bridge advertises `usage_report`, `session_search` and `artifacts` in the `capabilities` of `hello_ok` (`BRIDGE_CAPABILITIES` in `crates/harness-api-server/src/lib.rs`).
 

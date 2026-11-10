@@ -228,7 +228,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 
 ## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, durable_runtime
 
-이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 끝부분은 1.14의 내구 런타임 표면 넷입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
+이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 그다음은 1.14의 내구 런타임 표면 넷이고, 마지막은 1.16의 인자 복구입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
 
 세 요청 모두 추가형입니다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`를 광고합니다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
 
