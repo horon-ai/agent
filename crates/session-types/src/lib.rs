@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use horon_agent_message_types::{ContentBlock, Message, Role, ToolCall};
+use horon_agent_message_types::ToolCall;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
