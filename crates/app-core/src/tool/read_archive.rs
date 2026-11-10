@@ -138,7 +138,7 @@ fn absolute(raw: &str, cwd: &Path) -> PathBuf {
 /// Reads one archive request end to end.
 pub(super) fn read_archive(params: &ReadInput, ctx: &ToolContext, cwd: &Path) -> Result<ToolOutput> {
     let (path, kind, member) =
-        resolve(&params.file_path, cwd).ok_or_else(|| anyhow!("not an archive read: {}", params.file_path))?;
+        resolve(&params.file_path, cwd)?.ok_or_else(|| anyhow!("not an archive read: {}", params.file_path))?;
     // The policy judged the raw argument, which may not equal the archive path
     // once a member selector is stripped off it.
     crate::tool::path_policy::enforce("read", &serde_json::json!({ "file_path": path.to_string_lossy() }), ctx)?;
