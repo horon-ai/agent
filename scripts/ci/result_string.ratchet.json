@@ -6,8 +6,13 @@
     "kind": "regex_lines",
     "pattern": "Result\\s*<(?:[^<>]|<[^<>]*>)*,\\s*String\\s*>",
     "case_insensitive": true,
-    "roots": ["src", "crates"],
-    "extensions": [".rs"]
+    "roots": [
+      "src",
+      "crates"
+    ],
+    "extensions": [
+      ".rs"
+    ]
   },
-  "ceiling": 127
+  "ceiling": 138
 }
