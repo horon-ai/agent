@@ -335,7 +335,8 @@ fn settings_save_refuses_unknown_keys_and_bad_types() {
     let fixture = Fixture::new();
     let sources = fixture.sources();
     assert!(save_global(&sources, "not_a_key", &SettingValue::Bool(true)).is_err());
-    assert!(save_global(&sources, "theme", &SettingValue::Str("solarized".to_string())).is_err());
+    // `theme` names a file, so any string is accepted; only the type is checked.
+    assert!(save_global(&sources, "theme", &SettingValue::Bool(true)).is_err());
     assert!(save_global(&sources, "symbols", &SettingValue::Bool(true)).is_err());
     assert!(!fixture.global().exists(), "a refused save must not create the file");
 }
