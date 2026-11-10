@@ -75,7 +75,15 @@ pub(crate) fn decide(
 /// The decision for this process: its own terminal state, environment, and
 /// sibling binary.
 pub(crate) fn decide_for_process() -> (Handoff, Option<PathBuf>) {
-    let sibling = sibling_tui(std::env::current_exe().ok().as_deref());
+    // Without a resolvable executable path there is no sibling to find; the
+    // headless message then says the client is missing, and the log keeps why.
+    let sibling = match std::env::current_exe() {
+        Ok(exe) => sibling_tui(Some(&exe)),
+        Err(error) => {
+            crate::logging::info(&format!("tui handoff: cannot resolve current_exe: {error}"));
+            None
+        }
+    };
     let decision = decide(
         std::io::stdin().is_terminal(),
         std::io::stdout().is_terminal(),
