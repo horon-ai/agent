@@ -59,8 +59,6 @@ fn text_block(text: &str) -> Vec<ContentBlock> {
 /// A transcript long enough that a small recent-token budget leaves a prefix.
 async fn handoff_fixture() -> (crate::auth::test_sandbox::AuthTestSandbox, Agent) {
     let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("test sandbox");
-    std::fs::write(sandbox.root().join("config.toml"), "[compaction]\nrecent_tokens = 1\n").expect("write config");
-    crate::config::invalidate_config_cache();
 
     let provider: Arc<dyn Provider> = Arc::new(HandoffProvider);
     let registry = Registry::new(provider.clone()).await;
@@ -105,7 +103,7 @@ async fn handoff_compaction_commits_a_document_as_the_boundary() {
         answer: Ok(COMPLETE_DOCUMENT.to_string()),
     };
 
-    let outcome = agent.request_handoff_compaction_with(&cancel, &completer);
+    let outcome = agent.request_handoff_compaction_with(&cancel, 1, &completer);
 
     let HandoffOutcome::Committed { covered } = outcome else {
         panic!("expected a committed boundary, got {outcome:?}");
@@ -150,7 +148,7 @@ async fn handoff_compaction_commits_a_document_missing_a_heading() {
         answer: Ok(partial.to_string()),
     };
 
-    let outcome = agent.request_handoff_compaction_with(&cancel, &completer);
+    let outcome = agent.request_handoff_compaction_with(&cancel, 1, &completer);
 
     assert!(matches!(outcome, HandoffOutcome::Committed { covered } if covered > 0));
     let state = agent.session.compaction.as_ref().expect("the boundary is stored");
@@ -170,7 +168,7 @@ async fn handoff_compaction_provider_error_leaves_the_transcript_unchanged() {
         answer: Err("the provider refused the request".to_string()),
     };
 
-    let outcome = agent.request_handoff_compaction_with(&cancel, &completer);
+    let outcome = agent.request_handoff_compaction_with(&cancel, 1, &completer);
 
     let HandoffOutcome::ProviderError(detail) = outcome else {
         panic!("expected a provider error, got {outcome:?}");
@@ -194,7 +192,7 @@ async fn handoff_compaction_cancel_leaves_the_transcript_unchanged() {
         answer: Ok(COMPLETE_DOCUMENT.to_string()),
     };
 
-    let outcome = agent.request_handoff_compaction_with(&cancel, &completer);
+    let outcome = agent.request_handoff_compaction_with(&cancel, 1, &completer);
 
     assert_eq!(outcome, HandoffOutcome::Cancelled);
     assert_eq!(

@@ -37,16 +37,18 @@ impl Agent {
     /// before that tail. The commit follows the same path as a model-requested
     /// rollover, with the generated document in place of the rollover marker.
     pub fn request_handoff_compaction(&mut self, cancel: &AtomicBool) -> HandoffOutcome {
-        self.request_handoff_compaction_with(cancel, &crate::compaction::handoff::AuxCompletion)
+        let recent_tokens = crate::config::config().compaction.recent_tokens;
+        self.request_handoff_compaction_with(cancel, recent_tokens, &crate::compaction::handoff::AuxCompletion)
     }
 
-    /// The same request with an injected completer, so a test needs no network.
+    /// The same request with an explicit budget and completer, so a test needs
+    /// neither the process config nor a network.
     fn request_handoff_compaction_with(
         &mut self,
         cancel: &AtomicBool,
+        recent_tokens: usize,
         completer: &dyn HandoffCompleter,
     ) -> HandoffOutcome {
-        let recent_tokens = crate::config::config().compaction.recent_tokens;
         let messages: Vec<Message> = self
             .session
             .active_context()
