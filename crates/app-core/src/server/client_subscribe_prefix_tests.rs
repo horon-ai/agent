@@ -7,7 +7,7 @@
 
 #![allow(clippy::await_holding_lock)]
 use super::*;
-use crate::message::{Message, StreamEvent, ToolDefinition};
+use crate::message::{Message, ToolDefinition};
 use crate::provider::{EventStream, Provider};
 use serde_json::json;
 
@@ -189,6 +189,10 @@ impl Provider for EmptyProvider {
 
     fn name(&self) -> &str {
         "empty"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(EmptyProvider)
     }
 }
 
