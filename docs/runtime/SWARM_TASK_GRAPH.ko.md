@@ -419,6 +419,33 @@ spawn은 역할을 매번 다시 적지 않고 이름으로 부를 수 있다. `
 `swarm` 액션 `list_agent_defs`는 현재 워크스페이스에서 보이는 정의를 나열한다. `list`와 다른
 별도 액션이며, `list`는 계속 "swarm 멤버 나열"을 뜻하고 `list_agents`를 별칭으로 유지한다.
 
+## 8c. 팬아웃: `spawn_many`
+
+자식마다 `swarm spawn`을 한 번씩 부르면 부모는 자식마다 모델 왕복을 한 번씩 치른다.
+`swarm spawn_many`는 한 번의 호출로 여러 자식을 띄운다.
+
+- `tasks`: `{label, initial_message?, agent?, model?, effort?, isolation?, output_schema?}`
+  목록. 단일 spawn과 똑같이 `prompt`를 `initial_message`의 별칭으로 받는다.
+- `context`: 자식마다 첫 메시지 앞에 붙는 공유 배경.
+
+묶음 호출을 정직하게 유지하는 규칙은 이렇다.
+
+- 레이블은 한 호출 안에서 유일해야 하고, 대소문자를 구분하지 않고 비교한다. 중복이면 자식이
+  하나도 생기기 전에 호출이 실패한다.
+- 빈 `tasks` 목록은 거부한다.
+- 각 태스크는 단일 spawn 요청 경로를 그대로 타고, 태스크들은 소켓 요청 하나씩을 들고 동시에
+  시작한다.
+- 호출 수준의 `model`, `effort`, `output_schema`, `agent`, `isolation`, `working_dir`,
+  `spawn_mode`는 값을 생략한 태스크의 기본값이 된다. 태스크에 적은 값이 이긴다.
+- 결과는 입력 순서를 지키고 태스크마다 항목을 하나씩 담는다. 자식 세션 id이거나 그 태스크를
+  막은 오류다. 한 태스크의 실패가 다른 태스크를 취소하지 않는다.
+- 두 spawn 상한은 여전히 큐 대신 거부한다. 동시성은 `agents.swarm_max_concurrent_agents`,
+  전체 라이브 멤버는 `MAX_SWARM_MEMBERS`다. 그래서 호출자는 태스크 셋이 항상 자식 셋을 낳는다고
+  가정해선 안 된다.
+
+`context`는 자식의 첫 사용자 메시지 앞에 붙는다. 자식 세션이 첫 턴보다 먼저 만들어지므로
+시스템 프롬프트 절로 그리지 않는다.
+
 ---
 
 ## 9. 예제: 시간에 따른 그래프 변화
