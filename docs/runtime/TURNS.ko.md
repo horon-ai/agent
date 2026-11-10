@@ -130,7 +130,7 @@ omp와 다르다. `one-at-a-time`으로 두면 남은 메시지는 순서대로 
 
 #### 지점 C의 긴급 처리
 
-긴급 플래그가 선 메시지가 대기 중이면 도구 라운드를 끝까지 돌리지 않는다. 판정 함수는 `urgent_interrupt_pending` 하나뿐이다(`crates/app-core/src/agent/interrupts.rs:135-140`). 라운드를 자를 때는 아직 결과를 쓰지 않은 호출마다 `is_error: true`인 도구 결과를 먼저 넣는다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). 내용은 `[Skipped: user interrupted]`다(`:12`). 그 뒤 사용자 메시지를 넣고, 건너뛴 개수를 이벤트의 `tools_skipped`로 알린다.
+긴급 플래그가 선 메시지가 대기 중이면 도구 라운드를 끝까지 돌리지 않는다. 판정 함수는 `urgent_interrupt_pending` 하나뿐이다(`crates/app-core/src/agent/interrupts.rs:163-166`). 라운드를 자를 때는 아직 결과를 쓰지 않은 호출마다 `is_error: true`인 도구 결과를 먼저 넣는다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). 내용은 `[Skipped: user interrupted]`다(`:12`). 그 뒤 사용자 메시지를 넣고, 건너뛴 개수를 이벤트의 `tools_skipped`로 알린다.
 
 긴급하지 않은 인터럽트는 도구 사이에 넣지 않는다. 모두 지점 D로 미룬다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2104-2106`).
 
