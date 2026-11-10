@@ -80,19 +80,19 @@ jobs:
       # job's own toolchain, as the Build & Test job does.
       RUSTUP_TOOLCHAIN: stable
     steps:
+      # The cleanup lives in the repository, so the checkout comes first: the
+      # shared script is not on disk until the workspace exists.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Free disk space
         # The gate cold-compiles several `cargo test` binaries on a hosted ubuntu
-        # runner with about 14 GB free. Remove the pre-installed toolchains this
-        # job never uses; skip on the self-hosted macOS machine, whose toolchains
-        # are its owner's.
+        # runner with about 14 GB free. The shared script renames the unused
+        # pre-installed toolchains and returns before the deletion, which
+        # continues in the background while the toolchain installs; skip on the
+        # self-hosted macOS machine, whose toolchains are its owner's.
         if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' }}
         shell: bash
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        run: bash scripts/ci/free_disk_space.sh
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
