@@ -10,10 +10,14 @@ wins.
 Every change in this tree keeps all three. A change that breaks one is not
 done, regardless of what else it fixes.
 
-1. **No TUI.** The binary is headless and never opens a terminal. The
-   dependency graph stays free of `ratatui`, `crossterm`, and any
-   `horon-agent-tui*` crate. Do not bring back the TUI or the crossterm login
-   presenter.
+1. **No TUI in the headless package.** The `horon-agent` package (`serve`,
+   `run`, `api-bridge`, `acp` — the headless binary) never opens a terminal UI,
+   and its dependency graph stays free of `ratatui`, `crossterm`, `horon-tui`,
+   and any `horon-agent-tui*` crate. An interactive terminal client may exist
+   only as the separate package and binary `horon-tui` (planned), which talks
+   to the daemon through `horon-agent-sdk` and never moves the terminal stack
+   into `horon-agent`. `scripts/ci/check_headless_graph.py` enforces the graph
+   rule in CI.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
    both sides support. Current state: both are implemented — v2 negotiates in
@@ -60,6 +64,8 @@ direction (faster and smaller than jcode).
 - One headless binary, `horon-agent`. Working subcommands: `serve` (agent
   daemon), `run` (send one message and exit), `api-bridge` (alias `api`;
   harness API on a Unix socket, Unix only), and `acp` (ACP adapter on stdio).
+  A terminal client is not part of this package: when one ships it is the
+  separate `horon-tui` package and binary on `horon-agent-sdk`.
 - One model path: the agent POSTs `/chat/completions` to the OpenAI-compatible
   endpoint of the profile named by `[provider] default_provider` or
   `--provider-profile`. A profile is a `[providers.<name>]` table with
@@ -139,13 +145,20 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
 
-Requirement 1 check. Each command must fail with "did not match any packages":
+Requirement 1 check. Each `cargo tree` command must print "did not match any
+packages", and the graph gate must exit 0:
 
 ```bash
 cargo tree -p horon-agent -i ratatui
 cargo tree -p horon-agent -i crossterm
+cargo tree -p horon-agent -i horon-tui
 cargo tree -p horon-agent -i horon-agent-tui
+python3 scripts/ci/check_headless_graph.py
 ```
+
+The `cargo tree` lines cover those names only; `check_headless_graph.py` walks
+every package reachable from `horon-agent` and fails on the `horon-agent-tui*`
+prefix too.
 
 Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 `src/cli/acp.rs`). Requirement 3 check: the structural gate and A/B runner in

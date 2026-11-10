@@ -12,7 +12,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 
 | Requirement | What it means | Current state |
 | --- | --- | --- |
-| No TUI | The binary never opens a screen. `ratatui`, `crossterm`, and `horon-agent-tui*` must not appear in the dependency graph. | Met |
+| No TUI in `horon-agent` | The headless binary (`serve`, `run`, `api-bridge`, `acp`) never opens a screen, and its dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate. A terminal client, when one ships, is the separate `horon-tui` package on `horon-agent-sdk`. | Met. `scripts/ci/check_headless_graph.py` walks the resolved graph |
 | ACP v1 and v2 support | `horon acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
 | No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
 
