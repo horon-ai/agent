@@ -116,8 +116,9 @@ impl Reloader {
 
 /// Read an environment variable, treating a non-Unicode value as absent.
 fn resolve_process_env(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(value) => Some(value),
-        Err(_) => None,
+    let mut value = None;
+    if let Ok(raw) = std::env::var(name) {
+        value = Some(raw);
     }
+    value
 }

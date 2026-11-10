@@ -230,16 +230,18 @@ pub struct FileStamp {
 
 impl FileStamp {
     fn of(path: &Path) -> Option<Self> {
-        match std::fs::metadata(path) {
-            Ok(metadata) => Some(Self {
-                len: metadata.len(),
-                modified: match metadata.modified() {
-                    Ok(time) => Some(time),
-                    Err(_) => None,
-                },
-            }),
-            Err(_) => None,
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(_) => return None,
+        };
+        let mut modified = None;
+        if let Ok(time) = metadata.modified() {
+            modified = Some(time);
         }
+        Some(Self {
+            len: metadata.len(),
+            modified,
+        })
     }
 }
 
