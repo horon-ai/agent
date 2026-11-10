@@ -10,9 +10,12 @@ name: Benchmark docs
 # structural performance gate for the same commit must also have succeeded: "all
 # tests passed" means CI and that gate, which carries its own `on:` block.
 #
-# The docs commits are pushed with GITHUB_TOKEN. GitHub does not start workflows
-# for those pushes, so this never feeds itself; even if it did, a docs-only diff
-# fails the code-change gate above.
+# The docs commits are pushed with a Horon AI Bot installation token: the
+# repository ruleset requires `CI Required` and `Structural performance required`
+# on `main` and `dev`, and the bot is on its bypass list (GITHUB_TOKEN cannot be).
+# A push made with an app token would start workflows, so each commit message
+# carries `[skip ci]`: no CI run, no `release-tag.yml`, no new run of this file.
+# Even without it, a docs-only diff fails the code-change gate above.
 #
 # `workflow_run` only fires from the copy of this file on the default branch, so
 # the automation starts once this file is on `main`.
@@ -137,16 +140,26 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     env:
       SHA: ${{ needs.gate.outputs.sha }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       PYTHONUTF8: "1"
     steps:
+      - name: Mint the Horon AI Bot token
+        id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ secrets.HORON_AI_BOT_APP_ID }}
+          private-key: ${{ secrets.HORON_AI_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.gate.outputs.sha }}
           fetch-depth: 0
+          # The pushes below use this token, so the ruleset lets them through.
+          token: ${{ steps.bot.outputs.token }}
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -185,7 +198,7 @@ jobs:
               if git diff --cached --quiet; then
                 echo "$branch: already up to date"; ok=true; break
               fi
-              git commit --quiet -m "docs(perf): record benchmark for $short"
+              git commit --quiet -m "docs(perf): record benchmark for $short [skip ci]"
               if git push --quiet origin "HEAD:$branch"; then
                 echo "$branch: pushed $(git rev-parse --short HEAD)"; ok=true; break
               fi
