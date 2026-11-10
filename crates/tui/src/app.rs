@@ -13,6 +13,7 @@ use horon_agent_sdk::api::{ApiEvent, AskSelection};
 use crate::input::Input;
 use crate::prompts::{Prompt, Response};
 use crate::sdk_bridge::Incoming;
+use crate::theme::{Symbols, Theme};
 use crate::transcript::Transcript;
 
 /// What the UI asks the bridge to do after a keystroke.
@@ -65,6 +66,11 @@ pub struct App {
     pub provider: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
+    /// Colours the renderer uses, replaced when the theme loader resolves a
+    /// new theme.
+    pub theme: Theme,
+    /// Glyphs the renderer uses, replaced with the theme.
+    pub symbols: Symbols,
 }
 
 impl App {
@@ -84,6 +90,8 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            theme: Theme::default(),
+            symbols: Symbols::default(),
         }
     }
 
@@ -105,6 +113,8 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            theme: Theme::default(),
+            symbols: Symbols::default(),
         }
     }
 
@@ -132,6 +142,12 @@ impl App {
 
     /// The one-line status: what we are attached to and what it is doing.
     pub fn status_line(&self) -> String {
+        self.status_parts().join(" · ")
+    }
+
+    /// The status line's parts, for a renderer that chooses its own separator
+    /// and colours.
+    pub fn status_parts(&self) -> Vec<String> {
         let mut parts = vec![self.description.clone()];
         if let Some(model) = &self.model {
             parts.push(model.clone());
@@ -145,7 +161,7 @@ impl App {
             self.session_status.as_deref().unwrap_or("idle")
         };
         parts.push(state.to_string());
-        parts.join(" · ")
+        parts
     }
 
     /// Fold one protocol event into the state.
