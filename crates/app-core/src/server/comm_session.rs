@@ -6,7 +6,7 @@ use super::swarm_mutation_state::{
 use super::{
     SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember, SwarmState, VersionedPlan,
     append_swarm_completion_report_instructions, broadcast_swarm_plan, broadcast_swarm_status, create_headless_session,
-    fanout_session_event, persist_swarm_state_for, record_swarm_event, record_swarm_event_for_session,
+    SpawnExtras, fanout_session_event, persist_swarm_state_for, record_swarm_event, record_swarm_event_for_session,
     remove_background_tool_signal, remove_session_channel_subscriptions, remove_session_from_swarm,
     remove_session_interrupt_queue, set_member_task_label, truncate_detail, update_member_status,
     update_member_status_with_report,
@@ -342,9 +342,7 @@ pub(super) async fn spawn_swarm_agent(
     label: Option<String>,
     isolation: Isolation,
     iso_apply: IsoApply,
-    // Optional JSON Schema for the child's structured result. When present the
-    // child runs headless with a `yield` tool bound to this schema.
-    output_schema: Option<serde_json::Value>,
+    extras: SpawnExtras,
     sessions: &SessionAgents,
     global_session_id: &Arc<RwLock<String>>,
     provider_template: &Arc<dyn Provider>,
@@ -358,6 +356,10 @@ pub(super) async fn spawn_swarm_agent(
     mcp_pool: &Arc<crate::mcp::SharedMcpPool>,
     soft_interrupt_queues: &SessionInterruptQueues,
 ) -> anyhow::Result<String> {
+    let SpawnExtras {
+        output_schema,
+        allowed_tools,
+    } = extras;
     if let Some(schema) = output_schema.as_ref() {
         // Reject before a session exists: a child that can never submit a valid
         // result must not be spawned at all.
@@ -442,6 +444,7 @@ pub(super) async fn spawn_swarm_agent(
         spawn_route_api_method.clone(),
         spawn_effort.clone(),
         output_schema,
+        allowed_tools.map(|tools| tools.into_iter().collect()),
         Some(Arc::clone(mcp_pool)),
         Some(req_session_id.to_string()),
         super::headless::HeadlessMemoryScope::RealProject,
@@ -596,7 +599,7 @@ pub(super) async fn handle_comm_spawn(
     label: Option<String>,
     isolation: Option<String>,
     iso_apply: Option<String>,
-    output_schema: Option<serde_json::Value>,
+    extras: SpawnExtras,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     sessions: &SessionAgents,
     global_session_id: &Arc<RwLock<String>>,
@@ -670,9 +673,15 @@ pub(super) async fn handle_comm_spawn(
             label.clone().unwrap_or_default(),
             isolation.clone().unwrap_or_default(),
             iso_apply.clone().unwrap_or_default(),
-            output_schema
+            extras
+                .output_schema
                 .as_ref()
                 .map(|schema| schema.to_string())
+                .unwrap_or_default(),
+            extras
+                .allowed_tools
+                .as_ref()
+                .map(|tools| tools.join(","))
                 .unwrap_or_default(),
         ],
     );
@@ -700,7 +709,7 @@ pub(super) async fn handle_comm_spawn(
         label,
         isolation_mode,
         iso_apply_mode,
-        output_schema,
+        extras,
         sessions,
         global_session_id,
         provider_template,

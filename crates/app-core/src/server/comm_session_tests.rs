@@ -496,7 +496,7 @@ async fn session_agent_models_drive_spawn_selection() {
             Some("routing test".into()),
             super::comm_worktree::Isolation::None,
             super::comm_worktree::IsoApply::Apply,
-            None,
+            super::SpawnExtras::default(),
             &sessions,
             &Arc::new(RwLock::new(String::new())),
             &provider,
@@ -999,6 +999,85 @@ impl Provider for YieldScriptProvider {
     }
 }
 
+/// A definition's allow list reaches the child registry and nothing widens it.
+#[tokio::test]
+async fn allow_list_spawn_narrows_the_child_registry() {
+    let _env = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let previous = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
+
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut session = crate::session::Session::create_with_id("narrow_coord".to_string(), None, None);
+    session.model = Some("mock".to_string());
+    session.working_dir = Some(temp.path().to_string_lossy().into_owned());
+    let agent = Agent::new_with_session(provider.clone(), registry, session, None);
+    let sessions = Arc::new(RwLock::new(HashMap::from([(
+        "narrow_coord".to_string(),
+        Arc::new(Mutex::new(agent)),
+    )])));
+    let state = crate::server::SwarmState::new(HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
+    let mcp = Arc::new(crate::mcp::SharedMcpPool::new(crate::mcp::McpConfig::default()));
+
+    let child_id = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        super::spawn_swarm_agent(
+            "narrow_coord",
+            "narrow-swarm",
+            Some(temp.path().to_string_lossy().into_owned()),
+            Some("read only".to_string()),
+            Some(crate::config::SwarmSpawnMode::Headless),
+            None,
+            None,
+            Some("narrow child".into()),
+            super::comm_worktree::Isolation::None,
+            super::comm_worktree::IsoApply::Apply,
+            super::SpawnExtras {
+                output_schema: None,
+                allowed_tools: Some(vec!["read".to_string(), "ls".to_string()]),
+            },
+            &sessions,
+            &Arc::new(RwLock::new(String::new())),
+            &provider,
+            &state.members,
+            &state.swarms_by_id,
+            &state.coordinators,
+            &state.plans,
+            &Arc::new(RwLock::new(VecDeque::new())),
+            &Arc::new(AtomicU64::new(0)),
+            &broadcast::channel(16).0,
+            &mcp,
+            &Arc::new(RwLock::new(HashMap::new())),
+        ),
+    )
+    .await
+    .expect("the narrow spawn must not block")
+    .expect("the narrow spawn succeeds");
+
+    let child = sessions.read().await.get(&child_id).cloned().unwrap();
+    let child_guard = child.lock().await;
+    let advertised = child_guard.tool_definitions_for_debug().await;
+    let names: Vec<&str> = advertised.iter().map(|definition| definition.name.as_str()).collect();
+    assert!(names.contains(&"read"), "read must stay reachable: {names:?}");
+    assert!(names.contains(&"ls"), "ls must stay reachable: {names:?}");
+    assert!(
+        !names.contains(&"bash"),
+        "a tool outside the definition's list must not be advertised: {names:?}"
+    );
+    assert!(
+        !names.contains(&"write"),
+        "a tool outside the definition's list must not be advertised: {names:?}"
+    );
+    drop(child_guard);
+
+    if let Some(previous) = previous {
+        crate::env::set_var("HORON_HOME", previous);
+    } else {
+        crate::env::remove_var("HORON_HOME");
+    }
+}
+
 #[tokio::test]
 async fn schema_spawn_installs_yield_on_the_child_only() {
     let _env = crate::storage::lock_test_env();
@@ -1042,7 +1121,10 @@ async fn schema_spawn_installs_yield_on_the_child_only() {
             Some("structured child".into()),
             super::comm_worktree::Isolation::None,
             super::comm_worktree::IsoApply::Apply,
-            Some(schema),
+            super::SpawnExtras {
+                output_schema: Some(schema),
+                allowed_tools: None,
+            },
             &sessions,
             &Arc::new(RwLock::new(String::new())),
             &provider,

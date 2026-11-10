@@ -18,6 +18,7 @@
     clippy::useless_conversion
 )]
 
+pub mod agent_defs;
 pub mod artifacts;
 pub mod auth;
 pub mod aux_completion;

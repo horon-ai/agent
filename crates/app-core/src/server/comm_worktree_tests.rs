@@ -318,7 +318,7 @@ async fn swarm_default_isolation_unchanged() {
         Some("isolation default".into()),
         crate::server::comm_worktree::Isolation::None,
         IsoApply::Apply,
-        None,
+        crate::server::comm_session::SpawnExtras::default(),
         &sessions,
         &Arc::new(RwLock::new(String::new())),
         &provider,

@@ -69,8 +69,7 @@ fn test_comm_await_members_roundtrip() -> Result<()> {
 
 #[test]
 fn test_comm_await_members_defaults() -> Result<()> {
-    let json =
-        r#"{"type":"comm_await_members","id":1,"session_id":"s1","target_status":["completed"]}"#;
+    let json = r#"{"type":"comm_await_members","id":1,"session_id":"s1","target_status":["completed"]}"#;
     let decoded = parse_request_json(json)?;
     let Request::CommAwaitMembers {
         session_ids,
@@ -84,10 +83,7 @@ fn test_comm_await_members_defaults() -> Result<()> {
     else {
         return Err(anyhow!("expected CommAwaitMembers"));
     };
-    assert!(
-        session_ids.is_empty(),
-        "session_ids should default to empty"
-    );
+    assert!(session_ids.is_empty(), "session_ids should default to empty");
     assert_eq!(mode, None, "mode should default to None");
     assert_eq!(timeout_secs, None, "timeout_secs should default to None");
     assert!(background, "background should default to true");
@@ -140,12 +136,7 @@ fn test_comm_report_response_roundtrip() -> Result<()> {
     let json = encode_event(&event);
     assert!(json.contains("\"type\":\"comm_report_response\""));
     let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::CommReportResponse {
-        id,
-        status,
-        message,
-    } = decoded
-    else {
+    let ServerEvent::CommReportResponse { id, status, message } = decoded else {
         return Err(anyhow!("expected CommReportResponse"));
     };
     assert_eq!(id, 57);
@@ -378,6 +369,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         isolation: Some("worktree".to_string()),
         iso_apply: Some("keep".to_string()),
         output_schema: Some(serde_json::json!({"type": "object", "properties": {"files": {"type": "array"}}})),
+        allowed_tools: Some(vec!["read".to_string(), "ls".to_string()]),
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"comm_spawn\""));
@@ -402,6 +394,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         label,
         isolation,
         iso_apply,
+        allowed_tools,
         ..
     } = decoded
     else {
@@ -417,6 +410,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
     assert_eq!(label.as_deref(), Some("review auth flow"));
     assert_eq!(isolation.as_deref(), Some("worktree"));
     assert_eq!(iso_apply.as_deref(), Some("keep"));
+    assert_eq!(
+        allowed_tools.as_deref(),
+        Some(["read".to_string(), "ls".to_string()].as_slice())
+    );
     Ok(())
 }
 
@@ -432,10 +429,7 @@ fn test_comm_spawn_and_assign_next_decode_model_without_effort() -> Result<()> {
         let decoded = parse_request_json(&json.to_string())?;
         match decoded {
             Request::CommSpawn {
-                model,
-                effort,
-                label,
-                ..
+                model, effort, label, ..
             } => {
                 assert_eq!(model.as_deref(), Some("gpt-5.5"));
                 assert_eq!(effort, None);
@@ -471,10 +465,7 @@ fn test_comm_spawn_and_assign_next_roundtrip_omitted_or_null_model() -> Result<(
                 assert_eq!(request.id(), 60);
                 match request {
                     Request::CommSpawn {
-                        model,
-                        effort,
-                        label,
-                        ..
+                        model, effort, label, ..
                     } => {
                         assert_eq!(model, None);
                         assert_eq!(effort, None);
@@ -520,10 +511,8 @@ fn targeted_notification_does_not_require_subscription() -> Result<()> {
     let decoded = parse_request_json(&serde_json::to_string(&request)?)?;
     assert_eq!(decoded.id(), 92);
     assert!(decoded.is_lightweight_control_request());
-    assert!(
-        matches!(decoded, Request::NotifySession { session_id, message, .. }
-        if session_id == "existing-session" && message == "scheduled reminder")
-    );
+    assert!(matches!(decoded, Request::NotifySession { session_id, message, .. }
+        if session_id == "existing-session" && message == "scheduled reminder"));
     Ok(())
 }
 
