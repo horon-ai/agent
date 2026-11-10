@@ -1970,9 +1970,7 @@ class HoronAgentClient:
         cancellation leaves the transcript unchanged and is reported as that
         outcome rather than raised.
         """
-        frame = await self._expect_reply(
-            {"req": "compact", "session_id": session_id, "method": "handoff"}, "compacted"
-        )
+        frame = await self._expect_reply({"req": "compact", "session_id": session_id, "method": "handoff"}, "compacted")
         outcome = frame.get("handoff")
         if not isinstance(outcome, dict):
             raise HarnessError("unexpected_reply", "the daemon answered a handoff compaction without an outcome")

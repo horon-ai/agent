@@ -959,7 +959,7 @@ impl HoronAgentClient {
     }
 
     /// Send a request, failing when the server replies with an error frame.
-    fn request_ok(&self, request: ApiRequest) -> Result<ServerFrame> {
+    pub(crate) fn request_ok(&self, request: ApiRequest) -> Result<ServerFrame> {
         let frame = self.request(request)?;
         match frame.event {
             ApiEvent::Error { code, message, details } => {
