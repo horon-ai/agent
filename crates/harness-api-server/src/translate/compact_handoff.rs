@@ -64,10 +64,11 @@ pub(super) fn result_reply(state: &mut BridgeState, event: &Value) -> Vec<Server
 /// `compacted` reply rather than inventing an outcome nobody reported.
 fn parse_outcome(value: &Value) -> Option<HandoffCompaction> {
     match value["outcome"].as_str()? {
-        "committed" => match usize::try_from(value["covered"].as_u64()?) {
-            Ok(covered) => Some(HandoffCompaction::Committed { covered }),
-            Err(_) => None,
-        },
+        // A count wider than this target's `usize` saturates: it is still the
+        // committed outcome, only a smaller platform cannot hold the exact count.
+        "committed" => Some(HandoffCompaction::Committed {
+            covered: usize::try_from(value["covered"].as_u64()?).unwrap_or(usize::MAX),
+        }),
         "nothing_to_cover" => Some(HandoffCompaction::NothingToCover),
         "provider_error" => {
             let detail = value["detail"].as_str()?;
