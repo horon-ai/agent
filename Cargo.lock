@@ -2377,6 +2377,9 @@ dependencies = [
  "horon-agent-sdk",
  "horon-agent-tool-types",
  "ratatui",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

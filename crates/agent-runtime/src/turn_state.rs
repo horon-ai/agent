@@ -480,6 +480,8 @@ pub struct TurnState {
     unparsed_tool_markup_nudges: u32,
     auto_continuations: u8,
     final_text: String,
+    model_fallback_original: Option<String>,
+    model_fallback_tried: Vec<String>,
     outcome: Option<TurnOutcome>,
 }
 
@@ -499,6 +501,33 @@ impl TurnState {
 
     pub fn reset_context_limit_retries(&mut self) {
         self.context_limit_retries = 0;
+    }
+
+    /// The session model a model fallback moved away from, until it is restored.
+    pub fn model_fallback_original(&self) -> Option<&str> {
+        self.model_fallback_original.as_deref()
+    }
+
+    pub fn set_model_fallback_original(&mut self, model: String) {
+        self.model_fallback_original = Some(model);
+    }
+
+    pub fn take_model_fallback_original(&mut self) -> Option<String> {
+        self.model_fallback_original.take()
+    }
+
+    /// The fallback entries this turn already spent, oldest first.
+    pub fn model_fallback_tried(&self) -> &[String] {
+        &self.model_fallback_tried
+    }
+
+    pub fn record_model_fallback_tried(&mut self, model: String) -> usize {
+        self.model_fallback_tried.push(model);
+        self.model_fallback_tried.len()
+    }
+
+    pub fn clear_model_fallback_tried(&mut self) {
+        self.model_fallback_tried.clear();
     }
 
     pub fn rate_limit_retries(&self) -> u32 {

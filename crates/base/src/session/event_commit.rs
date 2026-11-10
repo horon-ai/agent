@@ -23,8 +23,12 @@ impl Session {
         let expected_prefix = self.event_state.source_hash.clone();
         let prefix_len = self.event_state.pending_base_len;
         let explicit_head = self.event_state.explicit_head;
+        // Consumed before any I/O so a failed commit cannot leave the flag
+        // armed for a later, unrelated commit: the next one rebuilds normally.
+        let skip_cache = std::mem::take(&mut self.event_state.skip_cache_once) && self.event_state.defer_final_cache;
         let external_source = self.event_state.external_source.clone();
         let runtime = super::event_wire::LocalRuntime::capture(self);
+        let confirmed_binding = self.event_state.confirmed_binding.clone();
         writer.call(move |writer| {
             writer.batched(|writer| -> Result<()> {
                 if let Some(source) = &external_source {
@@ -62,7 +66,7 @@ impl Session {
                 // Selection and the runtime binding are local, durable, and never
                 // exported as replica state. Their files are flushed individually
                 // and the session directory once, after both.
-                let runtime_changed = runtime.publish(&commit_paths, &commit_id)?;
+                let runtime_changed = runtime.publish(&commit_paths, &commit_id, confirmed_binding.as_ref())?;
                 let selected_changed = event_store::select(&commit_paths, &commit_id, &selected, explicit_head)?;
                 if runtime_changed || selected_changed {
                     event_store::sync_local_state(&commit_paths, &commit_id)?;
@@ -70,13 +74,20 @@ impl Session {
                 // One derived rebuild for the whole commit: every original above is
                 // durable and the head is already selected, so the checkpoint and the
                 // shared catalog are published once here instead of once per event.
+                //
+                // A one-shot run leaves the final commit's rebuild to the next
+                // reader. Every reader validates the cached stamp against this log,
+                // so the untouched cache is refused and rebuilt there; the write
+                // this saves is the one nobody reads before the process exits.
                 let cached_head = explicit_head.then_some(selected.clone());
-                if let Err(error) = writer.rebuild_cache(cached_head.as_ref()) {
-                    crate::logging::warn(&format!(
-                        "Session originals committed; derived cache needs repair: {error}"
-                    ));
-                } else if let Some(warning) = writer.cache_warning() {
-                    crate::logging::warn(&format!("Session originals committed; {warning}"));
+                if !skip_cache {
+                    if let Err(error) = writer.rebuild_cache(cached_head.as_ref()) {
+                        crate::logging::warn(&format!(
+                            "Session originals committed; derived cache needs repair: {error}"
+                        ));
+                    } else if let Some(warning) = writer.cache_warning() {
+                        crate::logging::warn(&format!("Session originals committed; {warning}"));
+                    }
                 }
                 Ok(())
             })

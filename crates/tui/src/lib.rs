@@ -13,6 +13,8 @@ pub mod app;
 pub mod input;
 pub mod prompts;
 pub mod sdk_bridge;
+pub mod settings;
+pub mod theme;
 pub mod transcript;
 
 use std::time::Duration;
@@ -21,24 +23,28 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::{Action, App};
 use crate::sdk_bridge::{Command, Incoming, Runtime};
-use crate::transcript::Item;
+use crate::theme::{Symbols, Theme, ThemeLoader};
+use crate::transcript::{Item, ToolState};
 
 /// Program usage, printed by `--help` and after an argument error.
 pub const USAGE: &str = "\
 horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
+                 [--config <file>]...
 
 Options:
   --socket <path>  Harness API socket to connect to (default: the resolved
                    harness socket for this user)
   --session <id>   Attach to an existing session instead of creating one
   --cwd <dir>      Working directory for a newly created session
+  --config <file>  Extra settings file, read after the global and project
+                   files and before the environment (repeatable)
   -V, --version    Print the version and exit
   -h, --help       Print this help and exit
 
@@ -56,6 +62,8 @@ pub struct Args {
     pub session: Option<String>,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
+    /// Extra settings files, applied in the order given.
+    pub config: Vec<std::path::PathBuf>,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -86,13 +94,18 @@ impl Args {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
                 },
+                "--config" => match arguments.next() {
+                    Some(path) if !path.is_empty() => parsed.config.push(path.into()),
+                    _ => return Err("--config needs a file".to_string()),
+                },
                 other => match other.split_once('=') {
-                    Some(("--socket", "")) | Some(("--session", "")) | Some(("--cwd", "")) => {
+                    Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
+                    Some(("--config", path)) => parsed.config.push(path.into()),
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
@@ -144,13 +157,23 @@ where
         print!("{USAGE}");
         return 0;
     }
+    // Settings load before the connection so a broken settings file is
+    // reported even when the daemon is unreachable.
+    let (sources, note) = settings::Sources::from_environment(args.config.clone());
+    if let Some(note) = note {
+        eprintln!("horon-tui: {note}");
+    }
+    let mut reloader = settings::Reloader::new(sources);
+    for warning in reloader.warnings() {
+        eprintln!("horon-tui: settings: {warning}");
+    }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime),
+        Ok(runtime) => run_interactive(runtime, &mut reloader),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -178,8 +201,19 @@ fn show_failure(message: &str) {
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime) -> i32 {
+fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
+    let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
+    // The stderr copy of these warnings is wiped by the alternate screen, so
+    // the transcript carries them for the person using the interface.
+    for warning in reloader.warnings() {
+        app.warn(format!("settings: {warning}"));
+    }
+    for warning in themes.apply(reloader.settings()) {
+        app.warn(format!("theme: {warning}"));
+    }
+    app.theme = themes.theme().clone();
+    app.symbols = *themes.symbols();
     install_panic_hook();
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -188,7 +222,7 @@ fn run_interactive(runtime: Runtime) -> i32 {
             return 1;
         }
     };
-    let code = event_loop(&mut terminal, &mut app, &runtime.commands);
+    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes);
     ratatui::restore();
     code
 }
@@ -203,7 +237,13 @@ fn install_panic_hook() {
 }
 
 /// The main loop: drain SDK events, redraw, then read at most one keystroke.
-fn event_loop<B>(terminal: &mut Terminal<B>, app: &mut App, commands: &std::sync::mpsc::Sender<Command>) -> i32
+fn event_loop<B>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    commands: &std::sync::mpsc::Sender<Command>,
+    reloader: &mut settings::Reloader,
+    themes: &mut ThemeLoader,
+) -> i32
 where
     B: Backend,
     B::Error: std::fmt::Display,
@@ -212,6 +252,26 @@ where
         drain_events(app);
         if !app.running {
             break;
+        }
+        // The reloader throttles itself to one file check per second; the
+        // theme loader shares that cadence for the selected theme file.
+        let mut themed = false;
+        if let Some(reload) = reloader.tick() {
+            for warning in reload.warnings {
+                app.warn(format!("settings: {warning}"));
+            }
+            for warning in themes.apply(&reload.settings) {
+                app.warn(format!("theme: {warning}"));
+            }
+            themed = true;
+        }
+        for warning in themes.tick() {
+            app.warn(format!("theme: {warning}"));
+            themed = true;
+        }
+        if themed {
+            app.theme = themes.theme().clone();
+            app.symbols = *themes.symbols();
         }
         if let Err(message) = draw(terminal, app) {
             eprintln!("horon-tui: {message}");
@@ -298,6 +358,8 @@ where
 }
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
+    let theme: &Theme = &app.theme;
+    let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
     let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
     if !prompt_lines.is_empty() {
@@ -310,7 +372,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let mut index = 0;
     if app.banner.is_some() {
         if let Some(banner) = app.banner.clone() {
-            let style = Style::default().add_modifier(Modifier::REVERSED);
+            let style = Style::default().fg(theme.core.error).add_modifier(Modifier::REVERSED);
             frame.render_widget(
                 Paragraph::new(Line::from(format!("! {banner}"))).style(style),
                 areas[index],
@@ -325,30 +387,91 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     index += 1;
 
     if !prompt_lines.is_empty() {
-        let lines: Vec<Line<'_>> = prompt_lines.into_iter().map(Line::from).collect();
+        let lines: Vec<Line<'_>> = prompt_lines
+            .into_iter()
+            .enumerate()
+            .map(|(line, text)| {
+                // The first line is the prompt itself; a background sets it
+                // apart from the rest of the pane.
+                let style = if line == 0 {
+                    Style::default()
+                        .fg(theme.prompt.prompt_border)
+                        .bg(theme.prompt.selected_bg)
+                } else {
+                    Style::default().fg(theme.prompt.prompt_text)
+                };
+                Line::from(Span::styled(text, style))
+            })
+            .collect();
         frame.render_widget(Paragraph::new(lines), areas[index]);
         index += 1;
     }
 
     let status_area = areas[index];
-    frame.render_widget(Paragraph::new(Line::from(app.status_line())), status_area);
+    frame.render_widget(status_widget(app, theme, symbols), status_area);
     index += 1;
 
     let input_area = areas[index];
-    let input = format!("> {}", app.input.text());
-    frame.render_widget(Paragraph::new(Line::from(input)), input_area);
-    let cursor_x = input_area.x.saturating_add(2).saturating_add(app.input.cursor_column());
+    let input = Line::from(vec![
+        Span::styled(
+            format!("{} ", symbols.prompt_marker),
+            Style::default().fg(theme.core.accent),
+        ),
+        Span::styled(
+            app.input.text().to_string(),
+            Style::default().fg(theme.prompt.prompt_text),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(input), input_area);
+    let cursor_x = input_area
+        .x
+        .saturating_add(symbols.prompt_marker_width())
+        .saturating_add(1)
+        .saturating_add(app.input.cursor_column());
     frame.set_cursor_position((cursor_x, input_area.y));
+}
+
+/// The bottom line: the attached-to description, the model, and the state,
+/// joined by the theme's separator.
+fn status_widget(app: &App, theme: &Theme, symbols: Symbols) -> Paragraph<'static> {
+    let parts = app.status_parts();
+    let last = parts.len().saturating_sub(1);
+    let state_style = if app.pending_turn {
+        Style::default().fg(theme.core.warning)
+    } else {
+        Style::default().fg(theme.core.success)
+    };
+    let mut spans = Vec::new();
+    for (index, part) in parts.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(
+                format!(" {} ", symbols.separator),
+                Style::default().fg(theme.core.border),
+            ));
+        }
+        let style = if index == 0 {
+            Style::default().fg(theme.status.status_accent)
+        } else if index == last {
+            state_style
+        } else {
+            Style::default().fg(theme.status.status_text)
+        };
+        spans.push(Span::styled(part, style));
+    }
+    Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.status.status_bg))
 }
 
 /// The transcript pane, scrolled to its last lines.
 fn transcript_widget(app: &App) -> Paragraph<'static> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     for item in app.transcript.items() {
-        lines.extend(render_item(item));
+        lines.extend(render_item(item, &app.theme, app.symbols));
     }
     if lines.is_empty() {
-        lines.push(Line::from("Send a message to start. /quit leaves."));
+        lines.push(Line::from(Span::styled(
+            "Send a message to start. /quit leaves.",
+            Style::default().fg(app.theme.core.muted),
+        )));
     }
     // Keep the newest lines: the pane has no scrollback yet, and the end of the
     // conversation is the part a user is reading.
@@ -359,24 +482,54 @@ fn transcript_widget(app: &App) -> Paragraph<'static> {
     Paragraph::new(lines).wrap(Wrap { trim: false })
 }
 
-fn render_item(item: &Item) -> Vec<Line<'static>> {
+fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static>> {
     match item {
-        Item::User(text) => prefixed("> ", text),
-        Item::Assistant(text) => text.lines().map(|line| Line::from(line.to_string())).collect(),
-        Item::Tool { name, state } => vec![Line::from(format!("* {} {}", name, state.label()))],
-        Item::Notice(text) => prefixed("- ", text),
-        Item::Warning(text) => prefixed("! ", text),
+        Item::User(text) => prefixed(
+            Span::styled("> ", Style::default().fg(theme.core.accent)),
+            text,
+            Style::default().fg(theme.transcript.user_text),
+        ),
+        Item::Assistant(text) => text
+            .lines()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(theme.transcript.assistant_text),
+                ))
+            })
+            .collect(),
+        Item::Tool { name, state } => {
+            let (glyph, color) = match state {
+                ToolState::Running => (symbols.tool_running, theme.transcript.tool_running),
+                ToolState::Done => (symbols.tool_done, theme.transcript.tool_done),
+                ToolState::Failed(_) => (symbols.tool_error, theme.transcript.tool_error),
+            };
+            vec![Line::from(vec![
+                Span::raw("* "),
+                Span::styled(name.clone(), Style::default().fg(theme.transcript.tool_title)),
+                Span::styled(format!(" {glyph} {}", state.label()), Style::default().fg(color)),
+            ])]
+        }
+        Item::Notice(text) => prefixed(
+            Span::styled(
+                format!("{} ", symbols.bullet),
+                Style::default().fg(theme.transcript.notice),
+            ),
+            text,
+            Style::default().fg(theme.transcript.notice),
+        ),
+        Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(theme.core.error)),
     }
 }
 
-fn prefixed(prefix: &str, text: &str) -> Vec<Line<'static>> {
+fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Line<'static>> {
     text.lines()
         .enumerate()
         .map(|(index, line)| {
             if index == 0 {
-                Line::from(format!("{prefix}{line}"))
+                Line::from(vec![prefix.clone(), Span::styled(line.to_string(), style)])
             } else {
-                Line::from(format!("  {line}"))
+                Line::from(Span::styled(format!("  {line}"), style))
             }
         })
         .collect()
@@ -447,6 +600,27 @@ mod tests {
         }
         assert!(Args::parse(["--session".to_string()]).is_err());
         assert!(Args::parse(["--cwd".to_string()]).is_err());
+    }
+
+    #[test]
+    fn args_parse_repeated_config_files() {
+        let parsed = Args::parse([
+            "--config".to_string(),
+            "/tmp/a.toml".to_string(),
+            "--config=/tmp/b.toml".to_string(),
+        ]);
+        match parsed {
+            Ok(args) => assert_eq!(
+                args.config,
+                vec![
+                    std::path::PathBuf::from("/tmp/a.toml"),
+                    std::path::PathBuf::from("/tmp/b.toml")
+                ]
+            ),
+            Err(message) => panic!("expected a parse: {message}"),
+        }
+        assert!(Args::parse(["--config".to_string()]).is_err());
+        assert!(Args::parse(["--config=".to_string()]).is_err());
     }
 
     #[test]

@@ -10,25 +10,12 @@ pub mod pruning;
 /// Default token budget (200k tokens - matches Claude's actual context limit)
 pub const DEFAULT_TOKEN_BUDGET: usize = 200_000;
 
-/// Trigger compaction at this percentage of budget.
-///
-/// Legacy fixed ratio. The live trigger is derived per window tier by
-/// [`compute_context_budget`], so this value no longer decides when structured
-/// compaction starts; it stays for callers that still report it.
-pub const COMPACTION_THRESHOLD: f32 = 0.80;
-
 /// If context is above this threshold when compaction starts, do a synchronous
 /// hard-compact (drop old messages) so the API call doesn't fail.
 pub const CRITICAL_THRESHOLD: f32 = 0.95;
 
 /// Minimum threshold for manual compaction (can compact at any time above this)
 pub const MANUAL_COMPACT_MIN_THRESHOLD: f32 = 0.10;
-
-/// Legacy message-count retention. Compaction retention is now measured in
-/// tokens ([`recent_cutoff_for_token_budget`]); this constant no longer drives
-/// how many recent turns stay verbatim and is kept only for callers that still
-/// reference it.
-pub const RECENT_TURNS_TO_KEEP: usize = 10;
 
 /// Absolute minimum turns to keep during emergency compaction
 pub const MIN_TURNS_TO_KEEP: usize = 2;

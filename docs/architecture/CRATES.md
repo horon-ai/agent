@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](CRATES.ko.md)
 
-> This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. An interactive terminal client, when one ships, is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
+> This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. The interactive terminal client is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
 This document defines the target structure that keeps `horon-agent` modular without turning shared crates into a dumping ground. It carries the practical decision rules. Use it when deciding whether to move a type, helper, or behavior out of the root crate.
 
 ## Goals

@@ -297,6 +297,9 @@ pub fn apply_record(
                     stop: None,
                 },
             );
+            if let Some(binding) = started.binding.clone() {
+                state.observe_binding(binding);
+            }
         }
         Payload::RunStopped(stopped) => {
             let run = state
@@ -311,6 +314,9 @@ pub fn apply_record(
                 at: record.at,
                 seq: record.seq,
             });
+            if let Some(binding) = stopped.binding.clone() {
+                state.observe_binding(binding);
+            }
         }
         Payload::ControlApplying(applying) => {
             if state.controls.contains_key(id) {

@@ -69,8 +69,7 @@ fn test_comm_await_members_roundtrip() -> Result<()> {
 
 #[test]
 fn test_comm_await_members_defaults() -> Result<()> {
-    let json =
-        r#"{"type":"comm_await_members","id":1,"session_id":"s1","target_status":["completed"]}"#;
+    let json = r#"{"type":"comm_await_members","id":1,"session_id":"s1","target_status":["completed"]}"#;
     let decoded = parse_request_json(json)?;
     let Request::CommAwaitMembers {
         session_ids,
@@ -84,10 +83,7 @@ fn test_comm_await_members_defaults() -> Result<()> {
     else {
         return Err(anyhow!("expected CommAwaitMembers"));
     };
-    assert!(
-        session_ids.is_empty(),
-        "session_ids should default to empty"
-    );
+    assert!(session_ids.is_empty(), "session_ids should default to empty");
     assert_eq!(mode, None, "mode should default to None");
     assert_eq!(timeout_secs, None, "timeout_secs should default to None");
     assert!(background, "background should default to true");
@@ -140,12 +136,7 @@ fn test_comm_report_response_roundtrip() -> Result<()> {
     let json = encode_event(&event);
     assert!(json.contains("\"type\":\"comm_report_response\""));
     let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::CommReportResponse {
-        id,
-        status,
-        message,
-    } = decoded
-    else {
+    let ServerEvent::CommReportResponse { id, status, message } = decoded else {
         return Err(anyhow!("expected CommReportResponse"));
     };
     assert_eq!(id, 57);
@@ -308,6 +299,7 @@ fn test_comm_assign_next_roundtrip() -> Result<()> {
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"comm_assign_next\""));
     assert!(json.contains("\"model\":\"openai-api:gpt-5.5\""));
+    assert!(json.contains("\"allowed_tools\":[\"read\",\"agentgrep\"]"));
     let decoded = parse_request_json(&json)?;
     assert_eq!(decoded.id(), 60);
     let Request::CommAssignNext {
@@ -375,6 +367,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         model: Some("openai-api:gpt-5.5".to_string()),
         effort: Some("low".to_string()),
         label: Some("review auth flow".to_string()),
+        isolation: None,
+        iso_apply: None,
+        output_schema: None,
+        allowed_tools: Some(vec!["read".to_string(), "agentgrep".to_string()]),
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"comm_spawn\""));
@@ -394,6 +390,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         model,
         effort,
         label,
+        allowed_tools,
         ..
     } = decoded
     else {
@@ -407,6 +404,10 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
     assert_eq!(model.as_deref(), Some("openai-api:gpt-5.5"));
     assert_eq!(effort.as_deref(), Some("low"));
     assert_eq!(label.as_deref(), Some("review auth flow"));
+    assert_eq!(
+        allowed_tools.as_deref(),
+        Some(["read".to_string(), "agentgrep".to_string()].as_slice())
+    );
     Ok(())
 }
 
@@ -422,10 +423,7 @@ fn test_comm_spawn_and_assign_next_decode_model_without_effort() -> Result<()> {
         let decoded = parse_request_json(&json.to_string())?;
         match decoded {
             Request::CommSpawn {
-                model,
-                effort,
-                label,
-                ..
+                model, effort, label, ..
             } => {
                 assert_eq!(model.as_deref(), Some("gpt-5.5"));
                 assert_eq!(effort, None);
@@ -461,10 +459,7 @@ fn test_comm_spawn_and_assign_next_roundtrip_omitted_or_null_model() -> Result<(
                 assert_eq!(request.id(), 60);
                 match request {
                     Request::CommSpawn {
-                        model,
-                        effort,
-                        label,
-                        ..
+                        model, effort, label, ..
                     } => {
                         assert_eq!(model, None);
                         assert_eq!(effort, None);

@@ -42,7 +42,7 @@ impl Agent {
         // Loop detection is per turn, and a reminder this turn's guard set must
         // not reach the next turn.
         self.loop_guard.reset();
-        self.turn_state = TurnState::new();
+        self.begin_turn_state();
         // Register this turn's cancel signal for the whole turn, including the
         // outcome bookkeeping below: the guard resets the signal when it drops,
         // so a scope that ended before the outcome was named would report every
@@ -1397,7 +1397,7 @@ impl Agent {
                 });
                 let message_id = self.add_message_ext(Role::Assistant, content_blocks, None, token_usage);
                 self.push_embedding_snapshot_if_semantic(&text_content);
-                self.save_session()?;
+                self.save_final_answer()?;
                 self.record_model_turn_usage(&usage_turn_id);
                 Some(message_id)
             } else {
