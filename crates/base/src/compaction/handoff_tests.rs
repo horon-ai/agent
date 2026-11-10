@@ -1,6 +1,11 @@
 use super::*;
+use crate::aux_completion::CompletionRequest;
+use crate::message::Message;
+use anyhow::Result;
 use horon_agent_compaction_core::message_token_count;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// A transcript with ten user turns, each followed by a long assistant answer.
 ///
