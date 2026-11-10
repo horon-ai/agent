@@ -117,14 +117,14 @@ const STATUSLINE_PRESETS: &[&str] = &["default", "minimal", "custom"];
 pub const REGISTRY: &[SettingSpec] = &[
     SettingSpec {
         id: "theme",
-        kind: SettingKind::Enum(&["dark", "light"]),
+        kind: SettingKind::Text,
         env: "HORON_TUI_THEME",
         default: DefaultValue::Text("dark"),
         ui: UiMeta {
             tab: "Appearance",
             group: "Theme",
             label: "Theme",
-            description: "Colour theme for the transcript, status line and input.",
+            description: "Colour theme: dark, light, or a file in $HORON_HOME/themes.",
         },
     },
     SettingSpec {
