@@ -229,6 +229,10 @@ RETRY_DENIED_TOOL = False
 # it. Only the smoke test turns this path on.
 APPROVAL_ANSWER_WAIT = 2.0
 
+# The write-class command the round-trip plan issues. It creates one file in the
+# working directory and prints a line, so its result is visible on screen.
+APPROVAL_ROUND_TRIP_COMMAND = "echo retry > tui-smoke.txt && echo tui-smoke-done"
+
 
 def tool_call_count(kind: str, body: dict) -> int:
     """Tool calls the model already made anywhere in this transcript."""
@@ -801,14 +805,20 @@ class Handler(BaseHTTPRequestHandler):
             # exists because the retry must land *after* the answer: the gate
             # refuses the queued request again until a decision exists, and the
             # PTY client only presses `y` once the prompt is on screen.
-            retry_denied = RETRY_DENIED_TOOL and (
-                "needs approval" in results or "was denied" in results
-            ) and tool_call_count(kind, body) < 2
+            refused = (
+                "was denied" in results or "needs approval" in results or "queued" in results
+            )
+            retry_denied = RETRY_DENIED_TOOL and refused and tool_call_count(kind, body) < 2
             if retry_denied:
                 time.sleep(APPROVAL_ANSWER_WAIT)
             if shell is not None and (not saw_result or retry_denied):
                 tool_name = shell[0]
-                arguments = {shell[1]: "ls"}
+                # A read-only `ls` is never parked under `approval_mode = "write"`,
+                # so the round-trip plan issues a write-class call instead: it is
+                # the call the approval gate asks about, and the retry is the one
+                # that runs after the answer.
+                command = APPROVAL_ROUND_TRIP_COMMAND if RETRY_DENIED_TOOL else "ls"
+                arguments = {shell[1]: command}
 
         capped = plan_name in ("skill", "mcp") and tool_call_count(kind, body) >= MAX_SCENARIO_TOOL_CALLS
         if capped:

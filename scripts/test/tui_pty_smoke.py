@@ -49,7 +49,7 @@ INSTALL_HINT = "horon-tui"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
-TOOL_DONE = "done"
+TOOL_DONE = "tui-smoke-done"
 
 
 class Failure(RuntimeError):
