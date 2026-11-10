@@ -107,9 +107,11 @@ pub fn choose_session_prefix_match(
 /// Every stored session id that starts with `query`, read from directory
 /// entry names only.
 ///
-/// Both layouts are covered: a canonical `sessions/<id>/` directory and a
-/// legacy `sessions/<id>.json` file. Nothing is opened, so a prefix query costs
-/// one directory listing rather than one transcript parse per session.
+/// A candidate is a `sessions/<id>/` directory holding an `events.jsonl`, the
+/// same predicate the store's own catalog listing applies, so a leftover
+/// directory, the `edit-stats` sibling or a preserved legacy file is never
+/// offered as a session. Nothing is opened, so a prefix query costs one
+/// directory listing rather than one transcript parse per session.
 ///
 /// A sessions root that cannot be read yields no matches. That is the answer a
 /// query matching nothing produces as well, so an unreadable store degrades to
@@ -135,25 +137,25 @@ pub fn stored_session_id_prefix_matches(query: &str) -> Vec<String> {
         if name.starts_with('.') {
             continue;
         }
+        if !name.starts_with(query) {
+            continue;
+        }
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        let id = if file_type.is_dir() {
-            name
-        } else if file_type.is_file() && name.ends_with(".json") {
-            name.trim_end_matches(".json")
-        } else {
-            continue;
-        };
-        if !id.starts_with(query) {
+        if !file_type.is_dir() {
             continue;
         }
-        // Only names the store accepts are sessions; a stray file that happens
-        // to share the prefix is not a candidate.
-        if horon_agent_session_store::SessionId::parse(id).is_err() {
+        // Only names the store accepts are sessions, and only a directory that
+        // the store wrote an event log into is one; a project pair or a
+        // preserved legacy file can share the prefix without being a session.
+        if horon_agent_session_store::SessionId::parse(name).is_err() {
             continue;
         }
-        matches.push(id.to_string());
+        if !entry.path().join("events.jsonl").is_file() {
+            continue;
+        }
+        matches.push(name.to_string());
     }
     matches.sort();
     matches.dedup();
