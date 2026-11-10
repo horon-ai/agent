@@ -39,7 +39,7 @@ on:
       oneshot_runs:
         type: string
         required: false
-        default: "3"
+        default: "5"
       baseline_ref:
         description: "Optional ref built in the build job beside the measured commit; the compare unit measures it as a second horon row"
         type: string

@@ -1186,6 +1186,20 @@ class ScenarioReportTests(unittest.TestCase):
         markdown = bench.render_markdown(report, [1], 1)
         self.assertIn("no such binary", markdown)
 
+    def test_the_host_line_names_the_sample_count_only_when_recorded(self) -> None:
+        # A reader judges a min-max range by how many samples it spans, so a
+        # measured report says how many; a hand-built one must not invent one.
+        results = [self._result("horon", "horon")]
+        report = bc.build_report("compare", results, [])
+        report["parameters"] = {"scenarios": ["oneshot"], "oneshot_runs": 5}
+        host_line = next(
+            line for line in bench.render_markdown(report, [1], 1).splitlines()
+            if line.startswith("Host:")
+        )
+        self.assertIn("Samples per one-shot, skill and MCP cell: 5.", host_line)
+        del report["parameters"]
+        self.assertNotIn("Samples per", bench.render_markdown(report, [1], 1))
+
     def test_a_failed_round_trip_shows_no_time_or_memory(self) -> None:
         # A row that never reached the fixture measured startup, not the
         # scenario, so printing its time next to horon's would read as a result.

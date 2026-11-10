@@ -61,7 +61,7 @@ on:
       oneshot_runs:
         type: string
         required: false
-        default: "3"
+        default: "5"
       baseline_ref:
         description: "Optional ref built beside the measured commit and compared as a second horon row"
         type: string
@@ -90,9 +90,9 @@ on:
         required: false
         default: "3"
       oneshot_runs:
-        description: "One-shot prompt repeats per build; raise it when a median must separate two builds"
+        description: "Samples per build for the one-shot, skill and MCP cells; the median needs at least 5 to separate two builds"
         required: false
-        default: "3"
+        default: "5"
       baseline_ref:
         description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row; empty measures one build"
         required: false

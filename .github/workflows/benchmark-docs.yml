@@ -122,6 +122,7 @@ jobs:
       ref: ${{ needs.gate.outputs.sha }}
       os: all
       suites: all
+      oneshot_runs: "5"
 
   docs:
     name: Write RESULTS.md on main and dev

@@ -50,7 +50,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | Tools compared with horon. `omp` (oh-my-pi) and `omo` (oh-my-openagent) are included. A tool that failed to install or lacks its runtime stays as `skipped`. |
 | `sessions` | `1 5 10` | Concurrent session counts for the session memory comparison |
 | `turns` | `3` | Turns sent per session |
-| `oneshot_runs` | `3` | How many times each build measures a one-shot prompt. Raise it to about 20 when the median has to separate two builds |
+| `oneshot_runs` | `5` | How many samples each build takes for the one-shot, skill and MCP cells; `compare.md` names the count on its Host line. Five is the floor for a median; raise it to about 20 when the median has to separate two close builds |
 | `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately as the `horon-base` row. That makes a before-and-after comparison on the same runner |
 
 An unknown OS or group name fails the run immediately (`scripts/perf/bench_select.py`). Results stay for 30 days as the per-OS `merge` job summary and the `benchmark-<os>-<run_id>` artifact (JSON, Markdown). Intermediate artifact names do not start with `benchmark-`, so they do not mix into the `benchmark-docs.yml` download.

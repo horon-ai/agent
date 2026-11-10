@@ -2317,7 +2317,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="concurrent session counts (default: 1 5 10)")
     parser.add_argument("--turns", type=int, default=3, help="turns per session (default: 3)")
     parser.add_argument("--version-runs", type=int, default=5, help="--version repeats (default: 5)")
-    parser.add_argument("--oneshot-runs", type=int, default=3, help="one-shot prompt repeats (default: 3)")
+    parser.add_argument(
+        "--oneshot-runs",
+        type=int,
+        default=5,
+        help="samples per build for the one-shot, skill and MCP cells (default: 5)",
+    )
     parser.add_argument("--tools", nargs="+", default=DEFAULT_TOOLS, metavar="TOOL",
                         help=f"tools to measure (default: {' '.join(DEFAULT_TOOLS)}); "
                              f"accepted names: {' '.join(RUNNERS)}")
@@ -2870,9 +2875,13 @@ def render_markdown(
         scenarios = list(selected) if selected is not None else list(SCENARIO_NAMES)
     lines = ["# Coding agent comparison (headless, mock model)", ""]
     host = report["host"]
+    samples = (report.get("parameters") or {}).get("oneshot_runs")
+    # The one-shot, skill and MCP cells each take this many samples per build;
+    # a hand-built report carries no parameters and names no count.
+    sample_note = f" Samples per one-shot, skill and MCP cell: {max(1, samples)}." if samples else ""
     lines.append(
         f"Host: {host['os']}/{host['arch']}, {host['cpu_count']} CPUs, Python {host['python']}. "
-        f"Baseline: **horon**."
+        f"Baseline: **horon**.{sample_note}"
     )
     lines.append("")
     horon_rows = [result["label"] for result in results if horon_kind(result["name"])]
