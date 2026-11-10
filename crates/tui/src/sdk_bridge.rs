@@ -10,7 +10,7 @@
 //! it maps a [`Command`] to the SDK call of the same name and forwards
 //! [`ApiEvent`]s unchanged.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -116,10 +116,10 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
 }
 
 /// What to tell the user when the first connection fails.
-fn explain_connect(error: &Error, socket: &PathBuf) -> String {
+fn explain_connect(error: &Error, socket: &Path) -> String {
     match &error.kind {
         ErrorKind::ConnectFailed { path, cause } => {
-            let where_ = path.as_deref().unwrap_or(socket.as_path()).display();
+            let where_ = path.as_deref().unwrap_or(socket).display();
             format!("no harness answered at {where_}. Start the daemon (horon-agent serve) and try again. {cause}")
         }
         ErrorKind::UnsupportedVersion {

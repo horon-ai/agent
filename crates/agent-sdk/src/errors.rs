@@ -172,8 +172,11 @@ impl Error {
     /// decide whether to upgrade itself or the daemon, without parsing prose.
     pub(crate) fn version_from_refusal(message: &str) -> Option<u32> {
         let rest = message.split("speaks API v").nth(1)?;
-        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-        digits.parse().ok()
+        let mut value: Option<u32> = None;
+        for digit in rest.chars().map_while(|c| c.to_digit(10)) {
+            value = Some(value.unwrap_or(0).checked_mul(10)?.checked_add(digit)?);
+        }
+        value
     }
 
     /// Interpret the `hello` handshake's error frame.
