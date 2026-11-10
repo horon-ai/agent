@@ -28,6 +28,7 @@ import {
   type ApiRequest,
   type AskSelection,
   type CanonicalRecordRef,
+  type CompactHandoffOutcome,
   type HistoryMessage,
   type ImageAttachment,
   type ModelRouteInfo,
@@ -1266,6 +1267,26 @@ export class HoronAgentClient extends EventEmitter {
   async compact(sessionId: string): Promise<string> {
     const frame = await this.expectReply({ req: "compact", session_id: sessionId }, "compacted");
     return frame.message;
+  }
+
+  /**
+   * Write a handoff document as the compaction boundary.
+   *
+   * Synchronous, unlike `compact`: this resolves after the boundary is written,
+   * and the returned outcome names what happened. A failure or a cancellation
+   * leaves the transcript unchanged and is reported as that outcome rather than
+   * rejected.
+   */
+  async compactHandoff(sessionId: string): Promise<CompactHandoffOutcome> {
+    const frame = await this.expectReply(
+      { req: "compact", session_id: sessionId, method: "handoff" },
+      "compacted",
+    );
+    const outcome = frame.handoff;
+    if (!outcome) {
+      throw new HarnessError("unexpected_reply", "the daemon answered a handoff compaction without an outcome");
+    }
+    return outcome;
   }
 
   /** Set a session's title. Omit `title` to restore the generated one. */

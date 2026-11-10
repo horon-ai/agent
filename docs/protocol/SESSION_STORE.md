@@ -135,9 +135,11 @@ The log is an immutable parent graph. `EventGraph` validates it on open: a paren
 | `prior_compaction_id` | The previously applied compaction, used for incremental summaries |
 | `provider` / `model` / `route` / `settings_digest` / `generation` | What produced it, under which settings |
 | `input_tokens` / `output_tokens` | Usage, when known |
-| `outcome` | `summary`, `native`, `lossy_emergency` |
+| `outcome` | `summary`, `native`, `lossy_emergency`, `handoff` |
 | `native_window` | Provider-native window entries, in order, preserved whole |
 | `restoration` | Bounded `{path, kind, note}` references plus a byte budget. Not file bodies |
+
+`handoff` marks a boundary written from a generated handoff document rather than a summary (`crates/app-core/src/agent/handoff_compaction.rs`). The document is stored as `summary_text` and is not validated: a document missing a section is still a valid `handoff`. A failed or cancelled generation writes no record at all, so the transcript, the previous boundary and the message count stay exactly as they were.
 
 A compaction that cannot make progress appends `compaction_blocked` with its reason instead of pretending the summary succeeded (`context_recovery_blocked`, `context_budget_too_small`, `provider_error`, `overflow_no_progress`, `stale_source`). A length notice or an empty structural summary is never recorded as a successful `summary`. A valid native window with an empty `summary_text` is recorded.
 

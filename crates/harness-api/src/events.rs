@@ -1,5 +1,6 @@
 //! Server-to-client events: replies and streaming.
 
+use crate::handoff::HandoffCompaction;
 use horon_agent_tool_types::AskQuestion;
 use serde::{Deserialize, Serialize};
 
@@ -577,10 +578,16 @@ pub enum ApiEvent {
     /// point rather than interrupting a turn mid-flight, so this confirms the
     /// request was accepted, not that the transcript has already shrunk. A
     /// client that wants the result should re-read the history afterwards.
+    ///
+    /// A `method: "handoff"` request is the exception: it is answered after the
+    /// boundary is committed, with `handoff` naming what happened.
     Compacted {
         session_id: String,
         /// Human-readable status, e.g. why compaction was refused.
         message: String,
+        /// Present only for a handoff request, where the reply is the result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff: Option<HandoffCompaction>,
     },
 
     /// A session's title changed, whether set by a client or generated.

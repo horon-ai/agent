@@ -26,6 +26,15 @@ pub struct ToolConfiguration {
     pub custom: Vec<SessionToolDefinition>,
 }
 
+/// What a `Compact` request should write as the new boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactMethod {
+    /// A generated handoff document covering everything before the verbatim
+    /// recent-token tail. The reply waits for the boundary commit.
+    Handoff,
+}
+
 /// Curated request surface. Internally-tagged on `"req"`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "req", rename_all = "snake_case")]
@@ -350,7 +359,16 @@ pub enum ApiRequest {
     ///
     /// Without this a long-lived client eventually hits the context limit and
     /// has no recourse but to clear the conversation and lose everything.
-    Compact { session_id: String },
+    ///
+    /// `method: "handoff"` writes a generated handoff document as the boundary
+    /// instead of a model summary, and the reply waits for that write, so it
+    /// reports the outcome. Absent keeps the scheduled summary that answers
+    /// before any work starts.
+    Compact {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<CompactMethod>,
+    },
 
     /// Set a session's title, or clear it to restore the generated one.
     RenameSession {

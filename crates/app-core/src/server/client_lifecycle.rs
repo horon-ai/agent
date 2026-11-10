@@ -2330,8 +2330,8 @@ pub(super) async fn handle_client(
                 handle_transfer(id, &client_session_id, &agent, &client_event_tx).await;
             }
 
-            Request::Compact { id } => {
-                handle_compact(id, &agent, &client_event_tx);
+            Request::Compact { id, method } => {
+                handle_compact(id, method, &agent, &client_event_tx);
             }
 
             Request::AskResponse {
