@@ -11,8 +11,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::{ApiEvent, AskSelection};
 
 use crate::input::Input;
+use crate::keys::{self, Bindings, Key};
 use crate::prompts::{Prompt, Response};
 use crate::sdk_bridge::Incoming;
+use crate::theme::{Symbols, Theme};
 use crate::transcript::Transcript;
 
 /// What the UI asks the bridge to do after a keystroke.
@@ -65,6 +67,13 @@ pub struct App {
     pub provider: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
+    /// Colours the renderer uses, replaced when the theme loader resolves a
+    /// new theme.
+    pub theme: Theme,
+    /// Glyphs the renderer uses, replaced with the theme.
+    pub symbols: Symbols,
+    /// What keystrokes mean, replaced when `keybindings.toml` changes.
+    pub bindings: Bindings,
 }
 
 impl App {
@@ -84,6 +93,9 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            theme: Theme::default(),
+            symbols: Symbols::default(),
+            bindings: Bindings::default(),
         }
     }
 
@@ -105,6 +117,9 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            theme: Theme::default(),
+            symbols: Symbols::default(),
+            bindings: Bindings::default(),
         }
     }
 
@@ -132,6 +147,12 @@ impl App {
 
     /// The one-line status: what we are attached to and what it is doing.
     pub fn status_line(&self) -> String {
+        self.status_parts().join(" · ")
+    }
+
+    /// The status line's parts, for a renderer that chooses its own separator
+    /// and colours.
+    pub fn status_parts(&self) -> Vec<String> {
         let mut parts = vec![self.description.clone()];
         if let Some(model) = &self.model {
             parts.push(model.clone());
@@ -145,7 +166,7 @@ impl App {
             self.session_status.as_deref().unwrap_or("idle")
         };
         parts.push(state.to_string());
-        parts.join(" · ")
+        parts
     }
 
     /// Fold one protocol event into the state.
@@ -221,10 +242,12 @@ impl App {
     /// Translate one keystroke into an action, if it produced one.
     ///
     /// A live prompt takes every key first: a half-answered approval must not
-    /// let a stray character into the message being drafted.
+    /// let a stray character into the message being drafted. The key map
+    /// decides what each key means; a printable character that no action claims
+    /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(prompt) = self.prompt.as_mut() {
-            match prompt.on_key(key) {
+            match prompt.on_key_with(&self.bindings, key) {
                 Some(Response::Approval {
                     request_id,
                     approved,
@@ -246,17 +269,9 @@ impl App {
         }
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        match key.code {
-            KeyCode::Char('c') if control => {
-                if self.pending_turn {
-                    self.transcript.push_notice("cancelling the turn");
-                    Some(Action::Cancel)
-                } else {
-                    Some(Action::Quit)
-                }
-            }
-            KeyCode::Char('d') if control => Some(Action::Quit),
-            KeyCode::Enter => {
+        let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+        match bound {
+            Some(keys::ids::APP_SUBMIT) => {
                 let text = self.input.take();
                 if text.trim().is_empty() {
                     return None;
@@ -267,38 +282,29 @@ impl App {
                 self.transcript.push_user(text.clone());
                 self.pending_turn = true;
                 self.session_status = Some("generating".to_string());
-                Some(Action::Send(text))
+                return Some(Action::Send(text));
             }
-            KeyCode::Backspace => {
-                self.input.backspace();
-                None
+            Some(keys::ids::APP_CANCEL) => {
+                if self.pending_turn {
+                    self.transcript.push_notice("cancelling the turn");
+                    return Some(Action::Cancel);
+                }
+                return Some(Action::Quit);
             }
-            KeyCode::Delete => {
-                self.input.delete();
-                None
-            }
-            KeyCode::Left => {
-                self.input.left();
-                None
-            }
-            KeyCode::Right => {
-                self.input.right();
-                None
-            }
-            KeyCode::Home => {
-                self.input.home();
-                None
-            }
-            KeyCode::End => {
-                self.input.end();
-                None
-            }
-            KeyCode::Char(character) if !control => {
-                self.input.insert(character);
-                None
-            }
-            _ => None,
+            Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
+            Some(keys::ids::EDITOR_BACKSPACE) => self.input.backspace(),
+            Some(keys::ids::EDITOR_DELETE) => self.input.delete(),
+            Some(keys::ids::EDITOR_LEFT) => self.input.left(),
+            Some(keys::ids::EDITOR_RIGHT) => self.input.right(),
+            Some(keys::ids::EDITOR_HOME) => self.input.home(),
+            Some(keys::ids::EDITOR_END) => self.input.end(),
+            _ => {}
         }
+        match key.code {
+            KeyCode::Char(character) if !control => self.input.insert(character),
+            _ => {}
+        }
+        None
     }
 }
 

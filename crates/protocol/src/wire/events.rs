@@ -106,6 +106,20 @@ pub enum ServerEvent {
         error: Option<String>,
     },
 
+    /// A tool call's arguments were rewritten before the tool ran, because the
+    /// model's JSON writer did not match the tool's schema. Sent immediately
+    /// before the call's `tool_done`. A client that does not know this event
+    /// ignores it; the call it describes completes either way.
+    #[serde(rename = "tool_args_repaired")]
+    ToolArgsRepaired {
+        id: String,
+        name: String,
+        /// The arguments exactly as the model sent them.
+        original_input: serde_json::Value,
+        /// One line per repair applied, in the order they were applied.
+        changes: Vec<String>,
+    },
+
     /// Rendered images produced during the live turn, including image-bearing
     /// tool results and provider-native image generation. Lets remote clients
     /// render them inline immediately instead of waiting for History reload.

@@ -448,7 +448,6 @@ impl BridgeState {
     fn translate_request(&mut self, request: &Value) -> Vec<Outbound> {
         let api_id = request["id"].as_u64().unwrap_or(0);
         let req = request["req"].as_str().unwrap_or("");
-
         // Stateful requests only mean something once this connection is
         // attached. Forwarding one before then is not merely useless: the
         // daemon answers "Client must Subscribe with a working_dir before
@@ -1971,6 +1970,7 @@ impl BridgeState {
                 output: event["output"].as_str().unwrap_or("").to_string(),
                 error: event["error"].as_str().map(str::to_string),
             })],
+            "tool_args_repaired" => crate::tool_args_repaired::frames(session(self), event),
             "side_pane_images" => vec![ServerFrame::event(ApiEvent::SidePaneImages {
                 session_id: event["session_id"]
                     .as_str()

@@ -493,6 +493,37 @@ a model role.
 workspace. It is a separate action from `list`, which still means "list swarm
 members" and keeps `list_agents` as its alias.
 
+## 8c. Fan-out: `spawn_many`
+
+A parent that fans work out pays one model round trip per child when it calls
+`swarm spawn` once per child. `swarm spawn_many` starts several children from one
+call:
+
+- `tasks`: a list of `{label, initial_message?, agent?, model?, effort?, isolation?, output_schema?}`.
+  `prompt` is accepted as an alias for `initial_message`, the same way the single
+  spawn accepts it.
+- `context`: shared background prepended to each child's first message.
+
+The rules that keep a batch honest:
+
+- Labels must be unique within one call, compared case-insensitively. A
+  duplicate fails the call before any child exists.
+- An empty `tasks` list is rejected.
+- Each task runs the single-spawn request path, and the tasks start
+  concurrently, one socket request each.
+- Call-level `model`, `effort`, `output_schema`, `agent`, `isolation`,
+  `working_dir` and `spawn_mode` act as defaults for the tasks that omit them.
+  A task value wins.
+- The result keeps input order and carries one entry per task: the child's
+  session id, or the error that stopped that task. One failure never cancels the
+  others.
+- Both spawn caps still reject rather than queue: `agents.swarm_max_concurrent_agents`
+  for concurrency and `MAX_SWARM_MEMBERS` for total live members. A caller must
+  not assume that three tasks always produce three children.
+
+`context` is prepended to the child's first user message, not rendered as a
+system-prompt section, because the child session exists before its first turn.
+
 ---
 
 ## 9. Example: how the graph changes over time

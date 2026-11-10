@@ -5,6 +5,9 @@
 //! and renders the answer as text. Diagnostics need a server that is already
 //! indexing; a definition request waits for it instead of failing fast.
 
+#[path = "lsp_edit.rs"]
+mod lsp_edit;
+
 use super::{Tool, ToolContext, ToolEffects, ToolOutput};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -40,6 +43,9 @@ enum Action {
     Hover,
     Symbols,
     Status,
+    Rename,
+    #[serde(rename = "code_actions")]
+    CodeActions,
 }
 
 impl Action {
@@ -51,6 +57,8 @@ impl Action {
             Self::Hover => "hover",
             Self::Symbols => "symbols",
             Self::Status => "status",
+            Self::Rename => "rename",
+            Self::CodeActions => "code_actions",
         }
     }
 }
@@ -69,6 +77,16 @@ struct LspInput {
     #[serde(default)]
     query: Option<String>,
     #[serde(default)]
+    new_name: Option<String>,
+    #[serde(default)]
+    apply: bool,
+    #[serde(default)]
+    action_id: Option<String>,
+    #[serde(default)]
+    end_line: Option<u32>,
+    #[serde(default)]
+    end_character: Option<u32>,
+    #[serde(default)]
     timeout_secs: Option<f64>,
 }
 
@@ -79,11 +97,27 @@ impl Tool for LspTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the project's language server for diagnostics, definitions, references, hover text, or symbols."
+        "Ask the project's language server for diagnostics, definitions, references, hover text, symbols, a rename, or code actions."
     }
 
     fn effects(&self) -> ToolEffects {
         ToolEffects::read().union(ToolEffects::process())
+    }
+
+    fn effects_for_input(&self, input: &Value) -> ToolEffects {
+        let applying = match input.get("action").and_then(Value::as_str) {
+            Some("rename") => input.get("apply").and_then(Value::as_bool).unwrap_or(false),
+            Some("code_actions") => input
+                .get("action_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.trim().is_empty()),
+            _ => false,
+        };
+        if applying {
+            self.effects().union(ToolEffects::write())
+        } else {
+            self.effects()
+        }
     }
 
     fn parameters_schema(&self) -> Value {
@@ -94,7 +128,16 @@ impl Tool for LspTool {
                 "intent": super::intent_schema_property(),
                 "action": {
                     "type": "string",
-                    "enum": ["diagnostics", "definition", "references", "hover", "symbols", "status"],
+                    "enum": [
+                        "diagnostics",
+                        "definition",
+                        "references",
+                        "hover",
+                        "symbols",
+                        "status",
+                        "rename",
+                        "code_actions"
+                    ],
                     "description": "What to ask the language server. `status` lists running servers and needs no file."
                 },
                 "file": {
@@ -119,6 +162,28 @@ impl Tool for LspTool {
                     "type": "string",
                     "description": "Workspace symbol query. With `symbols`, a query searches the workspace instead of outlining one file."
                 },
+                "new_name": {
+                    "type": "string",
+                    "description": "New name for `rename`."
+                },
+                "apply": {
+                    "type": "boolean",
+                    "description": "With `rename`, apply the server's edit. Default false, which only lists the planned edits."
+                },
+                "action_id": {
+                    "type": "string",
+                    "description": "With `code_actions`, the id of the action to apply. Omit to list the actions offered at the position."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Last line of a `code_actions` range. Default: the start line."
+                },
+                "end_character": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Last column of a `code_actions` range. Default: the start column."
+                },
                 "timeout_secs": {
                     "type": "number",
                     "minimum": 5,
@@ -136,6 +201,18 @@ impl Tool for LspTool {
 
         if params.action == Action::Status {
             return Ok(ToolOutput::new(status_output(&base).await));
+        }
+        // Refused before a server is started, so a missing argument costs no
+        // process and no indexing.
+        if params.action == Action::Rename
+            && params
+                .new_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .is_none()
+        {
+            bail!("new_name is required for action 'rename'.");
         }
 
         let file = params
@@ -246,6 +323,117 @@ impl Tool for LspTool {
                     Ok(ToolOutput::new(output))
                 }
             },
+            Action::Rename => {
+                let (line, column) = resolve_position(&path, params.line, params.character, params.symbol.as_deref())?;
+                let new_name = params
+                    .new_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| anyhow!("new_name is required for action 'rename'."))?;
+                let Some(edit) = client.rename(&path, line, column, new_name, timeout).await? else {
+                    return Ok(ToolOutput::new(format!(
+                        "No rename: the language server declined to rename the symbol at {}:{line}:{column}.",
+                        display_path(&path, &base)
+                    )));
+                };
+                let edits = edit.edit_count();
+                let files = edit.files.len();
+                let intro = format!(
+                    "Rename to '{new_name}': {edits} edit{} in {files} file{}.",
+                    if edits == 1 { "" } else { "s" },
+                    if files == 1 { "" } else { "s" }
+                );
+                let plans = lsp_edit::plan(&edit, &base).await?;
+                if !params.apply {
+                    return Ok(ToolOutput::new(lsp_edit::render_plan(&plans, &intro)));
+                }
+                if !lsp_edit::any_change(&plans) {
+                    return Ok(ToolOutput::new(format!(
+                        "{intro}\nNo changes: the edit reproduces the current content."
+                    )));
+                }
+                let body = lsp_edit::commit(&ctx, &plans).await?;
+                Ok(lsp_edit::attach(
+                    ToolOutput::new(format!("{intro}\n{body}")).with_title(file.to_string()),
+                    &plans,
+                ))
+            }
+            Action::CodeActions => {
+                let (line, column) = resolve_position(&path, params.line, params.character, params.symbol.as_deref())?;
+                let (end_line, end_character) = match (params.end_line, params.end_character) {
+                    (None, None) => (line, column),
+                    (Some(end_line), Some(end_character)) => {
+                        if end_line < line || (end_line == line && end_character < column) {
+                            bail!("the range ends before it starts: line {end_line}, character {end_character}.");
+                        }
+                        (end_line, end_character)
+                    }
+                    _ => bail!("Provide both end_line and end_character, or neither."),
+                };
+                let actions = client
+                    .code_actions(&path, line - 1, column - 1, end_line - 1, end_character - 1, timeout)
+                    .await?;
+                if actions.is_empty() {
+                    return Ok(ToolOutput::new(format!(
+                        "No code actions at {}:{line}:{column}.",
+                        display_path(&path, &base)
+                    )));
+                }
+                let Some(action_id) = params.action_id.as_deref().map(str::trim).filter(|id| !id.is_empty()) else {
+                    let mut body = format!(
+                        "Code actions at {}:{line}:{column} (apply one with action_id):\n",
+                        display_path(&path, &base)
+                    );
+                    for (index, action) in actions.iter().enumerate() {
+                        body.push_str(&format!("  {}. {}", index + 1, action.title));
+                        if let Some(kind) = &action.kind {
+                            body.push_str(&format!(" ({kind})"));
+                        }
+                        if let Some(reason) = &action.disabled {
+                            body.push_str(&format!(" — disabled: {reason}"));
+                        } else if action.command_only {
+                            body.push_str(" — command only, not executed");
+                        }
+                        body.push('\n');
+                    }
+                    return Ok(ToolOutput::new(body));
+                };
+                let index: usize = action_id
+                    .parse()
+                    .map_err(|_| anyhow!("action_id '{action_id}' is not one of the ids listed for this position."))?;
+                let Some(action) = index.checked_sub(1).and_then(|index| actions.get(index)) else {
+                    bail!(
+                        "action_id '{action_id}' is out of range; this position offers {} action{}.",
+                        actions.len(),
+                        if actions.len() == 1 { "" } else { "s" }
+                    );
+                };
+                if let Some(reason) = &action.disabled {
+                    bail!(
+                        "action {action_id} '{}' is disabled by the server: {reason}",
+                        action.title
+                    );
+                }
+                let Some(edit) = &action.edit else {
+                    bail!(
+                        "action {action_id} '{}' is a command only, and the lsp tool does not execute commands.",
+                        action.title
+                    );
+                };
+                let plans = lsp_edit::plan(edit, &base).await?;
+                if !lsp_edit::any_change(&plans) {
+                    return Ok(ToolOutput::new(format!(
+                        "Action '{0}' changes nothing: the edit reproduces the current content.",
+                        action.title
+                    )));
+                }
+                let body = lsp_edit::commit(&ctx, &plans).await?;
+                Ok(lsp_edit::attach(
+                    ToolOutput::new(format!("Applied '{}':\n{body}", action.title)).with_title(file.to_string()),
+                    &plans,
+                ))
+            }
             Action::Status => unreachable!("status returns before any file is resolved"),
         }
     }

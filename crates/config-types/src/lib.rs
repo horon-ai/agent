@@ -8,6 +8,7 @@ pub mod model_roles;
 mod power;
 mod serde_lenient;
 mod storage;
+mod swarm_spawn;
 pub use {
     display::DisplayConfig,
     feature::FeatureConfig,
@@ -15,6 +16,7 @@ pub use {
     irc::IrcConfig,
     power::PowerConfig,
     storage::{StorageConfig, StorageSyncMode},
+    swarm_spawn::SwarmSpawnMode,
 };
 
 /// Compaction mode
@@ -54,6 +56,8 @@ impl CompactionMode {
 /// Exactly one strategy owns compaction at a time. `structured` is horon's own
 /// summarizer; the `openai_*` variants hand ownership to the provider's native
 /// compaction so both never trigger for the same turn.
+///
+/// `handoff` commits a generated handoff document as the boundary instead.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionStrategy {
@@ -66,6 +70,8 @@ pub enum CompactionStrategy {
     /// [OI] native compaction is requested explicitly by the agent.
     #[serde(rename = "openai_explicit")]
     OpenAiExplicit,
+    /// A generated handoff document, committed as the boundary.
+    Handoff,
 }
 
 impl CompactionStrategy {
@@ -74,6 +80,7 @@ impl CompactionStrategy {
             Self::Structured => "structured",
             Self::OpenAiAuto => "openai_auto",
             Self::OpenAiExplicit => "openai_explicit",
+            Self::Handoff => "handoff",
         }
     }
 
@@ -82,13 +89,14 @@ impl CompactionStrategy {
             "structured" => Some(Self::Structured),
             "openai_auto" | "openai-auto" => Some(Self::OpenAiAuto),
             "openai_explicit" | "openai-explicit" => Some(Self::OpenAiExplicit),
+            "handoff" => Some(Self::Handoff),
             _ => None,
         }
     }
 
     /// Whether the provider owns compaction under this strategy.
     pub fn is_native(self) -> bool {
-        !matches!(self, Self::Structured)
+        matches!(self, Self::OpenAiAuto | Self::OpenAiExplicit)
     }
 }
 
@@ -259,6 +267,8 @@ pub struct CompactionConfig {
     /// Left unset, the strategy is derived from an explicitly-written
     /// `[provider] openai_native_compaction_mode`. An explicitly-set strategy
     /// always wins over that legacy key.
+    ///
+    /// `handoff` is also selectable and commits a generated document.
     pub strategy: Option<CompactionStrategy>,
 
     /// Headroom kept free below the compaction trigger. Raised to
@@ -782,48 +792,6 @@ impl AgentsConfig {
             .into_iter()
             .find(|level| level.eq_ignore_ascii_case(value))
             .unwrap_or("max")
-    }
-}
-
-/// How swarm-created agents should be spawned.
-///
-/// Every mode runs the worker in this process; the agent never opens a terminal
-/// window. The mode names how the coordinator surfaces the worker.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum SwarmSpawnMode {
-    /// Create the worker in-process.
-    Headless,
-    /// Like headless, but the coordinator renders a live inline gallery
-    /// viewport of each worker's streaming output.
-    #[default]
-    #[serde(alias = "visible", alias = "headed")]
-    Inline,
-    /// Historical "try visible first" mode. Resolves to the configured mode,
-    /// which is in-process, so an old config keeps working unchanged.
-    Auto,
-}
-
-impl SwarmSpawnMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            // `visible`/`headed` selected the removed terminal-window spawn;
-            // they now mean in-process like `inline`.
-            "visible" | "headed" => Some(Self::Inline),
-            "headless" => Some(Self::Headless),
-            "inline" => Some(Self::Inline),
-            "auto" => Some(Self::Auto),
-            _ => None,
-        }
-    }
-
-    /// Canonical lowercase string for this mode (matches the config/env values).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Headless => "headless",
-            Self::Inline => "inline",
-            Self::Auto => "auto",
-        }
     }
 }
 
@@ -1598,11 +1566,19 @@ mod compaction_strategy_tests {
             ("structured", CompactionStrategy::Structured),
             ("openai_auto", CompactionStrategy::OpenAiAuto),
             ("openai_explicit", CompactionStrategy::OpenAiExplicit),
+            ("handoff", CompactionStrategy::Handoff),
         ] {
             let json = format!("\"{text}\"");
             assert_eq!(serde_json::from_str::<CompactionStrategy>(&json).unwrap(), expected);
             assert_eq!(CompactionStrategy::parse(text), Some(expected));
+            assert_eq!(expected.as_str(), text);
         }
+    }
+
+    #[test]
+    fn handoff_is_not_a_native_strategy() {
+        assert!(!CompactionStrategy::Handoff.is_native());
+        assert_eq!(CompactionStrategy::default(), CompactionStrategy::Structured);
     }
 
     #[test]

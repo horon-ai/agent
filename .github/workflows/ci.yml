@@ -1571,9 +1571,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # The image's preinstalled Go can be older than actionlint's go.mod
+      # requirement, and the automatic toolchain switch then fails on a
+      # toolchain version the module proxy does not serve. Pin Go here and keep
+      # it from fetching another toolchain so the job depends only on these pins.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.25.x'
+          cache: false
+
       - name: Run actionlint
         # Pinned to a release; actionlint also runs the preinstalled shellcheck
         # over every `run:` script. Zero findings is the standing requirement.
+        env:
+          GOTOOLCHAIN: local
         run: |
           set -euo pipefail
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

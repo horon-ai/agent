@@ -140,6 +140,7 @@ fn prior_summary_state(compacted_count: usize) -> crate::session::StoredCompacti
             }),
             lossy_emergency: false,
             recovery_blocked: None,
+            handoff: false,
         }),
     }
 }
