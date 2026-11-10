@@ -524,6 +524,29 @@ The rules that keep a batch honest:
 `context` is prepended to the child's first user message, not rendered as a
 system-prompt section, because the child session exists before its first turn.
 
+## 8d. Consult: `source_session`
+
+A parent can ask a question of an earlier conversation instead of reading its
+transcript by hand. `swarm spawn` accepts `source_session: "<id>"`:
+
+- The child starts from a copy of that session's transcript, made the same way
+  `split` forks a session. The source session is never written to.
+- The question is the child's first new user message, and the answer comes back
+  through `agent://` like any other child result.
+- The child's registry is restricted to `read`, `agentgrep`, `ls` and `yield`.
+  The restriction is applied where the child session is created, so a wire
+  client naming a source session directly cannot widen it.
+- An unknown id fails before a child session exists. So does an id outside the
+  caller's spawn tree: that tree is the set of sessions sharing a top-most
+  ancestor, and the same rule is what a `history://<id>` read will use.
+- Plan mode needs no rule of its own. `swarm` declares no effects of its own,
+  so it keeps the default write barrier and a read-only plan state already
+  refuses the spawn.
+
+The fork names the source as its parent rather than the caller, so the child sits
+in the source's tree. Its model, effort and tool policy still come from the spawn
+parameters, not from the source session.
+
 ---
 
 ## 9. Example: how the graph changes over time

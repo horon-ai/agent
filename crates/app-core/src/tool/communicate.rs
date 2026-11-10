@@ -1454,6 +1454,8 @@ async fn spawn_assignment_session(ctx: &ToolContext, params: &CommunicateInput) 
         output_schema: None,
         // A plan assignment names no definition, so it keeps the profile.
         allowed_tools: None,
+        // A plan assignment starts from an empty transcript.
+        source_session: None,
     };
 
     match send_request(spawn_request).await {
@@ -1854,6 +1856,9 @@ struct CommunicateInput {
     /// override the definition's values.
     #[serde(default)]
     agent: Option<String>,
+    /// Session to fork a read-only consult child from (SWARM_TASK_GRAPH 8d).
+    #[serde(default)]
+    source_session: Option<String>,
     /// spawn_many children; each runs the single-spawn path concurrently.
     #[serde(default)]
     tasks: Option<Vec<agent_spawn::SpawnBatchTask>>,
@@ -1931,7 +1936,7 @@ impl Tool for CommunicateTool {
                              "task_graph", "expand_node", "complete_node", "inject_gap",
                              "start", "start_task", "wake", "resume", "retry", "reassign", "replace", "salvage",
                              "subscribe_channel", "unsubscribe_channel", "await_members", "list_models", "list_agent_defs", "spawn_many"],
-                    "description": "Action. spawn requires label and should include prompt, and may name an agent definition with agent; spawn_many starts several children concurrently from tasks[] with an optional shared context. list_models shows available models/routes; list_agent_defs lists named agent definitions."
+                    "description": "Action. spawn requires label and should include prompt, and may name an agent definition with agent; spawn_many starts several children concurrently from tasks[] with an optional shared context. To get an answer about an earlier conversation, spawn with source_session: the child forks that transcript and can only read. list_models shows available models/routes; list_agent_defs lists named agent definitions."
                 },
                 "key": {
                     "type": "string",
@@ -2132,7 +2137,7 @@ impl Tool for CommunicateTool {
                     "items": { "type": "object", "additionalProperties": true }
                 }),
             );
-            agent_spawn::spawn_many_schema_properties(props);
+            agent_spawn::spawn_schema_properties(props);
             props.insert(
                 "artifact".to_string(),
                 json!({

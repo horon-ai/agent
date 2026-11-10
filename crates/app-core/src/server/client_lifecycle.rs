@@ -2870,10 +2870,10 @@ pub(super) async fn handle_client(
                 iso_apply,
                 output_schema,
                 allowed_tools,
+                source_session,
             } => {
-                let spawn_mode = match parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) {
-                    Some(spawn_mode) => spawn_mode,
-                    None => return Ok(()),
+                let Some(spawn_mode) = parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) else {
+                    return Ok(());
                 };
                 handle_comm_spawn(
                     id,
@@ -2887,7 +2887,7 @@ pub(super) async fn handle_client(
                     label,
                     isolation,
                     iso_apply,
-                    super::comm_session::SpawnExtras { output_schema, allowed_tools },
+                    super::comm_session::SpawnExtras { output_schema, allowed_tools, source_session },
                     &client_event_tx,
                     &sessions,
                     &global_session_id,
