@@ -201,7 +201,7 @@ impl Agent {
         }
     }
 
-    fn refresh_compaction_budget(&self) {
+    pub(super) fn refresh_compaction_budget(&self) {
         let compaction = self.registry.compaction();
         let provider_name = self.provider.name().to_string();
         let model = self.provider.model();
