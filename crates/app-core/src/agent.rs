@@ -877,35 +877,21 @@ impl Agent {
         Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None)
     }
 
+    /// A spawned child's tool surface may be narrowed by a named agent definition. The list is
+    /// explicit, so the default `core` profile never widens it.
     pub(crate) fn new_with_parent_and_initial_working_dir(
         provider: Arc<dyn Provider>,
         registry: Registry,
         working_dir: Option<&str>,
         parent_id: Option<String>,
+        narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, None)
-    }
-
-    /// A spawned child whose tool surface is narrowed by a named agent
-    /// definition.
-    ///
-    /// The list is explicit, so it is never widened by the default `core`
-    /// profile: a definition that names three tools gets exactly those three.
-    pub(crate) fn new_with_parent_and_allowed_tools(
-        provider: Arc<dyn Provider>,
-        registry: Registry,
-        working_dir: Option<&str>,
-        parent_id: Option<String>,
-        allowed_tools: HashSet<String>,
-    ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, Some(allowed_tools))
+        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools)
     }
 
     /// Whether a session's allow-list is the untouched default `core` profile.
     ///
-    /// Only the default qualifies: an explicit `[tools] enabled` list, `disable_base_tools`, and
-    /// every other profile are the operator's own choice and are never widened here. The user's
-    /// explicit allow and deny remain the final authority.
+    /// An explicit list, `disable_base_tools`, or another profile is the operator's own choice.
     fn default_core_profile(tools: &crate::config::ToolConfig) -> bool {
         tools
             .profile
@@ -925,22 +911,19 @@ impl Agent {
     ) -> Self {
         let start = Instant::now();
         let tool_selection = crate::config::config().tools.selection();
+        let narrowed = narrowed_tools.is_some();
         let default_core_profile =
-            narrowed_tools.is_none() && Self::default_core_profile(&crate::config::config().tools);
+            !narrowed && Self::default_core_profile(&crate::config::config().tools);
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
         }
-        let (allowed_tools, disabled_tools) = match narrowed_tools {
-            Some(allowed) => (Some(allowed), HashSet::new()),
-            None => (tool_selection.allowed_tools, tool_selection.disabled_tools),
-        };
         let mut agent = Self::build_base(
             provider,
             registry,
             session,
-            allowed_tools,
-            disabled_tools,
+            narrowed_tools.or(tool_selection.allowed_tools),
+            if narrowed { HashSet::new() } else { tool_selection.disabled_tools },
             default_core_profile,
         );
         let model = agent.provider_model();

@@ -168,9 +168,15 @@ pub fn resolve(name: &str, working_dir: Option<&Path>) -> Result<AgentDefinition
 
 fn search_dirs(working_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    let project_root = working_dir
-        .map(Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok());
+    let project_root = working_dir.map(Path::to_path_buf).or_else(|| match std::env::current_dir() {
+        Ok(directory) => Some(directory),
+        Err(error) => {
+            crate::logging::debug(&format!(
+                "Agent definitions: the working directory is unavailable: {error}"
+            ));
+            None
+        }
+    });
     if let Some(root) = project_root {
         dirs.push(root.join(PROJECT_DIR));
     }
@@ -193,14 +199,35 @@ fn read_dir(directory: &Path) -> Vec<AgentDefinition> {
         }
     };
     let mut paths: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| match entry {
+            Ok(entry) => Some(entry),
+            Err(error) => {
+                crate::logging::debug(&format!(
+                    "Agent definitions: {} has an unreadable entry: {error}",
+                    directory.display()
+                ));
+                None
+            }
+        })
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("md"))
         .collect();
     // A directory listing has no order, so sort for a deterministic shadowing
     // result and a stable discovery listing.
     paths.sort();
-    paths.iter().filter_map(|path| parse_definition(path).ok()).collect()
+    paths
+        .iter()
+        .filter_map(|path| match parse_definition(path) {
+            Ok(definition) => Some(definition),
+            Err(error) => {
+                crate::logging::debug(&format!(
+                    "Agent definitions: {} is not usable: {error}",
+                    path.display()
+                ));
+                None
+            }
+        })
+        .collect()
 }
 
 fn parse_definition(path: &Path) -> Result<AgentDefinition> {
