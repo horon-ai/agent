@@ -222,7 +222,7 @@ MEASUREMENTS = (
             "-p",
             "horon-agent-app-core",
             "--lib",
-            "agent_tests::tool_request_bytes::core_profile_request_prefix_is_measured",
+            "agent::tests::tool_request_bytes::core_profile_request_prefix_is_measured",
         ],
     },
 )
