@@ -28,6 +28,7 @@ impl Session {
         let skip_cache = std::mem::take(&mut self.event_state.skip_cache_once) && self.event_state.defer_final_cache;
         let external_source = self.event_state.external_source.clone();
         let runtime = super::event_wire::LocalRuntime::capture(self);
+        let confirmed_binding = self.event_state.confirmed_binding.clone();
         writer.call(move |writer| {
             writer.batched(|writer| -> Result<()> {
                 if let Some(source) = &external_source {
@@ -65,7 +66,7 @@ impl Session {
                 // Selection and the runtime binding are local, durable, and never
                 // exported as replica state. Their files are flushed individually
                 // and the session directory once, after both.
-                let runtime_changed = runtime.publish(&commit_paths, &commit_id)?;
+                let runtime_changed = runtime.publish(&commit_paths, &commit_id, confirmed_binding.as_ref())?;
                 let selected_changed = event_store::select(&commit_paths, &commit_id, &selected, explicit_head)?;
                 if runtime_changed || selected_changed {
                     event_store::sync_local_state(&commit_paths, &commit_id)?;

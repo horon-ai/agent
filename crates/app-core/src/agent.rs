@@ -50,6 +50,7 @@ pub(crate) use request_messages::{join_request_messages, record_request_extra_cl
 mod response_recovery;
 mod resume_commit;
 mod round_budget;
+mod run_journal;
 mod session_replication;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
@@ -514,6 +515,8 @@ pub struct Agent {
     /// True while this Agent is a provisional placeholder whose session
     /// bootstrap is still deferred; see `provisional_init`.
     provisional_init_pending: bool,
+    /// Whether this process closes the session as soon as the run returns.
+    closes_after_run: bool,
     /// Session id whose restored state is prepared but not yet durable.
     ///
     /// Every external entry point refuses to start while this is set, so an
@@ -692,6 +695,7 @@ impl Agent {
             inline_output_tap: false,
             inline_tail: inline_tail::InlineTailBuffer::default(),
             provisional_init_pending: false,
+            closes_after_run: false,
             pending_resume: None,
             failover_budget: failover_budget::FailoverBudgetState::default(),
             persistent_runtime: false,
@@ -874,11 +878,6 @@ impl Agent {
 
     pub fn new(provider: Arc<dyn Provider>, registry: Registry) -> Self {
         Self::new_with_initial_working_dir(provider, registry, None)
-    }
-
-    /// Progress and exit state of the current (or most recent) turn.
-    pub(crate) fn turn_state(&self) -> &TurnState {
-        &self.turn_state
     }
 
     pub(crate) fn new_with_initial_working_dir(

@@ -6,94 +6,12 @@ use std::panic::AssertUnwindSafe;
 
 use super::turn_failover::ProviderErrorAction;
 use horon_agent_agent_runtime::{
-    RunIdentity, RunStop, StopDisposition, StopProvenance, current_run, current_stop, note_conversation_save,
-    observe_cause, observed_cause, provider_failure_provenance, record_stop,
-};
-use horon_agent_base::durable_runtime::{
-    DurableRuntimeStore, Payload, RunStarted, RunStopped, StopCause as JournalStopCause,
+    RunIdentity, RunStop, StopProvenance, current_run, current_stop, note_conversation_save, observe_cause,
+    observed_cause, provider_failure_provenance,
 };
 
 /// How long a reload marker still describes this process's own shutdown.
 const RELOAD_MARKER_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// The session journals this process already replayed.
-///
-/// Reopening a journal replays it, and a run boundary is once per turn, so
-/// reopening per turn would turn every turn into a full journal replay. The
-/// store is kept instead and reused: it already catches up on rows other writers
-/// appended before every append, so a cached handle never serves stale state.
-static RUN_JOURNALS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, DurableRuntimeStore>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// Dispatch one run row to `session_id`'s journal on a dedicated OS thread.
-///
-/// The handle is returned rather than awaited, because this entry point must
-/// reach its turn and publish its terminal event without yielding: an await in
-/// the turn's tail lets the caller's own timers run before that event lands.
-/// The write still starts before the turn does and is joined before the stop is
-/// recorded, so the journal keeps start-before-stop order, and the join blocks a
-/// few milliseconds instead of yielding the worker.
-fn dispatch_run_row(session_id: &str, run_id: &str, payload: Payload) -> std::thread::JoinHandle<bool> {
-    let session_id = session_id.to_string();
-    let run_id = run_id.to_string();
-    std::thread::spawn(move || append_run_row(&session_id, &run_id, payload))
-}
-
-/// `run.started` writes dispatched but not yet joined, keyed by session.
-///
-/// The handle is held here rather than on `Agent` because the entry point must
-/// reach its turn without yielding first, and this registry lets the write start
-/// before the turn while its join waits until the turn ends.
-static PENDING_RUN_STARTS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, std::thread::JoinHandle<bool>>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// Append one run row to `session_id`'s journal, on the calling (blocking) thread.
-fn append_run_row(session_id: &str, run_id: &str, payload: Payload) -> bool {
-    let Ok(root) = horon_agent_base::storage::horon_agent_dir() else {
-        logging::warn(&format!("run row not recorded for {session_id}: no agent home"));
-        return false;
-    };
-    let key = root
-        .join(horon_agent_base::durable_runtime::JOURNAL_DIR_NAME)
-        .join(session_id);
-    let mut journals = RUN_JOURNALS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let store = match journals.entry(key.clone()) {
-        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-        std::collections::hash_map::Entry::Vacant(entry) => match DurableRuntimeStore::open(session_id) {
-            Ok(store) => entry.insert(store),
-            Err(error) => {
-                logging::warn(&format!("run row not recorded for {session_id}: {error}"));
-                return false;
-            }
-        },
-    };
-    match store.append(run_id, payload) {
-        Ok(_) => true,
-        Err(error) => {
-            logging::warn(&format!("run row not recorded for {session_id}: {error}"));
-            // A corrupt or gapped journal must not be retried as transient, so
-            // the handle is dropped and the next attempt replays it afresh.
-            journals.remove(&key);
-            false
-        }
-    }
-}
-
-/// The journal's spelling of a stop cause.
-fn journal_cause(provenance: StopProvenance) -> JournalStopCause {
-    match provenance {
-        StopProvenance::Completed => JournalStopCause::Completed,
-        StopProvenance::UserCancelled => JournalStopCause::UserCancelled,
-        StopProvenance::Shutdown => JournalStopCause::Shutdown,
-        StopProvenance::ProviderError => JournalStopCause::ProviderError,
-        StopProvenance::Timeout => JournalStopCause::Timeout,
-        StopProvenance::LoopGuard => JournalStopCause::LoopGuard,
-        StopProvenance::Limit => JournalStopCause::Limit,
-        StopProvenance::InterruptedUnknown => JournalStopCause::InterruptedUnknown,
-    }
-}
 
 /// The stop cause a failed turn names, read from the error it returned.
 ///
@@ -116,46 +34,6 @@ impl Agent {
     /// this is the one place a run id is created.
     pub(super) fn mint_run_id() -> String {
         uuid::Uuid::new_v4().to_string()
-    }
-
-    /// Start the run this turn executes, recording `run.started` when it begins.
-    ///
-    /// The journal write is dispatched to a blocking thread and never performed
-    /// while an async lock is held. A failed write leaves the run unrecorded and
-    /// the turn still runs: an audit row is worth less than the answer the user
-    /// asked for.
-    pub(super) fn begin_run(&mut self) -> RunIdentity {
-        let identity = RunIdentity::new(Self::mint_run_id());
-        // Dispatched, not awaited: the streaming entry point must reach its turn
-        // without yielding first. The write still starts before the turn runs and
-        // is joined before the stop is recorded, so start precedes stop on disk.
-        let handle = dispatch_run_row(
-            &self.session.id,
-            identity.run_id(),
-            Payload::RunStarted(RunStarted { input_id: None }),
-        );
-        PENDING_RUN_STARTS
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(self.session.id.clone(), handle);
-        identity
-    }
-
-    /// Await this turn's `run.started` write and adopt its result.
-    ///
-    /// The join is synchronous on purpose: this runs at the turn's end, where a
-    /// yield would let a caller's timers fire before the terminal event is
-    /// published. It blocks for the few milliseconds the write takes.
-    pub(super) async fn settle_run_start(&mut self, identity: &RunIdentity) {
-        let handle = PENDING_RUN_STARTS
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.session.id);
-        let Some(handle) = handle else {
-            return;
-        };
-        let persisted = handle.join().unwrap_or(false);
-        horon_agent_agent_runtime::begin_run(&self.session.id, identity.clone(), persisted);
     }
 
     /// Record a cause the loop observed at a point that ends the turn.
@@ -200,39 +78,6 @@ impl Agent {
             },
             None => StopProvenance::InterruptedUnknown,
         }
-    }
-
-    /// End the run captured at turn start, after the conversation save.
-    ///
-    /// The caller passes the run id and cause captured when the turn ended, so
-    /// this writes what happened rather than what is current now. The in-memory
-    /// stop is recorded and kept even when the journal write fails; only a
-    /// successful write marks it persisted.
-    ///
-    /// Returns where the stop landed, so a caller can tell a late stop recorded
-    /// as history from the current run's own end.
-    pub(super) async fn finish_run(&self, run_id: &str, provenance: StopProvenance) -> StopDisposition {
-        let mut stop = RunStop::capture(run_id, provenance);
-        let session_id = self.session.id.clone();
-        let cause = journal_cause(provenance);
-        let handle = dispatch_run_row(
-            &self.session.id,
-            run_id,
-            Payload::RunStopped(RunStopped { cause, input_id: None }),
-        );
-        // Synchronous join, for the same reason as the start: the turn's tail
-        // must not yield, and the write itself already runs off this thread.
-        let persisted = handle.join().unwrap_or(false);
-        if persisted {
-            stop.mark_persisted();
-        }
-        let conversation_saved = horon_agent_agent_runtime::conversation_saved(&session_id);
-        let disposition = record_stop(&session_id, stop);
-        logging::info(&format!(
-            "run.stopped session={session_id} run={run_id} cause={} persisted={persisted} conversation_saved={conversation_saved:?} disposition={disposition:?}",
-            provenance.as_str()
-        ));
-        disposition
     }
 
     /// The run executing now, if a run was started.

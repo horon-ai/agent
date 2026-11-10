@@ -275,7 +275,8 @@ pub(super) fn restore(paths: &store::SessionPaths, id: &store::SessionId) -> Res
         ..Default::default()
     };
     session.event_state.identity = Some(session.route_identity());
-    session.restore_local_runtime(paths, id)?;
+    let binding = session.restore_local_runtime(paths, id)?;
+    session.event_state.confirmed_binding = binding.journal().cloned();
     session.event_state.local_binding = Some(super::event_wire::LocalRuntime::capture(&session));
     session.refresh_agent_model_overrides()?;
     session.event_state.metadata = Some(session.event_metadata()?);
