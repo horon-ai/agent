@@ -4,6 +4,7 @@ mod display;
 mod feature;
 mod gateway;
 mod irc;
+pub mod model_roles;
 mod power;
 mod serde_lenient;
 mod storage;
@@ -599,6 +600,8 @@ pub struct NamedProviderConfig {
     /// provider/model capability settings continue to work.
     #[serde(default, alias = "disable-reasoning-heuristics")]
     pub disable_reasoning_heuristics: bool,
+    #[serde(flatten, default)]
+    pub model_roles: model_roles::ModelRoleConfig,
 }
 
 /// Remembered trust decisions for external auth sources managed by other tools.
