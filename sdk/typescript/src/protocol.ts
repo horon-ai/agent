@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 15;
+export const API_VERSION_MINOR = 16;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -718,6 +718,14 @@ export type ApiEvent =
     }
   | { ev: "side_pane_images"; session_id: string; images: RenderedImage[] }
   | {
+      ev: "tool_args_repaired";
+      session_id: string;
+      call_id: string;
+      name: string;
+      original_input: unknown;
+      changes: string[];
+    }
+  | {
       ev: "token_usage";
       session_id: string;
       input: number;
@@ -1010,6 +1018,7 @@ export const KNOWN_EVENT_KINDS = [
   "tool_input_delta",
   "tool_exec",
   "tool_done",
+  "tool_args_repaired",
   "token_usage",
   "kv_cache_miss",
   "turn_done",

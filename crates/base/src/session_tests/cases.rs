@@ -629,10 +629,8 @@ fn load_startup_stub_preserves_metadata_but_skips_heavy_vectors() -> Result<()> 
             text: "hello world".to_string(),
             cache_control: None,
         }],
-        display_role: None,
         timestamp: Some(Utc::now()),
-        tool_duration_ms: None,
-        token_usage: None,
+        ..Default::default()
     });
     session.record_env_snapshot(EnvSnapshot {
         captured_at: Utc::now(),
@@ -694,10 +692,8 @@ fn load_for_remote_startup_preserves_messages_and_replay_but_skips_heavy_vectors
             text: "hello remote startup".to_string(),
             cache_control: None,
         }],
-        display_role: None,
         timestamp: Some(Utc::now()),
-        tool_duration_ms: None,
-        token_usage: None,
+        ..Default::default()
     });
     session.record_env_snapshot(EnvSnapshot {
         captured_at: Utc::now(),
@@ -2444,10 +2440,8 @@ fn reasoning_trace_survives_session_save_and_load() -> Result<()> {
                 cache_control: None,
             },
         ],
-        display_role: None,
         timestamp: Some(Utc::now()),
-        tool_duration_ms: None,
-        token_usage: None,
+        ..Default::default()
     });
     session.save()?;
 
@@ -3300,10 +3294,7 @@ fn screenshot_message(index: usize) -> StoredMessage {
                 data: "A".repeat(4 * 1024),
             },
         ],
-        display_role: None,
-        timestamp: None,
-        tool_duration_ms: None,
-        token_usage: None,
+        ..StoredMessage::default()
     }
 }
 
@@ -3462,10 +3453,8 @@ fn provider_projection_digest_matches_the_pre_change_baseline() {
                     data: "A".repeat(4 * 1024),
                 },
             ],
-            display_role: None,
             timestamp: None,
-            tool_duration_ms: None,
-            token_usage: None,
+            ..Default::default()
         });
         session.mark_messages_full_dirty();
     }

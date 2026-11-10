@@ -87,7 +87,7 @@ impl EventGraph {
                         return Err(invalid("prior native window belongs to a different model/route"));
                     }
                 }
-                CompactionOutcome::Summary | CompactionOutcome::LossyEmergency => {}
+                CompactionOutcome::Summary | CompactionOutcome::LossyEmergency | CompactionOutcome::Handoff => {}
             }
         }
         for id in &chain[covered.saturating_add(1)..=source_pos] {
@@ -129,7 +129,7 @@ impl EventGraph {
             return Err(invalid("compaction identity differs from selected metadata"));
         }
         match payload.outcome {
-            CompactionOutcome::Summary | CompactionOutcome::LossyEmergency => {
+            CompactionOutcome::Summary | CompactionOutcome::LossyEmergency | CompactionOutcome::Handoff => {
                 if payload.summary_text.trim().is_empty() || !payload.native_window.is_empty() {
                     return Err(invalid("text outcome requires nonempty summary and no native window"));
                 }

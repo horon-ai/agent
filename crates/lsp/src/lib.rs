@@ -71,6 +71,59 @@ pub struct Symbol {
     pub children: Vec<Symbol>,
 }
 
+/// One text replacement a server asked for.
+///
+/// Lines and characters are 0-based LSP positions, and a character is a UTF-16
+/// code unit, so a caller must convert both before slicing text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEdit {
+    pub start_line: u32,
+    pub start_character: u32,
+    pub end_line: u32,
+    pub end_character: u32,
+    pub new_text: String,
+}
+
+/// Every edit one file receives from a workspace edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileEdit {
+    pub path: std::path::PathBuf,
+    pub edits: Vec<TextEdit>,
+}
+
+/// A server-computed edit across one or more files.
+///
+/// Only text edits are represented: file creation, renaming, and deletion are
+/// outside what the `lsp` tool applies.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceEdit {
+    pub files: Vec<FileEdit>,
+}
+
+impl WorkspaceEdit {
+    pub fn is_empty(&self) -> bool {
+        self.files.iter().all(|file| file.edits.is_empty())
+    }
+
+    pub fn edit_count(&self) -> usize {
+        self.files.iter().map(|file| file.edits.len()).sum()
+    }
+}
+
+/// One code action a server offers for a position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeAction {
+    pub title: String,
+    pub kind: Option<String>,
+    /// The edits this action applies, when it carries any.
+    pub edit: Option<WorkspaceEdit>,
+    /// True when the only thing the action offers is a command, which the tool
+    /// lists but never executes.
+    pub command_only: bool,
+    /// Why the server disabled the action, when it did.
+    pub disabled: Option<String>,
+}
+
 /// One live language server process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientStatus {

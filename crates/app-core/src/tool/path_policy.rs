@@ -126,7 +126,8 @@ pub(crate) fn enforce(tool: &str, input: &Value, ctx: &ToolContext) -> anyhow::R
 /// Each tool reads its paths from a different key. `agentgrep` also accepts
 /// `file`/`file_path` for a single-file search; its `pattern` key is the search
 /// query, not a path, so it is not consulted here. `apply_patch` names its paths
-/// inside the patch text, including move destinations.
+/// inside the patch text, including move destinations, and `hashline_edit` names
+/// a move destination in `move_to`.
 fn resolved_paths(tool: &str, input: &Value, ctx: &ToolContext) -> Vec<PathBuf> {
     let keys: &[&str] = match tool {
         "read" | "write" | "edit" => &["file_path"],
@@ -134,6 +135,7 @@ fn resolved_paths(tool: &str, input: &Value, ctx: &ToolContext) -> Vec<PathBuf> 
         "ls" => &["path"],
         "agentgrep" => &["path", "file", "file_path"],
         "lsp" => &["file"],
+        "hashline_edit" => &["file_path", "move_to"],
         "apply_patch" => &["file_path", "path"],
         _ => &[],
     };

@@ -3,9 +3,9 @@
 use crate::*;
 
 #[test]
-fn api_version_minor_is_fifteen() {
+fn api_version_minor_is_sixteen() {
     assert_eq!(API_VERSION_MAJOR, 1);
-    assert_eq!(API_VERSION_MINOR, 15);
+    assert_eq!(API_VERSION_MINOR, 16);
 }
 
 /// The minor-14 surface is additive. Every request an older client sends keeps
