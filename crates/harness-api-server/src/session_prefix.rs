@@ -57,7 +57,7 @@ pub(crate) fn resolve(request: &mut Value, attached: Option<&str>, known: &[Stri
 
     let mut candidates: Vec<String> = horon_agent_base::session_prefix::stored_session_id_prefix_matches(&query);
     for id in attached.into_iter().chain(known.iter().map(String::as_str)) {
-        if id.starts_with(&query) && !candidates.contains(id) {
+        if id.starts_with(&query) && !candidates.iter().any(|seen| seen.as_str() == id) {
             candidates.push(id.to_string());
         }
     }

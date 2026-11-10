@@ -46,7 +46,7 @@ pub(super) async fn resolve_target_subscribe_prefix(
     }
     let mut candidates = horon_agent_base::session_prefix::stored_session_id_prefix_matches(target);
     for live in sessions.read().await.keys() {
-        if live.starts_with(target.as_str()) && !candidates.contains(&live) {
+        if live.starts_with(target.as_str()) && !candidates.iter().any(|seen| seen == live) {
             candidates.push(live.clone());
         }
     }
