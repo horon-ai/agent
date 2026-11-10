@@ -111,11 +111,11 @@ fn journal_control_rows(root: &std::path::Path, session: &str) -> Vec<(String, S
 fn seed_run(root: &std::path::Path, session: &str, run_id: &str, stop: Option<StopCause>) {
     let mut store = DurableRuntimeStore::open_in(root, session).expect("open the control journal");
     store
-        .append(run_id, Payload::RunStarted(RunStarted { input_id: None }))
+        .append(run_id, Payload::RunStarted(RunStarted::new(None)))
         .expect("run started");
     if let Some(cause) = stop {
         store
-            .append(run_id, Payload::RunStopped(RunStopped { cause, input_id: None }))
+            .append(run_id, Payload::RunStopped(RunStopped::new(cause, None)))
             .expect("run stopped");
     }
 }

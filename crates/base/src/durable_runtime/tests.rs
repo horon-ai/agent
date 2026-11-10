@@ -49,7 +49,7 @@ fn committed() -> Payload {
 }
 
 fn run_started() -> Payload {
-    Payload::RunStarted(RunStarted { input_id: None })
+    Payload::RunStarted(RunStarted::new(None))
 }
 
 fn cut_final_row(path: &Path, cut_from_end: usize) -> Vec<u8> {
@@ -126,20 +126,12 @@ fn append_and_replay_round_trip() {
         3
     );
     store
-        .append(
-            &run,
-            Payload::RunStarted(RunStarted {
-                input_id: Some(input.clone()),
-            }),
-        )
+        .append(&run, Payload::RunStarted(RunStarted::new(Some(input.clone()))))
         .expect("run started");
     store
         .append(
             &run,
-            Payload::RunStopped(RunStopped {
-                cause: StopCause::Completed,
-                input_id: Some(input.clone()),
-            }),
+            Payload::RunStopped(RunStopped::new(StopCause::Completed, Some(input.clone()))),
         )
         .expect("run stopped");
     store
@@ -386,10 +378,7 @@ fn transitions_cover_every_kind_and_refuse_invalid_orders() {
     store
         .append(
             &run,
-            Payload::RunStopped(RunStopped {
-                cause: StopCause::UserCancelled,
-                input_id: None,
-            }),
+            Payload::RunStopped(RunStopped::new(StopCause::UserCancelled, None)),
         )
         .expect("run stopped");
 
@@ -880,10 +869,7 @@ fn control_and_run_rows_are_recordable_at_the_live_input_cap() {
     store
         .append(
             &run,
-            Payload::RunStopped(RunStopped {
-                cause: StopCause::UserCancelled,
-                input_id: None,
-            }),
+            Payload::RunStopped(RunStopped::new(StopCause::UserCancelled, None)),
         )
         .expect("run stopped is a lifecycle row");
 
@@ -949,13 +935,7 @@ fn terminal_runs_are_bounded_and_unfinished_work_survives() {
         let run = new_id();
         store.append(&run, run_started()).expect("run started");
         store
-            .append(
-                &run,
-                Payload::RunStopped(RunStopped {
-                    cause: StopCause::Completed,
-                    input_id: None,
-                }),
-            )
+            .append(&run, Payload::RunStopped(RunStopped::new(StopCause::Completed, None)))
             .expect("run stopped");
         stopped_runs.push(run);
     }
