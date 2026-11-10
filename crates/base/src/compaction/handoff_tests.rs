@@ -177,7 +177,7 @@ async fn handoff_with_a_budget_that_keeps_everything_reports_nothing_to_cover() 
         .await
         .expect_err("everything is kept verbatim");
 
-    assert!(matches!(error, HandoffError::NothingToCover), "got {error}");
+    assert!(matches!(&error, HandoffError::NothingToCover), "got {error}");
     assert!(completer.prompts().is_empty(), "no completion may be dispatched");
 }
 
@@ -223,5 +223,5 @@ async fn handoff_cancellation_reports_cancelled_not_success() {
     .expect_err("cancellation is not a document");
 
     trigger.await.expect("cancellation trigger");
-    assert!(matches!(error, HandoffError::Cancelled), "got {error}");
+    assert!(matches!(&error, HandoffError::Cancelled), "got {error}");
 }
