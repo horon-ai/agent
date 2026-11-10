@@ -827,7 +827,14 @@ mod tests {
         };
 
         let screen = draw_to_string(&mut app);
-        let row = screen.lines().nth(22).unwrap_or_default().trim_end().to_string();
+        // `TestBackend`'s Display wraps each row in quotes.
+        let row = screen
+            .lines()
+            .nth(22)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .trim_end()
+            .to_string();
         assert!(
             row.starts_with("anthropic/claude-sonnet-4 · ~/proj"),
             "left side wrong: {row:?}\n{screen}"

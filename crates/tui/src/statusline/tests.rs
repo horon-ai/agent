@@ -57,7 +57,10 @@ fn draw_line(line: ratatui::text::Line<'static>, width: u16) -> String {
     terminal
         .draw(|frame| frame.render_widget(Paragraph::new(line), frame.area()))
         .expect("draw");
-    format!("{}", terminal.backend()).trim_end().to_string()
+    // `TestBackend`'s Display wraps each row in quotes; the cells are what the
+    // client actually draws.
+    let view = format!("{}", terminal.backend());
+    view.trim_end().trim_matches('"').trim_end().to_string()
 }
 
 fn rendered(data: &StatusData<'_>, layout: &Layout, width: u16) -> String {
