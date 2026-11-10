@@ -20,6 +20,7 @@ mod goal_continuation;
 #[cfg(test)]
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
+mod handoff_compaction;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -49,6 +50,7 @@ pub(crate) use request_messages::{join_request_messages, record_request_extra_cl
 mod response_recovery;
 mod resume_commit;
 mod round_budget;
+mod run_journal;
 mod session_replication;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
@@ -76,10 +78,12 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+mod usage;
 mod utils;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
+pub use usage::TokenUsage;
 
 use self::streaming::{send_stream_keepalive_mpsc, stream_keepalive_ticker};
 #[cfg(test)]
@@ -351,15 +355,6 @@ fn log_agent_provider_stream_lifecycle(
     logging::event(level, "AGENT_PROVIDER_STREAM_LIFECYCLE", owned);
 }
 
-/// Token usage from the last API request
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: Option<u64>,
-    pub cache_creation_input_tokens: Option<u64>,
-}
-
 #[derive(Debug, Clone)]
 struct RewindUndoSnapshot {
     head_event_id: String,
@@ -520,6 +515,8 @@ pub struct Agent {
     /// True while this Agent is a provisional placeholder whose session
     /// bootstrap is still deferred; see `provisional_init`.
     provisional_init_pending: bool,
+    /// Whether this process closes the session as soon as the run returns.
+    closes_after_run: bool,
     /// Session id whose restored state is prepared but not yet durable.
     ///
     /// Every external entry point refuses to start while this is set, so an
@@ -698,6 +695,7 @@ impl Agent {
             inline_output_tap: false,
             inline_tail: inline_tail::InlineTailBuffer::default(),
             provisional_init_pending: false,
+            closes_after_run: false,
             pending_resume: None,
             failover_budget: failover_budget::FailoverBudgetState::default(),
             persistent_runtime: false,
@@ -882,17 +880,12 @@ impl Agent {
         Self::new_with_initial_working_dir(provider, registry, None)
     }
 
-    /// Progress and exit state of the current (or most recent) turn.
-    pub(crate) fn turn_state(&self) -> &TurnState {
-        &self.turn_state
-    }
-
     pub(crate) fn new_with_initial_working_dir(
         provider: Arc<dyn Provider>,
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, true)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, true, None)
     }
 
     /// A connection may only be a viewer attaching to an existing Agent.
@@ -902,7 +895,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, false)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None)
     }
 
     pub(crate) fn new_with_parent_and_initial_working_dir(
@@ -910,15 +903,13 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
         parent_id: Option<String>,
+        narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true)
+        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools)
     }
 
-    /// Whether a session's allow-list is the untouched default `core` profile.
-    ///
-    /// Only the default qualifies: an explicit `[tools] enabled` list, `disable_base_tools`, and
-    /// every other profile are the operator's own choice and are never widened here. The user's
-    /// explicit allow and deny remain the final authority.
+    /// Whether a session's allow-list is the untouched default `core` profile. An explicit list,
+    /// `disable_base_tools`, or another profile is the operator's own choice.
     fn default_core_profile(tools: &crate::config::ToolConfig) -> bool {
         tools
             .profile
@@ -934,10 +925,12 @@ impl Agent {
         working_dir: Option<&str>,
         parent_id: Option<String>,
         confirmed: bool,
+        narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
         let start = Instant::now();
         let tool_selection = crate::config::config().tools.selection();
-        let default_core_profile = Self::default_core_profile(&crate::config::config().tools);
+        let narrowed = narrowed_tools.is_some();
+        let default_core_profile = !narrowed && Self::default_core_profile(&crate::config::config().tools);
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
@@ -946,7 +939,7 @@ impl Agent {
             provider,
             registry,
             session,
-            tool_selection.allowed_tools,
+            narrowed_tools.or(tool_selection.allowed_tools),
             tool_selection.disabled_tools,
             default_core_profile,
         );

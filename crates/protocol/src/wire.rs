@@ -750,6 +750,11 @@ pub enum Request {
         /// this schema, and the published child result carries those fields.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_schema: Option<serde_json::Value>,
+        /// Optional tool allow list for the child session, resolved from a named
+        /// agent definition. `None` leaves the child's tool surface as the
+        /// configured profile decides; `Some(list)` narrows it to `list`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_tools: Option<Vec<String>>,
     },
 
     /// List models/routes available for spawning swarm agents

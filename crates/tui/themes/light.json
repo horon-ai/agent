@@ -1,0 +1,35 @@
+{
+  "name": "light",
+  "vars": {
+    "fg": "#1f2430",
+    "ink": "#2e5bd6"
+  },
+  "colors": {
+    "accent": "ink",
+    "border": "#a8b3c4",
+    "muted": "#7b8794",
+    "text": "fg",
+    "success": "#2f7d32",
+    "warning": "#a86400",
+    "error": "#c62828",
+
+    "user_text": "#0b5fa5",
+    "assistant_text": "fg",
+    "tool_title": "#6a3ab2",
+    "tool_running": "#a86400",
+    "tool_done": "#2f7d32",
+    "tool_error": "#c62828",
+    "notice": "#7b8794",
+
+    "prompt_border": "ink",
+    "prompt_text": "fg",
+    "selected_bg": "#dbe6f7",
+
+    "status_bg": "#e6e9ef",
+    "status_text": "fg",
+    "status_accent": "ink"
+  },
+  "symbols": {
+    "preset": "unicode"
+  }
+}

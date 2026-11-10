@@ -37,10 +37,11 @@ async fn headless_child_records_its_parent_session() {
         registry,
         None,
         Some("coordinator-session".to_owned()),
+        None,
     );
     assert_eq!(child.session.parent_id.as_deref(), Some("coordinator-session"));
     let registry = Registry::new(provider.clone()).await;
-    let root = Agent::new_with_parent_and_initial_working_dir(provider, registry, None, None);
+    let root = Agent::new_with_parent_and_initial_working_dir(provider, registry, None, None, None);
     assert!(root.session.parent_id.is_none());
 }
 

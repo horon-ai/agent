@@ -116,7 +116,7 @@ impl Session {
                 let publish_paths = paths.clone();
                 let publish_id = id.clone();
                 writer.call(move |owned| {
-                    let runtime_changed = local.publish(&publish_paths, &publish_id)?;
+                    let runtime_changed = local.publish(&publish_paths, &publish_id, None)?;
                     let selected_changed = event_store::select(&publish_paths, &publish_id, &head, explicit)?;
                     if runtime_changed || selected_changed {
                         event_store::sync_local_state(&publish_paths, &publish_id)?;

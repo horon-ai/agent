@@ -11,6 +11,12 @@
 //! * Every row is `{v,seq,session_id,kind,id,at,payload}` with `v` fixed at 1.
 //!   `seq` is contiguous from the checkpoint that starts the file, and one
 //!   state transition is exactly one row.
+//! * A `run.started` or `run.stopped` payload may carry an optional `binding`:
+//!   the host-local session state (`LocalRuntime` fields) plus a monotonic
+//!   `rev`. A row without one is written exactly as before, so a build that
+//!   predates the field reads and rewrites the journal unchanged. The newest
+//!   binding seen is folded into `RuntimeState::binding` and so survives a
+//!   checkpoint, and a store or a state answers it through `latest_binding`.
 //! * A row is published only after `write` → file `sync_all`, and a newly
 //!   created file or an atomic replacement is followed by a parent-directory
 //!   sync. A caller that gets `Ok` holds a durable transition; a caller that
@@ -76,6 +82,10 @@ mod tests;
 #[cfg(test)]
 #[path = "directory_tests.rs"]
 mod directory_tests;
+
+#[cfg(test)]
+#[path = "binding_tests.rs"]
+mod binding_tests;
 
 use std::fmt;
 use std::path::Path;

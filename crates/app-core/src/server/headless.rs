@@ -30,6 +30,20 @@ pub(super) enum HeadlessMemoryScope {
     IsolatedTest,
 }
 
+/// Optional refinements a spawn carries beyond its prompt: a structured-result
+/// schema and the tool allow list resolved from a named agent definition.
+///
+/// They travel together because every spawn path decides both at the same
+/// moment, and one argument keeps the spawn signature from growing with each new
+/// refinement.
+#[derive(Debug, Clone, Default)]
+pub(super) struct SpawnExtras {
+    /// JSON Schema the child's `yield` tool validates its result against.
+    pub output_schema: Option<serde_json::Value>,
+    /// Tool allow list for the child; `None` keeps the configured profile.
+    pub allowed_tools: Option<Vec<String>>,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "headless session creation wires provider, global session, swarm state, interrupts, and MCP pool together"
@@ -51,6 +65,9 @@ pub(super) async fn create_headless_session(
     // JSON Schema the child's `yield` tool validates its result against. The
     // spawn path has already rejected an uncompilable schema.
     output_schema: Option<serde_json::Value>,
+    // Tool allow list resolved from a named agent definition. `None` keeps the
+    // configured profile, which is what a spawn without `agent` wants.
+    narrowed_tools: Option<HashSet<String>>,
     mcp_pool: Option<Arc<crate::mcp::SharedMcpPool>>,
     report_back_to_session_id: Option<String>,
     memory_scope: HeadlessMemoryScope,
@@ -86,6 +103,7 @@ pub(super) async fn create_headless_session(
         registry,
         working_dir_string.as_deref(),
         report_back_to_session_id.clone(),
+        narrowed_tools,
     );
     new_agent.set_memory_enabled(memory_enabled);
     // Inline swarm mode renders a live gallery of worker viewports in the
