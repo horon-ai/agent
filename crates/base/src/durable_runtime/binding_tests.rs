@@ -331,7 +331,7 @@ fn a_binding_row_whose_flush_fails_is_rolled_back_and_changes_no_state() {
         session,
         JournalOptions {
             limits: JournalLimits::default(),
-            hooks,
+            hooks: Some(hooks),
         },
     )
     .expect("open with a fault hook");
@@ -383,7 +383,7 @@ fn a_binding_row_whose_rollback_also_fails_keeps_state_unchanged() {
         session,
         JournalOptions {
             limits: JournalLimits::default(),
-            hooks,
+            hooks: Some(hooks),
         },
     )
     .expect("open with a fault hook");
