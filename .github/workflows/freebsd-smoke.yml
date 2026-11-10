@@ -27,7 +27,11 @@ on:
         required: false
         default: false
         type: boolean
+  # A branch that edits this workflow is checked with
+  # `gh workflow run freebsd-smoke.yml --ref <branch>`; `main` is covered by the
+  # weekly schedule below, so a push only runs here on `dev`.
   push:
+    branches: [dev]
     paths:
       - '.github/workflows/freebsd-smoke.yml'
   schedule:

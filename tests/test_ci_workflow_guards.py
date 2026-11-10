@@ -154,12 +154,19 @@ class WorkflowGuardTests(unittest.TestCase):
 
     def test_linux_rust_jobs_free_disk_before_building(self):
         # A hosted ubuntu runner has ~14 GB on `/`; the workspace's cold builds do
-        # not fit while the pre-installed toolchains are there.
+        # not fit while the pre-installed toolchains are there. structural-perf
+        # calls the same shared script as ci.yml, after the checkout that puts it
+        # on disk, and never deletes inline again (#21).
         text = (ROOT / '.github/workflows/structural-perf.yml').read_text()
-        self.assertIn('sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc',
-                      text)
-        self.assertIn('/opt/hostedtoolcache/CodeQL', text)
-        self.assertIn('df -h /', text)
+        gate = text.split('\n  structural-perf:\n', 1)[1].split(
+            '\n  structural-perf-required:\n', 1)[0]
+        self.assertIn('run: bash scripts/ci/free_disk_space.sh', gate)
+        self.assertIn("runner.environment == 'github-hosted' && runner.os == 'Linux'",
+                      gate)
+        self.assertNotIn('sudo rm -rf /usr/share/dotnet', gate)
+        self.assertLess(gate.index('- uses: actions/checkout@'),
+                        gate.index('- name: Free disk space'),
+                        'the shared script must be checked out before it runs')
 
         # ci.yml delegates to one script so the four steps cannot drift apart
         # (#21). Every Linux cleanup step must call it and stay off a
