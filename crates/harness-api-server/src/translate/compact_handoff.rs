@@ -47,7 +47,7 @@ pub(super) fn result_reply(state: &mut BridgeState, event: &Value) -> Vec<Server
     vec![ServerFrame::reply(
         api_id,
         ApiEvent::Compacted {
-            session_id: state.session_id.clone().unwrap_or_else(String::new),
+            session_id: session(state),
             message,
             handoff,
         },
@@ -63,5 +63,8 @@ fn parse_outcome(value: &Value) -> Option<horon_agent_harness_api::HandoffCompac
     }
     // A newer daemon can report an outcome this build does not know. The client
     // still gets the plain reply rather than an invented outcome.
-    serde_json::from_value(value.clone()).map_or(None, Some)
+    if let Ok(outcome) = serde_json::from_value(value.clone()) {
+        return Some(outcome);
+    }
+    None
 }

@@ -1221,7 +1221,7 @@ impl BridgeState {
             "compact" => {
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::Compact));
-                vec![Outbound::Legacy(compact_handoff::request(id, &request))]
+                vec![Outbound::Legacy(compact_handoff::request(id, request))]
             }
             "rename_session" => {
                 let id = self.legacy_id();
@@ -2319,7 +2319,7 @@ impl BridgeState {
             // reports refusal via `success: false` with a reason rather than
             // an error frame. Relayed as a real error so a client is not told
             // "done" about work that never happened.
-            "compact_result" => compact_handoff::result_reply(self, &event),
+            "compact_result" => compact_handoff::result_reply(self, event),
             "session_renamed" => {
                 let session_id = event["session_id"]
                     .as_str()
