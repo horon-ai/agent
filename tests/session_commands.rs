@@ -584,3 +584,52 @@ fn index_import_reads_a_staged_copy_and_leaves_the_database_untouched() {
     assert_eq!(report["saved"], json!(true));
     drop(connection);
 }
+
+/// `horon-agent export <id> --out x.md` writes exactly the bytes the request
+/// returns, because both call one renderer.
+#[test]
+fn export_writes_the_same_markdown_the_api_reply_carries() {
+    let sandbox = Sandbox::new("export-markdown");
+    let home = sandbox.home("a");
+    write_legacy(&home, "old");
+    assert_ok(&sandbox.migrate(&home, "old"));
+    let out = home.join("transcript.md");
+    let out_arg = out.to_str().expect("utf-8 path");
+
+    let output = sandbox.run(&home, &["export", "old", "--out", out_arg]);
+    assert_ok(&output);
+    assert!(
+        stdout(&output).is_empty(),
+        "the file form must not also print the transcript"
+    );
+
+    let written = fs::read(&out).expect("written transcript");
+    let markdown = String::from_utf8(written).expect("utf-8 transcript");
+    assert!(markdown.contains("### User"), "each user turn is a heading");
+    assert!(markdown.contains("### Assistant"), "each assistant turn is a heading");
+
+    // The same store root rendered in-process through the shared renderer the
+    // harness API reply uses. One lock keeps the env swap from racing a sibling.
+    let expected = {
+        let _guard = EXPORT_HOME_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os("HORON_HOME");
+        unsafe { std::env::set_var("HORON_HOME", &home) };
+        let rendered = horon_agent::session::Session::load("old")
+            .and_then(|session| horon_agent::session_export::export_session_markdown(&session));
+        match previous {
+            Some(value) => unsafe { std::env::set_var("HORON_HOME", value) },
+            None => unsafe { std::env::remove_var("HORON_HOME") },
+        }
+        rendered.expect("render the same session")
+    };
+    assert_eq!(
+        markdown, expected,
+        "the file and the API reply must be one renderer's output"
+    );
+
+    let plain = sandbox.run(&home, &["export", "old"]);
+    assert_ok(&plain);
+    assert_eq!(stdout(&plain), markdown, "stdout form writes the same bytes");
+}
+
+static EXPORT_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

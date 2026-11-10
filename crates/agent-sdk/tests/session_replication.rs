@@ -380,3 +380,51 @@ fn blob_and_record_transfers_round_trip() {
         .expect("record status");
     assert_eq!(record_resumed.received, 3);
 }
+
+#[test]
+fn export_session_markdown_sends_the_request_and_returns_the_transcript() {
+    let client = fake_harness(CAPABILITIES.to_vec(), |frame, writer| match frame.request {
+        ApiRequest::ExportSessionMarkdown { ref session_id } => {
+            assert_eq!(session_id, "s1");
+            reply(
+                frame,
+                ApiEvent::SessionMarkdown {
+                    session_id: "s1".into(),
+                    markdown: "### User\n\nhello\n\n### Assistant\n\nhi\n".into(),
+                },
+                writer,
+            )
+        }
+        _ => reply(
+            frame,
+            ApiEvent::Error {
+                code: ErrorCode::UnknownRequest,
+                message: "unexpected request".into(),
+                details: None,
+            },
+            writer,
+        ),
+    });
+
+    let markdown = client.export_session_markdown("s1").expect("export");
+    assert!(markdown.contains("### User"));
+    assert!(markdown.contains("### Assistant"));
+}
+
+#[test]
+fn export_session_markdown_refuses_a_server_without_session_replication() {
+    let client = fake_harness(vec!["sessions"], |frame, writer| {
+        reply(
+            frame,
+            ApiEvent::Error {
+                code: ErrorCode::UnknownRequest,
+                message: "should not be reached".into(),
+                details: None,
+            },
+            writer,
+        );
+    });
+    let error = client.export_session_markdown("s1").unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Unsupported);
+    assert!(error.message.contains("session_replication_v1"));
+}

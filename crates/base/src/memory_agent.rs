@@ -98,6 +98,10 @@ async fn run_final_extraction(transcript: String, session_id: String, working_di
         Ok(ids) => {
             memory::mark_memories_known(&session_id, &ids, "extracted from this session");
             memory::add_event(MemoryEventKind::ExtractionComplete { count: ids.len() });
+            // Phase two: merge what extraction added with earlier sessions and
+            // refresh the injected summary. Still inside the extraction task,
+            // never on the turn path.
+            manager.run_consolidation();
         }
         Err(_) => crate::logging::info("Optional memory extraction failed"),
     }

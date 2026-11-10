@@ -56,12 +56,14 @@ pub(super) fn stored_compaction(
                 }),
             lossy_emergency: payload.outcome == store::CompactionOutcome::LossyEmergency,
             recovery_blocked: None,
+            handoff: payload.outcome == store::CompactionOutcome::Handoff,
         })
         .filter(|meta| {
             meta.input_tokens.is_some()
                 || meta.output_tokens.is_some()
                 || meta.restoration.is_some()
                 || meta.lossy_emergency
+                || meta.handoff
         }),
     }
 }
@@ -240,6 +242,8 @@ impl Session {
             output_tokens: state.structured.as_ref().and_then(|meta| meta.output_tokens),
             outcome: if state.structured.as_ref().is_some_and(|meta| meta.lossy_emergency) {
                 store::CompactionOutcome::LossyEmergency
+            } else if state.structured.as_ref().is_some_and(|meta| meta.handoff) {
+                store::CompactionOutcome::Handoff
             } else if native_window.is_empty() {
                 store::CompactionOutcome::Summary
             } else {

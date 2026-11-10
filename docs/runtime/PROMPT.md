@@ -142,6 +142,30 @@ explicitly chooses an empty system prompt. The override belongs to that session,
 resume, and is inherited by forks. Attaching to an existing session does not change its prompt.
 This feature requires a daemon version that supports the `system_prompt` session creation field.
 
+## Per-turn effort keywords
+
+A user message may raise or lower the reasoning effort for that turn by including one
+standalone keyword. `ultrathink` selects the highest rung the model supports and `chillax`
+the lowest rung that is not `none`. The keyword stays in the message text; only that one
+request carries the different effort, and the next turn returns to the configured effort.
+
+Matching is exact lowercase and the word must stand alone in prose. Keywords inside inline
+code spans, fenced code blocks, HTML comments, tags, or URLs are ignored.
+
+Explicit effort always wins: an effort set through `SetReasoningEffort`, a `swarm spawn`
+`effort` argument, or a swarm sentinel already in session state is never overridden by a
+keyword in the same turn. A keyword also never moves the wrong way: `chillax` will not raise
+effort and `ultrathink` will not lower it. `swarm` and `swarm-deep` are orchestration modes,
+not reasoning rungs, so a keyword can neither produce nor match them.
+
+Keywords are read only from user-authored turn text: the client message turn, the REPL user
+prompt, and the first iteration of `horon-agent run`. Synthetic or agent-initiated messages
+(swarm assignments, reload recovery, live turns, overnight, advisor, ambient, debug, swarm
+planner, auto-poke continuations) never arm one.
+
+Set `[features] effort_keywords = false` to turn the scan off. A model without effort
+support ignores the keyword.
+
 ## Skills
 
 A skill is one `SKILL.md` plus the files in its folder. The "Available Skills" section of the system prompt holds only names and one-line descriptions; bodies are read when used.

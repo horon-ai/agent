@@ -367,6 +367,10 @@
     "src/cli/proctitle.rs": {
       "count": 1,
       "reason": "one match arm labelling the Unix-only `api-bridge` command."
+    },
+    "src/main.rs": {
+      "count": 1,
+      "reason": "Apple's linker reports the unoptimized `horon-agent` binary's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for debug links on macOS and is not actionable from source."
     }
   },
   "version": 1

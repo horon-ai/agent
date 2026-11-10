@@ -461,6 +461,71 @@ so it is staged.
 
 ---
 
+## 8b. Named agent definitions
+
+A spawn can name a role instead of restating it. `swarm spawn` accepts
+`agent: "<name>"`, resolved against Markdown files with YAML frontmatter:
+
+- `<workspace>/.horon/agents/*.md` first, then `~/.horon/agents/*.md`.
+- The first file carrying an exact name wins, so a project definition shadows a
+  home definition of the same name.
+- No definitions means spawn behaves exactly as it did before.
+
+Frontmatter keys follow this repository's spawn vocabulary rather than another
+tool's: `name`, `description`, `tools` (allow list), `model`, `effort`,
+`output_schema` (JSON Schema). The Markdown body is the role prompt. `tools`
+accepts a YAML sequence or a comma-delimited string.
+
+Resolution happens before any session exists:
+
+- Explicit spawn parameters override definition values, so a caller can reuse a
+  role and change its model for one run.
+- An unknown name fails and lists the names that do exist.
+- A file that cannot be parsed is reported under its own name rather than
+  hidden, while other definitions stay usable.
+
+The definition's `tools` reaches the child as an allow list. It narrows the
+child's registry and never widens it: a definition naming three tools gets those
+three, not the configured profile's surface. `model` is a plain model name, not
+a model role.
+
+`swarm` action `list_agent_defs` lists the definitions visible from the current
+workspace. It is a separate action from `list`, which still means "list swarm
+members" and keeps `list_agents` as its alias.
+
+## 8c. Fan-out: `spawn_many`
+
+A parent that fans work out pays one model round trip per child when it calls
+`swarm spawn` once per child. `swarm spawn_many` starts several children from one
+call:
+
+- `tasks`: a list of `{label, initial_message?, agent?, model?, effort?, isolation?, output_schema?}`.
+  `prompt` is accepted as an alias for `initial_message`, the same way the single
+  spawn accepts it.
+- `context`: shared background prepended to each child's first message.
+
+The rules that keep a batch honest:
+
+- Labels must be unique within one call, compared case-insensitively. A
+  duplicate fails the call before any child exists.
+- An empty `tasks` list is rejected.
+- Each task runs the single-spawn request path, and the tasks start
+  concurrently, one socket request each.
+- Call-level `model`, `effort`, `output_schema`, `agent`, `isolation`,
+  `working_dir` and `spawn_mode` act as defaults for the tasks that omit them.
+  A task value wins.
+- The result keeps input order and carries one entry per task: the child's
+  session id, or the error that stopped that task. One failure never cancels the
+  others.
+- Both spawn caps still reject rather than queue: `agents.swarm_max_concurrent_agents`
+  for concurrency and `MAX_SWARM_MEMBERS` for total live members. A caller must
+  not assume that three tasks always produce three children.
+
+`context` is prepended to the child's first user message, not rendered as a
+system-prompt section, because the child session exists before its first turn.
+
+---
+
 ## 9. Example: how the graph changes over time
 
 Task: "investigate multi-monitor support in scrollwm". Status legend: pending, running,

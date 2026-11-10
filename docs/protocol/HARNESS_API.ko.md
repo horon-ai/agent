@@ -101,6 +101,38 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이 요청들에 `unsupported`로 답한다. 클라이언트 입장에서는 "이 서버가 아직 제공하지 않는다"와
 같은 응답이므로 분기 처리가 달라지지 않는다.
 
+## 도구 인자 복구(프로토콜 1.16)
+
+프로바이더의 JSON 작성기는 때때로 도구 인자의 타입을 틀리게 씁니다. 숫자가
+들어갈 자리에 `"5000"`을, 불리언 자리에 `1`을 보내는 식입니다. 디스패처는
+도구가 실행되기 전에 그것을 복구하고, 이제 그 복구를 세 가지 방법으로 볼 수
+있습니다. 여기서 추가된 것은 모두 덧붙이는 변경입니다. 이전 클라이언트는 예전과
+같은 요청을 보내고 예전과 같은 이벤트를 읽습니다.
+
+### 이벤트: `tool_args_repaired`
+
+해당 호출의 `tool_done` 바로 앞에, 복구된 호출마다 한 번 보냅니다. 이 이벤트를
+모르는 클라이언트는 무시하며, 호출은 어느 쪽이든 끝까지 진행됩니다.
+
+```json
+{"ev":"tool_args_repaired","session_id":"s-1","call_id":"call-9","name":"bash",
+ "original_input":{"command":"ls","timeout":"5000"},"changes":["coerced `timeout` to a number"]}
+```
+
+`original_input`은 모델이 보낸 그대로의 인자이고, `changes`는 복구를 적용한
+순서대로 한 줄에 하나씩 적은 목록입니다.
+
+### 저장되는 기록
+
+저장된 도구 결과는 같은 두 값을 `original_input`과 `arg_repairs`로 함께
+보관합니다. 복구가 필요 없었던 호출에서는 두 값을 생략하므로, 나머지 기록은
+이 변경 전과 정확히 같은 바이트를 유지합니다.
+
+### 카운터
+
+`HORON_AGENT_PERF_COUNTERS=1`일 때 `snapshot().tool_arg_repairs`가 도구별
+복구 호출 수를 셉니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -149,6 +181,22 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 1 MiB 청크로 따로 이동하며 발행 전에 SHA-256과 크기로 검증한다. 중단된 전송은
 `get_session_blob_status`에서 이어 간다.
 
+### Markdown 대화록
+
+`export_session_markdown`은 `session_id`를 받아 읽을 수 있는 대화록 전체를
+`markdown`에 담은 `session_markdown` 이벤트로 응답한다. 각 턴은 `### User` 또는
+`### Assistant` 제목과 그 내용으로 이루어진다. 텍스트는 그대로, 도구 호출은 JSON
+코드 블록으로, 도구 결과는 코드 블록으로, 이미지와 오디오 블록은 짧은 자리표시자로
+표시한다. 비밀 값은 디스크 경로가 쓰는 같은 패턴 표로 가리므로, 이벤트 로그에
+들어가지 않은 토큰은 대화록에도 나타날 수 없다. 4 KiB를 넘는 도구 결과는 UTF-8
+경계에서 잘리고 `… (truncated, N bytes total)` 표시로 바뀐다.
+
+이 응답은 복제 프로토콜에 속하지 않으므로 `protocol_version`이 필요 없다.
+다른 저장 세션 읽기를 이미 막는 `session_replication_v1` 기능을 요구한다. 없는
+세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
+`horon-agent export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
+같은 바이트를 쓴다.
+
 클라이언트가 어겨서는 안 되는 규칙 두 가지:
 
 - **`canonical_json`을 다시 직렬화하지 않는다.** 이벤트의 정규 JSON은 문자열로
@@ -180,7 +228,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 
 ## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, durable_runtime
 
-이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 끝부분은 1.14의 내구 런타임 표면 넷입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
+이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 그다음은 1.14의 내구 런타임 표면 넷이고, 마지막은 1.16의 인자 복구입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
 
 세 요청 모두 추가형입니다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`를 광고합니다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
 

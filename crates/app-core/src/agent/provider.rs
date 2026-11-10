@@ -201,7 +201,7 @@ impl Agent {
         }
     }
 
-    fn refresh_compaction_budget(&self) {
+    pub(super) fn refresh_compaction_budget(&self) {
         let compaction = self.registry.compaction();
         let provider_name = self.provider.name().to_string();
         let model = self.provider.model();
@@ -329,6 +329,10 @@ impl Agent {
         } else {
             self.session.reasoning_effort = self.provider.reasoning_effort();
         }
+        // Restoring is not an explicit choice: a session that came back from
+        // disk with a stored effort only reproduces provider state. Only
+        // `set_reasoning_effort` pins the effort against keyword overrides.
+        self.reasoning_effort_pinned = self.session.reasoning_effort_pinned;
         // Mirror the effort into the deadlock-free side-table so server handlers
         // (e.g. the swarm seed handler) can learn this session's effort without
         // taking the agent lock.
@@ -340,6 +344,9 @@ impl Agent {
         self.session.invalidate_event_generation()?;
         let current = self.provider.reasoning_effort();
         self.session.reasoning_effort = current.clone();
+        // An explicit effort is pinned: a per-turn keyword must not move it.
+        self.reasoning_effort_pinned = true;
+        self.session.reasoning_effort_pinned = true;
         // Keep the side-table in sync (see `restore_reasoning_effort_from_session`).
         crate::session_effort::record_session_effort(&self.session.id, current.as_deref());
         self.log_env_snapshot("set_reasoning_effort");

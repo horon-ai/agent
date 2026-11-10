@@ -109,10 +109,11 @@ impl Session {
                 ),
             );
         }
-        session.restore_local_runtime(&paths, &id)?;
+        let binding = session.restore_local_runtime(&paths, &id)?;
         session.event_state = EventState {
             source_metadata: Some(projection.metadata().clone()),
             local_binding: Some(super::event_wire::LocalRuntime::capture(&session)),
+            confirmed_binding: binding.journal().cloned(),
             external_source,
             paths: Some(paths.clone()),
             bound_id: Some(id.as_str().to_owned()),

@@ -28,8 +28,9 @@
 //! Values are cumulative since process start; [`reset`] exists for tests and
 //! benchmark harnesses.
 
-use std::sync::OnceLock;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use serde::Serialize;
 
@@ -75,6 +76,11 @@ static TOOL_RESULT_AGING_BATCHES: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGED_RESULTS: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGED_BYTES: AtomicU64 = AtomicU64::new(0);
 static HOOK_PROCESS_SPAWNS: AtomicU64 = AtomicU64::new(0);
+
+/// Per-tool counts of calls a schema repair rewrote. The only counter keyed by
+/// a name, because "how often is this model's writer wrong about `bash`" is the
+/// question this exists to answer.
+static TOOL_ARG_REPAIRS: LazyLock<Mutex<BTreeMap<String, u64>>> = LazyLock::new(Mutex::default);
 
 /// Read once from [`ENV_ENABLE`] and cached, so the gate stays a single load and
 /// changing the variable mid-process cannot make counters inconsistent.
@@ -272,6 +278,22 @@ pub fn record_tool_output_spill(original_bytes: u64, kept_bytes: u64) {
     TOOL_OUTPUT_SPILL_KEPT_BYTES.fetch_add(kept_bytes, Ordering::Relaxed);
 }
 
+/// One tool call whose arguments a schema-directed repair rewrote, counted
+/// against the tool that ran them. A repaired call is the exception, so the
+/// per-tool map stays small and no name is formatted unless one happens.
+pub fn record_tool_arg_repair(tool: &str) {
+    if !enabled() {
+        return;
+    }
+    let mut repairs = TOOL_ARG_REPAIRS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match repairs.get_mut(tool) {
+        Some(count) => *count += 1,
+        None => {
+            repairs.insert(tool.to_string(), 1);
+        }
+    }
+}
+
 /// A repeated `read` of unchanged lines answered with a one-line notice.
 pub fn record_read_unchanged(avoided_bytes: u64) {
     if !enabled() {
@@ -357,6 +379,10 @@ pub fn reset() {
     ] {
         slot.store(0, Ordering::Relaxed);
     }
+    TOOL_ARG_REPAIRS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clear();
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -402,6 +428,8 @@ pub struct Snapshot {
     pub tool_result_aged_results: u64,
     pub tool_result_aged_bytes: u64,
     pub hook_process_spawns: u64,
+    /// Repaired calls per tool, ready to read without another lookup.
+    pub tool_arg_repairs: BTreeMap<String, u64>,
 }
 
 impl Snapshot {
@@ -464,6 +492,10 @@ pub fn snapshot() -> Snapshot {
         tool_result_aged_results: TOOL_RESULT_AGED_RESULTS.load(Ordering::Relaxed),
         tool_result_aged_bytes: TOOL_RESULT_AGED_BYTES.load(Ordering::Relaxed),
         hook_process_spawns: HOOK_PROCESS_SPAWNS.load(Ordering::Relaxed),
+        tool_arg_repairs: TOOL_ARG_REPAIRS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone(),
     }
 }
 
@@ -589,6 +621,7 @@ mod tests {
             "tool_result_aging_batches",
             "tool_result_aged_results",
             "tool_result_aged_bytes",
+            "tool_arg_repairs",
         ] {
             assert!(value.get(key).is_some(), "missing counter {key}");
         }

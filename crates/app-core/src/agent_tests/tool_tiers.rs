@@ -1,13 +1,13 @@
 use super::*;
 use crate::config::{CORE_TOOL_PROFILE, CORE_TOOLS, ESSENTIAL_TOOLS, LoadMode, TOOLBOX_TOOL};
 
-struct ProfileEnv {
+pub(super) struct ProfileEnv {
     _home: tempfile::TempDir,
     previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
 }
 
 impl ProfileEnv {
-    fn new(profile: &str, config_toml: Option<&str>) -> Self {
+    pub(super) fn new(profile: &str, config_toml: Option<&str>) -> Self {
         let previous = ["HORON_HOME", "HORON_AGENT_TOOL_PROFILE", "HORON_AGENT_TOOLS"]
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
@@ -42,7 +42,7 @@ impl Drop for ProfileEnv {
     }
 }
 
-async fn agent_with_mcp_management_tool() -> Agent {
+pub(super) async fn agent_with_mcp_management_tool() -> Agent {
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let registry = Registry::new(provider.clone()).await;
     registry
@@ -799,7 +799,7 @@ async fn the_listed_tools_index_is_frozen_for_the_session() {
     let env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
     let mut agent = agent_with_mcp_management_tool().await;
 
-    let first_tools = serde_json::to_string(&agent.tool_definitions().await).expect("serialize");
+    let first_tools = serde_json::to_string(&agent.tool_definitions().await[..]).expect("serialize");
     let first_prompt = without_clock(&agent.build_system_prompt_split(None).static_part);
     assert!(first_prompt.contains("# Additional tools"), "{first_prompt}");
 
@@ -807,7 +807,7 @@ async fn the_listed_tools_index_is_frozen_for_the_session() {
     agent.unlock_tools();
     agent.note_compaction_applied();
 
-    let second_tools = serde_json::to_string(&agent.tool_definitions().await).expect("serialize");
+    let second_tools = serde_json::to_string(&agent.tool_definitions().await[..]).expect("serialize");
     let second_prompt = without_clock(&agent.build_system_prompt_split(None).static_part);
     assert_eq!(second_tools, first_tools, "the tool list survives the unlock");
     assert_eq!(second_prompt, first_prompt, "the static part survives the unlock");

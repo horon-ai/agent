@@ -52,8 +52,20 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | `turns` | `3` | Turns sent per session |
 | `oneshot_runs` | `5` | How many samples each build takes for the one-shot, skill and MCP cells; `compare.md` names the count on its Host line. Five is the floor for a median; raise it to about 20 when the median has to separate two close builds |
 | `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately as the `horon-base` row. That makes a before-and-after comparison on the same runner |
+| `features` | empty | Cargo features added to the **candidate** release build only (`--features <value>`); the `horon-base` build never gets them, so the two rows stay comparable. Empty leaves the build command byte-identical to a run without this input, and the artifact then holds an empty `features.txt` line. The value must match `^[a-z0-9_,-]*$`. The `build` job keys its rust-cache entry on it, so a feature build never reuses the default artifacts |
 
 An unknown OS or group name fails the run immediately (`scripts/perf/bench_select.py`). Results stay for 30 days as the per-OS `merge` job summary and the `benchmark-<os>-<run_id>` artifact (JSON, Markdown). Intermediate artifact names do not start with `benchmark-`, so they do not mix into the `benchmark-docs.yml` download.
+
+### Allocator A/B
+
+The shipped binary builds without the `jemalloc` feature, so glibc is the Linux allocator and the default is not changed by a benchmark run. To compare the two on one runner, give the candidate the feature and let the same job build the baseline without it:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=20 -f baseline_ref=dev -f features=jemalloc
+```
+
+Read the added-session memory (idle and right after a turn), first-session RSS, one-shot time and install size in both horon rows. A cell where jemalloc's min–max range is worse than the baseline's does not justify a default change. The `features` input only exists on the candidate build; the `horon-base` row is always the shipped feature set, which is what makes the pair a measurement of the feature alone. The input is not restricted by OS; the allocator A/B is defined for `os=linux` only, and on a target where the C toolchain cannot build the allocator cargo fails the build job.
 
 There are no secrets and no API charges. Every measurement that needs a model attaches to `scripts/perf/mock_llm_server.py` (a local fake model server).
 
@@ -218,12 +230,15 @@ The gate asks "is the shape still bounded", not "is it fast". It therefore reads
 | IRC mailbox | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | At or below the 100 cap, 900 drops for 1000 arrivals, one body allocation per broadcast, 0 waiters after cleanup, at most 16 concurrent broadcasts |
 | Skill catalog and workspace skills | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | In a 200-skill catalog at most one file read and 8 KiB per skill (reading a 32 KiB body whole fails), 0 file and folder reads across 9 unchanged workspace requests, 1 or more warmup reads |
 | MCP user config | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 1 or more warmup reads, 0 rereads of unchanged user config after warmup |
+| Request prefix | `tools_bytes`, `tool_count` | The `core` profile's tool catalog is at least 1 byte and at or below the committed ceiling, and the tool count equals the eager definitions it was built from |
+
+The mock model server records `body_bytes`, `tools_bytes`, and `tool_count` for every request it answers (`GET /__stats`), so a bench run reports the same per-request shape the `prefix` row bounds.
 
 An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # everything
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix
 python3 scripts/perf/check_structural.py --print-plan    # only show the cargo commands that would run
 python3 -m unittest -v scripts/perf/test_check_structural.py   # the gate's contract tests
 ```

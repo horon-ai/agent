@@ -18,6 +18,7 @@
     clippy::useless_conversion
 )]
 
+pub mod agent_defs;
 pub mod artifacts;
 pub mod auth;
 pub mod aux_completion;
@@ -93,8 +94,10 @@ pub mod session_list_cache;
 pub mod session_metrics;
 pub mod sidecar;
 pub mod skill;
+pub mod skill_install;
 pub mod soft_interrupt_store;
 pub mod sponsors;
+pub mod sqlite_read;
 pub mod stdin_detect;
 pub mod storage;
 pub mod terminal_launch;

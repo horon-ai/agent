@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "lockfile-packages",
+  "description": "Resolved dependency count pinned by Cargo.lock. Every [[package]] entry is one crate version the build can install, so the count is the installer size and the supply-chain surface. Adding a dependency re-pins this ceiling in the reviewed commit that adds it; nothing else raises it.",
+  "counter": {
+    "kind": "cargo_lock_packages"
+  },
+  "ceiling": 662
+}

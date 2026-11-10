@@ -17,3 +17,4 @@ pub mod ssh;
 pub mod ssh_transport;
 pub mod startup;
 pub mod terminal;
+pub mod tui_handoff;

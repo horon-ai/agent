@@ -376,6 +376,9 @@ impl Agent {
             self.apply_pending_context_rollover();
         } else {
             crate::tool::new_context::clear_rollover(&self.session.id);
+            // A turn that fell back and then failed must not leave the session
+            // running on a fallback model.
+            self.restore_model_fallback();
         }
     }
 

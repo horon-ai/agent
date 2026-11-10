@@ -2869,6 +2869,7 @@ pub(super) async fn handle_client(
                 isolation,
                 iso_apply,
                 output_schema,
+                allowed_tools,
             } => {
                 let spawn_mode = match parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) {
                     Some(spawn_mode) => spawn_mode,
@@ -2886,7 +2887,7 @@ pub(super) async fn handle_client(
                     label,
                     isolation,
                     iso_apply,
-                    output_schema,
+                    super::comm_session::SpawnExtras { output_schema, allowed_tools },
                     &client_event_tx,
                     &sessions,
                     &global_session_id,
@@ -3796,6 +3797,7 @@ async fn start_processing_message(
                     (agent.message_count(), agent.soft_interrupt_queue())
                 }
             };
+            agent.arm_effort_keywords(&content);
             // Ownership is claimed only once this turn holds the agent, and the
             // guard drops before that lock is released. Claiming earlier left a
             // window in which a daemon wake turn could take the idle agent and

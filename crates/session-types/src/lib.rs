@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
-use horon_agent_message_types::{ContentBlock, Message, Role, ToolCall};
+use horon_agent_message_types::ToolCall;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+pub mod repair_record;
+mod stored_message;
 mod title;
 mod transcription;
+pub use stored_message::StoredMessage;
 pub use title::prompt_title;
 pub use transcription::{TRANSCRIPTION_CLOSE, TRANSCRIPTION_OPEN, strip_transcription, wrap_transcription};
 
@@ -243,27 +246,6 @@ pub struct StoredMemoryInjection {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredMessage {
-    pub id: String,
-    pub role: Role,
-    pub content: Vec<ContentBlock>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_role: Option<StoredDisplayRole>,
-    /// This message started a turn: it is the `start_message_id` that turn
-    /// reports. A message stored inside a running turn (a soft interrupt, a
-    /// reminder, a tool result) leaves it unset, and so does every message an
-    /// older build stored.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub turn_start: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_duration_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_usage: Option<StoredTokenUsage>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StoredDisplayRole {
@@ -400,6 +382,10 @@ pub struct StoredSummaryMetadata {
     /// restart does not retry the same doomed compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_blocked: Option<StoredRecoveryBlocked>,
+    /// True when the boundary carries a generated handoff document rather than
+    /// a summarizer summary. The document still replays as plain text.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub handoff: bool,
 }
 
 /// A refused automatic context recovery, bound to one exact source, provider,
@@ -421,43 +407,6 @@ pub struct StoredRecoveryBlocked {
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-}
-
-impl StoredMessage {
-    pub fn to_message(&self) -> Message {
-        Message {
-            role: self.role.clone(),
-            content: self.content.clone(),
-            timestamp: self.timestamp,
-            tool_duration_ms: self.tool_duration_ms,
-        }
-    }
-
-    /// Get a text preview of the message content
-    pub fn content_preview(&self) -> String {
-        for block in &self.content {
-            match block {
-                ContentBlock::Text { text, .. } => {
-                    // Return first non-empty text block
-                    let text = text.trim();
-                    if !text.is_empty() {
-                        return text.replace('\n', " ");
-                    }
-                }
-                ContentBlock::ToolUse { name, .. } => {
-                    return format!("[tool: {}]", name);
-                }
-                ContentBlock::ToolResult { content, .. } => {
-                    let preview = content.trim().replace('\n', " ");
-                    if !preview.is_empty() {
-                        return format!("[result: {}]", preview);
-                    }
-                }
-                _ => {}
-            }
-        }
-        "(empty)".to_string()
-    }
 }
 
 #[derive(Debug, Clone)]

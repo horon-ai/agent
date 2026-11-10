@@ -70,6 +70,7 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
     "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
     "request_message_copies=0",
+    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8",
 ]
 
 
@@ -441,6 +442,46 @@ class HooksSectionTest(unittest.TestCase):
         self.assertIn("hooks", run.stderr)
 
 
+class PrefixSectionTest(unittest.TestCase):
+    """The request prefix is bounded, and the bound is not met by losing tools."""
+
+    def test_a_catalog_above_its_ceiling_fails_the_gate(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=70000 tool_count=8 eager_count=8",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("tools_bytes", named)
+
+    def test_a_catalog_that_serialized_nothing_fails_rather_than_passing_on_a_zero(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=0 tool_count=0 eager_count=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("tools_bytes", named)
+
+    def test_a_catalog_that_lost_a_tool_fails_even_under_the_ceiling(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9000 tool_count=7 eager_count=8",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("tool_count", named)
+
+    def test_a_missing_prefix_section_fails_the_same_way(self):
+        without_prefix = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=prefix")]
+        run = run_gate(without_prefix)
+        self.assertEqual(run.code, 2, "a prefix section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["prefix"])
+
+
 class MissingMeasurementTest(unittest.TestCase):
     def test_a_missing_section_fails_instead_of_passing_on_nothing(self):
         without_soak = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=soak")]
@@ -546,6 +587,7 @@ class BudgetTest(unittest.TestCase):
             "mcp_config_user_rereads_max",
             "hooks_unset_process_spawns_max",
             "hooks_unset_message_copies_max",
+            "prefix_tools_bytes_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

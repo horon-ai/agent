@@ -440,7 +440,6 @@ impl BridgeState {
     fn translate_request(&mut self, request: &Value) -> Vec<Outbound> {
         let api_id = request["id"].as_u64().unwrap_or(0);
         let req = request["req"].as_str().unwrap_or("");
-
         // Stateful requests only mean something once this connection is
         // attached. Forwarding one before then is not merely useless: the
         // daemon answers "Client must Subscribe with a working_dir before
@@ -772,11 +771,11 @@ impl BridgeState {
             | "get_session_blob_status"
             | "export_session_record_blob"
             | "import_session_record_blob"
-            | "get_session_record_blob_status" => crate::replication::handle(request, self.request_envelope_bytes),
-            // Answered from the stored record rather than the daemon: the
-            // legacy protocol can only speak about the attached session, and
-            // attaching to a session merely to read it would disturb the very
-            // thing being previewed.
+            | "get_session_record_blob_status"
+            | "export_session_markdown" => crate::replication::handle(request, self.request_envelope_bytes),
+            // Answered from the stored record rather than the daemon: the legacy
+            // protocol can only speak about the attached session, and attaching
+            // merely to read it would disturb the very thing being previewed.
             "peek_session" => {
                 let session_id = request["session_id"].as_str().unwrap_or_default();
                 let limit = request["limit"].as_u64().unwrap_or(PEEK_LIMIT) as usize;
@@ -1964,6 +1963,7 @@ impl BridgeState {
                 output: event["output"].as_str().unwrap_or("").to_string(),
                 error: event["error"].as_str().map(str::to_string),
             })],
+            "tool_args_repaired" => crate::tool_args_repaired::frames(session(self), event),
             "side_pane_images" => vec![ServerFrame::event(ApiEvent::SidePaneImages {
                 session_id: event["session_id"]
                     .as_str()

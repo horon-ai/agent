@@ -1638,7 +1638,7 @@ async fn wait_for_member_presence(
 
 #[path = "communicate_tests/credential_failures.rs"]
 mod credential_failures;
-
 include!("communicate_tests/input_format.rs");
 include!("communicate_tests/end_to_end.rs");
 include!("communicate_tests/assignment.rs");
+include!("communicate_tests/agent_defs.rs");

@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 15
+API_VERSION_MINOR = 16
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -406,6 +406,15 @@ class SessionHistoryPage(TypedDict, total=False):
     next_cursor: str
 
 
+class SessionMarkdown(TypedDict, total=False):
+    """Reply to ``export_session_markdown``."""
+
+    session_id: str
+    # Full Markdown transcript: secrets redacted, long tool results truncated
+    # with a marker.
+    markdown: str
+
+
 class SessionEventPage(TypedDict, total=False):
     """Reply to ``export_session_events``."""
 
@@ -625,6 +634,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "tool_input_delta",
     "tool_exec",
     "tool_done",
+    "tool_args_repaired",
     "token_usage",
     "kv_cache_miss",
     "turn_done",
@@ -662,6 +672,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "session_renamed",
     "session_heads",
     "session_history_page",
+    "session_markdown",
     "session_event_page",
     "session_import_result",
     "session_blob_chunk",
@@ -733,6 +744,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "get_session_blob_status",
     "export_session_record_blob",
     "import_session_record_blob",
+    "export_session_markdown",
     "get_session_record_blob_status",
     "get_runtime_state",
     "apply_control",

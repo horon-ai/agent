@@ -275,8 +275,8 @@ async fn remote_startup_case(shared: bool) {
     }
     assert!(!registry.tool_names().await.iter().any(|name| name == "mcp__slow__echo"));
     assert_eq!(
-        serde_json::to_value(&before).unwrap(),
-        serde_json::to_value(agent.tool_definitions().await).unwrap()
+        serde_json::to_value(&before[..]).unwrap(),
+        serde_json::to_value(&agent.tool_definitions().await[..]).unwrap()
     );
     slow.release.add_permits(1);
     wait_for_tool(&registry, "mcp__slow__echo").await;
@@ -324,7 +324,7 @@ async fn remote_startup_case(shared: bool) {
         warm_registry,
     );
     warm_agent.mcp_tools_mode = crate::config::McpToolsMode::Eager;
-    let warm_before = serde_json::to_value(warm_agent.tool_definitions().await).unwrap();
+    let warm_before = serde_json::to_value(&warm_agent.tool_definitions().await[..]).unwrap();
     slow.wait_for_initialize().await;
     fast.wait_for_initialize().await;
     slow.release.add_permits(1);
@@ -344,7 +344,7 @@ async fn remote_startup_case(shared: bool) {
     .unwrap();
     assert_eq!(
         warm_before,
-        serde_json::to_value(warm_agent.tool_definitions().await).unwrap(),
+        serde_json::to_value(&warm_agent.tool_definitions().await[..]).unwrap(),
         "warm cached schemas keep even the eager tool snapshot unchanged"
     );
     eprintln!(

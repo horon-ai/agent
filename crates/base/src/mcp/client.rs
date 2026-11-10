@@ -782,7 +782,8 @@ impl McpClient {
         }
     }
 
-    // === Legacy compatibility methods that delegate to handle ===
+    // Accessors that delegate to the shared handle, so a caller holding the
+    // client does not reach into it.
 
     pub fn name(&self) -> &str {
         &self.handle.name

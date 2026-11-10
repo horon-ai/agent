@@ -2,8 +2,8 @@
 """Check that the documentation is a complete English/Korean pair set.
 
 English is the default language: `X.md` is canonical and `X.ko.md` is its Korean
-counterpart in the same folder. The checked set is `README.md`/`README.ko.md`
-and every Markdown file under `docs/`.
+counterpart in the same folder. The checked set is `README.md`/`README.ko.md`,
+`PHILOSOPHY.md`/`PHILOSOPHY.ko.md` and every Markdown file under `docs/`.
 
 Failures (all reported, exit status 1):
 
@@ -42,6 +42,7 @@ BENCH_BLOCK = re.compile(r"<!-- bench-auto:start.*?<!-- bench-auto:end -->", re.
 
 def pair_files() -> list[Path]:
     files = [REPO / "README.md", REPO / "README.ko.md"]
+    files += [REPO / "PHILOSOPHY.md", REPO / "PHILOSOPHY.ko.md"]
     files += sorted((REPO / "docs").rglob("*.md"))
     return files
 

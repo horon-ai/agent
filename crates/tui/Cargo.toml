@@ -1,0 +1,36 @@
+[package]
+name = "horon-tui"
+version = "0.1.0"
+description = "Terminal client for the horon-agent harness, built on the agent SDK"
+edition = "2024"
+publish = false
+autobins = false
+
+[lib]
+name = "horon_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "horon-tui"
+path = "src/main.rs"
+
+[dependencies]
+horon-agent-sdk = { path = "../agent-sdk" }
+# The ask tool's question shape crosses the harness API inside
+# `ApiEvent::AskRequested`, but the API crate only imports it privately, so a
+# client that answers questions names the type from its own crate.
+horon-agent-tool-types = { path = "../tool-types" }
+# Default features are off so the binary pulls only the widgets and backend it
+# uses: the crossterm 0.29 backend (matching the direct dependency below) and
+# the layout cache. `all-widgets` would add the calendar widget and its date
+# stack to every build for nothing.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
+crossterm = "0.29"
+toml = "0.8"
+serde_json = "1"
+# The `time` segment shows local wall-clock time; chrono is already in the
+# workspace lock through the harness crates.
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
