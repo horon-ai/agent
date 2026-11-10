@@ -66,9 +66,6 @@ pub(super) async fn resolve_target_subscribe_prefix(
     }
 }
 
-/// A reattachment names an existing session, not a new client working directory.
-/// Resolve an omitted cwd before provisional initialization, never from the
-/// daemon/bridge process cwd. Idle empty sessions may exist only in memory.
 /// Resolve a session id prefix, then the working directory.
 ///
 /// A target id prefix names a session only when it is unique, so pasting the
@@ -83,6 +80,10 @@ pub(super) async fn resolve_subscribe_target(
     resolve_target_subscribe_working_dir(request, sessions, members).await
 }
 
+/// A reattachment names an existing session, not a new client working directory.
+///
+/// Resolve an omitted cwd before provisional initialization, never from the
+/// daemon/bridge process cwd. Idle empty sessions may exist only in memory.
 pub(super) async fn resolve_target_subscribe_working_dir(
     request: &mut Request,
     sessions: &SessionAgents,
