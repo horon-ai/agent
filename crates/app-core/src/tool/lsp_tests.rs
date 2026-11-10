@@ -31,7 +31,16 @@ fn the_tool_is_named_lsp_and_declares_every_action() {
 
     let schema = tool.parameters_schema();
     let actions = schema["properties"]["action"]["enum"].as_array().expect("action enum");
-    for action in ["diagnostics", "definition", "references", "hover", "symbols", "status"] {
+    for action in [
+        "diagnostics",
+        "definition",
+        "references",
+        "hover",
+        "symbols",
+        "status",
+        "rename",
+        "code_actions",
+    ] {
         assert!(
             actions.iter().any(|value| value == action),
             "the schema must advertise {action}"
@@ -286,4 +295,43 @@ async fn lsp_definition_resolves_a_function_call() {
         "the definition of `add` is on line 1: {output}"
     );
     assert!(output.contains("fn add"), "{output}");
+}
+
+#[test]
+fn only_applying_actions_declare_a_write_effect() {
+    let tool = LspTool::new();
+    assert!(
+        !tool
+            .effects_for_input(&json!({"action": "rename", "apply": false}))
+            .writes(),
+        "a rename dry run writes nothing"
+    );
+    assert!(
+        tool.effects_for_input(&json!({"action": "rename", "apply": true}))
+            .writes()
+    );
+    assert!(
+        !tool.effects_for_input(&json!({"action": "code_actions"})).writes(),
+        "listing code actions writes nothing"
+    );
+    assert!(
+        tool.effects_for_input(&json!({"action": "code_actions", "action_id": "1"}))
+            .writes()
+    );
+    assert!(!tool.effects_for_input(&json!({"action": "references"})).writes());
+}
+
+#[tokio::test]
+async fn rename_without_a_new_name_is_refused_before_the_server_runs() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("main.rs");
+    std::fs::write(&path, "fn alpha() {}\n").expect("fixture");
+    let error = LspTool::new()
+        .execute(
+            json!({"action": "rename", "file": "main.rs", "line": 1, "character": 4}),
+            make_ctx(dir.path()),
+        )
+        .await
+        .expect_err("a rename needs a new name");
+    assert!(format!("{error:#}").contains("new_name"), "{error:#}");
 }
