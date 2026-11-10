@@ -65,7 +65,7 @@ fn v0_1_record(session_id: &str) -> String {
   "is_debug": false,
   "saved": true,
   "save_label": "timeout",
-  "migration_epoch": 3
+  "migration_epoch": 0
 }}"#
     )
 }
