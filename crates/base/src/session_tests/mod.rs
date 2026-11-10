@@ -43,6 +43,9 @@ mod tool_image_decay;
 #[path = "durability.rs"]
 mod durability;
 
+#[path = "binding_rev.rs"]
+mod binding_rev;
+
 #[path = "history_page.rs"]
 mod history_page;
 
