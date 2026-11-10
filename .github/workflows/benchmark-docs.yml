@@ -40,6 +40,8 @@ env:
   GIT_CONFIG_VALUE_0: main
   DOC: docs/performance/RESULTS.md
   DOC_KO: docs/performance/RESULTS.ko.md
+  # SVG charts bench_docs.py draws beside the documents (bench_charts.py).
+  CHARTS: docs/performance/charts
   CODE_PATHS: src crates Cargo.toml Cargo.lock .cargo rust-toolchain.toml scripts/perf
 
 jobs:
@@ -122,7 +124,6 @@ jobs:
       ref: ${{ needs.gate.outputs.sha }}
       os: all
       suites: all
-      oneshot_runs: "5"
 
   docs:
     name: Write RESULTS.md on main and dev
@@ -157,8 +158,8 @@ jobs:
         shell: bash
         run: |
           # The renderer comes from the measured commit; each branch's own copy
-          # of the script may be older.
-          cp scripts/perf/bench_docs.py "$RUNNER_TEMP/bench_docs.py"
+          # of the script may be older. bench_charts.py is imported by it.
+          cp scripts/perf/bench_docs.py scripts/perf/bench_charts.py "$RUNNER_TEMP/"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           short=$(git rev-parse --short "$SHA")
@@ -179,10 +180,12 @@ jobs:
                 fi
               done
               [[ "$rendered" == true ]] || break
-              if git diff --quiet -- "$DOC" "$DOC_KO"; then
+              # Stage first so charts drawn for the first time are seen as changes.
+              git add -A -- "$DOC" "$DOC_KO" "$CHARTS"
+              if git diff --cached --quiet; then
                 echo "$branch: already up to date"; ok=true; break
               fi
-              git commit --quiet -m "docs(perf): record benchmark for $short" -- "$DOC" "$DOC_KO"
+              git commit --quiet -m "docs(perf): record benchmark for $short"
               if git push --quiet origin "HEAD:$branch"; then
                 echo "$branch: pushed $(git rev-parse --short HEAD)"; ok=true; break
               fi

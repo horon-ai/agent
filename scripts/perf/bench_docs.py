@@ -28,6 +28,18 @@ Subcommands:
 RESULTS.md (English, `--lang en`, the default) and RESULTS.ko.md (`--lang ko`)
 carry the same block in their own language; the workflow renders both. Table
 contents written by the benchmark suites are language-neutral and shared.
+
+A document may also carry a second, optional block near its top:
+
+    <!-- bench-charts:start -->
+    ...generated...
+    <!-- bench-charts:end -->
+
+When it is present, `render` draws the per-OS `compare.json` files as SVG charts
+(`bench_charts.py`) into a `charts/` folder beside the document and rewrites the
+block with the summary chart and links to the per-metric charts. A document
+without that block gets no charts, so an older branch keeps working unchanged.
+The workflow copies `bench_charts.py` next to this script.
 """
 
 from __future__ import annotations
@@ -38,8 +50,13 @@ import re
 import sys
 from pathlib import Path
 
+import bench_charts
+
 START_RE = re.compile(r"^<!-- bench-auto:start(?: commit=([0-9a-f]{7,40}))? -->$", re.MULTILINE)
 END = "<!-- bench-auto:end -->"
+CHARTS_START = "<!-- bench-charts:start -->"
+CHARTS_END = "<!-- bench-charts:end -->"
+CHARTS_DIR = "charts"
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 HEADING_RE = re.compile(r"^(#{1,6}) ")
 
@@ -142,6 +159,40 @@ def replace_block(text: str, commit: str, body: str) -> str:
     start, end = _block_span(text)
     marker = f"<!-- bench-auto:start commit={commit} -->"
     return text[: start.start()] + marker + "\n\n" + body.strip("\n") + "\n\n" + text[end:]
+
+
+def charts_span(text: str) -> tuple[int, int] | None:
+    """Body span of the optional charts block, or None when the document has none."""
+    starts = [m.end() for m in re.finditer(re.escape(CHARTS_START), text)]
+    ends = [m.start() for m in re.finditer(re.escape(CHARTS_END), text)]
+    if not starts and not ends:
+        return None
+    if len(starts) != 1 or len(ends) != 1:
+        raise DocError(f"expected one bench-charts start and end marker, found {len(starts)} and {len(ends)}")
+    if ends[0] < starts[0]:
+        raise DocError("bench-charts end marker comes before the start marker")
+    return starts[0], ends[0]
+
+
+def _run_id(run_url: str | None) -> str | None:
+    match = re.search(r"/runs/(\d+)", run_url or "")
+    return match.group(1) if match else None
+
+
+def write_charts(text: str, doc: Path, results: Path, commit: str, run_url: str | None = None,
+                 lang: str = "en") -> str:
+    """Draw the charts beside `doc` and rewrite the charts block; no block, no charts."""
+    span = charts_span(text)
+    if span is None:
+        return text
+    files = bench_charts.render_charts(find_platform_dirs(results), commit, lang, _run_id(run_url))
+    folder = doc.parent / CHARTS_DIR
+    if files:
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, svg in files.items():
+            (folder / name).write_text(svg, encoding="utf-8", newline="\n")
+    body = bench_charts.markdown(lang, bool(files), CHARTS_DIR)
+    return text[: span[0]] + "\n\n" + body + "\n\n" + text[span[1]:]
 
 
 def demote_headings(markdown: str, level: int = FRAGMENT_LEVEL) -> str:
@@ -292,7 +343,9 @@ def main(argv: list[str]) -> int:
         if not args.results.is_dir():
             raise DocError(f"results directory not found: {args.results}")
         body = render_body(args.results, args.commit, args.run_url, lang=args.lang)
-        args.doc.write_text(replace_block(text, args.commit, body), encoding="utf-8")
+        text = replace_block(text, args.commit, body)
+        text = write_charts(text, args.doc, args.results, args.commit, args.run_url, args.lang)
+        args.doc.write_text(text, encoding="utf-8")
     except DocError as exc:
         print(f"bench_docs: {args.doc}: {exc}", file=sys.stderr)
         return 1
