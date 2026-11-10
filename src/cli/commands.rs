@@ -911,7 +911,7 @@ pub async fn run_single_message_command(
         // the agent runs. Warm runs skip this entirely and stay instant. (#390)
         wait_for_cold_cache_mcp_tools(&registry).await;
     }
-    let mut agent = crate::agent::Agent::new(provider.clone(), registry);
+    let mut agent = crate::agent::Agent::for_one_shot_run(provider.clone(), registry);
     if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session) {
         agent.mark_closed();
         return Err(error);
@@ -1363,7 +1363,7 @@ async fn run_single_message_command_capture_with_auto_poke(
 
 fn restore_agent_session_if_requested(agent: &mut crate::agent::Agent, resume_session: Option<&str>) -> Result<()> {
     if let Some(session_id) = resume_session {
-        agent.restore_session(session_id)?;
+        agent.restore_session_for_one_shot_run(session_id)?;
     }
     Ok(())
 }

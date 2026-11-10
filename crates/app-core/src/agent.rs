@@ -11,6 +11,7 @@ mod conversation_reset;
 mod durable_input_tests;
 mod environment;
 mod failover_budget;
+mod final_commit;
 mod goal_continuation;
 #[cfg(test)]
 #[path = "agent/goal_continuation_tests.rs"]
