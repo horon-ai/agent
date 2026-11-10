@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1090" viewBox="0 0 960 1090" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', 'Apple SD Gothic Neo', Helvetica, Arial, sans-serif" role="img">
+<title>원샷 프롬프트 시간 (ms, 낮을수록 좋음)</title>
+<rect x="0.5" y="0.5" width="959" height="1089" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<text x="32.0" y="44.0" font-size="22" fill="#1f2328" text-anchor="start" font-weight="bold">원샷 프롬프트 시간 (ms, 낮을수록 좋음)</text>
+<text x="32.0" y="68.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">중앙값. 기동, ls 도구 호출 한 번, 최종 답변까지. 파랑 = horon.</text>
+<rect x="32" y="96.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="114.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Linux</text>
+<line x1="202.2" y1="136.0" x2="202.2" y2="376.0" stroke="#eaeef2"/>
+<text x="202.2" y="392.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="400.8" y1="136.0" x2="400.8" y2="376.0" stroke="#eaeef2"/>
+<text x="400.8" y="392.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2,000</text>
+<line x1="599.4" y1="136.0" x2="599.4" y2="376.0" stroke="#eaeef2"/>
+<text x="599.4" y="392.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4,000</text>
+<line x1="798.0" y1="136.0" x2="798.0" y2="376.0" stroke="#eaeef2"/>
+<text x="798.0" y="392.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6,000</text>
+<text x="192.2" y="155.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="bold">horon</text>
+<rect x="202.2" y="142.0" width="6.6" height="18" rx="3" fill="#0b84de"/>
+<text x="216.8" y="155.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">66.4</text>
+<text x="192.2" y="185.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
+<rect x="202.2" y="172.0" width="13.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="224.1" y="185.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">139 (2.10×)</text>
+<text x="192.2" y="215.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
+<rect x="202.2" y="202.0" width="38.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="248.4" y="215.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">385 (5.79×)</text>
+<text x="192.2" y="245.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Codex CLI</text>
+<rect x="202.2" y="232.0" width="128.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="338.7" y="245.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1,294 (19.5×)</text>
+<text x="192.2" y="275.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">OpenCode</text>
+<rect x="202.2" y="262.0" width="216.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="427.2" y="275.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">2,185 (32.9×)</text>
+<text x="192.2" y="305.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">pi</text>
+<rect x="202.2" y="292.0" width="30.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="240.4" y="305.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">304 (4.58×)</text>
+<text x="192.2" y="335.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-pi (omp)</text>
+<rect x="202.2" y="322.0" width="149.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="359.6" y="335.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1,504 (22.6×)</text>
+<text x="192.2" y="365.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
+<rect x="202.2" y="352.0" width="508.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="718.9" y="365.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5,123 (77.1×)</text>
+<rect x="32" y="406.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="424.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
+<line x1="202.2" y1="446.0" x2="202.2" y2="686.0" stroke="#eaeef2"/>
+<text x="202.2" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="321.4" y1="446.0" x2="321.4" y2="686.0" stroke="#eaeef2"/>
+<text x="321.4" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2,000</text>
+<line x1="440.5" y1="446.0" x2="440.5" y2="686.0" stroke="#eaeef2"/>
+<text x="440.5" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4,000</text>
+<line x1="559.7" y1="446.0" x2="559.7" y2="686.0" stroke="#eaeef2"/>
+<text x="559.7" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6,000</text>
+<line x1="678.9" y1="446.0" x2="678.9" y2="686.0" stroke="#eaeef2"/>
+<text x="678.9" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8,000</text>
+<line x1="798.0" y1="446.0" x2="798.0" y2="686.0" stroke="#eaeef2"/>
+<text x="798.0" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10,000</text>
+<text x="192.2" y="465.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="bold">horon</text>
+<rect x="202.2" y="452.0" width="12.6" height="18" rx="3" fill="#0b84de"/>
+<text x="222.8" y="465.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">211</text>
+<text x="192.2" y="495.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
+<rect x="202.2" y="482.0" width="25.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="235.8" y="495.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">428 (2.02×)</text>
+<text x="192.2" y="525.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
+<rect x="202.2" y="512.0" width="36.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="246.7" y="525.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">611 (2.89×)</text>
+<text x="192.2" y="555.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Codex CLI</text>
+<rect x="202.2" y="542.0" width="73.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="284.0" y="555.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1,238 (5.86×)</text>
+<text x="192.2" y="585.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">OpenCode</text>
+<rect x="202.2" y="572.0" width="257.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="467.5" y="585.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">4,318 (20.4×)</text>
+<text x="192.2" y="615.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">pi</text>
+<rect x="202.2" y="602.0" width="35.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="245.5" y="615.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">592 (2.80×)</text>
+<text x="192.2" y="645.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-pi (omp)</text>
+<rect x="202.2" y="632.0" width="125.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="335.5" y="645.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">2,102 (9.94×)</text>
+<text x="192.2" y="675.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
+<rect x="202.2" y="662.0" width="544.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="755.0" y="675.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9,144 (43.2×)</text>
+<rect x="32" y="716.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="734.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
+<line x1="202.2" y1="756.0" x2="202.2" y2="996.0" stroke="#eaeef2"/>
+<text x="202.2" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="400.8" y1="756.0" x2="400.8" y2="996.0" stroke="#eaeef2"/>
+<text x="400.8" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10,000</text>
+<line x1="599.4" y1="756.0" x2="599.4" y2="996.0" stroke="#eaeef2"/>
+<text x="599.4" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">20,000</text>
+<line x1="798.0" y1="756.0" x2="798.0" y2="996.0" stroke="#eaeef2"/>
+<text x="798.0" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">30,000</text>
+<text x="192.2" y="775.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="bold">horon</text>
+<rect x="202.2" y="762.0" width="6.9" height="18" rx="3" fill="#0b84de"/>
+<text x="217.2" y="775.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">350</text>
+<text x="192.2" y="805.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
+<rect x="202.2" y="792.0" width="2.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="212.6" y="805.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">121 (0.35×)</text>
+<text x="192.2" y="835.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
+<rect x="202.2" y="822.0" width="21.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="232.0" y="835.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1,094 (3.13×)</text>
+<text x="192.2" y="865.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Codex CLI</text>
+<rect x="202.2" y="852.0" width="69.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="279.7" y="865.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">3,497 (10.0×)</text>
+<text x="192.2" y="895.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">OpenCode</text>
+<rect x="202.2" y="882.0" width="96.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="307.2" y="895.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">4,881 (14.0×)</text>
+<text x="192.2" y="925.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">pi</text>
+<rect x="202.2" y="912.0" width="9.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="219.2" y="925.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">452 (1.29×)</text>
+<text x="192.2" y="955.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-pi (omp)</text>
+<rect x="202.2" y="942.0" width="63.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="274.0" y="955.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">3,209 (9.18×)</text>
+<text x="192.2" y="985.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
+<rect x="202.2" y="972.0" width="501.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="711.9" y="985.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">25,260 (72.2×)</text>
+<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 5b83dc3 · 측정 2026-11-10 00:03 UTC · 실행 42723443025</text>
+<text x="32.0" y="1050.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">OS마다 다른 GitHub 호스티드 러너와 모의 모델로 쟀습니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</text>
+</svg>
