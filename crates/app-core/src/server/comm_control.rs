@@ -1869,7 +1869,7 @@ pub(super) async fn handle_comm_assign_next(
                 None,
                 super::comm_worktree::Isolation::None,
                 super::comm_worktree::IsoApply::Apply,
-                None,
+                super::comm_session::SpawnExtras::default(),
                 sessions,
                 global_session_id,
                 provider_template,

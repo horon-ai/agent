@@ -35,6 +35,28 @@ pub(crate) struct CatalogEntry {
     pub source: Stamp,
 }
 
+/// The activity clock a mirror records, when it parses at all.
+///
+/// A mirror the loader can read but the listing cannot is still a mirror: the
+/// caller falls back to the log's own activity instead of failing the listing.
+fn recorded_activity(path: &std::path::Path, probe: &ReadProbe) -> Option<i64> {
+    #[derive(Deserialize)]
+    struct LocalActivity {
+        last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+    // Both failures below are the documented fallback, not a lost error: an
+    // unreadable or unparsable mirror means "no recorded activity", and the
+    // caller then lists the session by the log's own activity clock.
+    let bytes = match probe.bounded(path) {
+        Ok(bytes) => bytes,
+        Err(_unreadable) => return None,
+    };
+    match serde_json::from_slice::<LocalActivity>(&bytes) {
+        Ok(activity) => activity.last_active_at.map(|time| time.timestamp_millis()),
+        Err(_unparsable) => None,
+    }
+}
+
 impl CatalogEntry {
     pub fn new(context: &CachedContext, source: Stamp) -> Self {
         Self {
@@ -82,18 +104,12 @@ impl CatalogEntry {
             .and_then(serde_json::Value::as_i64);
         let local_path = paths.session_dir(&self.session_id)?.join("local-runtime.json");
         let recorded_activity = match std::fs::symlink_metadata(&local_path) {
-            Ok(_) => {
-                #[derive(Deserialize)]
-                struct LocalActivity {
-                    last_active_at: Option<chrono::DateTime<chrono::Utc>>,
-                }
-                let activity: LocalActivity =
-                    serde_json::from_slice(&probe.bounded(&local_path)?).map_err(crate::cache_io::json_error)?;
-                activity
-                    .last_active_at
-                    .map(|time| time.timestamp_millis())
-                    .or(historical_activity)
+            // A mirror that a crash left empty, or one an older build never
+            // finished writing, states no clock: the listing falls back instead.
+            Ok(mirror) if mirror.is_file() && mirror.len() > 0 => {
+                recorded_activity(&local_path, probe).or(historical_activity)
             }
+            Ok(_) => historical_activity,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => historical_activity,
             Err(error) => return Err(error.into()),
         };
