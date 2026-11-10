@@ -597,9 +597,8 @@ async fn run_default_command(args: Args) -> Result<()> {
     let (handoff, sibling) = super::tui_handoff::decide_for_process();
     match handoff {
         super::tui_handoff::Handoff::Exec => {
-            let cwd = std::env::current_dir().map_err(|error| {
-                anyhow::anyhow!("cannot read the working directory for the interactive client: {error}")
-            })?;
+            let cwd =
+                std::env::current_dir().map_err(|error| anyhow::anyhow!("working directory unreadable: {error}"))?;
             match sibling {
                 Some(sibling) => super::tui_handoff::hand_off(&sibling, Some(cwd.as_path())),
                 // `decide` only answers `Exec` for a resolved path, so this is
