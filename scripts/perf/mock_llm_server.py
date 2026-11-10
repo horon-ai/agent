@@ -217,6 +217,22 @@ def has_tool_result(kind: str, body: dict) -> bool:
 # run then reports a failed round trip with its reason instead of a timeout.
 MAX_SCENARIO_TOOL_CALLS = 4
 
+# `--retry-denied-tool`: the default plan repeats its `ls` once after a refusal,
+# which is how the PTY smoke test drives the approval round trip. The first call
+# is denied, the client answers the approval prompt, and the model's retry gets
+# through. Bounded by the call count so a second denial cannot loop.
+RETRY_DENIED_TOOL = False
+
+# How long a retry waits before it is issued. The approval gate refuses a queued
+# request again until a decision exists, and the PTY client presses `y` only once
+# the prompt is drawn, so the retry has to wait for that answer rather than race
+# it. Only the smoke test turns this path on.
+APPROVAL_ANSWER_WAIT = 2.0
+
+# The write-class command the round-trip plan issues. It creates one file in the
+# working directory and prints a line, so its result is visible on screen.
+APPROVAL_ROUND_TRIP_COMMAND = "echo retry > tui-smoke.txt && echo tui-smoke-done"
+
 
 def tool_call_count(kind: str, body: dict) -> int:
     """Tool calls the model already made anywhere in this transcript."""
@@ -520,6 +536,18 @@ def _plan_name(body: dict, prompt: str) -> str:
     return "ls"
 
 
+def json_payload_bytes(value) -> int:
+    """The bytes a client's compact JSON serialization of this value occupies.
+
+    The client writes its body with serde_json, which uses `,`/`:` separators
+    with no spaces and leaves non-ASCII characters as UTF-8. A parsed body no
+    longer carries its original bytes for the tool catalog, so re-serializing
+    the parsed value the same way is what makes a per-request catalog size
+    comparable across agents and turns.
+    """
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def collect_paths(body: dict) -> list[str]:
     found: set[str] = set()
     blob = json.dumps(body, ensure_ascii=False)
@@ -580,6 +608,9 @@ class Handler(BaseHTTPRequestHandler):
     def _read_body(self) -> dict:
         length = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(length) if length else b""
+        # The decoded body no longer carries the request's own bytes, so the
+        # length is kept here for the per-request size record.
+        self._body_bytes = len(raw)
         if not raw:
             return {}
         try:
@@ -783,9 +814,26 @@ class Handler(BaseHTTPRequestHandler):
                 arguments = {prop: route}
         else:
             shell = find_shell_tool(tools)
-            if shell is not None and not saw_result:
+            # The refusal text the approval gate returns names the refusal, and
+            # `results` covers only this turn, so a retry after the user says yes
+            # is one more identical call rather than an endless one. The wait
+            # exists because the retry must land *after* the answer: the gate
+            # refuses the queued request again until a decision exists, and the
+            # PTY client only presses `y` once the prompt is on screen.
+            refused = (
+                "was denied" in results or "needs approval" in results or "queued" in results
+            )
+            retry_denied = RETRY_DENIED_TOOL and refused and tool_call_count(kind, body) < 2
+            if retry_denied:
+                time.sleep(APPROVAL_ANSWER_WAIT)
+            if shell is not None and (not saw_result or retry_denied):
                 tool_name = shell[0]
-                arguments = {shell[1]: "ls"}
+                # A read-only `ls` is never parked under `approval_mode = "write"`,
+                # so the round-trip plan issues a write-class call instead: it is
+                # the call the approval gate asks about, and the retry is the one
+                # that runs after the answer.
+                command = APPROVAL_ROUND_TRIP_COMMAND if RETRY_DENIED_TOOL else "ls"
+                arguments = {shell[1]: command}
 
         capped = plan_name in ("skill", "mcp") and tool_call_count(kind, body) >= MAX_SCENARIO_TOOL_CALLS
         if capped:
@@ -819,6 +867,12 @@ class Handler(BaseHTTPRequestHandler):
                 or (find_tool_search(tools) is not None and deferred_listed_tool(body))
             ),
             "tool_count": len(tools or []),
+            # Transport size of the whole request, and the part of it the tool
+            # catalog occupies. The structural gate's `prefix` area reads these
+            # per request, so an agent that grows the catalog it sends every
+            # turn shows up as a number instead of a diff.
+            "body_bytes": getattr(self, "_body_bytes", 0),
+            "tools_bytes": json_payload_bytes(tools) if tools else 0,
             # Every tool name the request offered, so a missing MCP server can
             # be told apart from a misnamed one without re-running the agent.
             "tool_names": [_tool_name(tool) for tool, _ns in flatten_tools(tools)][:60],
@@ -1228,7 +1282,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=0, help="0 picks a free port")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--retry-denied-tool",
+        action="store_true",
+        help="after a refused tool call, issue the same call once more (approval round trip)",
+    )
     args = parser.parse_args(argv)
+
+    global RETRY_DENIED_TOOL
+    RETRY_DENIED_TOOL = args.retry_denied_tool
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True

@@ -76,6 +76,7 @@ pub(crate) fn metadata(meta: &Map<String, Value>) -> Result<SessionMetadata, Sto
         "model",
         "route_api_method",
         "reasoning_effort",
+        "reasoning_effort_pinned",
         "subagent_model",
         "agent_model_overrides",
         "improve_mode",

@@ -5,10 +5,13 @@ use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 
-use crate::{gateway, memory, session, storage};
+use crate::{gateway, memory, storage};
 
 mod provider_setup;
 mod report_info;
+mod session_rename;
+
+pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;
 
@@ -30,53 +33,6 @@ pub async fn run_ambient_command(cmd: AmbientSubcommand) -> Result<()> {
     };
 
     super::debug::run_debug_command(debug_cmd, "", None, None, false).await
-}
-
-#[derive(Serialize)]
-struct SessionRenameOutput {
-    session_id: String,
-    display_name: String,
-    title: Option<String>,
-    cleared: bool,
-}
-
-pub fn run_session_rename_command(session_ref: &str, name: Option<&str>, clear: bool, json: bool) -> Result<()> {
-    let resolved_id = session::find_session_by_name_or_id(session_ref)?;
-    let mut session = session::Session::load(&resolved_id)?;
-
-    if clear {
-        session.rename_title(None);
-    } else {
-        let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) else {
-            anyhow::bail!("Provide a session name or use --clear");
-        };
-        session.rename_title(Some(name.to_string()));
-    }
-
-    session.save()?;
-
-    let output = SessionRenameOutput {
-        session_id: session.id.clone(),
-        display_name: session.display_name().to_string(),
-        title: session.display_title().map(ToOwned::to_owned),
-        cleared: clear,
-    };
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    } else if clear {
-        println!(
-            "Cleared custom name for session {} ({}).",
-            output.display_name, output.session_id
-        );
-    } else if let Some(title) = output.title.as_deref() {
-        println!(
-            "Renamed session {} ({}) to \"{}\".",
-            output.display_name, output.session_id, title
-        );
-    }
-
-    Ok(())
 }
 
 pub enum MemorySubcommand {
@@ -911,11 +867,13 @@ pub async fn run_single_message_command(
         // the agent runs. Warm runs skip this entirely and stay instant. (#390)
         wait_for_cold_cache_mcp_tools(&registry).await;
     }
-    let mut agent = crate::agent::Agent::new(provider.clone(), registry);
+    let mut agent = crate::agent::Agent::for_one_shot_run(provider.clone(), registry);
     if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session) {
         agent.mark_closed();
         return Err(error);
     }
+    // User-authored `run` message; later helper turns are synthetic.
+    agent.arm_effort_keywords(message);
     run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson).await
 }
 
@@ -1363,7 +1321,7 @@ async fn run_single_message_command_capture_with_auto_poke(
 
 fn restore_agent_session_if_requested(agent: &mut crate::agent::Agent, resume_session: Option<&str>) -> Result<()> {
     if let Some(session_id) = resume_session {
-        agent.restore_session(session_id)?;
+        agent.restore_session_for_one_shot_run(session_id)?;
     }
     Ok(())
 }

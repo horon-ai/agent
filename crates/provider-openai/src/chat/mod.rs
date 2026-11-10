@@ -208,11 +208,15 @@ impl OpenAiCompatibleProvider {
         system: &str,
         context: Option<&ProviderRequestContext>,
     ) -> Vec<u8> {
-        let reasoning = self
+        let configured = self
             .reasoning_effort
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        let reasoning = match context.and_then(|c| c.reasoning_effort.as_deref()) {
+            Some(effort) if !effort.is_empty() => Some(effort.to_string()),
+            _ => configured,
+        };
         let mut body = build_chat_completions_request(&self.model(), messages, tools, system, reasoning.as_deref());
         self.apply_prompt_cache(&mut body, context);
         if let Some(extra) = &self.extra_body

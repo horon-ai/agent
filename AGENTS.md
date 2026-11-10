@@ -10,14 +10,17 @@ wins.
 Every change in this tree keeps all three. A change that breaks one is not
 done, regardless of what else it fixes.
 
-1. **No TUI in the headless package.** The `horon-agent` package (`serve`,
-   `run`, `api-bridge`, `acp` — the headless binary) never opens a terminal UI,
-   and its dependency graph stays free of `ratatui`, `crossterm`, `horon-tui`,
-   and any `horon-agent-tui*` crate. An interactive terminal client may exist
-   only as the separate package and binary `horon-tui` (planned), which talks
-   to the daemon through `horon-agent-sdk` and never moves the terminal stack
-   into `horon-agent`. `scripts/ci/check_headless_graph.py` enforces the graph
-   rule in CI.
+1. **No TUI in the headless package.** The build ships two binaries, and the
+   split is the rule. `horon-agent` (`serve`, `run`, `api-bridge`, `acp` — the
+   headless binary) never opens a terminal UI, and its dependency graph stays
+   free of `ratatui`, `crossterm`, `horon-tui`, and any `horon-agent-tui*`
+   crate. The interactive client is the separate package and binary
+   `horon-tui`, which talks to the daemon through `horon-agent-sdk` and never
+   moves the terminal stack into `horon-agent`. The bare `horon` command is
+   still headless: when stdin and stdout are terminals, `HORON_NO_TUI` is
+   unset, and `horon-tui` sits beside the running binary, it replaces its own
+   process with that client (`src/cli/tui_handoff.rs`) and draws nothing
+   itself. `scripts/ci/check_headless_graph.py` enforces the graph rule in CI.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
    both sides support. Current state: both are implemented — v2 negotiates in
@@ -29,7 +32,13 @@ done, regardless of what else it fixes.
    and workload, a change must match or beat the recorded baseline. A change
    that makes a measured path slower than the baseline does not merge. How to
    measure: `docs/performance/BENCHMARK.md`; recorded numbers and their limits:
-   `docs/performance/RESULTS.md`, which is the recorded baseline.
+   `docs/performance/RESULTS.md`, which is the recorded baseline. Scope: the
+   baseline and the jcode target below cover the headless `horon-agent`
+   workloads, and those cells keep their definition unchanged now that a second
+   binary exists. The interactive client is measured on its own, never mixed
+   into a headless cell and never compared against one: its suites time
+   `horon-tui` against `horon-tui`, and a headless number quoted for a change
+   that only touches the client is not evidence.
 
 ## Performance target: beat jcode
 
@@ -59,13 +68,45 @@ direction (faster and smaller than jcode).
   `docs/protocol/SESSION_STORE.md`). A cell jcode keeps for such a reason is
   reported as a structural difference with that reason.
 
+## Design principles
+
+Short form of `PHILOSOPHY.md` (Korean: `PHILOSOPHY.ko.md`); this file keeps
+contract priority, and the Fixed requirements above are unchanged.
+
+Principles:
+
+1. Beat jcode in every cell and never fall below the recorded baseline.
+2. Support ACP v1 and v2.
+3. The headless package has no TUI; the TUI is the separate `horon-tui`
+   package and binary on the SDK. One engine, two binaries.
+4. The engine is usable from server code through the Rust, TypeScript and
+   Python SDKs.
+5. Claims are measured in CI, and durability is never traded for speed.
+
+A proposed change fits when it:
+
+1. reduces per-request tokens or per-turn CPU, fsync or memory;
+2. is measurable by CI `compare` or the structural gate;
+3. does not grow the headless dependency graph or the binary;
+4. does not break ACP v1/v2, the SDKs or stored sessions;
+5. does not reintroduce removed surface under another name.
+
+Does not do: forced tool-call steps, streaming dry-run, a `report_issue` tool,
+per-tool `family@rev` versions, a KDL model catalog, wholesale `anyhow` or
+`SmallVec` replacement, or a cutover of external contracts (ACP v1, harness API
+v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
+
 ## What this build is
 
-- One headless binary, `horon-agent`. Working subcommands: `serve` (agent
-  daemon), `run` (send one message and exit), `api-bridge` (alias `api`;
-  harness API on a Unix socket, Unix only), and `acp` (ACP adapter on stdio).
-  A terminal client is not part of this package: when one ships it is the
-  separate `horon-tui` package and binary on `horon-agent-sdk`.
+- Two binaries. The headless one, `horon-agent`, has these working
+  subcommands: `serve` (agent daemon), `run` (send one message and exit),
+  `api-bridge` (alias `api`; harness API on a Unix socket, Unix only), and
+  `acp` (ACP adapter on stdio). The interactive one, `horon-tui`, is a separate
+  package and binary on `horon-agent-sdk`; it renders the terminal client and
+  is built with its own cargo invocation so its feature set never unifies with
+  the headless package. Bare `horon` on a terminal replaces itself with the
+  sibling `horon-tui` once the server is up; a pipe, `HORON_NO_TUI`, or a
+  missing sibling keeps the headless message and prints the install hint.
 - One model path: the agent POSTs `/chat/completions` to the OpenAI-compatible
   endpoint of the profile named by `[provider] default_provider` or
   `--provider-profile`. A profile is a `[providers.<name>]` table with
@@ -95,6 +136,7 @@ direction (faster and smaller than jcode).
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`|`false`|`true`|
+|`[features] effort_keywords`|`true`|`false`|
 |`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
 |`[features] pricing_refresh`|`false`|`true`; `HORON_AGENT_PRICING_REFRESH=1` or `0` overrides it for one process|
 |`[server] idle_hibernation_secs`|`1800`|`0` disables the sweep; `HORON_AGENT_IDLE_HIBERNATION_SECS` overrides it for one process|
@@ -201,7 +243,7 @@ and do not merge or report success before then.
 request against its base, and a first-attempt push to `dev` against the head of
 the last successful `dev` push run of the same workflow (two-dot diff).
 
-- **Documentation only** (README, `docs/`, `AGENTS.md`, templates): runs
+- **Documentation only** (README, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`, templates): runs
   `Documentation Checks` (links, UTF-8, English/Korean pairs) and
   `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
   `horon_agent_docs` tests still run). The release build, the three-OS test
@@ -267,6 +309,7 @@ checks this and runs in the Quality Guardrails job.
 
 Every English Markdown file under `docs/`, including subfolders, and the root
 `README.md` are compiled into the binary and served by the `horon_agent_docs`
-tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled.
+tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled. The root
+`PHILOSOPHY.md` pair is checked like the READMEs but is not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.
 `docs/README.md` is the index; update it in the same change.

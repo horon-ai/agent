@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "internal-legacy-markers",
+  "description": "Lines in internal Rust source that name a legacy, deprecated, compat_alias or back-compat path. External contracts stay supported through v0.1.x (AGENTS.md, Fixed requirement 2, and the stored-session compatibility promise), so the subtrees that implement them are excluded by path with a reason each; everything else is internal leftovers and may only shrink.",
+  "counter": {
+    "kind": "regex_lines",
+    "pattern": "legacy|deprecated|compat_alias|back.?compat",
+    "case_insensitive": true,
+    "roots": ["src", "crates"],
+    "extensions": [".rs"],
+    "exclude": [
+      {
+        "path": "crates/harness-api-server",
+        "reason": "The harness API v1 bridge and translate layer: names each internal protocol frame it translates to as legacy, and tests the v1 mapping. The wire contract is kept for v1 clients, so its vocabulary cannot be renamed away."
+      },
+      {
+        "path": "crates/harness-api",
+        "reason": "The published harness API surface: schema snapshots and capability tests name the v1 request and event shapes they must keep answering, and edit_stats reads preserved legacy snapshots as its stored-session fallback."
+      },
+      {
+        "path": "crates/session-store",
+        "reason": "Stored-session compatibility: legacy_* modules are the offline, non-destructive migration and replay readers for sessions written by v0.1.x, and the reader/schema layer keeps the preserved legacy layout readable for rollback."
+      }
+    ]
+  },
+  "ceiling": 959
+}

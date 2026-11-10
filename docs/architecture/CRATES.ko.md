@@ -2,7 +2,7 @@
 
 언어: [English](CRATES.md) | **한국어**
 
-> 이 문서는 "TUI"를 언급한다. `horon-agent` 패키지에는 터미널 UI가 없고 의존성 그래프에도 TUI 크레이트가 없다. 대화형 터미널 클라이언트가 나오면 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이자 실행 파일이다. 경계 판단 기준을 설명하려고 이름을 남겼다.
+> 이 문서는 "TUI"를 언급한다. `horon-agent` 패키지에는 터미널 UI가 없고 의존성 그래프에도 TUI 크레이트가 없다. 대화형 터미널 클라이언트는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이자 실행 파일이다. 경계 판단 기준을 설명하려고 이름을 남겼다.
 이 문서는 공유 크레이트를 아무거나 쌓아 두는 곳으로 만들지 않으면서 `horon-agent`의 모듈성을 유지하기 위한 목표 구조를 정의한다. 실용적인 판단 기준을 담았다. 타입, 헬퍼, 동작을 루트 크레이트 밖으로 옮길지 정할 때 이 문서를 쓴다.
 
 ## 목표
@@ -225,6 +225,26 @@ python3 scripts/ci/check_dependency_boundaries.py
 ```
 
 가드는 `horon-agent-*-types` 크레이트가 `horon-agent`, `horon-agent-core`, 제공자 크레이트, TUI 크레이트, 프로토콜·런타임 크레이트, 데스크톱·모바일 크레이트처럼 루트나 런타임 비중이 큰 내부 크레이트에 직접 의존하는 것을 막는다. 타입 크레이트는 외부 경량 라이브러리와 다른 타입 크레이트에 의존할 수 있다. 새 내부 의존성이 필요하면 먼저 그것 자체가 타입 크레이트가 되어야 하는지 정한다.
+
+## 증가 래칫
+
+검토된 결정으로만 올릴 수 있는 두 수치를 게이트 하나가 고정한다.
+
+```sh
+python3 scripts/ci/check_growth_ratchets.py
+python3 scripts/ci/check_growth_ratchets.py --list
+```
+
+| 래칫 | 세는 대상 | 상한 파일 |
+| --- | --- | --- |
+| `Cargo.lock` 패키지 | `Cargo.lock`의 `[[package]]` 항목. 같은 크레이트의 두 버전은 두 번 센다 | `scripts/ci/lockfile_packages.ratchet.json` |
+| 내부 레거시 표시자 | 제외 하위 트리 밖에서 `legacy`, `deprecated`, `compat_alias`, `back.?compat`에 맞는 Rust 줄 | `scripts/ci/internal_legacy_markers.ratchet.json` |
+
+래칫 파일은 이름이 `.ratchet.json`으로 끝나거나, 최상위 객체가 `counter`와 `ceiling`을 선언한 `scripts/ci/*.json` 파일이다. 그래서 나중에 추가할 래칫(`Result<_, String>` 개수, 모델 이름 분기)은 파일 하나만 더하면 되고 워크플로나 `check_all.sh`를 고치지 않는다. `.ratchet.json`인데 두 키를 잃은 파일은 건너뛰지 않고 실패한다. `counter.kind`는 `cargo_lock_packages` 또는 `regex_lines`이고, 후자는 `pattern`, `roots`, `extensions`, `exclude`를 받는다. 옆에 있는 게이트별 예산 파일(`panic_budget.json`, `code_size_budget.json`)은 두 키를 선언하지 않으므로 각자 스크립트가 계속 소유한다.
+
+레거시 표시자 래칫은 외부 계약을 구현하는 하위 트리를 파일에 사유와 함께 제외한다. `crates/harness-api-server`(하네스 API v1 브리지와 변환 계층), `crates/harness-api`(공개된 v1 표면과 스키마 스냅숏), `crates/session-store`(v0.1.x가 쓴 세션을 읽는 저장소 이관·재생 리더)다. 존재하지 않는 경로를 제외하면 실패하므로 낡은 항목이 구멍을 넓히지 못한다. 나머지는 내부 잔여물이며 줄어들 수는 있어도 늘어날 수는 없다.
+
+증가하면 실패하고, 감소하면 `--update` 실행을 권하는 줄만 출력한다. 관계없는 변경에서 정리한 사람이 이 파일을 고칠 필요가 없고, 게이트가 스스로 느슨해지지도 않는다. 뭔가 다시 늘어나면 옛 상한에서 곧바로 실패한다. 새 의존성은 패키지 상한을 정당하게 올리며, 그 재고정은 의존성을 추가하는 검토 커밋에 들어간다. `--update`는 `ceiling`만 다시 쓰고 설명이나 사유는 건드리지 않는다.
 
 ## 테스트 정책
 

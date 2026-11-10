@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](CRATES.ko.md)
 
-> This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. An interactive terminal client, when one ships, is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
+> This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. The interactive terminal client is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
 This document defines the target structure that keeps `horon-agent` modular without turning shared crates into a dumping ground. It carries the practical decision rules. Use it when deciding whether to move a type, helper, or behavior out of the root crate.
 
 ## Goals
@@ -234,6 +234,26 @@ python3 scripts/ci/check_dependency_boundaries.py
 ```
 
 The guard blocks `horon-agent-*-types` crates from depending directly on root- or runtime-heavy internal crates such as `horon-agent`, `horon-agent-core`, provider crates, TUI crates, protocol and runtime crates, and desktop and mobile crates. Type crates may depend on external lightweight libraries and on other type crates. When a new internal dependency is needed, first decide whether it should itself be a type crate.
+
+## Growth ratchets
+
+Two counts that only a reviewed decision may raise are frozen by one gate.
+
+```sh
+python3 scripts/ci/check_growth_ratchets.py
+python3 scripts/ci/check_growth_ratchets.py --list
+```
+
+| Ratchet | Counts | Ceiling file |
+| --- | --- | --- |
+| Lockfile packages | `[[package]]` entries in `Cargo.lock`, so one crate at two versions counts twice | `scripts/ci/lockfile_packages.ratchet.json` |
+| Internal legacy markers | Rust lines matching `legacy`, `deprecated`, `compat_alias` or `back.?compat`, outside the excluded subtrees | `scripts/ci/internal_legacy_markers.ratchet.json` |
+
+A ratchet file is any `scripts/ci/*.json` file that ends in `.ratchet.json` or has a top-level object declaring `counter` and `ceiling`, so a later ratchet (the `Result<_, String>` count, model-name branches) adds one file and no workflow or `check_all.sh` edit. A `.ratchet.json` that lost its keys fails instead of being skipped. `counter.kind` is `cargo_lock_packages` or `regex_lines`; the latter takes `pattern`, `roots`, `extensions` and `exclude`. The per-gate budgets beside them (`panic_budget.json`, `code_size_budget.json`) declare neither key and stay owned by their own scripts.
+
+The legacy-marker ratchet excludes the subtrees that implement an external contract, each with a reason in the file: `crates/harness-api-server` (harness API v1 bridge and translate layer), `crates/harness-api` (the published v1 surface and its schema snapshots) and `crates/session-store` (the stored-session migration and replay readers for sessions written by v0.1.x). An exclude whose path does not exist fails, so a stale entry cannot widen the hole. Everything else is internal leftover: it may shrink, and it may not grow.
+
+Growth fails; a drop only prints `Consider running ... --update`. A cleanup in an unrelated change must not have to edit this file, and the gate still cannot loosen itself: the old ceiling fails again the moment anything grows back. A new dependency legitimately raises the package ceiling, and that re-pin belongs in the reviewed commit that adds the dependency. `--update` rewrites only `ceiling`, never a description or a reason.
 
 ## Test policy
 

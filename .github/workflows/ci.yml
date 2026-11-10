@@ -265,6 +265,22 @@ jobs:
         shell: bash
         run: python3 scripts/ci/check_swallowed_errors.py
 
+      - name: Growth ratchet contract tests
+        # The gate discovers its own ceiling files by shape, so a new ratchet
+        # (the `Result<_, String>` count of #156, model names) needs no step
+        # here. These tests are what keeps that discovery honest.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_check_growth_ratchets.py
+
+      - name: Enforce growth ratchets
+        # Cargo.lock package count and internal legacy markers: both may fall
+        # but not rise. Ceilings live in `scripts/ci/*.json` objects that
+        # declare `counter` and `ceiling`; adding one needs no edit here.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_growth_ratchets.py
+
       - name: Enforce crate dependency boundaries
         if: ${{ !cancelled() }}
         shell: bash
@@ -523,6 +539,24 @@ jobs:
           # exercised.
           "$CARGO_BIN" build --locked --target ${{ matrix.target }} -p horon-tui
 
+      - name: TUI PTY smoke (Linux, macOS)
+        # The bare command hands a terminal launch to the sibling `horon-tui`
+        # binary, and nothing else in this workflow drives that handoff or the
+        # terminal client's screen: the build above only proves the two binaries
+        # link. This runs both through a real PTY against the mock model server
+        # and checks the first screen, a streamed reply, the approval prompt, the
+        # retried tool call, `/quit`, and the three headless fallbacks. The
+        # client is built without `--release` above, next to the release daemon.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 scripts/test/tui_pty_smoke.py \
+            --agent target/${{ matrix.target }}/release/horon-agent \
+            --tui target/${{ matrix.target }}/debug/horon-tui \
+            --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
+          echo "--- transcript ---"
+          cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+
       - name: Benchmark script smoke
         # The benchmark workflow runs on demand and after a push to `main`, so
         # nothing on a pull request started the daemon-backed suites: a renamed
@@ -580,6 +614,18 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-tui \
             --min-passed 1 --timeout 600
+
+      - name: Run CLI handoff cohort
+        shell: bash
+        # The bare command's handoff decision is the only thing that sends a
+        # terminal launch into `horon-tui`, and no other step runs `horon-agent`
+        # lib tests at all, so a filter that matched nothing would look green.
+        # `--min-passed 1` fails the step when the filter selects no test.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- tui_handoff --nocapture
 
       - name: Run deterministic retention-readiness cohort
         shell: bash
