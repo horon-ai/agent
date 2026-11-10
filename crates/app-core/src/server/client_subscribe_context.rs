@@ -44,25 +44,20 @@ pub(super) async fn resolve_target_subscribe_prefix(
     if target.is_empty() || crate::session::session_exists(target) || sessions.read().await.contains_key(target) {
         return Ok(());
     }
-    // A store that cannot be read contributes no candidates, and the target
-    // keeps its existing unknown-session answer.
-    let mut candidates = match crate::session::stored_session_id_prefix_matches(target) {
-        Ok(ids) => ids,
-        Err(_) => Vec::new(),
-    };
+    let mut candidates = horon_agent_base::session_prefix::stored_session_id_prefix_matches(target);
     for live in sessions.read().await.keys() {
-        if live.starts_with(target.as_str()) && !candidates.iter().any(|seen| seen == live) {
+        if live.starts_with(target.as_str()) && !candidates.contains(&live) {
             candidates.push(live.clone());
         }
     }
-    match crate::session::choose_session_prefix_match(target, candidates) {
+    match horon_agent_base::session_prefix::choose_session_prefix_match(target, candidates) {
         Ok(full_id) => {
             if let Request::Subscribe { target_session_id, .. } = request {
                 *target_session_id = Some(full_id);
             }
             Ok(())
         }
-        Err(error @ crate::session::SessionPrefixError::Ambiguous { .. }) => Err(format!(
+        Err(error @ horon_agent_base::session_prefix::SessionPrefixError::Ambiguous { .. }) => Err(format!(
             "Subscribe target_session_id {error}; send a longer prefix or the full id"
         )),
         // Nothing on disk or in memory matches this prefix: keep the daemon's

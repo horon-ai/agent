@@ -51,18 +51,13 @@ pub(crate) fn resolve(request: &mut Value, attached: Option<&str>, known: &[Stri
     }
     let reply_to = request["id"].as_u64().unwrap_or(0);
     let query = request["session_id"].as_str()?.to_string();
-    if query.is_empty() || attached == Some(query.as_str()) || known.iter().any(|id| *id == query) {
+    if query.is_empty() || attached == Some(query.as_str()) || known.contains(&query) {
         return None;
     }
 
-    // An unreadable store contributes no candidates; the daemon then answers
-    // unknown_session, which is what the caller would see anyway.
-    let mut candidates: Vec<String> = match horon_agent_base::session_prefix::stored_session_id_prefix_matches(&query) {
-        Ok(ids) => ids,
-        Err(_) => Vec::new(),
-    };
+    let mut candidates: Vec<String> = horon_agent_base::session_prefix::stored_session_id_prefix_matches(&query);
     for id in attached.into_iter().chain(known.iter().map(String::as_str)) {
-        if id.starts_with(&query) && !candidates.iter().any(|seen| seen == id) {
+        if id.starts_with(&query) && !candidates.contains(id) {
             candidates.push(id.to_string());
         }
     }

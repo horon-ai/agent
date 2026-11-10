@@ -81,7 +81,7 @@ pub fn choose_session_prefix_match(
         if candidate == query {
             exact = true;
         }
-        if candidate.starts_with(query) && !matching.iter().any(|seen| *seen == candidate) {
+        if candidate.starts_with(query) && !matching.contains(&candidate) {
             matching.push(candidate);
         }
     }
@@ -111,20 +111,23 @@ pub fn choose_session_prefix_match(
 /// legacy `sessions/<id>.json` file. Nothing is opened, so a prefix query costs
 /// one directory listing rather than one transcript parse per session.
 ///
-/// # Errors
-/// Propagates an unreadable sessions root. A missing root is no matches.
-pub fn stored_session_id_prefix_matches(query: &str) -> Result<Vec<String>> {
+/// A sessions root that cannot be read yields no matches. That is the answer a
+/// query matching nothing produces as well, so an unreadable store degrades to
+/// the caller's existing unknown-session reply instead of inventing a failure
+/// the operator cannot act on.
+pub fn stored_session_id_prefix_matches(query: &str) -> Vec<String> {
     if query.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
-    let paths = crate::session::store_paths()?;
+    let Ok(paths) = crate::session::store_paths() else {
+        return Vec::new();
+    };
     let root = paths.root();
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
     let mut matches: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
+    for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
             continue;
@@ -132,7 +135,9 @@ pub fn stored_session_id_prefix_matches(query: &str) -> Result<Vec<String>> {
         if name.starts_with('.') {
             continue;
         }
-        let file_type = entry.file_type()?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let id = if file_type.is_dir() {
             name
         } else if file_type.is_file() && name.ends_with(".json") {
@@ -153,7 +158,7 @@ pub fn stored_session_id_prefix_matches(query: &str) -> Result<Vec<String>> {
     matches.sort();
     matches.dedup();
     matches.truncate(MAX_PREFIX_CANDIDATES);
-    Ok(matches)
+    matches
 }
 
 /// Resolve a query against stored sessions only.
@@ -161,13 +166,7 @@ pub fn stored_session_id_prefix_matches(query: &str) -> Result<Vec<String>> {
 /// Live sessions that were never persisted are not on disk; callers holding
 /// them pass their ids to [`choose_session_prefix_match`] instead.
 pub fn resolve_stored_session_prefix(query: &str) -> Result<String, SessionPrefixError> {
-    // A store that cannot be read contributes no candidates; the caller then
-    // reports the query as unknown rather than as a resolution failure.
-    let stored = match stored_session_id_prefix_matches(query) {
-        Ok(ids) => ids,
-        Err(_) => Vec::new(),
-    };
-    choose_session_prefix_match(query, stored)
+    choose_session_prefix_match(query, stored_session_id_prefix_matches(query))
 }
 
 #[cfg(test)]

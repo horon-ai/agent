@@ -196,7 +196,7 @@ impl Provider for EmptyProvider {
 fn an_ambiguous_error_names_the_candidates_it_reported() {
     // The bridge copies these ids into `details.accepted_ids`; the daemon path
     // puts the same text in the error. Both come from this one candidate list.
-    let error = crate::session::SessionPrefixError::Ambiguous {
+    let error = horon_agent_base::session_prefix::SessionPrefixError::Ambiguous {
         candidates: vec!["session_a_1790191044353".into(), "session_b_1790191044353".into()],
     };
     assert_eq!(error.candidates().len(), 2);
