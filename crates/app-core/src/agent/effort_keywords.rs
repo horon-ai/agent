@@ -20,7 +20,7 @@ impl Agent {
     /// call for synthetic or agent-initiated messages (swarm assignments, reload
     /// recovery, live turns, overnight, advisor, ambient, debug, swarm planner,
     /// auto-poke continuations).
-    pub(crate) fn arm_effort_keywords(&mut self, text: &str) {
+    pub fn arm_effort_keywords(&mut self, text: &str) {
         self.armed_effort_keyword = magic_keywords::scan(text);
     }
 
