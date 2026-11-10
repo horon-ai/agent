@@ -8,6 +8,7 @@
 //! an error frame cannot answer that.
 
 use super::*;
+use horon_agent_harness_api::HandoffCompaction;
 use serde_json::{Value, json};
 
 /// Build the legacy `compact` request, forwarding `method` only when the client
@@ -54,17 +55,27 @@ pub(super) fn result_reply(state: &mut BridgeState, event: &Value) -> Vec<Server
     )]
 }
 
-/// Read the daemon's outcome into the API type. An unreadable value stays
-/// `None`, which leaves the client on the plain `compacted` reply rather than
-/// inventing an outcome the daemon did not report.
-fn parse_outcome(value: &Value) -> Option<horon_agent_harness_api::HandoffCompaction> {
-    if value.is_null() {
-        return None;
+/// Read the daemon's outcome into the API type.
+///
+/// The four outcomes are read field by field rather than through a `serde`
+/// round trip: the value is either one the daemon wrote from this same enum or
+/// one from a newer daemon, and only the four documented shapes count as an
+/// outcome. Anything else stays `None`, which leaves the client on the plain
+/// `compacted` reply rather than inventing an outcome nobody reported.
+fn parse_outcome(value: &Value) -> Option<HandoffCompaction> {
+    match value["outcome"].as_str()? {
+        "committed" => match usize::try_from(value["covered"].as_u64()?) {
+            Ok(covered) => Some(HandoffCompaction::Committed { covered }),
+            Err(_) => None,
+        },
+        "nothing_to_cover" => Some(HandoffCompaction::NothingToCover),
+        "provider_error" => {
+            let detail = value["detail"].as_str()?;
+            Some(HandoffCompaction::ProviderError {
+                detail: detail.to_string(),
+            })
+        }
+        "cancelled" => Some(HandoffCompaction::Cancelled),
+        _ => None,
     }
-    // A newer daemon can report an outcome this build does not know. The client
-    // still gets the plain reply rather than an invented outcome.
-    let Ok(outcome) = serde_json::from_value(value.clone()) else {
-        return None;
-    };
-    Some(outcome)
 }
