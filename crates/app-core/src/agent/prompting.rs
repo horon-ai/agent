@@ -119,7 +119,21 @@ impl Agent {
             crate::memory_agent::update_context_sync_with_dir(session_id, messages, self.session.working_dir.clone());
         }
 
-        pending
+        // The consolidated cross-session summary is the durable half of memory
+        // guidance: one bounded digest per project, rewritten by the pass that
+        // runs after extraction. It rides in the same injection slot as this
+        // turn's relevance payload and adds nothing until a pass has run.
+        let summary = if fresh_user_turn {
+            self.session.working_dir.as_deref().and_then(|dir| {
+                crate::memory::MemoryManager::new()
+                    .with_project_dir(dir)
+                    .consolidation_summary()
+            })
+        } else {
+            None
+        };
+
+        compose_memory_guidance(pending, summary)
     }
 
     fn append_current_turn_system_reminder(&self, split: &mut crate::prompt::SplitSystemPrompt) {
@@ -312,5 +326,76 @@ impl Agent {
         _memory_event_tx: Option<crate::memory::MemoryEventSink>,
     ) -> Option<crate::memory::PendingMemory> {
         self.build_memory_prompt_nonblocking_shared(messages.to_vec().into(), _memory_event_tx)
+    }
+}
+
+/// Fold the consolidated summary into this turn's memory guidance.
+///
+/// The summary never replaces the relevance payload: with both present it is
+/// appended, and with no payload it is the whole injection. Either way the
+/// payload's count grows by the memories the digest speaks for.
+fn compose_memory_guidance(
+    pending: Option<crate::memory::PendingMemory>,
+    summary: Option<(String, usize)>,
+) -> Option<crate::memory::PendingMemory> {
+    match (pending, summary) {
+        (Some(mut memory), Some((summary, entries))) => {
+            memory.prompt.push_str("\n\n");
+            memory.prompt.push_str(&summary);
+            memory.count += entries;
+            Some(memory)
+        }
+        (pending, None) => pending,
+        (None, Some((summary, entries))) => Some(crate::memory::PendingMemory {
+            prompt: summary,
+            display_prompt: None,
+            computed_at: std::time::Instant::now(),
+            count: entries,
+            memory_ids: Vec::new(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending(prompt: &str) -> crate::memory::PendingMemory {
+        crate::memory::PendingMemory {
+            prompt: prompt.to_string(),
+            display_prompt: None,
+            computed_at: std::time::Instant::now(),
+            count: 1,
+            memory_ids: vec!["memory-1".to_string()],
+        }
+    }
+
+    #[test]
+    fn consolidation_summary_rides_after_the_relevance_payload() {
+        let guidance = compose_memory_guidance(
+            Some(pending("# Memory\n\n1. one")),
+            Some(("# Memory Summary".to_string(), 3)),
+        )
+        .expect("both halves produce guidance");
+        assert_eq!(guidance.prompt, "# Memory\n\n1. one\n\n# Memory Summary");
+        assert_eq!(guidance.memory_ids, vec!["memory-1".to_string()]);
+        assert_eq!(guidance.count, 4, "the digest's memories join the payload's count");
+    }
+
+    #[test]
+    fn consolidation_summary_alone_is_the_whole_injection() {
+        let guidance =
+            compose_memory_guidance(None, Some(("# Memory Summary".to_string(), 3))).expect("summary is guidance");
+        assert_eq!(guidance.prompt, "# Memory Summary");
+        assert_eq!(guidance.count, 3);
+        assert!(guidance.memory_ids.is_empty());
+    }
+
+    #[test]
+    fn no_summary_leaves_the_relevance_payload_untouched() {
+        let payload = pending("# Memory\n\n1. one");
+        let guidance = compose_memory_guidance(Some(payload), None).expect("payload is guidance");
+        assert_eq!(guidance.prompt, "# Memory\n\n1. one");
+        assert!(compose_memory_guidance(None, None).is_none());
     }
 }

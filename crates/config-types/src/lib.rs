@@ -645,6 +645,10 @@ pub struct AgentsConfig {
     pub memory_jev_threshold: f32,
     /// Optional model override for memory extraction only, never recall.
     pub memory_model: Option<String>,
+    // Cross-session consolidation: new memories per pass (Horon default `20`) and the
+    // injected summary byte cap (Horon default `4096`, where omp caps by tokens).
+    pub memory_consolidation_min_new: usize,
+    pub memory_consolidation_summary_bytes: usize,
     /// Whether optional automatic memory extraction may use a text-generating
     /// sidecar. Recall always uses Jev and is independent of this setting.
     #[serde(default = "default_memory_sidecar_enabled")]
@@ -743,6 +747,8 @@ impl Default for AgentsConfig {
             memory_jev_provider: default_memory_jev_provider(),
             memory_jev_threshold: default_memory_jev_threshold(),
             memory_model: None,
+            memory_consolidation_min_new: 20,
+            memory_consolidation_summary_bytes: 4096,
             memory_sidecar_enabled: default_memory_sidecar_enabled(),
             memory_rerank_cadence: default_memory_rerank_cadence(),
             memory_rerank_votes: default_memory_rerank_votes(),

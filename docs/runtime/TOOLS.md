@@ -466,6 +466,18 @@ Memory injected into the prompt is truncated, and seeing the full content used t
 - With `skill` given, `{"action": "create" | "update", "name": "...", "description": "...", "body": "..."}` writes a managed skill through the same code as `skill_manage create`/`update`. `name` is required: a `skill` object without it is reported as "`skill.name` is required" and nothing is written. A skill failure is reported on a second line of the result and never rolls back the lesson: the lesson is already stored. Unlike `skill_manage`, the skills list is not reloaded, so a new skill appears after the next `reload_all` or restart.
 - Authoring a skill still requires `[tools] managed_skills = true`; with it off, the lesson is stored and the result says the skill was not written.
 
+## Cross-session memory consolidation
+
+Extraction stores memories one session at a time and never merges across sessions, so the same subject piles up with drifting wording and there is no compact digest to inject. Consolidation is the second phase: it runs immediately after an extraction, inside the extraction task, never on the turn path.
+
+- Entries that share a subject merge into one active entry. The survivor keeps its id and content; the others are kept on disk and marked superseded (`superseded_by` plus a `Supersedes` edge), so they are still readable by id and nothing is deleted.
+- Two memories share a subject when they share at least two content terms and at least 60% of their combined term set, or when they share a tag. The pass prefers merging over keeping near-duplicates: a wrong merge costs a ranking slot, not data, and every merge is logged with the superseded ids and the session or tool that stored each.
+- A `correction` outranks every other category on its subject, because it records what the user said is true; a `fact` extracted later does not overwrite it. Within one category the newest entry wins.
+- Both scopes consolidate: the working folder's project store and the user-level global store, each with its own pass marker and summary (`crates/base/src/memory/consolidation.rs`).
+- Each scope's summary is written next to that scope's memory file and injected as memory guidance on the next fresh user turn, in the same slot as the per-turn relevance payload. It contributes nothing until a pass has run.
+- `[agents] memory_consolidation_min_new` (Horon default `20`) is how many memories must have been stored since the previous pass before it runs. A pass reloads the graph, merges and rewrites it, so it is batched instead of run per session.
+- `[agents] memory_consolidation_summary_bytes` (Horon default `4096`) caps the injected summary. Over the cap the text is cut at a character boundary, never dropped.
+
 ## Where MCP server configuration comes from
 
 MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.
