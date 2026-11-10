@@ -23,7 +23,7 @@ impl Agent {
     /// list. The switch stays inside the active named provider profile and is
     /// not persisted: the session keeps the model the user selected, and the
     /// next turn restores it through [`Self::restore_model_fallback`].
-    pub(crate) fn try_model_fallback(&mut self, error: &anyhow::Error) -> Option<ProviderErrorAction> {
+    pub(super) fn try_model_fallback(&mut self, error: &anyhow::Error) -> Option<ProviderErrorAction> {
         if !horon_agent_provider_core::failover::classify_model_fallback_error_message(&error.to_string()) {
             return None;
         }
@@ -57,7 +57,7 @@ impl Agent {
     /// The model fallback step, or the loop's existing handling when it does
     /// not apply. A profile without `fallback_models` behaves exactly as it did
     /// before this step existed.
-    pub(crate) fn model_fallback_or_proceed(&mut self, error: &anyhow::Error) -> ProviderErrorAction {
+    pub(super) fn model_fallback_or_proceed(&mut self, error: &anyhow::Error) -> ProviderErrorAction {
         self.try_model_fallback(error).unwrap_or(ProviderErrorAction::Proceed)
     }
 
