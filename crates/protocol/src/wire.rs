@@ -434,7 +434,13 @@ pub enum Request {
 
     /// Trigger manual context compaction
     #[serde(rename = "compact")]
-    Compact { id: u64 },
+    Compact {
+        id: u64,
+        /// Which kind of compaction to run. Absent is the summary path older
+        /// clients have always asked for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<CompactMethod>,
+    },
 
     /// Notify server that auth credentials changed (e.g., after login)
     #[serde(rename = "notify_auth_changed")]
@@ -1007,4 +1013,34 @@ pub enum PermissionDecision {
     Allow,
     AllowAlways,
     Deny,
+}
+
+/// What a `compact` request should write as the new boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactMethod {
+    /// A generated handoff document in place of the model's summary. The
+    /// request answers after the boundary is committed, so its reply carries
+    /// the outcome rather than "scheduled".
+    Handoff,
+}
+
+/// What the handoff compaction asked for by a `compact` request did.
+///
+/// The reply is the result, not an acknowledgement: a failed generation leaves
+/// the transcript unchanged and says so instead of reporting a summary that was
+/// never written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum HandoffCompactionReport {
+    /// The document became the boundary, covering the first `covered` messages
+    /// of the active context.
+    Committed { covered: usize },
+    /// The recent-token budget kept every message verbatim; nothing was written.
+    NothingToCover,
+    /// The completion failed. The transcript is unchanged.
+    ProviderError { detail: String },
+    /// The caller cancelled before the completion answered. The transcript is
+    /// unchanged.
+    Cancelled,
 }

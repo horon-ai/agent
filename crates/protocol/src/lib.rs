@@ -188,7 +188,8 @@ pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 mod wire;
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
-    FileDiffWire, PermissionDecision, PlanEntryWire, Request, ServerEvent, SessionMcpServer,
+    CompactMethod, FileDiffWire, HandoffCompactionReport, PermissionDecision, PlanEntryWire, Request, ServerEvent,
+    SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -636,7 +637,7 @@ impl Request {
             Request::SetSessionSaved { id, .. } => *id,
             Request::Split { id } => *id,
             Request::Transfer { id } => *id,
-            Request::Compact { id } => *id,
+            Request::Compact { id, .. } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,
             Request::InvalidateOpenAiUsage { id, .. } => *id,
             Request::ApprovalAck { id, .. } | Request::FailoverAck { id, .. } => *id,

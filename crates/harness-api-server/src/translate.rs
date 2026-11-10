@@ -1,6 +1,7 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
+mod compact_handoff;
 mod credentials;
 mod search_artifacts;
 mod usage_report;
@@ -1220,7 +1221,7 @@ impl BridgeState {
             "compact" => {
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::Compact));
-                vec![Outbound::Legacy(json!({"type": "compact", "id": id}))]
+                vec![Outbound::Legacy(compact_handoff::request(id, &request))]
             }
             "rename_session" => {
                 let id = self.legacy_id();
@@ -2318,30 +2319,7 @@ impl BridgeState {
             // reports refusal via `success: false` with a reason rather than
             // an error frame. Relayed as a real error so a client is not told
             // "done" about work that never happened.
-            "compact_result" => {
-                let id = event["id"].as_u64().unwrap_or(0);
-                let Some(api_id) = self.take_simple(id, SimpleKind::Compact) else {
-                    return vec![];
-                };
-                let message = event["message"].as_str().unwrap_or("").to_string();
-                if event["success"].as_bool() == Some(false) {
-                    return vec![ServerFrame::reply(
-                        api_id,
-                        ApiEvent::Error {
-                            code: ErrorCode::InvalidRequest,
-                            message,
-                            details: None,
-                        },
-                    )];
-                }
-                vec![ServerFrame::reply(
-                    api_id,
-                    ApiEvent::Compacted {
-                        session_id: session(self),
-                        message,
-                    },
-                )]
-            }
+            "compact_result" => compact_handoff::result_reply(self, &event),
             "session_renamed" => {
                 let session_id = event["session_id"]
                     .as_str()
@@ -3736,6 +3714,10 @@ mod usage_report_tests;
 #[cfg(test)]
 #[path = "translate_tests/credential_profile_tests.rs"]
 mod credential_profile_tests;
+
+#[cfg(test)]
+#[path = "translate_handoff_tests.rs"]
+mod translate_handoff_tests;
 
 #[cfg(test)]
 #[path = "user_response_capability_tests.rs"]

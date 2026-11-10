@@ -1750,20 +1750,6 @@ impl HoronAgentClient {
         .map(drop)
     }
 
-    /// Schedule compaction of the transcript so far, freeing context. Not
-    /// synchronous: returning means the request was accepted.
-    pub fn compact(&self, session_id: &str) -> Result<String> {
-        match self
-            .request_ok(ApiRequest::Compact {
-                session_id: session_id.to_string(),
-            })?
-            .event
-        {
-            ApiEvent::Compacted { message, .. } => Ok(message),
-            other => Err(unexpected("compacted", &other)),
-        }
-    }
-
     /// Set a session's title. `None` restores the generated one.
     pub fn rename_session(&self, session_id: &str, title: Option<String>) -> Result<()> {
         self.request_ok(ApiRequest::RenameSession {

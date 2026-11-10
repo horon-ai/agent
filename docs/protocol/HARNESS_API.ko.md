@@ -101,6 +101,42 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이 요청들에 `unsupported`로 답한다. 클라이언트 입장에서는 "이 서버가 아직 제공하지 않는다"와
 같은 응답이므로 분기 처리가 달라지지 않는다.
 
+## 핸드오프 압축
+
+`compact`는 선택 필드 `method`를 받는다. 없으면 클라이언트가 늘 요청해 온 모델 요약이고,
+응답 `compacted`는 요청이 접수됐다는 뜻이다. 데몬은 다음 안전 지점에서 요약하기 때문이다.
+
+`method: "handoff"`는 그 대신 생성한 핸드오프 문서를 경계로 쓴다. 응답은 그 쓰기가 끝난
+뒤 도착하며, 접수 확인이 아니라 결과다.
+
+요청:
+
+```json
+{"id": 4, "req": "compact", "session_id": "s-1", "method": "handoff"}
+```
+
+응답은 같은 `compacted` 이벤트에 `handoff`가 붙은 모양이다.
+
+```json
+{"id": 4, "event": "compacted", "session_id": "s-1", "message": "Committed a handoff document covering the first 120 messages.",
+ "handoff": {"outcome": "committed", "covered": 120}}
+```
+
+| `handoff.outcome` | 뜻 |
+| --- | --- |
+| `committed` | 문서가 경계가 됐다. `covered`는 덮은 메시지 수이고 최근 토큰 꼬리는 원문으로 남는다 |
+| `nothing_to_cover` | 모든 메시지가 최근 토큰 예산 안에 들어가 문서를 쓰지 않았다 |
+| `provider_error` | 완성 요청이 실패했다. `detail`에 프로바이더 메시지가 온다. 대화록은 그대로다 |
+| `cancelled` | 응답 전에 생성이 취소됐다. 대화록은 그대로다 |
+
+이 필드를 게이트하는 기능은 없다. 이 필드가 없던 서버는 요청의 모르는 필드를 무시하고
+`handoff` 없이 응답하므로, `method`를 보내는 클라이언트는 `handoff`가 빠진 응답을
+`nothing_to_cover`가 아니라 "이 서버가 지원하지 않음"으로 다뤄야 한다. 서버가 모르는 값은
+`invalid_request`로 거절한다.
+
+요청 자체에는 취소 신호가 없다. 완성 요청 한 번이 결과를 정하므로, 기다리기를 그만둔
+클라이언트가 있어도 생성은 계속된다. 이미 커밋된 경계를 되돌리지는 않는다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두

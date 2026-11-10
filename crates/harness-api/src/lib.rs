@@ -18,11 +18,13 @@ use serde::{Deserialize, Serialize};
 mod client;
 mod edit_stats;
 mod events;
+mod handoff;
 #[doc(hidden)]
 pub use edit_stats::estimate_session_edit_stats;
 pub use edit_stats::{
     SessionEditStats, enrich_sessions_from_edit_stats, enrich_sessions_from_local_edit_stats, record_session_edit,
 };
+pub use handoff::*;
 pub mod replication;
 mod requests;
 mod runtime_commands;
