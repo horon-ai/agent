@@ -1,6 +1,7 @@
 """Contract for the change classifier that decides which CI gates run."""
+import contextlib
+import io
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -8,7 +9,11 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from classify_changes import classify, last_green_sha  # noqa: E402
+from classify_changes import (  # noqa: E402
+    changed_files, classify, last_green_sha, main, parser, resolve)
+
+FULL = {"code": True, "docs": False, "docs_only": False}
+DOCS_ONLY = {"code": False, "docs": True, "docs_only": True}
 
 
 def pr(*files):
@@ -19,10 +24,14 @@ def push(files, ref="refs/heads/dev", attempt=1):
     return classify("push", list(files), ref=ref, attempt=attempt)
 
 
+def runs_json(sha):
+    return json.dumps({"workflow_runs": [{"head_sha": sha}]})
+
+
 class ClassifyChangesTests(unittest.TestCase):
     def test_docs_only_pull_request_skips_code_gates_but_keeps_docs_gates(self):
         result = pr("README.md", "docs/runtime/TOOLS.md", "docs/assets/diagram.svg")
-        self.assertEqual(result, {"code": False, "docs": True, "docs_only": True})
+        self.assertEqual(result, DOCS_ONLY)
 
     def test_any_code_file_forces_the_full_run(self):
         for extra in ("crates/base/src/lib.rs", "Cargo.lock", ".github/workflows/ci.yml",
@@ -34,8 +43,7 @@ class ClassifyChangesTests(unittest.TestCase):
                 self.assertFalse(result["docs_only"])
 
     def test_code_without_docs_does_not_run_docs_gates(self):
-        self.assertEqual(pr("crates/base/src/lib.rs"),
-                         {"code": True, "docs": False, "docs_only": False})
+        self.assertEqual(pr("crates/base/src/lib.rs"), FULL)
 
     def test_non_embedded_prose_is_docs_only_but_needs_no_corpus_test(self):
         # AGENTS.md is not compiled into the binary; a template is not documentation
@@ -43,122 +51,168 @@ class ClassifyChangesTests(unittest.TestCase):
         result = pr("AGENTS.md", ".github/pull_request_template.md")
         self.assertTrue(result["docs_only"])
 
-    def test_push_dispatch_and_empty_diff_always_run_everything(self):
-        full = {"code": True, "docs": False, "docs_only": False}
-        self.assertEqual(classify("push", ["README.md"]), full)
-        self.assertEqual(classify("workflow_dispatch", ["README.md"]), full)
-        self.assertEqual(classify("pull_request", []), full)
-        self.assertEqual(classify("pull_request", None), full)
+    def test_only_pull_requests_and_first_dev_pushes_are_classified(self):
+        self.assertEqual(push(["docs/README.md"]), DOCS_ONLY)
+        self.assertEqual(push(["crates/base/src/lib.rs"]), FULL)
+        self.assertEqual(push(["README.md"], ref="refs/heads/main"), FULL)
+        self.assertEqual(push(["README.md"], ref="refs/tags/v1.0.0"), FULL)
+        self.assertEqual(push(["README.md"], attempt=2), FULL)
+        self.assertEqual(push(["README.md"], attempt=0), FULL)
+        self.assertEqual(classify("workflow_dispatch", ["README.md"], ref="refs/heads/dev"), FULL)
+        self.assertEqual(classify("push", ["README.md"]), FULL)
 
-    # ---- dev-push-first-attempt tests ----
+    def test_empty_or_unknown_diff_runs_everything(self):
+        self.assertEqual(classify("pull_request", []), FULL)
+        self.assertEqual(classify("pull_request", None), FULL)
+        self.assertEqual(push([]), FULL)
+        self.assertEqual(classify("push", None, ref="refs/heads/dev"), FULL)
 
-    def test_dev_push_docs_only_runs_only_docs_gates(self):
-        # A push to dev with only docs changed → docs-only result.
-        result = push(["docs/README.md"])
-        self.assertEqual(result, {"code": False, "docs": True, "docs_only": True})
+    def test_last_green_sha_accepts_only_a_full_hex_sha(self):
+        good = "0123456789abcdef0123456789abcdef01234567"
+        self.assertEqual(last_green_sha("o/r", "ci.yml", lambda r, w: runs_json(good)), good)
+        bad = {
+            "fetch failed": lambda r, w: None,
+            "fetch raised": lambda r, w: (_ for _ in ()).throw(subprocess.TimeoutExpired("gh", 30)),
+            "empty runs": lambda r, w: json.dumps({"workflow_runs": []}),
+            "null sha": lambda r, w: runs_json(None),
+            "short sha": lambda r, w: runs_json("abc123"),
+            "upper-case sha": lambda r, w: runs_json(good.upper()),
+            "non-hex sha": lambda r, w: runs_json("z" * 40),
+            "invalid json": lambda r, w: "{not json",
+            "bare sha text": lambda r, w: good,
+            "wrong shape": lambda r, w: json.dumps([good]),
+        }
+        for name, fetch in bad.items():
+            with self.subTest(name):
+                self.assertIsNone(last_green_sha("o/r", "ci.yml", fetch))
+        self.assertIsNone(last_green_sha("", "ci.yml", lambda r, w: runs_json(good)))
+        self.assertIsNone(last_green_sha("o/r", "", lambda r, w: runs_json(good)))
 
-    def test_dev_push_with_code_runs_full(self):
-        result = push(["crates/base/src/lib.rs"])
-        self.assertEqual(result, {"code": True, "docs": False, "docs_only": False})
 
-    def test_dev_push_attempt_2_runs_full(self):
-        result = push(["docs/README.md"], attempt=2)
-        self.assertEqual(result, {"code": True, "docs": False, "docs_only": False})
+class GitRepo:
+    """A throwaway repository with an `origin/main` ref and a `dev` history."""
 
-    def test_main_push_docs_only_runs_full(self):
-        result = push(["README.md"], ref="refs/heads/main")
-        self.assertEqual(result, {"code": True, "docs": False, "docs_only": False})
+    def __init__(self, root):
+        self.root = root
+        for args in (["init", "-q"], ["config", "user.email", "t@example.com"],
+                     ["config", "user.name", "t"], ["config", "commit.gpgsign", "false"]):
+            self.git(*args)
 
-    def test_workflow_dispatch_runs_full(self):
-        result = classify("workflow_dispatch", ["README.md"], ref="", attempt=1)
-        self.assertEqual(result, {"code": True, "docs": False, "docs_only": False})
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True,
+                              capture_output=True, text=True).stdout.strip()
 
-    # ---- last_green_sha unit tests ----
+    def commit(self, path, text="x\n"):
+        target = Path(self.root, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", path)
+        return self.git("rev-parse", "HEAD")
 
-    def test_last_green_sha_valid_40hex(self):
-        valid_sha = "a" * 40
-        result = last_green_sha("test/repo", "ci.yml", lambda r, w: valid_sha)
-        self.assertEqual(result, valid_sha)
 
-    def test_last_green_sha_fetch_raising(self):
-        # fetch that raises/returns None → None
-        result = last_green_sha("test/repo", "ci.yml",
-                                lambda r, w: (_ for _ in ()).throw(RecursionError()))
-        self.assertIsNone(result)
+class DevPushResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = GitRepo(self.tmp.name)
+        self.released = self.repo.commit("crates/a/src/lib.rs")
+        self.repo.git("update-ref", "refs/remotes/origin/main", self.released)
+        self.green = self.repo.commit("crates/a/src/more.rs")
 
-    def test_last_green_sha_empty_workflow_runs(self):
-        result = last_green_sha("test/repo", "ci.yml",
-                                lambda r, w: json.dumps({"workflow_runs": []}))
-        self.assertIsNone(result)
+    def tearDown(self):
+        self.tmp.cleanup()
 
-    def test_last_green_sha_null_head_sha(self):
-        result = last_green_sha("test/repo", "ci.yml",
-                                lambda r, w: json.dumps(
-                                    {"workflow_runs": [{"head_sha": None}]}))
-        self.assertIsNone(result)
+    def resolve(self, head, *extra, fetch=None, attempt=1):
+        args = parser().parse_args(["--event", "push", "--ref", "refs/heads/dev",
+                                    "--workflow", "ci.yml", "--repo", "o/r",
+                                    "--head", head, *extra])
+        fetch = fetch or (lambda r, w: runs_json(self.green))
+        return resolve(args, attempt, fetch=fetch, cwd=self.tmp.name)
 
-    def test_last_green_sha_short_head_sha(self):
-        result = last_green_sha("test/repo", "ci.yml",
-                                lambda r, w: json.dumps(
-                                    {"workflow_runs": [{"head_sha": "abc"}]}))
-        self.assertIsNone(result)
+    def test_docs_only_push_is_compared_with_the_last_green_run(self):
+        head = self.repo.commit("docs/guide.md")
+        files, notice = self.resolve(head)
+        self.assertEqual(files, ["docs/guide.md"])
+        self.assertIn(f"compared with {self.green}", notice)
+        self.assertEqual(push(files), DOCS_ONLY)
 
-    def test_last_green_sha_non_hex_head_sha(self):
-        result = last_green_sha("test/repo", "ci.yml",
-                                lambda r, w: json.dumps(
-                                    {"workflow_runs": [{"head_sha": "xyzzzz"}]}))
-        self.assertIsNone(result)
+    def test_code_pushed_since_the_last_green_run_is_not_hidden_by_a_docs_tip(self):
+        self.repo.commit("crates/a/src/third.rs")
+        head = self.repo.commit("docs/guide.md")
+        files, _ = self.resolve(head)
+        self.assertTrue(push(files)["code"])
 
-    def test_last_green_sha_invalid_json(self):
-        result = last_green_sha("test/repo", "ci.yml", lambda r, w: "{invalid json")
-        self.assertIsNone(result)
+    def test_explicit_base_wins_over_the_lookup(self):
+        head = self.repo.commit("docs/guide.md")
+        files, notice = self.resolve(head, "--base", self.released,
+                                     fetch=lambda r, w: runs_json(head))
+        self.assertEqual(sorted(files), ["crates/a/src/more.rs", "docs/guide.md"])
+        self.assertIn("(--base)", notice)
 
-    # ---- changed_files tests ----
+    def test_every_uncertainty_runs_everything(self):
+        head = self.repo.commit("docs/guide.md")
+        cases = {
+            "lookup failed": dict(head=head, fetch=lambda r, w: None),
+            "unknown base": dict(head=head, fetch=lambda r, w: runs_json("f" * 40)),
+            "head already in origin/main": dict(head=self.released),
+            "re-run": dict(head=head, attempt=2),
+            "no head": dict(head=""),
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                files, notice = self.resolve(case["head"], fetch=case.get("fetch"),
+                                             attempt=case.get("attempt", 1))
+                self.assertIsNone(files)
+                self.assertIn("running every gate", notice)
 
-    def test_changed_files_rename_code_to_docs_is_not_docs_only(self):
-        """A code->doc rename should NOT be classified as docs-only."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = tmpdir
-            subprocess = __import__("subprocess")
+    def test_empty_diff_runs_everything(self):
+        files, _ = self.resolve(self.green)
+        self.assertEqual(files, [])
+        self.assertEqual(push(files), FULL)
 
-            subprocess.check_call(
-                ["git", "init"], cwd=repo,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            subprocess.check_call(
-                ["git", "config", "user.email", "test@test.com"], cwd=repo,
-            )
-            subprocess.check_call(
-                ["git", "config", "user.name", "Test"], cwd=repo,
-            )
+    def test_a_code_file_renamed_into_docs_still_counts_as_code(self):
+        Path(self.tmp.name, "docs").mkdir()
+        self.repo.git("mv", "crates/a/src/more.rs", "docs/more.rs")
+        self.repo.git("commit", "-q", "-m", "move")
+        head = self.repo.git("rev-parse", "HEAD")
+        for three_dot in (True, False):
+            files = changed_files(self.green, head, three_dot=three_dot, cwd=self.tmp.name)
+            self.assertIn("crates/a/src/more.rs", files)
+            self.assertFalse(classify("pull_request", files)["docs_only"])
 
-            # Create initial code file.
-            code_dir = Path(repo) / "crates" / "x"
-            code_dir.mkdir(parents=True, exist_ok=True)
-            (code_dir / "foo.md").write_text("# foo\n")
-            subprocess.check_call(
-                ["git", "add", "."], cwd=repo,
-            )
-            subprocess.check_call(
-                ["git", "commit", "-m", "initial code file"], cwd=repo,
-            )
 
-            # Move code file to docs.
-            docs_dir = Path(repo) / "docs"
-            docs_dir.mkdir(parents=True, exist_ok=True)
-            subprocess.check_call(
-                ["git", "mv", "crates/x/foo.md", "docs/foo.md"], cwd=repo,
-            )
-            subprocess.check_call(
-                ["git", "commit", "-m", "move code to docs"], cwd=repo,
-            )
+class CommandLineTests(unittest.TestCase):
+    def run_main(self, *argv, fetch=lambda r, w: None):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(list(argv), fetch=fetch)
+        return code, out.getvalue().splitlines()
 
-            # With --no-renames, the old code path still lists crates/x/foo.md.
-            from classify_changes import changed_files
-            changed = changed_files("HEAD~1", "HEAD", three_dot=False, cwd=repo)
-            self.assertIsNotNone(changed)
-            # With --no-renames, crates/x/foo.md should appear in the diff output.
-            self.assertIn("crates/x/foo.md", changed)
+    def test_one_notice_and_success_exit_on_every_path(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as listing:
+            listing.write("docs/a.md\n")
+            listing.flush()
+            cases = [
+                ("--event", "pull_request", "--files-from", listing.name),
+                ("--event", "push", "--ref", "refs/heads/main", "--attempt", "1",
+                 "--head", "HEAD"),
+                ("--event", "push", "--ref", "refs/heads/dev", "--attempt", "x",
+                 "--head", "HEAD"),
+                ("--event", "workflow_dispatch", "--ref", "refs/heads/dev"),
+                ("--event", "pull_request", "--base", "", "--head", ""),
+                ("--event", "pull_request", "--base", "0" * 40, "--head", "1" * 40),
+            ]
+            for argv in cases:
+                with self.subTest(argv=argv):
+                    code, lines = self.run_main(*argv)
+                    self.assertEqual(code, 0)
+                    self.assertEqual(sum(line.startswith("::notice::") for line in lines), 1)
+                    self.assertEqual(len([l for l in lines if l.startswith("code=")]), 1)
+            _, lines = self.run_main(*cases[0])
+            self.assertIn("docs_only=true", lines)
+            for argv in cases[1:]:
+                _, lines = self.run_main(*argv)
+                self.assertIn("code=true", lines)
 
 
 if __name__ == "__main__":
