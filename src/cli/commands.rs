@@ -916,6 +916,7 @@ pub async fn run_single_message_command(
         agent.mark_closed();
         return Err(error);
     }
+    let _settler = agent.arm_deferred_run_stop_join();
     run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson).await
 }
 
@@ -965,11 +966,10 @@ async fn run_single_message_with_agent(
     .await;
 
     // `Agent::new` and session restore both register this process as the active
-    // owner. Unlike the interactive lifecycle, `horon-agent run` has no later quit
-    // path to close the session. Finalize after output has been emitted, while
-    // returning the original command result unchanged. This prevents a normal
-    // one-shot exit from looking like a stale-PID crash on the next startup
-    // (issue #988).
+    // owner, and `horon-agent run` has no later quit path to close the session.
+    // Finalize after output, returning the original result unchanged: otherwise a
+    // normal one-shot exit looks like a stale-PID crash on the next startup (#988).
+    // Close joins the deferred `run.stopped` write; the guard covers paths it misses.
     agent.mark_closed();
     result
 }

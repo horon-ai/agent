@@ -294,6 +294,23 @@ The `JournalLimits` defaults (`store.rs`).
 - `input.in_doubt` can be sealed only from the `started` state. Arriving from any other phase is rejected as a transition violation.
 - A torn tail is reported separately (`RecoveryReport`). A file with no records at all and a corrupted file are different events.
 
+### Run end: the stop row and the close binding
+
+A turn ends with three durable writes in order: the conversation commit, `run.stopped`, and the close binding. `horon-agent run` overlaps the last two. `Agent::arm_deferred_run_stop_join` starts the `run.stopped` write and postpones only its join, and `Agent::mark_closed` joins it after the binding write and before the `session_end` hook. The ledger record for the stop is written after that join, so a reader of `control_receipts` or of the runtime summary never sees a stop whose row is still in flight. A journal write the store refuses leaves `persisted` false and does not change the turn's result. The flag is off for every long-lived caller: the daemon, ambient turns, and swarm workers keep the immediate join at the turn's tail.
+
+A process that never reaches the close path still owes its stop row, so the CLI `run` path holds a drop guard (`RunStopSettler`) that settles the deferred write on an early return, on an error propagated with `?`, and on an unwind. Termination that does not unwind does not join: the signal path in `src/cli/terminal.rs` calls `process::exit`, so a signalled `run` leaves the same state a crash would.
+
+What a crash between the two writes leaves behind:
+
+| Binding | Stop row | What the next load reports |
+| --- | --- | --- |
+| written | written | the recorded cause, session closed |
+| not written | written | the recorded cause; the crash sweep closes the session |
+| written | not written | no cause recorded; the session is already closed and the journal keeps the run open |
+| not written | not written | no cause recorded; the crash sweep closes the session and the journal keeps the run open |
+
+The last two rows recover alike: once a session is closed nothing retries the missing stop, so a binding without a stop is indistinguishable from neither write landing.
+
 ### Sessions that had no journal
 
 The existing `<session>.json` queue is imported once. The deterministic input id mapping is recorded, and a second start does not import again. After a normal transition the legacy JSON is mirrored with fsync. A mirror failure does not roll back admission into the new journal. It surfaces as a recovery warning and as a reason for `export-legacy` to refuse.

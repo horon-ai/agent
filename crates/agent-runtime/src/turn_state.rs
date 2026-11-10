@@ -210,6 +210,10 @@ pub enum StopDisposition {
     /// It names a run that is no longer current, so it went to history only and
     /// the current run's state was left untouched.
     History,
+    /// Its journal write is dispatched but not joined, so the stop reaches the
+    /// ledger later and no disposition exists yet: the CLI's close path records
+    /// it after the join.
+    Deferred,
 }
 
 /// The current run, its stop, and the stops that arrived too late to be current.

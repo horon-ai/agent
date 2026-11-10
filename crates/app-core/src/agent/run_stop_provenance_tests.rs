@@ -19,13 +19,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
-struct ProvenanceProvider {
+pub(crate) struct ProvenanceProvider {
     rounds: Arc<Mutex<VecDeque<Vec<StreamEvent>>>>,
     failing: Arc<AtomicBool>,
 }
 
 impl ProvenanceProvider {
-    fn scripted(rounds: Vec<Vec<StreamEvent>>) -> (Arc<dyn Provider>, Arc<AtomicBool>) {
+    pub(crate) fn scripted(rounds: Vec<Vec<StreamEvent>>) -> (Arc<dyn Provider>, Arc<AtomicBool>) {
         let failing = Arc::new(AtomicBool::new(false));
         let provider: Arc<dyn Provider> = Arc::new(Self {
             rounds: Arc::new(Mutex::new(rounds.into())),
@@ -63,7 +63,7 @@ impl Provider for ProvenanceProvider {
     }
 }
 
-fn completed_round(text: &str) -> Vec<StreamEvent> {
+pub(crate) fn completed_round(text: &str) -> Vec<StreamEvent> {
     vec![
         StreamEvent::TextDelta(text.into()),
         StreamEvent::MessageEnd {
@@ -95,7 +95,7 @@ fn run_stop_provenance_truncation_spends_the_continuation_budget() {
     );
 }
 
-fn probe_agent(provider: Arc<dyn Provider>) -> Agent {
+pub(crate) fn probe_agent(provider: Arc<dyn Provider>) -> Agent {
     let mut agent = Agent::new(provider, Registry::empty());
     agent.add_message(
         Role::User,
@@ -168,14 +168,14 @@ async fn echo_registry() -> Registry {
 }
 
 /// The journal root this test's agent home resolves to.
-fn journal_root() -> std::path::PathBuf {
+pub(crate) fn journal_root() -> std::path::PathBuf {
     horon_agent_base::storage::horon_agent_dir()
         .expect("the sandbox home resolves")
         .join(horon_agent_base::durable_runtime::JOURNAL_DIR_NAME)
 }
 
 /// Rows one session's journal holds, in order.
-fn journal_rows(session_id: &str) -> Vec<(RecordKind, String)> {
+pub(crate) fn journal_rows(session_id: &str) -> Vec<(RecordKind, String)> {
     let path = journal_root()
         .join(session_id)
         .join(horon_agent_base::durable_runtime::JOURNAL_FILE_NAME);
@@ -187,7 +187,7 @@ fn journal_rows(session_id: &str) -> Vec<(RecordKind, String)> {
 }
 
 /// The stop cause the journal recorded for `run_id`, if any.
-fn journal_stop_cause(session_id: &str, run_id: &str) -> Option<JournalStopCause> {
+pub(crate) fn journal_stop_cause(session_id: &str, run_id: &str) -> Option<JournalStopCause> {
     let path = journal_root()
         .join(session_id)
         .join(horon_agent_base::durable_runtime::JOURNAL_FILE_NAME);
@@ -201,7 +201,7 @@ fn journal_stop_cause(session_id: &str, run_id: &str) -> Option<JournalStopCause
 }
 
 /// The runs one session's journal started, in order.
-fn journal_started_runs(session_id: &str) -> Vec<String> {
+pub(crate) fn journal_started_runs(session_id: &str) -> Vec<String> {
     journal_rows(session_id)
         .into_iter()
         .filter(|(kind, _)| *kind == RecordKind::RunStarted)

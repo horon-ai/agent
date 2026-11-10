@@ -62,7 +62,7 @@ mod reload_trace;
 mod runtime;
 mod runtime_commands;
 mod runtime_special_commands;
-mod runtime_state_api;
+pub(crate) mod runtime_state_api;
 mod socket;
 mod swarm;
 mod swarm_channels;

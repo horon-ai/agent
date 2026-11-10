@@ -79,7 +79,7 @@ pub(super) async fn snapshot(
 /// holds no lock across an await. A session with no journal answers an empty
 /// summary with `exists: false`, which is a fact about that session rather than
 /// an error.
-pub(super) async fn runtime_state_summary(session_id: &str) -> Result<RuntimeStateSummary, String> {
+pub(crate) async fn runtime_state_summary(session_id: &str) -> Result<RuntimeStateSummary, String> {
     let session_id = session_id.to_string();
     tokio::task::spawn_blocking(move || summarise(&session_id))
         .await

@@ -40,6 +40,7 @@ pub(crate) use request_messages::{join_request_messages, record_request_extra_cl
 mod response_recovery;
 mod resume_commit;
 mod round_budget;
+pub mod run_stop;
 mod session_replication;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
@@ -523,6 +524,9 @@ pub struct Agent {
     /// Idle background compaction only starts here; a one-shot `run` leaves it
     /// false so it never compacts a transcript nobody will resume.
     persistent_runtime: bool,
+    /// Whether the run's `run.stopped` write is joined at close instead of at the
+    /// turn's tail. Only `horon-agent run` arms it (see `run_stop`).
+    defer_run_stop_join: bool,
     /// Opted-in advisor worker, created on the session's first completed tool
     /// round. `None` until then, after a disable, or when `[advisor]` is off.
     advisor: Option<advisor::Handle>,
@@ -675,6 +679,7 @@ impl Agent {
             pending_resume: None,
             failover_budget: failover_budget::FailoverBudgetState::default(),
             persistent_runtime: false,
+            defer_run_stop_join: false,
             advisor: None,
             advisor_cursor: 0,
             advisor_blocker_turn: None,
@@ -1605,18 +1610,6 @@ impl Agent {
             self.unlock_tools();
             self.session.refresh_initial_session_context_message();
         }
-    }
-
-    /// Mark this agent session as closed and persist it.
-    pub fn mark_closed(&mut self) {
-        // Closing releases ownership and persists the whole session; it is
-        // never the resume commit, so it must not announce `session_start`.
-        let persisted = !self.session.active_context().is_empty();
-        self.close_session_binding();
-        if persisted {
-            self.persist_session_best_effort("session close state");
-        }
-        self.fire_session_lifecycle_hook("session_end", "close");
     }
 
     /// Close the current binding without writing its session back.
