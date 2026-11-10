@@ -212,6 +212,19 @@ MEASUREMENTS = (
             "agent::request_messages::tests::structural_unset_pre_request_is_free",
         ],
     },
+    # The tool catalog is the request prefix every turn pays for: bounded in
+    # bytes, and measured beside the number of tools so a catalog that shrank
+    # its way under the ceiling is visible in the same line.
+    {
+        "section": "prefix",
+        "source": "tool-catalog",
+        "args": [
+            "-p",
+            "horon-agent-app-core",
+            "--lib",
+            "agent::tests::tool_request_bytes::core_profile_request_prefix_is_measured",
+        ],
+    },
 )
 
 REQUIRED_SECTIONS = (
@@ -226,6 +239,7 @@ REQUIRED_SECTIONS = (
     "skill",
     "mcp_config",
     "hooks",
+    "prefix",
 )
 
 
@@ -693,6 +707,25 @@ def check_hooks(report: Report, records: list[dict[str, str]], bounds: dict[str,
         )
 
 
+def check_prefix(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The request prefix stays inside its committed byte ceiling.
+
+    Three statements, because a ceiling alone certifies nothing. The floor
+    rejects a zero, which is what a catalog that never serialized reports; the
+    ceiling is the bound; and the tool count is compared against the eager
+    definitions the same measurement saw, so a catalog that fell under the
+    ceiling by losing a tool fails here instead of passing quietly.
+    """
+    for record in records:
+        section = "prefix"
+        tools = as_int(record, "tools_bytes", section)
+        count = as_int(record, "tool_count", section)
+        report.at_least(section, "tools_bytes", tools, 1)
+        report.at_most(section, "tools_bytes", tools, bounds["prefix_tools_bytes_max"])
+        report.at_least(section, "tool_count", count, 1)
+        report.equal(section, "tool_count", count, as_int(record, "eager_count", section))
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -705,6 +738,7 @@ CHECKS = {
     "skill": check_skill,
     "mcp_config": check_mcp_config,
     "hooks": check_hooks,
+    "prefix": check_prefix,
 }
 
 
