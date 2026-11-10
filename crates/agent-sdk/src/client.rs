@@ -1468,8 +1468,8 @@ impl HoronAgentClient {
                 session_id: session_id.to_string(),
             })?
             .event;
-        RuntimeInfo::from_reply(event, self.server.clone(), self.capabilities.clone())
-            .map_err(|other| unexpected("runtime_info", &other))
+        RuntimeInfo::from_reply(&event, self.server.clone(), self.capabilities.clone())
+            .ok_or_else(|| unexpected("runtime_info", &event))
     }
 
     /// Persist an API key in horon-agent's owner-only provider store and hot-reload

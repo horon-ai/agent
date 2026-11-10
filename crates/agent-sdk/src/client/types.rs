@@ -39,13 +39,8 @@ pub struct RuntimeInfo {
 }
 
 impl RuntimeInfo {
-    /// Build the public view from a daemon `runtime_info` reply, handing the
-    /// event back so a mismatched reply still reports what arrived.
-    pub(super) fn from_reply(
-        event: ApiEvent,
-        server: String,
-        capabilities: Vec<String>,
-    ) -> std::result::Result<Self, ApiEvent> {
+    /// Build the public view from a daemon `runtime_info` reply.
+    pub(super) fn from_reply(event: &ApiEvent, server: String, capabilities: Vec<String>) -> Option<Self> {
         let ApiEvent::RuntimeInfo {
             session_id,
             provider,
@@ -57,31 +52,31 @@ impl RuntimeInfo {
             routes,
         } = event
         else {
-            return Err(event);
+            return None;
         };
         let mut providers = Vec::new();
         if let Some(provider) = provider.as_ref() {
             providers.push(provider.clone());
         }
-        for route in &routes {
+        for route in routes {
             if !providers.contains(&route.provider) {
                 providers.push(route.provider.clone());
             }
         }
-        Ok(Self {
+        Some(Self {
             server,
             protocol_version: API_VERSION_MAJOR,
             capabilities,
             healthy: true,
-            session_id,
-            provider,
-            model,
-            reasoning_effort,
-            auth_method,
-            fallback_models,
-            serving_model,
+            session_id: session_id.clone(),
+            provider: provider.clone(),
+            model: model.clone(),
+            reasoning_effort: reasoning_effort.clone(),
+            auth_method: auth_method.clone(),
+            fallback_models: fallback_models.clone(),
+            serving_model: serving_model.clone(),
             providers,
-            routes,
+            routes: routes.clone(),
         })
     }
 }
