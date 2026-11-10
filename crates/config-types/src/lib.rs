@@ -49,10 +49,9 @@ impl CompactionMode {
     }
 }
 
-/// Which compaction engine owns a session.
-/// Exactly one strategy owns compaction: `structured` is horon's own
-/// summarizer, `handoff` commits a generated handoff document, and `openai_*`
-/// hands ownership to the provider's native compaction so both never trigger.
+/// Which compaction engine owns a session. Exactly one owns it: `structured`
+/// is horon's summarizer, `handoff` commits a generated document, and
+/// `openai_*` gives ownership to the provider so the two never both fire.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionStrategy {
@@ -159,11 +158,9 @@ impl UpdateChannel {
 }
 
 /// Config deserialization is deliberately lenient: an unknown or removed
-/// channel name (e.g. a stale `update_channel = "manual"` left in
-/// config.toml) falls back to the default channel instead of failing the
-/// entire config parse. A strict enum here once made the freshly exec'd
-/// server die during the reload handoff, leaving the handoff marker stuck
-/// in `starting` and clients re-requesting the reload forever (issue #349).
+/// channel name falls back to the default channel instead of failing the whole
+/// parse. A strict enum here once made the freshly exec'd server die during the
+/// reload handoff, leaving clients re-requesting the reload forever (#349).
 impl<'de> Deserialize<'de> for UpdateChannel {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -262,16 +259,16 @@ pub struct CompactionConfig {
     /// explicitly-set strategy always wins over that legacy key.
     pub strategy: Option<CompactionStrategy>,
 
-    /// Headroom kept free below the compaction trigger. Raised to
+    /// Headroom below the compaction trigger, raised to
     /// `min(window * 0.04, 49152)` when the window needs more room.
     pub reserve_tokens: usize,
 
-    /// Token allowance for the verbatim recent tail. Lowered when the window
+    /// Token allowance for the verbatim recent tail, lowered when the window
     /// cannot spare it (`window * (1 - ratio - 0.05)`, floor 1024).
     pub recent_tokens: usize,
 
-    /// Run proactive and idle compaction jobs in the background. Off leaves
-    /// threshold compaction and manual `/compact`; it never blocks a request.
+    /// Run proactive and idle compaction in the background; off leaves
+    /// threshold compaction and `/compact`, and never blocks a request.
     pub background: bool,
 
     /// Model for structured compaction summaries. Unset or empty uses the

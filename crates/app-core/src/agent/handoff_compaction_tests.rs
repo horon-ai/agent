@@ -57,7 +57,7 @@ fn text_block(text: &str) -> Vec<ContentBlock> {
 }
 
 /// A transcript long enough that a small recent-token budget leaves a prefix.
-fn handoff_fixture() -> (crate::auth::test_sandbox::AuthTestSandbox, Agent) {
+async fn handoff_fixture() -> (crate::auth::test_sandbox::AuthTestSandbox, Agent) {
     let sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().expect("test sandbox");
     std::fs::write(sandbox.root().join("config.toml"), "[compaction]\nrecent_tokens = 1\n").expect("write config");
     crate::config::invalidate_config_cache();
@@ -99,7 +99,7 @@ crates/app-core/src/agent/handoff_compaction.rs
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handoff_compaction_commits_a_document_as_the_boundary() {
-    let (_sandbox, mut agent) = handoff_fixture();
+    let (_sandbox, mut agent) = handoff_fixture().await;
     let cancel = AtomicBool::new(false);
     let completer = ScriptedCompleter {
         answer: Ok(COMPLETE_DOCUMENT.to_string()),
@@ -143,7 +143,7 @@ async fn handoff_compaction_commits_a_document_as_the_boundary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handoff_compaction_commits_a_document_missing_a_heading() {
-    let (_sandbox, mut agent) = handoff_fixture();
+    let (_sandbox, mut agent) = handoff_fixture().await;
     let cancel = AtomicBool::new(false);
     let partial = "## Goal\nfinish it\n\n## Done\nnothing yet\n";
     let completer = ScriptedCompleter {
@@ -162,7 +162,7 @@ async fn handoff_compaction_commits_a_document_missing_a_heading() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handoff_compaction_provider_error_leaves_the_transcript_unchanged() {
-    let (_sandbox, mut agent) = handoff_fixture();
+    let (_sandbox, mut agent) = handoff_fixture().await;
     let before_messages = agent.session.active_context().len();
     let before_state = agent.session.compaction.clone();
     let cancel = AtomicBool::new(false);
@@ -186,7 +186,7 @@ async fn handoff_compaction_provider_error_leaves_the_transcript_unchanged() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handoff_compaction_cancel_leaves_the_transcript_unchanged() {
-    let (_sandbox, mut agent) = handoff_fixture();
+    let (_sandbox, mut agent) = handoff_fixture().await;
     let before_messages = agent.session.active_context().len();
     let before_state = agent.session.compaction.clone();
     let cancel = AtomicBool::new(true);

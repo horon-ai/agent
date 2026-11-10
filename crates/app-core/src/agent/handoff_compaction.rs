@@ -82,6 +82,7 @@ impl Agent {
                 handoff: true,
                 ..Default::default()
             }),
+            ..Default::default()
         };
 
         let compaction = self.registry.compaction();

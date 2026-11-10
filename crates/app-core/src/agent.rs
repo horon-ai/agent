@@ -469,14 +469,11 @@ pub struct Agent {
     locked_tools: Option<Arc<[ToolDefinition]>>,
     /// One-shot guard for the async MCP-registration race (#206).
     ///
-    /// MCP servers connect on a background task and register `mcp__*` tools
-    /// seconds after the session starts (we deliberately do NOT block the first
-    /// turn on MCP connection, so the user can talk to the agent immediately).
-    /// The first turn therefore locks a snapshot without MCP tools. We allow
-    /// exactly one rebuild to pick them up — an intentional, one-time provider
-    /// prompt-cache miss. Once that rebuild happens (or we confirm there are no
-    /// MCP tools to wait for), this is set so the per-turn registry scan stops.
-    /// Reset whenever the tool list is intentionally unlocked.
+    /// MCP servers register `mcp__*` tools seconds after the session starts, so
+    /// the first turn locks a snapshot without them. We allow exactly one
+    /// rebuild to pick them up — an intentional, one-time prompt-cache miss —
+    /// then set this so the per-turn registry scan stops. Reset whenever the
+    /// tool list is intentionally unlocked.
     mcp_late_register_resolved: bool,
     /// Whether `locked_tools` was built for provider-native deferred MCP
     /// loading. A mid-session model/provider switch can change that
