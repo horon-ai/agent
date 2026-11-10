@@ -230,12 +230,15 @@ The gate asks "is the shape still bounded", not "is it fast". It therefore reads
 | IRC mailbox | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | At or below the 100 cap, 900 drops for 1000 arrivals, one body allocation per broadcast, 0 waiters after cleanup, at most 16 concurrent broadcasts |
 | Skill catalog and workspace skills | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | In a 200-skill catalog at most one file read and 8 KiB per skill (reading a 32 KiB body whole fails), 0 file and folder reads across 9 unchanged workspace requests, 1 or more warmup reads |
 | MCP user config | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 1 or more warmup reads, 0 rereads of unchanged user config after warmup |
+| Request prefix | `tools_bytes`, `tool_count` | The `core` profile's tool catalog is at least 1 byte and at or below the committed ceiling, and the tool count equals the eager definitions it was built from |
+
+The mock model server records `body_bytes`, `tools_bytes`, and `tool_count` for every request it answers (`GET /__stats`), so a bench run reports the same per-request shape the `prefix` row bounds.
 
 An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # everything
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix
 python3 scripts/perf/check_structural.py --print-plan    # only show the cargo commands that would run
 python3 -m unittest -v scripts/perf/test_check_structural.py   # the gate's contract tests
 ```

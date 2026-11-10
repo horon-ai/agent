@@ -536,6 +536,18 @@ def _plan_name(body: dict, prompt: str) -> str:
     return "ls"
 
 
+def json_payload_bytes(value) -> int:
+    """The bytes a client's compact JSON serialization of this value occupies.
+
+    The client writes its body with serde_json, which uses `,`/`:` separators
+    with no spaces and leaves non-ASCII characters as UTF-8. A parsed body no
+    longer carries its original bytes for the tool catalog, so re-serializing
+    the parsed value the same way is what makes a per-request catalog size
+    comparable across agents and turns.
+    """
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def collect_paths(body: dict) -> list[str]:
     found: set[str] = set()
     blob = json.dumps(body, ensure_ascii=False)
@@ -596,6 +608,9 @@ class Handler(BaseHTTPRequestHandler):
     def _read_body(self) -> dict:
         length = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(length) if length else b""
+        # The decoded body no longer carries the request's own bytes, so the
+        # length is kept here for the per-request size record.
+        self._body_bytes = len(raw)
         if not raw:
             return {}
         try:
@@ -852,6 +867,12 @@ class Handler(BaseHTTPRequestHandler):
                 or (find_tool_search(tools) is not None and deferred_listed_tool(body))
             ),
             "tool_count": len(tools or []),
+            # Transport size of the whole request, and the part of it the tool
+            # catalog occupies. The structural gate's `prefix` area reads these
+            # per request, so an agent that grows the catalog it sends every
+            # turn shows up as a number instead of a diff.
+            "body_bytes": getattr(self, "_body_bytes", 0),
+            "tools_bytes": json_payload_bytes(tools) if tools else 0,
             # Every tool name the request offered, so a missing MCP server can
             # be told apart from a misnamed one without re-running the agent.
             "tool_names": [_tool_name(tool) for tool, _ns in flatten_tools(tools)][:60],
