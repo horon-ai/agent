@@ -413,9 +413,7 @@ fn segment_style(id: SegmentId, data: &StatusData<'_>, theme: &Theme) -> Style {
     match id {
         SegmentId::Model => Style::default().fg(theme.status.status_accent),
         SegmentId::Status | SegmentId::Pending => {
-            if data.prompt.is_some() {
-                Style::default().fg(theme.core.warning)
-            } else if data.pending_turn {
+            if data.prompt.is_some() || data.pending_turn {
                 Style::default().fg(theme.core.warning)
             } else {
                 Style::default().fg(theme.core.success)

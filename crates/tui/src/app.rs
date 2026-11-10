@@ -387,10 +387,7 @@ impl App {
 fn home_directory() -> Option<String> {
     let value = match std::env::var_os("HOME") {
         Some(home) => home,
-        None => match std::env::var_os("USERPROFILE") {
-            Some(home) => home,
-            None => return None,
-        },
+        None => std::env::var_os("USERPROFILE")?,
     };
     Some(value.to_string_lossy().into_owned())
 }
