@@ -1574,8 +1574,6 @@ impl Agent {
                     is_error: Some(true),
                 };
                 let stored_message = StoredMessage {
-                    original_input: None,
-                    arg_repairs: None,
                     turn_start: false,
                     id: id::new_id("message"),
                     role: Role::User,
@@ -1584,6 +1582,7 @@ impl Agent {
                     timestamp: Some(chrono::Utc::now()),
                     tool_duration_ms: None,
                     token_usage: None,
+                    ..StoredMessage::default()
                 };
                 self.session
                     .insert_message(index + 1 + inserted + offset, stored_message);
