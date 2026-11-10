@@ -61,8 +61,7 @@ fn parse_outcome(value: &Value) -> Option<horon_agent_harness_api::HandoffCompac
     if value.is_null() {
         return None;
     }
-    match serde_json::from_value(value.clone()) {
-        Ok(outcome) => Some(outcome),
-        Err(_) => None,
-    }
+    // A newer daemon can report an outcome this build does not know. The client
+    // still gets the plain reply rather than an invented outcome.
+    serde_json::from_value(value.clone()).map_or(None, Some)
 }
