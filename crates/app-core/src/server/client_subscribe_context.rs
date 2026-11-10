@@ -44,7 +44,12 @@ pub(super) async fn resolve_target_subscribe_prefix(
     if target.is_empty() || crate::session::session_exists(target) || sessions.read().await.contains_key(target) {
         return Ok(());
     }
-    let mut candidates = crate::session::stored_session_id_prefix_matches(target).unwrap_or_default();
+    // A store that cannot be read contributes no candidates, and the target
+    // keeps its existing unknown-session answer.
+    let mut candidates = match crate::session::stored_session_id_prefix_matches(target) {
+        Ok(ids) => ids,
+        Err(_) => Vec::new(),
+    };
     for live in sessions.read().await.keys() {
         if live.starts_with(target.as_str()) && !candidates.iter().any(|seen| seen == live) {
             candidates.push(live.clone());

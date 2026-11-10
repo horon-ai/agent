@@ -161,7 +161,13 @@ pub fn stored_session_id_prefix_matches(query: &str) -> Result<Vec<String>> {
 /// Live sessions that were never persisted are not on disk; callers holding
 /// them pass their ids to [`choose_session_prefix_match`] instead.
 pub fn resolve_stored_session_prefix(query: &str) -> Result<String, SessionPrefixError> {
-    choose_session_prefix_match(query, stored_session_id_prefix_matches(query).unwrap_or_default())
+    // A store that cannot be read contributes no candidates; the caller then
+    // reports the query as unknown rather than as a resolution failure.
+    let stored = match stored_session_id_prefix_matches(query) {
+        Ok(ids) => ids,
+        Err(_) => Vec::new(),
+    };
+    choose_session_prefix_match(query, stored)
 }
 
 #[cfg(test)]
