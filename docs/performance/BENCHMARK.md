@@ -52,8 +52,20 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | `turns` | `3` | Turns sent per session |
 | `oneshot_runs` | `5` | How many samples each build takes for the one-shot, skill and MCP cells; `compare.md` names the count on its Host line. Five is the floor for a median; raise it to about 20 when the median has to separate two close builds |
 | `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately as the `horon-base` row. That makes a before-and-after comparison on the same runner |
+| `features` | empty | Cargo features added to the **candidate** release build only (`--features <value>`); the `horon-base` build never gets them, so the two rows stay comparable. Empty leaves the build command byte-identical to a run without this input, and the artifact then holds an empty `features.txt` line. The value must match `^[a-z0-9_,-]*$`. The `build` job keys its rust-cache entry on it, so a feature build never reuses the default artifacts |
 
 An unknown OS or group name fails the run immediately (`scripts/perf/bench_select.py`). Results stay for 30 days as the per-OS `merge` job summary and the `benchmark-<os>-<run_id>` artifact (JSON, Markdown). Intermediate artifact names do not start with `benchmark-`, so they do not mix into the `benchmark-docs.yml` download.
+
+### Allocator A/B
+
+The shipped binary builds without the `jemalloc` feature, so glibc is the Linux allocator and the default is not changed by a benchmark run. To compare the two on one runner, give the candidate the feature and let the same job build the baseline without it:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=20 -f baseline_ref=dev -f features=jemalloc
+```
+
+Read the added-session memory (idle and right after a turn), first-session RSS, one-shot time and install size in both horon rows. A cell where jemalloc's min–max range is worse than the baseline's does not justify a default change. The `features` input only exists on the candidate build; the `horon-base` row is always the shipped feature set, which is what makes the pair a measurement of the feature alone. The input is not restricted by OS; the allocator A/B is defined for `os=linux` only, and on a target where the C toolchain cannot build the allocator cargo fails the build job.
 
 There are no secrets and no API charges. Every measurement that needs a model attaches to `scripts/perf/mock_llm_server.py` (a local fake model server).
 
