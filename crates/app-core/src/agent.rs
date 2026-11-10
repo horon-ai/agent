@@ -1555,7 +1555,6 @@ impl Agent {
                 missing_repairs.push((index, missing_for_message));
             }
         }
-
         self.tool_output_scan_index = self.session.active_context().len();
 
         let mut repaired = 0usize;
@@ -1576,6 +1575,7 @@ impl Agent {
                     timestamp: Some(chrono::Utc::now()),
                     tool_duration_ms: None,
                     token_usage: None,
+                    ..StoredMessage::default()
                 };
                 self.session
                     .insert_message(index + 1 + inserted + offset, stored_message);

@@ -7,6 +7,8 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
     let temp_session_id = "session_temp_connecting_busy";
 
     let persisted_message = crate::session::StoredMessage {
+        original_input: None,
+        arg_repairs: None,
         turn_start: false,
         id: "msg-live-busy".to_string(),
         role: crate::message::Role::User,
@@ -77,14 +79,9 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
     let swarm_members = Arc::new(RwLock::new(HashMap::<String, SwarmMember>::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()));
     let file_touch = FileTouchService::new();
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::<
-        String,
-        HashMap<String, HashSet<String>>,
-    >::new()));
-    let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::<
-        String,
-        HashMap<String, HashSet<String>>,
-    >::new()));
+    let channel_subscriptions = Arc::new(RwLock::new(HashMap::<String, HashMap<String, HashSet<String>>>::new()));
+    let channel_subscriptions_by_session =
+        Arc::new(RwLock::new(HashMap::<String, HashMap<String, HashSet<String>>>::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::<String, VersionedPlan>::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::<String, String>::new()));
     let client_count = Arc::new(RwLock::new(2usize));
@@ -130,7 +127,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        false,
     )
     .await?;
 
@@ -179,9 +176,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
         "expected Done event for busy live attach, got {events:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, ServerEvent::Error { .. })),
+        !events.iter().any(|event| matches!(event, ServerEvent::Error { .. })),
         "busy live attach should not emit error events: {events:?}"
     );
     // A remote (gateway) client has no other way to learn its session id, and
@@ -207,9 +202,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
     let event: ServerEvent = serde_json::from_str(line.trim())?;
     match event {
         ServerEvent::History {
-            session_id,
-            messages,
-            ..
+            session_id, messages, ..
         } => {
             assert_eq!(session_id, target_session_id);
             assert_eq!(messages.len(), 1);
@@ -294,7 +287,7 @@ async fn live_attach_owed_target(
         &Arc::new(RwLock::new(VecDeque::<SwarmEvent>::new())),
         &Arc::new(std::sync::atomic::AtomicU64::new(0)),
         &swarm_event_tx,
-                false,
+        false,
     )
     .await?;
 
@@ -354,7 +347,9 @@ async fn live_attach_completes_an_owed_commit_before_done() -> Result<()> {
         "History is delivered first"
     );
     assert!(
-        events.iter().any(|event| matches!(event, ServerEvent::Done { id } if *id == 78)),
+        events
+            .iter()
+            .any(|event| matches!(event, ServerEvent::Done { id } if *id == 78)),
         "Done follows once the commit landed: {events:?}"
     );
     assert!(
@@ -391,7 +386,11 @@ async fn live_attach_reports_retryable_error_when_owed_commit_fails() -> Result<
     assert!(
         events.iter().any(|event| matches!(
             event,
-            ServerEvent::Error { id: 78, retry_after_secs: Some(1), .. }
+            ServerEvent::Error {
+                id: 78,
+                retry_after_secs: Some(1),
+                ..
+            }
         )),
         "a failed owed commit is a retryable error: {events:?}"
     );

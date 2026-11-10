@@ -209,6 +209,26 @@ Auto-approval writes an audit record. It creates no new file or queue and uses t
 
 `off` mode writes no audit line, because logs must match the era before approval tiers existed. Read-only calls are not audited either. That is why `off` returns before the read-only branch.
 
+## Argument repair
+
+A provider's JSON writer sometimes types an argument wrong: `"true"` where a
+boolean belongs, `"5000"` where a number does. Before a tool runs, the dispatcher
+coerces the value the schema names and records what it changed. A call that
+matched the schema on the first try takes no repair path and no allocation.
+
+A repaired call leaves three traces:
+
+- a debug log line, `[tool:<name>] repaired arguments: [...]`;
+- one entry in `snapshot().tool_arg_repairs`, keyed by tool name, when
+  `HORON_AGENT_PERF_COUNTERS=1`;
+- the stored tool result, which carries the arguments exactly as the model sent
+  them in `original_input` and one line per repair in `arg_repairs`.
+
+Both fields are omitted when the call needed no repair, so an existing session
+file keeps exactly its previous bytes and one written earlier still loads. The
+same two values go out as the `tool_args_repaired` event right before the call's
+result, described in `docs/protocol/HARNESS_API.md`.
+
 ## Edit safety
 
 A tool that writes a file records before and after snapshots of that call's changes in the edit journal once the write succeeds. `undo` reverts the most recent unit, and `redo` re-applies the unit the last `undo` removed. `read`'s hashline anchors and `hashline_edit` tag line contents so an edit can name target lines. This document describes the scope and limits of that behaviour in the current tree.
