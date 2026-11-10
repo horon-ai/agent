@@ -26,6 +26,15 @@ pub struct ToolConfiguration {
     pub custom: Vec<SessionToolDefinition>,
 }
 
+/// What a `Compact` request should write as the new boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactMethod {
+    /// A generated handoff document covering everything before the verbatim
+    /// recent-token tail. The reply waits for the boundary commit.
+    Handoff,
+}
+
 /// Curated request surface. Internally-tagged on `"req"`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "req", rename_all = "snake_case")]
@@ -350,7 +359,16 @@ pub enum ApiRequest {
     ///
     /// Without this a long-lived client eventually hits the context limit and
     /// has no recourse but to clear the conversation and lose everything.
-    Compact { session_id: String },
+    ///
+    /// `method: "handoff"` writes a generated handoff document as the boundary
+    /// instead of a model summary, and the reply waits for that write, so it
+    /// reports the outcome. Absent keeps the scheduled summary that answers
+    /// before any work starts.
+    Compact {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<CompactMethod>,
+    },
 
     /// Set a session's title, or clear it to restore the generated one.
     RenameSession {
@@ -555,6 +573,72 @@ pub enum PermissionDecision {
 }
 
 impl ApiRequest {
+    /// The session this request acts on, when it names one.
+    ///
+    /// The SDK uses it to attach the session id to an error frame, so a
+    /// "session not found" failure can say which id was not found without the
+    /// caller re-deriving it from the request it just sent.
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::ArchiveSession { session_id, .. } => Some(session_id.as_str()),
+            Self::RestoreSession { session_id, .. } => Some(session_id.as_str()),
+            Self::AttachSession { session_id, .. } => Some(session_id.as_str()),
+            Self::ForkSession { session_id, .. } => Some(session_id.as_str()),
+            Self::TransferSession { session_id, .. } => Some(session_id.as_str()),
+            Self::DetachSession { session_id, .. } => Some(session_id.as_str()),
+            Self::SendMessage { session_id, .. } => Some(session_id.as_str()),
+            Self::ConfigureTools { session_id, .. } => Some(session_id.as_str()),
+            Self::ListTools { session_id, .. } => Some(session_id.as_str()),
+            Self::ToolResult { session_id, .. } => Some(session_id.as_str()),
+            Self::Cancel { session_id, .. } => Some(session_id.as_str()),
+            Self::SoftInterrupt { session_id, .. } => Some(session_id.as_str()),
+            Self::GetHistory { session_id, .. } => Some(session_id.as_str()),
+            Self::PeekSession { session_id, .. } => Some(session_id.as_str()),
+            Self::Clear { session_id, .. } => Some(session_id.as_str()),
+            Self::Rewind { session_id, .. } => Some(session_id.as_str()),
+            Self::PermissionResponse { session_id, .. } => Some(session_id.as_str()),
+            Self::ApprovalAck { session_id, .. } => Some(session_id.as_str()),
+            Self::ExportSessionMarkdown { session_id, .. } => Some(session_id.as_str()),
+            Self::AskResponse { session_id, .. } => Some(session_id.as_str()),
+            Self::FailoverAck { session_id, .. } => Some(session_id.as_str()),
+            Self::ListModels { session_id, .. } => Some(session_id.as_str()),
+            Self::GetRuntimeInfo { session_id, .. } => Some(session_id.as_str()),
+            Self::UsageReport { session_id, .. } => session_id.as_deref(),
+            Self::RuntimeCommand { session_id, .. } => Some(session_id.as_str()),
+            Self::ReadFile { session_id, .. } => Some(session_id.as_str()),
+            Self::FindFiles { session_id, .. } => Some(session_id.as_str()),
+            Self::SearchText { session_id, .. } => Some(session_id.as_str()),
+            Self::FileStatus { session_id, .. } => Some(session_id.as_str()),
+            Self::ListArtifacts { session_id, .. } => Some(session_id.as_str()),
+            Self::GetTodoState { session_id, .. } => Some(session_id.as_str()),
+            Self::AckTodoFollowUp { session_id, .. } => Some(session_id.as_str()),
+            Self::SetModel { session_id, .. } => Some(session_id.as_str()),
+            Self::SetReasoningEffort { session_id, .. } => Some(session_id.as_str()),
+            Self::Compact { session_id, .. } => Some(session_id.as_str()),
+            Self::RenameSession { session_id, .. } => Some(session_id.as_str()),
+            Self::SetSessionSaved { session_id, .. } => Some(session_id.as_str()),
+            Self::RewindUndo { session_id, .. } => Some(session_id.as_str()),
+            Self::CancelSoftInterrupts { session_id, .. } => Some(session_id.as_str()),
+            Self::BackgroundTool { session_id, .. } => Some(session_id.as_str()),
+            Self::ListSessionHeads { session_id, .. } => Some(session_id.as_str()),
+            Self::SelectSessionHead { session_id, .. } => Some(session_id.as_str()),
+            Self::GetHistoryPage { session_id, .. } => Some(session_id.as_str()),
+            Self::ExportSessionEvents { session_id, .. } => Some(session_id.as_str()),
+            Self::ImportSessionEvents { session_id, .. } => Some(session_id.as_str()),
+            Self::ExportSessionBlob { session_id, .. } => Some(session_id.as_str()),
+            Self::ImportSessionBlob { session_id, .. } => Some(session_id.as_str()),
+            Self::GetSessionBlobStatus { session_id, .. } => Some(session_id.as_str()),
+            Self::ExportSessionRecordBlob { session_id, .. } => Some(session_id.as_str()),
+            Self::ImportSessionRecordBlob { session_id, .. } => Some(session_id.as_str()),
+            Self::GetSessionRecordBlobStatus { session_id, .. } => Some(session_id.as_str()),
+            Self::GetRuntimeState { session_id, .. } => Some(session_id.as_str()),
+            Self::ApplyControl { session_id, .. } => Some(session_id.as_str()),
+            Self::GetControlReceipt { session_id, .. } => Some(session_id.as_str()),
+            Self::GetSnapshot { session_id, .. } => Some(session_id.as_str()),
+            _ => None,
+        }
+    }
+
     /// The capability this request requires, or `None` when it is part of the
     /// surface every client has.
     ///

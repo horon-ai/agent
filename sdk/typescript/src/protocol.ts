@@ -618,7 +618,7 @@ export type ApiRequest =
   | { req: "ack_todo_follow_up"; session_id: string; effects: TodoEffects }
   | { req: "set_model"; session_id: string; model: string }
   | { req: "set_reasoning_effort"; session_id: string; effort: string }
-  | { req: "compact"; session_id: string }
+  | { req: "compact"; session_id: string; method?: "handoff" }
   | { req: "rename_session"; session_id: string; title?: string }
   | { req: "set_session_saved"; session_id: string; saved: boolean; label?: string }
   | { req: "rewind_undo"; session_id: string }
@@ -698,6 +698,13 @@ export type ApiRequest =
    */
   | { req: "get_snapshot"; session_id: string; tail?: number; max_bytes?: number }
   | { req: "ping" };
+
+/** What a `compactHandoff` request did. */
+export type CompactHandoffOutcome =
+  | { outcome: "committed"; covered: number }
+  | { outcome: "nothing_to_cover" }
+  | { outcome: "provider_error"; detail: string }
+  | { outcome: "cancelled" };
 
 export type ApiEvent =
   | { ev: "hello_ok"; version: number; server: string; capabilities?: string[] }
@@ -876,6 +883,8 @@ export type ApiEvent =
       model?: string;
       reasoning_effort?: string;
       auth_method?: string;
+      fallback_models?: string[];
+      serving_model?: string;
       routes: ModelRouteInfo[];
     }
   | { ev: "credential_updated"; provider: string; configured: boolean }
@@ -918,7 +927,12 @@ export type ApiEvent =
       pricing: string;
       estimated_cost: number | null;
     }
-  | { ev: "compacted"; session_id: string; message: string }
+  | {
+      ev: "compacted";
+      session_id: string;
+      message: string;
+      handoff?: CompactHandoffOutcome;
+    }
   | {
       ev: "session_renamed";
       session_id: string;

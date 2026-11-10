@@ -73,6 +73,8 @@ class RuntimeInfo(TypedDict, total=False):
     session_id: str
     provider: str
     model: str
+    fallback_models: list[str]
+    serving_model: str
     providers: list[str]
     routes: list[dict[str, Any]]
 
@@ -1831,6 +1833,11 @@ class HoronAgentClient:
             info["provider"] = provider
         if isinstance(frame.get("model"), str):
             info["model"] = frame["model"]
+        fallbacks = frame.get("fallback_models")
+        if isinstance(fallbacks, list):
+            info["fallback_models"] = [model for model in fallbacks if isinstance(model, str)]
+        if isinstance(frame.get("serving_model"), str):
+            info["serving_model"] = frame["serving_model"]
         return info
 
     # --- credentials --------------------------------------------------------
@@ -1959,6 +1966,22 @@ class HoronAgentClient:
         """
         frame = await self._expect_reply({"req": "compact", "session_id": session_id}, "compacted")
         return str(frame.get("message", ""))
+
+    async def compact_handoff(self, session_id: str) -> dict[str, Any]:
+        """Write a handoff document as the compaction boundary.
+
+        Synchronous, unlike :meth:`compact`: this resolves after the boundary is
+        written, and the returned ``handoff`` mapping names the outcome
+        (``committed`` with the covered count, ``nothing_to_cover``,
+        ``provider_error`` with its detail, or ``cancelled``). A failure or a
+        cancellation leaves the transcript unchanged and is reported as that
+        outcome rather than raised.
+        """
+        frame = await self._expect_reply({"req": "compact", "session_id": session_id, "method": "handoff"}, "compacted")
+        outcome = frame.get("handoff")
+        if not isinstance(outcome, dict):
+            raise HarnessError("unexpected_reply", "the daemon answered a handoff compaction without an outcome")
+        return dict(outcome)
 
     async def rename_session(self, session_id: str, title: str | None = None) -> None:
         """Set a session's title. Omit ``title`` to restore the generated one."""

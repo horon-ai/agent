@@ -43,6 +43,6 @@
     "mcp_config_user_rereads_max": 0,
     "hooks_unset_process_spawns_max": 0,
     "hooks_unset_message_copies_max": 0,
-    "prefix_tools_bytes_max": 9923
+    "prefix_tools_bytes_max": 9751
   }
 }

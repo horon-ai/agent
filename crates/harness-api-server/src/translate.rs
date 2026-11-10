@@ -1,7 +1,9 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
+mod compact_handoff;
 mod credentials;
+mod runtime_identity;
 mod search_artifacts;
 mod usage_report;
 
@@ -206,6 +208,13 @@ pub struct BridgeState {
     /// Reasoning effort last reported by the daemon, so identity events can
     /// carry it without a round trip.
     current_effort: Option<String>,
+    /// Configured fallback model ids the active provider profile tries, as the
+    /// daemon reports them with the catalog; `None` until an identity arrived.
+    fallback_models: Option<Vec<String>>,
+    /// Model that produced the most recent assistant response, when the daemon
+    /// says. Kept apart from `current_model`, which returns to the session's
+    /// own selection once a fallback turn ends.
+    serving_model: Option<String>,
     available_routes: Vec<ModelRouteInfo>,
     /// Deltas can precede the first catalog or a delayed snapshot reply.
     model_usage_updates: BTreeMap<(String, String, String), horon_agent_harness_api::ModelUsage>,
@@ -953,15 +962,17 @@ impl BridgeState {
                     },
                 ))]
             }
+            // Answered from the cache like before, unless the identity is not
+            // known yet or a fallback list can move the serving model.
             "get_runtime_info" => {
-                if !self.model_catalog_loaded {
-                    let id = self.legacy_id();
-                    self.pending_simple.push((id, api_id, SimpleKind::RuntimeInfo));
-                    return vec![Outbound::Legacy(
-                        json!({"type": "get_model_catalog", "id": id, "subscribe_usage_updates": true}),
-                    )];
+                if self.runtime_info_is_current() {
+                    return vec![Outbound::Reply(ServerFrame::reply(api_id, self.runtime_info()))];
                 }
-                vec![Outbound::Reply(ServerFrame::reply(api_id, self.runtime_info()))]
+                let id = self.legacy_id();
+                self.pending_simple.push((id, api_id, SimpleKind::RuntimeInfo));
+                vec![Outbound::Legacy(
+                    json!({"type": "get_model_catalog", "id": id, "subscribe_usage_updates": true}),
+                )]
             }
             "usage_report" => usage_report::reply(self, request, api_id),
             "notify_auth_changed" => {
@@ -1202,7 +1213,7 @@ impl BridgeState {
             "compact" => {
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::Compact));
-                vec![Outbound::Legacy(json!({"type": "compact", "id": id}))]
+                vec![Outbound::Legacy(compact_handoff::request(id, request))]
             }
             "rename_session" => {
                 let id = self.legacy_id();
@@ -2302,30 +2313,7 @@ impl BridgeState {
             // reports refusal via `success: false` with a reason rather than
             // an error frame. Relayed as a real error so a client is not told
             // "done" about work that never happened.
-            "compact_result" => {
-                let id = event["id"].as_u64().unwrap_or(0);
-                let Some(api_id) = self.take_simple(id, SimpleKind::Compact) else {
-                    return vec![];
-                };
-                let message = event["message"].as_str().unwrap_or("").to_string();
-                if event["success"].as_bool() == Some(false) {
-                    return vec![ServerFrame::reply(
-                        api_id,
-                        ApiEvent::Error {
-                            code: ErrorCode::InvalidRequest,
-                            message,
-                            details: None,
-                        },
-                    )];
-                }
-                vec![ServerFrame::reply(
-                    api_id,
-                    ApiEvent::Compacted {
-                        session_id: session(self),
-                        message,
-                    },
-                )]
-            }
+            "compact_result" => compact_handoff::result_reply(self, event),
             "session_renamed" => {
                 let session_id = event["session_id"]
                     .as_str()
@@ -2801,6 +2789,7 @@ impl BridgeState {
             self.note_provider(provider);
         }
         self.note_credential(event);
+        self.note_identity(event);
         if event.get("reasoning_effort").is_some() {
             self.current_effort = event["reasoning_effort"].as_str().map(str::to_string);
         }
@@ -2847,30 +2836,6 @@ impl BridgeState {
     fn note_credential(&mut self, event: &Value) {
         if let Some(credential) = event.get("resolved_credential") {
             self.current_credential = credential.as_str().map(str::to_string);
-        }
-    }
-
-    fn runtime_info(&self) -> ApiEvent {
-        ApiEvent::RuntimeInfo {
-            session_id: self.session_id.clone().unwrap_or_default(),
-            provider: self.current_provider.clone(),
-            model: self.current_model.clone(),
-            reasoning_effort: self.current_effort.clone(),
-            auth_method: self.current_credential.clone(),
-            routes: self.available_routes.clone(),
-        }
-    }
-
-    fn model_info(&self, session_id: String, event: &Value) -> ApiEvent {
-        ApiEvent::ModelInfo {
-            session_id,
-            provider: event["provider_name"].as_str().map(str::to_string),
-            model: event["provider_model"].as_str().map(str::to_string),
-            reasoning_effort: event["reasoning_effort"]
-                .as_str()
-                .map(str::to_string)
-                .or_else(|| self.current_effort.clone()),
-            auth_method: self.current_credential.clone(),
         }
     }
 
@@ -3714,12 +3679,20 @@ impl BridgeState {
 mod tests;
 
 #[cfg(test)]
+#[path = "translate/runtime_identity_tests.rs"]
+mod runtime_identity_tests;
+
+#[cfg(test)]
 #[path = "translate/usage_report_tests.rs"]
 mod usage_report_tests;
 
 #[cfg(test)]
 #[path = "translate_tests/credential_profile_tests.rs"]
 mod credential_profile_tests;
+
+#[cfg(test)]
+#[path = "translate_handoff_tests.rs"]
+mod translate_handoff_tests;
 
 #[cfg(test)]
 #[path = "user_response_capability_tests.rs"]

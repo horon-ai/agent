@@ -891,7 +891,12 @@ pub(super) async fn handle_resume_all_sessions(
     });
 }
 
-pub(super) fn handle_compact(id: u64, agent: &Arc<Mutex<Agent>>, client_event_tx: &mpsc::UnboundedSender<ServerEvent>) {
+pub(super) fn handle_compact(
+    id: u64,
+    method: Option<crate::protocol::CompactMethod>,
+    agent: &Arc<Mutex<Agent>>,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
     let agent = Arc::clone(agent);
     let tx = client_event_tx.clone();
     tokio::spawn(async move {
@@ -908,7 +913,20 @@ pub(super) fn handle_compact(id: u64, agent: &Arc<Mutex<Agent>>, client_event_tx
             return;
         }
         let session_id = agent_guard.session_id().to_string();
-        let (message, success) = agent_guard.request_manual_compaction();
+        let (message, success, handoff) = match method {
+            Some(crate::protocol::CompactMethod::Handoff) => {
+                // The request itself has no cancel signal: one bounded
+                // completion decides it and the reply is the outcome. The
+                // cancelled outcome belongs to a supervisor that shuts down
+                // before the answer arrives, such as an overnight run.
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                blocking_session_io(|| handoff_reply(agent_guard.request_handoff_compaction(&cancel)))
+            }
+            None => {
+                let (message, success) = agent_guard.request_manual_compaction();
+                (message, success, None)
+            }
+        };
         drop(agent_guard);
 
         if success {
@@ -922,7 +940,48 @@ pub(super) fn handle_compact(id: u64, agent: &Arc<Mutex<Agent>>, client_event_tx
             );
         }
 
-        let result = ServerEvent::CompactResult { id, message, success };
+        let result = ServerEvent::CompactResult {
+            id,
+            message,
+            success,
+            handoff,
+        };
         let _ = tx.send(result);
     });
+}
+
+/// Turn one handoff outcome into the reply a client reads: what happened, and
+/// whether the request succeeded.
+///
+/// A provider error is a reported outcome rather than a transport error: the
+/// transcript is untouched, and a client that only saw a failure frame could
+/// not tell that apart from a boundary that was written.
+fn handoff_reply(
+    outcome: crate::agent::HandoffOutcome,
+) -> (String, bool, Option<crate::protocol::HandoffCompactionReport>) {
+    use crate::agent::HandoffOutcome;
+    use crate::protocol::HandoffCompactionReport;
+
+    match outcome {
+        HandoffOutcome::Committed { covered } => (
+            format!("Committed a handoff document covering the first {covered} messages."),
+            true,
+            Some(HandoffCompactionReport::Committed { covered }),
+        ),
+        HandoffOutcome::NothingToCover => (
+            "Nothing to cover: the recent-token budget keeps every message verbatim.".to_string(),
+            true,
+            Some(HandoffCompactionReport::NothingToCover),
+        ),
+        HandoffOutcome::ProviderError(detail) => (
+            format!("Handoff compaction failed: {detail}"),
+            false,
+            Some(HandoffCompactionReport::ProviderError { detail: detail.clone() }),
+        ),
+        HandoffOutcome::Cancelled => (
+            "Handoff compaction was cancelled; the transcript is unchanged.".to_string(),
+            false,
+            Some(HandoffCompactionReport::Cancelled),
+        ),
+    }
 }
