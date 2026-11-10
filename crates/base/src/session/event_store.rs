@@ -113,6 +113,12 @@ pub(super) struct EventState {
     pub blocked: Option<store::StoreError>,
     pub reset_requested: bool,
     pub generation: u64,
+    /// Whether a caller that ends a turn may leave the derived cache of that
+    /// last commit to the next reader. Only a one-shot run enables this.
+    pub defer_final_cache: bool,
+    /// Set just before the commit that closes a turn. The commit consumes it
+    /// even when it fails, so the commit after that rebuilds normally.
+    pub skip_cache_once: bool,
 }
 
 pub(super) fn validate_external(source: &(PathBuf, String)) -> Result<()> {
@@ -295,6 +301,25 @@ fn absent(path: &Path) -> Result<bool> {
 }
 
 impl Session {
+    /// Allow a caller that ends a turn to leave the derived cache of that last
+    /// commit to the next reader.
+    ///
+    /// Only a one-shot run sets this. Every other caller, and every reader,
+    /// keeps the ordinary behavior: the commit that publishes originals also
+    /// publishes the derived checkpoint and catalog row.
+    pub fn set_defer_final_cache(&mut self, on: bool) {
+        self.event_state.defer_final_cache = on;
+    }
+
+    /// Mark the commit that closes a turn as the last one whose derived cache
+    /// may be left to the next reader.
+    ///
+    /// The mark is consumed by the next commit whatever its outcome; when the
+    /// flag above is off, the mark changes nothing.
+    pub fn mark_final_commit(&mut self) {
+        self.event_state.skip_cache_once = true;
+    }
+
     pub(super) fn event_writer(&mut self) -> Result<Arc<Writer>> {
         let paths = self.event_state.paths.clone().map(Ok).unwrap_or_else(paths)?;
         if let Some(writer) = &self.event_state.writer {

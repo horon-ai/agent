@@ -13,7 +13,9 @@ break silently:
 - Anthropic Messages emits `message_start` ... `message_stop` with a
   `tool_use` block;
 - the scenario only issues a tool call when a shell tool is offered and the
-  current turn has not already been answered, and `/__stats` proves it.
+  current turn has not already been answered, and `/__stats` proves it;
+- every request records its own body bytes and the bytes its tool catalog
+  occupies, which is what the structural gate's `prefix` area bounds.
 
 Only localhost traffic is used; no external network and no binaries.
 """
@@ -686,6 +688,55 @@ class ScenarioPlanTests(ServerCase):
         self.assertEqual(name, "bash")
         self.assertEqual(arguments, {"command": "ls"})
         self.assertEqual(self.requests()[0]["plan"], "ls")
+
+
+class RequestSizeRecordTests(ServerCase):
+    """The per-request size record the structural gate's `prefix` area reads.
+
+    `body_bytes` is the request as it crossed the socket and `tools_bytes` the
+    catalog inside it. Both are pinned here because a record that stops
+    carrying a size would make the gate read a zero and call it a measurement.
+    """
+
+    def entry(self) -> dict:
+        return get_json(self.port, "/__stats")["requests"][0]
+
+    def test_a_request_records_its_body_and_catalog_size(self) -> None:
+        body = chat_request(True, [{"role": "user", "content": "hi"}])
+        status, _headers, _raw = post(self.port, "/v1/chat/completions", body)
+        self.assertEqual(status, 200)
+        record = self.entry()
+        self.assertEqual(record["tool_count"], 1)
+        self.assertEqual(record["body_bytes"], len(json.dumps(body).encode()))
+        self.assertEqual(
+            record["tools_bytes"],
+            len(json.dumps(SHELL_TOOLS, separators=(",", ":")).encode()),
+        )
+        self.assertGreater(record["body_bytes"], record["tools_bytes"])
+
+    def test_a_request_without_tools_records_no_catalog_bytes(self) -> None:
+        body = {"model": "mock-model", "stream": True, "messages": [{"role": "user", "content": "hi"}]}
+        post(self.port, "/v1/chat/completions", body)
+        record = self.entry()
+        self.assertEqual(record["tool_count"], 0)
+        self.assertEqual(record["tools_bytes"], 0)
+        self.assertEqual(record["body_bytes"], len(json.dumps(body).encode()))
+
+    def test_every_endpoint_records_the_same_size_fields(self) -> None:
+        body = {
+            "model": "mock-model",
+            "stream": True,
+            "input": [{"role": "user", "content": "hi"}],
+            "tools": SHELL_TOOLS,
+        }
+        post(self.port, "/v1/responses", body)
+        record = self.entry()
+        self.assertEqual(record["tool_count"], 1)
+        self.assertEqual(record["body_bytes"], len(json.dumps(body).encode()))
+        self.assertEqual(
+            record["tools_bytes"],
+            len(json.dumps(SHELL_TOOLS, separators=(",", ":")).encode()),
+        )
 
 
 if __name__ == "__main__":
