@@ -20,6 +20,7 @@ mod goal_continuation;
 #[cfg(test)]
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
+mod handoff_compaction;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;

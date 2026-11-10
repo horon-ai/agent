@@ -123,13 +123,11 @@ struct HardThresholdWait {
 /// Rolling character-count estimate for the active (non-compacted) message
 /// suffix.
 ///
-/// Token estimation needs the size of the live message tail without rescanning
-/// the entire history on every call, so this caches that sum next to a dirty
-/// flag. The value and the flag must always move together: previously they were
-/// two independent `CompactionManager` fields, and a code path that updated one
-/// without the other silently corrupted token accounting. Keeping the raw
-/// fields private and forcing every mutation through these named operations
-/// makes that class of bug unrepresentable.
+/// Token estimation needs the size of the live tail without rescanning the
+/// whole history on every call, so this caches that sum beside a dirty flag.
+/// The value and the flag must move together; keeping both private and forcing
+/// every mutation through these named operations makes a corrupted accounting
+/// unrepresentable.
 #[derive(Debug, Clone, Default)]
 struct ActiveCharEstimate {
     chars: usize,
@@ -285,6 +283,10 @@ pub struct CompactionManager {
     /// must not present this as a complete summary.
     active_lossy: bool,
 
+    /// True when `active_summary` is a generated handoff document rather than a
+    /// summarizer summary; a persisted boundary keeps the tag across restarts.
+    active_handoff: bool,
+
     /// Durable refusal of automatic context recovery for one exact source,
     /// provider, model and settings identity.
     recovery_blocked: Option<recovery::RecoveryBlocked>,
@@ -379,6 +381,7 @@ impl CompactionManager {
             active_summary_usage: (None, None),
             active_restoration: None,
             active_lossy: false,
+            active_handoff: false,
             recovery_blocked: None,
             last_recovery: None,
             mode,
@@ -526,9 +529,8 @@ impl CompactionManager {
     /// A native window is opaque and bound to the model and credential route
     /// that produced it. Replaying it elsewhere would send the provider a
     /// payload it never created, and keeping the boundary would hide the
-    /// originals from the summarizer that has to rebuild them. So the window is
-    /// discarded and the boundary resets to zero: the originals become the
-    /// active context again, and no compacted count is advanced.
+    /// originals from the summarizer that has to rebuild them. The window is
+    /// discarded and the boundary resets to zero.
     ///
     /// Returns true when the persisted view changed.
     pub fn discard_foreign_openai_native_compaction(&mut self) -> bool {
@@ -715,11 +717,10 @@ impl CompactionManager {
     /// Point the manager at the engine the active provider reports as owner.
     ///
     /// Exactly one engine may compact a turn. The provider knows whether it
-    /// owns compaction natively (`auto`/`explicit`) or leaves it to horon; the
-    /// configured strategy only decides the case where the provider says
-    /// nothing. Reconciling here keeps a stale config from starting a structured
-    /// summary while the provider is already compacting the same turn (duplicate
-    /// compaction and double billing).
+    /// owns compaction natively; the configured strategy only decides the case
+    /// where the provider says nothing. Reconciling here keeps a stale config
+    /// from starting a structured summary while the provider is already
+    /// compacting the same turn.
     ///
     /// Returns true when ownership changed.
     pub fn reconcile_strategy(&mut self, provider_owned: Option<CompactionStrategy>) -> bool {
@@ -864,6 +865,7 @@ impl CompactionManager {
         );
         self.active_restoration = structured.and_then(|meta| meta.restoration.clone());
         self.active_lossy = structured.is_some_and(|meta| meta.lossy_emergency);
+        self.active_handoff = structured.is_some_and(|meta| meta.handoff);
         self.recovery_blocked = structured
             .and_then(|meta| meta.recovery_blocked.clone())
             .map(|blocked| recovery::RecoveryBlocked {
@@ -940,6 +942,7 @@ impl CompactionManager {
                     restoration: self.active_restoration.clone(),
                     lossy_emergency: self.active_lossy,
                     recovery_blocked: self.stored_recovery_blocked(),
+                    handoff: self.active_handoff,
                 })
                 .filter(|meta| {
                     meta.input_tokens.is_some()
@@ -947,6 +950,7 @@ impl CompactionManager {
                         || meta.restoration.is_some()
                         || meta.lossy_emergency
                         || meta.recovery_blocked.is_some()
+                        || meta.handoff
                 }),
             })
     }
@@ -1123,6 +1127,7 @@ impl CompactionManager {
         self.active_summary_usage = (None, None);
         self.active_restoration = Some(stored_restoration(&plan.restoration));
         self.active_lossy = true;
+        self.active_handoff = false;
         self.recovery_blocked = None;
         self.observed_input_tokens = None;
         self.generation = self.generation.wrapping_add(1);
@@ -1345,11 +1350,9 @@ impl CompactionManager {
     /// Returns `true` if the semantic strategy detects a topic shift or
     /// predicts we should compact now.
     ///
-    /// Topic-shift detection: compares the mean embedding of the oldest half
-    /// of the history window against the newest half. A low cosine similarity
-    /// between the two clusters indicates a topic boundary was crossed —
-    /// the previous topic is complete and safe to summarize.
-    ///
+    /// Topic-shift detection compares the mean embedding of the oldest half of
+    /// the history window against the newest half: a low cosine similarity
+    /// means a topic boundary was crossed and the previous topic is complete.
     /// Falls back to proactive logic if embeddings are unavailable.
     fn should_compact_semantic(&self, all_messages: &[Message]) -> bool {
         if self.anti_signals_block(all_messages) {
@@ -1395,12 +1398,10 @@ impl CompactionManager {
     ///
     /// Embeds the last `goal_window_turns` messages to represent the current
     /// goal, then scores all active messages by cosine similarity. Returns the
-    /// cutoff index: messages before the cutoff will be summarized, messages at
-    /// or after are kept verbatim.
-    ///
-    /// Messages above `relevance_keep_threshold` anywhere in the history are
-    /// pulled out of the summarize set. Falls back to the standard recency
-    /// cutoff if embeddings fail.
+    /// cutoff index: messages before it are summarized, messages at or after
+    /// it are kept verbatim. Messages above `relevance_keep_threshold` anywhere
+    /// in the history are pulled out of the summarize set. Falls back to the
+    /// standard recency cutoff if embeddings fail.
     fn semantic_cutoff(&mut self, active: &[Message]) -> usize {
         let goal_window_turns = self.compaction_config.goal_window_turns;
         let relevance_keep_threshold = self.compaction_config.relevance_keep_threshold;
@@ -2320,6 +2321,7 @@ impl CompactionManager {
         self.active_summary_usage = (result.input_tokens, result.output_tokens);
         self.active_restoration = result.restoration.as_ref().map(stored_restoration);
         self.active_lossy = false;
+        self.active_handoff = false;
         self.recovery_blocked = None;
         self.discard_oversized_openai_native_compaction();
         self.observed_input_tokens = None;
@@ -2633,15 +2635,11 @@ impl CompactionManager {
             return Err("Cannot compact — would split tool call/result pairs".to_string());
         }
 
-        // This hard compact will advance `compacted_count` and supersede any
-        // in-flight background (reactive/proactive/semantic) compaction. That
-        // background task summarized messages relative to the *old*
-        // `compacted_count`; if it completed afterwards, `check_and_apply_*`
-        // would add its stale cutoff on top of the already-advanced
-        // `compacted_count`, double-compacting and wiping out all live messages
-        // (observed as "kept 0 recent messages"). Cancel it now that we're
-        // committed to the hard compact, and bump the generation so any result
-        // that still slips through is discarded.
+        // This hard compact advances `compacted_count` and supersedes any
+        // in-flight background compaction. That task summarized against the old
+        // count, so a late result would add a stale cutoff on top and
+        // double-compact every live message. Cancel it and bump the generation
+        // so a result that still slips through is discarded.
         if self.pending_task.is_some() {
             crate::logging::warn(&format!(
                 "[compaction] Aborting in-flight background compaction (pending_cutoff={}, trigger={:?}) — superseded by hard compact",
@@ -2674,6 +2672,7 @@ impl CompactionManager {
         self.active_summary = Some(summary);
         self.active_summary_usage = (None, None);
         self.active_lossy = true;
+        self.active_handoff = false;
         self.observed_input_tokens = None;
         let post_tokens = self.effective_token_count_with(all_messages) as u64;
         self.last_compaction = Some(CompactionEvent {
@@ -2727,14 +2726,10 @@ impl CompactionManager {
     /// This is the shared escalation policy used by every emergency-recovery
     /// caller: drop old turns via [`hard_compact_with`], then — only if the
     /// context is *still* over budget — shorten oversized tool results via
-    /// [`emergency_truncate_with`]. Previously each caller open-coded this
-    /// sequence with subtly different escalation (one retried after a hard
-    /// compact without re-checking the budget), so centralizing it both removes
-    /// the duplication and guarantees consistent behavior.
+    /// [`emergency_truncate_with`]. Centralizing it keeps every caller on the
+    /// same escalation order.
     ///
-    /// Returns a structured outcome so callers can render their own
-    /// user-facing message. `pre_usage` is the context usage fraction observed
-    /// before recovery (captured here so the report matches what triggered it).
+    /// Returns a structured outcome so callers can render their own message.
     pub fn recover_within_budget(&mut self, all_messages: &mut [Message]) -> EmergencyRecovery {
         let pre_usage = self.context_usage_with(all_messages);
 
@@ -3016,11 +3011,11 @@ async fn generate_compaction_artifact(
 /// The ordered window to replay for a native compaction result, or why it
 /// cannot be replayed.
 ///
-/// A result that carries only `encrypted_content` is promoted to a
-/// single-item window, so every native state has one representation. A window
-/// is replayable only when it contains the compaction item, that payload is
-/// within [OI]'s per-string limit, and every retained item is an object with a
-/// string `type`.
+/// A result that carries only `encrypted_content` is promoted to a single-item
+/// window so every native state has one representation. A window is replayable
+/// only when it holds the compaction item, that payload is within [OI]'s
+/// per-string limit, and every retained item is an object with a string
+/// `type`.
 pub fn native_replayable_window(
     native: &horon_agent_provider_core::NativeCompactionResult,
 ) -> std::result::Result<Vec<serde_json::Value>, String> {
@@ -3146,6 +3141,7 @@ pub async fn build_transfer_compaction_state(
             restoration: result.restoration.as_ref().map(stored_restoration),
             lossy_emergency: false,
             recovery_blocked: None,
+            handoff: false,
         }),
     }))
 }

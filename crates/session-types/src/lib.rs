@@ -400,6 +400,10 @@ pub struct StoredSummaryMetadata {
     /// restart does not retry the same doomed compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_blocked: Option<StoredRecoveryBlocked>,
+    /// True when the boundary carries a generated handoff document rather than
+    /// a summarizer summary. The document still replays as plain text.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub handoff: bool,
 }
 
 /// A refused automatic context recovery, bound to one exact source, provider,

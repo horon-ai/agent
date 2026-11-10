@@ -50,10 +50,9 @@ impl CompactionMode {
 }
 
 /// Which compaction engine owns a session.
-///
-/// Exactly one strategy owns compaction at a time. `structured` is horon's own
-/// summarizer; the `openai_*` variants hand ownership to the provider's native
-/// compaction so both never trigger for the same turn.
+/// Exactly one strategy owns compaction: `structured` is horon's own
+/// summarizer, `handoff` commits a generated handoff document, and `openai_*`
+/// hands ownership to the provider's native compaction so both never trigger.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CompactionStrategy {
@@ -66,6 +65,8 @@ pub enum CompactionStrategy {
     /// [OI] native compaction is requested explicitly by the agent.
     #[serde(rename = "openai_explicit")]
     OpenAiExplicit,
+    /// A generated handoff document, committed as the boundary.
+    Handoff,
 }
 
 impl CompactionStrategy {
@@ -74,6 +75,7 @@ impl CompactionStrategy {
             Self::Structured => "structured",
             Self::OpenAiAuto => "openai_auto",
             Self::OpenAiExplicit => "openai_explicit",
+            Self::Handoff => "handoff",
         }
     }
 
@@ -82,13 +84,14 @@ impl CompactionStrategy {
             "structured" => Some(Self::Structured),
             "openai_auto" | "openai-auto" => Some(Self::OpenAiAuto),
             "openai_explicit" | "openai-explicit" => Some(Self::OpenAiExplicit),
+            "handoff" => Some(Self::Handoff),
             _ => None,
         }
     }
 
     /// Whether the provider owns compaction under this strategy.
     pub fn is_native(self) -> bool {
-        !matches!(self, Self::Structured)
+        matches!(self, Self::OpenAiAuto | Self::OpenAiExplicit)
     }
 }
 
@@ -247,18 +250,16 @@ pub struct CompactionConfig {
     /// the model's advertised context window. 0 = no cap (use the model window).
     ///
     /// Every turn re-sends the whole transcript, so on a 1M-window model the
-    /// default 80%-of-window trigger lets a session reach ~800k tokens per
-    /// request before anything folds. Set this to e.g. 200000 to compact earlier
-    /// on large-window providers. This bounds the compaction trigger budget,
-    /// not the final request size when recent messages cannot be compacted.
+    /// default 80%-of-window trigger lets a session reach ~800k tokens before
+    /// anything folds. Set this to e.g. 200000 to compact earlier on
+    /// large-window providers. This bounds the trigger budget, not the final
+    /// request size when recent messages cannot be compacted.
     pub max_context_tokens: usize,
 
-    /// Which engine owns compaction: `structured` (default), `openai_auto`, or
-    /// `openai_explicit`.
-    ///
-    /// Left unset, the strategy is derived from an explicitly-written
-    /// `[provider] openai_native_compaction_mode`. An explicitly-set strategy
-    /// always wins over that legacy key.
+    /// Which engine owns compaction: `structured` (default), `handoff`,
+    /// `openai_auto`, or `openai_explicit`. Left unset, it is derived from an
+    /// explicitly-written `[provider] openai_native_compaction_mode`; an
+    /// explicitly-set strategy always wins over that legacy key.
     pub strategy: Option<CompactionStrategy>,
 
     /// Headroom kept free below the compaction trigger. Raised to
@@ -269,20 +270,17 @@ pub struct CompactionConfig {
     /// cannot spare it (`window * (1 - ratio - 0.05)`, floor 1024).
     pub recent_tokens: usize,
 
-    /// Run proactive and idle compaction jobs in the background. Turning this
-    /// off leaves threshold (reactive) compaction and manual `/compact`
-    /// available; it never blocks a provider request.
+    /// Run proactive and idle compaction jobs in the background. Off leaves
+    /// threshold compaction and manual `/compact`; it never blocks a request.
     pub background: bool,
 
     /// Model for structured compaction summaries. Unset or empty uses the
     /// session model. Ignored by provider-native strategies.
     pub summary_model: Option<String>,
     /// Replace stale tool results with a short marker on the provider request.
-    ///
-    /// The stored transcript is untouched: an older `read` superseded by a
-    /// newer one, or a result that reported nothing, costs one line instead of
-    /// its full text until the conversation is compacted. Off by default
-    /// because it changes what the model sees.
+    /// The stored transcript is untouched: a superseded or empty `read` result
+    /// costs one line instead of its full text until the next compaction. Off
+    /// by default because it changes what the model sees.
     pub prune_tool_results: bool,
 }
 
@@ -830,15 +828,12 @@ impl SwarmSpawnMode {
 /// Lifecycle hooks: external commands horon-agent runs at well-defined points.
 ///
 /// Hook commands are parsed shell-style (quotes work) but executed directly,
-/// with `HORON_AGENT_HOOK_*` env vars describing the event (`HORON_AGENT_HOOK_EVENT`,
-/// `HORON_AGENT_HOOK_SESSION_ID`, `HORON_AGENT_HOOK_CWD`, event-specific fields, and a
-/// `HORON_AGENT_HOOK_PAYLOAD` JSON mirror). Hook processes get
+/// with `HORON_AGENT_HOOK_*` env vars describing the event. Hook processes get
 /// `HORON_AGENT_HOOKS_DISABLED=1` so nested horon-agent invocations don't recurse.
 ///
 /// All hooks except `pre_tool` are observers: detached, fire-and-forget,
-/// failures only logged. `pre_tool` is a gate: horon-agent waits for it and exit
-/// code 2 blocks the tool call (stderr becomes the error shown to the model);
-/// exit 0 allows; anything else fails open.
+/// failures only logged. `pre_tool` is a gate: horon-agent waits for it and
+/// exit code 2 blocks the tool call; exit 0 allows; anything else fails open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookCommands(Vec<String>);
 
@@ -1598,11 +1593,19 @@ mod compaction_strategy_tests {
             ("structured", CompactionStrategy::Structured),
             ("openai_auto", CompactionStrategy::OpenAiAuto),
             ("openai_explicit", CompactionStrategy::OpenAiExplicit),
+            ("handoff", CompactionStrategy::Handoff),
         ] {
             let json = format!("\"{text}\"");
             assert_eq!(serde_json::from_str::<CompactionStrategy>(&json).unwrap(), expected);
             assert_eq!(CompactionStrategy::parse(text), Some(expected));
+            assert_eq!(expected.as_str(), text);
         }
+    }
+
+    #[test]
+    fn handoff_is_not_a_native_strategy() {
+        assert!(!CompactionStrategy::Handoff.is_native());
+        assert_eq!(CompactionStrategy::default(), CompactionStrategy::Structured);
     }
 
     #[test]
