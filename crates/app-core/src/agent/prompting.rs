@@ -107,9 +107,9 @@ impl Agent {
         };
 
         // Use the persistent memory-agent pipeline as the single source of truth.
-        // Running both this and the legacy MemoryManager background retrieval path
-        // can prepare overlapping pending prompts for the same turn, which makes
-        // memory injection feel overly aggressive.
+        // A second retrieval pass preparing its own pending prompt for the same
+        // turn would overlap this one, which makes memory injection feel overly
+        // aggressive.
         // Relevance results are consumed only at the start of a fresh user turn.
         // Enqueuing again after every tool result runs the local embedding model
         // for each provider continuation without creating an additional injection

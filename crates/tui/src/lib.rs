@@ -13,6 +13,7 @@ pub mod app;
 pub mod input;
 pub mod prompts;
 pub mod sdk_bridge;
+pub mod settings;
 pub mod transcript;
 
 use std::time::Duration;
@@ -33,12 +34,15 @@ pub const USAGE: &str = "\
 horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
+                 [--config <file>]...
 
 Options:
   --socket <path>  Harness API socket to connect to (default: the resolved
                    harness socket for this user)
   --session <id>   Attach to an existing session instead of creating one
   --cwd <dir>      Working directory for a newly created session
+  --config <file>  Extra settings file, read after the global and project
+                   files and before the environment (repeatable)
   -V, --version    Print the version and exit
   -h, --help       Print this help and exit
 
@@ -56,6 +60,8 @@ pub struct Args {
     pub session: Option<String>,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
+    /// Extra settings files, applied in the order given.
+    pub config: Vec<std::path::PathBuf>,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -86,13 +92,18 @@ impl Args {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
                 },
+                "--config" => match arguments.next() {
+                    Some(path) if !path.is_empty() => parsed.config.push(path.into()),
+                    _ => return Err("--config needs a file".to_string()),
+                },
                 other => match other.split_once('=') {
-                    Some(("--socket", "")) | Some(("--session", "")) | Some(("--cwd", "")) => {
+                    Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
+                    Some(("--config", path)) => parsed.config.push(path.into()),
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
@@ -144,13 +155,23 @@ where
         print!("{USAGE}");
         return 0;
     }
+    // Settings load before the connection so a broken settings file is
+    // reported even when the daemon is unreachable.
+    let (sources, note) = settings::Sources::from_environment(args.config.clone());
+    if let Some(note) = note {
+        eprintln!("horon-tui: {note}");
+    }
+    let mut reloader = settings::Reloader::new(sources);
+    for warning in reloader.warnings() {
+        eprintln!("horon-tui: settings: {warning}");
+    }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime),
+        Ok(runtime) => run_interactive(runtime, &mut reloader),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -178,8 +199,13 @@ fn show_failure(message: &str) {
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime) -> i32 {
+fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
     let mut app = App::new(runtime.description.clone(), runtime.events);
+    // The stderr copy of these warnings is wiped by the alternate screen, so
+    // the transcript carries them for the person using the interface.
+    for warning in reloader.warnings() {
+        app.warn(format!("settings: {warning}"));
+    }
     install_panic_hook();
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -188,7 +214,7 @@ fn run_interactive(runtime: Runtime) -> i32 {
             return 1;
         }
     };
-    let code = event_loop(&mut terminal, &mut app, &runtime.commands);
+    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader);
     ratatui::restore();
     code
 }
@@ -203,7 +229,12 @@ fn install_panic_hook() {
 }
 
 /// The main loop: drain SDK events, redraw, then read at most one keystroke.
-fn event_loop<B>(terminal: &mut Terminal<B>, app: &mut App, commands: &std::sync::mpsc::Sender<Command>) -> i32
+fn event_loop<B>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    commands: &std::sync::mpsc::Sender<Command>,
+    reloader: &mut settings::Reloader,
+) -> i32
 where
     B: Backend,
     B::Error: std::fmt::Display,
@@ -212,6 +243,12 @@ where
         drain_events(app);
         if !app.running {
             break;
+        }
+        // The reloader throttles itself to one file check per second.
+        if let Some(reload) = reloader.tick() {
+            for warning in reload.warnings {
+                app.warn(format!("settings: {warning}"));
+            }
         }
         if let Err(message) = draw(terminal, app) {
             eprintln!("horon-tui: {message}");
@@ -447,6 +484,27 @@ mod tests {
         }
         assert!(Args::parse(["--session".to_string()]).is_err());
         assert!(Args::parse(["--cwd".to_string()]).is_err());
+    }
+
+    #[test]
+    fn args_parse_repeated_config_files() {
+        let parsed = Args::parse([
+            "--config".to_string(),
+            "/tmp/a.toml".to_string(),
+            "--config=/tmp/b.toml".to_string(),
+        ]);
+        match parsed {
+            Ok(args) => assert_eq!(
+                args.config,
+                vec![
+                    std::path::PathBuf::from("/tmp/a.toml"),
+                    std::path::PathBuf::from("/tmp/b.toml")
+                ]
+            ),
+            Err(message) => panic!("expected a parse: {message}"),
+        }
+        assert!(Args::parse(["--config".to_string()]).is_err());
+        assert!(Args::parse(["--config=".to_string()]).is_err());
     }
 
     #[test]
