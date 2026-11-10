@@ -6,9 +6,11 @@
 //! module owns the prompt state and the key mapping; the app only forwards the
 //! resulting [`Response`] to the bridge.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use horon_agent_sdk::api::AskSelection;
 use horon_agent_tool_types::AskQuestion;
+
+use crate::keys::{self, Bindings, Code, Key, Scope};
 
 /// The harness is waiting for a permission decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,17 +199,29 @@ impl Prompt {
         }
     }
 
-    /// Handle one keystroke.
+    /// Handle one keystroke with the shipped key map.
+    ///
+    /// This is the entry point for a caller that has no loaded key map, such
+    /// as a test driving the prompt on its own; the app uses
+    /// [`Prompt::on_key_with`] with the map in force.
+    pub fn on_key(&mut self, key: KeyEvent) -> Option<Response> {
+        self.on_key_with(keys::default_bindings(), key)
+    }
+
+    /// Handle one keystroke through the given key map.
     ///
     /// Returns a [`Response`] only when the prompt is answered completely; a
-    /// partially answered ask keeps its state and keeps drawing.
-    pub fn on_key(&mut self, key: KeyEvent) -> Option<Response> {
+    /// partially answered ask keeps its state and keeps drawing. Digits are
+    /// matched literally rather than through the map: a question is answered by
+    /// pressing its number, which must keep working whatever the user bound.
+    pub fn on_key_with(&mut self, bindings: &Bindings, key: KeyEvent) -> Option<Response> {
+        let key = Key::from_event(key)?;
         match self {
             Self::Approval(approval) => {
-                let (approved, always) = match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => (true, false),
-                    KeyCode::Char('a') | KeyCode::Char('A') => (true, true),
-                    KeyCode::Char('n') | KeyCode::Char('N') => (false, false),
+                let (approved, always) = match bindings.resolve(Scope::Prompt, &key) {
+                    Some(keys::ids::PROMPT_ALLOW) => (true, false),
+                    Some(keys::ids::PROMPT_ALLOW_ALWAYS) => (true, true),
+                    Some(keys::ids::PROMPT_DENY) => (false, false),
                     _ => return None,
                 };
                 approval.always = always;
@@ -219,12 +233,19 @@ impl Prompt {
             }
             Self::Ask(ask) => {
                 let multi = ask.question().is_some_and(|question| question.multi);
-                match key.code {
-                    KeyCode::Esc => return None,
+                match bindings.resolve(Scope::Prompt, &key) {
+                    Some(keys::ids::PROMPT_DISMISS) => return None,
                     // A multi-select question toggles digits and confirms with
                     // Enter; a single-choice one is settled by its digit.
-                    KeyCode::Enter if multi => {}
-                    KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(keys::ids::PROMPT_CONFIRM) if multi => {}
+                    Some(_) => return None,
+                    None => {
+                        let Code::Char(character) = key.code else {
+                            return None;
+                        };
+                        if key.ctrl {
+                            return None;
+                        }
                         let index = character.to_digit(10)?.checked_sub(1)?;
                         ask.choose(index as usize);
                         if multi {
@@ -232,7 +253,6 @@ impl Prompt {
                         }
                         ask.current = ask.current.saturating_add(1);
                     }
-                    _ => return None,
                 }
                 if !ask.advance() {
                     return None;
@@ -249,6 +269,7 @@ impl Prompt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
     use horon_agent_tool_types::AskOption;
 
     fn key(code: KeyCode) -> KeyEvent {
