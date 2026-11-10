@@ -44,12 +44,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Same classification as ci.yml: a documentation-only pull request has no
-  # counter to measure. Pushes and dispatches always run the gate.
+  # Same classification as ci.yml: a documentation-only pull request or
+  # first-attempt `dev` push has no counter to measure. A push to `main`, a
+  # dispatch, a re-run of a `dev` push and every lookup or diff failure run the
+  # gate.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
     steps:
@@ -60,9 +65,10 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
+          GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci/classify_changes.py --workflow structural-perf.yml --base "$BASE_SHA" --head "$HEAD_SHA"
 
   structural-perf:
     name: Structural performance gate
@@ -117,8 +123,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 scripts/perf/check_structural.py
 
-  # Always finishes: a documentation-only pull request skips the gate by design
-  # and must not leave a required check pending.
+  # Always finishes: a documentation-only pull request or `dev` push skips the
+  # gate by design and must not leave a required check pending.
   structural-perf-required:
     name: Structural performance required
     if: ${{ always() }}
@@ -133,5 +139,10 @@ jobs:
           set -euo pipefail
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
           [ "$(echo "$NEEDS" | jq -r '.changes.result')" = success ]
+          code="$(echo "$NEEDS" | jq -r '.changes.outputs.code // ""')"
+          if [ "$code" != true ] && [ "$code" != false ]; then
+            echo "::error::Changed Paths gave code='$code'; expected true or false"
+            exit 1
+          fi
           [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != failure ]
           [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != cancelled ]

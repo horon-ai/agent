@@ -51,7 +51,7 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
         # The only allowed conditions are the path classification (a
-        # documentation-only pull request skips the job) and the negation of the
+        # documentation-only pull request or dev push skips the job) and the negation of the
         # repository-wide switch to the self-hosted macOS runner, which cannot
         # run Windows jobs at all. The negation keeps fork pull requests on
         # hosted runners.
@@ -249,10 +249,37 @@ class WorkflowGuardTests(unittest.TestCase):
                 for job in names:
                     if job != aggregate:
                         self.assertRegex(needs, rf'\b{re.escape(job)}\b', job)
-        # A push or dispatch must never be classified as documentation-only,
+                # An empty or malformed classification must fail the aggregate
+                # instead of passing with every gate skipped.
+                self.assertIn(".changes.outputs.code // \"\"", block)
+                self.assertRegex(block, r'if \[ "\$code" != true \] && \[ "\$code" != false \]; then\n'
+                                        r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+                # The dev push lookup reads the run list with the job's own token.
+                changes = re.split(r'\n  [A-Za-z0-9_-]+:\n', jobs.split('\n  changes:\n', 1)[1], maxsplit=1)[0]
+                self.assertIn('      actions: read', changes)
+                self.assertIn('GH_TOKEN: ${{ github.token }}', changes)
+                self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
+                self.assertIn('HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}', changes)
+                self.assertIn('fetch-depth: 0', changes)
+                self.assertIn(f'run: python3 scripts/ci/classify_changes.py --workflow {name} '
+                              '--base "$BASE_SHA" --head "$HEAD_SHA"', changes)
+        ci_block = (ROOT / '.github/workflows/ci.yml').read_text().split('\n  ci-required:\n', 1)[1]
+        self.assertRegex(ci_block, r'if \[ "\$code" != true \] && \[ "\$docs_only" != true \]; then\n'
+                                   r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+        # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
-        script = (ROOT / 'scripts/ci/classify_changes.py').read_text()
-        self.assertIn('if event != "pull_request"', script)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'classify_changes', ROOT / 'scripts/ci/classify_changes.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        full = {'code': True, 'docs': False, 'docs_only': False}
+        for event, ref, attempt in (('push', 'refs/heads/main', 1),
+                                    ('push', 'refs/tags/v1.0.0', 1),
+                                    ('workflow_dispatch', 'refs/heads/dev', 1),
+                                    ('push', 'refs/heads/dev', 2)):
+            with self.subTest(event=event, ref=ref, attempt=attempt):
+                self.assertEqual(mod.classify(event, ['README.md'], ref=ref, attempt=attempt), full)
 
     def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
         # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by

@@ -67,13 +67,19 @@ env:
 # to `ubuntu-24.04` otherwise. The GitHub-hosted-only jobs use the negated
 # condition so a fork PR still gets them.
 jobs:
-  # Decides which gates a pull request needs. Every uncertainty (a push, a
-  # dispatch, an unreadable diff) resolves to the full run: the release gate
-  # accepts only a fully successful push run (scripts/release/check_ci.py).
+  # Decides which gates a change needs. A pull request is compared with its
+  # base; a first-attempt push to `dev` with the head of the last successful
+  # `dev` push run of this workflow (needs `actions: read`). A push to `main`, a
+  # dispatch, a re-run of a `dev` push, a head already in `origin/main` and every
+  # lookup or diff failure run everything: the release gate accepts only a fully
+  # successful push run (scripts/release/check_ci.py).
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
       docs: ${{ steps.classify.outputs.docs }}
@@ -90,9 +96,10 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
+          GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci/classify_changes.py --workflow ci.yml --base "$BASE_SHA" --head "$HEAD_SHA"
   quality:
     name: Quality Guardrails
     needs: changes
@@ -1360,7 +1367,8 @@ jobs:
           # Shows the CRT and SDK landed in the cached directory.
           du -sh "$XWIN_CACHE_DIR"
 
-  # Documentation-only pull requests run this instead of the code gates.
+  # Documentation-only pull requests and `dev` pushes run this instead of the
+  # code gates.
   docs:
     name: Documentation Checks
     needs: changes
@@ -1439,10 +1447,10 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
 
-  # The one check a branch rule needs. Gates that a documentation-only change
-  # skips by design stay "skipped" and would leave a required check pending;
-  # this job always finishes and fails only when a gate failed, was cancelled,
-  # or the path classification itself broke.
+  # The one check a branch rule needs. Gates that a documentation-only pull
+  # request or `dev` push skips by design stay "skipped" and would leave a
+  # required check pending; this job always finishes and fails only when a gate
+  # failed, was cancelled, or the path classification broke or came back empty.
   ci-required:
     name: CI Required
     if: ${{ always() }}
@@ -1473,6 +1481,16 @@ jobs:
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' | sort
           if [ "$(echo "$NEEDS" | jq -r '.changes.result')" != success ]; then
             echo "::error::path classification did not succeed"
+            exit 1
+          fi
+          code="$(echo "$NEEDS" | jq -r '.changes.outputs.code // ""')"
+          docs_only="$(echo "$NEEDS" | jq -r '.changes.outputs.docs_only // ""')"
+          if [ "$code" != true ] && [ "$code" != false ]; then
+            echo "::error::Changed Paths gave code='$code'; expected true or false"
+            exit 1
+          fi
+          if [ "$code" != true ] && [ "$docs_only" != true ]; then
+            echo "::error::Changed Paths skipped the code gates without a documentation-only result"
             exit 1
           fi
           failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
