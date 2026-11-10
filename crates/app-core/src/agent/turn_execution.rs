@@ -53,7 +53,7 @@ impl Agent {
         if !user_message.trim().is_empty() {
             self.begin_model_usage_turn(&input_id);
         }
-        self.save_session()?;
+        self.save_first_commit()?;
         if trace_enabled() {
             eprintln!("[trace] session_id {}", self.session.id);
         }
@@ -90,7 +90,7 @@ impl Agent {
         if !user_message.trim().is_empty() {
             self.begin_model_usage_turn(&input_id);
         }
-        self.save_session()?;
+        self.save_first_commit()?;
         if trace_enabled() {
             eprintln!("[trace] session_id {}", self.session.id);
         }

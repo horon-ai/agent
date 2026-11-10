@@ -38,6 +38,15 @@ struct PendingStart {
 static PENDING_RUN_STARTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, PendingStart>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// Starts this process began for a turn before its first commit, by session.
+///
+/// The turn adopts the identity here through `begin_run` instead of writing a
+/// second start row, so one run keeps one start. A start whose row did not land
+/// is adopted too: the turn still needs its identity, and the binding it would
+/// have confirmed is simply not confirmed.
+static PRESTARTED_RUN_STARTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, RunIdentity>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 /// Dispatch one run row to `session_id`'s journal on a dedicated OS thread.
 ///
 /// The handle is returned rather than awaited, because this entry point must
@@ -129,6 +138,16 @@ impl Agent {
     /// A binding that cannot be read leaves the row without one, and the session
     /// stays on the flushing path: an audit row is worth less than the turn.
     pub(super) fn begin_run(&mut self) -> RunIdentity {
+        // A one-shot turn confirms its start before the first commit, so the
+        // commit's binding publish lands by rename. Adopting that row here keeps
+        // the run to one start instead of writing a second one.
+        if let Some(run) = PRESTARTED_RUN_STARTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.session.id)
+        {
+            return run;
+        }
         let identity = RunIdentity::new(Self::mint_run_id());
         let binding = match self.session.next_journal_binding() {
             Ok(binding) => Some(binding),
@@ -158,18 +177,83 @@ impl Agent {
     /// Only a write that landed confirms its binding. A failed one leaves the
     /// session on the flushing path, because no journal row answers the value.
     pub(super) async fn settle_run_start(&mut self, identity: &RunIdentity) {
+        self.confirm_run_start(identity);
+    }
+
+    /// Join this run's `run.started` write and adopt its result, on this thread.
+    ///
+    /// Returns whether the row landed. Only a landed row confirms its binding;
+    /// a failed one leaves the session on the flushing path, because no journal
+    /// row answers the value.
+    fn confirm_run_start(&mut self, identity: &RunIdentity) -> bool {
         let pending = PENDING_RUN_STARTS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&self.session.id);
         let Some(PendingStart { handle, binding }) = pending else {
-            return;
+            return false;
         };
         let persisted = handle.join().unwrap_or(false);
         note_run_start(&self.session.id, identity.clone(), persisted);
         if persisted && let Some(binding) = binding {
             self.session.note_journal_binding(binding);
         }
+        persisted
+    }
+
+    /// Save the turn's first commit, confirming the run's start before it.
+    ///
+    /// A process that closes the session after this run states the binding its
+    /// first commit publishes in the `run.started` row before the commit writes
+    /// it, so that publish lands by rename: a crash that loses the file still
+    /// reads the row. The same turn adopts the start through [`Self::begin_run`],
+    /// so the run keeps one start row. A row that does not land confirms
+    /// nothing, and the commit takes the flushing path exactly as before.
+    ///
+    /// A failed commit closes a start that did land, so the journal is not left
+    /// holding a live run for a turn that never began.
+    pub(super) fn save_first_commit(&mut self) -> Result<()> {
+        if !self.closes_after_run {
+            return self.save_session();
+        }
+        let run = self.begin_run();
+        let persisted = self.confirm_run_start(&run);
+        let session_id = self.session.id.clone();
+        PRESTARTED_RUN_STARTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(session_id.clone(), run.clone());
+        match self.save_session() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                PRESTARTED_RUN_STARTS
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&session_id);
+                if persisted {
+                    self.close_unrun_start(&run);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Close the start of a run whose first commit failed, so no live run is
+    /// left behind for a turn that never began.
+    fn close_unrun_start(&self, run: &RunIdentity) {
+        let payload = Payload::RunStopped(RunStopped::with_binding(
+            JournalStopCause::InterruptedUnknown,
+            None,
+            None,
+        ));
+        let persisted = dispatch_run_row(&self.session.id, run.run_id(), payload)
+            .join()
+            .unwrap_or(false);
+        let mut stop = RunStop::capture(run.run_id(), StopProvenance::InterruptedUnknown);
+        if persisted {
+            stop.mark_persisted();
+        }
+        record_stop(&self.session.id, stop);
     }
 
     /// End the run captured at turn start, after the conversation save.

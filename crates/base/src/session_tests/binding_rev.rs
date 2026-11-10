@@ -349,3 +349,56 @@ fn run_boundary_binding_that_never_landed_flushes() -> Result<()> {
     assert_eq!(read_mirror(&session)?["rev"], serde_json::json!(unlanded.rev));
     Ok(())
 }
+
+/// The first commit of a one-shot run writes the file by rename alone: the
+/// start row the process confirmed before it already states the binding.
+#[test]
+fn first_commit_after_a_confirmed_start_publishes_without_a_flush() -> Result<()> {
+    let _lock = tests::lock_env();
+    let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-binding-first-commit-")?;
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
+
+    // Given a session nothing has saved: no mirror, no row, no version anywhere.
+    let mut session = Session::create_with_id("first_commit".to_owned(), None, None);
+    session.add_message(Role::User, text("first prompt"));
+    let started = session.next_journal_binding()?;
+    assert_eq!(started.rev, 1, "the first binding takes version 1");
+
+    // When the start row states that binding before the commit, and the session
+    // adopts it, the commit only renames the file into place.
+    let root = home_path.join(crate::durable_runtime::JOURNAL_DIR_NAME);
+    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_started("run-1", None, Some(started.clone()))?;
+    session.note_journal_binding(started.clone());
+    session.save()?;
+
+    assert_eq!(
+        mirror_writes::take("first_commit"),
+        vec![MirrorWrite::Renamed],
+        "a binding the start row already states must not spend a flush"
+    );
+    let mirror = read_mirror(&session)?;
+    assert_eq!(mirror["rev"], serde_json::json!(started.rev));
+    assert_eq!(mirror["status"], serde_json::to_value(&session.status)?);
+    Ok(())
+}
+
+/// Without that confirmation the same first commit writes the file with a
+/// flush, so a binding no row states is never published by rename alone.
+#[test]
+fn first_commit_without_a_confirmed_start_flushes() -> Result<()> {
+    let _lock = tests::lock_env();
+    let (_home_dir, home_path) = cases::canonical_tempdir("horon-agent-binding-first-flush-")?;
+    let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
+
+    let mut session = Session::create_with_id("first_commit_flush".to_owned(), None, None);
+    session.add_message(Role::User, text("first prompt"));
+    session.save()?;
+
+    assert_eq!(
+        mirror_writes::take("first_commit_flush"),
+        vec![MirrorWrite::Flushed],
+        "a value no journal row answers must be flushed"
+    );
+    assert_eq!(read_mirror(&session)?["rev"], serde_json::json!(1));
+    Ok(())
+}

@@ -258,3 +258,66 @@ impl State {
         }
     }
 }
+
+/// A closing one-shot run states the binding its first commit publishes in the
+/// start row before the commit, so the commit reuses that version and a crash
+/// that loses the file still reads the owner from the journal.
+#[tokio::test]
+async fn first_commit_comes_after_its_start_row_and_the_lost_file_still_names_the_owner() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let mut agent = probe_agent().closing_after_run();
+    let session_id = agent.session.id.clone();
+
+    agent.save_first_commit().expect("the first commit lands");
+
+    let rows = row_bindings(&session_id);
+    assert_eq!(rows.len(), 1, "one start row states the first commit: {rows:?}");
+    let started = &rows[0];
+    assert_eq!(started.status, SessionStatus::Active);
+    assert_eq!(started.last_pid, agent.session.last_pid);
+    assert_eq!(started.working_dir, agent.session.working_dir);
+    assert_eq!(
+        mirror_rev(&session_id),
+        started.rev,
+        "the commit publishes the version its start row states"
+    );
+
+    // The turn adopts that start instead of writing a second one.
+    agent.begin_run();
+    assert_eq!(row_bindings(&session_id).len(), 1, "one run keeps one start row");
+
+    // A crash that loses the renamed file leaves the row as the only copy.
+    std::fs::remove_file(mirror_path(&session_id)).expect("the commit wrote the mirror");
+    let reloaded = Session::load(&session_id).expect("the session loads from its log and journal");
+    assert_eq!(reloaded.status, SessionStatus::Active);
+    assert_eq!(reloaded.last_pid, started.last_pid, "the journal names the owner");
+    assert_eq!(reloaded.working_dir, started.working_dir);
+}
+
+/// A start row that cannot land confirms nothing, so the first commit keeps the
+/// flushing path and the mirror carries the binding.
+#[tokio::test]
+async fn failed_start_row_keeps_the_first_commit_on_the_flushing_path() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let mut agent = probe_agent().closing_after_run();
+    let session_id = agent.session.id.clone();
+    // A journal path that cannot be opened refuses every row.
+    std::fs::create_dir_all(journal_path(&session_id)).expect("the journal path is replaced by a directory");
+
+    agent.save_first_commit().expect("the commit still saves");
+
+    assert!(
+        row_bindings(&session_id).is_empty(),
+        "no row landed, so none states a binding"
+    );
+    assert_eq!(mirror_rev(&session_id), 1, "a version no row states is flushed");
+    assert_eq!(mirror(&session_id)["status"], serde_json::json!("Active"));
+    assert_eq!(
+        mirror(&session_id)["last_pid"],
+        serde_json::json!(agent.session.last_pid)
+    );
+
+    let reloaded = Session::load(&session_id).expect("the session loads from its mirror");
+    assert_eq!(reloaded.status, SessionStatus::Active);
+    assert_eq!(reloaded.last_pid, agent.session.last_pid);
+}
