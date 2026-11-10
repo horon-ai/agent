@@ -52,8 +52,20 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 | `oneshot_runs` | `5` | one-shot·스킬·MCP 칸을 빌드마다 몇 번 잴지. `compare.md`의 Host 줄에 이 횟수가 적힌다. 중앙값의 최소 기준이 5이고, 가까운 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
 | `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 `horon-base` 줄로 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
+| `features` | 빈 값 | **후보** release 빌드에만 붙는 cargo feature(`--features <값>`). `horon-base` 빌드에는 붙지 않으므로 두 줄을 계속 비교할 수 있다. 비우면 빌드 명령이 이 입력이 없던 때와 바이트까지 같고, 아티팩트의 `features.txt`에는 빈 줄이 남는다. 값은 `^[a-z0-9_,-]*$`를 만족해야 한다. `build` 작업의 rust-cache 항목이 이 값으로 갈리므로 feature 빌드가 기본 아티팩트를 재사용하지 않는다 |
 
 모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 `merge` 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다. 중간 아티팩트 이름은 `benchmark-`로 시작하지 않으므로 `benchmark-docs.yml`의 다운로드에 섞이지 않는다.
+
+### 할당자 A/B
+
+배포 바이너리는 `jemalloc` feature 없이 빌드되므로 Linux 할당자는 glibc이고, 벤치마크 실행만으로 기본값이 바뀌지 않는다. 두 할당자를 한 러너에서 비교하려면 후보에만 feature를 주고 같은 잡이 기준선을 feature 없이 빌드하게 한다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=20 -f baseline_ref=dev -f features=jemalloc
+```
+
+두 horon 줄의 세션당 추가 메모리(유휴, 턴 직후), 첫 세션 RSS, one-shot 시간, 설치 크기를 읽는다. jemalloc의 최솟값–최댓값 범위가 기준선보다 한 칸이라도 나쁜 칸은 기본값 변경의 근거가 되지 않는다. `features` 입력은 후보 빌드에만 적용되고 `horon-base` 줄은 항상 배포 feature 구성이므로, 이 쌍이 feature 하나만 잰 결과가 된다. 이 입력은 OS로 제한되지 않지만 할당자 A/B는 `os=linux`로만 정의한다. allocator를 빌드할 C 도구 체인이 없는 대상에서는 cargo가 빌드 작업을 실패로 끝낸다.
 
 시크릿과 API 요금은 없다. 모델이 필요한 측정은 모두 `scripts/perf/mock_llm_server.py`(로컬 가짜 모델 서버)에 붙는다.
 

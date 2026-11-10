@@ -45,6 +45,11 @@ on:
         type: string
         required: false
         default: ""
+      features:
+        description: "Cargo features for the candidate release build only (comma-separated, e.g. jemalloc); the baseline build never gets them. Empty leaves the build command unchanged"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -107,6 +112,9 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
       SUITES: ${{ inputs.suites }}
+      # Cargo features for the candidate build only. Empty leaves every build
+      # command exactly as it was before this input existed.
+      FEATURES: ${{ inputs.features }}
       # The baseline checkout lives inside the workspace because actions/checkout
       # only writes below $GITHUB_WORKSPACE. It is a sibling tree with its own
       # target directory, so neither build reuses the other's artifacts.
@@ -166,7 +174,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          key: benchmark-${{ runner.os }}
+          # The feature set changes the artifact, so its own cache entry; the
+          # expression keeps the empty-input key byte-identical to the old one.
+          key: benchmark-${{ runner.os }}${{ inputs.features != '' && format('-{0}', inputs.features) || '' }}
           # Save the dependency build even when a later step fails, so a rerun
           # does not rebuild every crate from scratch.
           cache-on-failure: "true"
@@ -175,6 +185,18 @@ jobs:
         id: sel
         shell: bash
         run: python3 scripts/perf/bench_select.py "$SUITES" >> "$GITHUB_OUTPUT"
+
+      - name: Validate the features input
+        # The value reaches cargo as a shell word, so it stays inside a fixed
+        # alphabet instead of being escaped. A feature that does not exist is
+        # cargo's own error, not this check's.
+        shell: bash
+        run: |
+          if [[ ! "$FEATURES" =~ ^[a-z0-9_,-]*$ ]]; then
+            echo "::error::features must match ^[a-z0-9_,-]*$ (got '$FEATURES')"
+            exit 1
+          fi
+          echo "features: '${FEATURES}'"
 
       - name: Check out the baseline ref beside the measured commit
         # After the rust-cache step on purpose: rust-cache hashes every
@@ -243,7 +265,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --locked -p horon-agent
+          if [[ -n "$FEATURES" ]]; then
+            cargo build --release --locked -p horon-agent --features "$FEATURES"
+          else
+            cargo build --release --locked -p horon-agent
+          fi
           if [[ "${{ steps.sel.outputs.loading }}" == "true" ]]; then
             cargo build --release --locked -p horon-agent-base --example loading_probe
           fi
@@ -258,6 +284,9 @@ jobs:
           tar -cf bench-bin.tar -C target/release "${files[@]}"
           mkdir -p "$RESULTS"
           git rev-parse HEAD > "$RESULTS/commit.txt"
+          # Evidence of which feature set the candidate row was built with; the
+          # file holds an empty line when the input was empty.
+          printf '%s\n' "$FEATURES" > "$RESULTS/features.txt"
           "./target/release/horon-agent$exe" --version | tee "$RESULTS/horon-version.txt"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

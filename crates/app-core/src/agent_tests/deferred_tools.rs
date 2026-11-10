@@ -198,8 +198,8 @@ async fn late_mcp_tools_are_announced_once_in_the_transcript() {
     assert_eq!(again, 1);
     let after = agent.tool_definitions().await;
     assert_eq!(
-        serde_json::to_string(&before).unwrap(),
-        serde_json::to_string(&after).unwrap()
+        serde_json::to_string(&before[..]).unwrap(),
+        serde_json::to_string(&after[..]).unwrap()
     );
 }
 

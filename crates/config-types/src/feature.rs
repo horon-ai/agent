@@ -55,6 +55,10 @@ pub struct FeatureConfig {
     /// Automatic continuation after a turn stops unexpectedly: `off`,
     /// `conservative` (default), or `aggressive`
     pub turn_recovery: TurnRecoveryMode,
+    /// Enable per-turn effort keyword recognition (`ultrathink`/`chillax`)
+    /// in user messages. When off, keywords are ignored and no effort
+    /// override happens for the turn. The default preserves today's behavior.
+    pub effort_keywords: bool,
     /// Enforce the operator-written `[[stream_rules]]` entries while a response
     /// streams: a matching pattern aborts the response, injects the rule body as
     /// a system reminder, and re-issues the request (default: false)
@@ -86,6 +90,7 @@ impl Default for FeatureConfig {
             turn_recovery: TurnRecoveryMode::default(),
             stream_rules: false,
             pricing_refresh: false,
+            effort_keywords: true,
         }
     }
 }

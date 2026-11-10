@@ -1642,12 +1642,8 @@ fn seed_transient_session_state(agent: &mut Agent) {
         cache_read_input_tokens: Some(3),
         cache_creation_input_tokens: Some(5),
     };
-    agent.locked_tools = Some(vec![ToolDefinition {
-        name: "test_tool".to_string(),
-        description: "test tool".to_string(),
-        input_schema: serde_json::json!({"type": "object"}),
-        defer_loading: false,
-    }]);
+    let frozen = ToolDefinition::new("test_tool", "test tool", serde_json::json!({"type": "object"}));
+    agent.locked_tools = Some(vec![frozen].into());
 }
 
 #[tokio::test]
@@ -2095,8 +2091,8 @@ async fn mcp_exposure_modes_select_eager_or_fixed_definitions() {
     let eager_names: Vec<String> = eager
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
     assert!(eager_names.iter().any(|name| name == "mcp__test__verbose"));
     assert!(!eager_names.iter().any(|name| name == "mcp_search"));
@@ -2106,8 +2102,8 @@ async fn mcp_exposure_modes_select_eager_or_fixed_definitions() {
     let deferred_names: Vec<String> = deferred
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
     assert!(!deferred_names.iter().any(|name| name.starts_with("mcp__")));
     assert!(deferred_names.iter().any(|name| name == "mcp_search"));
@@ -2120,8 +2116,8 @@ async fn mcp_exposure_modes_select_eager_or_fixed_definitions() {
     let auto_small_names: Vec<String> = auto_small
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
     assert!(!auto_small_names.iter().any(|name| name.starts_with("mcp__")));
     assert!(auto_small_names.iter().any(|name| name == "mcp_search"));
@@ -2131,8 +2127,8 @@ async fn mcp_exposure_modes_select_eager_or_fixed_definitions() {
     let auto_deferred_names: Vec<String> = auto_deferred
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
     assert!(!auto_deferred_names.iter().any(|name| name.starts_with("mcp__")));
     assert!(auto_deferred_names.iter().any(|name| name == "mcp_search"));
@@ -2140,8 +2136,8 @@ async fn mcp_exposure_modes_select_eager_or_fixed_definitions() {
     let stable_auto_names: Vec<String> = auto_deferred
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
     assert_eq!(auto_deferred_names, stable_auto_names);
     assert!(auto_deferred.mcp_late_register_resolved);
@@ -2159,8 +2155,8 @@ async fn deferred_mcp_surface_ignores_late_per_tool_registration() {
     let before: Vec<String> = agent
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
     agent
         .registry
@@ -2174,8 +2170,8 @@ async fn deferred_mcp_surface_ignores_late_per_tool_registration() {
     let after: Vec<String> = agent
         .tool_definitions()
         .await
-        .into_iter()
-        .map(|tool| tool.name)
+        .iter()
+        .map(|tool| tool.name.clone())
         .collect();
 
     assert_eq!(before, after, "fixed deferred surface must stay cache-stable");
@@ -2209,8 +2205,8 @@ async fn auto_mode_never_changes_the_tool_list_for_late_mcp_tools() {
 
     let after = agent.tool_definitions().await;
     assert_eq!(
-        serde_json::to_string(&before).unwrap(),
-        serde_json::to_string(&after).unwrap(),
+        serde_json::to_string(&before[..]).unwrap(),
+        serde_json::to_string(&after[..]).unwrap(),
         "late MCP registration and the mcp tool must not change the cached tool list"
     );
     assert!(agent.mcp_late_register_resolved);
