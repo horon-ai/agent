@@ -370,7 +370,10 @@ def main(argv: list[str] | None = None) -> int:
             raise Failure(f"{label} binary not found at {path}")
 
     server, base_url = start_mock_server(retry_denied=True)
-    root = tempfile.mkdtemp(prefix="horon-tui-smoke-")
+    # Unix socket paths are capped near 104 bytes (SUN_LEN), and macOS puts the
+    # default temp dir under a long /var/folders/... path, so the run root lives
+    # directly under /tmp to keep `<root>/<case>/run/horon-agent-api.sock` short.
+    root = tempfile.mkdtemp(prefix="htui-", dir="/tmp")
     try:
         log("case 1: bare horon hands a terminal over to horon-tui")
         transcript = happy_path(args.agent, args.tui, os.path.join(root, "happy"), base_url)
