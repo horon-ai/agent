@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod input;
+pub mod keys;
 pub mod prompts;
 pub mod sdk_bridge;
 pub mod settings;
@@ -51,6 +52,7 @@ Options:
 Keys:
   Enter          send the typed message
   /quit          leave (Ctrl-C cancels a running turn, Ctrl-D always leaves)
+  Bindings are remapped in $HORON_HOME/keybindings.toml.
 ";
 
 /// Parsed command line.
@@ -167,13 +169,17 @@ where
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
     }
+    let mut keys = keys::Loader::new();
+    for warning in keys.warnings() {
+        eprintln!("horon-tui: keys: {warning}");
+    }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -201,7 +207,7 @@ fn show_failure(message: &str) {
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
+fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
     let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
     // The stderr copy of these warnings is wiped by the alternate screen, so
@@ -209,6 +215,10 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
     }
+    for warning in keys.warnings() {
+        app.warn(format!("keys: {warning}"));
+    }
+    app.bindings = keys.bindings().clone();
     for warning in themes.apply(reloader.settings()) {
         app.warn(format!("theme: {warning}"));
     }
@@ -222,7 +232,7 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
             return 1;
         }
     };
-    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes);
+    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
     ratatui::restore();
     code
 }
@@ -243,6 +253,7 @@ fn event_loop<B>(
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
+    keys: &mut keys::Loader,
 ) -> i32
 where
     B: Backend,
@@ -254,7 +265,8 @@ where
             break;
         }
         // The reloader throttles itself to one file check per second; the
-        // theme loader shares that cadence for the selected theme file.
+        // theme loader and the key bindings share that cadence for their own
+        // files.
         let mut themed = false;
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
@@ -268,6 +280,12 @@ where
         for warning in themes.tick() {
             app.warn(format!("theme: {warning}"));
             themed = true;
+        }
+        if let Some(reload) = keys.tick() {
+            for warning in reload.warnings {
+                app.warn(format!("keys: {warning}"));
+            }
+            app.bindings = reload.bindings;
         }
         if themed {
             app.theme = themes.theme().clone();
