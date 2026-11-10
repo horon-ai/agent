@@ -108,15 +108,15 @@ impl Provider for EffortLadderProvider {
     }
 }
 
-async fn effort_test_agent(provider: Arc<EffortLadderProvider>) -> Agent {
-    let registry = Registry::new(provider.clone()).await;
-    Agent::new(provider, registry)
+fn effort_test_agent(provider: Arc<EffortLadderProvider>) -> Agent {
+    Agent::new(provider, Registry::empty())
 }
 
 #[tokio::test]
 async fn effort_keywords_ultrathink_overrides_only_that_turn() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec!["low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
 
     agent.arm_effort_keywords("please ultrathink this");
     agent.run_once("please ultrathink this").await.unwrap();
@@ -133,8 +133,9 @@ async fn effort_keywords_ultrathink_overrides_only_that_turn() {
 
 #[tokio::test]
 async fn effort_keywords_chillax_uses_lowest_non_none_rung() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec!["none", "low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
 
     agent.arm_effort_keywords("chillax");
     agent.run_once("chillax").await.unwrap();
@@ -154,7 +155,7 @@ async fn effort_keywords_off_by_feature_flag_produces_no_override() {
     crate::config::Config::invalidate_cache();
 
     let provider = EffortLadderProvider::new(vec!["low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
     agent.arm_effort_keywords("ultrathink");
     agent.run_once("ultrathink").await.unwrap();
 
@@ -163,8 +164,9 @@ async fn effort_keywords_off_by_feature_flag_produces_no_override() {
 
 #[tokio::test]
 async fn effort_keywords_pinned_effort_wins() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec!["low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
     agent.set_reasoning_effort("low").unwrap();
 
     agent.arm_effort_keywords("ultrathink");
@@ -176,8 +178,9 @@ async fn effort_keywords_pinned_effort_wins() {
 
 #[tokio::test]
 async fn effort_keywords_swarm_current_effort_wins() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec!["low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
     agent.session.reasoning_effort = Some("swarm-deep".to_string());
 
     agent.arm_effort_keywords("chillax");
@@ -188,8 +191,9 @@ async fn effort_keywords_swarm_current_effort_wins() {
 
 #[tokio::test]
 async fn effort_keywords_unarmed_turn_ignores_keyword_text() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec!["low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
 
     // The text contains the keyword, but nothing armed the slot: this is an
     // agent-initiated turn and must not scan the text.
@@ -200,8 +204,9 @@ async fn effort_keywords_unarmed_turn_ignores_keyword_text() {
 
 #[tokio::test]
 async fn effort_keywords_chillax_does_not_lower_a_lower_rung_below_it() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec!["none", "low", "medium", "high"]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
     agent.set_reasoning_effort("low").unwrap();
     // Clear the pin so the ladder direction rule is what is under test.
     agent.session.reasoning_effort_pinned = false;
@@ -219,8 +224,9 @@ async fn effort_keywords_chillax_does_not_lower_a_lower_rung_below_it() {
 
 #[tokio::test]
 async fn effort_keywords_empty_ladder_produces_no_override() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
     let provider = EffortLadderProvider::new(vec![]);
-    let mut agent = effort_test_agent(provider.clone()).await;
+    let mut agent = effort_test_agent(provider.clone());
 
     agent.arm_effort_keywords("ultrathink");
     agent.run_once("ultrathink").await.unwrap();
