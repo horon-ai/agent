@@ -132,7 +132,7 @@ impl Agent {
         let handle = dispatch_run_row(
             &self.session.id,
             identity.run_id(),
-            Payload::RunStarted(RunStarted { input_id: None }),
+            Payload::RunStarted(RunStarted::new(None)),
         );
         PENDING_RUN_STARTS
             .lock()
@@ -218,7 +218,7 @@ impl Agent {
         let handle = dispatch_run_row(
             &self.session.id,
             run_id,
-            Payload::RunStopped(RunStopped { cause, input_id: None }),
+            Payload::RunStopped(RunStopped::new(cause, None)),
         );
         // Synchronous join, for the same reason as the start: the turn's tail
         // must not yield, and the write itself already runs off this thread.

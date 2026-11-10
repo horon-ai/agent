@@ -446,7 +446,7 @@ async fn run_stop_provenance_failed_stop_write_leaves_persisted_false() {
     )
     .expect("the store opens");
     let error = store
-        .append(run.run_id(), Payload::RunStarted(RunStarted { input_id: None }))
+        .append(run.run_id(), Payload::RunStarted(RunStarted::new(None)))
         .expect_err("the injected failure refuses the write");
     assert_eq!(error.kind(), JournalErrorKind::Io);
     drop(store);
@@ -476,7 +476,7 @@ async fn run_stop_provenance_recovery_of_started_only_is_interrupted_unknown() {
     {
         let mut store = DurableRuntimeStore::open_in(&root, session_id).expect("the store opens");
         store
-            .append(&run_id, Payload::RunStarted(RunStarted { input_id: None }))
+            .append(&run_id, Payload::RunStarted(RunStarted::new(None)))
             .expect("run.started is written");
         assert!(store.state().live_runs().count() == 1, "the run is live with no stop");
     }

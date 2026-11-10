@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::record::{Checkpoint, JOURNAL_VERSION, JournalRecord, Payload, RecordKind, RuntimeState};
+use super::record::{
+    Binding, Checkpoint, JOURNAL_VERSION, JournalRecord, Payload, RecordKind, RunStarted, RunStopped, RuntimeState,
+    StopCause,
+};
 use super::replay::{self, RetentionCaps, ScanReport, ScanStart};
 use super::{JournalError, JournalResult};
 
@@ -279,6 +282,18 @@ impl DurableRuntimeStore {
         Ok(self.state.clone())
     }
 
+    /// The newest session binding any run row carried, after replaying what is
+    /// on disk.
+    ///
+    /// The caller gets the highest `rev` seen; two rows on the same `rev` are
+    /// won by the later one. A journal whose run rows carry no binding — every
+    /// journal an older build wrote, and every run this build records without
+    /// one — answers `None` rather than a fabricated default.
+    pub fn latest_binding(&mut self) -> JournalResult<Option<Binding>> {
+        self.replay()?;
+        Ok(self.state.latest_binding().cloned())
+    }
+
     /// Append one transition and return it only after it is durable.
     ///
     /// `id` is the entity the row refers to. The row's sequence is assigned
@@ -286,6 +301,30 @@ impl DurableRuntimeStore {
     pub fn append(&mut self, id: &str, payload: Payload) -> JournalResult<JournalRecord> {
         validate_record_id(id)?;
         self.with_writer_lock(|store| store.append_locked(id, payload))
+    }
+
+    /// Append a `run.started` row that carries the session binding.
+    pub fn append_run_started(
+        &mut self,
+        run_id: &str,
+        input_id: Option<String>,
+        binding: Option<Binding>,
+    ) -> JournalResult<JournalRecord> {
+        self.append(run_id, Payload::RunStarted(RunStarted::with_binding(input_id, binding)))
+    }
+
+    /// Append a `run.stopped` row that carries the session binding.
+    pub fn append_run_stopped(
+        &mut self,
+        run_id: &str,
+        cause: StopCause,
+        input_id: Option<String>,
+        binding: Option<Binding>,
+    ) -> JournalResult<JournalRecord> {
+        self.append(
+            run_id,
+            Payload::RunStopped(RunStopped::with_binding(cause, input_id, binding)),
+        )
     }
 
     /// Fold the replayed state into one checkpoint row.
