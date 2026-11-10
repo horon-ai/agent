@@ -29,6 +29,7 @@ use std::time::Instant;
 use summary::{PriorSummary, SummaryLimits};
 use tokio::task::JoinHandle;
 
+pub use horon_agent_compaction_core::pruning;
 pub use horon_agent_compaction_core::{
     CHARS_PER_TOKEN_UPPER_BOUND, COMPACTION_THRESHOLD, CRITICAL_THRESHOLD, CompactionAction, CompactionEvent,
     CompactionStats, ContextBudget, ContextBudgetError, DEFAULT_RECENT_TOKENS, DEFAULT_RESERVE_TOKENS,
@@ -45,8 +46,7 @@ pub use horon_agent_compaction_core::{
 };
 use horon_agent_config_types::CompactionStrategy;
 
-pub use horon_agent_compaction_core::pruning;
-
+pub mod handoff;
 pub mod jobs;
 pub mod recovery;
 pub mod source_projection;
