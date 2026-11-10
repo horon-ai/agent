@@ -46,7 +46,8 @@ concurrency:
 jobs:
   # Same classification as ci.yml: a documentation-only pull request or
   # first-attempt `dev` push has no counter to measure. A push to `main`, a
-  # dispatch, a re-run and every lookup or diff failure run the gate.
+  # dispatch, a re-run of a `dev` push and every lookup or diff failure run the
+  # gate.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04

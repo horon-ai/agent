@@ -67,9 +67,9 @@ jobs:
   # Decides which gates a change needs. A pull request is compared with its
   # base; a first-attempt push to `dev` with the head of the last successful
   # `dev` push run of this workflow (needs `actions: read`). A push to `main`, a
-  # dispatch, a re-run, a head already in `origin/main` and every lookup or diff
-  # failure run everything: the release gate accepts only a fully successful
-  # push run (scripts/release/check_ci.py).
+  # dispatch, a re-run of a `dev` push, a head already in `origin/main` and every
+  # lookup or diff failure run everything: the release gate accepts only a fully
+  # successful push run (scripts/release/check_ci.py).
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04

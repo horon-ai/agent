@@ -235,15 +235,20 @@ class WorkflowGuardTests(unittest.TestCase):
                 # An empty or malformed classification must fail the aggregate
                 # instead of passing with every gate skipped.
                 self.assertIn(".changes.outputs.code // \"\"", block)
-                self.assertIn('if [ "$code" != true ] && [ "$code" != false ]; then', block)
+                self.assertRegex(block, r'if \[ "\$code" != true \] && \[ "\$code" != false \]; then\n'
+                                        r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
                 # The dev push lookup reads the run list with the job's own token.
                 changes = re.split(r'\n  [A-Za-z0-9_-]+:\n', jobs.split('\n  changes:\n', 1)[1], maxsplit=1)[0]
                 self.assertIn('      actions: read', changes)
                 self.assertIn('GH_TOKEN: ${{ github.token }}', changes)
                 self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
-                self.assertIn(f'--workflow {name}', changes)
+                self.assertIn('HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}', changes)
+                self.assertIn('fetch-depth: 0', changes)
+                self.assertIn(f'run: python3 scripts/ci/classify_changes.py --workflow {name} '
+                              '--base "$BASE_SHA" --head "$HEAD_SHA"', changes)
         ci_block = (ROOT / '.github/workflows/ci.yml').read_text().split('\n  ci-required:\n', 1)[1]
-        self.assertIn('if [ "$code" != true ] && [ "$docs_only" != true ]; then', ci_block)
+        self.assertRegex(ci_block, r'if \[ "\$code" != true \] && \[ "\$docs_only" != true \]; then\n'
+                                   r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
         # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
         import importlib.util

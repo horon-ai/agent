@@ -2,15 +2,20 @@
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import classify_changes  # noqa: E402
 from classify_changes import (  # noqa: E402
-    changed_files, classify, last_green_sha, main, parser, resolve)
+    changed_files, classify, fetch_runs, head_in_origin_main, last_green_sha,
+    main, parse_attempt, parser, resolve)
 
 FULL = {"code": True, "docs": False, "docs_only": False}
 DOCS_ONLY = {"code": False, "docs": True, "docs_only": True}
@@ -213,6 +218,92 @@ class CommandLineTests(unittest.TestCase):
             for argv in cases[1:]:
                 _, lines = self.run_main(*argv)
                 self.assertIn("code=true", lines)
+
+
+class EdgeCaseTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = GitRepo(self.tmp.name)
+        self.released = self.repo.commit("crates/a/src/lib.rs")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def resolve(self, *argv):
+        args = parser().parse_args(["--event", "push", "--ref", "refs/heads/dev",
+                                    "--workflow", "ci.yml", "--repo", "o/r", *argv])
+        return resolve(args, 1, fetch=lambda r, w: None, cwd=self.tmp.name)
+
+    def test_lookup_asks_for_the_last_successful_dev_push_run(self):
+        done = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+        with mock.patch.object(classify_changes.subprocess, "run", return_value=done) as run:
+            self.assertEqual(fetch_runs("o/r", "ci.yml"), "{}")
+        self.assertEqual(run.call_args.args[0], [
+            "gh", "api", "repos/o/r/actions/workflows/ci.yml/runs"
+            "?branch=dev&event=push&status=success&per_page=1"])
+        failed = subprocess.CompletedProcess([], 1, stdout="{}", stderr="")
+        with mock.patch.object(classify_changes.subprocess, "run", return_value=failed):
+            self.assertIsNone(fetch_runs("o/r", "ci.yml"))
+
+    def test_unknown_origin_main_runs_everything(self):
+        head = self.repo.commit("docs/guide.md")
+        self.assertIsNone(head_in_origin_main(head, cwd=self.tmp.name))
+        files, notice = self.resolve("--base", self.released, "--head", head)
+        self.assertIsNone(files)
+        self.assertIn("could not be checked against origin/main", notice)
+
+    def test_a_diverged_base_reports_its_code_under_the_push_diff(self):
+        # A base that is not an ancestor of the head: the two-dot tree diff
+        # still reports the base's code, where a three-dot diff would hide it.
+        self.repo.git("update-ref", "refs/remotes/origin/main", self.released)
+        self.repo.git("checkout", "-q", "-b", "side")
+        side = self.repo.commit("crates/a/src/side.rs")
+        self.repo.git("checkout", "-q", "-")
+        head = self.repo.commit("docs/guide.md")
+        files, _ = self.resolve("--base", side, "--head", head)
+        self.assertTrue(classify("push", files, ref="refs/heads/dev")["code"])
+        hidden = changed_files(side, head, three_dot=True, cwd=self.tmp.name)
+        self.assertEqual(hidden, ["docs/guide.md"])
+
+    def test_a_non_utf8_path_is_classified_instead_of_crashing(self):
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], input="x\n",
+                              cwd=self.tmp.name, check=True, capture_output=True,
+                              text=True).stdout.strip()
+        subprocess.run([b"git", b"update-index", b"--add", b"--cacheinfo",
+                        b"100644," + blob.encode() + b",docs/caf\xe9.md"],
+                       cwd=self.tmp.name, check=True, capture_output=True)
+        self.repo.git("commit", "-q", "-m", "latin-1 name")
+        files = changed_files(self.released, "HEAD", three_dot=False, cwd=self.tmp.name)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(classify("pull_request", files), DOCS_ONLY)
+
+    def test_attempt_numbers_other_than_positive_integers_count_as_re_runs(self):
+        self.assertEqual(parse_attempt("1"), 1)
+        self.assertEqual(parse_attempt("3"), 3)
+        for value in ("", None, "x", "0", "-1", "1.0"):
+            with self.subTest(value=value):
+                self.assertEqual(parse_attempt(value), 0)
+
+    def test_command_line_classifies_a_docs_only_dev_push(self):
+        self.repo.git("update-ref", "refs/remotes/origin/main", self.released)
+        green = self.repo.commit("crates/a/src/more.rs")
+        self.repo.commit("docs/guide.md")
+        good = json.dumps({"workflow_runs": [{"head_sha": green}]})
+        out = io.StringIO()
+        cwd = os.getcwd()
+        os.chdir(self.tmp.name)
+        try:
+            with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": ""}), \
+                    contextlib.redirect_stdout(out):
+                code = main(["--event", "push", "--ref", "refs/heads/dev", "--attempt", "1",
+                             "--workflow", "ci.yml", "--repo", "o/r", "--base", "",
+                             "--head", "HEAD"], fetch=lambda r, w: good)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertIn("docs_only=true", lines)
+        self.assertIn(f"compared with {green}", lines[-1])
 
 
 if __name__ == "__main__":

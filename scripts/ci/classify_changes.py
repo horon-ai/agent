@@ -134,7 +134,9 @@ def changed_files(base: str, head: str, three_dot: bool = True,
     try:
         out = subprocess.run(
             ["git", "diff", "--name-only", "-z", "--no-renames", spec],
-            check=True, capture_output=True, text=True, timeout=30, cwd=cwd,
+            check=True, capture_output=True, timeout=30, cwd=cwd,
+            # git prints raw path bytes; a non-UTF-8 name must not crash the job.
+            encoding="utf-8", errors="surrogateescape",
         ).stdout
     except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
         return None
