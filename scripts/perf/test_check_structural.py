@@ -70,7 +70,7 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
     "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
     "request_message_copies=0",
-    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=12000 tool_count=8 eager_count=8",
+    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8",
 ]
 
 

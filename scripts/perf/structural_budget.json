@@ -9,7 +9,7 @@
     "skill loading: listing the catalog reads at most one frontmatter prefix per skill (8 KiB each, so a 32 KiB body read whole fails), and a request against an unchanged workspace reads no SKILL.md and lists no skill directory.",
     "mcp config: once warmed, a session start against unchanged user-level MCP config files (horon-agent, Claude, Codex) reads none of them again.",
     "hooks: the request projection with no pre_request hook configured spawns no child process and copies no message; the probe floor (request_messages_in_probe) fails a run that measured nothing.",
-    "prefix: the tool catalog one core-profile request sends is measured as the exact bytes the provider body carries, with the tool count beside it so a catalog that shrank its way under the ceiling fails instead of passing."
+    "prefix: the tool catalog one core-profile request sends is 9751 bytes for the core profile's eight eager tools, measured from the request body the provider builds; the tool count is checked beside it so a catalog that shrank its way under the ceiling fails instead of passing."
   ],
   "bounds": {
     "queue_depth_high_water": 64,
@@ -43,6 +43,6 @@
     "mcp_config_user_rereads_max": 0,
     "hooks_unset_process_spawns_max": 0,
     "hooks_unset_message_copies_max": 0,
-    "prefix_tools_bytes_max": 65536
+    "prefix_tools_bytes_max": 9751
   }
 }
