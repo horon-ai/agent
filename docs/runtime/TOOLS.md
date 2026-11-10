@@ -252,6 +252,9 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 - A line longer than 2000 bytes is cut and receives the `----` tag (`read.rs:13` `MAX_LINE_LEN`). That anchor names no content, so it cannot be used for an edit.
 - `hashline_edit` is registered only when `[tools] hashline_edit = true`. The default is `false`, and it is outside the core set.
 - Input is `file_path` plus an `ops` array. Each op has `start_anchor`, an optional `end_anchor`, and `new_text`.
+- `ops` may be omitted when the call names a file-level effect: `delete: true` removes the file, and `move_to: "<path>"` writes the file's final content to that path and then removes the source. Both run after any line ops, in the same call and the same mutation unit, so one `undo` restores the old content and the old path.
+- A move refuses an existing destination instead of overwriting it; `apply_patch` remains the way to replace a destination deliberately. `move_to` and `delete` cannot be combined.
+- The path policy and the generated-file guard apply to the source and to the move destination, and `delete` also passes the protected-path check.
 - Every anchor is checked against the current on-disk content first. One stale anchor refuses the whole call and writes nothing (`crates/app-core/src/tool/hashline_edit.rs:128` `resolve_ops`).
 - Line numbers start at 1, spans move downward only, and overlapping spans are refused.
 - An empty `new_text` deletes the span. A single trailing newline counts as a separator rather than content.
