@@ -98,7 +98,27 @@ fn journal_cause(provenance: StopProvenance) -> JournalStopCause {
     }
 }
 
+#[cfg(test)]
+#[path = "run_binding_tests.rs"]
+mod run_binding_tests;
+
 impl Agent {
+    /// Mark this agent as one whose process closes the session when it exits.
+    ///
+    /// The `run` command has no later quit path, so it closes the session as
+    /// soon as the turn returns. Saying so lets the run's stop row state the
+    /// binding that close publishes, and the close then writes the mirror by
+    /// rename instead of flushing a value no journal row answers.
+    pub fn closing_after_run(mut self) -> Self {
+        self.closes_after_run = true;
+        self
+    }
+
+    /// Progress and exit state of the current (or most recent) turn.
+    pub(crate) fn turn_state(&self) -> &TurnState {
+        &self.turn_state
+    }
+
     /// Start the run this turn executes, recording `run.started` when it begins.
     ///
     /// The row states the session binding as it stands at dispatch, numbered at

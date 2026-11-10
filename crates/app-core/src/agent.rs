@@ -48,9 +48,6 @@ pub(crate) use request_messages::{join_request_messages, record_request_extra_cl
 mod response_recovery;
 mod resume_commit;
 mod round_budget;
-#[cfg(test)]
-#[path = "agent/run_binding_tests.rs"]
-mod run_binding_tests;
 mod run_journal;
 mod session_replication;
 #[cfg(test)]
@@ -524,10 +521,6 @@ pub struct Agent {
     /// bootstrap is still deferred; see `provisional_init`.
     provisional_init_pending: bool,
     /// Whether this process closes the session as soon as the run returns.
-    ///
-    /// Only the `run` command does: its one-shot lifecycle has no later quit
-    /// path, so it closes the session on the way out. A stop row may then state
-    /// the binding that close publishes, and the close lands by rename.
     closes_after_run: bool,
     /// Session id whose restored state is prepared but not yet durable.
     ///
@@ -890,22 +883,6 @@ impl Agent {
 
     pub fn new(provider: Arc<dyn Provider>, registry: Registry) -> Self {
         Self::new_with_initial_working_dir(provider, registry, None)
-    }
-
-    /// Mark this agent as one whose process closes the session when it exits.
-    ///
-    /// The `run` command has no later quit path, so it closes the session as
-    /// soon as the turn returns. Saying so lets the run's stop row state the
-    /// binding that close publishes, and the close then writes the mirror by
-    /// rename instead of flushing a value no journal row answers.
-    pub fn closing_after_run(mut self) -> Self {
-        self.closes_after_run = true;
-        self
-    }
-
-    /// Progress and exit state of the current (or most recent) turn.
-    pub(crate) fn turn_state(&self) -> &TurnState {
-        &self.turn_state
     }
 
     pub(crate) fn new_with_initial_working_dir(
