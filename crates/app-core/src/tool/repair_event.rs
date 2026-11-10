@@ -23,18 +23,13 @@ pub(crate) fn send(
         return;
     };
     // A closed channel means the turn is already over; the record stays for the
-    // session, so there is nothing left to do here.
-    if event_tx
-        .send(ServerEvent::ToolArgsRepaired {
-            id: call_id.to_string(),
-            name: name.to_string(),
-            original_input: record.original_input,
-            changes: record.changes,
-        })
-        .is_err()
-    {
-        return;
-    }
+    // session to take, so there is nothing left to do with the result.
+    drop(event_tx.send(ServerEvent::ToolArgsRepaired {
+        id: call_id.to_string(),
+        name: name.to_string(),
+        original_input: record.original_input,
+        changes: record.changes,
+    }));
 }
 
 #[cfg(test)]
