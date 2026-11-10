@@ -1,12 +1,13 @@
 use super::client_lifecycle::process_message_streaming_mpsc;
 use super::comm_worktree::{self, IsoApply, Isolation};
+pub(super) use super::headless::SpawnExtras;
 use super::swarm_mutation_state::{
     PersistedSwarmMutationResponse, SwarmMutationRuntime, begin_or_replay, finish_request, request_key,
 };
 use super::{
     SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember, SwarmState, VersionedPlan,
     append_swarm_completion_report_instructions, broadcast_swarm_plan, broadcast_swarm_status, create_headless_session,
-    SpawnExtras, fanout_session_event, persist_swarm_state_for, record_swarm_event, record_swarm_event_for_session,
+    fanout_session_event, persist_swarm_state_for, record_swarm_event, record_swarm_event_for_session,
     remove_background_tool_signal, remove_session_channel_subscriptions, remove_session_from_swarm,
     remove_session_interrupt_queue, set_member_task_label, truncate_detail, update_member_status,
     update_member_status_with_report,

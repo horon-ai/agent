@@ -5,14 +5,11 @@
 //! tool module itself stays under its size budget; the resolution rules are in
 //! `horon_agent_base::agent_defs`.
 
-use super::CommunicateInput;
-use super::REQUEST_ID;
+use super::{CommunicateInput, REQUEST_ID};
 use crate::agent_defs::{AgentDefinition, compose_initial_message, discover, resolve};
 use crate::protocol::Request;
 use crate::tool::ToolContext;
 use anyhow::Result;
-
-use super::REQUEST_ID;
 
 /// Build one `CommSpawn` request, resolving a named agent definition.
 ///
