@@ -7,3 +7,8 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+# The role table is written as `[providers.<name>.roles]`, so its round-trip
+# test parses the real TOML shape rather than a JSON approximation of it.
+toml = "0.8"

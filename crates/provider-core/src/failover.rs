@@ -189,6 +189,65 @@ pub fn classify_failover_error_message(message: &str) -> FailoverDecision {
     FailoverDecision::None
 }
 
+/// Whether a failed model call may be retried on the next `fallback_models` entry.
+///
+/// Only a capacity or availability signal on the model itself is worth a second
+/// model on the same endpoint: rate limits and 5xx, an overloaded backend, or an
+/// id the endpoint does not serve. Credential, request-shape, and request-size
+/// errors are decided by the caller and must not spend the fallback list.
+pub fn classify_model_fallback_error_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+
+    let request_or_credential = [
+        "invalid_request",
+        "invalid request",
+        "context length",
+        "context_length",
+        "context window",
+        "maximum context",
+        "prompt is too long",
+        "input is too long",
+        "too many tokens",
+        "token limit",
+        "token_limit",
+        "unauthorized",
+        "forbidden",
+        "authentication failed",
+        "invalid api key",
+        "invalid_api_key",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        || ["400", "401", "403", "413"]
+            .iter()
+            .any(|code| contains_independent_status_code(&lower, code));
+    if request_or_credential {
+        return false;
+    }
+
+    let model_availability = [
+        "overloaded",
+        "service unavailable",
+        "model not found",
+        "model_not_found",
+        "model unavailable",
+        "model is not available",
+        "model does not exist",
+        "no such model",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+
+    model_availability
+        || ["429", "500", "502", "503", "504"]
+            .iter()
+            .any(|code| contains_independent_status_code(&lower, code))
+}
+
+#[cfg(test)]
+#[path = "model_fallback_tests.rs"]
+mod model_fallback_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
