@@ -31,6 +31,9 @@ mod magic_keywords;
 #[path = "agent/magic_keywords_tests.rs"]
 mod magic_keywords_tests;
 mod messages;
+mod model_fallback;
+#[cfg(test)]
+mod model_fallback_tests;
 #[cfg(test)]
 mod model_usage_tests;
 #[cfg(test)]
@@ -435,6 +438,10 @@ pub struct Agent {
     /// refusals. Reset at the start of every turn, so a loop the model broke
     /// last turn starts clean.
     loop_guard: loop_guard::LoopGuard,
+    /// Per-turn `fallback_models` step: the session model a switch moved away
+    /// from, and the entries this turn already tried. Restored at the next turn
+    /// start and on a failed turn, so a fallback never becomes the selection.
+    model_fallback: model_fallback::FallbackState,
     /// Progress and exit state of the current (or most recent) turn. Both turn
     /// loops replace it at turn start and advance it through the recovery
     /// helpers, so no loop owns a private copy of a recovery counter.
@@ -671,6 +678,7 @@ impl Agent {
             pending_alerts: Vec::new(),
             current_turn_system_reminder: None,
             loop_guard: loop_guard::LoopGuard::new(),
+            model_fallback: model_fallback::FallbackState::default(),
             turn_state: TurnState::new(),
             tool_call_ids: HashSet::new(),
             tool_result_ids: HashSet::new(),
