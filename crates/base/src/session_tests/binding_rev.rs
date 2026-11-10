@@ -224,7 +224,7 @@ fn mirror_and_journal_resolve_to_the_newer_binding() -> Result<()> {
         // A rev-less mirror an older build wrote after the journal row.
         ("resolve_unversioned", Some(u64::MAX), Some(2), 0),
     ] {
-        let (mut session, live) = saved_session(id)?;
+        let (session, live) = saved_session(id)?;
         if let Some(rev) = journal_rev {
             append_binding(&home_path, &session, rev, &live, pid + 7)?;
         }

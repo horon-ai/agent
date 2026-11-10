@@ -313,6 +313,7 @@ pub(crate) mod mirror_writes {
     }
 
     /// Take the writes this session made since the last call.
+    #[cfg(test)]
     pub(crate) fn take(session: &str) -> Vec<super::MirrorWrite> {
         let mut writes = WRITES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (taken, kept) = writes.drain(..).partition(|(id, _)| id == session);
