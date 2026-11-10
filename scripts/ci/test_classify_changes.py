@@ -265,6 +265,18 @@ class EdgeCaseTests(unittest.TestCase):
         hidden = changed_files(side, head, three_dot=True, cwd=self.tmp.name)
         self.assertEqual(hidden, ["docs/guide.md"])
 
+    def test_a_pull_request_ignores_code_that_only_its_base_moved_ahead(self):
+        # The base branch gained code after the pull request branched off; the
+        # three-dot diff keeps that out of a documentation-only pull request.
+        self.repo.git("checkout", "-q", "-b", "base")
+        base = self.repo.commit("crates/a/src/base_only.rs")
+        self.repo.git("checkout", "-q", "-")
+        head = self.repo.commit("docs/guide.md")
+        args = parser().parse_args(["--event", "pull_request", "--base", base, "--head", head])
+        files, _ = resolve(args, 1, cwd=self.tmp.name)
+        self.assertEqual(files, ["docs/guide.md"])
+        self.assertEqual(classify("pull_request", files), DOCS_ONLY)
+
     def test_a_non_utf8_path_is_classified_instead_of_crashing(self):
         blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], input="x\n",
                               cwd=self.tmp.name, check=True, capture_output=True,
