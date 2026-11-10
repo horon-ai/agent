@@ -1,3 +1,10 @@
+// Apple's linker reports that the `__eh_frame` section of this binary's
+// unoptimized test executable passes its 16 MB limit for the compact unwind
+// table, so panics in that test binary unwind through the slower DWARF path.
+// The executable exists only to run tests; shipped binaries link without the
+// message. Scoped to the one target that produces it, as in `horon-agent-app-core`.
+#![cfg_attr(all(test, target_os = "macos"), allow(linker_messages))]
+
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
