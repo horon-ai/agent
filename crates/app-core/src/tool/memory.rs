@@ -605,12 +605,10 @@ fn learn_skill(skill: LearnSkillInput) -> String {
     if !super::skill::managed_skills_enabled() {
         return "Skill not written: managed skills are disabled. Set [tools] managed_skills = true to let the model create skills.".to_string();
     }
-    match super::skill::write_managed_skill_file(
-        &skill.action,
-        skill.name.as_deref().unwrap_or_default(),
-        skill.description,
-        skill.body,
-    ) {
+    let Some(name) = skill.name.as_deref() else {
+        return "Skill not written: `skill.name` is required for create and update.".to_string();
+    };
+    match super::skill::write_managed_skill_file(&skill.action, name, skill.description, skill.body) {
         Ok(write) => format!(
             "{} managed skill '{}' at {}",
             write.verb,

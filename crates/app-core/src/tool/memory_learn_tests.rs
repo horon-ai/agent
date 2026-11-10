@@ -467,6 +467,36 @@ async fn memory_learn_reports_an_invalid_skill_name_and_keeps_the_lesson() {
 }
 
 #[tokio::test]
+async fn memory_learn_reports_a_skill_without_a_name_and_keeps_the_lesson() {
+    let isolated = IsolatedHome::new("managed_skills = true\n");
+    let project = tempfile::tempdir().expect("project");
+    let ctx = test_ctx(project.path().to_path_buf());
+    let tool = MemoryTool::new();
+
+    // The schema requires `skill.name`, but a caller that sends only `action`
+    // must be told what is missing instead of writing a nameless skill.
+    let output = tool
+        .execute(
+            json!({
+                "action": "learn",
+                "memory": "name the skill you want to write",
+                "skill": {"action": "create"}
+            }),
+            ctx.clone(),
+        )
+        .await
+        .expect("a skill object without a name must not fail the lesson")
+        .output;
+    assert!(output.contains("Learned lesson"), "{output}");
+    assert!(output.contains("`skill.name` is required"), "{output}");
+    assert_eq!(project_records(&tool, &ctx).len(), 1);
+    assert!(
+        !isolated.home.path().join("managed-skills").exists(),
+        "nothing is written without a name"
+    );
+}
+
+#[tokio::test]
 async fn memory_learn_ranks_ahead_of_a_fact_of_the_same_age() {
     let _isolated = IsolatedHome::new("");
     let project = tempfile::tempdir().expect("project");
