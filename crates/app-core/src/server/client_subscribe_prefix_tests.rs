@@ -7,8 +7,10 @@
 
 #![allow(clippy::await_holding_lock)]
 use super::*;
+use crate::agent::Agent;
 use crate::message::{Message, ToolDefinition};
 use crate::provider::{EventStream, Provider};
+use crate::tool::Registry;
 use serde_json::json;
 
 /// A request that names a session by some prefix of its id.
