@@ -231,7 +231,7 @@ fn other_error_frames_keep_their_wire_code_and_details() {
         ErrorKind::Harness(horon_agent_harness_api::ErrorCode::InvalidRequest)
     );
     assert_eq!(
-        error.details.expect("typed detail").store_code,
+        error.details.as_ref().expect("typed detail").store_code,
         "missing_credential",
         "the server's finer cause survives the typed change"
     );
