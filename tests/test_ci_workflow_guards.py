@@ -133,13 +133,17 @@ class WorkflowGuardTests(unittest.TestCase):
 
     def test_ci_dispatch_and_cancellation_keep_release_evidence(self):
         # `scripts/release/check_ci.py` accepts only a successful push run for the
-        # tagged SHA, so a push run must never be superseded by the next one, and
-        # a lost run must be recreatable for the same commit.
+        # tagged SHA, so a push run on `main` must never be superseded by the next
+        # one, and a lost run must be recreatable for the same commit. Everywhere
+        # else a newer run replaces the older one; a manual dispatch is diagnosis
+        # only and never counts as release evidence.
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertIn('workflow_dispatch:', workflow)
-        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}",
                       workflow)
         self.assertNotIn('cancel-in-progress: true', workflow)
+        self.assertNotIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+                         workflow)
 
     def test_every_job_has_a_hosted_sized_timeout(self):
         for name in ('ci.yml', 'structural-perf.yml'):

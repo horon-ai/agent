@@ -6,17 +6,19 @@ on:
   pull_request:
     branches: [dev, main]
   # A push run on the commit a release tag will point at is the evidence
-  # `scripts/release/check_ci.py` requires. A cancelled or flaky run had no way to
-  # be recreated for the same commit without pushing a new one; dispatch reruns it
-  # in place.
+  # `scripts/release/check_ci.py` requires; after a cancelled or flaky run, re-run
+  # that push run so the retry keeps the same commit and event. A manual dispatch
+  # runs the same gates on any ref for diagnosis, but it is never accepted as that
+  # evidence.
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded pull-request runs only. A push run on the commit a release
-  # tag points at must finish: the release gate accepts only a successful `push`
-  # run for the tagged SHA, so cancelling it leaves the release with no evidence.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer run on the same ref cancels the older one everywhere except `main`: a
+  # push run on `main` is release evidence, so it is never cancelled. On `dev` a
+  # push and a manual dispatch share the group and cancel each other; a cancelled
+  # `dev` push run is recovered with `Re-run all jobs` on that run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Read-only for every job here: the workflow builds, tests, and uploads
 # artifacts, and never writes to the repository. Jobs that need more grant it
