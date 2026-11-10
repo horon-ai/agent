@@ -149,7 +149,7 @@ METRICS = (
     Metric("09-fsync-calls", "count",
            {"en": "fsync calls per one-shot prompt", "ko": "원샷 프롬프트당 fsync 호출 수"},
            {"en": "Counted with strace, so only Linux records it.",
-            "ko": "strace 로 세므로 Linux 에서만 기록된다."},
+            "ko": "strace 로 세므로 Linux 에서만 기록합니다."},
            _scenario("oneshot", "fsync_calls")),
     Metric("10-first-session-memory", "bytes",
            {"en": "First session memory", "ko": "첫 세션 메모리"},
@@ -176,6 +176,7 @@ TEXT = {
         "next": "next: {tool} {ratio}",
         "best": "best: {tool} {ratio}",
         "alone": "no other tool measured",
+        "no_strace": "(strace is not available on this runner.)",
     },
     "ko": {
         "lower": "낮을수록 좋음",
@@ -194,6 +195,7 @@ TEXT = {
         "next": "다음: {tool} {ratio}",
         "best": "최저: {tool} {ratio}",
         "alone": "비교할 다른 도구 없음",
+        "no_strace": "(이 러너에는 strace 가 없습니다.)",
     },
 }
 
@@ -420,9 +422,9 @@ def render_metric(metric: Metric, runs: dict[str, dict], commit: str, lang: str,
                 heading += " · " + text["sessions"].format(n=max(counts))
         note = text["no_os" if key not in runs else "empty"].format(os=os_title)
         if key in runs and metric.stem == "09-fsync-calls":
-            reasons = [s.get("reason") for s in runs[key].get("skipped", []) if isinstance(s, dict) and s.get("name") == "syscalls"]
-            if reasons:
-                note += f" ({reasons[0]})"
+            skipped = [s for s in runs[key].get("skipped", []) if isinstance(s, dict) and s.get("name") == "syscalls"]
+            if skipped:
+                note += " " + text["no_strace"]
         part, y = _panel(y, heading, per_os[key], tools, metric, divisor, label_w, lang, note)
         body += part
     footer, y = _footer(y + 6, commit, _measured_at(runs), run_id, lang)

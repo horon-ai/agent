@@ -252,7 +252,7 @@ class Charts(unittest.TestCase):
         # Windows produced nothing at all.
         self.assertIn("This run has no comparison result for Windows.", oneshot)
         fsync = files["09-fsync-calls.svg"]
-        self.assertIn("(strace not available)", fsync)
+        self.assertIn("(strace is not available on this runner.)", fsync)
         # horon is drawn first and in blue on every chart.
         self.assertIn(bench_charts.BLUE, oneshot)
         summary = files["00-summary.svg"]
