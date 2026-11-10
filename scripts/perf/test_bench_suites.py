@@ -23,6 +23,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
@@ -32,6 +33,7 @@ import bench_select  # noqa: E402
 import bench_reload_storm  # noqa: E402
 import bench_tools  # noqa: E402
 import bench_merge  # noqa: E402
+import bench_smoke  # noqa: E402
 
 
 class ToolCaseReporting(unittest.TestCase):
@@ -234,6 +236,66 @@ class MergeParts(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             self._run(add)
+
+
+class DaemonHomeEnv(unittest.TestCase):
+    """Both suites start the daemon on a throwaway HORON_HOME.
+
+    The binary reads its home from HORON_HOME only. Under any other name it
+    falls back to `$HOME/.horon`, away from the directory the suite prepared.
+    """
+
+    def _start(self, module, root: Path) -> tuple[tuple, dict]:
+        with mock.patch.object(module.subprocess, "Popen") as popen:
+            result = module.start_daemon("/h", root, root, root / "daemon.log")
+        return result, popen.call_args.kwargs["env"]
+
+    def test_tools_daemon_home_is_under_the_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, spawned = self._start(bench_tools, root)
+            self.assertEqual(Path(spawned["HORON_HOME"]), root / "home")
+            self.assertTrue((root / "home" / "sessions").is_dir())
+
+    def test_reload_daemon_home_is_under_the_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (_, _, home), spawned = self._start(bench_reload_storm, root)
+            self.assertEqual(Path(spawned["HORON_HOME"]), root / "home")
+            self.assertEqual(home, spawned["HORON_HOME"])
+            self.assertTrue((root / "home" / "sessions").is_dir())
+
+
+class SmokeVerdict(unittest.TestCase):
+    """The smoke reads the report, because every suite exits 0 on a failed run."""
+
+    def test_measured_report_passes(self) -> None:
+        row = {"name": "read", "latency_ms": {"median": 1.0}, "errors": [], "error": None}
+        report = {"results": [row], "skipped": []}
+        self.assertEqual(bench_smoke.problems("tools", report), [])
+
+    def test_skipped_suite_fails(self) -> None:
+        report = {"results": [], "skipped": [{"name": "tools", "reason": "binary missing"}]}
+        self.assertEqual(bench_smoke.problems("tools", report), ["skipped: binary missing", "no results"])
+
+    def test_daemon_error_inside_a_session_point_fails(self) -> None:
+        row = {
+            "name": "horon",
+            "error": None,
+            "oneshot": {"ms": 1.0, "error": None, "errors": []},
+            "sessions_memory": {"points": [{"sessions": 1, "error": "Unknown provider profile 'mock'", "errors": []}]},
+        }
+        self.assertEqual(
+            bench_smoke.problems("compare", {"results": [row], "skipped": []}),
+            ["results[0].sessions_memory.points[0].error: Unknown provider profile 'mock'"],
+        )
+
+    def test_compare_scenario_that_did_not_run_fails(self) -> None:
+        row = {"name": "horon", "error": None, "oneshot": None, "sessions_memory": {"points": []}}
+        self.assertEqual(
+            bench_smoke.problems("compare", {"results": [row], "skipped": []}),
+            ["horon: oneshot did not run"],
+        )
 
 
 

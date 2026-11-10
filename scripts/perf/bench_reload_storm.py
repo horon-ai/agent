@@ -182,7 +182,7 @@ def storm(socket_path: str, session_ids: list[str], cwd: str, chunk: int, deadli
 def start_daemon(binary: str, root: Path, repo: Path, log_path: Path) -> tuple[subprocess.Popen, str, str]:
     # Every store, cache, and socket lives under the throwaway root; the user's
     # real ~/.horon is never read or written.
-    env = common.isolated_home_env(str(root), "HORON_AGENT")
+    env = common.isolated_home_env(str(root), "HORON_AGENT", home_var="HORON_HOME")
     env["HORON_AGENT_DEBUG_CONTROL"] = "1"
     home = private(Path(env["HORON_HOME"]))
     runtime = private(Path(env["HORON_AGENT_RUNTIME_DIR"]))
