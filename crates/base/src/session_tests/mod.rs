@@ -45,6 +45,8 @@ mod durability;
 
 #[path = "binding_rev.rs"]
 mod binding_rev;
+#[path = "final_cache_skip.rs"]
+mod final_cache_skip;
 
 #[path = "history_page.rs"]
 mod history_page;
