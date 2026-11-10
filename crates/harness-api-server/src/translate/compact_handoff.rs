@@ -8,6 +8,7 @@
 //! an error frame cannot answer that.
 
 use super::*;
+use serde_json::{Value, json};
 
 /// Build the legacy `compact` request, forwarding `method` only when the client
 /// named one so an older daemon still sees the frame it always saw.

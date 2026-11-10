@@ -6,6 +6,7 @@
 
 use super::*;
 use horon_agent_harness_api::HandoffCompaction;
+use serde_json::{Value, json};
 
 fn state_with_session() -> BridgeState {
     let mut state = BridgeState::default();

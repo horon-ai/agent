@@ -2,6 +2,7 @@
 //! line rather than the end of the run.
 
 use super::*;
+use chrono::{Duration as ChronoDuration, Utc};
 use std::cell::Cell;
 
 fn test_manifest(root: &std::path::Path, run_id: &str) -> OvernightManifest {
