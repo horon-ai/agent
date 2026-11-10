@@ -64,13 +64,17 @@ env:
 # to `ubuntu-24.04` otherwise. The GitHub-hosted-only jobs use the negated
 # condition so a fork PR still gets them.
 jobs:
-  # Decides which gates a pull request needs. Every uncertainty (a push, a
-  # dispatch, an unreadable diff) resolves to the full run: the release gate
-  # accepts only a fully successful push run (scripts/release/check_ci.py).
+  # Classifies a pull request (or a first-attempt push to `dev`) by changed
+  # paths. Every uncertainty (push to main, dispatch, re-run, unreadable diff)
+  # resolves to the full run; only a push to dev with docs-only changes runs
+  # the documentation gates.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
       docs: ${{ steps.classify.outputs.docs }}
@@ -87,9 +91,9 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci/classify_changes.py --base "$BASE_SHA" --head "$HEAD_SHA" --workflow ci.yml
   quality:
     name: Quality Guardrails
     needs: changes

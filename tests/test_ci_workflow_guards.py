@@ -232,10 +232,22 @@ class WorkflowGuardTests(unittest.TestCase):
                 for job in names:
                     if job != aggregate:
                         self.assertRegex(needs, rf'\b{re.escape(job)}\b', job)
-        # A push or dispatch must never be classified as documentation-only,
-        # because release evidence needs every mandatory job to have run.
-        script = (ROOT / 'scripts/ci/classify_changes.py').read_text()
-        self.assertIn('if event != "pull_request"', script)
+        # A push to main, a dispatch and a re-run must never be classified as
+        # documentation-only, because release evidence needs every mandatory job
+        # to have run. A first-attempt docs-only dev push is classified as
+        # docs-only; that is intentional (release evidence still requires a
+        # fully successful push run on dev or main).
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'classify_changes', ROOT / 'scripts/ci/classify_changes.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        full = {'code': True, 'docs': False, 'docs_only': False}
+        self.assertEqual(mod.classify('push', ['README.md'], ref='refs/heads/main', attempt=1), full)
+        self.assertEqual(mod.classify('workflow_dispatch', ['README.md']), full)
+        self.assertEqual(mod.classify('push', ['README.md'], ref='refs/heads/dev', attempt=2), full)
+        self.assertEqual(mod.classify('push', ['docs/a.md'], ref='refs/heads/dev', attempt=1),
+                         {'code': False, 'docs': True, 'docs_only': True})
 
     def test_cross_target_jobs_pin_the_toolchain_they_installed_targets_into(self):
         # `dtolnay/rust-toolchain@stable` installs into the `stable` toolchain by

@@ -193,8 +193,10 @@ and do not merge or report success before then.
   matrix, the SDK jobs and the structural performance gate are skipped.
 - **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
   gate runs.
-- **Pushes and manual dispatches always run everything.** Release evidence
-  (`scripts/release/check_ci.py`) accepts only a fully successful push run.
+- **Pushes to `main`, manual dispatches and re-runs always run everything.**
+  Release evidence (`scripts/release/check_ci.py`) accepts only a fully
+  successful push run; a documentation-only `dev` run is not release evidence,
+  and `Re-run all jobs` on that run produces a full run.
 - `CI Required` and `Structural performance required` always finish and fail
   only when a gate failed or was cancelled; use them as the required checks so
   a skipped gate never leaves a check pending.
@@ -209,13 +211,15 @@ release, so do it only when the owner asks. The two branches differ by merge
 commits and automatic `docs(perf)` commits, which is why a release is followed by
 a sync back.
 
-1. **Release.** Check the latest `dev` CI run with `scripts/ci/run_warnings.py`
-   (zero warnings, all jobs green). Open a PR with base `main`, head `dev`, titled
-   `Release: dev into main (vX.Y.Z)`, `Refs` the issues it carries, and list what
-   it ships. Merge it with a merge commit, never squash. After the CI push run on
-   `main` succeeds, `release-tag.yml` tags the merge commit, runs `release.yml`
-   and pushes `ghcr.io/horon-ai/agent`; watch `gh run list --branch main` until
-   the release run ends.
+1. **Release.** The latest `dev` CI run must be one where the code gates ran and
+   that was not cancelled (if the latest run is documentation-only, check the
+   newest run that ran the code gates or use `Re-run all jobs`). Open a PR with
+   base `main`, head `dev`, titled `Release: dev into main (vX.Y.Z)`, `Refs` the
+   issues it carries, and list what it ships. Merge it with a merge commit,
+   never squash. After the CI push run on `main` succeeds, `release-tag.yml`
+   tags the merge commit, runs `release.yml` and pushes
+   `ghcr.io/horon-ai/agent`; watch `gh run list --branch main` until the release
+   run ends.
 2. **Sync back.** When the release has finished, open a PR with base `dev`, head
    `main`, titled `Sync: main into dev`, and merge it with a merge commit so `dev`
    holds every commit `main` has. It needs a linked issue like any PR.
