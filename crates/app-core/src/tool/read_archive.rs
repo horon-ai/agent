@@ -100,7 +100,11 @@ struct Member {
 /// members. Otherwise each colon is tried from the right, and the first prefix
 /// that is an existing archive names the archive while the remainder is the
 /// member (plus an optional line selector).
-pub(super) fn resolve(raw: &str, cwd: &Path) -> Result<Option<(PathBuf, ArchiveKind, Option<(String, Selector)>)>> {
+/// A resolved archive request: the archive path, its kind, and the optional
+/// member with a line selector inside it.
+pub(super) type ArchiveRequest = (PathBuf, ArchiveKind, Option<(String, Selector)>);
+
+pub(super) fn resolve(raw: &str, cwd: &Path) -> Result<Option<ArchiveRequest>> {
     let whole = absolute(raw, cwd);
     if let Some(kind) = ArchiveKind::detect(&whole) {
         return Ok(Some((whole, kind, None)));
@@ -224,7 +228,7 @@ fn read_member(path: &Path, kind: ArchiveKind, member: &str) -> Result<Vec<u8>> 
                 _ => tar::Archive::new(Box::new(reader)),
             };
             for entry in archive.entries()? {
-                let mut entry = entry?;
+                let entry = entry?;
                 let name = entry.path()?.to_string_lossy().to_string();
                 let normalized = name.trim_start_matches("./");
                 if normalized != member {

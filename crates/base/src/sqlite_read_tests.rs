@@ -81,7 +81,7 @@ fn rejects_a_file_that_is_not_a_database() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("not.sqlite");
     std::fs::write(&path, b"this is plain text, not a database").expect("write fixture");
-    let error = ReadOnlyDb::open(&path).expect_err("plain text is not a database");
+    let error = ReadOnlyDb::open(&path).err().expect("plain text is not a database");
     let message = error.to_string();
     assert!(
         message.contains("not a readable SQLite database"),

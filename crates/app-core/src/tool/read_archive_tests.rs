@@ -63,10 +63,6 @@ fn write_fixture(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
     path
 }
 
-fn body(text: &str) -> Vec<u8> {
-    text.as_bytes().to_vec()
-}
-
 const MEMBER_TEXT: &str = "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta\ntheta\niota\nkappa\n\
 lambda\nmu\n";
 
