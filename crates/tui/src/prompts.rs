@@ -83,9 +83,8 @@ impl Ask {
         self.questions
             .iter()
             .zip(self.chosen.iter())
-            .enumerate()
-            .map(|(index, (question, held))| AskSelection {
-                question_id: question_id(question, index),
+            .map(|(question, held)| AskSelection {
+                question_id: question_id(question),
                 selected: held.clone(),
             })
             .collect()
@@ -103,19 +102,17 @@ impl Ask {
     }
 }
 
-/// The daemon's own fallback id for a question that has none: `crates/app-core`'s
-/// ask tool and its bridge both name such a question `q1`, so an answer keyed
-/// on that string resolves.
-fn question_id(question: &AskQuestion, index: usize) -> String {
+/// The id the daemon matches an answer against.
+///
+/// A question without an id is named `q1` — the fixed fallback in
+/// `crates/app-core/src/tool/ask.rs` (`question.id.clone().unwrap_or_else(||
+/// "q1".to_string())`), not a per-position `q2`, `q3`. Numbering here would
+/// address a question the daemon never looks up, so every id-less question in
+/// a request answers to the same `q1`.
+fn question_id(question: &AskQuestion) -> String {
     match &question.id {
         Some(id) => id.clone(),
-        None => {
-            if index == 0 {
-                "q1".to_string()
-            } else {
-                format!("q{}", index + 1)
-            }
-        }
+        None => "q1".to_string(),
     }
 }
 
