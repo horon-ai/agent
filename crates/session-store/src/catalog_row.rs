@@ -44,11 +44,17 @@ fn recorded_activity(path: &std::path::Path, probe: &ReadProbe) -> Option<i64> {
     struct LocalActivity {
         last_active_at: Option<chrono::DateTime<chrono::Utc>>,
     }
-    let bytes = probe.bounded(path).ok()?;
-    serde_json::from_slice::<LocalActivity>(&bytes)
-        .ok()?
-        .last_active_at
-        .map(|time| time.timestamp_millis())
+    // Both failures below are the documented fallback, not a lost error: an
+    // unreadable or unparsable mirror means "no recorded activity", and the
+    // caller then lists the session by the log's own activity clock.
+    let bytes = match probe.bounded(path) {
+        Ok(bytes) => bytes,
+        Err(_unreadable) => return None,
+    };
+    match serde_json::from_slice::<LocalActivity>(&bytes) {
+        Ok(activity) => activity.last_active_at.map(|time| time.timestamp_millis()),
+        Err(_unparsable) => None,
+    }
 }
 
 impl CatalogEntry {

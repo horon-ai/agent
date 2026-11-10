@@ -173,7 +173,18 @@ pub(super) fn journal_binding(paths: &SessionPaths, id: &SessionId) -> Option<Bi
         .join(crate::durable_runtime::JOURNAL_DIR_NAME)
         .join(id.as_str())
         .join(crate::durable_runtime::JOURNAL_FILE_NAME);
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        // A session that never ran states no binding in the journal.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            crate::logging::warn(&format!(
+                "runtime journal of {} is unreadable; the binding mirror answers alone: {error}",
+                id.as_str()
+            ));
+            return None;
+        }
+    };
     let mut state = RuntimeState::default();
     for line in bytes.split(|byte| *byte == b'\n') {
         let Ok(record) = JournalRecord::from_line(line) else {
@@ -306,12 +317,14 @@ impl LocalRuntime {
 }
 
 /// Note how the mirror was written, for the tests that count the flushes spent.
+#[cfg(any(test, feature = "test-support"))]
 fn note_mirror_write(id: &SessionId, write: MirrorWrite) {
-    #[cfg(any(test, feature = "test-support"))]
     mirror_writes::record(id.as_str(), write);
-    #[cfg(not(any(test, feature = "test-support")))]
-    let _ = (id, write);
 }
+
+/// Release builds keep no record of mirror writes.
+#[cfg(not(any(test, feature = "test-support")))]
+fn note_mirror_write(_id: &SessionId, _write: MirrorWrite) {}
 
 /// The mirror writes this process made, per session.
 #[cfg(any(test, feature = "test-support"))]
