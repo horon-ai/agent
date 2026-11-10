@@ -55,10 +55,6 @@ impl ReloadContext {
         Ok(crate::storage::horon_agent_dir()?.join(format!("reload-context-{}.json", sanitized)))
     }
 
-    fn legacy_path() -> Result<PathBuf> {
-        Ok(crate::storage::horon_agent_dir()?.join("reload-context.json"))
-    }
-
     #[cfg(test)]
     pub fn save(&self) -> Result<()> {
         let path = Self::path_for_session(&self.session_id)?;
@@ -69,45 +65,21 @@ impl ReloadContext {
     /// Peek at context for a specific session without consuming it.
     pub fn peek_for_session(session_id: &str) -> Result<Option<Self>> {
         let session_path = Self::path_for_session(session_id)?;
-        if session_path.exists() {
-            let ctx: Self = crate::storage::read_json(&session_path)?;
-            return Ok(Some(ctx));
-        }
-
-        let legacy = Self::legacy_path()?;
-        if !legacy.exists() {
+        if !session_path.exists() {
             return Ok(None);
         }
-
-        let ctx: Self = crate::storage::read_json(&legacy)?;
-        if ctx.session_id == session_id {
-            Ok(Some(ctx))
-        } else {
-            Ok(None)
-        }
+        Ok(Some(crate::storage::read_json(&session_path)?))
     }
 
     /// Load context only if it belongs to the given session; consumes on success.
     pub fn load_for_session(session_id: &str) -> Result<Option<Self>> {
         let session_path = Self::path_for_session(session_id)?;
-        if session_path.exists() {
-            let ctx: Self = crate::storage::read_json(&session_path)?;
-            remove_context_file(&session_path);
-            return Ok(Some(ctx));
-        }
-
-        let legacy = Self::legacy_path()?;
-        if !legacy.exists() {
+        if !session_path.exists() {
             return Ok(None);
         }
-
-        let ctx: Self = crate::storage::read_json(&legacy)?;
-        if ctx.session_id == session_id {
-            remove_context_file(&legacy);
-            Ok(Some(ctx))
-        } else {
-            Ok(None)
-        }
+        let ctx: Self = crate::storage::read_json(&session_path)?;
+        remove_context_file(&session_path);
+        Ok(Some(ctx))
     }
 
     fn task_info_suffix(&self) -> String {
