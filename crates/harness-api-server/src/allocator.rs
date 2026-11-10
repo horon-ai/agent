@@ -66,6 +66,7 @@ pub fn request_is_heavy(request: &serde_json::Value) -> bool {
                 | "read_file"
                 | "find_files"
                 | "search_text"
+                | "export_session_markdown"
         )
     )
 }

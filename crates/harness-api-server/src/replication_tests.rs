@@ -709,3 +709,42 @@ impl Drop for ScratchGuard {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+/// `export_markdown` over the bridge returns headings for each turn.
+#[test]
+fn export_markdown_over_the_bridge_has_a_heading_per_turn() {
+    let home = ScopedHome::new("markdown-turns");
+    let seeded = seed_session(&home.sessions(), "repl_markdown", 3);
+    let event = request(json!({"req": "export_session_markdown", "id": 1, "session_id": seeded.id.as_str()}));
+    let markdown = match event {
+        ApiEvent::SessionMarkdown { markdown, .. } => markdown,
+        other => panic!("expected session_markdown, got {other:?}"),
+    };
+    assert!(markdown.contains("### User"), "the transcript must label user turns");
+    assert!(
+        markdown.contains("### Assistant"),
+        "the transcript must label assistant turns"
+    );
+    assert!(markdown.contains("message 0"));
+    assert!(markdown.contains("message 2"));
+}
+
+/// An unknown session answers the same typed error the other reads use.
+#[test]
+fn export_markdown_of_an_unknown_session_is_unknown_session() {
+    let home = ScopedHome::new("markdown-unknown");
+    let _ = home;
+    let event = request(json!({"req": "export_session_markdown", "id": 2, "session_id": "does_not_exist"}));
+    let (code, _) = error_of(event);
+    assert_eq!(code, ErrorCode::UnknownSession);
+}
+
+/// A malformed session id is an invalid request, not an unknown session.
+#[test]
+fn export_markdown_with_a_bad_session_id_is_invalid_request() {
+    let home = ScopedHome::new("markdown-bad-id");
+    let _ = home;
+    let event = request(json!({"req": "export_session_markdown", "id": 3, "session_id": "not an id"}));
+    let (code, _) = error_of(event);
+    assert_eq!(code, ErrorCode::InvalidRequest);
+}

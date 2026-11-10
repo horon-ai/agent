@@ -11,6 +11,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use crate::cli::args::SessionCommand;
+use crate::session;
 use crate::session::event_store_api as store;
 
 const BUNDLE_KIND: &str = "horon-agent-session-bundle";
@@ -163,6 +164,37 @@ fn layout_name(layout: store::reader::SourceLayout) -> &'static str {
         store::reader::SourceLayout::Canonical => "canonical",
         store::reader::SourceLayout::Legacy => "legacy",
     }
+}
+
+/// Write a session's Markdown transcript to stdout or a file.
+///
+/// The text comes from the same renderer the `export_session_markdown` harness
+/// API reply uses, so a script and an SDK client see identical bytes.
+pub(crate) fn export_markdown(session: &str, out: Option<&Path>, json_output: bool) -> Result<()> {
+    let id = session::find_session_by_name_or_id(session)?;
+    let loaded = session::Session::load(&id)?;
+    let markdown = crate::session_export::export_session_markdown(&loaded)?;
+
+    if json_output {
+        let value = json!({ "session_id": id, "markdown": markdown });
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+
+    match out {
+        Some(path) => {
+            if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            std::fs::write(path, markdown.as_bytes()).with_context(|| format!("failed to write {}", path.display()))?;
+        }
+        None => {
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(markdown.as_bytes())?;
+            stdout.flush()?;
+        }
+    }
+    Ok(())
 }
 
 fn inspect(home: &Path, session: &str, json_output: bool) -> Result<()> {

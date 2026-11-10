@@ -149,6 +149,22 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 1 MiB 청크로 따로 이동하며 발행 전에 SHA-256과 크기로 검증한다. 중단된 전송은
 `get_session_blob_status`에서 이어 간다.
 
+### Markdown 대화록
+
+`export_session_markdown`은 `session_id`를 받아 읽을 수 있는 대화록 전체를
+`markdown`에 담은 `session_markdown` 이벤트로 응답한다. 각 턴은 `### User` 또는
+`### Assistant` 제목과 그 내용으로 이루어진다. 텍스트는 그대로, 도구 호출은 JSON
+코드 블록으로, 도구 결과는 코드 블록으로, 이미지와 오디오 블록은 짧은 자리표시자로
+표시한다. 비밀 값은 디스크 경로가 쓰는 같은 패턴 표로 가리므로, 이벤트 로그에
+들어가지 않은 토큰은 대화록에도 나타날 수 없다. 4 KiB를 넘는 도구 결과는 UTF-8
+경계에서 잘리고 `… (truncated, N bytes total)` 표시로 바뀐다.
+
+이 응답은 복제 프로토콜에 속하지 않으므로 `protocol_version`이 필요 없다.
+다른 저장 세션 읽기를 이미 막는 `session_replication_v1` 기능을 요구한다. 없는
+세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
+`horon-agent export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
+같은 바이트를 쓴다.
+
 클라이언트가 어겨서는 안 되는 규칙 두 가지:
 
 - **`canonical_json`을 다시 직렬화하지 않는다.** 이벤트의 정규 JSON은 문자열로

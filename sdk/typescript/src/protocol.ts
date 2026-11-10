@@ -900,6 +900,7 @@ export type ApiEvent =
       display_title: string;
     }
   | { ev: "session_heads"; session_id: string; heads: string[]; selected_head?: string }
+  | { ev: "session_markdown"; session_id: string; markdown: string }
   | {
       ev: "session_history_page";
       session_id: string;
@@ -1045,6 +1046,7 @@ export const KNOWN_EVENT_KINDS = [
   "session_renamed",
   "session_heads",
   "session_history_page",
+  "session_markdown",
   "session_event_page",
   "session_import_result",
   "session_blob_chunk",
@@ -1122,6 +1124,7 @@ export const KNOWN_REQUEST_KINDS = [
   "get_control_receipt",
   "get_snapshot",
   "ping",
+  "export_session_markdown",
 ] as const;
 
 export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {

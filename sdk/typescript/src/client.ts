@@ -1517,6 +1517,20 @@ export class HoronAgentClient extends EventEmitter {
     };
   }
 
+  /** Export the conversation as a Markdown transcript.
+   *
+   * Requires `session_replication_v1`. Returns the full markdown text with
+   * secrets redacted and long tool results truncated with a marker.
+   */
+  async exportSessionMarkdown(sessionId: string): Promise<string> {
+    this.requireCapability("session_replication_v1", "exportSessionMarkdown");
+    const frame = await this.expectReply(
+      { req: "export_session_markdown", session_id: sessionId },
+      "session_markdown",
+    );
+    return frame.markdown ?? "";
+  }
+
   /** Import one validated page. Identical retransmissions are idempotent. */
   async importSessionEvents(page: SessionEventPage, retryCursor?: string): Promise<SessionImportResult> {
     this.requireCapability("session_replication_v1", "importSessionEvents");
