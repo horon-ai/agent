@@ -3,6 +3,16 @@
 use super::*;
 use crate::tool::Tool;
 
+/// The fixture servers are POSIX shell scripts, so a host without `/bin/sh`
+/// skips these tests instead of failing them.
+fn sh_unavailable(test: &str) -> bool {
+    let available = std::path::Path::new("/bin/sh").exists();
+    if !available {
+        eprintln!("SKIP {test}: /bin/sh is unavailable");
+    }
+    !available
+}
+
 fn fixture_config(script: &str) -> McpServerConfig {
     McpServerConfig {
         command: "/bin/sh".to_string(),
@@ -89,6 +99,9 @@ done
 
 #[tokio::test]
 async fn mcp_resources_action_lists_and_reads_a_servers_resources() {
+    if sh_unavailable("mcp_resources_action_lists_and_reads_a_servers_resources") {
+        return;
+    }
     let tool = tool_with_server("notes", NOTES_SERVER);
 
     let listed = tool
@@ -132,6 +145,9 @@ async fn mcp_resources_action_lists_and_reads_a_servers_resources() {
 
 #[tokio::test]
 async fn mcp_resources_actions_report_a_missing_capability_as_a_result() {
+    if sh_unavailable("mcp_resources_actions_report_a_missing_capability_as_a_result") {
+        return;
+    }
     let tool = tool_with_server("plain", TOOLS_ONLY_SERVER);
 
     let listed = tool
@@ -161,6 +177,9 @@ async fn mcp_resources_actions_report_a_missing_capability_as_a_result() {
 
 #[tokio::test]
 async fn mcp_resources_read_body_honours_the_result_budget() {
+    if sh_unavailable("mcp_resources_read_body_honours_the_result_budget") {
+        return;
+    }
     let tool = tool_with_server("notes", NOTES_SERVER);
 
     let trimmed = tool

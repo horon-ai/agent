@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 #[path = "mcp_resources.rs"]
 mod resources;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "mcp_resources_tests.rs"]
 mod resources_tests;
 

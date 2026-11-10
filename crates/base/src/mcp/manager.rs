@@ -1414,6 +1414,10 @@ done
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "manager_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "manager_unix_tests.rs"]
+mod unix_tests;

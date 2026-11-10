@@ -564,7 +564,6 @@ impl McpClient {
         Ok(client)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new_handle(
         name: &str,
         config: &McpServerConfig,
@@ -573,8 +572,6 @@ impl McpClient {
         writer_tx: mpsc::Sender<String>,
         notifications: mpsc::UnboundedSender<String>,
         notifications_rx: NotificationReceiver,
-        resources: Arc<std::sync::RwLock<Option<Vec<McpResourceDef>>>>,
-        prompts: Arc<std::sync::RwLock<Option<Vec<McpPromptDef>>>>,
     ) -> McpHandle {
         McpHandle {
             name: name.to_string(),
@@ -585,8 +582,8 @@ impl McpClient {
             server_info: Arc::new(std::sync::RwLock::new(None)),
             capabilities: Arc::new(std::sync::RwLock::new(ServerCapabilities::default())),
             tools: Arc::new(std::sync::RwLock::new(Vec::new())),
-            resources,
-            prompts,
+            resources: Arc::new(std::sync::RwLock::new(None)),
+            prompts: Arc::new(std::sync::RwLock::new(None)),
             request_timeout: request_timeout_for(config),
             notifications,
             notifications_rx,
@@ -662,8 +659,6 @@ impl McpClient {
             writer_tx,
             notifications,
             notifications_rx,
-            Arc::new(std::sync::RwLock::new(None)),
-            Arc::new(std::sync::RwLock::new(None)),
         );
         let mut client = Self {
             handle,
@@ -969,6 +964,6 @@ done
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "resources_tests.rs"]
 mod resources_tests;

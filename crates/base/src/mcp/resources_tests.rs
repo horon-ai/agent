@@ -4,6 +4,16 @@ use super::McpClient;
 use crate::mcp::protocol::{ContentBlock, McpServerConfig};
 use serde_json::json;
 
+/// The fixture servers are POSIX shell scripts, so a host without `/bin/sh`
+/// skips the round-trip tests instead of failing them.
+fn sh_unavailable(test: &str) -> bool {
+    let available = std::path::Path::new("/bin/sh").exists();
+    if !available {
+        eprintln!("SKIP {test}: /bin/sh is unavailable");
+    }
+    !available
+}
+
 /// A stdio server that publishes one resource and one prompt.
 ///
 /// The first `resources/list` answers with one resource, later ones with two,
@@ -80,6 +90,9 @@ done
 
 #[tokio::test]
 async fn mcp_resources_and_prompts_round_trip() {
+    if sh_unavailable("mcp_resources_and_prompts_round_trip") {
+        return;
+    }
     let client = McpClient::connect("notes".to_string(), &fixture_config(RESOURCES_AND_PROMPTS_SERVER))
         .await
         .expect("fixture server must connect");
@@ -119,6 +132,9 @@ async fn mcp_resources_and_prompts_round_trip() {
 
 #[tokio::test]
 async fn mcp_resources_server_without_capability_is_rejected_before_any_request() {
+    if sh_unavailable("mcp_resources_server_without_capability_is_rejected_before_any_request") {
+        return;
+    }
     let client = McpClient::connect("plain".to_string(), &fixture_config(TOOLS_ONLY_SERVER))
         .await
         .expect("fixture server must connect");
@@ -154,6 +170,9 @@ async fn mcp_resources_server_without_capability_is_rejected_before_any_request(
 
 #[tokio::test]
 async fn mcp_resources_list_changed_notification_invalidates_the_list_cache() {
+    if sh_unavailable("mcp_resources_list_changed_notification_invalidates_the_list_cache") {
+        return;
+    }
     let client = McpClient::connect("notes".to_string(), &fixture_config(RESOURCES_AND_PROMPTS_SERVER))
         .await
         .expect("fixture server must connect");
