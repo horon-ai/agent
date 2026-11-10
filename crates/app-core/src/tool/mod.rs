@@ -2111,7 +2111,7 @@ impl Registry {
         // so an approval decision is made on what will actually run. Anything
         // the schema cannot prove is left alone and still fails in the tool.
         let input = arg_repair_record::record(
-            ctx,
+            &ctx,
             resolved_name,
             arg_repair::repair_recorded(&tool.parameters_schema(), input),
         );
