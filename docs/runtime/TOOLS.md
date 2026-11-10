@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](TOOLS.ko.md)
 
-This covers tool loading tiers, effects and approval tiers, edit safety, the ancestor `AGENTS.md` attached to `read`, skill reads (`skill://`), memory reads (`memory://`) and memory updates, where MCP configuration comes from, condensing large tool output and `read` deduplication, aging of old results, and the one-shot auxiliary call.
+This covers tool loading tiers, effects and approval tiers, edit safety, the ancestor `AGENTS.md` attached to `read`, archive and SQLite reads, skill reads (`skill://`), memory reads (`memory://`) and memory updates, where MCP configuration comes from, condensing large tool output and `read` deduplication, aging of old results, and the one-shot auxiliary call.
 
 ## Tool discovery and deferred loading
 
@@ -432,6 +432,51 @@ The safety rules for `delete` live in one place, `remove` in `crates/base/src/ma
 Refusal text names the source a name belongs to. A skill from a working folder's `.agents/skills`, for example, reads "a project skill from the agents source (<directory>)". The text is built by reading the skill source table (`SOURCES` in `crates/base/src/skill/sources.rs`), so it never invents a directory the table does not have.
 
 In plan mode all three actions are refused. `skill_manage` declares the write effect, and the plan-mode gate blocks calls with the write effect before execution. That gate is described in [Tool effects, plan mode, and approval tiers](#tool-effects-plan-mode-and-approval-tiers).
+
+## Reading archives and SQLite databases
+
+A `.tar.gz`, `.tar`, `.tgz` or `.zip` and a SQLite database are containers, not
+text, so `read` handles them itself instead of sending the model to a shell.
+Nothing is extracted to disk: a tar is streamed and a zip is read in place, and a
+database is opened read-only. Both readers sit in front of the plain-file path in
+`execute` (`crates/app-core/src/tool/read.rs`).
+
+### `read <archive>`
+
+- `read bundle.tar.gz` lists the members, one `- <name> (<n> bytes)` line each,
+  and directory entries end in `/`. `.tar` and `.tgz` are the same reader; `.zip`
+  is listed from the zip central directory.
+- `read bundle.zip:dir/file.txt` returns that member's text through the normal
+  file path, so line selectors (`bundle.zip:dir/file.txt:10-20`) and `offset`/
+  `limit` apply with the same caps and continuation hint as a file read.
+- A member path that is absolute or contains `..` is refused before the member
+  is looked up, and the refusal names the path. A member is read only when it is
+  a regular file, so a directory entry or a symlink member is refused.
+- One member body is capped at 8 MiB. Past that the error says to use a line
+  selector or an extraction tool rather than returning nothing.
+- Detection is by extension **and** magic bytes, so a text file named `notes.zip`
+  still reads as a file. A plain file whose name contains `:` also wins when it
+  exists, so `read a:b.txt` reads the file.
+
+### `read <database>`
+
+- `read app.db` lists the user tables with their row counts (`.sqlite`,
+  `.sqlite3`, `.db`, `.db3`). `sqlite_%` catalog tables are left out.
+- `read app.db:users` returns the table's `CREATE TABLE` statement, its declared
+  columns (type, primary key, not null, default), and a page of rows.
+- `?limit=` and `?offset=` page the rows (`app.db:users?limit=20&offset=40`), and
+  the result names the next page when more rows remain. `limit=0` and a
+  non-numeric value fall back to the default page size of 50.
+- The database is opened with `SQLITE_OPEN_READ_ONLY`, so a read never writes to
+  it and no journal or WAL is created. A locked or encrypted database fails with
+  a message naming the file. The query helper lives in the base crate
+  (`crates/base/src/sqlite_read.rs`), not in the tool layer.
+- An unknown table lists the available names. The whole existing path wins over
+  a table split, so a database file whose name contains `:` reads as a database.
+
+Both readers return ordinary tool output, so it goes through
+`secrets::mask_for_history` on the same path as every other tool result; there is
+no separate redaction step for them.
 
 ## Reading memory
 

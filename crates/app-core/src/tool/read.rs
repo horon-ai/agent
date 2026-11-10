@@ -124,7 +124,7 @@ impl Tool for ReadTool {
     fn description(&self) -> &str {
         // Always-on prompt cost: the selector syntax and the `agent://` shapes
         // live in the `file_path` parameter description and the tool's docs.
-        "Read a file (text, image, PDF) or `agent://` child result."
+        "Read a file (text, image, PDF), an archive member, a SQLite table, or `agent://` child result."
     }
 
     fn effects(&self) -> ToolEffects {
@@ -151,7 +151,7 @@ impl Tool for ReadTool {
                 "intent": super::intent_schema_property(),
                 "file_path": {
                     "type": "string",
-                    "description": "Path to a file; a line selector like `path:10-40` reads part. Also artifact:// ids and memory:// references."
+                    "description": "Path to a file; a line selector like `path:10-40` reads part. An archive lists members, and `bundle.zip:dir/a.txt` reads one; a `.db` lists tables, and `app.db:users?limit=20&offset=40` reads rows. Also artifact:// ids and memory:// references."
                 },
                 "start_line": {
                     "type": "integer",
@@ -198,6 +198,15 @@ impl Tool for ReadTool {
             .working_dir
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // An archive or a SQLite database is a container, not text: it is listed
+        // and then read through a member or table selector, so it is dispatched
+        // before the plain-file path would report it as binary.
+        if read_archive::resolve(&params.file_path, &cwd)?.is_some() {
+            return read_archive::read_archive(&params, &ctx, &cwd);
+        }
+        if read_sqlite::resolve(&params.file_path, &cwd).is_some() {
+            return read_sqlite::read_sqlite(&params, &ctx, &cwd);
+        }
         let (authored_path, selector) = split_path_and_selector(&params.file_path, &cwd)?;
 
         let explicit_range = params.start_line.is_some()
@@ -608,10 +617,14 @@ fn remember_read(
 
 #[cfg(test)]
 mod agent_url_tests;
+#[path = "read_archive.rs"]
+mod read_archive;
 #[path = "read_memory_url.rs"]
 mod read_memory_url;
 #[path = "read_skill.rs"]
 mod read_skill;
+#[path = "read_sqlite.rs"]
+mod read_sqlite;
 #[cfg(test)]
 mod tests;
 
