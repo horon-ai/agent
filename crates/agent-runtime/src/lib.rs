@@ -130,8 +130,22 @@ impl SoftInterruptQueue {
     /// Both vectors change under the same lock, so no observer can see a
     /// message in neither collection.
     pub fn transfer_to_in_flight(&self) -> Vec<SoftInterruptMessage> {
+        self.transfer_prefix_to_in_flight(usize::MAX)
+    }
+
+    /// Move at most `max` pending messages to `in_flight`, oldest first.
+    ///
+    /// This is the `one-at-a-time` delivery mode: the messages left behind stay
+    /// pending, in the same order, for the next delivery point. `max` of zero or
+    /// more than the queue holds moves what is there, so the caller never has to
+    /// clamp.
+    pub fn transfer_prefix_to_in_flight(&self, max: usize) -> Vec<SoftInterruptMessage> {
         let mut inner = self.lock_inner();
-        let moved = std::mem::take(&mut inner.pending);
+        let moved: Vec<SoftInterruptMessage> = if max >= inner.pending.len() {
+            std::mem::take(&mut inner.pending)
+        } else {
+            inner.pending.drain(..max).collect()
+        };
         inner.in_flight.extend(moved.iter().cloned());
         moved
     }

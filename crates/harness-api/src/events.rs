@@ -692,6 +692,12 @@ pub enum ApiEvent {
         snapshot: SessionSnapshot,
     },
 
+    /// Reply to `GetMessageModes`: the daemon's `[messages]` delivery modes.
+    MessageModes {
+        session_id: String,
+        modes: crate::MessageModes,
+    },
+
     /// Forward-compatibility catch-all: clients must skip this silently.
     #[serde(other)]
     Unknown,

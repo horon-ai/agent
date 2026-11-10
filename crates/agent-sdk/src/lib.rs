@@ -138,6 +138,7 @@ mod diagnostics;
 mod errors;
 mod export;
 mod launch;
+mod message_modes;
 mod ssh;
 mod structured;
 pub mod turn_retry;

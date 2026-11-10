@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 15
+API_VERSION_MINOR = 16
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -307,6 +307,14 @@ class RenderedImage(TypedDict, total=False):
 
 #: Base64 image attachment: ``(media_type, base64_data)``.
 ImageAttachment: TypeAlias = tuple[str, str]
+
+
+class MessageModes(TypedDict):
+    """How the daemon delivers messages that arrive while it is busy."""
+
+    follow_up_mode: str
+    steering_mode: str
+    interrupt_mode: str
 
 
 class SessionToolDefinition(TypedDict):
@@ -630,6 +638,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "reasoning_done",
     "tool_start",
     "tools",
+    "message_modes",
     "tool_call",
     "tool_input_delta",
     "tool_exec",
@@ -698,6 +707,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "detach_session",
     "configure_tools",
     "list_tools",
+    "get_message_modes",
     "tool_result",
     "send_message",
     "cancel",

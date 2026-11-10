@@ -3,14 +3,11 @@
 use crate::*;
 
 #[test]
-fn api_version_minor_is_fifteen() {
+fn api_version_minor_is_sixteen() {
     assert_eq!(API_VERSION_MAJOR, 1);
-    assert_eq!(API_VERSION_MINOR, 15);
+    assert_eq!(API_VERSION_MINOR, 16);
 }
 
-/// The minor-14 surface is additive. Every request an older client sends keeps
-/// its exact bytes, and the one shape that gained a field still decodes from
-/// the old form with the field absent, so a legacy peer is unaffected.
 #[test]
 fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
     let legacy_ask = r#"{"v":1,"id":4,"req":"ask_response","session_id":"s1","ask_id":"a1","answers":[{"question_id":"q1","selected":["Fast"]}]}"#;

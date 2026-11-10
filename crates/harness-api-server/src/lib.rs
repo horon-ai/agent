@@ -19,6 +19,7 @@
 
 pub mod allocator;
 pub mod background_progress;
+mod message_modes;
 pub mod replication;
 pub mod translate;
 mod writer;
@@ -650,6 +651,13 @@ where
                                 continue;
                             }
                         };
+                        // The `[messages]` modes are daemon configuration rather
+                        // than session state, so the bridge answers them here and
+                        // the daemon never sees the request.
+                        if let Some(frame) = message_modes::reply(&request) {
+                            send_frame!('translate, frame);
+                            continue;
+                        }
                         if request["req"] == "list_sessions" {
                             state.user_connected_sessions = if user_connections_supported {
                                 daemon_user_connections(&legacy_socket).await

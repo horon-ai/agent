@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 mod client;
 mod edit_stats;
 mod events;
+mod message_modes;
 #[doc(hidden)]
 pub use edit_stats::estimate_session_edit_stats;
 pub use edit_stats::{
@@ -34,11 +35,14 @@ pub use client::{FrameError, HarnessClient, MAX_FRAME_BYTES, read_frame, write_f
 pub use events::*;
 pub use horon_agent_session_types::TurnStopReason;
 pub use horon_agent_usage_types::{ModelUsage, compare_model_usage};
+pub use message_modes::MessageModes;
 pub use replication::*;
 pub use requests::*;
 pub use sockets::{api_socket_path, legacy_socket_path, runtime_dir};
 pub use swarm_metadata::{enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state};
 
+#[path = "harness_api_tests/message_modes_snapshot.rs"]
+mod message_modes_snapshot_tests;
 #[cfg(test)]
 #[path = "harness_api_tests/schema_snapshot.rs"]
 mod schema_snapshot_tests;
@@ -50,7 +54,7 @@ mod capability_coverage_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 15;
+pub const API_VERSION_MINOR: u32 = 16;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.

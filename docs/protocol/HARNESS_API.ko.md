@@ -403,4 +403,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 16`
+- `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다
