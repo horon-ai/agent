@@ -1,4 +1,4 @@
-//! Skill tool - load, list, reload, and read skills
+//! Skill tool - load, list, reload, read, author, install, and read skills
 
 use super::{Tool, ToolContext, ToolOutput};
 use crate::skill::SkillRegistry;
@@ -11,9 +11,15 @@ use tokio::sync::RwLock;
 
 /// `skill_manage delete` (issue #62): the managed directory is the only one the
 /// action reaches, and plan mode never reaches it at all.
+mod skill_install_action;
+
 #[cfg(test)]
 #[path = "skill_delete_tests.rs"]
 mod skill_delete_tests;
+
+#[cfg(test)]
+#[path = "skill_install_tests.rs"]
+mod skill_install_tests;
 
 pub struct SkillTool {
     registry: Arc<RwLock<SkillRegistry>>,
@@ -61,6 +67,13 @@ struct SkillInput {
     /// Managed `create`/`update`: the markdown body of the skill.
     #[serde(default)]
     body: Option<String>,
+    /// `install`: a git source to install from. Exactly one of `name` and
+    /// `source` selects the source.
+    #[serde(default)]
+    source: Option<String>,
+    /// `install`: branch, tag, or commit to clone.
+    #[serde(default, rename = "ref")]
+    git_ref: Option<String>,
 }
 
 fn default_action() -> String {
@@ -68,7 +81,7 @@ fn default_action() -> String {
 }
 
 /// Answer for `create`/`update` while `[tools] managed_skills` is off.
-const MANAGED_SKILLS_DISABLED: &str =
+pub(super) const MANAGED_SKILLS_DISABLED: &str =
     "Managed skills are disabled. Set [tools] managed_skills = true to let the model create skills.";
 
 #[async_trait]
@@ -81,6 +94,21 @@ impl Tool for SkillTool {
         "Manage skills."
     }
 
+    /// `install` clones, so it reaches the network and the disk; authoring and
+    /// deletion write; every other action only reads. Plan mode refuses any
+    /// call that writes, which is the gate the install action needs.
+    fn effects_for_input(&self, input: &Value) -> crate::tool::ToolEffects {
+        match input.get("action").and_then(Value::as_str) {
+            Some("install") => crate::tool::ToolEffects::read()
+                .union(crate::tool::ToolEffects::write())
+                .union(crate::tool::ToolEffects::network()),
+            Some("create" | "update" | "delete") => {
+                crate::tool::ToolEffects::read().union(crate::tool::ToolEffects::write())
+            }
+            _ => crate::tool::ToolEffects::read(),
+        }
+    }
+
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
@@ -88,7 +116,7 @@ impl Tool for SkillTool {
                 "intent": super::intent_schema_property(),
                 "action": {
                     "type": "string",
-                    "enum": ["load", "list", "reload", "reload_all", "read", "create", "update", "delete"],
+                    "enum": ["load", "list", "reload", "reload_all", "read", "create", "update", "delete", "install"],
                     "description": "Action."
                 },
                 "name": {
@@ -102,6 +130,14 @@ impl Tool for SkillTool {
                 "body": {
                     "type": "string",
                     "description": "Managed skills only: markdown body."
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Install only: git URL or path to clone the skill from, either alone or with a name to choose one skill inside it."
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Install only: branch, tag, or commit to clone. Defaults to the remote's default branch."
                 }
             }
         })
@@ -134,8 +170,9 @@ impl Tool for SkillTool {
                         .await
                 }
                 "delete" => self.delete_managed_skill(working_dir.as_deref(), params.name).await,
+                "install" => self.install_skill(params.name, params.source, params.git_ref).await,
                 _ => Ok(ToolOutput::new(format!(
-                    "Unknown action: {}. Use 'load', 'list', 'reload', 'reload_all', 'read', 'create', 'update', or 'delete'.",
+                    "Unknown action: {}. Use 'load', 'list', 'reload', 'reload_all', 'read', 'create', 'update', 'delete', or 'install'.",
                     params.action
                 ))),
             }
@@ -166,7 +203,8 @@ impl SkillTool {
             {
                 match endorsed.install {
                     Some(install) => anyhow::anyhow!(
-                        "Skill '{}' is endorsed but not installed. Install it with `{}`, then run skill_manage reload_all.",
+                        "Skill '{}' is endorsed but not installed. Run skill_manage with action=install and name='{}', or install it with `{}`, then run skill_manage reload_all.",
+                        name,
                         name,
                         install
                     ),
@@ -388,7 +426,7 @@ impl SkillTool {
     /// created, updated, or deleted skill once this runs. A failed reload is
     /// reported in the tool output instead of failing the change: the file
     /// operation already happened.
-    async fn reload_after_managed_change(&self, name: &str) -> String {
+    pub(super) async fn reload_after_managed_change(&self, name: &str) -> String {
         let mut registry = self.registry.write().await;
         match registry.reload_global() {
             Ok(_) => String::new(),

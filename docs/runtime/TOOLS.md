@@ -411,15 +411,20 @@ The path-denial policy (`path_policy`) never treats the literal `skill://` as a 
 
 ## Managing skills
 
-`create`, `update`, and `delete` in `skill_manage` touch only skills the model wrote itself. Those live at `~/.horon/managed-skills/<name>/SKILL.md`, and a human-written skill with the same name always wins. So none of the three actions can edit or delete a human-written skill.
+`create`, `update`, `delete`, and `install` in `skill_manage` touch only skills in the managed directory. Those live at `~/.horon/managed-skills/<name>/SKILL.md`, and a human-written skill with the same name always wins. So none of the four actions can edit, delete, or install over a human-written skill.
 
 | Action | What it does | When it refuses |
 | --- | --- | --- |
 | `create` | Writes a new managed skill. | Refuses when a skill with the same name is already loaded or exists in the managed directory. |
 | `update` | Changes a managed skill's description and body. | Says to use `create` when no managed skill exists. |
 | `delete` | Removes the managed skill directory and reloads the skill list. | When the same name is loaded as a human-written skill, names its source and deletes no file. |
+| `install` | Clones one skill into the managed directory, writes a lock entry, and reloads the skill list. | When the name already exists, when the source holds no `SKILL.md`, or when the endorsed name is unknown. |
 
-`create` and `update` require `[tools] managed_skills` to be on. `delete` ignores that switch, because managed skills left behind after turning it off still need cleaning up.
+`create`, `update`, and `install` require `[tools] managed_skills` to be on. `delete` ignores that switch, because managed skills left behind after turning it off still need cleaning up.
+
+### Installing a skill
+
+`{"action": "install", "name": "<endorsed name>"}` installs an endorsed catalog entry from the fixed repository its source names; the model never supplies a command. `{"action": "install", "source": "<git URL or path>", "ref": "<branch, tag, or commit>"}` installs any other skill, and `name` beside `source` chooses one skill inside a repository that holds several. The clone is shallow, lands in a staging directory beside the target, and moves into place with one rename only after its `SKILL.md` parsed and its name validated, so a refused install writes nothing. The name comes from the frontmatter, a description is taken from it as well, and `install-lock.json` in the managed directory records the name, source, requested ref, and resolved commit of every install. The installer lives in `crates/base/src/skill_install.rs`.
 
 The safety rules for `delete` live in one place, `remove` in `crates/base/src/managed_skills.rs`.
 
@@ -431,7 +436,7 @@ The safety rules for `delete` live in one place, `remove` in `crates/base/src/ma
 
 Refusal text names the source a name belongs to. A skill from a working folder's `.agents/skills`, for example, reads "a project skill from the agents source (<directory>)". The text is built by reading the skill source table (`SOURCES` in `crates/base/src/skill/sources.rs`), so it never invents a directory the table does not have.
 
-In plan mode all three actions are refused. `skill_manage` declares the write effect, and the plan-mode gate blocks calls with the write effect before execution. That gate is described in [Tool effects, plan mode, and approval tiers](#tool-effects-plan-mode-and-approval-tiers).
+In plan mode every action that writes is refused, `install` included, which additionally declares the network effect for its clone. `skill_manage` declares those effects per action, and the plan-mode gate blocks calls with the write effect before execution. That gate is described in [Tool effects, plan mode, and approval tiers](#tool-effects-plan-mode-and-approval-tiers).
 
 ## Reading memory
 
