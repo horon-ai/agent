@@ -852,7 +852,7 @@ async fn persistence_operations_serialize_per_swarm_but_not_globally() {
 
 /// Companion finding discovered while writing the regression test above:
 /// `load_runtime_state` filters entries only with `path.is_file()`, with no
-/// `.json` extension check (unlike `migrate_legacy_state`, which does check).
+/// `.json` extension check.
 /// Since `storage::write_json_fast` leaves a `<swarm>.bak` hard link of the
 /// PREVIOUS snapshot next to the primary, startup restore parses both files
 /// and inserts them into the same maps keyed by `state.swarm_id`, so
