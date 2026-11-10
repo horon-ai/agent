@@ -237,7 +237,7 @@ The guard blocks `horon-agent-*-types` crates from depending directly on root- o
 
 ## Growth ratchets
 
-Two counts that only a reviewed decision may raise are frozen by one gate.
+Three counts that only a reviewed decision may raise are frozen by one gate.
 
 ```sh
 python3 scripts/ci/check_growth_ratchets.py
@@ -248,8 +248,9 @@ python3 scripts/ci/check_growth_ratchets.py --list
 | --- | --- | --- |
 | Lockfile packages | `[[package]]` entries in `Cargo.lock`, so one crate at two versions counts twice | `scripts/ci/lockfile_packages.ratchet.json` |
 | Internal legacy markers | Rust lines matching `legacy`, `deprecated`, `compat_alias` or `back.?compat`, outside the excluded subtrees | `scripts/ci/internal_legacy_markers.ratchet.json` |
+| String results | Rust lines whose signature returns `Result<_, String>`; a string error carries no type, so a caller cannot branch on the cause | `scripts/ci/result_string.ratchet.json` |
 
-A ratchet file is any `scripts/ci/*.json` file that ends in `.ratchet.json` or has a top-level object declaring `counter` and `ceiling`, so a later ratchet (the `Result<_, String>` count, model-name branches) adds one file and no workflow or `check_all.sh` edit. A `.ratchet.json` that lost its keys fails instead of being skipped. `counter.kind` is `cargo_lock_packages` or `regex_lines`; the latter takes `pattern`, `roots`, `extensions` and `exclude`. The per-gate budgets beside them (`panic_budget.json`, `code_size_budget.json`) declare neither key and stay owned by their own scripts.
+A ratchet file is any `scripts/ci/*.json` file that ends in `.ratchet.json` or has a top-level object declaring `counter` and `ceiling`, so a later ratchet (model-name branches) adds one file and no workflow or `check_all.sh` edit. A `.ratchet.json` that lost its keys fails instead of being skipped. `counter.kind` is `cargo_lock_packages` or `regex_lines`; the latter takes `pattern`, `roots`, `extensions` and `exclude`. The per-gate budgets beside them (`panic_budget.json`, `code_size_budget.json`) declare neither key and stay owned by their own scripts.
 
 The legacy-marker ratchet excludes the subtrees that implement an external contract, each with a reason in the file: `crates/harness-api-server` (harness API v1 bridge and translate layer), `crates/harness-api` (the published v1 surface and its schema snapshots) and `crates/session-store` (the stored-session migration and replay readers for sessions written by v0.1.x). An exclude whose path does not exist fails, so a stale entry cannot widen the hole. Everything else is internal leftover: it may shrink, and it may not grow.
 
