@@ -10,14 +10,17 @@ wins.
 Every change in this tree keeps all three. A change that breaks one is not
 done, regardless of what else it fixes.
 
-1. **No TUI in the headless package.** The `horon-agent` package (`serve`,
-   `run`, `api-bridge`, `acp` — the headless binary) never opens a terminal UI,
-   and its dependency graph stays free of `ratatui`, `crossterm`, `horon-tui`,
-   and any `horon-agent-tui*` crate. An interactive terminal client may exist
-   only as the separate package and binary `horon-tui` (planned), which talks
-   to the daemon through `horon-agent-sdk` and never moves the terminal stack
-   into `horon-agent`. `scripts/ci/check_headless_graph.py` enforces the graph
-   rule in CI.
+1. **No TUI in the headless package.** The build ships two binaries, and the
+   split is the rule. `horon-agent` (`serve`, `run`, `api-bridge`, `acp` — the
+   headless binary) never opens a terminal UI, and its dependency graph stays
+   free of `ratatui`, `crossterm`, `horon-tui`, and any `horon-agent-tui*`
+   crate. The interactive client is the separate package and binary
+   `horon-tui`, which talks to the daemon through `horon-agent-sdk` and never
+   moves the terminal stack into `horon-agent`. The bare `horon` command is
+   still headless: when stdin and stdout are terminals, `HORON_NO_TUI` is
+   unset, and `horon-tui` sits beside the running binary, it replaces its own
+   process with that client (`src/cli/tui_handoff.rs`) and draws nothing
+   itself. `scripts/ci/check_headless_graph.py` enforces the graph rule in CI.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
    both sides support. Current state: both are implemented — v2 negotiates in
@@ -29,7 +32,13 @@ done, regardless of what else it fixes.
    and workload, a change must match or beat the recorded baseline. A change
    that makes a measured path slower than the baseline does not merge. How to
    measure: `docs/performance/BENCHMARK.md`; recorded numbers and their limits:
-   `docs/performance/RESULTS.md`, which is the recorded baseline.
+   `docs/performance/RESULTS.md`, which is the recorded baseline. Scope: the
+   baseline and the jcode target below cover the headless `horon-agent`
+   workloads, and those cells keep their definition unchanged now that a second
+   binary exists. The interactive client is measured on its own, never mixed
+   into a headless cell and never compared against one: its suites time
+   `horon-tui` against `horon-tui`, and a headless number quoted for a change
+   that only touches the client is not evidence.
 
 ## Performance target: beat jcode
 
@@ -89,11 +98,15 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 
 ## What this build is
 
-- One headless binary, `horon-agent`. Working subcommands: `serve` (agent
-  daemon), `run` (send one message and exit), `api-bridge` (alias `api`;
-  harness API on a Unix socket, Unix only), and `acp` (ACP adapter on stdio).
-  A terminal client is not part of this package: when one ships it is the
-  separate `horon-tui` package and binary on `horon-agent-sdk`.
+- Two binaries. The headless one, `horon-agent`, has these working
+  subcommands: `serve` (agent daemon), `run` (send one message and exit),
+  `api-bridge` (alias `api`; harness API on a Unix socket, Unix only), and
+  `acp` (ACP adapter on stdio). The interactive one, `horon-tui`, is a separate
+  package and binary on `horon-agent-sdk`; it renders the terminal client and
+  is built with its own cargo invocation so its feature set never unifies with
+  the headless package. Bare `horon` on a terminal replaces itself with the
+  sibling `horon-tui` once the server is up; a pipe, `HORON_NO_TUI`, or a
+  missing sibling keeps the headless message and prints the install hint.
 - One model path: the agent POSTs `/chat/completions` to the OpenAI-compatible
   endpoint of the profile named by `[provider] default_provider` or
   `--provider-profile`. A profile is a `[providers.<name>]` table with
