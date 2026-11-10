@@ -140,13 +140,13 @@ fn exclusion_mask(text: &str) -> Vec<bool> {
         }
 
         // Tag.
-        if bytes[i] == b'<' {
-            if let Some(rel) = bytes[i..].iter().position(|&b| b == b'>') {
-                let start = i;
-                i += rel + 1;
-                mask[start..i].fill(true);
-                continue;
-            }
+        if bytes[i] == b'<'
+            && let Some(rel) = bytes[i..].iter().position(|&b| b == b'>')
+        {
+            let start = i;
+            i += rel + 1;
+            mask[start..i].fill(true);
+            continue;
         }
 
         // URL starting with `www.`.

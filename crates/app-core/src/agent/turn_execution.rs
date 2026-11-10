@@ -1616,7 +1616,7 @@ impl Agent {
                     println!("{}\n", skill.description);
                     self.active_skill = Some(invocation.name.to_string());
                     if let Some(prompt) = invocation.prompt {
-                        self.arm_effort_keywords(&prompt);
+                        self.arm_effort_keywords(prompt);
                         if let Err(e) = self.run_once(prompt).await {
                             eprintln!("\nError: {}\n", e);
                         }
