@@ -461,6 +461,40 @@ so it is staged.
 
 ---
 
+## 8b. Named agent definitions
+
+A spawn can name a role instead of restating it. `swarm spawn` accepts
+`agent: "<name>"`, resolved against Markdown files with YAML frontmatter:
+
+- `<workspace>/.horon/agents/*.md` first, then `~/.horon/agents/*.md`.
+- The first file carrying an exact name wins, so a project definition shadows a
+  home definition of the same name.
+- No definitions means spawn behaves exactly as it did before.
+
+Frontmatter keys follow this repository's spawn vocabulary rather than another
+tool's: `name`, `description`, `tools` (allow list), `model`, `effort`,
+`output_schema` (JSON Schema). The Markdown body is the role prompt. `tools`
+accepts a YAML sequence or a comma-delimited string.
+
+Resolution happens before any session exists:
+
+- Explicit spawn parameters override definition values, so a caller can reuse a
+  role and change its model for one run.
+- An unknown name fails and lists the names that do exist.
+- A file that cannot be parsed is reported under its own name rather than
+  hidden, while other definitions stay usable.
+
+The definition's `tools` reaches the child as an allow list. It narrows the
+child's registry and never widens it: a definition naming three tools gets those
+three, not the configured profile's surface. `model` is a plain model name, not
+a model role.
+
+`swarm` action `list_agent_defs` lists the definitions visible from the current
+workspace. It is a separate action from `list`, which still means "list swarm
+members" and keeps `list_agents` as its alias.
+
+---
+
 ## 9. Example: how the graph changes over time
 
 Task: "investigate multi-monitor support in scrollwm". Status legend: pending, running,

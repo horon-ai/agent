@@ -496,7 +496,7 @@ async fn session_agent_models_drive_spawn_selection() {
             Some("routing test".into()),
             super::comm_worktree::Isolation::None,
             super::comm_worktree::IsoApply::Apply,
-            None,
+            super::SpawnExtras::default(),
             &sessions,
             &Arc::new(RwLock::new(String::new())),
             &provider,
@@ -1042,7 +1042,10 @@ async fn schema_spawn_installs_yield_on_the_child_only() {
             Some("structured child".into()),
             super::comm_worktree::Isolation::None,
             super::comm_worktree::IsoApply::Apply,
-            Some(schema),
+            super::SpawnExtras {
+                output_schema: Some(schema),
+                allowed_tools: None,
+            },
             &sessions,
             &Arc::new(RwLock::new(String::new())),
             &provider,
@@ -1171,3 +1174,6 @@ async fn schema_spawn_installs_yield_on_the_child_only() {
         crate::env::remove_var("HORON_HOME");
     }
 }
+
+#[path = "comm_session_tests/spawn_extras.rs"]
+mod spawn_extras;

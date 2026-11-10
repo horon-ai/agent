@@ -891,7 +891,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, true)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, true, None)
     }
 
     /// A connection may only be a viewer attaching to an existing Agent.
@@ -901,7 +901,7 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, None, false)
+        Self::new_with_initial_ownership(provider, registry, working_dir, None, false, None)
     }
 
     pub(crate) fn new_with_parent_and_initial_working_dir(
@@ -909,15 +909,13 @@ impl Agent {
         registry: Registry,
         working_dir: Option<&str>,
         parent_id: Option<String>,
+        narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true)
+        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools)
     }
 
-    /// Whether a session's allow-list is the untouched default `core` profile.
-    ///
-    /// Only the default qualifies: an explicit `[tools] enabled` list, `disable_base_tools`, and
-    /// every other profile are the operator's own choice and are never widened here. The user's
-    /// explicit allow and deny remain the final authority.
+    /// Whether a session's allow-list is the untouched default `core` profile. An explicit list,
+    /// `disable_base_tools`, or another profile is the operator's own choice.
     fn default_core_profile(tools: &crate::config::ToolConfig) -> bool {
         tools
             .profile
@@ -933,10 +931,12 @@ impl Agent {
         working_dir: Option<&str>,
         parent_id: Option<String>,
         confirmed: bool,
+        narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
         let start = Instant::now();
         let tool_selection = crate::config::config().tools.selection();
-        let default_core_profile = Self::default_core_profile(&crate::config::config().tools);
+        let narrowed = narrowed_tools.is_some();
+        let default_core_profile = !narrowed && Self::default_core_profile(&crate::config::config().tools);
         let mut session = Session::create(parent_id, None);
         if let Some(working_dir) = working_dir {
             session.working_dir = Some(working_dir.to_string());
@@ -945,7 +945,7 @@ impl Agent {
             provider,
             registry,
             session,
-            tool_selection.allowed_tools,
+            narrowed_tools.or(tool_selection.allowed_tools),
             tool_selection.disabled_tools,
             default_core_profile,
         );
