@@ -262,7 +262,6 @@ where
             }
             for warning in themes.apply(&reload.settings) {
                 app.warn(format!("theme: {warning}"));
-                themed = true;
             }
             themed = true;
         }
