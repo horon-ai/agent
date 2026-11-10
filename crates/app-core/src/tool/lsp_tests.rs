@@ -329,7 +329,7 @@ async fn rename_without_a_new_name_is_refused_before_the_server_runs() {
     let error = LspTool::new()
         .execute(
             json!({"action": "rename", "file": "main.rs", "line": 1, "character": 4}),
-            make_ctx(dir.path()),
+            make_ctx(dir.path().to_path_buf()),
         )
         .await
         .expect_err("a rename needs a new name");
