@@ -47,6 +47,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("select_session_head", "selectSessionHead"),
     cap("get_history_page", "getHistoryPage"),
     cap("export_session_events", "exportSessionEvents"),
+    cap("export_session_markdown", "exportSessionMarkdown"),
     cap("import_session_events", "importSessionEvents"),
     cap("export_session_blob", "exportSessionBlob"),
     cap("import_session_blob", "importSessionBlob"),
@@ -309,7 +310,7 @@ const PY_ONLY: &[(&str, &str)] = &[
 
 fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    ["client.rs", "structured.rs"]
+    ["client.rs", "structured.rs", "export.rs"]
         .into_iter()
         .map(|file| {
             std::fs::read_to_string(root.join(file))
