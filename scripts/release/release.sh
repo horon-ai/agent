@@ -233,6 +233,7 @@ tag_and_push() {
     repository="$(gh repo view "$origin_url" --json nameWithOwner --jq .nameWithOwner)"
     if ! python3 scripts/release/check_ci.py "$head_commit" --repo "$repository" --timeout 0; then
         echo "Error: release blocked. Push this commit to dev or main and wait for all CI checks to succeed, then retry." >&2
+        echo "If the newest CI run for this commit was a documentation-only dev run (code gates skipped) or was cancelled by a newer dev push, open it and use 'Re-run all jobs': a re-run always runs every gate." >&2
         exit 1
     fi
     [[ "$(git rev-parse HEAD)" == "$head_commit" ]] || {
