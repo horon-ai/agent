@@ -1,6 +1,116 @@
 use super::*;
 
+/// One-line notice a model-requested rollover leaves where a summary would be.
+///
+/// The boundary carries no generated summary, so this text stands in its place
+/// in the provider projection. It has to name `history://current`: the covered
+/// messages are still stored, and that URL is the only way back to them. The
+/// working notes stay in the dynamic system prompt, not here.
+pub(super) const CONTEXT_ROLLOVER_MARKER: &str = "The model rolled this session's context over: earlier turns are out of the active context but stored in full at history://current, and the working notes in the system prompt hold the state to continue from.";
+
+/// Index of the newest user message that carries text and no tool result.
+///
+/// A rollover boundary starts the active context here. It must never land on a
+/// tool-result message: the call that produced the result would sit before the
+/// boundary, the result would replay as an orphan pair, and the session
+/// projection rejects that transcript.
+fn last_user_turn_start(messages: &[crate::session::StoredMessage]) -> Option<usize> {
+    messages.iter().rposition(|message| {
+        matches!(message.role, Role::User)
+            && message
+                .content
+                .iter()
+                .any(|block| matches!(block, crate::message::ContentBlock::Text { .. }))
+            && !message
+                .content
+                .iter()
+                .any(|block| matches!(block, crate::message::ContentBlock::ToolResult { .. }))
+    })
+}
+
 impl Agent {
+    /// Apply a rollover the model asked for with `new_context`, if one is due.
+    ///
+    /// The tool only records the request; a tool round cannot rebuild its own
+    /// transcript, because the assistant message that called it and the results
+    /// still to come belong to the same turn. Both turn loops reach this through
+    /// the turn settle step once the transcript is final.
+    ///
+    /// The rebuild is a compaction boundary over every message before the
+    /// newest user turn. No summary is generated: the boundary carries
+    /// `CONTEXT_ROLLOVER_MARKER`, or a text summary the session already had
+    /// followed by it, so the next request is the dynamic system prompt (with
+    /// the working notes), that user message, and the marker. Nothing is
+    /// removed from the stored transcript: `history://current` still serves all
+    /// of it.
+    ///
+    /// One request is one rollover. Calling the tool twice in a turn leaves one
+    /// pending request, and the second call is consumed by the same boundary.
+    pub(super) fn apply_pending_context_rollover(&mut self) {
+        let session_id = self.session.id.clone();
+        if !crate::tool::new_context::rollover_pending(&session_id) {
+            return;
+        }
+        let Some(boundary) = last_user_turn_start(self.session.active_context()) else {
+            crate::tool::new_context::clear_rollover(&session_id);
+            return;
+        };
+        // The active context already starts at the newest user turn: there is
+        // nothing to drop, and the request is finished.
+        if boundary == 0 {
+            crate::tool::new_context::clear_rollover(&session_id);
+            return;
+        }
+        let offset = self.session.active_history_offset();
+        let active_len = self.session.active_context().len();
+        // A text summary the model already had keeps describing everything the
+        // new boundary now covers, so it stays in front of the marker. A
+        // provider-native window is dropped instead: advancing the boundary
+        // past it would replay an opaque payload the server built for the
+        // earlier coverage.
+        let prior_summary = self
+            .session
+            .compaction
+            .as_ref()
+            .filter(|state| !state.is_native())
+            .map(|state| state.summary_text.trim().to_string())
+            .filter(|text| !text.is_empty());
+        let summary_text = match prior_summary {
+            Some(prior) => format!("{prior}\n\n{CONTEXT_ROLLOVER_MARKER}"),
+            None => CONTEXT_ROLLOVER_MARKER.to_string(),
+        };
+        let state = crate::session::StoredCompactionState {
+            summary_text,
+            covers_up_to_turn: offset + boundary,
+            original_turn_count: offset + active_len,
+            compacted_count: boundary,
+            ..Default::default()
+        };
+
+        let compaction = self.registry.compaction();
+        let Ok(mut manager) = compaction.try_write() else {
+            // Leave the request pending: the boundary still applies, it just
+            // waits for a turn whose manager lock is free.
+            logging::warn("[compaction/rollover] deferred: compaction manager lock busy");
+            return;
+        };
+        manager.set_budget(self.provider.context_window());
+        manager.restore_persisted_stored_state_with(&state, self.session.active_context());
+        // Persisting the state rewrites the stored boundary and refreshes the
+        // resident active context to the messages after it.
+        self.sync_session_compaction_state_from_manager(&mut manager);
+        self.session.set_compaction_generation(manager.generation());
+        crate::tool::new_context::clear_rollover(&session_id);
+        self.note_compaction_applied();
+        logging::info(&format!(
+            "[compaction/rollover] session {} rolled over at message {} of {} ({} kept)",
+            session_id,
+            offset + boundary,
+            offset + active_len,
+            active_len - boundary,
+        ));
+    }
+
     /// Mark this agent as living inside the persistent serve/api-bridge daemon.
     /// Only such agents run idle background compaction.
     pub fn set_persistent_runtime(&mut self, persistent: bool) {
@@ -494,3 +604,7 @@ mod compaction_job_tests;
 #[cfg(test)]
 #[path = "context_limit_tests.rs"]
 mod context_limit_tests;
+
+#[cfg(test)]
+#[path = "context_rollover_tests.rs"]
+mod context_rollover_tests;
