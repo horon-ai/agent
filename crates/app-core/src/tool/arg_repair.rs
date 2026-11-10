@@ -170,14 +170,6 @@ pub(crate) fn repair_recorded(schema: &Value, input: Value) -> Repaired {
     }
 }
 
-/// Repair `input` against `schema`, returning the repaired value and one note
-/// per change. No notes means the input was already valid or could not be
-/// improved.
-pub(crate) fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
-    let repaired = repair_recorded(schema, input);
-    (repaired.input, repaired.changes)
-}
-
 /// One validation failure reduced to owned data, so the input can be mutated
 /// while the errors are still being applied.
 struct Problem {
