@@ -59,6 +59,34 @@ direction (faster and smaller than jcode).
   `docs/protocol/SESSION_STORE.md`). A cell jcode keeps for such a reason is
   reported as a structural difference with that reason.
 
+## Design principles
+
+Short form of `PHILOSOPHY.md` (Korean: `PHILOSOPHY.ko.md`); this file keeps
+contract priority, and the Fixed requirements above are unchanged.
+
+Principles:
+
+1. Beat jcode in every cell and never fall below the recorded baseline.
+2. Support ACP v1 and v2.
+3. The headless package has no TUI; the TUI is the separate `horon-tui`
+   package and binary on the SDK. One engine, two binaries.
+4. The engine is usable from server code through the Rust, TypeScript and
+   Python SDKs.
+5. Claims are measured in CI, and durability is never traded for speed.
+
+A proposed change fits when it:
+
+1. reduces per-request tokens or per-turn CPU, fsync or memory;
+2. is measurable by CI `compare` or the structural gate;
+3. does not grow the headless dependency graph or the binary;
+4. does not break ACP v1/v2, the SDKs or stored sessions;
+5. does not reintroduce removed surface under another name.
+
+Does not do: forced tool-call steps, streaming dry-run, a `report_issue` tool,
+per-tool `family@rev` versions, a KDL model catalog, wholesale `anyhow` or
+`SmallVec` replacement, or a cutover of external contracts (ACP v1, harness API
+v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
+
 ## What this build is
 
 - One headless binary, `horon-agent`. Working subcommands: `serve` (agent
@@ -202,7 +230,7 @@ and do not merge or report success before then.
 request against its base, and a first-attempt push to `dev` against the head of
 the last successful `dev` push run of the same workflow (two-dot diff).
 
-- **Documentation only** (README, `docs/`, `AGENTS.md`, templates): runs
+- **Documentation only** (README, `PHILOSOPHY*.md`, `docs/`, `AGENTS.md`, templates): runs
   `Documentation Checks` (links, UTF-8, English/Korean pairs) and
   `Documentation Corpus Test` (`docs/` is compiled into the binary, so the
   `horon_agent_docs` tests still run). The release build, the three-OS test
@@ -268,6 +296,7 @@ checks this and runs in the Quality Guardrails job.
 
 Every English Markdown file under `docs/`, including subfolders, and the root
 `README.md` are compiled into the binary and served by the `horon_agent_docs`
-tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled.
+tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled. The root
+`PHILOSOPHY.md` pair is checked like the READMEs but is not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.
 `docs/README.md` is the index; update it in the same change.
