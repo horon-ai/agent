@@ -347,6 +347,7 @@ impl MemoryEntry {
     /// - Preference: 90 days (preferences may evolve)
     /// - Fact: 30 days (codebase facts can become stale)
     /// - Entity: 60 days (entities change moderately)
+    /// - Lesson: 180 days (a learned procedure outlives a codebase fact)
     pub fn effective_confidence(&self) -> f32 {
         let age_days = (Utc::now() - self.created_at).num_days() as f32;
         let half_life = match self.category {
@@ -354,6 +355,7 @@ impl MemoryEntry {
             MemoryCategory::Preference => 90.0,
             MemoryCategory::Fact => 30.0,
             MemoryCategory::Entity => 60.0,
+            MemoryCategory::Lesson => 180.0,
             MemoryCategory::Custom(_) => 45.0, // Default for custom categories
         };
 
@@ -461,6 +463,10 @@ pub enum MemoryCategory {
     Preference,
     Entity,
     Correction,
+    /// A procedure or non-obvious fix learned while working (memory tool
+    /// action `learn`, issue #61). Kept apart from `Fact` so recall can rank a
+    /// lesson above a plain statement of the same age.
+    Lesson,
     Custom(String),
 }
 
@@ -471,6 +477,7 @@ impl std::fmt::Display for MemoryCategory {
             MemoryCategory::Preference => write!(f, "preference"),
             MemoryCategory::Entity => write!(f, "entity"),
             MemoryCategory::Correction => write!(f, "correction"),
+            MemoryCategory::Lesson => write!(f, "lesson"),
             MemoryCategory::Custom(s) => write!(f, "{}", s),
         }
     }
@@ -485,6 +492,7 @@ impl std::str::FromStr for MemoryCategory {
             "preference" => MemoryCategory::Preference,
             "entity" => MemoryCategory::Entity,
             "correction" => MemoryCategory::Correction,
+            "lesson" => MemoryCategory::Lesson,
             other => MemoryCategory::Custom(other.to_string()),
         })
     }
@@ -500,7 +508,8 @@ impl MemoryCategory {
             "preference" | "preferences" | "pref" => MemoryCategory::Preference,
             "correction" | "corrections" | "fix" | "bug" => MemoryCategory::Correction,
             "entity" | "entities" => MemoryCategory::Entity,
-            "observation" | "lesson" | "learning" => MemoryCategory::Fact,
+            "lesson" | "learning" => MemoryCategory::Lesson,
+            "observation" => MemoryCategory::Fact,
             _ => MemoryCategory::Fact,
         }
     }
@@ -605,6 +614,10 @@ pub fn memory_score(entry: &MemoryEntry) -> f64 {
     score += match entry.category {
         MemoryCategory::Correction => 50.0,
         MemoryCategory::Preference => 30.0,
+        // A lesson is a procedure worth reusing, so it outranks a plain fact of
+        // the same age while preferences and corrections still outrank it
+        // (issue #61).
+        MemoryCategory::Lesson => 25.0,
         MemoryCategory::Fact => 20.0,
         MemoryCategory::Entity => 10.0,
         MemoryCategory::Custom(_) => 5.0,
@@ -674,6 +687,7 @@ fn format_entries_for_prompt_with_header(
     let mut output = String::new();
     let order = [
         MemoryCategory::Correction,
+        MemoryCategory::Lesson,
         MemoryCategory::Fact,
         MemoryCategory::Preference,
         MemoryCategory::Entity,
@@ -696,6 +710,7 @@ fn format_entries_for_prompt_with_header(
         if let Some(items) = sections.remove(cat) {
             let title = match cat {
                 MemoryCategory::Correction => "Corrections",
+                MemoryCategory::Lesson => "Lessons",
                 MemoryCategory::Fact => "Facts",
                 MemoryCategory::Preference => "Preferences",
                 MemoryCategory::Entity => "Entities",
@@ -972,5 +987,64 @@ pub mod ranking {
             assert!(top_k_by_score([("a", 1.0)], 0).is_empty());
             assert!(top_k_by_ord([("a", 1)], 0).is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod lesson_category_tests {
+    use super::*;
+
+    /// A lesson is its own category, not a second spelling of `fact`, so recall
+    /// can rank it and an extracted lesson is stored as one (issue #61).
+    #[test]
+    fn extraction_keeps_a_lesson_out_of_fact() {
+        assert_eq!(MemoryCategory::from_extracted("lesson"), MemoryCategory::Lesson);
+        assert_eq!(MemoryCategory::from_extracted("Learning"), MemoryCategory::Lesson);
+        assert_eq!(MemoryCategory::from_extracted("observation"), MemoryCategory::Fact);
+    }
+
+    #[test]
+    fn lesson_round_trips_through_its_name_and_json() {
+        assert_eq!("lesson".parse::<MemoryCategory>().unwrap(), MemoryCategory::Lesson);
+        assert_eq!(MemoryCategory::Lesson.to_string(), "lesson");
+        assert_eq!(
+            serde_json::to_string(&MemoryCategory::Lesson).unwrap(),
+            "\"lesson\"",
+            "a stored lesson must read back as a lesson"
+        );
+        assert_eq!(
+            serde_json::from_str::<MemoryCategory>("\"lesson\"").unwrap(),
+            MemoryCategory::Lesson
+        );
+    }
+
+    #[test]
+    fn a_lesson_scores_above_a_fact_with_the_same_timestamps() {
+        let stamp = Utc::now();
+        let mut lesson = MemoryEntry::new(MemoryCategory::Lesson, "run the gate first");
+        let mut fact = MemoryEntry::new(MemoryCategory::Fact, "the gate lives in scripts/ci");
+        for entry in [&mut lesson, &mut fact] {
+            entry.created_at = stamp;
+            entry.updated_at = stamp;
+        }
+        assert!(
+            memory_score(&lesson) > memory_score(&fact),
+            "a lesson must outrank a fact when age, access count and trust are equal"
+        );
+    }
+
+    #[test]
+    fn a_lesson_survives_longer_than_a_fact() {
+        let mut lesson = MemoryEntry::new(MemoryCategory::Lesson, "run the gate first");
+        let mut fact = MemoryEntry::new(MemoryCategory::Fact, "the gate lives in scripts/ci");
+        let old = Utc::now() - chrono::Duration::days(120);
+        for entry in [&mut lesson, &mut fact] {
+            entry.created_at = old;
+            entry.updated_at = old;
+        }
+        assert!(
+            lesson.effective_confidence() > fact.effective_confidence(),
+            "a lesson keeps its confidence longer than a codebase fact"
+        );
     }
 }
