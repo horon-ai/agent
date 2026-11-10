@@ -82,20 +82,18 @@ pub fn install(source: &str, git_ref: Option<&str>, name_hint: Option<&str>) -> 
     std::fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
 
     let staging = dir.join(format!(".staging-{}-{}", std::process::id(), unique_suffix()));
-    if staging.exists() {
-        std::fs::remove_dir_all(&staging).ok();
-    }
+    discard(&staging);
     let installed = clone_into(source, git_ref, name_hint, &staging);
     match installed {
         Ok(installed) => {
-            let result = move_into_place(&installed, &dir);
-            std::fs::remove_dir_all(&staging).ok();
-            let installed = result?;
+            let moved = move_into_place(&installed, &dir);
+            discard(&staging);
+            let installed = moved?;
             write_lock(&dir, installed.record(git_ref))?;
             Ok(installed)
         }
         Err(error) => {
-            std::fs::remove_dir_all(&staging).ok();
+            discard(&staging);
             Err(error)
         }
     }
@@ -135,6 +133,23 @@ pub fn endorsed_repo(entry: &crate::skill::EndorsedSkill) -> Option<String> {
 /// Looks up an endorsed skill by name.
 pub fn endorsed(name: &str) -> Option<&'static crate::skill::EndorsedSkill> {
     crate::skill::endorsed_skills().iter().find(|entry| entry.name == name)
+}
+
+/// Removes the staging directory, reporting a failure other than "already gone".
+///
+/// A leftover staging directory is harmless (the next install picks a fresh
+/// name and this one is invisible to the registry), so it must not turn a
+/// finished install into a failure; it is still reported, because a directory
+/// that cannot be removed at all belongs in the log.
+fn discard(staging: &Path) {
+    if let Err(error) = std::fs::remove_dir_all(staging)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "warning: cannot remove the skill staging directory {}: {error}",
+            staging.display()
+        );
+    }
 }
 
 fn unique_suffix() -> String {
