@@ -3294,11 +3294,8 @@ fn screenshot_message(index: usize) -> StoredMessage {
                 data: "A".repeat(4 * 1024),
             },
         ],
-        display_role: None,
-        timestamp: None,
-        tool_duration_ms: None,
-        token_usage: None,
-    }..Default::default()
+        ..StoredMessage::default()
+    }
 }
 
 #[test]
