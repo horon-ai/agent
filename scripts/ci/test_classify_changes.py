@@ -35,7 +35,7 @@ def runs_json(sha):
 
 class ClassifyChangesTests(unittest.TestCase):
     def test_docs_only_pull_request_skips_code_gates_but_keeps_docs_gates(self):
-        result = pr("README.md", "docs/runtime/TOOLS.md", "docs/assets/diagram.svg")
+        result = pr("README.md", "PHILOSOPHY.md", "PHILOSOPHY.ko.md", "docs/runtime/TOOLS.md", "docs/assets/diagram.svg")
         self.assertEqual(result, DOCS_ONLY)
 
     def test_any_code_file_forces_the_full_run(self):

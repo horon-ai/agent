@@ -2,6 +2,8 @@ use super::*;
 use crate::{terminal_eprintln as eprintln, terminal_println as println};
 
 pub(in crate::agent) mod audio;
+mod turn_token_usage;
+use turn_token_usage::*;
 
 impl Agent {
     /// Refuse to run a model turn when this session moved to another machine
@@ -37,6 +39,7 @@ impl Agent {
 
     /// Run a single turn with the given user message
     pub async fn run_once(&mut self, user_message: &str) -> Result<()> {
+        self.resolve_armed_effort(false, None);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
         let input_id = self.add_turn_start_message(
@@ -73,6 +76,7 @@ impl Agent {
         user_message: &str,
         display_role: Option<crate::session::StoredDisplayRole>,
     ) -> Result<String> {
+        self.resolve_armed_effort(false, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
         let input_id = self.add_turn_start_message(
@@ -152,6 +156,7 @@ impl Agent {
         };
         self.current_turn_system_reminder = system_reminder;
 
+        self.resolve_armed_effort(continues_turn, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
         let stored_as_user = display_role.is_none();
@@ -425,9 +430,9 @@ impl Agent {
     /// one-shot late-MCP-discovery check before the first real turn.
     pub(crate) async fn prewarm_provider(&self) {
         self.ensure_listed_tools_index().await;
-        let tools = match &self.locked_tools {
-            Some(tools) => tools.clone(),
-            None => self.build_filtered_tool_definitions().await,
+        let tools: Arc<[ToolDefinition]> = match &self.locked_tools {
+            Some(tools) => Arc::clone(tools),
+            None => self.build_filtered_tool_definitions().await.into(),
         };
         let prompt = self.build_system_prompt_split(None);
         self.provider
@@ -435,7 +440,7 @@ impl Agent {
             .await;
     }
 
-    pub(super) async fn tool_definitions(&mut self) -> Vec<ToolDefinition> {
+    pub(super) async fn tool_definitions(&mut self) -> Arc<[ToolDefinition]> {
         let tools = self.lock_tool_definitions().await;
         // The surface is now authoritative, so the index is built (or rebuilt
         // once, when a warmup built it before the lock) from the same registry
@@ -444,7 +449,7 @@ impl Agent {
         tools
     }
 
-    async fn lock_tool_definitions(&mut self) -> Vec<ToolDefinition> {
+    async fn lock_tool_definitions(&mut self) -> Arc<[ToolDefinition]> {
         // The MCP fixed-surface decision is taken here, once, before any list
         // is built: every later rebuild reads the frozen value. The published
         // flag is refreshed on every lock because a provider switch can change
@@ -501,17 +506,17 @@ impl Agent {
                     .any(|tool| matches!(tool.name.as_str(), "mcp_search" | "mcp_call"))
                     && !locked.iter().any(|tool| tool.name.starts_with("mcp__"))
             });
-        if locked_uses_fixed_mcp_surface && let Some(locked) = self.locked_tools.clone() {
+        if locked_uses_fixed_mcp_surface && let Some(locked) = &self.locked_tools {
             // Per-server tools may continue registering in the background, but
             // the fixed surface cannot change as a result. Avoid a provider
             // cache reset and registry scan; new tools are announced in the
             // transcript instead (see `announce_late_mcp_tools`).
             self.mcp_late_register_resolved = true;
-            return locked;
+            return Arc::clone(locked);
         }
         if let Some(ref locked) = self.locked_tools {
             if self.mcp_late_register_resolved {
-                return locked.clone();
+                return Arc::clone(locked);
             }
             if self.registry_has_new_mcp_tools(locked).await {
                 logging::info(
@@ -532,11 +537,11 @@ impl Agent {
                 // No MCP tools have appeared. They may still be connecting, so
                 // leave the guard unset and re-check on the next turn. Once they
                 // appear (or never do, after the registry settles) we stop.
-                return locked.clone();
+                return Arc::clone(locked);
             }
         }
 
-        let tools = self.build_filtered_tool_definitions().await;
+        let tools: Arc<[ToolDefinition]> = self.build_filtered_tool_definitions().await.into();
 
         // Lock the tool list to prevent cache invalidation when more tools
         // arrive asynchronously mid-session.
@@ -544,7 +549,7 @@ impl Agent {
             "Locking tool list at {} tools for cache stability",
             tools.len()
         ));
-        self.locked_tools = Some(tools.clone());
+        self.locked_tools = Some(Arc::clone(&tools));
         self.locked_tools_native_deferred = false;
         // Per-server definitions in the snapshot itself (eager mode) are
         // already described to the model; never announce them again.
@@ -665,33 +670,34 @@ impl Agent {
     /// definitions are appended as deferred on every turn from the live
     /// registry. They never enter the cached prefix, so adding, removing, or
     /// reconnecting servers costs no prompt-cache miss.
-    async fn native_deferred_tool_definitions(&mut self) -> Vec<ToolDefinition> {
+    async fn native_deferred_tool_definitions(&mut self) -> Arc<[ToolDefinition]> {
         let current = self.build_filtered_tool_definitions().await;
         let eager = match &self.locked_tools {
             // A snapshot locked before switching to the native path may still
             // carry eager MCP definitions; keep them eager for cache stability
             // (they are still callable) but never duplicate them as deferred.
-            Some(locked) => locked.clone(),
+            Some(locked) => Arc::clone(locked),
             None => {
-                let eager = ToolDefinition::eager(&current);
+                let eager: Arc<[ToolDefinition]> = ToolDefinition::eager(&current).into();
                 logging::info(&format!(
                     "Locking eager tool list at {} tools for cache stability (MCP tools deferred)",
                     eager.len()
                 ));
-                self.locked_tools = Some(eager.clone());
+                self.locked_tools = Some(Arc::clone(&eager));
                 self.locked_tools_native_deferred = true;
                 eager
             }
         };
         self.mcp_late_register_resolved = true;
-        let mut tools = eager;
+        // Deferred definitions grow from the live registry, so this path copies.
+        let mut tools = eager.to_vec();
         let eager_names: HashSet<String> = tools.iter().map(|t| t.name.clone()).collect();
         tools.extend(
             current
                 .into_iter()
                 .filter(|t| t.defer_loading && !eager_names.contains(&t.name)),
         );
-        tools
+        tools.into()
     }
 
     /// Build the agent's tool definitions from the registry, applying the
@@ -1610,6 +1616,7 @@ impl Agent {
                     println!("{}\n", skill.description);
                     self.active_skill = Some(invocation.name.to_string());
                     if let Some(prompt) = invocation.prompt {
+                        self.arm_effort_keywords(prompt);
                         if let Err(e) = self.run_once(prompt).await {
                             eprintln!("\nError: {}\n", e);
                         }
@@ -1631,6 +1638,7 @@ impl Agent {
                 }
             }
 
+            self.arm_effort_keywords(input);
             if let Err(e) = self.run_once(input).await {
                 eprintln!("\nError: {}\n", e);
             }
@@ -1752,61 +1760,6 @@ impl Agent {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TurnTokenUsage {
-    prompt_tokens: Option<u64>,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_input_tokens: Option<u64>,
-    cache_creation_input_tokens: Option<u64>,
-}
-
-fn session_turn_token_usage_after(session: &Session, start_message_index: usize) -> Option<TurnTokenUsage> {
-    let history = session
-        .history_messages()
-        .map_err(|error| {
-            logging::warn(&format!("Cannot read turn usage history: {error}"));
-        })
-        .ok()?;
-    turn_token_usage_after(&history, start_message_index)
-}
-
-fn turn_token_usage_after(
-    messages: &[crate::session::StoredMessage],
-    start_message_index: usize,
-) -> Option<TurnTokenUsage> {
-    let mut usage = TurnTokenUsage {
-        prompt_tokens: None,
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_read_input_tokens: None,
-        cache_creation_input_tokens: None,
-    };
-    let mut saw_usage = false;
-
-    for message in messages.iter().skip(start_message_index) {
-        if !matches!(&message.role, Role::Assistant) {
-            continue;
-        }
-        let Some(message_usage) = message.token_usage.as_ref() else {
-            continue;
-        };
-
-        saw_usage = true;
-        let add = |acc: Option<u64>, v: Option<u64>| v.map(|v| acc.unwrap_or(0).saturating_add(v)).or(acc);
-        usage.prompt_tokens = add(usage.prompt_tokens, message_usage.prompt_tokens);
-        usage.input_tokens = usage.input_tokens.saturating_add(message_usage.input_tokens);
-        usage.output_tokens = usage.output_tokens.saturating_add(message_usage.output_tokens);
-        usage.cache_read_input_tokens = add(usage.cache_read_input_tokens, message_usage.cache_read_input_tokens);
-        usage.cache_creation_input_tokens = add(
-            usage.cache_creation_input_tokens,
-            message_usage.cache_creation_input_tokens,
-        );
-    }
-
-    saw_usage.then_some(usage)
 }
 
 /// Cap on tools listed in one late-MCP transcript announcement.

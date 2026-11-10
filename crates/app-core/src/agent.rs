@@ -9,6 +9,10 @@ mod conversation_reset;
 #[cfg(test)]
 #[path = "agent/durable_input_tests.rs"]
 mod durable_input_tests;
+mod effort_keywords;
+#[cfg(test)]
+#[path = "agent_tests/effort_keywords.rs"]
+mod effort_keywords_tests;
 mod environment;
 mod failover_budget;
 mod goal_continuation;
@@ -21,6 +25,10 @@ mod interrupts;
 mod loop_guard;
 #[cfg(test)]
 mod loop_guard_tests;
+mod magic_keywords;
+#[cfg(test)]
+#[path = "agent/magic_keywords_tests.rs"]
+mod magic_keywords_tests;
 mod messages;
 #[cfg(test)]
 mod model_usage_tests;
@@ -457,9 +465,10 @@ pub struct Agent {
     /// Last token usage from API request (for debug socket queries)
     last_usage: TokenUsage,
     /// Locked tool list: once the first API request is sent, freeze the tool list
-    /// to avoid cache invalidation when MCP tools arrive asynchronously.
-    /// Cleared on compaction/reset.
-    locked_tools: Option<Vec<ToolDefinition>>,
+    /// to avoid cache invalidation when MCP tools arrive asynchronously, and
+    /// share it by refcount so a turn copies no definitions. Cleared on
+    /// compaction/reset.
+    locked_tools: Option<Arc<[ToolDefinition]>>,
     /// One-shot guard for the async MCP-registration race (#206).
     ///
     /// MCP servers connect on a background task and register `mcp__*` tools
@@ -529,6 +538,22 @@ pub struct Agent {
     /// Automatic failover attempt budget for the current run chain.
     /// Persisted separately from the session journal so a restart cannot refund attempts.
     failover_budget: failover_budget::FailoverBudgetState,
+    /// One-shot override for the current turn's reasoning effort.
+    ///
+    /// Resolved at the start of every turn from [`Agent::armed_effort_keyword`]
+    /// and cleared at the next turn start, so an unarmed turn can never inherit
+    /// an override and the next turn returns to the configured effort.
+    turn_effort_override: Option<String>,
+    /// Keyword armed by a user-authored turn entry point, consumed at turn start.
+    ///
+    /// `arm_effort_keywords` only stores what the scanner found; the ladder
+    /// resolution (available rungs, pinned effort, movement rules) happens at
+    /// turn start so it reads the state that is current for that turn.
+    armed_effort_keyword: Option<magic_keywords::EffortKeyword>,
+    /// True when the session's reasoning effort has been explicitly pinned
+    /// (via `SetReasoningEffort`). This prevents keyword overrides from
+    /// lowering the effort below the pinned value.
+    reasoning_effort_pinned: bool,
     /// True when this agent runs inside the persistent serve/api-bridge daemon.
     /// Idle background compaction only starts here; a one-shot `run` leaves it
     /// false so it never compacts a transcript nobody will resume.
@@ -686,6 +711,9 @@ impl Agent {
             pending_resume: None,
             failover_budget: failover_budget::FailoverBudgetState::default(),
             persistent_runtime: false,
+            turn_effort_override: None,
+            armed_effort_keyword: None,
+            reasoning_effort_pinned: false,
             advisor: None,
             advisor_cursor: 0,
             advisor_blocker_turn: None,
@@ -1618,6 +1646,7 @@ impl Agent {
             session_id: Some(self.session.id.clone()),
             parent_session_id: self.session.parent_id.clone(),
             cache_root_id: self.session.cache_root_id.clone(),
+            reasoning_effort: self.turn_effort_override.clone(),
         }
     }
 

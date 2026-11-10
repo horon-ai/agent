@@ -57,6 +57,9 @@ members = [
     "crates/codemode",
     "crates/tool-core",
     "crates/tool-types",
+    # Terminal client: a separate package and binary so the harness itself never
+    # links a terminal library. Gated by scripts/ci/check_headless_graph.py.
+    "crates/tui",
     "crates/update-core",
     "crates/terminal-launch",
     "crates/perf-counters",

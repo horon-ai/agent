@@ -161,6 +161,28 @@ Rust 호출자는 `create_session_with_options(CreateSessionOptions { working_di
 상속된다. 기존 세션에 붙는 것은 그 프롬프트를 바꾸지 않는다. 이 기능은 `system_prompt`
 세션 생성 필드를 지원하는 데몬 버전을 요구한다.
 
+## 턴별 추론 강도 키워드
+
+사용자 메시지에 낱말 하나를 넣어 그 턴의 추론 강도를 올리거나 내릴 수 있다. `ultrathink`는
+모델이 지원하는 가장 높은 단계를, `chillax`는 `none`을 뺀 가장 낮은 단계를 고른다. 키워드는
+메시지 본문에 그대로 남고, 그 요청 하나만 다른 강도를 쓰며 다음 턴은 설정된 강도로 돌아간다.
+
+대소문자를 그대로 맞춰야 하고 낱말이 문장 안에서 따로 서 있어야 한다. 인라인 코드, 코드
+블록, HTML 주석, 태그, URL 안의 키워드는 무시한다.
+
+명시한 강도가 항상 이긴다. `SetReasoningEffort`, `swarm spawn`의 `effort` 인자, 이미 세션
+상태에 있는 swarm 센티널로 정한 강도는 같은 턴의 키워드가 바꾸지 못한다. 키워드는 방향도
+지킨다. `chillax`는 강도를 올리지 않고 `ultrathink`는 내리지 않는다. `swarm`과 `swarm-deep`은
+추론 단계가 아니라 오케스트레이션 모드이므로 키워드가 만들지도, 맞추지도 않는다.
+
+키워드는 사용자가 쓴 턴 본문에서만 읽는다. 클라이언트 메시지 턴, REPL 사용자 입력, `horon-agent
+run`의 첫 반복이 그렇다. 합성 메시지나 에이전트가 만든 메시지(swarm 배정, 재개 복구, 라이브
+턴, overnight, advisor, ambient, debug, swarm 플래너, 자동 재촉 연속 턴)는 키워드를 세우지
+않는다.
+
+`[features] effort_keywords = false`로 스캔을 끈다. 추론 강도를 지원하지 않는 모델은
+키워드를 무시한다.
+
 ## 스킬
 
 스킬은 `SKILL.md` 하나와 그 폴더의 파일로 이루어진다. 시스템 프롬프트의 "Available Skills" 절에는 이름과 한 줄 설명만 들어가고, 본문은 쓸 때 읽는다.

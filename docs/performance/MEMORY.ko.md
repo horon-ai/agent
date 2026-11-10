@@ -232,6 +232,22 @@ hibernation의 몫은 도구 인덱스 + 다시 만들어진 projection이며, `
 `session_provider_cache_*`가 이미 0인 세션에서는 도구 인덱스 항목 수만 관찰된다. 두 값 모두 위 로그
 한 줄과 `server:memory`로 확인한다.
 
+## 할당자 A/B: Linux 기본값은 glibc 유지
+
+2026-11-10 GitHub Actions의 `compare` 스위트로 측정했다(run 42748612662, Linux x86_64, CPU 4개, 칸당 표본 5개). `horon`은 `--features jemalloc`로, `horon-base`는 같은 커밋을 기본 glibc 할당자로 같은 잡에서 빌드했다(`docs/performance/BENCHMARK.ko.md`의 "할당자 A/B").
+
+| 칸 | glibc (`horon-base`) | jemalloc (`horon`) | 판정 |
+|---|---|---|---|
+| 원샷 시간(중앙값) | 65.3 ms | 64.6 ms | 동률(범위 겹침) |
+| 원샷 최대 트리 RSS | 31.8 MB | 37.8 MB | jemalloc 1.19배 큼 |
+| MCP 호출 시간(중앙값) | 86.0 ms | 84.4 ms | 동률 |
+| 첫 세션 RSS(유휴) | 36.8 MB | 39.2 MB | jemalloc 큼 |
+| 추가 세션당(유휴) | 75.2 KB | 268.7 KB | jemalloc 큼 |
+| 추가 세션당(턴 직후) | 354.5 KB | 487.2 KB | jemalloc 큼 |
+| 설치 크기 | 110.9 MB | 111.4 MB | jemalloc 큼 |
+
+시간은 동률이고 메모리 칸은 모두 jemalloc이 나쁘므로 Linux 기본값은 glibc로 둔다. `jemalloc` feature는 프로파일링용(`jemalloc-prof`)으로 남긴다. 다시 검토하려면 A/B를 먼저 다시 돌린다.
+
 ## HoronAgent 서버 메모리 인시던트 런북
 
 상태: 현재 운영 중인 런북

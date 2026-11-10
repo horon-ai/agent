@@ -46,6 +46,7 @@ DEV_REF = "refs/heads/dev"
 # embedded documentation corpus (covered separately by the `docs` gates).
 DOC_PATTERNS = (
     "README*.md",
+    "PHILOSOPHY*.md",
     "AGENTS*.md",
     "CHANGELOG*.md",
     "LICENSE*",

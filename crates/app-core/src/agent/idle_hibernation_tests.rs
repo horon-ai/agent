@@ -112,12 +112,12 @@ fn idle_hibernation_releases_cache_and_rebuilds_exact_history_and_indexes() {
     let projected_before = cache_count(&mut agent);
     assert!(projected_before >= 2, "both stored messages are in the projection");
 
-    agent.locked_tools = Some(vec![ToolDefinition {
-        name: "frozen".to_string(),
-        description: "keep the original tool surface".to_string(),
-        input_schema: serde_json::json!({"type": "object"}),
-        defer_loading: false,
-    }]);
+    let frozen = ToolDefinition::new(
+        "frozen",
+        "keep the original tool surface",
+        serde_json::json!({"type": "object"}),
+    );
+    agent.locked_tools = Some(vec![frozen].into());
     agent.agents_md_snapshot.0 = Some("Frozen instructions, not recaptured on wake".to_string());
     agent.provider_session_id = Some("upstream-live-session".to_string());
     agent.rewind_undo_snapshot = Some(RewindUndoSnapshot {

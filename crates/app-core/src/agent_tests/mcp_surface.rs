@@ -193,12 +193,12 @@ async fn the_mcp_surface_decision_is_frozen_for_the_session() {
     let _env = CoreEnv::new(crate::config::CORE_TOOL_PROFILE);
 
     let mut listed_first = core_agent(0).await;
-    let first = serde_json::to_string(&listed_first.tool_definitions().await).expect("serialize");
+    let first = serde_json::to_string(&listed_first.tool_definitions().await[..]).expect("serialize");
     let first_prompt = listed_first.system_prompt_for_debug();
     listed_first.registry.set_configured_mcp_servers_for_test(3);
     listed_first.unlock_tools();
     listed_first.note_compaction_applied();
-    let second = serde_json::to_string(&listed_first.tool_definitions().await).expect("serialize");
+    let second = serde_json::to_string(&listed_first.tool_definitions().await[..]).expect("serialize");
     assert_eq!(
         second, first,
         "a later server never makes the surface eager mid-session"
@@ -210,11 +210,11 @@ async fn the_mcp_surface_decision_is_frozen_for_the_session() {
     );
 
     let mut eager_first = core_agent(1).await;
-    let first = serde_json::to_string(&eager_first.tool_definitions().await).expect("serialize");
+    let first = serde_json::to_string(&eager_first.tool_definitions().await[..]).expect("serialize");
     eager_first.registry.set_configured_mcp_servers_for_test(0);
     eager_first.unlock_tools();
     eager_first.note_compaction_applied();
-    let second = serde_json::to_string(&eager_first.tool_definitions().await).expect("serialize");
+    let second = serde_json::to_string(&eager_first.tool_definitions().await[..]).expect("serialize");
     assert_eq!(second, first, "the surface stays eager once it was resolved eager");
 }
 

@@ -67,6 +67,11 @@ on:
         type: string
         required: false
         default: ""
+      features:
+        description: "Cargo features added to the candidate release build only, e.g. jemalloc (empty builds exactly what ships)"
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       os:
@@ -95,6 +100,10 @@ on:
         default: "5"
       baseline_ref:
         description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row; empty measures one build"
+        required: false
+        default: ""
+      features:
+        description: "Cargo features added to the candidate release build only, e.g. jemalloc (empty builds exactly what ships; the baseline never gets them)"
         required: false
         default: ""
 
@@ -153,3 +162,4 @@ jobs:
       turns: ${{ inputs.turns }}
       oneshot_runs: ${{ inputs.oneshot_runs }}
       baseline_ref: ${{ inputs.baseline_ref }}
+      features: ${{ inputs.features }}

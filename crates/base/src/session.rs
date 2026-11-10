@@ -6,45 +6,6 @@ pub use crate::storage::{
 };
 use crate::storage::{active_pids_dir, register_active_pid, unregister_active_pid};
 
-/// RAII guard that marks a session as actively streaming for its lifetime.
-///
-/// Wraps the on-disk streaming marker from `horon-agent-storage` (cleared on every
-/// exit path so presence UIs never show a phantom streaming session) and
-/// additionally holds a macOS power assertion so the system does not
-/// idle-sleep in the middle of a streaming model response.
-pub struct StreamingGuard {
-    _marker: crate::storage::StreamingGuard,
-    #[allow(dead_code)]
-    sleep_assertion: horon_agent_platform::PowerAssertion,
-}
-
-impl StreamingGuard {
-    pub fn new(session_id: impl Into<String>) -> Self {
-        Self {
-            _marker: crate::storage::StreamingGuard::new(session_id),
-            sleep_assertion: horon_agent_platform::PowerAssertion::prevent_user_idle_system_sleep(
-                "HoronAgent streaming model response",
-            ),
-        }
-    }
-
-    /// Whether this guard currently holds a sleep-prevention assertion.
-    ///
-    /// Test-only: lets a test assert the in-process state directly instead of
-    /// inferring it from the machine-global `pmset` table.
-    #[cfg(test)]
-    pub fn assertion_is_active(&self) -> bool {
-        self.sleep_assertion.is_active()
-    }
-
-    /// Release the sleep-prevention assertion through the same path `Drop`
-    /// uses, so a test can observe the release on a live value (a dropped
-    /// value cannot be queried).
-    #[cfg(test)]
-    pub fn release_sleep_assertion(&mut self) {
-        self.sleep_assertion.release();
-    }
-}
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -77,6 +38,7 @@ mod persistence;
 mod render;
 mod resume_marker;
 mod storage_paths;
+mod streaming_guard;
 pub use crash::{
     CrashedSessionsInfo, detect_crashed_sessions, find_recent_crashed_sessions, find_session_by_name_or_id,
     recover_crashed_sessions, recover_crashed_sessions_by_ids,
@@ -106,6 +68,7 @@ pub use storage_paths::session_journal_path_from_snapshot;
 pub(crate) use storage_paths::session_path_in_dir;
 pub use storage_paths::{discard_session_original, session_exists, session_journal_path, session_path, store_paths};
 use storage_paths::{estimate_json_bytes, persist_vector_mode_label};
+pub use streaming_guard::StreamingGuard;
 pub use {horon_agent_session_types::prompt_title, persistence::drain_saves_for_shutdown};
 
 fn stored_messages_to_messages(messages: &[StoredMessage]) -> Vec<Message> {
@@ -262,6 +225,10 @@ pub struct Session {
     /// Provider reasoning/thinking effort for this session (e.g., OpenAI low|medium|high|xhigh).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// True when `reasoning_effort` is an explicit choice a per-turn effort
+    /// keyword must not override. Old sessions read `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reasoning_effort_pinned: bool,
     /// Optional fixed model to use for subagents launched from this session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_model: Option<String>,
@@ -535,6 +502,7 @@ impl Session {
             plugin_id: self.plugin_id.clone(),
             model: self.model.clone(),
             reasoning_effort: self.reasoning_effort.clone(),
+            reasoning_effort_pinned: self.reasoning_effort_pinned,
             subagent_model: self.subagent_model.clone(),
             agent_model_overrides: self.agent_model_overrides.clone(),
             improve_mode: self.improve_mode,
@@ -730,6 +698,7 @@ impl Session {
             model: None,
             route_api_method: None,
             reasoning_effort: None,
+            reasoning_effort_pinned: false,
             subagent_model: None,
             agent_model_overrides: AgentModelOverrides::new(),
             improve_mode: None,
@@ -799,6 +768,7 @@ impl Session {
             model: None,
             route_api_method: None,
             reasoning_effort: None,
+            reasoning_effort_pinned: false,
             subagent_model: None,
             agent_model_overrides: AgentModelOverrides::new(),
             improve_mode: None,
