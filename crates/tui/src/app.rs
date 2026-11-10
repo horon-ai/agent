@@ -16,7 +16,10 @@ use crate::sdk_bridge::Incoming;
 use crate::transcript::Transcript;
 
 /// What the UI asks the bridge to do after a keystroke.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq`: an answer carries protocol selections, which only compare with
+/// `PartialEq`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// Send this text as a user message.
     Send(String),

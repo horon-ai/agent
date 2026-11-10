@@ -120,7 +120,7 @@ fn question_id(question: &AskQuestion, index: usize) -> String {
 }
 
 /// The prompt currently blocking the turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Prompt {
     /// A tool approval.
     Approval(Approval),
@@ -129,7 +129,7 @@ pub enum Prompt {
 }
 
 /// What a keystroke settled, if anything.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Response {
     /// Answer a parked approval.
     Approval {

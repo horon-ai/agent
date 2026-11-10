@@ -27,7 +27,10 @@ const COMMAND_POLL: Duration = Duration::from_millis(20);
 const EVENT_POLL: Duration = Duration::from_millis(30);
 
 /// Something the UI wants the harness to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq`: an answer carries [`AskSelection`], which only guarantees
+/// `PartialEq` because the protocol type does.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// Send a user message to the attached session.
     Text(String),

@@ -86,10 +86,26 @@ impl Args {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
                 },
-                other => match other.strip_prefix("--socket=") {
-                    Some(path) if !path.is_empty() => parsed.socket = Some(path.into()),
-                    _ => return Err(format!("unknown argument: {other}")),
-                },
+                other => {
+                    if let Some(path) = other.strip_prefix("--socket=") {
+                        if path.is_empty() {
+                            return Err("--socket needs a path".to_string());
+                        }
+                        parsed.socket = Some(path.into());
+                    } else if let Some(session) = other.strip_prefix("--session=") {
+                        if session.is_empty() {
+                            return Err("--session needs a session id".to_string());
+                        }
+                        parsed.session = Some(session.to_string());
+                    } else if let Some(path) = other.strip_prefix("--cwd=") {
+                        if path.is_empty() {
+                            return Err("--cwd needs a directory".to_string());
+                        }
+                        parsed.cwd = Some(path.into());
+                    } else {
+                        return Err(format!("unknown argument: {other}"));
+                    }
+                }
             }
         }
         Ok(parsed)
