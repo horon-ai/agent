@@ -41,7 +41,7 @@ impl SkillTool {
             ),
             _ => None,
         };
-        let hint = name.clone();
+        let hint = name;
         let installed = tokio::task::spawn_blocking(move || match (endorsed, source) {
             (Some(entry), _) => crate::skill_install::install_endorsed(entry),
             (None, Some(source)) => crate::skill_install::install(&source, git_ref.as_deref(), hint.as_deref()),
