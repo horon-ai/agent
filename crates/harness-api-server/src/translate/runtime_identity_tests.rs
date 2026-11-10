@@ -198,3 +198,63 @@ fn runtime_info_omits_the_model_fallback_fields_when_unset() {
     assert!(value.get("fallback_models").is_none());
     assert!(value.get("serving_model").is_none());
 }
+
+#[test]
+fn runtime_info_answers_from_the_cache_without_a_model_fallback_list() {
+    let mut state = state_with_session();
+    // The identity arrives on a catalog push; an empty list is omitted.
+    state.legacy_event_to_api(&json!({
+        "type": "available_models_updated",
+        "provider_model": "m1",
+        "available_models": ["m1"],
+        "identity": {"serving_model": "m1"}
+    }));
+    let out = state.api_request_to_legacy(&json!({
+        "req": "get_runtime_info", "id": 7, "session_id": "s1"
+    }));
+    let [Outbound::Reply(frame)] = &out[..] else {
+        panic!("a warm cache with no fallback list must answer locally, got {out:?}");
+    };
+    let ApiEvent::RuntimeInfo {
+        model,
+        fallback_models,
+        serving_model,
+        ..
+    } = &frame.event
+    else {
+        panic!("expected runtime info");
+    };
+    assert_eq!(model.as_deref(), Some("m1"));
+    assert!(fallback_models.is_empty());
+    assert_eq!(serving_model.as_deref(), Some("m1"));
+    assert_eq!(
+        state.pending_request_count(),
+        0,
+        "a local answer leaves nothing pending"
+    );
+}
+
+#[test]
+fn runtime_info_drops_a_model_fallback_list_removed_from_the_profile() {
+    let mut state = state_with_session();
+    let push = |fallbacks: Value| {
+        json!({
+            "type": "available_models_updated",
+            "provider_model": "m1",
+            "available_models": ["m1", "m2"],
+            "identity": fallbacks
+        })
+    };
+    state.legacy_event_to_api(&push(json!({"fallback_models": ["m2"]})));
+    state.legacy_event_to_api(&push(json!({})));
+    let out = state.api_request_to_legacy(&json!({
+        "req": "get_runtime_info", "id": 8, "session_id": "s1"
+    }));
+    let [Outbound::Reply(frame)] = &out[..] else {
+        panic!("an identity without a list clears it, so the cache answers, got {out:?}");
+    };
+    let ApiEvent::RuntimeInfo { fallback_models, .. } = &frame.event else {
+        panic!("expected runtime info");
+    };
+    assert!(fallback_models.is_empty());
+}

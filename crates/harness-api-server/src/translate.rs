@@ -225,8 +225,8 @@ pub struct BridgeState {
     /// carry it without a round trip.
     current_effort: Option<String>,
     /// Configured fallback model ids the active provider profile tries, as the
-    /// daemon reports them with the catalog.
-    fallback_models: Vec<String>,
+    /// daemon reports them with the catalog; `None` until an identity arrived.
+    fallback_models: Option<Vec<String>>,
     /// Model that produced the most recent assistant response, when the daemon
     /// says. Kept apart from `current_model`, which returns to the session's
     /// own selection once a fallback turn ends.
@@ -978,9 +978,12 @@ impl BridgeState {
                     },
                 ))]
             }
-            // Always asks again: the reply carries the serving model and the
-            // fallback list, which change without the catalog changing.
+            // Answered from the cache like before, unless the identity is not
+            // known yet or a fallback list can move the serving model.
             "get_runtime_info" => {
+                if self.runtime_info_is_current() {
+                    return vec![Outbound::Reply(ServerFrame::reply(api_id, self.runtime_info()))];
+                }
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::RuntimeInfo));
                 vec![Outbound::Legacy(
@@ -2824,19 +2827,7 @@ impl BridgeState {
             self.note_provider(provider);
         }
         self.note_credential(event);
-        // Absent keys keep the last known values: most pushes carry no
-        // identity, and a stale fallback list beats a blank one.
-        if let Some(identity) = event.get("identity") {
-            if let Some(fallbacks) = identity["fallback_models"].as_array() {
-                self.fallback_models = fallbacks
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_string))
-                    .collect();
-            }
-            if identity.get("serving_model").is_some() {
-                self.serving_model = identity["serving_model"].as_str().map(str::to_string);
-            }
-        }
+        self.note_identity(event);
         if event.get("reasoning_effort").is_some() {
             self.current_effort = event["reasoning_effort"].as_str().map(str::to_string);
         }
