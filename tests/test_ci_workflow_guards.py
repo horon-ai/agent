@@ -99,8 +99,13 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertNotIn('continue-on-error: true', quality)
         self.assertIn('cargo clippy --locked --all-targets --all-features -- -D warnings', quality)
         for script in ('check_code_size.py', 'check_test_size.py',
-                       'check_panics.py', 'check_swallowed_errors.py'):
+                       'check_panics.py', 'check_swallowed_errors.py',
+                       'check_growth_ratchets.py'):
             self.assertIn(f'run: python3 scripts/ci/{script}\n', quality)
+        # The growth ratchets discover their own ceiling files, so the contract
+        # tests that pin that discovery are a step of their own.
+        self.assertIn('run: python3 -m unittest -v scripts/ci/test_check_growth_ratchets.py\n',
+                      quality)
 
     def test_compiler_lookup_failure_is_not_masked_by_export(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
