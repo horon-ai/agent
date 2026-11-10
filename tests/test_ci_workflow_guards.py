@@ -258,6 +258,24 @@ class WorkflowGuardTests(unittest.TestCase):
                 self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
                 self.assertIn('targets: ', block)
 
+    def test_benchmark_docs_push_through_the_ruleset_without_restarting_ci(self):
+        # The ruleset on main and dev requires CI checks and only lets the
+        # Horon AI Bot (and admins) push directly. GITHUB_TOKEN pushes would be
+        # rejected, and an app-token push without [skip ci] would start CI (and
+        # release-tag.yml) on every docs commit.
+        workflow = (ROOT / '.github/workflows/benchmark-docs.yml').read_text()
+        docs = workflow.split('\n  docs:\n', 1)[1]
+        self.assertIn('uses: actions/create-github-app-token@', docs)
+        self.assertIn('app-id: ${{ secrets.HORON_AI_BOT_APP_ID }}', docs)
+        self.assertIn('private-key: ${{ secrets.HORON_AI_BOT_PRIVATE_KEY }}', docs)
+        self.assertIn('token: ${{ steps.bot.outputs.token }}', docs)
+        self.assertLess(docs.index('id: bot'), docs.index('actions/checkout@'))
+        self.assertIn('\n    permissions:\n      contents: read\n', docs)
+        commits = re.findall(r'git commit [^\n]*-m "([^"]*)"', docs)
+        self.assertTrue(commits)
+        for message in commits:
+            self.assertIn('[skip ci]', message)
+
 
 if __name__ == '__main__':
     unittest.main()
