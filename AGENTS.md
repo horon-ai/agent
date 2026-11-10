@@ -227,8 +227,8 @@ and do not merge or report success before then.
   fix (an unmaintained transitive crate, a Rust toolchain defect) may be allowed at
   the narrowest scope, with the reason beside it and named in the report. Existing
   cases: the `audit_ignores` list in `scripts/ci/check_security.sh` (triage in
-  `docs/safety/SECURITY.md`) and the `linker_messages` allow in
-  `crates/app-core/src/lib.rs`.
+  `docs/safety/SECURITY.md`) and the `linker_messages` allows for unoptimized
+  macOS links in `crates/app-core/src/lib.rs` and `src/main.rs`.
 - **Gates that keep it at zero.** `ci.yml` sets `CARGO_BUILD_WARNINGS=deny`, so a
   rustc or build-script warning in a workspace crate fails the build, and
   `scripts/ci/check_security.sh` runs `cargo audit --deny warnings`. A new
