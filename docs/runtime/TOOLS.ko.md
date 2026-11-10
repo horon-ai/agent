@@ -463,7 +463,7 @@ config 하위 디렉터리 규칙 본문
 - `scope`는 `project`(기본) 또는 `global`이고, `remember`와 같은 저장소에 들어갑니다. `all`은 읽기 범위라 거부합니다.
 - 기록의 범주는 `fact`가 아니라 `lesson`입니다. 그래야 recall이 교훈으로 보여 주고 같은 시기의 사실보다 앞에 둡니다. `from_extracted`도 `lesson`과 `learning`을 이 범주로 옮기므로, 추출된 교훈이 더 이상 `fact`로 접히지 않습니다.
 - 본문은 세션 기록을 저장할 때와 같은 비밀값 마스킹을 거친 뒤 저장되고, 같은 교훈을 다시 보내면 새 기록을 만들지 않고 저장된 기록을 보강합니다.
-- `skill`을 주면 `{"action": "create" | "update", "name": "...", "description": "...", "body": "..."}`로 `skill_manage create`/`update`와 같은 코드를 거쳐 관리형 스킬을 씁니다. 스킬 쓰기가 실패하면 결과 둘째 줄에 알리고 교훈은 되돌리지 않습니다. 교훈은 이미 저장됐기 때문입니다. `skill_manage`와 달리 스킬 목록은 다시 읽지 않으므로, 새 스킬은 다음 `reload_all`이나 재시작 뒤에 보입니다.
+- `skill`을 주면 `{"action": "create" | "update", "name": "...", "description": "...", "body": "..."}`로 `skill_manage create`/`update`와 같은 코드를 거쳐 관리형 스킬을 씁니다. `name`은 필수라, `skill` 객체에 `name`이 없으면 "`skill.name` is required"로 알리고 아무것도 쓰지 않습니다. 스킬 쓰기가 실패하면 결과 둘째 줄에 알리고 교훈은 되돌리지 않습니다. 교훈은 이미 저장됐기 때문입니다. `skill_manage`와 달리 스킬 목록은 다시 읽지 않으므로, 새 스킬은 다음 `reload_all`이나 재시작 뒤에 보입니다.
 - 스킬 작성에는 여전히 `[tools] managed_skills = true`가 필요합니다. 꺼져 있으면 교훈만 저장하고 스킬을 쓰지 않았다고 결과에 적습니다.
 
 ## MCP 서버 설정 출처
