@@ -138,8 +138,7 @@ fi
 # The executable verifies the release, and only then advances the immutable
 # version, channels and launcher with rollback. A failure leaves the previous
 # installation untouched.
-HORON_AGENT_NO_AUTO_UPDATE=1 \
-  install_output="$("$bin" install-release \
+install_output="$(HORON_AGENT_NO_AUTO_UPDATE=1 "$bin" install-release \
     --assets "$assets_dir" \
     --agent-version "$agent_version" \
     --source-binary "$bin")"

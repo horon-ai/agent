@@ -168,7 +168,7 @@ def horon_env(root: str, home: str) -> dict:
             "HORON_AGENT_RUNTIME_DIR": os.path.join(root, "run"),
             "HORON_AGENT_SOCKET": os.path.join(root, "run", "horon-agent.sock"),
             "HORON_AGENT_API_SOCKET": os.path.join(root, "run", "horon-agent-api.sock"),
-            "HORON_AGENT_NO_UPDATE": "1",
+            "HORON_AGENT_NO_AUTO_UPDATE": "1",
             "HORON_AGENT_RUN_MCP": "0",
             "HORON_AGENT_RUN_AUTO_POKE": "0",
             "HORON_AGENT_CLI_BOOTSTRAP_LOGIN": "0",

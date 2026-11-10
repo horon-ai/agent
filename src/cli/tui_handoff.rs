@@ -78,7 +78,15 @@ pub(crate) fn decide_for_process() -> (Handoff, Option<PathBuf>) {
     // Without a resolvable executable path there is no sibling to find; the
     // headless message then says the client is missing, and the log keeps why.
     let sibling = match std::env::current_exe() {
-        Ok(exe) => sibling_tui(Some(&exe)),
+        // The raw path is checked first; a launcher that is itself a symlink
+        // (macOS reports the unresolved path) is retried at its real location.
+        Ok(exe) => sibling_tui(Some(&exe)).or_else(|| match std::fs::canonicalize(&exe) {
+            Ok(real) => sibling_tui(Some(&real)),
+            Err(error) => {
+                crate::logging::info(&format!("tui handoff: cannot resolve {}: {error}", exe.display()));
+                None
+            }
+        }),
         Err(error) => {
             crate::logging::info(&format!("tui handoff: cannot resolve current_exe: {error}"));
             None
