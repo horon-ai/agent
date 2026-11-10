@@ -102,7 +102,7 @@ fn page(session: &Session, parent: Option<store::EventId>, value: &str) -> Sessi
         store::OriginId::new_v4(),
         chrono::DateTime::UNIX_EPOCH,
         store::EventKind::new(store::KnownEventKind::MessageAppended),
-        serde_json::json!({"message": StoredMessage {
+        serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
             turn_start: false,
             id: uuid::Uuid::new_v4().to_string(), role: Role::User, content: text(value),
             display_role: None, timestamp: None, tool_duration_ms: None, token_usage: None,

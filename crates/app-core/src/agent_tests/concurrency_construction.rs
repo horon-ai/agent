@@ -136,6 +136,8 @@ async fn cold_restore_from_provisional_records_resume_and_never_bootstraps() {
 
 fn stored_user_message(id: &str, text: &str) -> crate::session::StoredMessage {
     crate::session::StoredMessage {
+        original_input: None,
+        arg_repairs: None,
         id: id.to_string(),
         role: crate::message::Role::User,
         content: vec![crate::message::ContentBlock::Text {

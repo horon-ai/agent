@@ -1561,7 +1561,6 @@ impl Agent {
                 missing_repairs.push((index, missing_for_message));
             }
         }
-
         self.tool_output_scan_index = self.session.active_context().len();
 
         let mut repaired = 0usize;
@@ -1574,6 +1573,8 @@ impl Agent {
                     is_error: Some(true),
                 };
                 let stored_message = StoredMessage {
+                    original_input: None,
+                    arg_repairs: None,
                     turn_start: false,
                     id: id::new_id("message"),
                     role: Role::User,

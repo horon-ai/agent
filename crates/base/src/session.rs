@@ -1277,6 +1277,8 @@ request in this new forked session, using the inherited conversation only as con
     ) -> String {
         let id = new_id("message");
         self.append_stored_message(StoredMessage {
+            original_input: None,
+            arg_repairs: None,
             turn_start,
             id: id.clone(),
             role,
