@@ -21,7 +21,6 @@ mod goal_continuation;
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
 mod handoff_compaction;
-mod hashing;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -78,10 +77,12 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+mod usage;
 mod utils;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
+pub use usage::TokenUsage;
 
 use self::streaming::{send_stream_keepalive_mpsc, stream_keepalive_ticker};
 #[cfg(test)]
@@ -106,13 +107,13 @@ use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use anyhow::Result;
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use hashing::{projected_message_hash, stable_hash_json, stable_hash_str, stable_json_len};
 pub use horon_agent_agent_runtime::{
     BackgroundToolSignal, GracefulShutdownSignal, InterruptSignal, SoftInterruptMessage, SoftInterruptQueue,
     SoftInterruptSource, StreamError, TurnOutcome, TurnState, outcome_for_stop_reason,
@@ -134,6 +135,36 @@ static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> =
 static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<HashMap<PathBuf, Option<GitState>>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 const STREAM_KEEPALIVE_PONG_ID: u64 = 0;
+
+fn stable_hash_str(value: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn stable_hash_json<T: serde::Serialize + ?Sized>(value: &T) -> u64 {
+    let encoded = serde_json::to_string(value).unwrap_or_default();
+    stable_hash_str(&encoded)
+}
+
+fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
+    serde_json::to_string(value)
+        .map(|encoded| encoded.len())
+        .unwrap_or_default()
+}
+
+/// Hash the cache-relevant projection, not the raw `Message`.
+///
+/// Raw hashing keys off non-transmitted metadata (timestamp,
+/// `tool_duration_ms`, `ReasoningTrace` blocks, `cache_control` markers), which
+/// triggers spurious `harness:_prefix_changed` KV-cache miss reports when the
+/// same message is re-serialized with backfilled metadata on the next turn.
+fn projected_message_hash(projected: &serde_json::Value) -> u64 {
+    let encoded = serde_json::to_string(projected).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&encoded, &mut hasher);
+    std::hash::Hasher::finish(&hasher)
+}
 
 /// Slice-based form of [`kv_cache_request_event_ref`], kept as the reference
 /// implementation the request-preparation tests compare against.
@@ -321,15 +352,6 @@ fn log_agent_provider_stream_lifecycle(
     ];
     owned.extend(fields.into_iter().map(|(key, value)| (key.to_string(), value)));
     logging::event(level, "AGENT_PROVIDER_STREAM_LIFECYCLE", owned);
-}
-
-/// Token usage from the last API request
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: Option<u64>,
-    pub cache_creation_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
