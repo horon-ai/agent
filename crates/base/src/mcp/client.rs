@@ -25,6 +25,11 @@ pub struct McpHandle {
     server_info: Arc<std::sync::RwLock<Option<ServerInfo>>>,
     capabilities: Arc<std::sync::RwLock<ServerCapabilities>>,
     tools: Arc<std::sync::RwLock<Vec<McpToolDef>>>,
+    /// Cached `resources/list` result. `None` means "not fetched or invalidated
+    /// since", which is distinct from a server that legitimately has none.
+    resources: Arc<std::sync::RwLock<Option<Vec<McpResourceDef>>>>,
+    /// Cached `prompts/list` result, with the same `None` = stale rule.
+    prompts: Arc<std::sync::RwLock<Option<Vec<McpPromptDef>>>>,
     /// Reply timeout applied to every request on this server.
     request_timeout: std::time::Duration,
     /// Server-initiated notifications, by method. A frame with a `method` and
@@ -50,6 +55,12 @@ pub struct McpHandle {
 /// watcher learns it must run the reconnect ladder.
 pub const TRANSPORT_CLOSED_NOTIFICATION: &str = "horon-agent/transport_closed";
 
+/// Notification a server sends when its resource list changed.
+pub const RESOURCES_LIST_CHANGED_NOTIFICATION: &str = "notifications/resources/list_changed";
+
+/// Notification a server sends when its prompt list changed.
+pub const PROMPTS_LIST_CHANGED_NOTIFICATION: &str = "notifications/prompts/list_changed";
+
 /// The single receiving half of a connection's notification channel. Wrapped so
 /// the watcher can take it exactly once, however many handles exist.
 pub(crate) type NotificationReceiver = Arc<std::sync::Mutex<Option<mpsc::UnboundedReceiver<String>>>>;
@@ -57,6 +68,11 @@ pub(crate) type NotificationReceiver = Arc<std::sync::Mutex<Option<mpsc::Unbound
 fn notification_channel() -> (mpsc::UnboundedSender<String>, NotificationReceiver) {
     let (tx, rx) = mpsc::unbounded_channel();
     (tx, Arc::new(std::sync::Mutex::new(Some(rx))))
+}
+
+/// Clear one list cache so the next read refetches it.
+fn invalidate_list<T>(cache: &std::sync::RwLock<Option<Vec<T>>>) {
+    *cache.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
 /// Removes waiters on timeout, send failure and cancellation of the caller.
@@ -198,6 +214,124 @@ impl McpHandle {
 
         Ok(())
     }
+
+    /// The capabilities the server declared in its `initialize` result.
+    pub fn server_capabilities(&self) -> ServerCapabilities {
+        self.capabilities
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Whether the server advertised the `resources` capability.
+    pub fn supports_resources(&self) -> bool {
+        self.server_capabilities().resources.is_some()
+    }
+
+    /// Whether the server advertised the `prompts` capability.
+    pub fn supports_prompts(&self) -> bool {
+        self.server_capabilities().prompts.is_some()
+    }
+
+    /// The server's resource list, taken from the cache when an earlier call
+    /// already fetched it. A `resources/list_changed` notification empties the
+    /// cache, so this refetches after one.
+    pub async fn list_resources(&self) -> Result<Vec<McpResourceDef>> {
+        if let Some(cached) = self
+            .resources
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+        {
+            return Ok(cached);
+        }
+        self.refresh_resources().await
+    }
+
+    /// Fetch the resource list and replace the cache.
+    pub async fn refresh_resources(&self) -> Result<Vec<McpResourceDef>> {
+        self.require_capability(self.supports_resources(), "resources")?;
+        let response = self.request("resources/list", None).await?;
+        let result = response.result.context("No result from resources/list")?;
+        let parsed: ResourcesListResult = serde_json::from_value(result)?;
+        let resources = parsed.resources;
+        *self.resources.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(resources.clone());
+        Ok(resources)
+    }
+
+    /// Read one resource body. A server without the `resources` capability is
+    /// rejected before any request is written.
+    pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult> {
+        self.require_capability(self.supports_resources(), "resources")?;
+        let params = serde_json::to_value(ReadResourceParams { uri })?;
+        let response = self.request("resources/read", Some(params)).await?;
+        let result = response.result.context("No result from resources/read")?;
+        Ok(serde_json::from_value(result)?)
+    }
+
+    /// The server's prompt list, with the same cache rule as resources.
+    pub async fn list_prompts(&self) -> Result<Vec<McpPromptDef>> {
+        if let Some(cached) = self
+            .prompts
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+        {
+            return Ok(cached);
+        }
+        self.refresh_prompts().await
+    }
+
+    /// Fetch the prompt list and replace the cache.
+    pub async fn refresh_prompts(&self) -> Result<Vec<McpPromptDef>> {
+        self.require_capability(self.supports_prompts(), "prompts")?;
+        let response = self.request("prompts/list", None).await?;
+        let result = response.result.context("No result from prompts/list")?;
+        let parsed: PromptsListResult = serde_json::from_value(result)?;
+        let prompts = parsed.prompts;
+        *self.prompts.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(prompts.clone());
+        Ok(prompts)
+    }
+
+    /// Expand one prompt on the server.
+    pub async fn get_prompt(&self, name: &str, arguments: Option<Value>) -> Result<GetPromptResult> {
+        self.require_capability(self.supports_prompts(), "prompts")?;
+        let params = serde_json::to_value(GetPromptParams {
+            name: name.to_string(),
+            arguments,
+        })?;
+        let response = self.request("prompts/get", Some(params)).await?;
+        let result = response.result.context("No result from prompts/get")?;
+        Ok(serde_json::from_value(result)?)
+    }
+
+    /// Drop the cached resource list so the next call refetches it.
+    pub fn invalidate_resources(&self) {
+        invalidate_list(&self.resources);
+    }
+
+    /// Drop the cached prompt list so the next call refetches it.
+    pub fn invalidate_prompts(&self) {
+        invalidate_list(&self.prompts);
+    }
+
+    /// Reject a method the server never declared, instead of writing a request
+    /// it would answer with a protocol error.
+    fn require_capability(&self, supported: bool, capability: &str) -> Result<()> {
+        if supported {
+            return Ok(());
+        }
+        anyhow::bail!("{}", unsupported_capability_message(capability, &self.name))
+    }
+}
+
+/// The message a caller gets for a capability the server never advertised, used
+/// both when the client refuses to send the request and when the tool reports
+/// the capability as missing.
+pub fn unsupported_capability_message(capability: &str, server: &str) -> String {
+    format!(
+        "MCP {capability} are not supported by '{server}' (the server did not advertise the {capability} capability)"
+    )
 }
 
 /// MCP Client - owns the child process and provides shared handles.
@@ -309,6 +443,12 @@ impl McpClient {
         let reader_name = name.clone();
         let (notifications, notifications_rx) = notification_channel();
         let reader_notifications = notifications.clone();
+        // Created before the reader so a list_changed notification clears the
+        // same caches the handle readers consult.
+        let resources: Arc<std::sync::RwLock<Option<Vec<McpResourceDef>>>> = Arc::new(std::sync::RwLock::new(None));
+        let prompts: Arc<std::sync::RwLock<Option<Vec<McpPromptDef>>>> = Arc::new(std::sync::RwLock::new(None));
+        let reader_resources = Arc::clone(&resources);
+        let reader_prompts = Arc::clone(&prompts);
         let mut reader = BufReader::new(stdout);
         tokio::spawn(async move {
             let mut line = String::new();
@@ -327,6 +467,15 @@ impl McpClient {
                                 // client capabilities, so only notifications (no
                                 // `id`) are acted on.
                                 if object.get("id").is_none() {
+                                    // The list caches are invalidated in the
+                                    // reader, before the notification reaches
+                                    // the watcher: a frame that follows this one
+                                    // must already see the stale cache cleared.
+                                    if method == RESOURCES_LIST_CHANGED_NOTIFICATION {
+                                        invalidate_list(&reader_resources);
+                                    } else if method == PROMPTS_LIST_CHANGED_NOTIFICATION {
+                                        invalidate_list(&reader_prompts);
+                                    }
                                     let _ = reader_notifications.send(method.to_string());
                                 } else {
                                     crate::logging::debug(&format!(
@@ -383,6 +532,8 @@ impl McpClient {
             server_info: Arc::new(std::sync::RwLock::new(None)),
             capabilities: Arc::new(std::sync::RwLock::new(ServerCapabilities::default())),
             tools: Arc::new(std::sync::RwLock::new(Vec::new())),
+            resources,
+            prompts,
             request_timeout: request_timeout_for(config),
             notifications,
             notifications_rx,
@@ -431,6 +582,8 @@ impl McpClient {
             server_info: Arc::new(std::sync::RwLock::new(None)),
             capabilities: Arc::new(std::sync::RwLock::new(ServerCapabilities::default())),
             tools: Arc::new(std::sync::RwLock::new(Vec::new())),
+            resources: Arc::new(std::sync::RwLock::new(None)),
+            prompts: Arc::new(std::sync::RwLock::new(None)),
             request_timeout: request_timeout_for(config),
             notifications,
             notifications_rx,
@@ -810,3 +963,7 @@ done
         assert!(!reported.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "resources_tests.rs"]
+mod resources_tests;

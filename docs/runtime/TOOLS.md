@@ -473,6 +473,21 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 - A user-level file is not re-parsed while its `FileStamp` holds; a process cache (up to 16 files) is used instead. A session start with no changed user settings reads no file at all. Working-folder files are not cached, because they must be parsed from the same single read that produced the trust decision.
 - Environment expansion (`${VAR}`) and removal of unlaunchable entries happen after merging, every time.
 
+### Resources and prompts
+
+Servers that publish resources or prompts are reached through the same `mcp` tool, so the core tool list and the deferred-loading layout do not change.
+
+| Action | Arguments | Result |
+| --- | --- | --- |
+| `resources` | optional `server` | One line per resource (URI, name, MIME type, description) for the named server, or for every connected server when no name is given. |
+| `read_resource` | `server`, `uri` | The resource body. Text goes through the same secret redaction as tool results and is fitted to the MCP result budget unless `accept_large_output: true`; a binary body is summarized by MIME type and decoded size. |
+| `prompts` | optional `server` | One line per prompt with its arguments; a trailing `*` marks a required argument. |
+| `get_prompt` | `server`, `name`, optional `arguments` | The prompt expanded by the server, as text. It is returned to the caller like any tool output and is not injected into the conversation. |
+
+- A server that did not advertise the `resources` or `prompts` capability gets `MCP resources are not supported by '<server>' …` and no JSON-RPC request is written for it.
+- `notifications/resources/list_changed` and `notifications/prompts/list_changed` drop the cached list, so the next `resources` or `prompts` call refetches it. The cache belongs to the connection and starts empty again after a reconnect.
+- Resource subscriptions (`resources/subscribe`), sampling, and roots are not implemented.
+
 ## Large tool output and context saving
 
 Three devices reduce how much tool output enters the model's context. None of them discards the original. The model gets the reduced result together with an address for reading the original back.

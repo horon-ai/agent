@@ -185,6 +185,89 @@ pub struct ResourceContent {
     pub blob: Option<String>,
 }
 
+/// One entry of a `resources/list` result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResourceDef {
+    pub uri: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "mimeType", default)]
+    pub mime_type: Option<String>,
+}
+
+/// resources/list result
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResourcesListResult {
+    #[serde(default)]
+    pub resources: Vec<McpResourceDef>,
+}
+
+/// resources/read params
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadResourceParams<'a> {
+    pub uri: &'a str,
+}
+
+/// resources/read result
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReadResourceResult {
+    #[serde(default)]
+    pub contents: Vec<ResourceContent>,
+}
+
+/// One argument a prompt accepts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptArgument {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// One entry of a `prompts/list` result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpPromptDef {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub arguments: Vec<PromptArgument>,
+}
+
+/// prompts/list result
+#[derive(Debug, Clone, Deserialize)]
+pub struct PromptsListResult {
+    #[serde(default)]
+    pub prompts: Vec<McpPromptDef>,
+}
+
+/// prompts/get params
+#[derive(Debug, Clone, Serialize)]
+pub struct GetPromptParams {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Value>,
+}
+
+/// One message returned by `prompts/get`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PromptMessage {
+    pub role: String,
+    pub content: ContentBlock,
+}
+
+/// prompts/get result
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetPromptResult {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub messages: Vec<PromptMessage>,
+}
+
 /// MCP server configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpServerConfig {
