@@ -31,14 +31,6 @@ impl MessageDeliveryMode {
             Self::OneAtATime => "one-at-a-time",
         }
     }
-
-    pub fn parse(input: &str) -> Option<Self> {
-        match input.trim().to_ascii_lowercase().as_str() {
-            "all" => Some(Self::All),
-            "one-at-a-time" | "one_at_a_time" | "oneatatime" => Some(Self::OneAtATime),
-            _ => None,
-        }
-    }
 }
 
 /// Whether a queued message interrupts the tool call that is running now.
@@ -61,14 +53,6 @@ impl InterruptMode {
         match self {
             Self::Wait => "wait",
             Self::Immediate => "immediate",
-        }
-    }
-
-    pub fn parse(input: &str) -> Option<Self> {
-        match input.trim().to_ascii_lowercase().as_str() {
-            "wait" => Some(Self::Wait),
-            "immediate" => Some(Self::Immediate),
-            _ => None,
         }
     }
 }
