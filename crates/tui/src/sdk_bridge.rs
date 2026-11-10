@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, PermissionDecision};
-use horon_agent_sdk::{ConnectOptions, EventStream, HoronAgentClient};
+use horon_agent_sdk::{ConnectOptions, Error, ErrorKind, EventStream, HoronAgentClient};
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -79,16 +79,21 @@ pub struct Runtime {
 ///
 /// The error is a sentence a user can act on, not a protocol code: it is drawn
 /// in the failure banner exactly as it arrives.
+///
+/// The typed SDK error decides the sentence, because the three ways the first
+/// connection fails need different fixes: a daemon that is not running, a
+/// client and daemon built against different protocol versions, and a session
+/// id the daemon does not have.
 pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Option<&str>) -> Result<Runtime, String> {
     let socket = options
         .socket_path
         .clone()
         .unwrap_or_else(horon_agent_sdk::api::api_socket_path);
-    let client = HoronAgentClient::connect(options).map_err(|error| format!("cannot reach the harness: {error}"))?;
+    let client = HoronAgentClient::connect(options).map_err(|error| explain_connect(&error, &socket))?;
     let session = match attach {
         Some(session_id) => client
             .attach_session(session_id)
-            .map_err(|error| format!("the harness refused to attach to {session_id}: {error}"))?,
+            .map_err(|error| explain_attach(&error, session_id))?,
         None => client
             .create_session(working_dir.map(str::to_owned))
             .map_err(|error| format!("the harness refused a new session: {error}"))?,
@@ -108,6 +113,42 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         events: event_rx,
         description,
     })
+}
+
+/// What to tell the user when the first connection fails.
+fn explain_connect(error: &Error, socket: &PathBuf) -> String {
+    match &error.kind {
+        ErrorKind::ConnectFailed { path, cause } => {
+            let where_ = path.as_deref().unwrap_or(socket.as_path()).display();
+            format!(
+                "no harness answered at {where_}. Start the daemon (horon-agent serve) and try again. {cause}"
+            )
+        }
+        ErrorKind::UnsupportedVersion {
+            client_major,
+            server_major,
+            ..
+        } => match server_major {
+            Some(server) => format!(
+                "this UI speaks protocol v{client_major} but the running daemon speaks v{server}. \
+                 Update the daemon and the UI to the same release."
+            ),
+            None => format!(
+                "the daemon did not complete the v{client_major} handshake. Restart it and try again."
+            ),
+        },
+        _ => format!("cannot reach the harness: {error}"),
+    }
+}
+
+/// What to tell the user when attaching to a session fails.
+fn explain_attach(error: &Error, session_id: &str) -> String {
+    match &error.kind {
+        ErrorKind::UnknownSession { session_id } => format!(
+            "the harness does not have session {session_id}. Check the id, or start a new session."
+        ),
+        _ => format!("the harness refused to attach to {session_id}: {error}"),
+    }
 }
 
 /// The bridge thread: alternate between pumping events and reading commands.

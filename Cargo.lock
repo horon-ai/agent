@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "horon-agent-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "horon-agent-base",
@@ -2240,6 +2240,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
