@@ -210,6 +210,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      - name: Run clippy on horon-tui
+        # A separate `-p` selection, not `--workspace`: this is the one package
+        # the guardrail job would otherwise miss, because a bare `cargo clippy`
+        # at the root selects only the root package. It also keeps the terminal
+        # stack out of the root package's all-features build.
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings
+
       - name: Enforce Cargo.lock is up to date
         if: ${{ !cancelled() }}
         shell: bash
@@ -271,6 +279,14 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_headless_graph.py
+
+      - name: Test runner contract tests
+        # The cohort steps trust `run_lib_tests.py` to turn a libtest run that
+        # matched nothing into a failure; `--min-passed` is that behaviour, and
+        # this is where it is proved rather than assumed.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_run_lib_tests.py
 
       - name: Enforce Rust and TypeScript SDK surface parity
         if: ${{ !cancelled() }}
