@@ -1963,7 +1963,7 @@ impl BridgeState {
                 output: event["output"].as_str().unwrap_or("").to_string(),
                 error: event["error"].as_str().map(str::to_string),
             })],
-            "tool_args_repaired" => tool_args_repaired::frames(session(self), event),
+            "tool_args_repaired" => crate::tool_args_repaired::frames(session(self), event),
             "side_pane_images" => vec![ServerFrame::event(ApiEvent::SidePaneImages {
                 session_id: event["session_id"]
                     .as_str()
