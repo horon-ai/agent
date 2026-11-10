@@ -5,7 +5,7 @@ Language: **English** | [한국어](INSTALL.ko.md)
 The installers download the release assets and then hand them to the agent binary's `install-release` instead of unpacking the archive themselves. Verification, extraction, the immutable version directory and channel activation all run through one path (`src/cli/install_release.rs`, `crates/app-core/src/update.rs` `install_release_from_directory`).
 
 ```bash
-horon-agent install-release --assets <directory> --agent-version <version>
+horon install-release --assets <directory> --agent-version <version>
 ```
 
 | Flag | Meaning |

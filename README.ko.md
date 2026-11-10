@@ -38,7 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install
 irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
-설치 스크립트는 릴리스 압축 파일과 `SHA256SUMS`를 받아 `horon-agent install-release`에 넘긴다. 이 명령이 체크섬을 확인하고, 바뀌지 않는 버전 디렉터리를 만들고, `stable`/`current` 링크를 바꾼다. 같은 버전 디렉터리에 다른 바이트가 있으면 덮어쓰지 않고 거부한다([자세히](docs/release/INSTALL.ko.md)).
+설치 스크립트는 릴리스 압축 파일과 `SHA256SUMS`를 받아 `horon install-release`에 넘긴다. 이 명령이 체크섬을 확인하고, 바뀌지 않는 버전 디렉터리를 만들고, `stable`/`current` 링크를 바꾼다. 같은 버전 디렉터리에 다른 바이트가 있으면 덮어쓰지 않고 거부한다([자세히](docs/release/INSTALL.ko.md)).
+
+설치 스크립트는 실행 파일을 가리키는 이름을 세 개 만든다. 문서의 모든 예제가 쓰는 `horon`, 같은 명령을 더 짧게 부르는 `hrn`, 실행 파일 자체의 이름인 `horon-agent`다.
 
 **컨테이너 (Linux, amd64·arm64)**
 
@@ -79,7 +81,7 @@ horon run "summarize this repo"
 ```
 
 <p align="center">
-  <img src="docs/assets/terminal-run.svg" alt="터미널 기록: provider current가 ready를 보고하고, horon-agent run이 ls 도구 호출을 실행한 뒤 모델이 mock-ok로 답한다" width="860">
+  <img src="docs/assets/terminal-run.svg" alt="터미널 기록: provider current가 ready를 보고하고, horon run이 ls 도구 호출을 실행한 뒤 모델이 mock-ok로 답한다" width="860">
 </p>
 
 <sub>`dev` 빌드를 저장소의 결정적 모의 모델 서버(`scripts/perf/mock_llm_server.py`)에 붙여 격리된 홈 디렉터리에서 실제로 실행해 얻은 출력이다. 모델 응답은 모의 서버의 고정 문구다.</sub>

@@ -13,7 +13,7 @@ HoronAgent treats Windows as a fully supported platform. The Windows implementat
 | PowerShell install script | Verified in Windows CI |
 | Native IPC and process lifecycle | Covered by Windows-targeted tests and end-to-end tests |
 | `horon update` | Supported, with SHA-256 verification |
-| `horon-agent install-release` | The path the install script hands release asset verification and channel activation to |
+| `horon install-release` | The path the install script hands release asset verification and channel activation to |
 | Distribution assets | `.exe` and `.tar.gz` assets for x64 and ARM64 |
 | Authenticode signing | The pipeline is ready; the Azure setup below has to be done once |
 
@@ -32,7 +32,7 @@ The install script proceeds in this order:
 1. Detect x64 or ARM64.
 2. Download the matching asset from the official GitHub release.
 3. Verify it against the release's `SHA256SUMS` file.
-4. Hand the downloaded asset directory and version to `horon-agent install-release --assets <directory> --agent-version <version>`. The executable verifies the assets again and creates the immutable version directory, `stable`, `current` and the launcher links under `%LOCALAPPDATA%\horon-agent`.
+4. Hand the downloaded asset directory and version to `horon install-release --assets <directory> --agent-version <version>`. The executable verifies the assets again and creates the immutable version directory, `stable`, `current` and the launcher links under `%LOCALAPPDATA%\horon-agent`.
 5. Add `%LOCALAPPDATA%\horon-agent\bin` to the user `PATH`.
 
 The install script never unpacks the release archive itself. `install-release` in step 4 handles verification and channel activation on one path, and a failure leaves the previous installation in place. Flags and verification rules are in [`INSTALL.md`](INSTALL.md).

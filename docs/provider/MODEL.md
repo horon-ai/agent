@@ -156,7 +156,7 @@ Key files get narrowed permissions when read. You can also write the key value d
 `provider add` writes the same table into `config.toml` and stores the key received on `--api-key-stdin` in the key file.
 
 ```bash
-printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
+printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --base-url https://llm.example.com/v1 \
   --model my-model \
   --api-key-env MY_GW_API_KEY \

@@ -38,7 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install
 irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
-The installer downloads the release archive and `SHA256SUMS`, then hands them to `horon-agent install-release`, which verifies the checksum, stages an immutable version directory and switches the `stable`/`current` links. A version directory that already holds different bytes is refused, not overwritten ([details](docs/release/INSTALL.md)).
+The installer downloads the release archive and `SHA256SUMS`, then hands them to `horon install-release`, which verifies the checksum, stages an immutable version directory and switches the `stable`/`current` links. A version directory that already holds different bytes is refused, not overwritten ([details](docs/release/INSTALL.md)).
+
+The installer links three launchers: `horon`, the command every example in these docs uses; `hrn`, the same command under a shorter name; and `horon-agent`, the executable's own name.
 
 **Container (Linux, amd64 and arm64)**
 
@@ -79,7 +81,7 @@ horon run "summarize this repo"
 ```
 
 <p align="center">
-  <img src="docs/assets/terminal-run.svg" alt="Terminal transcript: provider current reports ready, then horon-agent run executes an ls tool call and the model answers mock-ok" width="860">
+  <img src="docs/assets/terminal-run.svg" alt="Terminal transcript: provider current reports ready, then horon run executes an ls tool call and the model answers mock-ok" width="860">
 </p>
 
 <sub>Captured from a real run of a `dev` build against the repository's deterministic mock model server (`scripts/perf/mock_llm_server.py`), with an isolated home directory. The model reply is the mock's fixed text.</sub>
