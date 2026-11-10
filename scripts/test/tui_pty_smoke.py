@@ -50,7 +50,12 @@ INSTALL_HINT = "horon-tui"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
-TOOL_DONE = "tui-smoke-done"
+# The client draws a tool call as its name and status, not its output, so the
+# approved retry is proven by the status line plus the file the command writes
+# (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
+APPROVAL_RESOLVED = "approval approved"
+TOOL_FILE = "tui-smoke.txt"
+TOOL_FILE_TEXT = "retry"
 
 
 class Failure(RuntimeError):
@@ -287,9 +292,17 @@ def happy_path(agent: str, tui: str, root: str, base_url: str) -> str:
         # any reply text, so the answer has to come first.
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         terminal.send("y")
-        terminal.read_until(TOOL_DONE, STEP_TIMEOUT, "tool result after approval")
+        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
         terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        written = os.path.join(root, TOOL_FILE)
+        try:
+            with open(written, encoding="utf-8") as handle:
+                content = handle.read().strip()
+        except OSError as error:
+            raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
+        if content != TOOL_FILE_TEXT:
+            raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
