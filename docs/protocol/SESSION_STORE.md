@@ -148,6 +148,7 @@ The model that produces a structured summary can be changed with `summary_model`
 - `summary.json` and `.catalog.index.jsonl` are listing rows. Listing never parses a transcript.
 - `facade-cache.json` holds the session facade record and its hash. A session above the size cap keeps no cache and is rebuilt from the originals.
 - A cache hit reads only `checkpoint.json` and the tail. A size decrease, an inode/epoch change, an anchor mismatch or a same-length edit forces a full replay. Finding an arbitrary modification inside an unchanged prefix is `doctor`'s job, and a warm connection does not claim to hash the whole prefix.
+- The last commit of `horon-agent run` leaves its derived cache to the next reader. The commit still writes its originals, its runtime binding and its selected head, but it skips the derived rebuild that would be paid for a process about to exit. The next reader finds a checkpoint whose stamp no longer matches the log and rebuilds it under the writer lock, exactly as it would after a crash. The deferral is armed once and spent by that commit whatever its outcome, and a long-lived session never sets it.
 
 ### Locks and the writer pool
 
