@@ -590,9 +590,7 @@ impl SshTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| {
-                Error::connect_failed(None, &error, format!("could not start system ssh: {error}"))
-            })?;
+            .map_err(|error| Error::connect_failed(None, &error, format!("could not start system ssh: {error}")))?;
         let reader = child.stdout.take();
         let writer = child.stdin.take();
         let mut stderr_pipe = child.stderr.take().expect("piped stderr");

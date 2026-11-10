@@ -120,9 +120,7 @@ fn explain_connect(error: &Error, socket: &PathBuf) -> String {
     match &error.kind {
         ErrorKind::ConnectFailed { path, cause } => {
             let where_ = path.as_deref().unwrap_or(socket.as_path()).display();
-            format!(
-                "no harness answered at {where_}. Start the daemon (horon-agent serve) and try again. {cause}"
-            )
+            format!("no harness answered at {where_}. Start the daemon (horon-agent serve) and try again. {cause}")
         }
         ErrorKind::UnsupportedVersion {
             client_major,
@@ -133,9 +131,7 @@ fn explain_connect(error: &Error, socket: &PathBuf) -> String {
                 "this UI speaks protocol v{client_major} but the running daemon speaks v{server}. \
                  Update the daemon and the UI to the same release."
             ),
-            None => format!(
-                "the daemon did not complete the v{client_major} handshake. Restart it and try again."
-            ),
+            None => format!("the daemon did not complete the v{client_major} handshake. Restart it and try again."),
         },
         _ => format!("cannot reach the harness: {error}"),
     }
@@ -144,9 +140,9 @@ fn explain_connect(error: &Error, socket: &PathBuf) -> String {
 /// What to tell the user when attaching to a session fails.
 fn explain_attach(error: &Error, session_id: &str) -> String {
     match &error.kind {
-        ErrorKind::UnknownSession { session_id } => format!(
-            "the harness does not have session {session_id}. Check the id, or start a new session."
-        ),
+        ErrorKind::UnknownSession { session_id } => {
+            format!("the harness does not have session {session_id}. Check the id, or start a new session.")
+        }
         _ => format!("the harness refused to attach to {session_id}: {error}"),
     }
 }

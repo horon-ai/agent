@@ -200,8 +200,7 @@ impl Error {
     pub fn is_unknown_session(&self) -> bool {
         matches!(
             self.kind,
-            ErrorKind::UnknownSession { .. }
-                | ErrorKind::Harness(horon_agent_harness_api::ErrorCode::UnknownSession)
+            ErrorKind::UnknownSession { .. } | ErrorKind::Harness(horon_agent_harness_api::ErrorCode::UnknownSession)
         )
     }
 

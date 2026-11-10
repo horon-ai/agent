@@ -77,7 +77,7 @@ fn reply(frame: &ClientFrame, event: ApiEvent, writer: &mut dyn Write) {
         reply_to: Some(frame.id),
         event,
     };
-    write_frame(&mut *writer, &out).expect("reply");
+    write_frame(&mut { writer }, &out).expect("reply");
 }
 
 /// A dial that finds no socket is a connection failure that names the path and
@@ -91,11 +91,16 @@ fn a_missing_socket_is_a_connection_failure_with_its_path_and_cause() {
         request_timeout: Some(Duration::from_millis(200)),
         ..Default::default()
     })
-    .expect_err("a missing socket must not connect");
+    .err()
+    .expect("a missing socket must not connect");
     assert_eq!(error.code(), "connect_failed");
     match &error.kind {
         ErrorKind::ConnectFailed { path, cause } => {
-            assert_eq!(path.as_deref(), Some(socket.as_path()), "the failed dial names its socket");
+            assert_eq!(
+                path.as_deref(),
+                Some(socket.as_path()),
+                "the failed dial names its socket"
+            );
             assert!(!cause.is_empty(), "the OS cause is kept");
         }
         other => panic!("expected a typed connection failure, got {other:?}"),
@@ -120,7 +125,8 @@ fn a_refused_handshake_is_a_version_mismatch_with_both_majors() {
         },
         |_, _| {},
     )
-    .expect_err("a refused handshake must fail");
+    .err()
+    .expect("a refused handshake must fail");
     assert_eq!(error.code(), "unsupported_version");
     assert!(error.is_version_mismatch());
     match &error.kind {
@@ -129,7 +135,11 @@ fn a_refused_handshake_is_a_version_mismatch_with_both_majors() {
             server_major,
         } => {
             assert_eq!(*client_major, API_VERSION_MAJOR);
-            assert_eq!(*server_major, Some(unsupported), "the server's major is read from the refusal");
+            assert_eq!(
+                *server_major,
+                Some(unsupported),
+                "the server's major is read from the refusal"
+            );
         }
         other => panic!("expected a typed version mismatch, got {other:?}"),
     }
@@ -139,7 +149,9 @@ fn a_refused_handshake_is_a_version_mismatch_with_both_majors() {
 /// a distinct failure: nothing about the versions was ever agreed.
 #[test]
 fn an_unexpected_handshake_reply_is_not_reported_as_a_version_mismatch() {
-    let error = fake_harness(|| ApiEvent::Pong, |_, _| {}).expect_err("an unexpected handshake reply must fail");
+    let error = fake_harness(|| ApiEvent::Pong, |_, _| {})
+        .err()
+        .expect("an unexpected handshake reply must fail");
     assert_eq!(error.code(), "handshake_failed");
     assert!(!error.is_version_mismatch(), "no version was refused; none was agreed");
 }
@@ -150,12 +162,10 @@ fn an_unexpected_handshake_reply_is_not_reported_as_a_version_mismatch() {
 #[test]
 fn an_unknown_session_carries_the_id_the_client_sent() {
     let client = fake_harness(
-        || {
-            ApiEvent::HelloOk {
-                version: API_VERSION_MAJOR,
-                server: "fake-harness/1.0".to_string(),
-                capabilities: vec!["sessions".to_string()],
-            }
+        || ApiEvent::HelloOk {
+            version: API_VERSION_MAJOR,
+            server: "fake-harness/1.0".to_string(),
+            capabilities: vec!["sessions".to_string()],
         },
         |frame, writer| {
             reply(
@@ -188,12 +198,10 @@ fn an_unknown_session_carries_the_id_the_client_sent() {
 #[test]
 fn other_error_frames_keep_their_wire_code_and_details() {
     let client = fake_harness(
-        || {
-            ApiEvent::HelloOk {
-                version: API_VERSION_MAJOR,
-                server: "fake-harness/1.0".to_string(),
-                capabilities: vec!["sessions".to_string()],
-            }
+        || ApiEvent::HelloOk {
+            version: API_VERSION_MAJOR,
+            server: "fake-harness/1.0".to_string(),
+            capabilities: vec!["sessions".to_string()],
         },
         |frame, writer| {
             reply(
@@ -214,7 +222,9 @@ fn other_error_frames_keep_their_wire_code_and_details() {
         },
     )
     .expect("handshake must succeed");
-    let error = client.set_model("s1", "unavailable").expect_err("the refusal must surface");
+    let error = client
+        .set_model("s1", "unavailable")
+        .expect_err("the refusal must surface");
     assert_eq!(error.code(), "invalid_request");
     assert_eq!(
         error.kind,
