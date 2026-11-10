@@ -50,7 +50,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
-| `oneshot_runs` | `3` | one-shot 프롬프트를 빌드마다 몇 번 잴지. 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
+| `oneshot_runs` | `5` | one-shot·스킬·MCP 칸을 빌드마다 몇 번 잴지. `compare.md`의 Host 줄에 이 횟수가 적힌다. 중앙값의 최소 기준이 5이고, 가까운 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
 | `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 `horon-base` 줄로 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
 
 모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 `merge` 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다. 중간 아티팩트 이름은 `benchmark-`로 시작하지 않으므로 `benchmark-docs.yml`의 다운로드에 섞이지 않는다.
