@@ -217,6 +217,18 @@ def has_tool_result(kind: str, body: dict) -> bool:
 # run then reports a failed round trip with its reason instead of a timeout.
 MAX_SCENARIO_TOOL_CALLS = 4
 
+# `--retry-denied-tool`: the default plan repeats its `ls` once after a refusal,
+# which is how the PTY smoke test drives the approval round trip. The first call
+# is denied, the client answers the approval prompt, and the model's retry gets
+# through. Bounded by the call count so a second denial cannot loop.
+RETRY_DENIED_TOOL = False
+
+# How long a retry waits before it is issued. The approval gate refuses a queued
+# request again until a decision exists, and the PTY client presses `y` only once
+# the prompt is drawn, so the retry has to wait for that answer rather than race
+# it. Only the smoke test turns this path on.
+APPROVAL_ANSWER_WAIT = 2.0
+
 
 def tool_call_count(kind: str, body: dict) -> int:
     """Tool calls the model already made anywhere in this transcript."""
@@ -783,7 +795,18 @@ class Handler(BaseHTTPRequestHandler):
                 arguments = {prop: route}
         else:
             shell = find_shell_tool(tools)
-            if shell is not None and not saw_result:
+            # The refusal text the approval gate returns names the refusal, and
+            # `results` covers only this turn, so a retry after the user says yes
+            # is one more identical call rather than an endless one. The wait
+            # exists because the retry must land *after* the answer: the gate
+            # refuses the queued request again until a decision exists, and the
+            # PTY client only presses `y` once the prompt is on screen.
+            retry_denied = RETRY_DENIED_TOOL and (
+                "needs approval" in results or "was denied" in results
+            ) and tool_call_count(kind, body) < 2
+            if retry_denied:
+                time.sleep(APPROVAL_ANSWER_WAIT)
+            if shell is not None and (not saw_result or retry_denied):
                 tool_name = shell[0]
                 arguments = {shell[1]: "ls"}
 
@@ -1228,7 +1251,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=0, help="0 picks a free port")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--retry-denied-tool",
+        action="store_true",
+        help="after a refused tool call, issue the same call once more (approval round trip)",
+    )
     args = parser.parse_args(argv)
+
+    global RETRY_DENIED_TOOL
+    RETRY_DENIED_TOOL = args.retry_denied_tool
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True

@@ -107,8 +107,20 @@ else
 fi
 bin="$repo_root/target/$profile/horon-agent"
 
+# The interactive client is a separate package and binary. A separate cargo
+# invocation keeps its feature set from unifying with the headless package, the
+# same rule the CI build follows; the bare `horon` command hands a terminal
+# launch to this binary when it sits beside `horon-agent`.
+cargo build --profile "$profile" --manifest-path "$repo_root/Cargo.toml" -p horon-tui
+tui_bin="$repo_root/target/$profile/horon-tui"
+
 if [[ ! -x "$bin" ]]; then
   echo "Release binary not found: $bin" >&2
+  exit 1
+fi
+
+if [[ ! -x "$tui_bin" ]]; then
+  echo "Interactive client not found: $tui_bin" >&2
   exit 1
 fi
 
@@ -127,10 +139,21 @@ fi
 # version, channels and launcher with rollback. A failure leaves the previous
 # installation untouched.
 HORON_AGENT_NO_AUTO_UPDATE=1 \
-  "$bin" install-release \
+  install_output="$("$bin" install-release \
     --assets "$assets_dir" \
     --agent-version "$agent_version" \
-    --source-binary "$bin"
+    --source-binary "$bin")"
+printf '%s\n' "$install_output"
+
+# The handoff looks for `horon-tui` beside the running executable, which is the
+# versioned binary inside the install layout rather than the launcher symlink.
+installed_bin="$(printf '%s\n' "$install_output" | sed -n 's/^installed complete release at //p' | tail -n 1)"
+if [[ -z "$installed_bin" || ! -x "$installed_bin" ]]; then
+  echo "install-release did not report an installed binary" >&2
+  exit 1
+fi
+cp "$tui_bin" "$(dirname "$installed_bin")/horon-tui"
+chmod +x "$(dirname "$installed_bin")/horon-tui"
 
 install_dir="${HORON_AGENT_INSTALL_DIR:-${HORON_HOME:+$HORON_HOME/bin}}"
 install_dir="${install_dir:-$HOME/.local/bin}"

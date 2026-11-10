@@ -539,6 +539,24 @@ jobs:
           # exercised.
           "$CARGO_BIN" build --locked --target ${{ matrix.target }} -p horon-tui
 
+      - name: TUI PTY smoke (Linux, macOS)
+        # The bare command hands a terminal launch to the sibling `horon-tui`
+        # binary, and nothing else in this workflow drives that handoff or the
+        # terminal client's screen: the build above only proves the two binaries
+        # link. This runs both through a real PTY against the mock model server
+        # and checks the first screen, a streamed reply, the approval prompt, the
+        # retried tool call, `/quit`, and the three headless fallbacks. The
+        # client is built without `--release` above, next to the release daemon.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 scripts/test/tui_pty_smoke.py \
+            --agent target/${{ matrix.target }}/release/horon-agent \
+            --tui target/${{ matrix.target }}/debug/horon-tui \
+            --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
+          echo "--- transcript ---"
+          cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+
       - name: Benchmark script smoke
         # The benchmark workflow runs on demand and after a push to `main`, so
         # nothing on a pull request started the daemon-backed suites: a renamed
