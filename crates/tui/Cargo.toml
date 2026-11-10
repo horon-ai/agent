@@ -16,6 +16,10 @@ path = "src/main.rs"
 
 [dependencies]
 horon-agent-sdk = { path = "../agent-sdk" }
+# The ask tool's question shape crosses the harness API inside
+# `ApiEvent::AskRequested`, but the API crate only imports it privately, so a
+# client that answers questions names the type from its own crate.
+horon-agent-tool-types = { path = "../tool-types" }
 # Default features are off so the binary pulls only the widgets and backend it
 # uses: the crossterm 0.29 backend (matching the direct dependency below) and
 # the layout cache. `all-widgets` would add the calendar widget and its date

@@ -120,7 +120,9 @@ fn run_worker(
             }
             Ok(None) => {}
             Err(error) => {
-                let _ = events.send(Incoming::Closed(format!("the event stream ended: {error}")));
+                // A dropped receiver means the UI already exited, which is the
+                // one case where nobody needs to be told why the stream ended.
+                drop(events.send(Incoming::Closed(format!("the event stream ended: {error}"))));
                 return;
             }
         }

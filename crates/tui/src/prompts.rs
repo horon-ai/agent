@@ -7,7 +7,8 @@
 //! resulting [`Response`] to the bridge.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use horon_agent_sdk::api::{AskQuestion, AskSelection};
+use horon_agent_sdk::api::AskSelection;
+use horon_agent_tool_types::AskQuestion;
 
 /// The harness is waiting for a permission decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,13 +75,18 @@ impl Ask {
     }
 
     /// Move to the next unanswered question, or finish when none is left.
+    /// Answers for every question, in the order they were asked.
+    ///
+    /// `chosen` is built with one slot per question and only ever written
+    /// through that pairing, so zipping is what the two vectors already mean.
     fn answers(&self) -> Vec<AskSelection> {
         self.questions
             .iter()
+            .zip(self.chosen.iter())
             .enumerate()
-            .map(|(index, question)| AskSelection {
+            .map(|(index, (question, held))| AskSelection {
                 question_id: question_id(question, index),
-                selected: self.chosen.get(index).cloned().unwrap_or_default(),
+                selected: held.clone(),
             })
             .collect()
     }
@@ -242,7 +248,7 @@ impl Prompt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use horon_agent_sdk::api::AskOption;
+    use horon_agent_tool_types::AskOption;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)

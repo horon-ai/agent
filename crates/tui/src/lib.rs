@@ -15,7 +15,6 @@ pub mod prompts;
 pub mod sdk_bridge;
 pub mod transcript;
 
-use std::io;
 use std::time::Duration;
 
 use ratatui::Terminal;
@@ -423,6 +422,45 @@ mod tests {
     }
 
     #[test]
+    fn args_parse_session_and_cwd() {
+        let parsed = Args::parse([
+            "--session".to_string(),
+            "sess-42".to_string(),
+            "--cwd=/tmp/work".to_string(),
+        ]);
+        match parsed {
+            Ok(args) => {
+                assert_eq!(args.session.as_deref(), Some("sess-42"));
+                assert_eq!(args.cwd, Some("/tmp/work".into()));
+            }
+            Err(message) => panic!("expected a parse: {message}"),
+        }
+        assert!(Args::parse(["--session".to_string()]).is_err());
+        assert!(Args::parse(["--cwd".to_string()]).is_err());
+    }
+
+    #[test]
+    fn help_and_version_exit_without_connecting() {
+        // Both paths return before any connection is attempted, which is what
+        // makes them testable in CI where no daemon is running.
+        let code = run([
+            std::ffi::OsString::from("horon-tui"),
+            std::ffi::OsString::from("--help"),
+        ]);
+        assert_eq!(code, 0);
+        let code = run([
+            std::ffi::OsString::from("horon-tui"),
+            std::ffi::OsString::from("--version"),
+        ]);
+        assert_eq!(code, 0);
+        let code = run([
+            std::ffi::OsString::from("horon-tui"),
+            std::ffi::OsString::from("--bogus"),
+        ]);
+        assert_eq!(code, 2);
+    }
+
+    #[test]
     fn streams_text_and_finishes_turn() {
         let mut app = app_with(None);
         app.apply_event(&text_event("Hello"));
@@ -497,7 +535,7 @@ mod tests {
             request_timeout: Some(Duration::from_millis(200)),
             ..horon_agent_sdk::ConnectOptions::default()
         };
-        let failure = sdk_bridge::connect(options);
+        let failure = sdk_bridge::connect(options, None, None);
         assert!(failure.is_err(), "connecting to a missing socket must fail");
 
         let mut app = match failure {
@@ -589,16 +627,16 @@ mod tests {
     fn ask_prompt_collects_one_answer_per_question() {
         let mut app = app_with(None);
         let questions = vec![
-            horon_agent_sdk::api::AskQuestion {
+            horon_agent_tool_types::AskQuestion {
                 id: Some("scope".into()),
                 question: "Which scope?".into(),
                 header: None,
                 options: vec![
-                    horon_agent_sdk::api::AskOption {
+                    horon_agent_tool_types::AskOption {
                         label: "one file".into(),
                         description: None,
                     },
-                    horon_agent_sdk::api::AskOption {
+                    horon_agent_tool_types::AskOption {
                         label: "whole repo".into(),
                         description: None,
                     },
@@ -606,11 +644,11 @@ mod tests {
                 recommended: Some(0),
                 multi: false,
             },
-            horon_agent_sdk::api::AskQuestion {
+            horon_agent_tool_types::AskQuestion {
                 id: Some("style".into()),
                 question: "Which style?".into(),
                 header: None,
-                options: vec![horon_agent_sdk::api::AskOption {
+                options: vec![horon_agent_tool_types::AskOption {
                     label: "minimal".into(),
                     description: None,
                 }],

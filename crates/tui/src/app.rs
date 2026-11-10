@@ -368,7 +368,7 @@ mod tests {
         app.pending_turn = true;
         app.apply_event(&ApiEvent::TurnStopped {
             session_id: "s1".into(),
-            reason: horon_agent_sdk::api::TurnStopReason::default(),
+            reason: horon_agent_sdk::api::TurnStopReason::Failure,
             message: "provider failed".into(),
             provider_stop_reason: None,
         });
