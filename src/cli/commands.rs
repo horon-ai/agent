@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 
-use crate::{gateway, memory, session, storage};
+use crate::{gateway, memory, storage};
 
 mod provider_setup;
 mod report_info;
