@@ -28,8 +28,58 @@ pub struct RuntimeInfo {
     pub reasoning_effort: Option<String>,
     /// Credential the session bills against (`oauth` or `api_key`).
     pub auth_method: Option<String>,
+    /// Configured fallback model ids the active provider profile tries, in
+    /// order. Empty when none is configured.
+    pub fallback_models: Vec<String>,
+    /// Model that produced the most recent response, which differs from
+    /// [`Self::model`] after a fallback answered a turn.
+    pub serving_model: Option<String>,
     pub providers: Vec<String>,
     pub routes: Vec<ModelRouteInfo>,
+}
+
+impl RuntimeInfo {
+    /// Build the public view from a daemon `runtime_info` reply, handing the
+    /// event back so a mismatched reply still reports what arrived.
+    pub(super) fn from_reply(event: ApiEvent, server: String, capabilities: Vec<String>) -> Result<Self, ApiEvent> {
+        let ApiEvent::RuntimeInfo {
+            session_id,
+            provider,
+            model,
+            reasoning_effort,
+            auth_method,
+            fallback_models,
+            serving_model,
+            routes,
+        } = event
+        else {
+            return Err(event);
+        };
+        let mut providers = Vec::new();
+        if let Some(provider) = provider.as_ref() {
+            providers.push(provider.clone());
+        }
+        for route in &routes {
+            if !providers.contains(&route.provider) {
+                providers.push(route.provider.clone());
+            }
+        }
+        Ok(Self {
+            server,
+            protocol_version: API_VERSION_MAJOR,
+            capabilities,
+            healthy: true,
+            session_id,
+            provider,
+            model,
+            reasoning_effort,
+            auth_method,
+            fallback_models,
+            serving_model,
+            providers,
+            routes,
+        })
+    }
 }
 
 /// Content and truncation metadata returned by [`HoronAgentClient::read_file`].

@@ -449,6 +449,15 @@ pub enum ApiEvent {
         /// key route.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         auth_method: Option<String>,
+        /// Configured fallback model ids of the active named provider
+        /// profile, in the order a turn tries them. Absent when none is set.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        fallback_models: Vec<String>,
+        /// Model that produced the most recent assistant response, when the
+        /// daemon reports it. Differs from `model` after a model fallback,
+        /// because `model` returns to the session's own selection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        serving_model: Option<String>,
         routes: Vec<ModelRouteInfo>,
     },
 

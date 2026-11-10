@@ -1463,45 +1463,13 @@ impl HoronAgentClient {
 
     pub fn get_runtime_info(&self, session_id: &str) -> Result<RuntimeInfo> {
         self.ping()?;
-        match self
+        let event = self
             .request_ok(ApiRequest::GetRuntimeInfo {
                 session_id: session_id.to_string(),
             })?
-            .event
-        {
-            ApiEvent::RuntimeInfo {
-                session_id,
-                provider,
-                model,
-                reasoning_effort,
-                auth_method,
-                routes,
-            } => {
-                let mut providers = Vec::new();
-                if let Some(provider) = provider.as_ref() {
-                    providers.push(provider.clone());
-                }
-                for route in &routes {
-                    if !providers.contains(&route.provider) {
-                        providers.push(route.provider.clone());
-                    }
-                }
-                Ok(RuntimeInfo {
-                    server: self.server.clone(),
-                    protocol_version: API_VERSION_MAJOR,
-                    capabilities: self.capabilities.clone(),
-                    healthy: true,
-                    session_id,
-                    provider,
-                    model,
-                    reasoning_effort,
-                    auth_method,
-                    providers,
-                    routes,
-                })
-            }
-            other => Err(unexpected("runtime_info", &other)),
-        }
+            .event;
+        RuntimeInfo::from_reply(event, self.server.clone(), self.capabilities.clone())
+            .map_err(|other| unexpected("runtime_info", &other))
     }
 
     /// Persist an API key in horon-agent's owner-only provider store and hot-reload

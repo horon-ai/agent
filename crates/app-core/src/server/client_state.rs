@@ -229,6 +229,8 @@ pub(super) async fn handle_get_model_catalog(
         service_tier,
         reasoning_effort,
         source,
+        fallback_models,
+        serving_model,
     ) = {
         match agent.try_lock() {
             Ok(agent_guard) => {
@@ -242,6 +244,8 @@ pub(super) async fn handle_get_model_catalog(
                     agent_guard.provider_handle().service_tier(),
                     agent_guard.provider_handle().reasoning_effort(),
                     "live",
+                    agent_guard.fallback_models(),
+                    agent_guard.last_serving_model(),
                 )
             }
             Err(_) => {
@@ -269,12 +273,24 @@ pub(super) async fn handle_get_model_catalog(
                     provider.service_tier(),
                     provider.reasoning_effort(),
                     "fallback",
+                    crate::agent::active_profile_fallback_models().unwrap_or_else(Vec::new),
+                    None,
                 )
             }
         }
     };
     let build_ms = build_started.elapsed().as_millis();
 
+    let identity_json = encode_event(&ServerEvent::AvailableModelsUpdated {
+        provider_name: provider_name.clone(),
+        provider_model: provider_model.clone(),
+        available_models: available_models.clone(),
+        available_model_routes: available_model_routes.clone(),
+        identity: Some(crate::protocol::RuntimeModelIdentity {
+            fallback_models,
+            serving_model,
+        }),
+    });
     let encode_started = Instant::now();
     let event = ServerEvent::History {
         id,
@@ -318,6 +334,7 @@ pub(super) async fn handle_get_model_catalog(
     let write_started = Instant::now();
     let mut writer_guard = writer.lock().await;
     let writer_lock_ms = write_started.elapsed().as_millis();
+    writer_guard.write_all(identity_json.as_bytes()).await?;
     writer_guard.write_all(json.as_bytes()).await?;
     let write_ms = write_started.elapsed().as_millis().saturating_sub(writer_lock_ms);
     crate::logging::info(&format!(

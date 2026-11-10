@@ -401,6 +401,7 @@ async fn notify_auth_changed_emits_available_models_updated_after_provider_updat
                 provider_model,
                 available_models,
                 available_model_routes,
+                ..
             } => {
                 saw_models = Some((provider_name, provider_model, available_models, available_model_routes));
                 break;
