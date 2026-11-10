@@ -181,7 +181,7 @@ impl Prompt {
                         let chosen = ask
                             .chosen
                             .get(ask.current)
-                            .is_some_and(|held| held.iter().any(|label| *label == option.label));
+                            .is_some_and(|held| held.contains(&option.label));
                         let box_mark = if chosen { "x" } else { " " };
                         if question.multi {
                             lines.push(format!("  [{box_mark}] {}) {}{mark}", index + 1, option.label));
@@ -228,12 +228,7 @@ impl Prompt {
                     // Enter; a single-choice one is settled by its digit.
                     KeyCode::Enter if multi => {}
                     KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        let Some(digit) = character.to_digit(10) else {
-                            return None;
-                        };
-                        let Some(index) = digit.checked_sub(1) else {
-                            return None;
-                        };
+                        let index = character.to_digit(10)?.checked_sub(1)?;
                         ask.choose(index as usize);
                         if multi {
                             return None;

@@ -50,7 +50,11 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
     /// One protocol event, forwarded unchanged.
-    Event(ApiEvent),
+    ///
+    /// Boxed because a protocol event is an order of magnitude larger than the
+    /// two string variants, and every channel slot would otherwise carry the
+    /// largest event's footprint.
+    Event(Box<ApiEvent>),
     /// A local notice that is not a protocol event.
     Notice(String),
     /// The connection ended; the string says why.
@@ -117,7 +121,7 @@ fn run_worker(
     loop {
         match stream.next_result_timeout(EVENT_POLL) {
             Ok(Some(event)) => {
-                if events.send(Incoming::Event(event)).is_err() {
+                if events.send(Incoming::Event(Box::new(event))).is_err() {
                     return;
                 }
             }
@@ -131,10 +135,10 @@ fn run_worker(
         }
         match commands.recv_timeout(COMMAND_POLL) {
             Ok(command) => {
-                if let Err(message) = apply(&client, &session_id, command) {
-                    if events.send(Incoming::Notice(message)).is_err() {
-                        return;
-                    }
+                if let Err(message) = apply(&client, &session_id, command)
+                    && events.send(Incoming::Notice(message)).is_err()
+                {
+                    return;
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}

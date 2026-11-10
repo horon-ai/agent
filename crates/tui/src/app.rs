@@ -311,10 +311,6 @@ mod tests {
         App::new("socket · session".to_string(), receiver)
     }
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
     #[test]
     fn status_line_shows_model_and_state() {
         let mut app = app();
