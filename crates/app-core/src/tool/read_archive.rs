@@ -228,7 +228,7 @@ fn read_member(path: &Path, kind: ArchiveKind, member: &str) -> Result<Vec<u8>> 
                 _ => tar::Archive::new(Box::new(reader)),
             };
             for entry in archive.entries()? {
-                let entry = entry?;
+                let mut entry = entry?;
                 let name = entry.path()?.to_string_lossy().to_string();
                 let normalized = name.trim_start_matches("./");
                 if normalized != member {
@@ -308,7 +308,7 @@ fn member_from_bytes(bytes: &[u8], kind: ArchiveKind, member: &str) -> Result<Ve
             };
             let mut archive = tar::Archive::new(reader);
             for entry in archive.entries()? {
-                let mut entry = entry?;
+                let entry = entry?;
                 if entry.path()?.to_string_lossy().trim_start_matches("./") == member {
                     let mut body = Vec::new();
                     entry.take(MAX_MEMBER_BYTES + 1).read_to_end(&mut body)?;
