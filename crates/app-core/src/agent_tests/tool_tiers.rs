@@ -7,7 +7,7 @@ pub(super) struct ProfileEnv {
 }
 
 impl ProfileEnv {
-    fn new(profile: &str, config_toml: Option<&str>) -> Self {
+    pub(super) fn new(profile: &str, config_toml: Option<&str>) -> Self {
         let previous = ["HORON_HOME", "HORON_AGENT_TOOL_PROFILE", "HORON_AGENT_TOOLS"]
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
