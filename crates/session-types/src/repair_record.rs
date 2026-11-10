@@ -51,6 +51,16 @@ pub fn take(tool_call_id: &str) -> Option<ArgRepairRecord> {
         .remove(tool_call_id)
 }
 
+/// A copy of the record for `tool_call_id`, for a reader that runs before the
+/// result is stored and must leave it for the session to take.
+pub fn peek(tool_call_id: &str) -> Option<ArgRepairRecord> {
+    PENDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(tool_call_id)
+        .cloned()
+}
+
 /// Take the record for the first tool result among `blocks`, if that call was
 /// repaired.
 ///

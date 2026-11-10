@@ -52,6 +52,7 @@ pub(crate) mod post_tool_feedback;
 mod read;
 mod read_selector;
 pub(crate) mod read_state;
+pub(crate) mod repair_event;
 mod replace;
 pub(crate) mod sdk;
 pub(crate) mod serde_coerce;
