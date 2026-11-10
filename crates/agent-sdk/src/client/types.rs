@@ -41,7 +41,11 @@ pub struct RuntimeInfo {
 impl RuntimeInfo {
     /// Build the public view from a daemon `runtime_info` reply, handing the
     /// event back so a mismatched reply still reports what arrived.
-    pub(super) fn from_reply(event: ApiEvent, server: String, capabilities: Vec<String>) -> Result<Self, ApiEvent> {
+    pub(super) fn from_reply(
+        event: ApiEvent,
+        server: String,
+        capabilities: Vec<String>,
+    ) -> std::result::Result<Self, ApiEvent> {
         let ApiEvent::RuntimeInfo {
             session_id,
             provider,
