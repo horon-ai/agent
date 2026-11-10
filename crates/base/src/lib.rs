@@ -94,6 +94,7 @@ pub mod session_list_cache;
 pub mod session_metrics;
 pub mod sidecar;
 pub mod skill;
+pub mod skill_install;
 pub mod soft_interrupt_store;
 pub mod sponsors;
 pub mod sqlite_read;
