@@ -507,6 +507,15 @@ swarm_stall_after_secs = 600
 # Env overrides: HORON_AGENT_MEMORY_SIDECAR_ENABLED, HORON_AGENT_MEMORY_MODEL
 # memory_sidecar_enabled = true
 # memory_model = "gpt-5.6-luna"
+#
+# Cross-session consolidation is the second memory phase: after an extraction it
+# merges memories that share a subject into one active entry (the rest are kept
+# and marked superseded) and rewrites one bounded summary that is injected as
+# memory guidance. A pass only runs once this many memories have been stored
+# since the previous one, and the injected summary is capped at this many bytes.
+# Both defaults are Horon defaults; omp caps its summary by tokens instead.
+# memory_consolidation_min_new = 20
+# memory_consolidation_summary_bytes = 4096
 # Legacy memory_rerank_* and memory_embedding_* settings are accepted for
 # backwards compatibility, but have no effect on Jev recall.
 

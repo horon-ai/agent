@@ -21,10 +21,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-#[path = "memory/activity.rs"]
 mod activity;
 mod cache;
-#[path = "memory/pending.rs"]
+mod consolidation;
 mod pending;
 #[path = "memory_prompt.rs"]
 mod prompt_support;
