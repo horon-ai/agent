@@ -1194,6 +1194,10 @@ pub use self::server::{DEFAULT_IDLE_HIBERNATION_SECS, ServerConfig};
 mod tests;
 
 #[cfg(test)]
+#[path = "config/checkpoint_switch_tests.rs"]
+mod checkpoint_switch_tests;
+
+#[cfg(test)]
 #[path = "config/moved_tests.rs"]
 mod moved_tests;
 
