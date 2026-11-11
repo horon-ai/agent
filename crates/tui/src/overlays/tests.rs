@@ -164,18 +164,7 @@ fn overlays_theme_change_reaches_the_cell_the_settings_and_the_file() {
     press(&mut app, KeyCode::Down);
     assert_eq!(overlay(&app).pick_index(), Some(1));
     press(&mut app, KeyCode::Enter);
-    assert_eq!(
-        app.take_setting_change()
-            .as_ref()
-            .map(|change| (change.id, &change.value)),
-        Some(("theme", &SettingValue::Str("light".to_string())))
-    );
-
-    // Confirm again: the screen reports the change and the caller writes it.
-    select(&mut app, "theme");
-    press(&mut app, KeyCode::Enter);
-    press(&mut app, KeyCode::Down);
-    press(&mut app, KeyCode::Enter);
+    // The screen reports the change; the caller writes and re-applies it.
     crate::flush_setting_change(&mut app, &mut reloader, &mut themes);
 
     assert_eq!(reloader.settings().text("theme"), Some("light"));
@@ -265,8 +254,8 @@ fn overlays_rows_are_generated_from_the_registry() {
 #[test]
 fn overlays_bool_row_toggles_without_an_editor() {
     let fixture = Fixture::new();
-    let reloader = fixture.reloader();
-    let (mut app, _themes) = fixture.app(&reloader);
+    let mut reloader = fixture.reloader();
+    let (mut app, mut themes) = fixture.app(&reloader);
     open(&mut app);
     select(&mut app, "editor.submit_on_enter");
 
@@ -280,6 +269,13 @@ fn overlays_bool_row_toggles_without_an_editor() {
         })
     );
 
+    // Write the first toggle so the row shows the value now in force, then
+    // toggle it back.
+    crate::flush_setting_change(&mut app, &mut reloader, &mut themes);
+    assert_eq!(
+        overlay(&app).value("editor.submit_on_enter"),
+        Some(&SettingValue::Bool(false))
+    );
     press(&mut app, KeyCode::Enter);
     assert_eq!(
         app.take_setting_change(),
@@ -440,14 +436,18 @@ fn overlays_a_higher_layer_keeps_its_value_and_its_source_after_a_save() {
         "the screen says which layer supplied the value"
     );
 
-    // Saving the global file cannot beat the project layer.
+    // Saving the global file cannot beat the project layer: choose `dark`,
+    // which only the global file would carry.
     select(&mut app, "theme");
     press(&mut app, KeyCode::Enter);
-    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Up);
+    assert_eq!(overlay(&app).pick_index(), Some(0));
     press(&mut app, KeyCode::Enter);
     crate::flush_setting_change(&mut app, &mut reloader, &mut themes);
 
     assert_eq!(reloader.settings().text("theme"), Some("light"));
+    let saved = std::fs::read_to_string(fixture.global()).expect("the global file was written");
+    assert!(saved.contains("theme = \"dark\""), "{saved}");
     assert_eq!(
         overlay(&app).provenance("theme").map(|origin| origin.label()),
         Some(format!("project {}", project.display()))

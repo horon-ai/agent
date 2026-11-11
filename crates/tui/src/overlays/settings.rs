@@ -232,37 +232,72 @@ impl SettingsOverlay {
     /// Every key is consumed: the editor under the overlay must not receive a
     /// letter meant for a value.
     pub fn on_key(&mut self, key: KeyEvent) -> Outcome {
-        match (key.code, &mut self.mode) {
-            (KeyCode::Esc, Mode::Browse) => return Outcome::Closed,
-            (KeyCode::Esc, Mode::Pick { .. } | Mode::Edit { .. }) => {
-                self.mode = Mode::Browse;
-                return Outcome::Handled;
+        match key.code {
+            KeyCode::Esc => return self.escape(),
+            KeyCode::Enter => return self.confirm(),
+            _ => {}
+        }
+        if let Mode::Edit { buffer, error } = &mut self.mode {
+            match key.code {
+                KeyCode::Backspace => {
+                    buffer.pop();
+                    *error = None;
+                    return Outcome::Handled;
+                }
+                KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    buffer.push(character);
+                    *error = None;
+                    return Outcome::Handled;
+                }
+                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {}
+                _ => return Outcome::Handled,
             }
-            (KeyCode::Enter, _) => return self.confirm(),
-            (KeyCode::Backspace, Mode::Edit { buffer, error }) => {
-                buffer.pop();
-                *error = None;
-            }
-            (KeyCode::Char(character), Mode::Edit { buffer, error })
-                if !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                buffer.push(character);
-                *error = None;
-            }
-            (KeyCode::Up, _) => self.step(-1),
-            (KeyCode::Down, _) => self.step(1),
-            (KeyCode::Left | KeyCode::Tab, Mode::Browse) => self.switch_tab(-1),
-            (KeyCode::Right | KeyCode::BackTab, Mode::Browse) => self.switch_tab(1),
-            (KeyCode::Left, Mode::Pick { index, .. }) => {
-                *index = index.saturating_sub(1);
-            }
-            (KeyCode::Right, Mode::Pick { choices, index }) => {
-                *index = (*index + 1).min(choices.len().saturating_sub(1));
-            }
-            (KeyCode::Left | KeyCode::Right, Mode::Edit { .. }) => {}
+        }
+        match key.code {
+            KeyCode::Up => self.step(-1),
+            KeyCode::Down => self.step(1),
+            KeyCode::Left | KeyCode::Tab => self.left(),
+            KeyCode::Right | KeyCode::BackTab => self.right(),
             _ => {}
         }
         Outcome::Handled
+    }
+
+    /// Leave the open widget, or close the overlay when nothing is open.
+    fn escape(&mut self) -> Outcome {
+        if matches!(self.mode, Mode::Browse) {
+            return Outcome::Closed;
+        }
+        self.mode = Mode::Browse;
+        Outcome::Handled
+    }
+
+    /// Left: move inside a pick list, otherwise to the previous tab.
+    fn left(&mut self) {
+        if !self.pick_step(-1) && matches!(self.mode, Mode::Browse) {
+            self.switch_tab(-1);
+        }
+    }
+
+    /// Right: move inside a pick list, otherwise to the next tab.
+    fn right(&mut self) {
+        if !self.pick_step(1) && matches!(self.mode, Mode::Browse) {
+            self.switch_tab(1);
+        }
+    }
+
+    /// Move the open pick list's selection; false when no list is open.
+    fn pick_step(&mut self, delta: i32) -> bool {
+        let Mode::Pick { choices, index } = &mut self.mode else {
+            return false;
+        };
+        let last = choices.len().saturating_sub(1);
+        *index = if delta < 0 {
+            index.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            (*index + delta as usize).min(last)
+        };
+        true
     }
 
     /// Move the selection within the rows or the open pick list.
@@ -318,12 +353,12 @@ impl SettingsOverlay {
 
     /// Act on the selected row: open its widget, or settle it.
     fn confirm(&mut self) -> Outcome {
-        let Some(row) = self.selected() else {
+        let Some((id, spec, current, text)) = self
+            .selected()
+            .map(|row| (row.id, row.spec, row.value.clone(), row.text()))
+        else {
             return Outcome::Handled;
         };
-        let id = row.id;
-        let spec = row.spec;
-        let current = row.value.clone();
         match self.mode.clone() {
             Mode::Browse => match spec.kind {
                 SettingKind::Bool => {
@@ -339,15 +374,14 @@ impl SettingsOverlay {
                     Outcome::Handled
                 }
                 SettingKind::Text if id == THEME_ID => {
-                    self.mode = Mode::Pick {
-                        index: choice_index(&self.theme_choices, &current),
-                        choices: self.theme_choices.clone(),
-                    };
+                    let choices = self.theme_choices.clone();
+                    let index = choice_index(&choices, &current);
+                    self.mode = Mode::Pick { index, choices };
                     Outcome::Handled
                 }
                 SettingKind::Text | SettingKind::Number | SettingKind::Array => {
                     self.mode = Mode::Edit {
-                        buffer: row.text(),
+                        buffer: text,
                         error: None,
                     };
                     Outcome::Handled

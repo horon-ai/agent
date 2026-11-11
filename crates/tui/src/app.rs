@@ -350,18 +350,17 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
         // An open overlay owns every key: a letter meant for a value must not
         // reach the message being drafted underneath it.
-        if let Some(overlay) = self.overlay.as_mut() {
-            match overlay.on_key(key) {
-                Outcome::Handled => return None,
-                Outcome::Closed => {
-                    self.overlay = None;
-                    return None;
-                }
+        if let Some(mut overlay) = self.overlay.take() {
+            let outcome = overlay.on_key(key);
+            match outcome {
+                Outcome::Handled => self.overlay = Some(overlay),
+                Outcome::Closed => self.pending_change = None,
                 Outcome::Change(change) => {
                     self.pending_change = Some(change);
-                    return None;
+                    self.overlay = Some(overlay);
                 }
             }
+            return None;
         }
         if let Some(prompt) = self.prompt.as_mut() {
             match prompt.on_key_with(&self.bindings, key) {
