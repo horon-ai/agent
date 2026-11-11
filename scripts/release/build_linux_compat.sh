@@ -17,6 +17,7 @@ if [[ "$out_dir" != /* ]]; then
 fi
 
 artifact="${HORON_AGENT_COMPAT_ARTIFACT:-horon-agent-linux-x86_64}"
+tui_artifact="${HORON_AGENT_COMPAT_TUI_ARTIFACT:-horon-tui-linux-x86_64}"
 profile="${HORON_AGENT_COMPAT_PROFILE:-release}"
 image="${HORON_AGENT_COMPAT_IMAGE:-quay.io/pypa/manylinux2014_x86_64}"
 cache_root="${HORON_AGENT_COMPAT_CACHE_DIR:-$HOME/.cache/horon-agent-linux-compat}"
@@ -84,6 +85,8 @@ docker run --rm \
   -e HORON_AGENT_BUILD_GIT_DIRTY="$git_dirty" \
   -e HORON_AGENT_COMPAT_PROFILE="$profile" \
   -e HORON_AGENT_COMPAT_TARGET="$target" \
+  -e HORON_AGENT_COMPAT_ARTIFACT="$artifact" \
+  -e HORON_AGENT_COMPAT_TUI_ARTIFACT="$tui_artifact" \
   -e HOST_UID="$host_uid" \
   -e HOST_GID="$host_gid" \
   -v "$repo_root:/work" \
@@ -151,9 +154,15 @@ docker run --rm \
 	    "${build_command[@]}" --locked --profile "$HORON_AGENT_COMPAT_PROFILE" --target "$HORON_AGENT_COMPAT_TARGET" \
 	      -p horon-agent --bin horon-agent
 
-	    cp "$CARGO_TARGET_DIR/$HORON_AGENT_COMPAT_TARGET/$HORON_AGENT_COMPAT_PROFILE/horon-agent" "/out/'"$artifact"'.bin"
-	    chmod +x "/out/'"$artifact"'.bin"
-	    cat > "/out/'"$artifact"'" <<WRAPPER
+	    cp "$CARGO_TARGET_DIR/$HORON_AGENT_COMPAT_TARGET/$HORON_AGENT_COMPAT_PROFILE/horon-agent" "/out/${HORON_AGENT_COMPAT_ARTIFACT}.bin"
+	    chmod +x "/out/${HORON_AGENT_COMPAT_ARTIFACT}.bin"
+
+	    # Emit the portable wrapper and archive for one built binary. The wrapper
+	    # resolves its own directory so the .bin shipped beside it is found
+	    # regardless of the working directory.
+	    package_binary() {
+	      local name="$1"
+	      cat > "/out/$name" <<WRAPPER
 #!/usr/bin/env sh
 set -eu
 self_path=\$0
@@ -172,19 +181,35 @@ if [ -n "\${LD_LIBRARY_PATH:-}" ]; then
 else
   export LD_LIBRARY_PATH="\$self_dir"
 fi
-exec "\$self_dir/'"$artifact"'.bin" "\$@"
+exec "\$self_dir/$name.bin" "\$@"
 WRAPPER
-	    chmod +x "/out/'"$artifact"'"
+	      chmod +x "/out/$name"
 
-	    (cd /out && tar czf '"$artifact"'.tar.gz '"$artifact"' '"$artifact"'.bin)
+	      (cd /out && tar czf "$name.tar.gz" "$name" "$name.bin")
 
-	    chown "$HOST_UID:$HOST_GID" "/out/'"$artifact"'" "/out/'"$artifact"'.bin" "/out/'"$artifact"'.tar.gz" 2>/dev/null || true
+	      chown "$HOST_UID:$HOST_GID" "/out/$name" "/out/$name.bin" "/out/$name.tar.gz" 2>/dev/null || true
+	    }
+
+	    package_binary "$HORON_AGENT_COMPAT_ARTIFACT"
+
+	    # horon-tui is a second binary in the same workspace. The root manifest
+	    # declares a package, so an unqualified build only produces horon-agent
+	    # and the binary has to be selected explicitly. horon-tui defines no
+	    # cargo features, so the agent feature flags are not forwarded to it.
+	    "${build_command[@]}" --locked --profile "$HORON_AGENT_COMPAT_PROFILE" --target "$HORON_AGENT_COMPAT_TARGET" \
+	      -p horon-tui --bin horon-tui
+
+	    cp "$CARGO_TARGET_DIR/$HORON_AGENT_COMPAT_TARGET/$HORON_AGENT_COMPAT_PROFILE/horon-tui" "/out/${HORON_AGENT_COMPAT_TUI_ARTIFACT}.bin"
+	    chmod +x "/out/${HORON_AGENT_COMPAT_TUI_ARTIFACT}.bin"
+	    package_binary "$HORON_AGENT_COMPAT_TUI_ARTIFACT"
 		  '
 
 # A failed docker run can leave a previous build's binary in out_dir, and
 # benchmark launchers pin artifact SHA-256s, so a stale artifact would pass for
 # a new build. Verify every output exists before claiming success.
-for required in "$out_dir/$artifact" "$out_dir/$artifact.bin" "$out_dir/$artifact.tar.gz"; do
+for required in \
+  "$out_dir/$artifact" "$out_dir/$artifact.bin" "$out_dir/$artifact.tar.gz" \
+  "$out_dir/$tui_artifact" "$out_dir/$tui_artifact.bin" "$out_dir/$tui_artifact.tar.gz"; do
   if [[ ! -s "$required" ]]; then
     echo "error: build did not produce $required" >&2
     exit 1
@@ -192,7 +217,8 @@ for required in "$out_dir/$artifact" "$out_dir/$artifact.bin" "$out_dir/$artifac
 done
 
 echo "Built artifacts:"
-ls -lh "$out_dir/$artifact" "$out_dir/$artifact.tar.gz"
+ls -lh "$out_dir/$artifact" "$out_dir/$artifact.tar.gz" \
+  "$out_dir/$tui_artifact" "$out_dir/$tui_artifact.tar.gz"
 
 # Fail closed when the embedded hash does not match the tree that was built.
 # `horon-agent-build-meta`'s build script deliberately does not watch .git/HEAD, so a

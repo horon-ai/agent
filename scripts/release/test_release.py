@@ -4,6 +4,7 @@
 No GitHub writes, Rust builds, or network requests are made.
 Run: python3 scripts/release/test_release.py
 """
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -310,6 +311,44 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("Refusing to replace published assets", result.stderr)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertFalse(any(call[:2] in (["release", "upload"], ["release", "edit"]) for call in calls))
+
+
+VERIFIER_SPEC = importlib.util.spec_from_file_location(
+    "release_verify_public", ROOT / "scripts/release/verify_public.py")
+verifier = importlib.util.module_from_spec(VERIFIER_SPEC)
+VERIFIER_SPEC.loader.exec_module(verifier)
+
+
+class RequiredAssetTests(unittest.TestCase):
+    """The public release must carry a horon-tui asset per supported platform."""
+
+    def metadata(self, names):
+        return {"tag_name": TAG, "draft": False, "prerelease": False,
+                "assets": [{"name": name, "size": 1, "state": "uploaded"}
+                           for name in sorted(names)]}
+
+    def test_tui_assets_are_required_for_every_non_freebsd_platform(self):
+        required = verifier.REQUIRED
+        for platform in ("linux-x86_64", "linux-aarch64", "macos-aarch64",
+                         "macos-x86_64", "windows-x86_64", "windows-aarch64"):
+            with self.subTest(platform=platform):
+                self.assertIn(f"horon-tui-{platform}.tar.gz", required)
+        for name in ("horon-tui-windows-x86_64.exe", "horon-tui-windows-aarch64.exe"):
+            with self.subTest(name=name):
+                self.assertIn(name, required)
+        # FreeBSD keeps publishing horon-agent only.
+        self.assertNotIn("horon-tui-freebsd-x86_64.tar.gz", required)
+
+    def test_release_missing_a_tui_asset_is_refused_and_named(self):
+        names = set(verifier.REQUIRED)
+        self.assertEqual(verifier.verify_metadata(self.metadata(names), TAG), names)
+        for missing in ("horon-tui-linux-aarch64.tar.gz",
+                        "horon-tui-windows-x86_64.exe"):
+            with self.subTest(missing=missing):
+                incomplete = names - {missing}
+                with self.assertRaisesRegex(ValueError, "Missing required release assets") as caught:
+                    verifier.verify_metadata(self.metadata(incomplete), TAG)
+                self.assertIn(missing, str(caught.exception))
 
 
 if __name__ == "__main__":

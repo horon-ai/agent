@@ -35,6 +35,11 @@ on:
         description: Existing release tag (vMAJOR.MINOR.PATCH)
         required: true
         type: string
+      package_only:
+        description: Build and upload workflow artifacts only; no signing, no release
+        required: false
+        type: boolean
+        default: false
   # release-tag.yml calls this workflow after it tags a main commit whose CI
   # push run succeeded. A tag pushed with GITHUB_TOKEN cannot trigger the
   # `push` event below, so the automatic patch release enters here.
@@ -92,10 +97,19 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.sha }}
+          PACKAGE_ONLY: ${{ inputs.package_only }}
           RELEASE_PROVENANCE_PATH: ${{ runner.temp }}/release-provenance.json
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag" >&2; exit 1; }
+          # package_only builds the triggering commit as a dry run: no tag, no
+          # draft release and no exact-commit CI evidence is required, and every
+          # release-mutating or signing step in this workflow is skipped.
+          if [ "$PACKAGE_ONLY" = true ]; then
+            echo "tag_sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+            git checkout --detach "$WORKFLOW_SHA"
+            exit 0
+          fi
           if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$WORKFLOW_REF" != refs/heads/dev ]; then
             echo "A re-run must use the reviewed workflow on dev" >&2; exit 1
           fi
@@ -112,6 +126,7 @@ jobs:
           fi
 
       - name: Require successful exact-commit CI
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,6 +152,7 @@ jobs:
       # commit subjects since the previous tag grouped by conventional-commit
       # prefix, always ending with the compare link.
       - name: Generate release notes
+        if: ${{ inputs.package_only != true }}
         shell: bash
         run: |
           scripts/release/release_notes.sh "$RELEASE_TAG" > release_notes.md
@@ -144,6 +160,7 @@ jobs:
       # Stage platform assets on a draft. The final job publishes every
       # successfully completed asset and records unavailable platforms.
       - name: Create draft release if missing
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -188,16 +205,20 @@ jobs:
             os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: horon-agent-linux-x86_64
+            tui_artifact: horon-tui-linux-x86_64
             compat_container: true
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: horon-agent-linux-aarch64
+            tui_artifact: horon-tui-linux-aarch64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: horon-agent-macos-aarch64
+            tui_artifact: horon-tui-macos-aarch64
           - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: horon-agent-macos-x86_64
+            tui_artifact: horon-tui-macos-x86_64
 
     steps:
       - uses: actions/checkout@v7
@@ -223,6 +244,7 @@ jobs:
           df -h /
 
       - name: Prepare release source
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
@@ -299,6 +321,15 @@ jobs:
           else
             justrust build --local --locked --release --target ${{ matrix.target }}
           fi
+          # horon-tui is a second binary in the same workspace. The root manifest
+          # declares a package, so an unqualified build only produces horon-agent
+          # and the TUI has to be selected explicitly. It defines no cargo
+          # features, so the agent's feature flags are never forwarded to it.
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            RUSTUP_TOOLCHAIN=nightly justrust build --local --locked -Z build-std=std,panic_abort --release --target ${{ matrix.target }} -p horon-tui --bin horon-tui
+          else
+            justrust build --local --locked --release --target ${{ matrix.target }} -p horon-tui --bin horon-tui
+          fi
         env:
           HORON_AGENT_RELEASE_BUILD: "1"
           HORON_AGENT_CI_BUILD: "1"
@@ -313,6 +344,7 @@ jobs:
           HORON_AGENT_CI_BUILD: "1"
           HORON_AGENT_BUILD_SEMVER: ${{ env.RELEASE_TAG }}
           HORON_AGENT_COMPAT_ARTIFACT: ${{ matrix.artifact }}
+          HORON_AGENT_COMPAT_TUI_ARTIFACT: ${{ matrix.tui_artifact }}
 
       - name: Verify release build preserved Cargo.lock
         shell: bash
@@ -323,18 +355,24 @@ jobs:
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/horon-agent dist/${{ matrix.artifact }}
-          chmod +x dist/${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/horon-tui dist/${{ matrix.tui_artifact }}
+          chmod +x dist/${{ matrix.artifact }} dist/${{ matrix.tui_artifact }}
           if [ "$RUNNER_OS" = "macOS" ]; then
             # The linker's ad-hoc signature uses cargo's hashed output name
             # (`horon-agent-<hash>`) as the code-signing identifier, so every release
             # looked like a different program. macOS Tahoe's "Allow in the Menu
             # Bar" keys unbundled executables on that identity, which added a new
             # horon-agent toggle per update and reset the menu bar item's placement
-            # (#621). Re-sign ad-hoc with a stable identifier.
+            # (#621). Re-sign ad-hoc with a stable identifier. The TUI is the
+            # process the CLI execs, so it gets the same stable-identifier
+            # treatment under its own identifier.
             codesign --force --sign - --identifier com.horon-agent.cli dist/${{ matrix.artifact }}
             codesign -dv dist/${{ matrix.artifact }} 2>&1 | grep -qx 'Identifier=com.horon-agent.cli'
+            codesign --force --sign - --identifier com.horon-tui.cli dist/${{ matrix.tui_artifact }}
+            codesign -dv dist/${{ matrix.tui_artifact }} 2>&1 | grep -qx 'Identifier=com.horon-tui.cli'
           fi
           cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+          cd dist && tar czf ${{ matrix.tui_artifact }}.tar.gz ${{ matrix.tui_artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -342,14 +380,23 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.tar.gz
 
+      - name: Upload TUI artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.tui_artifact }}
+          path: dist/${{ matrix.tui_artifact }}.tar.gz
+
       # Attach this platform's asset to the draft release. It remains hidden
       # until the final job verifies the complete release set.
       - name: Publish asset to release
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${RELEASE_TAG}" "dist/${{ matrix.artifact }}.tar.gz" --clobber
+          gh release upload "${RELEASE_TAG}" \
+            "dist/${{ matrix.artifact }}.tar.gz" \
+            "dist/${{ matrix.tui_artifact }}.tar.gz" --clobber
 
   build-windows:
     name: Build (x86_64-pc-windows-msvc)
@@ -372,6 +419,7 @@ jobs:
           fetch-depth: 0
 
       - name: Prepare release source
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
@@ -420,6 +468,13 @@ jobs:
 
           & justrust @cargoArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # horon-tui is a second binary in the same workspace. The root manifest
+          # declares a package, so the CLI build above only produces horon-agent
+          # and the TUI has to be selected explicitly. It defines no cargo
+          # features, so the agent's feature flags are never forwarded to it.
+          & justrust @cargoArgs -p horon-tui --bin horon-tui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           HORON_AGENT_RELEASE_BUILD: "1"
           HORON_AGENT_CI_BUILD: "1"
@@ -442,12 +497,15 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "target/x86_64-pc-windows-msvc/release/horon-agent.exe" "dist/horon-agent-windows-x86_64.exe"
+          Copy-Item "target/x86_64-pc-windows-msvc/release/horon-tui.exe" "dist/horon-tui-windows-x86_64.exe"
 
       - name: Upload unsigned binary for signing
         uses: actions/upload-artifact@v7
         with:
           name: windows-unsigned-x86_64
-          path: dist/horon-agent-windows-x86_64.exe
+          path: |
+            dist/horon-agent-windows-x86_64.exe
+            dist/horon-tui-windows-x86_64.exe
 
       # These debug-harness tests provide extra signal, but they must not block
       # publishing a release binary that already built, launched, and passed the
@@ -485,6 +543,7 @@ jobs:
           fetch-depth: 0
 
       - name: Prepare release source
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
@@ -527,6 +586,12 @@ jobs:
 
           & cargo build --locked --release --target aarch64-pc-windows-msvc --no-default-features --features pdf
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Same second-binary rule as x64: select horon-tui explicitly. It has no
+          # cargo features, so the agent's --no-default-features/--features pdf
+          # flags would be rejected and are deliberately not forwarded.
+          & cargo build --locked --release --target aarch64-pc-windows-msvc -p horon-tui --bin horon-tui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           HORON_AGENT_RELEASE_BUILD: "1"
           HORON_AGENT_CI_BUILD: "1"
@@ -549,12 +614,15 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "target/aarch64-pc-windows-msvc/release/horon-agent.exe" "dist/horon-agent-windows-aarch64.exe"
+          Copy-Item "target/aarch64-pc-windows-msvc/release/horon-tui.exe" "dist/horon-tui-windows-aarch64.exe"
 
       - name: Upload unsigned binary for signing
         uses: actions/upload-artifact@v7
         with:
           name: windows-unsigned-aarch64
-          path: dist/horon-agent-windows-aarch64.exe
+          path: |
+            dist/horon-agent-windows-aarch64.exe
+            dist/horon-tui-windows-aarch64.exe
 
   publish-windows:
     name: Sign and publish Windows assets
@@ -571,10 +639,9 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    # The Azure secrets are scoped to the signing steps instead of the job so a
+    # package_only run never reads them.
     env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       WINDOWS_SIGNING_ENDPOINT: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
       WINDOWS_SIGNING_ACCOUNT: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
       WINDOWS_SIGNING_CERTIFICATE_PROFILE: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE }}
@@ -586,6 +653,7 @@ jobs:
           fetch-depth: 0
 
       - name: Prepare release source
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
@@ -601,9 +669,24 @@ jobs:
           pattern: windows-unsigned-*
           path: artifacts
 
+      # A package_only run builds and packages but never signs, so it reports the
+      # same skipped-signing notice without touching the signing configuration.
+      # The `signing` step below does not run, so its `enabled` output is empty
+      # and every signing step stays skipped.
+      - name: Report skipped code signing (package_only)
+        if: ${{ inputs.package_only == true }}
+        shell: pwsh
+        run: |
+          Write-Output "::notice::Windows code signing skipped: package_only builds upload workflow artifacts without signing or publishing."
+
       - name: Determine signing mode
         id: signing
+        if: ${{ inputs.package_only != true }}
         shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           $requiredValues = @(
             $env:AZURE_CLIENT_ID,
@@ -646,6 +729,7 @@ jobs:
           certificate-profile-name: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE }}
           files: |
             ${{ github.workspace }}\artifacts\windows-unsigned-x86_64\horon-agent-windows-x86_64.exe
+            ${{ github.workspace }}\artifacts\windows-unsigned-x86_64\horon-tui-windows-x86_64.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -659,6 +743,7 @@ jobs:
           certificate-profile-name: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE }}
           files: |
             ${{ github.workspace }}\artifacts\windows-unsigned-aarch64\horon-agent-windows-aarch64.exe
+            ${{ github.workspace }}\artifacts\windows-unsigned-aarch64\horon-tui-windows-aarch64.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -670,7 +755,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $assets = @(
             @{ Name = 'horon-agent-windows-x86_64'; Path = 'artifacts/windows-unsigned-x86_64/horon-agent-windows-x86_64.exe'; Required = $true },
-            @{ Name = 'horon-agent-windows-aarch64'; Path = 'artifacts/windows-unsigned-aarch64/horon-agent-windows-aarch64.exe'; Required = $false }
+            @{ Name = 'horon-tui-windows-x86_64'; Path = 'artifacts/windows-unsigned-x86_64/horon-tui-windows-x86_64.exe'; Required = $true },
+            @{ Name = 'horon-agent-windows-aarch64'; Path = 'artifacts/windows-unsigned-aarch64/horon-agent-windows-aarch64.exe'; Required = $false },
+            @{ Name = 'horon-tui-windows-aarch64'; Path = 'artifacts/windows-unsigned-aarch64/horon-tui-windows-aarch64.exe'; Required = $false }
           )
           $packaged = @()
 
@@ -697,7 +784,10 @@ jobs:
             $packaged += $asset.Name
           }
 
-          $arm64 = ($packaged -contains 'horon-agent-windows-aarch64').ToString().ToLowerInvariant()
+          # The ARM64 assets are published only when the agent and its TUI
+          # sibling both exist, because the CLI execs that sibling binary.
+          $arm64 = (($packaged -contains 'horon-agent-windows-aarch64') -and
+            ($packaged -contains 'horon-tui-windows-aarch64')).ToString().ToLowerInvariant()
           "arm64=$arm64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload final Windows artifacts
@@ -708,6 +798,14 @@ jobs:
             dist/horon-agent-windows-x86_64.exe
             dist/horon-agent-windows-x86_64.tar.gz
 
+      - name: Upload final Windows TUI artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: horon-tui-windows-x86_64
+          path: |
+            dist/horon-tui-windows-x86_64.exe
+            dist/horon-tui-windows-x86_64.tar.gz
+
       - name: Upload final Windows ARM64 artifacts
         if: steps.package.outputs.arm64 == 'true'
         uses: actions/upload-artifact@v7
@@ -717,7 +815,17 @@ jobs:
             dist/horon-agent-windows-aarch64.exe
             dist/horon-agent-windows-aarch64.tar.gz
 
+      - name: Upload final Windows ARM64 TUI artifacts
+        if: steps.package.outputs.arm64 == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: horon-tui-windows-aarch64
+          path: |
+            dist/horon-tui-windows-aarch64.exe
+            dist/horon-tui-windows-aarch64.tar.gz
+
       - name: Publish Windows assets to release
+        if: ${{ inputs.package_only != true }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -725,11 +833,15 @@ jobs:
         run: |
           $files = @(
             'dist/horon-agent-windows-x86_64.exe',
-            'dist/horon-agent-windows-x86_64.tar.gz'
+            'dist/horon-agent-windows-x86_64.tar.gz',
+            'dist/horon-tui-windows-x86_64.exe',
+            'dist/horon-tui-windows-x86_64.tar.gz'
           )
           if (Test-Path -LiteralPath 'dist/horon-agent-windows-aarch64.tar.gz') {
             $files += 'dist/horon-agent-windows-aarch64.exe'
             $files += 'dist/horon-agent-windows-aarch64.tar.gz'
+            $files += 'dist/horon-tui-windows-aarch64.exe'
+            $files += 'dist/horon-tui-windows-aarch64.tar.gz'
           } else {
             Write-Warning 'ARM64 Windows assets were not built; publishing x64 assets only. The release stays a draft until ARM64 exists.'
           }
@@ -765,6 +877,7 @@ jobs:
           df -h /
 
       - name: Prepare release source
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
@@ -774,7 +887,10 @@ jobs:
           git show "$WORKFLOW_SHA:scripts/release/prepare_source.py" > "$RUNNER_TEMP/prepare-source.py"
           python3 "$RUNNER_TEMP/prepare-source.py" "$RELEASE_TAG" "$WORKFLOW_SHA"
 
+      # FreeBSD keeps shipping horon-agent only, and a package_only run skips it
+      # entirely: no FreeBSD TUI asset exists to upload.
       - name: Build release binary in FreeBSD VM
+        if: ${{ inputs.package_only != true }}
         uses: vmactions/freebsd-vm@v1
         with:
           release: "15.1"
@@ -840,12 +956,14 @@ jobs:
             cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64
 
       - name: Upload artifact
+        if: ${{ inputs.package_only != true }}
         uses: actions/upload-artifact@v7
         with:
           name: horon-agent-freebsd-x86_64
           path: dist/horon-agent-freebsd-x86_64.tar.gz
 
       - name: Publish asset to release
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -871,6 +989,7 @@ jobs:
           fetch-depth: 0
 
       - name: Prepare release source
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           WORKFLOW_SHA: ${{ github.sha }}
@@ -884,23 +1003,37 @@ jobs:
         continue-on-error: true
         with:
           path: artifacts
-          pattern: horon-agent-*
+          pattern: horon-*
 
       - name: Validate complete platform asset set
         shell: bash
+        env:
+          PACKAGE_ONLY: ${{ inputs.package_only }}
         run: |
           set -euo pipefail
           expected=(
             artifacts/horon-agent-linux-x86_64/horon-agent-linux-x86_64.tar.gz
+            artifacts/horon-tui-linux-x86_64/horon-tui-linux-x86_64.tar.gz
             artifacts/horon-agent-linux-aarch64/horon-agent-linux-aarch64.tar.gz
+            artifacts/horon-tui-linux-aarch64/horon-tui-linux-aarch64.tar.gz
             artifacts/horon-agent-macos-aarch64/horon-agent-macos-aarch64.tar.gz
+            artifacts/horon-tui-macos-aarch64/horon-tui-macos-aarch64.tar.gz
             artifacts/horon-agent-macos-x86_64/horon-agent-macos-x86_64.tar.gz
+            artifacts/horon-tui-macos-x86_64/horon-tui-macos-x86_64.tar.gz
             artifacts/horon-agent-windows-x86_64/horon-agent-windows-x86_64.exe
             artifacts/horon-agent-windows-x86_64/horon-agent-windows-x86_64.tar.gz
+            artifacts/horon-tui-windows-x86_64/horon-tui-windows-x86_64.exe
+            artifacts/horon-tui-windows-x86_64/horon-tui-windows-x86_64.tar.gz
             artifacts/horon-agent-windows-aarch64/horon-agent-windows-aarch64.exe
             artifacts/horon-agent-windows-aarch64/horon-agent-windows-aarch64.tar.gz
-            artifacts/horon-agent-freebsd-x86_64/horon-agent-freebsd-x86_64.tar.gz
+            artifacts/horon-tui-windows-aarch64/horon-tui-windows-aarch64.exe
+            artifacts/horon-tui-windows-aarch64/horon-tui-windows-aarch64.tar.gz
           )
+          # FreeBSD ships horon-agent only, and a package_only run skips that VM
+          # build, so its asset is expected exactly when it is built.
+          if [ "$PACKAGE_ONLY" != true ]; then
+            expected+=(artifacts/horon-agent-freebsd-x86_64/horon-agent-freebsd-x86_64.tar.gz)
+          fi
 
           missing=()
           for asset in "${expected[@]}"; do
@@ -918,6 +1051,7 @@ jobs:
       # again here so a late per-platform upload failure cannot leave a built
       # artifact out of the public release.
       - name: Attach all completed platform assets
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -933,6 +1067,7 @@ jobs:
           gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
 
       - name: Record platform availability
+        if: ${{ inputs.package_only != true }}
         shell: bash
         run: |
           set -euo pipefail
@@ -969,6 +1104,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate checksums
+        if: ${{ inputs.package_only != true }}
         shell: bash
         run: |
           python3 - << 'PY'
@@ -994,12 +1130,14 @@ jobs:
       # Per-platform assets were already attached to the draft by their build
       # jobs. Add the cross-cutting checksum file before making it public.
       - name: Upload checksums to release
+        if: ${{ inputs.package_only != true }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${RELEASE_TAG}" SHA256SUMS release-provenance.json --clobber
 
       - name: Add platform availability to release notes
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1052,6 +1190,7 @@ jobs:
           gh release edit "${RELEASE_TAG}" --notes-file release_notes.md
 
       - name: Verify staged assets before publication
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1063,6 +1202,7 @@ jobs:
           python3 "$RUNNER_TEMP/verify-public-release.py" "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --sha "$TAG_SHA" --allow-draft
 
       - name: Publish completed release
+        if: ${{ inputs.package_only != true }}
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
@@ -1078,6 +1218,7 @@ jobs:
           fi
 
       - name: Verify public assets and exact source provenance
+        if: ${{ inputs.package_only != true }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1089,6 +1230,7 @@ jobs:
           python3 "$RUNNER_TEMP/verify-public-release.py" "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --sha "$TAG_SHA"
 
       - name: Smoke test public Linux installer in an isolated home
+        if: ${{ inputs.package_only != true }}
         shell: bash
         run: |
           set -euo pipefail
