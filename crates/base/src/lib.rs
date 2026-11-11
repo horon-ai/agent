@@ -93,6 +93,7 @@ pub mod session;
 pub mod session_list_cache;
 pub mod session_metrics;
 pub mod session_prefix;
+pub mod session_scope;
 pub mod sidecar;
 pub mod skill;
 pub mod skill_install;

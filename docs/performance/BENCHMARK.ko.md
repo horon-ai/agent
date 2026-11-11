@@ -27,7 +27,7 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
 | `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
-| `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`다. `compare`는 기준 빌드가 있으면 `horon-base` 줄로 같은 작업 안에서 번갈아 잰다. |
+| `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, `tui`다. `compare`는 기준 빌드가 있으면 `horon-base` 줄로 같은 작업 안에서 번갈아 잰다. |
 | `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
 | `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
 
@@ -46,7 +46,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
 | `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. |
-| `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `compile` 중 쉼표로 고른다. |
+| `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile` 중 쉼표로 고른다. |
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
@@ -78,6 +78,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연 |
 | `reload` | `bench_reload_storm.py` | 세션 N개(1, 10, 40)를 동시에 다시 열어 `history`가 올 때까지의 지연 |
+| `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 설치 크기 |
 | `compile` | `bench_compile.py` | `cargo check`의 변경 없음, `src/main.rs`·`crates/app-core`·build-meta 수정 뒤 재빌드 시간 |
 
 ### 자동 측정

@@ -5,7 +5,7 @@
 설치 스크립트는 릴리스 자산을 내려받은 뒤 압축을 직접 풀지 않고 에이전트 실행 파일의 `install-release`에 넘긴다. 검증, 압축 해제, 변경 불가 버전 디렉터리 생성, 채널 활성화를 한 경로에서 처리하려는 것이다 (`src/cli/install_release.rs`, `crates/app-core/src/update.rs` `install_release_from_directory`).
 
 ```bash
-horon-agent install-release --assets <디렉터리> --agent-version <버전>
+horon install-release --assets <디렉터리> --agent-version <버전>
 ```
 
 | 플래그 | 뜻 |

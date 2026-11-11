@@ -31,6 +31,7 @@ import {
   type CompactHandoffOutcome,
   type HistoryMessage,
   type ImageAttachment,
+  type MessageModes,
   type ModelRouteInfo,
   type PayloadRef,
   type PermissionDecision,
@@ -799,6 +800,16 @@ export class HoronAgentClient extends EventEmitter {
     return (await this.expectReply({ req: "list_tools", session_id: sessionId }, "tools")).tools;
   }
 
+  /**
+   * Read the daemon's `[messages]` delivery modes.
+   *
+   * These are daemon configuration rather than session state, so the answer does
+   * not depend on the session existing.
+   */
+  async getMessageModes(sessionId: string): Promise<MessageModes> {
+    return (await this.expectReply({ req: "get_message_modes", session_id: sessionId }, "message_modes")).modes;
+  }
+
   /** Low-level response API for applications handling tool_call events themselves. */
   async submitToolResult(sessionId: string, callId: string, result: string | ToolResult): Promise<void> {
     const value = typeof result === "string" ? { output: result } : result;
@@ -1065,6 +1076,21 @@ export class HoronAgentClient extends EventEmitter {
 
   async rewind(sessionId: string, messageIndex: number): Promise<void> {
     await this.requestOk({ req: "rewind", session_id: sessionId, message_index: messageIndex });
+  }
+
+  /**
+   * Rewind, asking the daemon to report on the branch it discards.
+   *
+   * `summarize` only takes effect when the daemon's `[compaction]
+   * rewind_summary` is on; a summary failure never fails the rewind.
+   */
+  async rewindWithSummary(sessionId: string, messageIndex: number, summarize: boolean): Promise<void> {
+    await this.requestOk({
+      req: "rewind",
+      session_id: sessionId,
+      message_index: messageIndex,
+      summarize,
+    });
   }
 
   async respondToPermission(sessionId: string, requestId: string, decision: PermissionDecision): Promise<void> {

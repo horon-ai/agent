@@ -55,6 +55,8 @@ pub(crate) use request_messages::request_extra_clone_counters;
 pub(crate) use request_messages::{join_request_messages, record_request_extra_clone};
 mod response_recovery;
 mod resume_commit;
+mod rewind_summary;
+pub use rewind_summary::RewindSummaryOutcome;
 mod round_budget;
 mod run_journal;
 mod session_replication;

@@ -17,6 +17,10 @@ use std::collections::HashSet;
 /// Separator between the parts of a child's first message.
 const SEGMENT_SEPARATOR: &str = "\n\n---\n\n";
 
+/// Tools a consult child gets. It answers from the source transcript, so it may
+/// read and search but never write, run a shell, or reach the network.
+const CONSULT_TOOLS: [&str; 4] = crate::session_scope::CONSULT_TOOLS;
+
 /// One child of a `spawn_many` call.
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct SpawnBatchTask {
@@ -63,6 +67,8 @@ struct SpawnSpec {
     output_schema: Option<Value>,
     /// Shared batch background; prepended to the child's first message.
     context: Option<String>,
+    /// Session to fork a read-only consult child from.
+    source_session: Option<String>,
 }
 
 /// Build one `CommSpawn` request, resolving a named agent definition.
@@ -83,6 +89,7 @@ pub(super) fn spawn_request(ctx: &ToolContext, params: &CommunicateInput, label:
             isolation: params.isolation.clone(),
             output_schema: params.output_schema.clone(),
             context: None,
+            source_session: params.source_session.clone(),
         },
     )
 }
@@ -114,6 +121,13 @@ fn build_request(ctx: &ToolContext, params: &CommunicateInput, spec: SpawnSpec) 
             .as_ref()
             .and_then(|definition| definition.output_schema.clone())
     });
+    // A consult replaces the definition's tools with the read-only set: the
+    // child's job is to answer from the source transcript, not to act.
+    let allowed_tools = if spec.source_session.is_some() {
+        Some(CONSULT_TOOLS.iter().map(|tool| tool.to_string()).collect())
+    } else {
+        definition.as_ref().and_then(|definition| definition.tools.clone())
+    };
     Ok(Request::CommSpawn {
         id: REQUEST_ID,
         session_id: ctx.session_id.clone(),
@@ -131,7 +145,8 @@ fn build_request(ctx: &ToolContext, params: &CommunicateInput, spec: SpawnSpec) 
         isolation: spec.isolation.or_else(|| params.isolation.clone()),
         iso_apply: params.iso_apply.clone(),
         output_schema,
-        allowed_tools: definition.and_then(|definition| definition.tools),
+        allowed_tools,
+        source_session: spec.source_session,
     })
 }
 
@@ -208,6 +223,7 @@ pub(super) fn prepare_task(ctx: &ToolContext, params: &CommunicateInput, task: &
         isolation: task.isolation.clone().or_else(|| params.isolation.clone()),
         output_schema: task.output_schema.clone().or_else(|| params.output_schema.clone()),
         context: params.context.clone(),
+        source_session: params.source_session.clone(),
     };
     match build_request(ctx, params, spec) {
         Ok(request) => Ok((label, request)),
@@ -251,8 +267,16 @@ fn render_outcomes(outcomes: Vec<(String, SpawnOutcome)>) -> ToolOutput {
     }))
 }
 
-/// Declare the `spawn_many` arguments on the `swarm` schema.
-pub(super) fn spawn_many_schema_properties(props: &mut serde_json::Map<String, Value>) {
+/// Declare the `spawn`/`spawn_many` arguments that live beside the macro's
+/// single-spawn fields.
+pub(super) fn spawn_schema_properties(props: &mut serde_json::Map<String, Value>) {
+    props.insert(
+        "source_session".to_string(),
+        json!({
+            "type": "string",
+            "description": "For spawn: session id whose transcript the child forks as a read-only consult. The child gets only read, agentgrep, ls and yield; the source session is never modified. An id outside this session's spawn tree is refused before any child starts. See SWARM_TASK_GRAPH 8d."
+        }),
+    );
     props.insert(
         "tasks".to_string(),
         json!({

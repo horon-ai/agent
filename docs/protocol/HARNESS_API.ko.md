@@ -137,6 +137,45 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 요청 자체에는 취소 신호가 없다. 완성 요청 한 번이 결과를 정하므로, 기다리기를 그만둔
 클라이언트가 있어도 생성은 계속된다. 이미 커밋된 경계를 되돌리지는 않는다.
 
+## 되감기 브랜치 요약
+
+`rewind`는 선택적 `summarize`를 받는다. 값을 빼거나 `false`로 보내면 지금까지 보내던
+요청과 같고 데몬 동작도 같다.
+
+`summarize: true`는 되감기가 버리는 브랜치의 보고서를 작성해 남는 브랜치 끝에 숨은
+시스템 알림 한 개로 붙이라고 요청한다. 그러면 모델은 버려진 시도가 왜 실패했는지 알 수
+있고, 대화록에는 죽은 브랜치 전체가 남지 않는다. 보고서는 무엇을 시도했는지, 무엇이 왜
+실패했는지, 브랜치가 확정한 사실이 무엇인지를 담는다.
+
+데몬의 `[compaction] rewind_summary`가 켜져 있어야 동작한다. 보고서 길이는
+`[compaction] rewind_summary_tokens`로 정하며, 기본값 1500은 horon이 직접 고른 값이다.
+값은 `1..=4096`으로 잘리고 `0`은 "기본값을 쓴다"는 뜻이다.
+
+요청:
+
+```json
+{"id": 7, "req": "rewind", "session_id": "s-1", "message_index": 12, "summarize": true}
+```
+
+되감기를 먼저 하고 보고서를 나중에 쓰므로, 요약이 실패해도 대화가 되감기 전으로 돌아가지
+않는다.
+
+| 일어난 일 | 메시지 기록 |
+| --- | --- |
+| 설정이 꺼져 있음 | 되감기만 하고 보고서는 붙이지 않음 |
+| 보고서 작성됨 | 되감은 뒤 멈춘 지점 뒤에 숨은 `<system-reminder>` 메시지 하나를 붙임 |
+| 버릴 메시지 없음 | 되감기만 함 |
+| 완성 호출 실패 | 되감기만 하고 붙이지 않음. 이유는 `history` 응답의 `status_detail`과 데몬 로그에 남음 |
+| 완성 호출 취소 | 되감기만 함 |
+
+붙은 보고서는 화면에 보이는 대화록 메시지도, 되감기 대상도 아니므로 나중에 실행하는
+`/rewind N`의 번호가 달라지지 않는다. `rewind_undo`는 되감기 전에 기록한 헤드를 복원하므로
+보고서도 되감기가 버린 나머지와 함께 사라진다.
+
+이 필드를 게이트하는 기능은 없다. 이 필드를 모르는 서버는 모르는 필드를 무시하고 평범한
+되감기로 응답하므로, 구버전 데몬에 `summarize`를 보낸 클라이언트는 오류 대신 예전 동작을
+받는다.
+
 ## 도구 인자 복구(프로토콜 1.16)
 
 프로바이더의 JSON 작성기는 때때로 도구 인자의 타입을 틀리게 씁니다. 숫자가
@@ -204,6 +243,56 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 호출하는 곳이 없습니다. 그래서 "거절 뒤 재시도"를 나타내는 영수증은 없고, 위의 예방
 단계만 보고합니다.
 
+## 메시지 전달 모드(프로토콜 1.18)
+
+턴이 도는 중에 도착한 메시지는 세션의 대기열에 남았다가 다음 전달 지점에서 주입됩니다.
+`[messages]`는 그 지점마다 몇 개를 가져갈지와, 대기 중인 메시지가 실행 중인 도구를
+멈추는지를 정합니다. 여기서 추가된 것은 모두 덧붙이는 변경입니다. 이전 클라이언트는
+예전과 같은 요청을 보내고 예전과 같은 이벤트를 읽습니다.
+
+| 키 | 값 | 기본값 | 뜻 |
+| --- | --- | --- | --- |
+| `follow_up_mode` | `all`, `one-at-a-time` | `all` | 턴의 첫 전달 지점이 가져가는 메시지 수. 앞 턴에서 남은 메시지다 |
+| `steering_mode` | `all`, `one-at-a-time` | `all` | 같은 턴의 그 뒤 전달 지점이 가져가는 메시지 수 |
+| `interrupt_mode` | `wait`, `immediate` | `wait` | 대기 중인 메시지가 실행 중인 도구를 기다리는지, 남은 도구를 멈추는지 |
+
+두 큐 모드의 기본값 `all`은 지금까지의 horon 동작을 그대로 유지합니다. 이는 omp의
+기본값(`one-at-a-time`)과 일부러 다릅니다. 설정하지 않은 데몬이 예전에 함께 전달하던
+메시지를 나누어 보내기 시작하면 안 되기 때문입니다. `one-at-a-time`은 남은 메시지를
+순서대로 대기열에 두므로 메시지마다 따로 주입됩니다.
+
+### 요청: `get_message_modes`
+
+```json
+{"v":1,"id":7,"req":"get_message_modes","session_id":"s-1"}
+```
+
+| 필드 | 타입 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | 문자열 | 예 | 질문의 대상 세션 |
+
+### 응답: `message_modes`
+
+```json
+{"v":1,"reply_to":7,"ev":"message_modes","session_id":"s-1",
+ "modes":{"follow_up_mode":"all","steering_mode":"one-at-a-time","interrupt_mode":"wait"}}
+```
+
+문자열은 설정 파일에 쓰는 표기 그대로이므로 클라이언트가 열거형을 다시 문자로 바꾸지
+않습니다.
+
+### 동작
+
+세 값은 세션 상태가 아니라 데몬 설정입니다. 브리지가
+`crates/harness-api-server/src/message_modes.rs`에서 데몬에 묻지 않고 직접 답하며,
+지목한 세션이 있는지와 무관하게 답합니다. 클라이언트는 대화 상대인 데몬의 모드를
+세션 전이나 세션 없이 읽습니다.
+
+이 요청·응답 쌍을 게이트하는 기능은 없습니다. 추가형이므로 이 요청을 모르는 서버는
+`unknown_request`로 답하고, 그 오류를 받은 클라이언트는 기본값을 가정하지 않고 모드를
+알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
+`getMessageModes`(TypeScript)로 제공합니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -265,7 +354,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이 응답은 복제 프로토콜에 속하지 않으므로 `protocol_version`이 필요 없다.
 다른 저장 세션 읽기를 이미 막는 `session_replication_v1` 기능을 요구한다. 없는
 세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
-`horon-agent export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
+`horon export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
 같은 바이트를 쓴다.
 
 클라이언트가 어겨서는 안 되는 규칙 두 가지:
@@ -523,4 +612,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 18`
+- `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

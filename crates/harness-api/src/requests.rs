@@ -124,6 +124,11 @@ pub enum ApiRequest {
     /// List the effective tools available to the attached session.
     ListTools { session_id: String },
 
+    /// Read the daemon's `[messages]` delivery modes. Answered with
+    /// `MessageModes`; the values are configuration, not session state, so the
+    /// reply does not depend on the session existing.
+    GetMessageModes { session_id: String },
+
     /// Complete a client-executed custom tool call. Acknowledged with `Ok`.
     ToolResult {
         session_id: String,
@@ -174,7 +179,15 @@ pub enum ApiRequest {
     Clear { session_id: String },
 
     /// Rewind history to the given 1-based message index.
-    Rewind { session_id: String, message_index: usize },
+    ///
+    /// `summarize` asks for a report on the branch the rewind discards; the
+    /// daemon also needs `[compaction] rewind_summary` on. Omit it for the
+    /// pre-existing behavior.
+    Rewind {
+        session_id: String,
+        message_index: usize,
+        summarize: Option<bool>,
+    },
 
     /// Reply to a `PermissionRequest` event.
     PermissionResponse {

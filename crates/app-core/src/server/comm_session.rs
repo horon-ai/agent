@@ -360,6 +360,7 @@ pub(super) async fn spawn_swarm_agent(
     let SpawnExtras {
         output_schema,
         allowed_tools,
+        source_session,
     } = extras;
     if let Some(schema) = output_schema.as_ref() {
         // Reject before a session exists: a child that can never submit a valid
@@ -425,11 +426,9 @@ pub(super) async fn spawn_swarm_agent(
         .as_deref()
         .map(append_swarm_completion_report_instructions);
 
-    let cmd = if let Some(ref dir) = resolved_working_dir {
-        format!("create_session:{dir}")
-    } else {
-        "create_session".to_string()
-    };
+    let cmd = resolved_working_dir
+        .as_ref()
+        .map_or_else(|| "create_session".to_string(), |dir| format!("create_session:{dir}"));
     let new_session_id = create_headless_session(
         sessions,
         global_session_id,
@@ -446,6 +445,7 @@ pub(super) async fn spawn_swarm_agent(
         spawn_effort.clone(),
         output_schema,
         allowed_tools.map(|tools| tools.into_iter().collect()),
+        source_session,
         Some(Arc::clone(mcp_pool)),
         Some(req_session_id.to_string()),
         super::headless::HeadlessMemoryScope::RealProject,

@@ -159,7 +159,7 @@ effort and `ultrathink` will not lower it. `swarm` and `swarm-deep` are orchestr
 not reasoning rungs, so a keyword can neither produce nor match them.
 
 Keywords are read only from user-authored turn text: the client message turn, the REPL user
-prompt, and the first iteration of `horon-agent run`. Synthetic or agent-initiated messages
+prompt, and the first iteration of `horon run`. Synthetic or agent-initiated messages
 (swarm assignments, reload recovery, live turns, overnight, advisor, ambient, debug, swarm
 planner, auto-poke continuations) never arm one.
 

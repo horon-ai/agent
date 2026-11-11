@@ -241,8 +241,17 @@ pub enum Request {
     Clear { id: u64 },
 
     /// Rewind conversation history to the given 1-based message index.
+    ///
+    /// `summarize` asks the daemon to append a report on the branch the rewind
+    /// discards. It is off unless both this flag and `[compaction]
+    /// rewind_summary` are set, and an absent flag is exactly the old request.
     #[serde(rename = "rewind")]
-    Rewind { id: u64, message_index: usize },
+    Rewind {
+        id: u64,
+        message_index: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        summarize: bool,
+    },
 
     /// Undo the most recent rewind, if one is available.
     #[serde(rename = "rewind_undo")]
@@ -761,6 +770,11 @@ pub enum Request {
         /// configured profile decides; `Some(list)` narrows it to `list`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_tools: Option<Vec<String>>,
+        /// Optional session to fork a consult child from. The child starts with
+        /// a copy of that transcript and can only read; the source session is
+        /// never written to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_session: Option<String>,
     },
 
     /// List models/routes available for spawning swarm agents

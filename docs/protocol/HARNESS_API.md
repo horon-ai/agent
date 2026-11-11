@@ -105,6 +105,48 @@ The request itself has no cancel signal. One bounded completion decides it, so a
 client that stops waiting leaves the generation running; it does not roll back a
 boundary that is already committed.
 
+## Rewind branch summary
+
+`rewind` takes an optional `summarize`. Absent or `false` is the request a client
+has always sent and the daemon behaves identically.
+
+`summarize: true` asks the daemon to write a report on the branch the rewind
+discards and append it to the kept branch as one hidden system reminder, so the
+model sees why the abandoned attempt failed without the transcript carrying the
+whole dead branch. The report covers what was tried, what failed and why, and
+which facts the branch established.
+
+The feature is off unless the daemon's `[compaction] rewind_summary` is on. The
+allowance for the report comes from `[compaction] rewind_summary_tokens`; its
+default 1500 is horon's own choice, and values are clamped to `1..=4096`, with
+`0` meaning "use the default".
+
+Request:
+
+```json
+{"id": 7, "req": "rewind", "session_id": "s-1", "message_index": 12, "summarize": true}
+```
+
+The rewind happens first and the report second, so a summary failure never leaves
+the conversation where it was:
+
+| What happened | Message history |
+| --- | --- |
+| Setting off | Rewound, no report appended |
+| Report written | Rewound, one hidden `<system-reminder>` message appended after the stop point |
+| Nothing to discard | Rewound, nothing appended |
+| Completion failed | Rewound, nothing appended; the reason appears in `status_detail` on the `history` reply and in the daemon log |
+| Completion cancelled | Rewound, nothing appended |
+
+The appended report is not a visible transcript message and not a rewind target,
+so a later `/rewind N` counts the same entries it counted before. `rewind_undo`
+restores the head recorded before the rewind, which removes the report together
+with everything else the rewind discarded.
+
+No capability gates this field: a server that predates it ignores the unknown
+field and answers with a plain rewind, so a client that sends `summarize` to an
+older daemon gets the old behavior rather than an error.
+
 ## Tool argument repair (protocol 1.16)
 
 A provider's JSON writer sometimes types a tool argument wrong: `"5000"` where a
@@ -173,6 +215,59 @@ The provider-rejection retry path (`recover_from_error`) has no production calle
 today, so no receipt says "rejected and retried"; only the prevention layer above
 reports.
 
+## Message delivery modes (protocol 1.18)
+
+A message that arrives while a turn is running is held in the session's pending
+queue and injected at the next delivery point. `[messages]` decides how many of
+those each point carries and whether one stops the running tools. Everything here
+is additive: a client that predates it sends the same requests and reads the same
+events as before.
+
+| Key | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `follow_up_mode` | `all`, `one-at-a-time` | `all` | Queued messages the first delivery point of a turn carries; those are left over from the previous turn |
+| `steering_mode` | `all`, `one-at-a-time` | `all` | Queued messages each later delivery point of the same turn carries |
+| `interrupt_mode` | `wait`, `immediate` | `wait` | Whether a queued message waits for the running tool call or stops the remaining ones |
+
+Both defaults of `all` keep the behavior horon has always had. That deliberately
+differs from omp, whose default is `one-at-a-time` for both queue modes: an
+unconfigured daemon must not start splitting messages it used to deliver together.
+`one-at-a-time` leaves the rest pending, in order, so each message gets its own
+injection.
+
+### Request: `get_message_modes`
+
+```json
+{"v":1,"id":7,"req":"get_message_modes","session_id":"s-1"}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the question is about |
+
+### Response: `message_modes`
+
+```json
+{"v":1,"reply_to":7,"ev":"message_modes","session_id":"s-1",
+ "modes":{"follow_up_mode":"all","steering_mode":"one-at-a-time","interrupt_mode":"wait"}}
+```
+
+The strings are the config spellings, so a client never maps an enum back to
+text.
+
+### Behaviour
+
+The values are daemon configuration rather than session state. The bridge answers
+the request itself in `crates/harness-api-server/src/message_modes.rs` without a
+daemon round trip, and the answer does not depend on the named session existing:
+a client reads the modes of the daemon it is talking to, before or without a
+session.
+
+No capability gates the pair. The request is additive, so a server that predates
+it answers `unknown_request`; a client that gets that error treats the modes as
+unknown rather than assuming the defaults. The SDKs expose the call as
+`get_message_modes` (Rust, Python) and `getMessageModes` (TypeScript).
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -204,7 +299,7 @@ A session can hold several heads after a rewind or a branched import. The select
 
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
-The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon-agent export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
 
 Two rules a client must not break:
 
@@ -438,4 +533,5 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 18`
+- `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`

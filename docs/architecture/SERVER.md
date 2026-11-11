@@ -12,7 +12,7 @@ re-execs. This repository contains no client implementation.
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              SERVER (🔥 blazing)                              │
 │                                                                             │
-│  horon-agent serve                                                                │
+│  horon serve                                                                │
 │  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
 │  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
 │  ├── Registry:     ~/.horon/servers.json                                    │
@@ -54,7 +54,7 @@ new process registers under a new name. Stale entries are cleaned up automatical
 ```
   START                          CONNECT                     RELOAD
   ─────                          ───────                     ──────
-  horon-agent (first run)              horon-agent (subsequent)          /reload
+  horon (first run)                    horon (subsequent)                /reload
        │                              │                          │
        ├─▶ No server? Spawn daemon    ├─▶ Server exists?         ├─▶ Server execs into
        ├─▶ Wait for socket            │   Connect directly       │   new binary (same PID)

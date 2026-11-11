@@ -79,7 +79,7 @@ on:
         required: false
         default: all
       suites:
-        description: "Comma-separated suites: compare, startup, loading, tools, reload, compile, or all"
+        description: "Comma-separated suites: compare, startup, loading, tools, reload, tui, compile, or all"
         required: false
         default: all
       competitors:

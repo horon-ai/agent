@@ -232,3 +232,58 @@ fn depth_and_buffered_bytes_count_in_flight_messages() {
     assert_eq!(queue.depth(), 0);
     assert_eq!(queue.buffered_bytes(), 0);
 }
+
+#[test]
+fn a_prefix_transfer_moves_only_the_oldest_message() {
+    let queue = SoftInterruptQueue::new();
+    for content in ["one", "two", "three"] {
+        queue.lock().expect("queue lock").push(message(content));
+    }
+
+    let first = queue.transfer_prefix_to_in_flight(1);
+    assert_eq!(
+        first.iter().map(|message| message.content.as_str()).collect::<Vec<_>>(),
+        vec!["one"],
+        "one-at-a-time delivers the oldest message first"
+    );
+    assert_eq!(contents(&queue), vec!["two", "three"], "the rest stay in order");
+    assert_eq!(queue.in_flight_len(), 1);
+
+    let second = queue.transfer_prefix_to_in_flight(1);
+    assert_eq!(
+        second
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["two"]
+    );
+    assert_eq!(contents(&queue), vec!["three"]);
+}
+
+#[test]
+fn a_prefix_transfer_larger_than_the_queue_moves_everything() {
+    let queue = SoftInterruptQueue::new();
+    queue.lock().expect("queue lock").push(message("one"));
+
+    let moved = queue.transfer_prefix_to_in_flight(usize::MAX);
+
+    assert_eq!(moved.len(), 1);
+    assert_eq!(queue.pending_len(), 0);
+    assert_eq!(queue.in_flight_len(), 1);
+}
+
+#[test]
+fn a_prefix_transfer_of_one_keeps_the_restore_order() {
+    let queue = SoftInterruptQueue::new();
+    for content in ["one", "two"] {
+        queue.lock().expect("queue lock").push(message(content));
+    }
+    queue.transfer_prefix_to_in_flight(1);
+
+    assert_eq!(queue.restore(), 1, "a failed turn restores the one message it took");
+    assert_eq!(
+        contents(&queue),
+        vec!["one", "two"],
+        "the restored message goes back in front of the ones that never left"
+    );
+}

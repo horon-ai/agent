@@ -29,6 +29,7 @@ from .protocol import (
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
     CanonicalRecordRef,
+    MessageModes,
     SessionToolDefinition,
 )
 from .sockets import api_socket_path, transport_endpoint
@@ -1499,6 +1500,16 @@ class HoronAgentClient:
         tools = frame.get("tools")
         return list(tools) if isinstance(tools, list) else []
 
+    async def get_message_modes(self, session_id: str) -> MessageModes:
+        """Read the daemon's ``[messages]`` delivery modes.
+
+        These are daemon configuration rather than session state, so the answer
+        does not depend on the session existing.
+        """
+        frame = await self._expect_reply({"req": "get_message_modes", "session_id": session_id}, "message_modes")
+        modes = frame.get("modes")
+        return cast(MessageModes, modes if isinstance(modes, dict) else {})
+
     async def submit_tool_result(
         self,
         session_id: str,
@@ -1729,6 +1740,21 @@ class HoronAgentClient:
 
     async def rewind(self, session_id: str, message_index: int) -> None:
         await self._request_ok({"req": "rewind", "session_id": session_id, "message_index": message_index})
+
+    async def rewind_with_summary(self, session_id: str, message_index: int, summarize: bool) -> None:
+        """Rewind and ask the daemon to report on the branch it discards.
+
+        ``summarize`` only takes effect when the daemon's ``[compaction]
+        rewind_summary`` is on; a summary failure never fails the rewind.
+        """
+        await self._request_ok(
+            {
+                "req": "rewind",
+                "session_id": session_id,
+                "message_index": message_index,
+                "summarize": summarize,
+            }
+        )
 
     async def rewind_undo(self, session_id: str) -> None:
         """Restore the history the last :meth:`rewind` removed."""

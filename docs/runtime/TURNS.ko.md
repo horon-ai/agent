@@ -107,9 +107,30 @@ cargo test -p horon-agent-base soft_interrupt_store
 
 지점 판정은 `crates/app-core/src/agent/interrupts.rs:695`(B)와 `:706`(D)에 있고, C는 긴급 인터럽트가 있을 때만 열린다. 스트리밍 경로는 같은 지점을 `crates/app-core/src/agent/turn_streaming_mpsc.rs:1504`(B), `:1636`(D), `:2231`(C)에서 쓴다.
 
+#### 전달 모드(`[messages]`)
+
+`all`과 `one-at-a-time`은 턴이 아니라 지점마다 정해진다
+(`crates/app-core/src/agent/interrupts.rs`). 턴의 첫 전달 지점은 앞 턴에서 남은
+메시지를 가져가므로 `[messages] follow_up_mode`가 적용되고, 그 뒤 지점은 이번
+턴에 도착한 메시지를 가져가므로 `[messages] steering_mode`가 적용된다. 모드를
+개수로 옮기는 곳은 `crates/base/src/config/messages.rs`의 `batch_limit()` 하나뿐이고,
+`transfer_prefix_to_in_flight`가 그 개수만큼 오래된 것부터 옮긴다.
+
+두 모드의 기본값은 `all`이다. 지금까지의 동작이며 기본값이 `one-at-a-time`인
+omp와 다르다. `one-at-a-time`으로 두면 남은 메시지는 순서대로 대기열에 남아
+각각 따로 주입되므로, 대화 기록에는 메시지 하나가 한 단계로 남는다.
+
+`[messages] interrupt_mode`는 대기 중인 메시지가 실행 중인 도구를 언제 멈추는지
+정한다. `wait`(기본값, 지금까지의 시점)는 메시지 자체의 `urgent` 플래그를 따르므로
+긴급한 메시지만 지점 C에서 회차를 끊는다. `immediate`는 대기 중인 모든 메시지를
+긴급으로 취급하므로, 무언가 대기하는 즉시 회차를 끊는다.
+
+세 값은 하네스 API의 `get_message_modes`로 확인한다. 세션 상태가 아니라 데몬
+설정이므로 세션이 없어도 답한다.
+
 #### 지점 C의 긴급 처리
 
-긴급 플래그가 선 메시지가 대기 중이면 도구 라운드를 끝까지 돌리지 않는다. 판정 함수는 `urgent_interrupt_pending` 하나뿐이다(`crates/app-core/src/agent/interrupts.rs:135-140`). 라운드를 자를 때는 아직 결과를 쓰지 않은 호출마다 `is_error: true`인 도구 결과를 먼저 넣는다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). 내용은 `[Skipped: user interrupted]`다(`:12`). 그 뒤 사용자 메시지를 넣고, 건너뛴 개수를 이벤트의 `tools_skipped`로 알린다.
+긴급 플래그가 선 메시지가 대기 중이면 도구 라운드를 끝까지 돌리지 않는다. 판정 함수는 `urgent_interrupt_pending` 하나뿐이다(`crates/app-core/src/agent/interrupts.rs:163-166`). 라운드를 자를 때는 아직 결과를 쓰지 않은 호출마다 `is_error: true`인 도구 결과를 먼저 넣는다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). 내용은 `[Skipped: user interrupted]`다(`:12`). 그 뒤 사용자 메시지를 넣고, 건너뛴 개수를 이벤트의 `tools_skipped`로 알린다.
 
 긴급하지 않은 인터럽트는 도구 사이에 넣지 않는다. 모두 지점 D로 미룬다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2104-2106`).
 
