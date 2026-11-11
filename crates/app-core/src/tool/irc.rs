@@ -252,4 +252,4 @@ async fn list(bus: &IrcBus, session_id: &str) -> ToolOutput {
 
 #[cfg(test)]
 #[path = "irc_tests.rs"]
-mod irc_tests;
+pub(in crate::tool) mod irc_tests;
