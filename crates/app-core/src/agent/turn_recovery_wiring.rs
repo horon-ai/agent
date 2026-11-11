@@ -272,8 +272,10 @@ impl Agent {
                 "TURN_RECOVERY_JUDGE_FAILED",
                 vec![("reason", error.to_string())],
             );
-        })
-        .ok()?;
+        });
+        let Ok(request) = request else {
+            return None;
+        };
 
         match horon_agent_base::judge::judge_with(
             &self.provider,
@@ -291,12 +293,15 @@ impl Agent {
                         ("model", outcome.model),
                         (
                             "probability",
-                            probability.map(|p| format!("{p:.3}")).unwrap_or_default(),
+                            probability.map_or_else(String::new, |p| format!("{p:.3}")),
                         ),
                         ("elapsed_ms", outcome.elapsed.as_millis().to_string()),
                         (
                             "output_tokens",
-                            outcome.usage.output_tokens.map(|t| t.to_string()).unwrap_or_default(),
+                            outcome
+                                .usage
+                                .output_tokens
+                                .map_or_else(String::new, |tokens| tokens.to_string()),
                         ),
                     ],
                 );
@@ -335,6 +340,6 @@ impl Agent {
                     .join("\n")
             })
             .find(|text| !text.trim().is_empty() && !text.starts_with(TURN_RECOVERY_NUDGE_PREFIX))
-            .unwrap_or_default()
+            .map_or_else(String::new, String::from)
     }
 }

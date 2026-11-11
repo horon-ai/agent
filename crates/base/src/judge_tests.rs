@@ -13,8 +13,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `answers` is consumed in order and repeated once exhausted, `delay` lets a
 /// timeout test outlast a short budget, and `refuse_model` makes `set_model`
 /// fail the way a provider without model switching does.
+/// One scripted answer: the reply text a provider would return, or the failure
+/// it would raise.
+#[derive(Clone)]
+enum ScriptedAnswer {
+    Reply(String),
+    Failure(String),
+}
+
 struct ScriptedJudgeProvider {
-    answers: Vec<Result<String, String>>,
+    answers: Vec<ScriptedAnswer>,
     calls: Arc<AtomicUsize>,
     prompts: Arc<Mutex<Vec<(String, String)>>>,
     delay: Option<Duration>,
@@ -28,7 +36,7 @@ struct ScriptedJudge {
 }
 
 impl ScriptedJudge {
-    fn new(answers: Vec<Result<String, String>>) -> Self {
+    fn new(answers: Vec<ScriptedAnswer>) -> Self {
         Self {
             provider: Arc::new(ScriptedJudgeProvider {
                 answers,
@@ -128,8 +136,8 @@ impl Provider for ScriptedJudgeProvider {
             tokio::time::sleep(delay).await;
         }
         let answer = match self.answers.get(index).or_else(|| self.answers.last()) {
-            Some(Ok(text)) => text.clone(),
-            Some(Err(error)) => return Err(anyhow::anyhow!("{error}")),
+            Some(ScriptedAnswer::Reply(text)) => text.clone(),
+            Some(ScriptedAnswer::Failure(error)) => return Err(anyhow::anyhow!("{error}")),
             None => return Err(anyhow::anyhow!("the script is empty")),
         };
         Ok((
@@ -189,7 +197,7 @@ fn bool_reply(id: &str, probability: f32) -> String {
 
 #[tokio::test]
 async fn an_attempt_parses_a_bool_answer_and_keeps_usage() {
-    let judge = ScriptedJudge::new(vec![Ok(bool_reply("stopped", 0.91))]);
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(bool_reply("stopped", 0.91))]);
     let outcome = judge_with(&judge.handle(), "judge-model", 3000, &bool_request("stopped"))
         .await
         .expect("the scripted answer satisfies the contract");
@@ -203,13 +211,15 @@ async fn an_attempt_parses_a_bool_answer_and_keeps_usage() {
 
 #[tokio::test]
 async fn a_choice_and_a_score_answer_parse_together() {
-    let judge = ScriptedJudge::new(vec![Ok(serde_json::json!({
-        "answers": [
-            {"id": "kind", "label": "truncated"},
-            {"id": "severity", "level": 2}
-        ]
-    })
-    .to_string())]);
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(
+        serde_json::json!({
+            "answers": [
+                {"id": "kind", "label": "truncated"},
+                {"id": "severity", "level": 2}
+            ]
+        })
+        .to_string(),
+    )]);
     let request = JudgeRequest::new(
         serde_json::json!("an answer that stops mid-sentence"),
         vec![
@@ -240,7 +250,9 @@ async fn a_choice_and_a_score_answer_parse_together() {
 
 #[tokio::test]
 async fn a_malformed_reply_is_not_repaired() {
-    let judge = ScriptedJudge::new(vec![Ok("I think it probably is not finished.".to_string())]);
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(
+        "I think it probably is not finished.".to_string(),
+    )]);
     let error = judge_with(&judge.handle(), "judge-model", 3000, &bool_request("stopped"))
         .await
         .expect_err("prose is not the documented shape");
@@ -249,10 +261,12 @@ async fn a_malformed_reply_is_not_repaired() {
 
 #[tokio::test]
 async fn a_reply_that_invents_a_probability_field_is_rejected() {
-    let judge = ScriptedJudge::new(vec![Ok(serde_json::json!({
-        "answers": [{"id": "stopped", "probability": 0.4, "label": "yes"}]
-    })
-    .to_string())]);
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(
+        serde_json::json!({
+            "answers": [{"id": "stopped", "probability": 0.4, "label": "yes"}]
+        })
+        .to_string(),
+    )]);
     let error = judge_with(&judge.handle(), "judge-model", 3000, &bool_request("stopped"))
         .await
         .expect_err("an extra field is outside the contract");
@@ -261,7 +275,8 @@ async fn a_reply_that_invents_a_probability_field_is_rejected() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn an_attempt_that_outlasts_its_budget_times_out() {
-    let judge = ScriptedJudge::new(vec![Ok(bool_reply("stopped", 0.2))]).with_delay(Duration::from_millis(120));
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(bool_reply("stopped", 0.2))])
+        .with_delay(Duration::from_millis(120));
     let error = judge_with(&judge.handle(), "judge-model", 20, &bool_request("stopped"))
         .await
         .expect_err("the delayed answer arrives after the budget");
@@ -270,7 +285,7 @@ async fn an_attempt_that_outlasts_its_budget_times_out() {
 
 #[tokio::test]
 async fn a_backend_failure_is_reported_as_one() {
-    let judge = ScriptedJudge::new(vec![Err("502 from the upstream".to_string())]);
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Failure("502 from the upstream".to_string())]);
     let error = judge_with(&judge.handle(), "judge-model", 3000, &bool_request("stopped"))
         .await
         .expect_err("the backend refused the call");
@@ -280,7 +295,7 @@ async fn a_backend_failure_is_reported_as_one() {
 
 #[tokio::test]
 async fn a_judge_model_that_cannot_be_selected_refuses_instead_of_inheriting_the_session_model() {
-    let judge = ScriptedJudge::new(vec![Ok(bool_reply("stopped", 0.9))]).refusing_model();
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(bool_reply("stopped", 0.9))]).refusing_model();
     let error = judge_with(&judge.handle(), "judge-model", 3000, &bool_request("stopped"))
         .await
         .expect_err("a judgment must run on the model it names");
@@ -290,7 +305,8 @@ async fn a_judge_model_that_cannot_be_selected_refuses_instead_of_inheriting_the
 
 #[tokio::test]
 async fn a_provider_without_a_backend_is_unavailable_before_any_request() {
-    let judge = ScriptedJudge::new(vec![Ok(bool_reply("stopped", 0.9))]).unavailable("no credential");
+    let judge =
+        ScriptedJudge::new(vec![ScriptedAnswer::Reply(bool_reply("stopped", 0.9))]).unavailable("no credential");
     let error = judge_with(&judge.handle(), "judge-model", 3000, &bool_request("stopped"))
         .await
         .expect_err("an unconfigured provider cannot judge");
@@ -305,7 +321,7 @@ fn a_request_outside_the_contract_fails_before_the_model_is_selected() {
         questions: vec![JudgeItem::new("q", JudgeQuestion::boolean("is it done?"))],
     };
     let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-    let judge = ScriptedJudge::new(vec![Ok(bool_reply("q", 0.9))]);
+    let judge = ScriptedJudge::new(vec![ScriptedAnswer::Reply(bool_reply("q", 0.9))]);
     let error = runtime
         .block_on(judge_with(&judge.handle(), "judge-model", 3000, &request))
         .expect_err("a non-text state is outside the contract");

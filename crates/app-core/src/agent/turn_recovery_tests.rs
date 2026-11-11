@@ -11,6 +11,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+/// One scripted judge answer: the reply text the provider returns, or the
+/// failure it raises.
+enum ScriptedAnswer {
+    Reply(String),
+    Failure(String),
+}
+
 #[derive(Clone)]
 struct ScriptedStopProvider {
     stops: Vec<ScriptedStop>,
@@ -22,7 +29,7 @@ struct ScriptedStopProvider {
     model: Arc<Mutex<String>>,
     /// One scripted judge reply per `complete_simple_with_usage` call. The last
     /// entry repeats, so a test can script one answer and keep it.
-    judge_replies: Arc<Mutex<Vec<Result<String, String>>>>,
+    judge_replies: Arc<Mutex<Vec<ScriptedAnswer>>>,
     judge_prompts: Arc<Mutex<Vec<String>>>,
     judge_calls: Arc<AtomicUsize>,
     judge_delay: Arc<Mutex<Option<std::time::Duration>>>,
@@ -52,7 +59,7 @@ impl ScriptedStopProvider {
 
     /// Script the answers a judge call receives, in order; the last entry
     /// repeats.
-    fn with_judge_replies(&self, replies: Vec<Result<String, String>>) {
+    fn with_judge_replies(&self, replies: Vec<ScriptedAnswer>) {
         *self.judge_replies.lock().unwrap() = replies;
     }
 
@@ -173,8 +180,8 @@ impl Provider for ScriptedStopProvider {
         }
         let replies = self.judge_replies.lock().unwrap();
         let reply = match replies.get(index).or_else(|| replies.last()) {
-            Some(Ok(text)) => text.clone(),
-            Some(Err(error)) => return Err(anyhow::anyhow!("{error}")),
+            Some(ScriptedAnswer::Reply(text)) => text.clone(),
+            Some(ScriptedAnswer::Failure(error)) => return Err(anyhow::anyhow!("{error}")),
             // An unscripted judge answers "not confident", so a test that only
             // asserts about the turn never has to script one.
             None => serde_json::json!({"answers": [{"id": "premature_stop", "probability": 0.0}]}).to_string(),
@@ -849,7 +856,7 @@ fn semantic_judge_provider(probability: f32) -> ScriptedStopProvider {
         ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
         ScriptedStop::Stop("end_turn".into(), "done".into()),
     ]);
-    provider.with_judge_replies(vec![Ok(judge_json(probability))]);
+    provider.with_judge_replies(vec![ScriptedAnswer::Reply(judge_json(probability))]);
     provider
 }
 
@@ -939,7 +946,7 @@ async fn a_failed_judgment_fails_open_to_the_deterministic_decision() {
         ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
         ScriptedStop::Stop("end_turn".into(), "done".into()),
     ]);
-    provider.with_judge_replies(vec![Err("502 from the upstream".to_string())]);
+    provider.with_judge_replies(vec![ScriptedAnswer::Failure("502 from the upstream".to_string())]);
     let (agent, calls) = run_with_provider(&provider, "do the task").await;
 
     assert_eq!(provider.judge_calls(), 1);
@@ -1030,7 +1037,7 @@ async fn a_malformed_judgment_fails_open_too() {
     let _flag = write_autojudge(sandbox.root(), "aggressive", JudgeOptions::default());
 
     let provider = semantic_judge_provider(0.0);
-    provider.with_judge_replies(vec![Ok("I think it is probably fine.".to_string())]);
+    provider.with_judge_replies(vec![ScriptedAnswer::Reply("I think it is probably fine.".to_string())]);
     let (agent, calls) = run_with_provider(&provider, "do the task").await;
 
     assert_eq!(provider.judge_calls(), 1);
@@ -1052,7 +1059,7 @@ async fn judgments_are_bounded_by_the_continuation_budget() {
         ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
         ScriptedStop::Stop("end_turn".into(), "done".into()),
     ]);
-    provider.with_judge_replies(vec![Ok(judge_json(0.9))]);
+    provider.with_judge_replies(vec![ScriptedAnswer::Reply(judge_json(0.9))]);
     let (agent, calls) = run_with_provider(&provider, "do the task").await;
 
     // Two continuations plus the stop that records the terminal notice: the

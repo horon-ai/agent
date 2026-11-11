@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod autojudge;
 mod display;
 mod feature;
 mod gateway;
@@ -12,6 +13,7 @@ mod serde_lenient;
 mod storage;
 mod swarm_spawn;
 pub use {
+    autojudge::{AutoJudgeConfig, DEFAULT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS, MAX_AUTOJUDGE_ATTEMPT_TIMEOUT_MS},
     display::DisplayConfig,
     feature::FeatureConfig,
     gateway::GatewayConfig,
@@ -980,55 +982,6 @@ impl Default for SponsorsConfig {
         Self {
             enabled: true,
             endpoint: "https://api.horon-agent.sh/v1/discovery".to_string(),
-        }
-    }
-}
-
-/// Automatic end-of-turn execution judging configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AutoJudgeConfig {
-    /// Enable autojudge by default for new/resumed sessions (default: false)
-    pub enabled: bool,
-    /// Optional model override for autojudge sessions.
-    pub model: Option<String>,
-    /// Longest a single judgment attempt may take, in milliseconds (default:
-    /// 3000). A judgment holds up the turn it is judging, so there is no
-    /// unbounded value: `0` means the default. A judgment that runs out of
-    /// budget fails open, and the caller keeps its own decision.
-    pub attempt_timeout_ms: u64,
-}
-
-/// Longest attempt budget a configuration may ask for. A judgment holds up the
-/// turn it is judging, so an hour-long budget is a typo rather than a request.
-pub const MAX_AUTOJUDGE_ATTEMPT_TIMEOUT_MS: u64 = 30_000;
-
-/// Attempt budget a configuration gets when it names none. A judgment is an
-/// extra request in front of a turn's continuation, so the budget is short.
-pub const DEFAULT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS: u64 = 3_000;
-
-impl AutoJudgeConfig {
-    /// The attempt budget to use, with `0` replaced by the default and an
-    /// absurd value clamped to [`MAX_AUTOJUDGE_ATTEMPT_TIMEOUT_MS`].
-    ///
-    /// The result is never `0`: a judgment either finishes inside its budget or
-    /// fails open. Waiting without a deadline would stall the turn on a
-    /// provider that never answers, which is the failure this budget exists to
-    /// bound.
-    pub fn attempt_timeout_ms(&self) -> u64 {
-        match self.attempt_timeout_ms {
-            0 => DEFAULT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS,
-            asked => asked.min(MAX_AUTOJUDGE_ATTEMPT_TIMEOUT_MS),
-        }
-    }
-}
-
-impl Default for AutoJudgeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            model: None,
-            attempt_timeout_ms: DEFAULT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS,
         }
     }
 }
