@@ -329,9 +329,9 @@ async fn late_mcp_announcement_uses_original_names_for_sanitized_aliases() {
     assert!(text.contains("server: yc  tool: hiring.create_job"), "{text}");
 }
 
-/// `todo` and `session_search` are part of the `core` surface, and the surface
-/// still sends only the seven essential schemas plus the dispatcher: both new
-/// tools are listed by name and reached through `toolbox`.
+/// `swarm`, `todo` and `session_search` are part of the `core` surface, and the
+/// surface still sends only the seven essential schemas plus the dispatcher:
+/// the new tools are listed by name and reached through `toolbox`.
 #[tokio::test]
 async fn core_surface_lists_todo_and_session_search() {
     let _guard = crate::storage::lock_test_env();
@@ -339,7 +339,7 @@ async fn core_surface_lists_todo_and_session_search() {
     let mut agent = super::tool_tiers::agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions().await;
-    for name in ["todo", "session_search"] {
+    for name in ["swarm", "todo", "session_search"] {
         let definition = definitions
             .iter()
             .find(|definition| definition.name == name)
@@ -354,7 +354,7 @@ async fn core_surface_lists_todo_and_session_search() {
     );
 
     let listed = agent.listed_tools_section().expect("a core session lists its tools");
-    for name in ["todo", "session_search"] {
+    for name in ["swarm", "todo", "session_search"] {
         assert!(listed.contains(name), "the index names {name}: {listed}");
     }
     assert!(
@@ -375,7 +375,7 @@ async fn load_mode_off_removes_todo_and_session_search() {
     let agent = super::tool_tiers::agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions_for_debug().await;
-    for name in ["todo", "session_search"] {
+    for name in ["swarm", "todo", "session_search"] {
         assert!(
             !definitions.iter().any(|definition| definition.name == name),
             "{name} is off in this session"
