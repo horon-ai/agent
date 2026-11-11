@@ -45,7 +45,9 @@ use tokio::sync::RwLock;
 
 use crate::compaction::CompactionManager;
 use crate::message::Message;
-use crate::tool::{CONTEXT_LIMIT_REFUSAL_PREFIX, OUTPUT_TRUNCATED_MARKER, Registry, ToolOutput, is_context_refusal};
+use crate::tool::{
+    CONTEXT_LIMIT_REFUSAL_PREFIX, OUTPUT_TRUNCATED_MARKER, Registry, ToolOutput, ToolVerdict, is_context_refusal,
+};
 
 pub(super) struct RoundTokenBudget {
     /// `0` disables the guard, the same way `Registry::guard_context_overflow`
@@ -195,9 +197,8 @@ impl RoundTokenBudget {
             self.applied_tokens += crate::util::estimate_tokens(&refusal);
             return ToolOutput {
                 output: refusal,
-                title: output.title,
-                metadata: output.metadata,
-                images: output.images,
+                verdict: Some(ToolVerdict::Withheld),
+                ..output
             };
         }
 
@@ -239,9 +240,8 @@ impl RoundTokenBudget {
             self.applied_tokens += crate::util::estimate_tokens(&refusal);
             return ToolOutput {
                 output: refusal,
-                title: output.title,
-                metadata: output.metadata,
-                images: output.images,
+                verdict: Some(ToolVerdict::Withheld),
+                ..output
             };
         }
 
@@ -270,9 +270,8 @@ impl RoundTokenBudget {
         self.applied_tokens += crate::util::estimate_tokens(&truncated);
         ToolOutput {
             output: truncated,
-            title: output.title,
-            metadata: output.metadata,
-            images: output.images,
+            verdict: Some(ToolVerdict::after_cut(output.verdict)),
+            ..output
         }
     }
 
