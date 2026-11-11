@@ -2949,7 +2949,7 @@ fn restored_tool_image_boundaries_follow_returned_history_rows() {
         text: text.into(),
         cache_control: None,
     };
-    let result = |id: &str| ContentBlock::tool_result(&id.into(), "read image", None);
+    let result = |id: &str| ContentBlock::tool_result(id, "read image", None);
     let image = |data: &str| ContentBlock::Image {
         media_type: "image/png".into(),
         data: data.into(),
