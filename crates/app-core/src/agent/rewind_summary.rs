@@ -68,7 +68,7 @@ impl Agent {
             crate::compaction::rewind_summary::clamp_max_tokens(compaction.rewind_summary_tokens),
             &crate::compaction::rewind_summary::AuxCompletion,
         )?;
-        self.record_rewind_summary_outcome(&outcome);
+        self.record_rewind_summary_outcome(&outcome.outcome);
         Ok(outcome.removed)
     }
 
