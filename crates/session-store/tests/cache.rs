@@ -56,7 +56,8 @@ fn appended(parent: &SealedEvent, text: &str) -> SealedEvent {
         OriginId::new_v4(),
         chrono::DateTime::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
-        serde_json::json!({"message": StoredMessage {
+        serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
+        degradations: None,
             turn_start: false,
             id: uuid::Uuid::new_v4().to_string(), role: Role::User,
             content: vec![ContentBlock::Text { text: text.into(), cache_control: None }],
@@ -1231,10 +1232,8 @@ fn r2_blocks(parent: &SealedEvent, content: Vec<ContentBlock>) -> SealedEvent {
         id: uuid::Uuid::new_v4().to_string(),
         role: Role::Assistant,
         content,
-        display_role: None,
         timestamp: None,
-        tool_duration_ms: None,
-        token_usage: None,
+        ..Default::default()
     };
     r2_payload_event(
         parent,
@@ -1469,10 +1468,8 @@ fn r2_revised_large_message_resolves_effective_original_without_history_copy() {
             text: "b".repeat(MAX_RECORD_BYTES + 2048),
             cache_control: None,
         }],
-        display_role: None,
         timestamp: None,
-        tool_duration_ms: None,
-        token_usage: None,
+        ..Default::default()
     };
     let revised = r2_payload_event(
         &original,
@@ -1516,7 +1513,8 @@ fn diverged_heads_stay_listable_while_execution_needs_a_selection() {
             OriginId::new_v4(),
             chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(offset),
             EventKind::new(KnownEventKind::MessageAppended),
-            serde_json::json!({"message": StoredMessage {
+            serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
+            degradations: None,
                 turn_start: false,
                 id: uuid::Uuid::new_v4().to_string(), role: Role::User,
                 content: vec![ContentBlock::Text { text: text.into(), cache_control: None }],

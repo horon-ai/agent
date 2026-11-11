@@ -370,10 +370,12 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         iso_apply: Some("keep".to_string()),
         output_schema: Some(serde_json::json!({"type": "object", "properties": {"files": {"type": "array"}}})),
         allowed_tools: Some(vec!["read".to_string(), "ls".to_string()]),
+        source_session: Some("session_source".to_string()),
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"comm_spawn\""));
     assert!(json.contains("\"request_nonce\":\"planner-fresh-123\""));
+    assert!(json.contains("\"source_session\":\"session_source\""));
     assert!(json.contains("\"spawn_mode\":\"headless\""));
     assert!(json.contains("\"effort\":\"low\""));
     assert!(json.contains("\"label\":\"review auth flow\""));
@@ -395,6 +397,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         isolation,
         iso_apply,
         allowed_tools,
+        source_session,
         ..
     } = decoded
     else {
@@ -414,6 +417,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         allowed_tools.as_deref(),
         Some(["read".to_string(), "ls".to_string()].as_slice())
     );
+    assert_eq!(source_session.as_deref(), Some("session_source"));
     Ok(())
 }
 

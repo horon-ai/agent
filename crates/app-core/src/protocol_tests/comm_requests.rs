@@ -371,6 +371,7 @@ fn test_comm_spawn_roundtrip_with_optional_nonce() -> Result<()> {
         iso_apply: None,
         output_schema: None,
         allowed_tools: Some(vec!["read".to_string(), "agentgrep".to_string()]),
+        source_session: None,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"comm_spawn\""));

@@ -41,6 +41,9 @@ fn root() -> EventEnvelope {
 
 fn user_message(content: Vec<ContentBlock>) -> StoredMessage {
     StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "legacy-user".into(),
         role: Role::User,

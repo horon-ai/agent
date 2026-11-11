@@ -65,6 +65,114 @@ Four events were added: `runtime_state`, `control_receipt`, `snapshot_marker` an
 
 The protocol shape and SDK methods of `apply_control`/`get_control_receipt` and `get_snapshot` are settled, but the storage and observation implementation behind them belongs to separate work. Until that work lands, the bridge answers these requests with `unsupported`. From the client's side that is the same "this server does not offer it yet" answer, so no branching changes.
 
+## Handoff compaction
+
+`compact` takes an optional `method`. Absent is the model summary a client has
+always requested: the reply is `compacted` and means the request was accepted,
+because the daemon summarizes at its next safe point.
+
+`method: "handoff"` writes a generated handoff document as the boundary instead,
+and the reply arrives after that write. It is the outcome, not an
+acknowledgement.
+
+Request:
+
+```json
+{"id": 4, "req": "compact", "session_id": "s-1", "method": "handoff"}
+```
+
+Response, the same `compacted` event with `handoff` attached:
+
+```json
+{"id": 4, "event": "compacted", "session_id": "s-1", "message": "Committed a handoff document covering the first 120 messages.",
+ "handoff": {"outcome": "committed", "covered": 120}}
+```
+
+| `handoff.outcome` | Meaning |
+| --- | --- |
+| `committed` | The document became the boundary. `covered` is how many messages it covers; the recent-token tail stays verbatim |
+| `nothing_to_cover` | Every message fits inside the recent-token budget, so no document was written |
+| `provider_error` | The completion failed. `detail` carries the provider's message. The transcript is unchanged |
+| `cancelled` | The generation was cancelled before it answered. The transcript is unchanged |
+
+No capability gates this field: a server that predates it ignores an unknown
+field on the request and answers without `handoff`, so a client that sends
+`method` to an older daemon must treat a missing `handoff` as "not supported by
+this server" rather than as `nothing_to_cover`. A value the server does not know
+is refused as `invalid_request`.
+
+The request itself has no cancel signal. One bounded completion decides it, so a
+client that stops waiting leaves the generation running; it does not roll back a
+boundary that is already committed.
+
+## Tool argument repair (protocol 1.16)
+
+A provider's JSON writer sometimes types a tool argument wrong: `"5000"` where a
+number belongs, `1` where a boolean does. The dispatcher repairs those before the
+tool runs, and the repair is now visible three ways. Everything here is
+additive: a client that predates it sends the same requests and reads the same
+events as before.
+
+### Event: `tool_args_repaired`
+
+Sent immediately before the call's `tool_done`, once per repaired call. A client
+that does not know the event ignores it, and the call finishes either way.
+
+```json
+{"ev":"tool_args_repaired","session_id":"s-1","call_id":"call-9","name":"bash",
+ "original_input":{"command":"ls","timeout":"5000"},"changes":["coerced `timeout` to a number"]}
+```
+
+`original_input` is the arguments exactly as the model sent them, and `changes`
+is one line per repair, in the order the repairs were applied.
+
+### Stored record
+
+The stored tool result carries the same two values as `original_input` and
+`arg_repairs`. Both are omitted when the call needed no repair, so every other
+record keeps exactly the bytes it had before.
+
+### Counter
+
+`snapshot().tool_arg_repairs` counts repaired calls per tool, when
+`HORON_AGENT_PERF_COUNTERS=1`.
+
+## Degradation receipts (protocol 1.17)
+
+horon-agent narrows the tool catalog before a request leaves when the
+provider's schema dialect cannot express part of it. Each narrowing is now
+recorded. Everything here is additive: a client that predates it sends the same
+requests and reads the same events as before.
+
+### Event: `degradation_receipts`
+
+Sent after the assistant message of a streamed turn is stored, only when that
+request lost something not already reported in this session. A client that does
+not know the event ignores it.
+
+```json
+{"ev":"degradation_receipts","session_id":"s-1","message_id":"m-7",
+ "receipts":[{"kind":"schema_keyword_dropped","tool":"bash","target":"uniqueItems"}]}
+```
+
+`kind` is one of `schema_keyword_dropped` (a keyword, or `format:<value>`, outside
+the dialect), `strict_disabled` (the tool was sent with `strict: false`) and
+`duplicate_tool_dropped` (a second definition of the same name was not sent).
+Each distinct (kind, tool, target) is reported once per session, not once per
+request; a daemon restart may report it once more.
+
+### Stored record
+
+The assistant message appended for that request carries the same receipts as
+`degradations`, written in the same append. A message whose request lost nothing
+omits the field and keeps exactly the bytes it had before.
+
+### Not covered
+
+The provider-rejection retry path (`recover_from_error`) has no production caller
+today, so no receipt says "rejected and retried"; only the prevention layer above
+reports.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -113,11 +221,22 @@ The five stable `ErrorCode` values are unchanged, so older clients keep decoding
 
 `runtime_info` builds liveness from the current host runtime. A PID recorded in stale session metadata is historical side information, not a live process, and no client should display it as running.
 
+### Runtime identity fields
+
+`get_runtime_info` answers with the session's identity. Two of its fields exist because the model that answered a turn is not always the model the session selected.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `fallback_models` | `array<string>` | Fallback model ids the active named provider profile is configured with, in the order a turn tries them. The key is absent when the list is empty. |
+| `serving_model` | `string` | Model that produced the most recent assistant response. After a fallback answered it differs from `model`, which returns to the session's own selection once the turn ends. Absent when no response has been named yet. |
+
+Both fields are optional. An older daemon omits them, and a client that ignores them keeps working. Once the catalog and one identity report have arrived, the bridge answers `get_runtime_info` from its cache when no fallback list is configured, because the serving model can then only be the session's own. With a fallback list configured, or before the first identity report, it asks the daemon for the catalog on every `get_runtime_info`, because the serving model can change without the catalog changing.
+
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 
-This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, and the last part covers the four durable runtime surfaces of 1.14. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
+This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, the next covers the four durable runtime surfaces of 1.14, and the part after that covers the argument repair of 1.16. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
 
 All three requests are additive. A client that sends none of them keeps working, and the bridge advertises `usage_report`, `session_search` and `artifacts` in the `capabilities` of `hello_ok` (`BRIDGE_CAPABILITIES` in `crates/harness-api-server/src/lib.rs`).
 
@@ -128,6 +247,7 @@ All three requests are additive. A client that sends none of them keeps working,
 - Unknown fields are ignored, and unknown event kinds are skipped.
 - A failure arrives as `{"ev":"error","code":...,"message":...}`. The `ErrorCode` values these surfaces use are `invalid_request`, `unknown_session` and `internal`.
 - A request that names a session takes `session_id`. A missing session answers `unknown_session` rather than an empty result, because "this session wrote nothing" and "no such session exists" are different facts.
+- `session_id` also accepts a unique leading prefix of at least 6 characters. A full id always wins, and an id the connection already knows is never rewritten. A prefix several sessions share answers `unknown_session` with up to 10 candidates in `details.accepted_ids` and `details.store_code` set to `ambiguous_session`; the code itself stays `unknown_session`, so a client built against an older build still decodes the frame. A prefix that matches nothing keeps the plain `unknown_session` answer.
 
 ### usage_report
 

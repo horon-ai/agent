@@ -85,13 +85,20 @@ impl Agent {
             }
         }
     }
+
+    /// The configured fallback entries of the active named provider profile,
+    /// in the order a turn tries them. Empty when no profile is active.
+    pub fn fallback_models(&self) -> Vec<String> {
+        // A session without an active named profile contributes no entries.
+        active_profile_fallback_models().into_iter().flatten().collect()
+    }
 }
 
 /// The fallback entries of the active named provider profile.
 ///
 /// A session that is not on a named profile has no list this step may spend,
 /// so it keeps its existing error path.
-fn active_profile_fallback_models() -> Option<Vec<String>> {
+pub(crate) fn active_profile_fallback_models() -> Option<Vec<String>> {
     let profile_name = [
         "HORON_AGENT_NAMED_PROVIDER_PROFILE",
         "HORON_AGENT_PROVIDER_PROFILE_NAME",

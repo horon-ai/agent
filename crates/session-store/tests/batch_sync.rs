@@ -75,7 +75,8 @@ impl Fixture {
             OriginId::new_v4(),
             chrono::DateTime::UNIX_EPOCH,
             EventKind::new(KnownEventKind::MessageAppended),
-            serde_json::json!({"message": StoredMessage {
+            serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
+            degradations: None,
                 turn_start: false,
                 id: uuid::Uuid::new_v4().to_string(),
                 role: Role::User,

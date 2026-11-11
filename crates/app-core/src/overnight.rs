@@ -1,3 +1,6 @@
+#[path = "overnight_handoff.rs"]
+mod handoff_trigger;
+
 use crate::agent::Agent;
 use crate::provider::Provider;
 use crate::session::{Session, SessionStatus};
@@ -234,6 +237,7 @@ async fn run_supervisor(
 
     let mut agent = Agent::new_with_session(provider, registry, child, None);
     let mut next_prompt = build_coordinator_prompt(&manifest, &preflight);
+    let handoff_stop = std::sync::atomic::AtomicBool::new(false);
     let mut handoff_notice_sent = false;
     let mut morning_report_prompt_sent = false;
     let mut final_wrapup_prompt_sent = false;
@@ -241,6 +245,7 @@ async fn run_supervisor(
     loop {
         let current = load_manifest(&manifest.run_id)?;
         if matches!(current.status, OvernightRunStatus::CancelRequested) {
+            handoff_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             record_event(
                 &current,
                 "run_cancel_acknowledged",
@@ -253,15 +258,9 @@ async fn run_supervisor(
         }
 
         let now = Utc::now();
-        if !handoff_notice_sent && now >= current.handoff_ready_at && now < current.target_wake_at {
-            record_event(
-                &current,
-                "handoff_ready_notice",
-                "Entering handoff-ready mode".to_string(),
-                json!({ "target_wake_at": current.target_wake_at }),
-                true,
-            )?;
-            next_prompt = build_handoff_ready_prompt(&current);
+        let handoff = || agent.request_handoff_compaction(&handoff_stop);
+        if let Some(prompt) = handoff_trigger::ready_pass(&current, handoff_notice_sent, now, handoff)? {
+            next_prompt = prompt;
             handoff_notice_sent = true;
         }
 
@@ -287,6 +286,7 @@ async fn run_supervisor(
 
         let after_turn = load_manifest(&manifest.run_id)?;
         if matches!(after_turn.status, OvernightRunStatus::CancelRequested) {
+            handoff_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             mark_completed(
                 &after_turn,
                 OvernightRunStatus::Completed,

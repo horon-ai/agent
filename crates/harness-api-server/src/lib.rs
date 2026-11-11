@@ -19,7 +19,11 @@
 
 pub mod allocator;
 pub mod background_progress;
+mod degradation_receipts;
+mod message_content;
 pub mod replication;
+pub mod session_prefix;
+mod tool_args_repaired;
 pub mod translate;
 mod writer;
 
@@ -636,7 +640,7 @@ where
                             - usize::from(api_frame.last() == Some(&b'\n'));
                         api_frame.clear();
                         release_large_frame(&mut api_frame);
-                        let request: Value = match parsed {
+                        let mut request: Value = match parsed {
                             Ok(value) => value,
                             Err(error) => {
                                 // No `reply_to`: the id lived in the frame that failed
@@ -654,6 +658,14 @@ where
                             state.user_connected_sessions = if user_connections_supported {
                                 daemon_user_connections(&legacy_socket).await
                             } else { Default::default() };
+                        }
+                        // A session id prefix names one session when it is
+                        // unique, so an operator does not have to paste all of
+                        // an id. This runs before translation because every
+                        // session-addressed request forwards its id verbatim.
+                        if let Some(frame) = state.resolve_session_prefix(&mut request) {
+                            send_frame!('translate, frame);
+                            continue;
                         }
                         // Translation may inspect persisted session/archive files. Tell
                         // Tokio before entering that synchronous region so it can keep

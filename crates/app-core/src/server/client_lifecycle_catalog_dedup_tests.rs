@@ -38,6 +38,7 @@ fn catalog_dedup_key_ignores_age_drift_but_keeps_real_changes() {
         provider_model: Some("claude-opus-4.6".to_string()),
         available_models: vec!["claude-opus-4.6".to_string()],
         available_model_routes: vec![route(detail)],
+        identity: None,
     };
 
     // Only the cosmetic age moved: same catalog, must dedup.
@@ -84,6 +85,7 @@ fn catalog_dedup_keeps_model_and_auth_route_changes() {
             usage: None,
             cheapness: None,
         }],
+        identity: None,
     };
     let key = available_models_dedup_key(&baseline);
     // Every semantic catalog field must invalidate dedup immediately, with no
@@ -95,6 +97,7 @@ fn catalog_dedup_keeps_model_and_auth_route_changes() {
             provider_model,
             available_models,
             available_model_routes,
+            ..
         } = &mut changed
         else {
             unreachable!()

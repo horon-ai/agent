@@ -135,7 +135,7 @@ Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](
 
 ## Features
 
-- **A core tool set of 15.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo` and `ask`. A core session sends seven of them up front plus `toolbox`, names the other eight in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
+- **A core tool set of 18.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search` and `swarm`. A core session sends seven of them up front plus `toolbox`, names the other eleven in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
 - **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon session inspect|doctor|export|import|migrate|recover-to` work on the store ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
 - **Edit safety.** A journal backs `undo` for file edits, and `redo` and hashline anchors are opt-in ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
 - **MCP and skills.** `horon mcp` lists configured MCP servers and manages remote-server OAuth credentials; skills are read through `skill://` and managed with `skill_manage`.

@@ -13,6 +13,7 @@ use std::path::Path;
 
 mod agent_models;
 mod crash;
+mod degradation;
 pub use agent_models::AgentModelOverrides;
 mod event_actor;
 mod event_archive;
@@ -1276,7 +1277,17 @@ request in this new forked session, using the inherited conversation only as con
         turn_start: bool,
     ) -> String {
         let id = new_id("message");
+        // A repaired tool call left its original arguments and change list with
+        // the dispatcher; take them here so the record carries them at rest.
+        let repair = horon_agent_session_types::repair_record::take_in(&self.id, &content);
+        let (original_input, arg_repairs) = match repair {
+            Some(record) => (Some(record.original_input), Some(record.changes)),
+            None => (None, None),
+        };
         self.append_stored_message(StoredMessage {
+            original_input,
+            arg_repairs,
+            degradations: self.take_degradations(&role),
             turn_start,
             id: id.clone(),
             role,

@@ -137,6 +137,7 @@ pub mod collections;
 mod diagnostics;
 mod errors;
 mod export;
+mod handoff;
 mod launch;
 mod ssh;
 mod structured;
@@ -155,10 +156,10 @@ pub use client::{
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
 pub use horon_agent_harness_api::{
-    RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary, RuntimeQueueSummary,
-    RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary, SessionEditStats,
-    SessionSnapshot, SnapshotMarkerInfo, enrich_sessions_from_edit_stats, enrich_sessions_from_local_edit_stats,
-    enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state,
+    HandoffCompaction, RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary,
+    RuntimeQueueSummary, RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary,
+    SessionEditStats, SessionSnapshot, SnapshotMarkerInfo, enrich_sessions_from_edit_stats,
+    enrich_sessions_from_local_edit_stats, enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state,
 };
 /// Auto-poke and todo quality-gate policy, identical to the TUI's. Fetch a
 /// snapshot with [`HoronAgentClient::todo_state`], run

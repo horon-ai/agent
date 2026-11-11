@@ -126,6 +126,16 @@ aux = "my-small-model"
 
 역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
 
+### 런타임에서 폴백 목록이 보이는 모습
+
+`crates/config-types/src/model_roles.rs`의 `ModelRoleConfig::fallback_models()`는 항목마다 앞뒤 공백을 지우고 빈 문자열을 버린다. 빈 문자열이 시도로 바뀌지 않는다.
+
+이 단계가 쓸 수 있는 목록은 활성 이름 지정 프로파일에만 있다. `crates/app-core/src/agent/model_fallback.rs`의 `active_profile_fallback_models()`가 `HORON_AGENT_NAMED_PROVIDER_PROFILE`, 그다음 `HORON_AGENT_PROVIDER_PROFILE_NAME`으로 프로파일을 찾고, 항목이 비어 있지 않을 때만 돌려준다. 이름 지정 프로파일이 아닌 세션은 이 단계가 생기기 전과 똑같이 동작한다.
+
+`Agent::try_model_fallback`은 전환을 적용하기 전에 턴 상태에 그 항목을 기록한다. 그래야 프로바이더가 거부한 전환도 항목을 소모하고, 같은 거부를 한도 없이 재시도하지 않는다. `restore_model_fallback`은 다음 턴 시작(`begin_turn_state`), 인터럽트, 실패한 턴에서 세션 자체 모델을 되돌린다. 전환은 `session.model`에 닿지 않으므로, 다시 읽는 클라이언트나 재로드는 사용자가 고른 선택을 본다.
+
+결과를 읽는 접근자는 둘이다. `Agent::fallback_models()`는 설정된 항목을 돌려주고, 활성 프로파일이 없으면 빈 목록이다. `Agent::last_serving_model()`은 응답을 저장할 때 `Agent::record_model_turn_usage`가 설정하므로, 다음 턴이 세션 모델을 되돌린 뒤에도 답한 모델을 가리킨다. `get_runtime_info`는 이 둘을 `fallback_models`와 `serving_model`로 보고하고, 카탈로그 푸시도 같은 쌍을 `identity` 객체에 실어 보낸다. 푸시된 카탈로그를 유지하는 클라이언트는 폴링할 필요가 없다.
+
 ## 프롬프트 캐시 키
 
 `prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 24자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.

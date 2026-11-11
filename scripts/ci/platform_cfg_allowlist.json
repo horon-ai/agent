@@ -36,6 +36,10 @@
       "count": 1,
       "reason": "test fixture serves structured output from a stub daemon over a Unix socket."
     },
+    "crates/agent-sdk/tests/typed_errors.rs": {
+      "count": 1,
+      "reason": "whole test file drives the client over a Unix socket-pair fake harness (#![cfg(unix)]), like client_behavior.rs; Windows has no socket pair to hand the client."
+    },
     "crates/agent-sdk/tests/user_response_capability.rs": {
       "count": 1,
       "reason": "test fixture drives a stub daemon over a Unix socket."
@@ -367,6 +371,10 @@
     "src/cli/proctitle.rs": {
       "count": 1,
       "reason": "one match arm labelling the Unix-only `api-bridge` command."
+    },
+    "src/main.rs": {
+      "count": 1,
+      "reason": "Apple's linker reports the unoptimized `horon-agent` binary's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for debug links on macOS and is not actionable from source."
     }
   },
   "version": 1

@@ -776,6 +776,9 @@ mod tests {
     fn history_rows_mark_turn_starts_for_v2_only() {
         use crate::message::{ContentBlock, Role};
         let stored = |id: &str, turn_start: bool| crate::session::StoredMessage {
+            original_input: None,
+            arg_repairs: None,
+            degradations: None,
             turn_start,
             id: id.to_string(),
             role: Role::User,

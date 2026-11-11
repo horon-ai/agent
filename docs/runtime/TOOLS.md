@@ -2,11 +2,11 @@
 
 Language: **English** | [한국어](TOOLS.ko.md)
 
-This covers tool loading tiers, effects and approval tiers, edit safety, the ancestor `AGENTS.md` attached to `read`, skill reads (`skill://`), memory reads (`memory://`) and memory updates, where MCP configuration comes from, condensing large tool output and `read` deduplication, aging of old results, and the one-shot auxiliary call.
+This covers tool loading tiers, effects and approval tiers, edit safety, the ancestor `AGENTS.md` attached to `read`, archive and SQLite reads, skill reads (`skill://`), memory reads (`memory://`) and memory updates, where MCP configuration comes from, condensing large tool output and `read` deduplication, aging of old results, and the one-shot auxiliary call.
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the fifteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
 
 ### Three tiers
 
@@ -31,8 +31,8 @@ memory = "essential"
 ### Default layout
 
 - The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:803` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
-- `CORE_TOOLS` still holds fifteen entries and is the allow-list of the `core` profile (`config.rs:779` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session.
-- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eight core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`) become `discoverable` and are named in the index (`config.rs:889` `ToolLoadTiers::tier`).
+- `CORE_TOOLS` holds eighteen entries and is the allow-list of the `core` profile (`config.rs:779` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session. `swarm`, `todo` and `session_search` joined last; an SDK-driven session keeps `session_search` and `swarm` off unless its `enabled` list names them (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
+- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:889` `ToolLoadTiers::tier`).
 - Sessions that are not listing sessions send every core tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists and tiers are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
 - `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:861` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
 - `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:889` `ToolLoadTiers::tier`).
@@ -45,7 +45,7 @@ memory = "essential"
 
 - Writing `[tools.load_mode] ask = "essential"` ships that tool with its schema even in a listing session. An explicit entry outranks the default layout.
 - `monitor = "off"` removes that tool from both the request and the index.
-- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts all fifteen core tools back on the eager surface. The point is to avoid creating a tool with no way to reach it.
+- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts all eighteen core tools back on the eager surface. The point is to avoid creating a tool with no way to reach it.
 
 ### The listing index
 
@@ -57,7 +57,7 @@ The static part of a listing `core` session's system prompt gains an `# Addition
 - Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
 - When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:175`). An overridden session still keeps the names of listed tools.
 - A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`.
-- The `todo` guidance sentence is appended only for sessions whose allow-list contains `todo` (`acp` and the like), and never for a listing `core` session, which has no `todo` (`prompting.rs:233` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
+- The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:233` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox
 
@@ -91,7 +91,7 @@ Model requests go straight to an OpenAI-compatible `/chat/completions` and carry
 
 ### Why core stays closed
 
-`core` is an allow-list. It pins the default headless surface to the fifteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eight are reached through the index and `toolbox`. The most recent addition, `monitor`, watches files and commands across restarts. The choice preserves three things.
+`core` is an allow-list. It pins the default headless surface to the eighteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eleven are reached through the index and `toolbox`. The most recent additions, `swarm`, `todo` and `session_search`, keep their schemas out of the prefix the same way. The choice preserves three things.
 
 - The default surface's size does not change, so the request prefix and the prompt cache stay stable.
 - The default permission envelope, writes and shell included, stays predictable.
@@ -209,6 +209,26 @@ Auto-approval writes an audit record. It creates no new file or queue and uses t
 
 `off` mode writes no audit line, because logs must match the era before approval tiers existed. Read-only calls are not audited either. That is why `off` returns before the read-only branch.
 
+## Argument repair
+
+A provider's JSON writer sometimes types an argument wrong: `"true"` where a
+boolean belongs, `"5000"` where a number does. Before a tool runs, the dispatcher
+coerces the value the schema names and records what it changed. A call that
+matched the schema on the first try takes no repair path and no allocation.
+
+A repaired call leaves three traces:
+
+- a debug log line, `[tool:<name>] repaired arguments: [...]`;
+- one entry in `snapshot().tool_arg_repairs`, keyed by tool name, when
+  `HORON_AGENT_PERF_COUNTERS=1`;
+- the stored tool result, which carries the arguments exactly as the model sent
+  them in `original_input` and one line per repair in `arg_repairs`.
+
+Both fields are omitted when the call needed no repair, so an existing session
+file keeps exactly its previous bytes and one written earlier still loads. The
+same two values go out as the `tool_args_repaired` event right before the call's
+result, described in `docs/protocol/HARNESS_API.md`.
+
 ## Edit safety
 
 A tool that writes a file records before and after snapshots of that call's changes in the edit journal once the write succeeds. `undo` reverts the most recent unit, and `redo` re-applies the unit the last `undo` removed. `read`'s hashline anchors and `hashline_edit` tag line contents so an edit can name target lines. This document describes the scope and limits of that behaviour in the current tree.
@@ -252,6 +272,9 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 - A line longer than 2000 bytes is cut and receives the `----` tag (`read.rs:13` `MAX_LINE_LEN`). That anchor names no content, so it cannot be used for an edit.
 - `hashline_edit` is registered only when `[tools] hashline_edit = true`. The default is `false`, and it is outside the core set.
 - Input is `file_path` plus an `ops` array. Each op has `start_anchor`, an optional `end_anchor`, and `new_text`.
+- `ops` may be omitted when the call names a file-level effect: `delete: true` removes the file, and `move_to: "<path>"` writes the file's final content to that path and then removes the source. Both run after any line ops, in the same call and the same mutation unit, so one `undo` restores the old content and the old path.
+- A move refuses an existing destination instead of overwriting it; `apply_patch` remains the way to replace a destination deliberately. `move_to` and `delete` cannot be combined.
+- The path policy and the generated-file guard apply to the source and to the move destination, and `delete` also passes the protected-path check.
 - Every anchor is checked against the current on-disk content first. One stale anchor refuses the whole call and writes nothing (`crates/app-core/src/tool/hashline_edit.rs:128` `resolve_ops`).
 - Line numbers start at 1, spans move downward only, and overlapping spans are refused.
 - An empty `new_text` deletes the span. A single trailing newline counts as a separator rather than content.
@@ -411,15 +434,20 @@ The path-denial policy (`path_policy`) never treats the literal `skill://` as a 
 
 ## Managing skills
 
-`create`, `update`, and `delete` in `skill_manage` touch only skills the model wrote itself. Those live at `~/.horon/managed-skills/<name>/SKILL.md`, and a human-written skill with the same name always wins. So none of the three actions can edit or delete a human-written skill.
+`create`, `update`, `delete`, and `install` in `skill_manage` touch only skills in the managed directory. Those live at `~/.horon/managed-skills/<name>/SKILL.md`, and a human-written skill with the same name always wins. So none of the four actions can edit, delete, or install over a human-written skill.
 
 | Action | What it does | When it refuses |
 | --- | --- | --- |
 | `create` | Writes a new managed skill. | Refuses when a skill with the same name is already loaded or exists in the managed directory. |
 | `update` | Changes a managed skill's description and body. | Says to use `create` when no managed skill exists. |
 | `delete` | Removes the managed skill directory and reloads the skill list. | When the same name is loaded as a human-written skill, names its source and deletes no file. |
+| `install` | Clones one skill into the managed directory, writes a lock entry, and reloads the skill list. | When the name already exists, when the source holds no `SKILL.md`, or when the endorsed name is unknown. |
 
-`create` and `update` require `[tools] managed_skills` to be on. `delete` ignores that switch, because managed skills left behind after turning it off still need cleaning up.
+`create`, `update`, and `install` require `[tools] managed_skills` to be on. `delete` ignores that switch, because managed skills left behind after turning it off still need cleaning up.
+
+### Installing a skill
+
+`{"action": "install", "name": "<endorsed name>"}` installs an endorsed catalog entry from the fixed repository its source names; the model never supplies a command. `{"action": "install", "source": "<git URL or path>", "ref": "<branch, tag, or commit>"}` installs any other skill, and `name` beside `source` chooses one skill inside a repository that holds several. The clone is shallow, lands in a staging directory beside the target, and moves into place with one rename only after its `SKILL.md` parsed and its name validated, so a refused install writes nothing. The name comes from the frontmatter, a description is taken from it as well, and `install-lock.json` in the managed directory records the name, source, requested ref, and resolved commit of every install. The installer lives in `crates/base/src/skill_install.rs`.
 
 The safety rules for `delete` live in one place, `remove` in `crates/base/src/managed_skills.rs`.
 
@@ -431,7 +459,52 @@ The safety rules for `delete` live in one place, `remove` in `crates/base/src/ma
 
 Refusal text names the source a name belongs to. A skill from a working folder's `.agents/skills`, for example, reads "a project skill from the agents source (<directory>)". The text is built by reading the skill source table (`SOURCES` in `crates/base/src/skill/sources.rs`), so it never invents a directory the table does not have.
 
-In plan mode all three actions are refused. `skill_manage` declares the write effect, and the plan-mode gate blocks calls with the write effect before execution. That gate is described in [Tool effects, plan mode, and approval tiers](#tool-effects-plan-mode-and-approval-tiers).
+In plan mode every action that writes is refused, `install` included, which additionally declares the network effect for its clone. `skill_manage` declares those effects per action, and the plan-mode gate blocks calls with the write effect before execution. That gate is described in [Tool effects, plan mode, and approval tiers](#tool-effects-plan-mode-and-approval-tiers).
+
+## Reading archives and SQLite databases
+
+A `.tar.gz`, `.tar`, `.tgz` or `.zip` and a SQLite database are containers, not
+text, so `read` handles them itself instead of sending the model to a shell.
+Nothing is extracted to disk: a tar is streamed and a zip is read in place, and a
+database is opened read-only. Both readers sit in front of the plain-file path in
+`execute` (`crates/app-core/src/tool/read.rs`).
+
+### `read <archive>`
+
+- `read bundle.tar.gz` lists the members, one `- <name> (<n> bytes)` line each,
+  and directory entries end in `/`. `.tar` and `.tgz` are the same reader; `.zip`
+  is listed from the zip central directory.
+- `read bundle.zip:dir/file.txt` returns that member's text through the normal
+  file path, so line selectors (`bundle.zip:dir/file.txt:10-20`) and `offset`/
+  `limit` apply with the same caps and continuation hint as a file read.
+- A member path that is absolute or contains `..` is refused before the member
+  is looked up, and the refusal names the path. A member is read only when it is
+  a regular file, so a directory entry or a symlink member is refused.
+- One member body is capped at 8 MiB. Past that the error says to use a line
+  selector or an extraction tool rather than returning nothing.
+- Detection is by extension **and** magic bytes, so a text file named `notes.zip`
+  still reads as a file. A plain file whose name contains `:` also wins when it
+  exists, so `read a:b.txt` reads the file.
+
+### `read <database>`
+
+- `read app.db` lists the user tables with their row counts (`.sqlite`,
+  `.sqlite3`, `.db`, `.db3`). `sqlite_%` catalog tables are left out.
+- `read app.db:users` returns the table's `CREATE TABLE` statement, its declared
+  columns (type, primary key, not null, default), and a page of rows.
+- `?limit=` and `?offset=` page the rows (`app.db:users?limit=20&offset=40`), and
+  the result names the next page when more rows remain. `limit=0` and a
+  non-numeric value fall back to the default page size of 50.
+- The database is opened with `SQLITE_OPEN_READ_ONLY`, so a read never writes to
+  it and no journal or WAL is created. A locked or encrypted database fails with
+  a message naming the file. The query helper lives in the base crate
+  (`crates/base/src/sqlite_read.rs`), not in the tool layer.
+- An unknown table lists the available names. The whole existing path wins over
+  a table split, so a database file whose name contains `:` reads as a database.
+
+Both readers return ordinary tool output, so it goes through
+`secrets::mask_for_history` on the same path as every other tool result; there is
+no separate redaction step for them.
 
 ## Reading memory
 
@@ -642,3 +715,28 @@ Restoration running before the gate is the design's invariant. An approver who s
 The mapping between placeholders and real values lives only in process memory. A per-session vault holds the real-to-placeholder table, the reverse table, and a per-name counter, and writes nothing to disk. It disappears when the process ends. Debug output prints item counts, not values, so a log line or a crash bundle cannot leak credentials through the vault itself.
 
 `block` mode refuses with an error starting `SECRET_BLOCK`, naming how many hits matched which label and how to switch to `obfuscate`.
+## Language server (lsp)
+
+The `lsp` tool asks the project's language server what the compiler knows, and can apply the edits the server computes. Actions are `diagnostics`, `definition`, `references`, `hover`, `symbols`, `status`, `rename`, and `code_actions`.
+
+`file` is resolved against the working directory, `line` and `character` are 1-based, and with `character` omitted the first occurrence of `symbol` on that line is used.
+
+### rename
+
+`rename` takes `new_name` and `apply` (default `false`).
+
+- A dry run returns the planned edits per file and writes nothing; `apply: true` writes them.
+- A server that declines the position, or an edit that reproduces the current content, reports that and writes nothing.
+- Positions in the server's answer are 0-based and counted in UTF-16 code units, so the applier converts them against the file's own text before slicing.
+
+### code_actions
+
+`code_actions` takes a position (`line`/`character`) or a range (also `end_line`/`end_character`) and lists what the server offers, numbered from 1.
+
+- `action_id` applies that action's edit; the id is the number in the list.
+- An action whose only effect is a command is listed and never executed.
+- A disabled action reports the server's reason instead of being applied.
+
+### Write path
+
+An applied edit goes through the same path as `edit`: path policy and the generated-file guard on every file, per-path locks, and one undo unit for the whole call, so one `undo` restores every file. Content is compared against the bytes the plan was computed from before anything is written, and a file that changed since then fails the call with no file written. Only the applying calls (`rename` with `apply: true`, `code_actions` with `action_id`) declare a write effect.

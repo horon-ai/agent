@@ -1,7 +1,11 @@
 //! Server-to-client events: replies and streaming.
 
+use crate::handoff::HandoffCompaction;
 use horon_agent_tool_types::AskQuestion;
 use serde::{Deserialize, Serialize};
+
+mod usage_report;
+pub use usage_report::{UsageLimitInfo, UsageModel, UsageSession, UsageTotals};
 
 /// Curated event surface. Internally-tagged on `"ev"`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -143,6 +147,26 @@ pub enum ApiEvent {
     SidePaneImages {
         session_id: String,
         images: Vec<RenderedImage>,
+    },
+
+    /// The request behind this assistant message was narrowed to fit the
+    /// provider: a schema keyword or string format was dropped, a tool was sent
+    /// without strict mode, or a duplicate definition was not sent. One entry
+    /// per distinct loss in the session. Additive: older clients ignore it.
+    DegradationReceipts(crate::degradation::DegradationReceiptsEvent),
+
+    /// A tool call's arguments were rewritten before the tool ran, because the
+    /// model's JSON writer did not match the tool's schema. Sent just before the
+    /// call's `ToolDone`. Additive: a client that does not know this event
+    /// ignores it, and the call finishes either way.
+    ToolArgsRepaired {
+        session_id: String,
+        call_id: String,
+        name: String,
+        /// The arguments exactly as the model sent them.
+        original_input: serde_json::Value,
+        /// One line per repair applied, in the order they were applied.
+        changes: Vec<String>,
     },
 
     /// Usage for the latest provider call, not cumulative session or turn totals.
@@ -449,6 +473,15 @@ pub enum ApiEvent {
         /// key route.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         auth_method: Option<String>,
+        /// Configured fallback model ids of the active named provider
+        /// profile, in the order a turn tries them. Absent when none is set.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        fallback_models: Vec<String>,
+        /// Model that produced the most recent assistant response, when the
+        /// daemon reports it. Differs from `model` after a model fallback,
+        /// because `model` returns to the session's own selection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        serving_model: Option<String>,
         routes: Vec<ModelRouteInfo>,
     },
 
@@ -551,10 +584,16 @@ pub enum ApiEvent {
     /// point rather than interrupting a turn mid-flight, so this confirms the
     /// request was accepted, not that the transcript has already shrunk. A
     /// client that wants the result should re-read the history afterwards.
+    ///
+    /// A `method: "handoff"` request is the exception: it is answered after the
+    /// boundary is committed, with `handoff` naming what happened.
     Compacted {
         session_id: String,
         /// Human-readable status, e.g. why compaction was refused.
         message: String,
+        /// Present only for a handoff request, where the reply is the result.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff: Option<HandoffCompaction>,
     },
 
     /// A session's title changed, whether set by a client or generated.
@@ -1013,74 +1052,6 @@ pub struct TextMatch {
     pub preview: String,
 }
 
-/// Durable token usage for one session.
-///
-/// Input and cache counts keep the provider's own accounting: a provider that
-/// includes cache reads in input and one that reports them separately both
-/// land here unchanged, exactly as the stored messages recorded them.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct UsageSession {
-    pub session_id: String,
-    /// The model the session recorded, when its metadata names one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// Summed input tokens; absent when no request recorded the metric.
-    pub input: Option<u64>,
-    /// Summed output tokens; absent when no request recorded the metric.
-    pub output: Option<u64>,
-    /// Summed cache-read input tokens; absent when no provider reported them.
-    pub cache_read_input: Option<u64>,
-    /// Summed cache-write input tokens; absent when no provider reported them.
-    pub cache_creation_input: Option<u64>,
-    /// Provider requests that recorded usage, not user turns: one turn can
-    /// make several requests, and tool rounds count separately.
-    pub requests: u64,
-}
-
-/// Sums across every session in a report.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct UsageTotals {
-    pub input: Option<u64>,
-    pub output: Option<u64>,
-    pub cache_read_input: Option<u64>,
-    pub cache_creation_input: Option<u64>,
-    pub requests: u64,
-    /// Sessions the sums cover, including sessions that recorded no usage.
-    pub sessions: usize,
-}
-
-/// Usage attributed to one model across the sessions in a report.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct UsageModel {
-    /// Model id, or `unknown` when the session metadata named none.
-    pub model: String,
-    pub input: Option<u64>,
-    pub output: Option<u64>,
-    pub cache_read_input: Option<u64>,
-    pub cache_creation_input: Option<u64>,
-    pub requests: u64,
-    /// Sessions that used this model.
-    pub sessions: usize,
-}
-
-/// One subscription limit the daemon published for the account.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct UsageLimitInfo {
-    /// Stable limit id, for example `subscription_spend`.
-    pub name: String,
-    /// Amount consumed in the current window, when the daemon reported it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub used: Option<f64>,
-    /// Window cap, when the plan has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<f64>,
-    /// Unit for `used` and `limit`, for example `usd`.
-    pub unit: String,
-    /// RFC 3339 reset time, when the daemon reported one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resets_at: Option<String>,
-}
-
 /// Durable usage for one user turn, summed across its assistant/tool rounds.
 /// Input is the raw provider-reported count, not normalized across providers.
 /// Cache reads may be included in input (OpenAI) or separate (Anthropic).
@@ -1143,42 +1114,4 @@ pub struct RenderedImage {
     /// for multiple images at the same boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_message_index: Option<usize>,
-}
-
-#[cfg(test)]
-mod image_history_tests {
-    use super::*;
-
-    #[test]
-    fn image_history_boundary_is_optional_and_round_trips() {
-        let legacy = serde_json::json!({"media_type": "image/png", "data": "bytes", "label": null,
-            "source": {"kind": "tool_result", "tool_name": "read"}, "anchor": {"kind": "tool_call", "id": "read-1"}});
-        let mut image: RenderedImage = serde_json::from_value(legacy.clone()).unwrap();
-        assert_eq!(image.history_message_index, None);
-        assert_eq!(serde_json::to_value(&image).unwrap(), legacy);
-        for boundary in [0, 3] {
-            image.history_message_index = Some(boundary);
-            let encoded = serde_json::to_value(&image).unwrap();
-            assert_eq!(encoded["history_message_index"], boundary);
-            assert_eq!(serde_json::from_value::<RenderedImage>(encoded).unwrap(), image);
-        }
-    }
-}
-
-#[cfg(test)]
-mod response_stats_tests {
-    use super::*;
-
-    #[test]
-    fn history_response_stats_are_backward_compatible_and_optional() {
-        let old = serde_json::json!({"role":"assistant","content":"answer"});
-        let message: HistoryMessage = serde_json::from_value(old.clone()).unwrap();
-        assert!(message.response_stats.is_none());
-        assert_eq!(serde_json::to_value(message).unwrap(), old);
-        let new = serde_json::json!({"role":"assistant","content":"answer",
-            "response_stats":{"input_tokens":0,"output_tokens":12,"cache_read_tokens":0}});
-        let message: HistoryMessage = serde_json::from_value(new.clone()).unwrap();
-        assert_eq!(message.response_stats.as_ref().unwrap().duration_secs, None);
-        assert_eq!(serde_json::to_value(message).unwrap(), new);
-    }
 }

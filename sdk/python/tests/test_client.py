@@ -327,6 +327,8 @@ async def test_ga_methods_send_stable_request_shapes_and_map_typed_replies() -> 
                         "session_id": "s1",
                         "provider": "anthropic",
                         "model": "claude",
+                        "fallback_models": ["claude-backup"],
+                        "serving_model": "claude-backup",
                         "routes": [
                             {
                                 "model": "claude",
@@ -398,6 +400,8 @@ async def test_ga_methods_send_stable_request_shapes_and_map_typed_replies() -> 
         runtime = await client.get_runtime_info("s1")
         assert runtime["healthy"] is True
         assert runtime["providers"] == ["anthropic"]
+        assert runtime["fallback_models"] == ["claude-backup"]
+        assert runtime["serving_model"] == "claude-backup"
         assert len(runtime["routes"]) == 2
 
         await client.set_api_key("gemini-api", "secret")

@@ -355,6 +355,9 @@ async fn assert_history_service_tier(tier: Option<&'static str>, busy: bool, rac
         crate::session::Session::create_with_id(session_id.to_string(), None, Some("busy fallback".to_string()));
     session.model = Some("mock-model".to_string());
     session.append_stored_message(crate::session::StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "msg-busy-fallback".to_string(),
         role: crate::message::Role::User,

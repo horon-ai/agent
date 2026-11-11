@@ -10,10 +10,13 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+pub mod commands;
 pub mod input;
+pub mod keys;
 pub mod prompts;
 pub mod sdk_bridge;
 pub mod settings;
+pub mod statusline;
 pub mod theme;
 pub mod transcript;
 
@@ -50,7 +53,18 @@ Options:
 
 Keys:
   Enter          send the typed message
-  /quit          leave (Ctrl-C cancels a running turn, Ctrl-D always leaves)
+  Tab            complete the slash command being typed
+  Ctrl-C         cancel a running turn, or leave when nothing is running
+  Ctrl-D         leave
+  Bindings are remapped in $HORON_HOME/keybindings.toml.
+
+Commands:
+  /help          list the commands, including the harness ones and the
+                 markdown files under .horon/commands and $HORON_HOME/commands
+  /clear         clear the transcript pane
+  /model [name]  list the models, or switch to the one named
+  /quit          leave
+  //text         send the literal message /text
 ";
 
 /// Parsed command line.
@@ -167,13 +181,17 @@ where
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
     }
+    let mut keys = keys::Loader::new();
+    for warning in keys.warnings() {
+        eprintln!("horon-tui: keys: {warning}");
+    }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -201,7 +219,7 @@ fn show_failure(message: &str) {
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
+fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
     let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
     // The stderr copy of these warnings is wiped by the alternate screen, so
@@ -209,11 +227,25 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
     }
+    for warning in keys.warnings() {
+        app.warn(format!("keys: {warning}"));
+    }
+    app.bindings = keys.bindings().clone();
     for warning in themes.apply(reloader.settings()) {
         app.warn(format!("theme: {warning}"));
     }
     app.theme = themes.theme().clone();
     app.symbols = *themes.symbols();
+    match std::env::current_dir() {
+        Ok(directory) => app.cwd = Some(directory.display().to_string()),
+        Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+    }
+    app.reload_commands();
+    let (layout, layout_warnings) = statusline::Layout::from_settings(reloader.settings());
+    app.statusline = layout;
+    for warning in layout_warnings {
+        app.warn(format!("statusline: {warning}"));
+    }
     install_panic_hook();
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -222,7 +254,7 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader) -> i32 {
             return 1;
         }
     };
-    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes);
+    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
     ratatui::restore();
     code
 }
@@ -243,6 +275,7 @@ fn event_loop<B>(
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
+    keys: &mut keys::Loader,
 ) -> i32
 where
     B: Backend,
@@ -254,7 +287,8 @@ where
             break;
         }
         // The reloader throttles itself to one file check per second; the
-        // theme loader shares that cadence for the selected theme file.
+        // theme loader, the key bindings and the command directories share
+        // that cadence for their own files.
         let mut themed = false;
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
@@ -263,12 +297,26 @@ where
             for warning in themes.apply(&reload.settings) {
                 app.warn(format!("theme: {warning}"));
             }
+            let (layout, layout_warnings) = statusline::Layout::from_settings(&reload.settings);
+            app.statusline = layout;
+            for warning in layout_warnings {
+                app.warn(format!("statusline: {warning}"));
+            }
             themed = true;
         }
         for warning in themes.tick() {
             app.warn(format!("theme: {warning}"));
             themed = true;
         }
+        if let Some(reload) = keys.tick() {
+            for warning in reload.warnings {
+                app.warn(format!("keys: {warning}"));
+            }
+            app.bindings = reload.bindings;
+        }
+        // Command directories are only stat-ed here; the files are re-read when
+        // a directory's timestamp moved.
+        app.tick_commands();
         if themed {
             app.theme = themes.theme().clone();
             app.symbols = *themes.symbols();
@@ -315,6 +363,7 @@ fn drain_events(app: &mut App) {
         match incoming {
             Incoming::Event(event) => app.apply_event(&event),
             Incoming::Notice(message) => app.warn(message),
+            Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Closed(message) => app.disconnected(&message),
         }
     }
@@ -335,6 +384,8 @@ fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: 
             always,
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
+        Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::Model(name) => Command::Model(name),
         Action::Quit => {
             app.running = false;
             return;
@@ -361,7 +412,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
+    let hint = app.completion_hint();
     let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
+    if hint.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
     if !prompt_lines.is_empty() {
         constraints.insert(1, Constraint::Length(prompt_lines.len() as u16));
     }
@@ -408,7 +463,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 
     let status_area = areas[index];
-    frame.render_widget(status_widget(app, theme, symbols), status_area);
+    frame.render_widget(status_widget(app, status_area.width), status_area);
     index += 1;
 
     let input_area = areas[index];
@@ -429,36 +484,22 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         .saturating_add(1)
         .saturating_add(app.input.cursor_column());
     frame.set_cursor_position((cursor_x, input_area.y));
+    if let Some(hint) = hint {
+        index += 1;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(theme.core.muted)))),
+            areas[index],
+        );
+    }
 }
 
-/// The bottom line: the attached-to description, the model, and the state,
-/// joined by the theme's separator.
-fn status_widget(app: &App, theme: &Theme, symbols: Symbols) -> Paragraph<'static> {
-    let parts = app.status_parts();
-    let last = parts.len().saturating_sub(1);
-    let state_style = if app.pending_turn {
-        Style::default().fg(theme.core.warning)
-    } else {
-        Style::default().fg(theme.core.success)
-    };
-    let mut spans = Vec::new();
-    for (index, part) in parts.into_iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled(
-                format!(" {} ", symbols.separator),
-                Style::default().fg(theme.core.border),
-            ));
-        }
-        let style = if index == 0 {
-            Style::default().fg(theme.status.status_accent)
-        } else if index == last {
-            state_style
-        } else {
-            Style::default().fg(theme.status.status_text)
-        };
-        spans.push(Span::styled(part, style));
-    }
-    Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.status.status_bg))
+/// The bottom line: the segments the status-line layout names, joined by the
+/// theme's separator with the right-hand group aligned to the edge.
+fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
+    let mut data = app.status_data();
+    data.now = Some(statusline::local_now());
+    let line = statusline::render(&data, &app.statusline, &app.theme, app.symbols, width);
+    Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
 }
 
 /// The transcript pane, scrolled to its last lines.
@@ -469,7 +510,7 @@ fn transcript_widget(app: &App) -> Paragraph<'static> {
     }
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
-            "Send a message to start. /quit leaves.",
+            "Send a message to start. /help lists the commands; /quit leaves.",
             Style::default().fg(app.theme.core.muted),
         )));
     }
@@ -785,6 +826,51 @@ mod tests {
         let status = app.status_line();
         assert!(status.contains("claude-sonnet-4"), "status was {status}");
         assert!(status.contains("anthropic"), "status was {status}");
+    }
+
+    #[test]
+    fn statusline_custom_preset_draws_left_then_right() {
+        let mut app = app_with(None);
+        app.apply_event(&ApiEvent::ModelInfo {
+            session_id: "s1".into(),
+            provider: Some("anthropic".into()),
+            model: Some("claude-sonnet-4".into()),
+            reasoning_effort: None,
+            auth_method: None,
+        });
+        app.apply_event(&ApiEvent::TokenUsage {
+            session_id: "s1".into(),
+            input: 200,
+            output: 50,
+            cache_read_input: None,
+            cache_creation_input: None,
+        });
+        app.cwd = Some("/home/u/proj".to_string());
+        app.home = Some("/home/u".to_string());
+        app.statusline = statusline::Layout {
+            preset: statusline::Preset::Custom,
+            left: vec![statusline::SegmentId::Model, statusline::SegmentId::Path],
+            right: vec![statusline::SegmentId::ContextPct, statusline::SegmentId::Time],
+            path_max: 40,
+            context_window: 1000,
+        };
+
+        let screen = draw_to_string(&mut app);
+        // `TestBackend`'s Display wraps each row in quotes.
+        let row = screen
+            .lines()
+            .nth(22)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .trim_end()
+            .to_string();
+        assert!(
+            row.starts_with("anthropic/claude-sonnet-4 · ~/proj"),
+            "left side wrong: {row:?}\n{screen}"
+        );
+        assert!(row.contains("25% · "), "context percentage missing: {row:?}");
+        let time = row.rsplit(" · ").next().unwrap_or_default();
+        assert!(time.len() == 5 && time.as_bytes()[2] == b':', "clock missing: {row:?}");
     }
 
     #[test]

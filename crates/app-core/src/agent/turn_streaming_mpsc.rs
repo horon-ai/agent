@@ -1396,6 +1396,7 @@ impl Agent {
                     cache_creation_input_tokens: self.last_usage.cache_creation_input_tokens,
                 });
                 let message_id = self.add_message_ext(Role::Assistant, content_blocks, None, token_usage);
+                crate::agent::degradation_event::announce(&self.session, &event_tx, &message_id);
                 self.push_embedding_snapshot_if_semantic(&text_content);
                 self.save_final_answer()?;
                 self.record_model_turn_usage(&usage_turn_id);
@@ -1961,6 +1962,7 @@ impl Agent {
                                 }
 
                                 let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
+                                crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
                                 self.add_message_with_duration(
                                     Role::User,
                                     blocks,
@@ -1990,6 +1992,7 @@ impl Agent {
                                     error: Some(error_msg.clone()),
                                 });
 
+                                crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
                                 self.add_message_with_duration(
                                     Role::User,
                                     vec![ContentBlock::ToolResult {
@@ -2044,6 +2047,7 @@ impl Agent {
                             },
                         });
 
+                        crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
                         self.add_message_with_duration(
                             Role::User,
                             vec![ContentBlock::ToolResult {
@@ -2122,6 +2126,7 @@ impl Agent {
                             error: None,
                         });
 
+                        crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
                         self.add_message_with_duration(
                             Role::User,
                             vec![ContentBlock::ToolResult {
@@ -2662,6 +2667,7 @@ impl Agent {
                             }
 
                             let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
+                            crate::tool::repair_event::send(event_tx, &self.session.id, &tc.id, &tc.name);
                             self.add_message_with_duration(Role::User, blocks, Some(tool_elapsed.as_millis() as u64));
                             *tool_results_dirty = true;
                         }
@@ -2673,6 +2679,7 @@ impl Agent {
                                 output: error_msg.clone(),
                                 error: Some(error_msg.clone()),
                             });
+                            crate::tool::repair_event::send(event_tx, &self.session.id, &tc.id, &tc.name);
                             self.add_message_with_duration(
                                 Role::User,
                                 vec![ContentBlock::ToolResult {

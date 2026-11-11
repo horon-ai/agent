@@ -10,9 +10,12 @@ use std::sync::mpsc::{self, Receiver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::{ApiEvent, AskSelection};
 
+use crate::commands::{Invocation, Local, Registry};
 use crate::input::Input;
+use crate::keys::{self, Bindings, Key};
 use crate::prompts::{Prompt, Response};
 use crate::sdk_bridge::Incoming;
+use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
 use crate::transcript::Transcript;
 
@@ -34,6 +37,13 @@ pub enum Action {
     },
     /// Answer a structured question.
     Ask { ask_id: String, answers: Vec<AskSelection> },
+    /// Ask the harness to run one of its own commands.
+    Runtime {
+        command: horon_agent_sdk::RuntimeCommand,
+        arguments: Vec<String>,
+    },
+    /// List the models, or switch to the one named.
+    Model(Option<String>),
     /// Leave.
     Quit,
 }
@@ -66,11 +76,25 @@ pub struct App {
     pub provider: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
+    /// Session the client is attached to, from the last event that named it.
+    pub session_id: Option<String>,
+    /// Working directory the `path` segment shows.
+    pub cwd: Option<String>,
+    /// The user's home directory, shortened to `~` by the `path` segment.
+    pub home: Option<String>,
+    /// Latest token totals the daemon reported.
+    pub tokens: Option<TokenTotals>,
+    /// How the bottom line is arranged, replaced when `tui.toml` changes.
+    pub statusline: Layout,
     /// Colours the renderer uses, replaced when the theme loader resolves a
     /// new theme.
     pub theme: Theme,
     /// Glyphs the renderer uses, replaced with the theme.
     pub symbols: Symbols,
+    /// What keystrokes mean, replaced when `keybindings.toml` changes.
+    pub bindings: Bindings,
+    /// The slash commands in force, re-read when a command directory changes.
+    pub commands: Registry,
 }
 
 impl App {
@@ -90,8 +114,15 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            session_id: None,
+            cwd: None,
+            home: home_directory(),
+            tokens: None,
+            statusline: Layout::default(),
             theme: Theme::default(),
             symbols: Symbols::default(),
+            bindings: Bindings::default(),
+            commands: Registry::default(),
         }
     }
 
@@ -113,8 +144,15 @@ impl App {
             model: None,
             provider: None,
             session_status: None,
+            session_id: None,
+            cwd: None,
+            home: home_directory(),
+            tokens: None,
+            statusline: Layout::default(),
             theme: Theme::default(),
             symbols: Symbols::default(),
+            bindings: Bindings::default(),
+            commands: Registry::default(),
         }
     }
 
@@ -162,6 +200,34 @@ impl App {
         };
         parts.push(state.to_string());
         parts
+    }
+
+    /// The state the status-line segments read.
+    ///
+    /// The clock is left empty here: the renderer fills it once per frame, so
+    /// the app state never holds a time that goes stale.
+    pub fn status_data(&self) -> StatusData<'_> {
+        StatusData {
+            provider: self.provider.as_deref(),
+            model: self.model.as_deref(),
+            session_id: self.session_id.as_deref(),
+            pending_turn: self.pending_turn,
+            session_status: self.session_status.as_deref(),
+            prompt: self.prompt_label(),
+            cwd: self.cwd.as_deref(),
+            home: self.home.as_deref(),
+            tokens: self.tokens,
+            now: None,
+        }
+    }
+
+    /// The pending-decision wording for the `pending` segment.
+    fn prompt_label(&self) -> Option<&'static str> {
+        match &self.prompt {
+            Some(Prompt::Approval(_)) => Some("approval needed"),
+            Some(Prompt::Ask(_)) => Some("question waiting"),
+            None => None,
+        }
     }
 
     /// Fold one protocol event into the state.
@@ -215,7 +281,13 @@ impl App {
             ApiEvent::AskRequested { ask_id, questions, .. } => {
                 self.prompt = Some(Prompt::ask(ask_id.clone(), questions.clone()));
             }
-            ApiEvent::ModelInfo { provider, model, .. } => {
+            ApiEvent::ModelInfo {
+                session_id,
+                provider,
+                model,
+                ..
+            } => {
+                self.session_id = Some(session_id.clone());
                 if let Some(model) = model {
                     self.model = Some(model.clone());
                 }
@@ -223,8 +295,25 @@ impl App {
                     self.provider = Some(provider.clone());
                 }
             }
-            ApiEvent::SessionStatus { status, .. } => {
+            ApiEvent::SessionStatus { session_id, status, .. } => {
+                self.session_id = Some(session_id.clone());
                 self.session_status = Some(status.clone());
+            }
+            ApiEvent::TokenUsage {
+                session_id,
+                input,
+                output,
+                cache_read_input,
+                cache_creation_input,
+                ..
+            } => {
+                self.session_id = Some(session_id.clone());
+                self.tokens = Some(TokenTotals {
+                    input: *input,
+                    output: *output,
+                    cache_read: optional_count(cache_read_input),
+                    cache_creation: optional_count(cache_creation_input),
+                });
             }
             ApiEvent::Error { message, .. } => {
                 self.pending_turn = false;
@@ -237,10 +326,12 @@ impl App {
     /// Translate one keystroke into an action, if it produced one.
     ///
     /// A live prompt takes every key first: a half-answered approval must not
-    /// let a stray character into the message being drafted.
+    /// let a stray character into the message being drafted. The key map
+    /// decides what each key means; a printable character that no action claims
+    /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
         if let Some(prompt) = self.prompt.as_mut() {
-            match prompt.on_key(key) {
+            match prompt.on_key_with(&self.bindings, key) {
                 Some(Response::Approval {
                     request_id,
                     approved,
@@ -262,59 +353,155 @@ impl App {
         }
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        match key.code {
-            KeyCode::Char('c') if control => {
-                if self.pending_turn {
-                    self.transcript.push_notice("cancelling the turn");
-                    Some(Action::Cancel)
-                } else {
-                    Some(Action::Quit)
-                }
-            }
-            KeyCode::Char('d') if control => Some(Action::Quit),
-            KeyCode::Enter => {
+        let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+        match bound {
+            Some(keys::ids::APP_SUBMIT) => {
                 let text = self.input.take();
                 if text.trim().is_empty() {
                     return None;
                 }
-                if text.trim() == "/quit" {
-                    return Some(Action::Quit);
+                return self.submit(&text);
+            }
+            Some(keys::ids::EDITOR_COMPLETE) => {
+                self.complete();
+                return None;
+            }
+            Some(keys::ids::APP_CANCEL) => {
+                if self.pending_turn {
+                    self.transcript.push_notice("cancelling the turn");
+                    return Some(Action::Cancel);
                 }
-                self.transcript.push_user(text.clone());
-                self.pending_turn = true;
-                self.session_status = Some("generating".to_string());
-                Some(Action::Send(text))
+                return Some(Action::Quit);
             }
-            KeyCode::Backspace => {
-                self.input.backspace();
-                None
-            }
-            KeyCode::Delete => {
-                self.input.delete();
-                None
-            }
-            KeyCode::Left => {
-                self.input.left();
-                None
-            }
-            KeyCode::Right => {
-                self.input.right();
-                None
-            }
-            KeyCode::Home => {
-                self.input.home();
-                None
-            }
-            KeyCode::End => {
-                self.input.end();
-                None
-            }
-            KeyCode::Char(character) if !control => {
-                self.input.insert(character);
-                None
-            }
-            _ => None,
+            Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
+            Some(keys::ids::EDITOR_BACKSPACE) => self.input.backspace(),
+            Some(keys::ids::EDITOR_DELETE) => self.input.delete(),
+            Some(keys::ids::EDITOR_LEFT) => self.input.left(),
+            Some(keys::ids::EDITOR_RIGHT) => self.input.right(),
+            Some(keys::ids::EDITOR_HOME) => self.input.home(),
+            Some(keys::ids::EDITOR_END) => self.input.end(),
+            _ => {}
         }
+        match key.code {
+            KeyCode::Char(character) if !control => self.input.insert(character),
+            _ => {}
+        }
+        None
+    }
+
+    /// Resolve one submitted line and turn it into an action.
+    ///
+    /// A slash line either names a built-in UI command, a command file or one
+    /// of the harness's commands; a line that names none of them becomes an
+    /// error line and never reaches the model.
+    fn submit(&mut self, text: &str) -> Option<Action> {
+        match self.commands.resolve(text) {
+            Invocation::Message(message) => {
+                self.transcript.push_user(message.clone());
+                Some(self.start_turn(message))
+            }
+            // A command file sends the body it expands to, while the line the
+            // user typed stays in the transcript as the message they sent.
+            Invocation::Expanded { display, text } => {
+                self.transcript.push_user(display);
+                Some(self.start_turn(text))
+            }
+            Invocation::Local { command, arguments } => self.run_local(command, &arguments),
+            Invocation::Server { command, arguments } => Some(Action::Runtime { command, arguments }),
+            Invocation::Error(message) => {
+                self.warn(message);
+                None
+            }
+        }
+    }
+
+    /// Mark a turn as running and hand the text to the bridge.
+    fn start_turn(&mut self, text: String) -> Action {
+        self.pending_turn = true;
+        self.session_status = Some("generating".to_string());
+        Action::Send(text)
+    }
+
+    /// Answer a built-in command that the client owns.
+    fn run_local(&mut self, command: Local, arguments: &str) -> Option<Action> {
+        match command {
+            Local::Quit => Some(Action::Quit),
+            Local::Help => {
+                let listing = self.commands.help();
+                self.transcript.push_notice(listing);
+                None
+            }
+            Local::Clear => {
+                self.transcript = Transcript::new();
+                None
+            }
+            Local::Model => match arguments.trim() {
+                "" => Some(Action::Model(None)),
+                name => Some(Action::Model(Some(name.to_string()))),
+            },
+        }
+    }
+
+    /// The one-line completion hint drawn under the input, if one applies.
+    pub fn completion_hint(&self) -> Option<String> {
+        let text = self.input.text();
+        let completion = self.commands.complete(&text)?;
+        Some(completion.matches.join("  "))
+    }
+
+    /// Complete the line being edited to the longest common prefix, or the
+    /// single match when there is one.
+    pub fn complete(&mut self) {
+        let text = self.input.text();
+        let Some(completion) = self.commands.complete(&text) else {
+            return;
+        };
+        if completion.insert == text {
+            return;
+        }
+        self.input.clear();
+        for character in completion.insert.chars() {
+            self.input.insert(character);
+        }
+    }
+
+    /// Point the command registry at the working directory and read the files.
+    pub fn reload_commands(&mut self) {
+        let cwd = self.cwd.clone();
+        if self.commands.sync(cwd.as_deref().map(std::path::Path::new)) {
+            for warning in self.commands.take_warnings() {
+                self.warn(format!("commands: {warning}"));
+            }
+        }
+    }
+
+    /// Re-read the command files when a directory changed.
+    pub fn tick_commands(&mut self) {
+        if self.commands.tick() {
+            for warning in self.commands.take_warnings() {
+                self.warn(format!("commands: {warning}"));
+            }
+        }
+    }
+}
+
+/// The home directory the `path` segment shortens to `~`.
+///
+/// `HOME` is read first and `USERPROFILE` second, which covers Unix and
+/// Windows without an OS-specific block.
+fn home_directory() -> Option<String> {
+    let value = match std::env::var_os("HOME") {
+        Some(home) => home,
+        None => std::env::var_os("USERPROFILE")?,
+    };
+    Some(value.to_string_lossy().into_owned())
+}
+
+/// A token count the protocol left optional.
+fn optional_count(value: &Option<u64>) -> u64 {
+    match value {
+        Some(value) => *value,
+        None => 0,
     }
 }
 

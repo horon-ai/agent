@@ -586,20 +586,20 @@ pub const CORE_TOOL_PROFILE: &str = "core";
 /// `ambient.approval_for_clientless_runs` is on.
 ///
 /// It is deliberately not part of [`CORE_TOOLS`]: the default headless surface
-/// must stay at fifteen entries, and this tool only becomes reachable when the
+/// must stay at eighteen entries, and this tool only becomes reachable when the
 /// operator opts into clientless approvals.
 pub const CLIENTLESS_APPROVAL_TOOL: &str = "request_permission";
 
 /// Tool joined into a non-empty allow-list when `[tools] plan_mode` is on.
 ///
 /// Like [`CLIENTLESS_APPROVAL_TOOL`] it stays outside [`CORE_TOOLS`]: the
-/// fifteen-tool headless surface is unchanged, and this tool only becomes
+/// eighteen-tool headless surface is unchanged, and this tool only becomes
 /// reachable when the operator turns plan mode on.
 pub const PLAN_TOOL: &str = "submit_plan";
 
 /// Tool joined into a non-empty allow-list when `[tools] irc` is on.
 ///
-/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`]: the fifteen-tool
+/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`]: the eighteen-tool
 /// headless surface is unchanged, and this tool only becomes reachable when the
 /// operator turns the IRC bus on.
 pub const IRC_TOOL: &str = "irc";
@@ -607,14 +607,14 @@ pub const IRC_TOOL: &str = "irc";
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
 /// Every other registered built-in stays off because the profile is an
-/// allow-list: `swarm`, `batch`, `bg`, `memory`, `irc`, `schedule`, `todo`,
-/// `goal`, `horon_agent_docs`, `invalid`, `session_search`,
-/// `conversation_search`, the opt-in `codemode`/`redo`/`hashline_edit`/
-/// `ast_grep`/`ast_edit`/`lsp`/`context_notes`/`toolbox`/
-/// `integration_tools` surface, and the per-session `request_permission` and
-/// `submit_plan` tools. `skill_manage` is the registry key for the skill tool
-/// (`resolve_tool_name` maps `skill` to it); `mcp` is the wildcard covering
-/// every `mcp__server__tool` plus the fixed `mcp_search`/`mcp_call` surface.
+/// allow-list: `batch`, `bg`, `memory`, `irc`, `schedule`, `goal`,
+/// `horon_agent_docs`, `invalid`, `conversation_search`, the opt-in
+/// `codemod`/`redo`/`hashline_edit`/`ast_grep`/`ast_edit`/`lsp`/
+/// `context_notes`/`toolbox`/`integration_tools` surface, and the per-session
+/// `request_permission` and `submit_plan` tools. `skill_manage` is the registry
+/// key for the skill tool (`resolve_tool_name` maps `skill` to it); `mcp` is the
+/// wildcard covering every `mcp__server__tool` plus the fixed
+/// `mcp_search`/`mcp_call` surface.
 ///
 /// The list is the reachability contract, not the eager surface: a `core`
 /// listing sends only [`ESSENTIAL_TOOLS`] eagerly and names the rest in its
@@ -635,6 +635,9 @@ pub const CORE_TOOLS: &[&str] = &[
     "monitor",
     "undo",
     "ask",
+    "todo",
+    "session_search",
+    "swarm",
 ];
 
 /// Tools a `core`-listed session keeps eager.
@@ -649,7 +652,7 @@ pub const ESSENTIAL_TOOLS: &[&str] = &["read", "write", "edit", "apply_patch", "
 /// eagerly.
 ///
 /// Deliberately outside [`CORE_TOOLS`]: the `core` allow-list joins it and the
-/// `acp` list never does, so [`CORE_TOOLS`] itself stays the fifteen-tool
+/// `acp` list never does, so [`CORE_TOOLS`] itself stays the eighteen-tool
 /// surface. It is registered under `full` and `core`, and [`ToolLoadTiers::tier`]
 /// pins its tier to [`LoadMode::Essential`] so the one tool that reaches the
 /// deferred surface is never itself deferred. It only loads a schema.
@@ -1105,7 +1108,7 @@ impl ToolConfig {
         } else if profile == CORE_TOOL_PROFILE {
             // The dispatcher joins the closed `core` list so the tools this
             // session lists instead of sending stay reachable. It stays out of
-            // `CORE_TOOLS`: that constant is the fifteen-tool reachability
+            // `CORE_TOOLS`: that constant is the eighteen-tool reachability
             // contract, and every other profile keeps its own list.
             Some(
                 CORE_TOOLS

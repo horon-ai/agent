@@ -129,6 +129,9 @@ fn imported_history_is_bounded_for_fast_initial_render() {
     let mut session = Session::create_with_id("imported_test_bounded".to_string(), None, None);
     for index in 0..(IMPORT_HISTORY_MAX_MESSAGES + 80) {
         session.append_stored_message(StoredMessage {
+            original_input: None,
+            arg_repairs: None,
+            degradations: None,
             turn_start: false,
             id: format!("message-{index}"),
             role: if index % 2 == 0 { Role::User } else { Role::Assistant },
@@ -448,6 +451,9 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
     let imported_id = imported_codex_session_id("legacy-tools");
     let mut legacy = Session::create_with_id(imported_id.clone(), None, None);
     legacy.append_stored_message(StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "assistant-tool".to_string(),
         role: Role::Assistant,
@@ -463,6 +469,9 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
         token_usage: None,
     });
     legacy.append_stored_message(StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "user-result".to_string(),
         role: Role::User,
@@ -477,6 +486,9 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
         token_usage: None,
     });
     legacy.append_stored_message(StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "horon-agent-continuation".to_string(),
         role: Role::Assistant,
@@ -987,6 +999,9 @@ fn test_reimporting_claude_session_preserves_horon_agent_continuation() {
     // User resumes inside horon-agent and appends a horon-agent-only follow-up message.
     let mut session = Session::load(&imported_id).unwrap();
     session.append_stored_message(StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "horon-agent-continuation".to_string(),
         role: Role::User,
