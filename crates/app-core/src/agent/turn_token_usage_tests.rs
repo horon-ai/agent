@@ -12,6 +12,7 @@ fn assistant_message(
     crate::session::StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: id.to_string(),
         role: Role::Assistant,
@@ -36,6 +37,7 @@ fn sums_assistant_usage_only_from_the_turn_start() {
         crate::session::StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             turn_start: false,
             id: "user".to_string(),
             role: Role::User,
@@ -62,6 +64,7 @@ fn returns_none_without_assistant_usage() {
     let messages = vec![crate::session::StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "user".to_string(),
         role: Role::User,

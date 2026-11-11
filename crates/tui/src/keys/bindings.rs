@@ -38,6 +38,8 @@ pub mod ids {
     pub const EDITOR_HOME: &str = "editor.home";
     /// Move the cursor to the end of the line.
     pub const EDITOR_END: &str = "editor.end";
+    /// Complete the slash command being typed.
+    pub const EDITOR_COMPLETE: &str = "editor.complete";
     /// Approve a parked tool call once.
     pub const PROMPT_ALLOW: &str = "prompt.allow";
     /// Approve a parked tool call and every later call like it.
@@ -97,6 +99,7 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::EDITOR_RIGHT, Scope::Editor, &["right"]),
     ActionSpec::new(ids::EDITOR_HOME, Scope::Editor, &["home"]),
     ActionSpec::new(ids::EDITOR_END, Scope::Editor, &["end"]),
+    ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
     ActionSpec::new(ids::PROMPT_DENY, Scope::Prompt, &["n"]),

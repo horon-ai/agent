@@ -529,6 +529,7 @@ fn normalize_imported_history(session: &mut Session, apply_limits: bool) -> bool
             kept_reversed.insert(
                 0,
                 StoredMessage { original_input: None, arg_repairs: None,
+                degradations: None,
                     turn_start: false,
                     id: crate::id::new_id("message"),
                     role: Role::User,
@@ -801,6 +802,7 @@ fn import_session_from_file_with_target(
             imported_messages.push(StoredMessage {
                 original_input: None,
                 arg_repairs: None,
+                degradations: None,
                 turn_start: false,
                 id: msg_id,
                 role,
@@ -946,6 +948,7 @@ fn append_text_message(session: &mut Session, role: Role, text: String, timestam
     session.append_stored_message(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: crate::id::new_id("msg"),
         role,

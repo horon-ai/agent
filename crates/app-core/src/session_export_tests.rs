@@ -12,6 +12,7 @@ fn message(role: Role, content: Vec<ContentBlock>) -> StoredMessage {
     StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         id: "m1".to_string(),
         role,
         content,
