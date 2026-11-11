@@ -9,6 +9,7 @@
 //! mechanisms cannot drift.
 
 use horon_agent_agent_runtime::turn_recovery::{MAX_AUTO_CONTINUATIONS, RecoveryClass, RecoveryMode, classify};
+use horon_agent_provider_core::judge::{JudgeItem, JudgeQuestion, JudgeRequest};
 
 use super::*;
 
@@ -24,6 +25,15 @@ pub(crate) const TURN_RECOVERY_NUDGE_PREFIX: &str = "[System reminder: your prev
 /// Stable opening of the terminal notice written once the continuation budget
 /// is spent.
 pub(crate) const TURN_RECOVERY_EXHAUSTED_PREFIX: &str = "Automatic turn recovery was exhausted";
+
+/// How much probability a judgment needs before the semantic class is acted on.
+///
+/// `0.5` is where the judge's own prompt says it does not know, so a tie is not
+/// a reason to continue: the turn keeps the mode's own decision, exactly as a
+/// failed judgment does. Every value at or above it, from an uncalibrated
+/// model, is compared once and never reweighted; the threshold is a policy
+/// choice, not a claim about the model's calibration.
+const JUDGED_STOP_ACT_THRESHOLD: f32 = 0.5;
 
 /// What the caller should do after the automatic-continuation check.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,11 +106,25 @@ impl Agent {
     /// existing recovery chain untouched: a clean stop, an unrecognized stop
     /// reason, a refusal, an abort, or a mode that does not act on this class.
     ///
+    /// The semantic class is the one place the classifier only guesses: it reads
+    /// the last sentence and matches an announcement pattern. When `[autojudge]`
+    /// is enabled this asks the `judge` role for a typed second opinion on that
+    /// class alone, and acts on the answer; every other class is deterministic
+    /// and never judged. A judgment that is unavailable, fails, times out or
+    /// answers with an unusable probability leaves the deterministic decision in
+    /// place, so a broken judge can only cost a request, never change a turn.
+    ///
+    /// Because the switch itself is off by default, enabling it is what extends
+    /// `conservative` to the semantic class; that reach is stated in
+    /// `docs/runtime/TURNS.md` rather than implied. A judgment still runs on the
+    /// stop that spends the last continuation, because its answer decides
+    /// whether the terminal notice claims output may be missing.
+    ///
     /// Callers must already have established that the turn actually finished
     /// (not aborted) and carried no tool calls. The spent budget lives in
     /// [`TurnState`](horon_agent_agent_runtime::TurnState), so a loop never
     /// keeps a counter of its own.
-    pub(super) fn maybe_auto_continue_unexpected_stop(
+    pub(super) async fn maybe_auto_continue_unexpected_stop(
         &mut self,
         stop_reason: Option<&str>,
         final_text: &str,
@@ -116,13 +140,31 @@ impl Agent {
             return Ok(None);
         };
         let class = classify(&token, final_text);
-        if class.is_clean() || !mode.acts_on(class) {
+        if class.is_clean() {
             return Ok(None);
         }
+        let mut acts = mode.acts_on(class);
+        // A judgment is spent only where its answer can still change the turn:
+        // it can grant a continuation, or, once the budget is gone, it can still
+        // decide whether the terminal notice is recorded. A mode that neither
+        // acts on this class nor is widened by the judge is not asked at all.
+        // The bound is one judgment per unexpected stop, and the turn ends
+        // immediately after the notice, so a run spends at most
+        // `MAX_AUTO_CONTINUATIONS + 1`.
+        if class == RecoveryClass::SemanticPrematureStop
+            && (acts || Self::autojudge_widens_into(mode))
+            && let Some(judged) = self.judged_semantic_stop(final_text).await
+        {
+            acts = judged;
+        }
+        if !acts {
+            return Ok(None);
+        }
+        let budget_left = self.turn_state.auto_continuations() < MAX_AUTO_CONTINUATIONS;
 
         let label = Self::recovery_reason_label(class);
 
-        if self.turn_state.auto_continuations() >= MAX_AUTO_CONTINUATIONS {
+        if !budget_left {
             let attempts = self.turn_state.auto_continuations();
             let notice = format!(
                 "{TURN_RECOVERY_EXHAUSTED_PREFIX} after {MAX_AUTO_CONTINUATIONS} automatic continuations (last detected: {label}). The turn ended with possibly incomplete output."
@@ -168,5 +210,131 @@ impl Agent {
             }],
             Some(crate::session::StoredDisplayRole::System),
         );
+    }
+
+    /// Whether enabling the judge extends `mode` to the semantic class.
+    ///
+    /// `aggressive` already acts on every non-clean class, so a judgment there
+    /// only confirms or withdraws that decision. `conservative` deliberately
+    /// leaves the semantic guess alone; turning the judge on is the one thing
+    /// that changes that, and only because the answer comes from a model rather
+    /// than a sentence pattern.
+    fn autojudge_widens_into(mode: RecoveryMode) -> bool {
+        mode == RecoveryMode::Conservative
+    }
+
+    /// Ask the `judge` role whether a semantic stop was premature.
+    ///
+    /// `Some(true)` means the judge is confident enough to act on the class,
+    /// `Some(false)` means it is not, and `None` means no judgment was obtained
+    /// and the caller keeps its deterministic decision. Every path that returns
+    /// `None` is a fail-open path: the setting is off, no judge model resolves,
+    /// the request cannot be built, or the attempt failed.
+    ///
+    /// This never retries. A judgment gates a turn that is already waiting, so a
+    /// second attempt spends the user's time on the same coin flip.
+    async fn judged_semantic_stop(&mut self, final_text: &str) -> Option<bool> {
+        let config = crate::config::config();
+        let enabled = self.autojudge_enabled().unwrap_or(config.autojudge.enabled);
+        if !enabled {
+            return None;
+        }
+        let target = match horon_agent_base::judge::judge_target_for_session(&self.session, &config.autojudge) {
+            Ok(target) => target,
+            Err(error) => {
+                crate::logging::event_rate_limited(
+                    crate::logging::LogLevel::Info,
+                    "turn_recovery_judge_unavailable",
+                    std::time::Duration::from_secs(300),
+                    "TURN_RECOVERY_JUDGE_UNAVAILABLE",
+                    vec![("reason", error.to_string())],
+                );
+                return None;
+            }
+        };
+        let last_user = self.last_user_text();
+        let state = horon_agent_base::judge::turn_recovery_state(&last_user, final_text);
+        let request = JudgeRequest::new(
+            state,
+            vec![JudgeItem::new(
+                "premature_stop",
+                JudgeQuestion::boolean(
+                    "The assistant announced work and then ended its turn with no tool call. \
+                     Did it stop before finishing the work the user asked for?",
+                ),
+            )],
+        )
+        .inspect_err(|error| {
+            crate::logging::event_rate_limited(
+                crate::logging::LogLevel::Warn,
+                "turn_recovery_judge_failed",
+                std::time::Duration::from_secs(60),
+                "TURN_RECOVERY_JUDGE_FAILED",
+                vec![("reason", error.to_string())],
+            );
+        })
+        .ok()?;
+
+        match horon_agent_base::judge::judge_with(
+            &self.provider,
+            &target.model,
+            config.autojudge.attempt_timeout_ms(),
+            &request,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                let probability = outcome.answers.probability("premature_stop");
+                crate::logging::event_info(
+                    "TURN_RECOVERY_JUDGE_ANSWER",
+                    vec![
+                        ("model", outcome.model),
+                        (
+                            "probability",
+                            probability.map(|p| format!("{p:.3}")).unwrap_or_default(),
+                        ),
+                        ("elapsed_ms", outcome.elapsed.as_millis().to_string()),
+                        (
+                            "output_tokens",
+                            outcome.usage.output_tokens.map(|t| t.to_string()).unwrap_or_default(),
+                        ),
+                    ],
+                );
+                probability.map(|probability| probability >= JUDGED_STOP_ACT_THRESHOLD)
+            }
+            Err(error) => {
+                crate::logging::event_rate_limited(
+                    crate::logging::LogLevel::Warn,
+                    "turn_recovery_judge_failed",
+                    std::time::Duration::from_secs(60),
+                    "TURN_RECOVERY_JUDGE_FAILED",
+                    vec![("reason", error.to_string()), ("model", target.model)],
+                );
+                None
+            }
+        }
+    }
+
+    /// The most recent user text in the active context, excluding the synthetic
+    /// recovery nudges this module appends.
+    fn last_user_text(&self) -> String {
+        self.session
+            .active_context()
+            .iter()
+            .rev()
+            .filter(|message| message.role == Role::User)
+            .map(|message| {
+                message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .find(|text| !text.trim().is_empty() && !text.starts_with(TURN_RECOVERY_NUDGE_PREFIX))
+            .unwrap_or_default()
     }
 }

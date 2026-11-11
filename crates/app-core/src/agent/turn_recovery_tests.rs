@@ -17,6 +17,15 @@ struct ScriptedStopProvider {
     calls: Arc<AtomicUsize>,
     prompts: Arc<Mutex<Vec<Vec<Message>>>>,
     abort_on_call: Arc<Mutex<Option<(usize, horon_agent_agent_runtime::InterruptSignal)>>>,
+    /// Selected model, shared with every fork so a judge `set_model` is visible
+    /// to the test.
+    model: Arc<Mutex<String>>,
+    /// One scripted judge reply per `complete_simple_with_usage` call. The last
+    /// entry repeats, so a test can script one answer and keep it.
+    judge_replies: Arc<Mutex<Vec<Result<String, String>>>>,
+    judge_prompts: Arc<Mutex<Vec<String>>>,
+    judge_calls: Arc<AtomicUsize>,
+    judge_delay: Arc<Mutex<Option<std::time::Duration>>>,
 }
 
 #[derive(Clone)]
@@ -33,11 +42,38 @@ impl ScriptedStopProvider {
             calls: Arc::new(AtomicUsize::new(0)),
             prompts: Arc::new(Mutex::new(Vec::new())),
             abort_on_call: Arc::new(Mutex::new(None)),
+            model: Arc::new(Mutex::new("session-model".to_string())),
+            judge_replies: Arc::new(Mutex::new(Vec::new())),
+            judge_prompts: Arc::new(Mutex::new(Vec::new())),
+            judge_calls: Arc::new(AtomicUsize::new(0)),
+            judge_delay: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Script the answers a judge call receives, in order; the last entry
+    /// repeats.
+    fn with_judge_replies(&self, replies: Vec<Result<String, String>>) {
+        *self.judge_replies.lock().unwrap() = replies;
     }
 
     fn arm_abort(&self, call: usize, signal: horon_agent_agent_runtime::InterruptSignal) {
         *self.abort_on_call.lock().unwrap() = Some((call, signal));
+    }
+
+    fn judge_calls(&self) -> usize {
+        self.judge_calls.load(Ordering::SeqCst)
+    }
+
+    fn with_judge_delay(&self, delay: std::time::Duration) {
+        *self.judge_delay.lock().unwrap() = Some(delay);
+    }
+
+    fn judge_prompts(&self) -> Vec<String> {
+        self.judge_prompts.lock().unwrap().clone()
+    }
+
+    fn selected_model(&self) -> String {
+        self.model.lock().unwrap().clone()
     }
 }
 
@@ -112,6 +148,47 @@ impl Provider for ScriptedStopProvider {
         "scripted-stop"
     }
 
+    fn model(&self) -> String {
+        self.model.lock().unwrap().clone()
+    }
+
+    fn set_model(&self, model: &str) -> Result<()> {
+        *self.model.lock().unwrap() = model.to_string();
+        Ok(())
+    }
+
+    /// A judgment is a simple completion, so it is answered from the judge
+    /// script rather than the turn script: a judge call must not consume a
+    /// scripted turn.
+    async fn complete_simple_with_usage(
+        &self,
+        prompt: &str,
+        _system: &str,
+    ) -> Result<(String, horon_agent_provider_core::SimpleCompletionUsage)> {
+        let index = self.judge_calls.fetch_add(1, Ordering::SeqCst);
+        self.judge_prompts.lock().unwrap().push(prompt.to_string());
+        let delay = *self.judge_delay.lock().unwrap();
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
+        let replies = self.judge_replies.lock().unwrap();
+        let reply = match replies.get(index).or_else(|| replies.last()) {
+            Some(Ok(text)) => text.clone(),
+            Some(Err(error)) => return Err(anyhow::anyhow!("{error}")),
+            // An unscripted judge answers "not confident", so a test that only
+            // asserts about the turn never has to script one.
+            None => serde_json::json!({"answers": [{"id": "premature_stop", "probability": 0.0}]}).to_string(),
+        };
+        Ok((
+            reply,
+            horon_agent_provider_core::SimpleCompletionUsage {
+                input_tokens: Some(24),
+                output_tokens: Some(3),
+                ..Default::default()
+            },
+        ))
+    }
+
     fn fork(&self) -> Arc<dyn Provider> {
         Arc::new(self.clone())
     }
@@ -128,6 +205,55 @@ fn write_turn_recovery(root: &std::path::Path, mode: &str) -> TurnRecoveryFlag {
 }
 
 struct TurnRecoveryFlag;
+
+/// The named provider profile the judge tests configure.
+const JUDGE_PROFILE: &str = "judge-gw";
+
+struct JudgeOptions {
+    enabled: bool,
+    judge_model: Option<&'static str>,
+    timeout_ms: u64,
+}
+
+impl Default for JudgeOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            judge_model: Some("judge-model"),
+            timeout_ms: 3000,
+        }
+    }
+}
+
+/// Write a configuration with a named profile and an optional `judge` role, so
+/// role resolution has a real table to read.
+fn write_autojudge(root: &std::path::Path, mode: &str, judge: JudgeOptions) -> TurnRecoveryFlag {
+    let roles = judge
+        .judge_model
+        .map(|model| format!("\n[providers.{JUDGE_PROFILE}.roles]\njudge = \"{model}\"\n"))
+        .unwrap_or_default();
+    // A profile without `default_model` and without roles resolves nothing, which
+    // is how the "no judge model" case is built.
+    let default_model = if judge.judge_model.is_some() {
+        "default_model = \"session-model\"\n"
+    } else {
+        ""
+    };
+    std::fs::write(
+        root.join("config.toml"),
+        format!(
+            "[features]\nturn_recovery = \"{mode}\"\nparallel_tools = true\n\n\
+             [autojudge]\nenabled = {enabled}\nattempt_timeout_ms = {timeout}\n\n\
+             [providers.{JUDGE_PROFILE}]\nbase_url = \"http://127.0.0.1:1/v1\"\n{default_model}{roles}",
+            enabled = judge.enabled,
+            timeout = judge.timeout_ms,
+        ),
+    )
+    .expect("the config is written");
+    crate::env::set_var("HORON_AGENT_NAMED_PROVIDER_PROFILE", JUDGE_PROFILE);
+    crate::config::invalidate_config_cache();
+    TurnRecoveryFlag
+}
 
 impl Drop for TurnRecoveryFlag {
     fn drop(&mut self) {
@@ -710,4 +836,258 @@ fn turn_recovery_mode_parses_and_falls_back() {
     let explicit: crate::config::FeatureConfig =
         serde_json::from_str(r#"{"turn_recovery": "off"}"#).expect("a known mode parses");
     assert_eq!(explicit.turn_recovery, TurnRecoveryMode::Off);
+}
+
+fn judge_json(probability: f32) -> String {
+    serde_json::json!({"answers": [{"id": "premature_stop", "probability": probability}]}).to_string()
+}
+
+/// A provider whose judge answers `probability`, with the semantic stop first
+/// and a clean final answer second.
+fn semantic_judge_provider(probability: f32) -> ScriptedStopProvider {
+    let provider = ScriptedStopProvider::new(vec![
+        ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
+        ScriptedStop::Stop("end_turn".into(), "done".into()),
+    ]);
+    provider.with_judge_replies(vec![Ok(judge_json(probability))]);
+    provider
+}
+
+async fn run_with_provider(provider: &ScriptedStopProvider, prompt: &str) -> (Agent, usize) {
+    let (agent, calls) = run_blocking(provider.clone(), prompt).await;
+    (agent, calls.load(Ordering::SeqCst))
+}
+
+#[tokio::test]
+async fn autojudge_off_leaves_the_semantic_guess_alone() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(
+        sandbox.root(),
+        "conservative",
+        JudgeOptions {
+            enabled: false,
+            ..JudgeOptions::default()
+        },
+    );
+
+    let provider = semantic_judge_provider(0.99);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(calls, 1, "the judge must not run while the switch is off");
+    assert_eq!(
+        provider.judge_calls(),
+        0,
+        "no judgment request may be spent on a disabled judge"
+    );
+    assert!(nudges(&agent).is_empty(), "conservative must not act on the class");
+}
+
+#[tokio::test]
+async fn a_judged_premature_stop_continues_in_conservative_mode() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "conservative", JudgeOptions::default());
+
+    let provider = semantic_judge_provider(0.87);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 1, "exactly one judgment per stop");
+    assert_eq!(calls, 2, "a judged premature stop costs one continuation");
+    assert_eq!(nudges(&agent).len(), 1);
+    assert_eq!(
+        provider.selected_model(),
+        "judge-model",
+        "the judgment runs on the role's model, not the session model"
+    );
+
+    let prompt = provider
+        .judge_prompts()
+        .first()
+        .cloned()
+        .expect("the judge was prompted");
+    assert!(
+        prompt.contains("do the task"),
+        "the judgment reads the user's request: {prompt}"
+    );
+    assert!(
+        prompt.contains("I'll now run the full test suite."),
+        "the judgment reads the stopped text: {prompt}"
+    );
+}
+
+#[tokio::test]
+async fn a_judged_complete_stop_is_left_alone_in_aggressive_mode() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "aggressive", JudgeOptions::default());
+
+    let provider = semantic_judge_provider(0.05);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 1, "the judge is consulted once");
+    assert_eq!(
+        calls, 1,
+        "aggressive acts on the class only when the judge agrees the stop was premature"
+    );
+    assert!(nudges(&agent).is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_judgment_fails_open_to_the_deterministic_decision() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "aggressive", JudgeOptions::default());
+
+    let provider = ScriptedStopProvider::new(vec![
+        ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
+        ScriptedStop::Stop("end_turn".into(), "done".into()),
+    ]);
+    provider.with_judge_replies(vec![Err("502 from the upstream".to_string())]);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 1);
+    assert_eq!(
+        calls, 2,
+        "a failed judgment falls back to aggressive's deterministic decision"
+    );
+    assert_eq!(nudges(&agent).len(), 1);
+}
+
+#[tokio::test]
+async fn a_judgment_timeout_fails_open_too() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(
+        sandbox.root(),
+        "conservative",
+        JudgeOptions {
+            timeout_ms: 20,
+            ..JudgeOptions::default()
+        },
+    );
+
+    let provider = semantic_judge_provider(0.99);
+    provider.with_judge_delay(std::time::Duration::from_millis(200));
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(
+        calls, 1,
+        "a timed-out judgment leaves conservative's decision in place even though the judge would have continued"
+    );
+    assert!(nudges(&agent).is_empty());
+}
+
+#[tokio::test]
+async fn a_missing_judge_role_fails_open_without_a_request() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(
+        sandbox.root(),
+        "aggressive",
+        JudgeOptions {
+            judge_model: None,
+            ..JudgeOptions::default()
+        },
+    );
+
+    let provider = semantic_judge_provider(0.99);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 0, "an unresolved role spends no request");
+    assert_eq!(calls, 2, "aggressive still acts on the class deterministically");
+    assert_eq!(nudges(&agent).len(), 1);
+}
+
+#[tokio::test]
+async fn deterministic_classes_are_never_judged() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "conservative", JudgeOptions::default());
+
+    let provider = ScriptedStopProvider::new(vec![
+        ScriptedStop::Stop("length".into(), "partial answer".into()),
+        ScriptedStop::Stop("end_turn".into(), "final answer".into()),
+    ]);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 0, "a length stop is provable, not a guess");
+    assert_eq!(calls, 2);
+    assert_eq!(nudges(&agent).len(), 1);
+}
+
+#[tokio::test]
+async fn a_clean_stop_is_never_judged() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "aggressive", JudgeOptions::default());
+
+    let provider = ScriptedStopProvider::new(vec![ScriptedStop::Stop(
+        "end_turn".into(),
+        "The migration is complete.".into(),
+    )]);
+    let (_agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 0);
+    assert_eq!(calls, 1);
+}
+
+#[tokio::test]
+async fn a_malformed_judgment_fails_open_too() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "aggressive", JudgeOptions::default());
+
+    let provider = semantic_judge_provider(0.0);
+    provider.with_judge_replies(vec![Ok("I think it is probably fine.".to_string())]);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 1);
+    assert_eq!(
+        calls, 2,
+        "prose is not an answer, so aggressive's deterministic decision stands"
+    );
+    assert_eq!(nudges(&agent).len(), 1);
+}
+
+#[tokio::test]
+async fn judgments_are_bounded_by_the_continuation_budget() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(sandbox.root(), "aggressive", JudgeOptions::default());
+
+    let provider = ScriptedStopProvider::new(vec![
+        ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
+        ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
+        ScriptedStop::Stop("end_turn".into(), "I'll now run the full test suite.".into()),
+        ScriptedStop::Stop("end_turn".into(), "done".into()),
+    ]);
+    provider.with_judge_replies(vec![Ok(judge_json(0.9))]);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    // Two continuations plus the stop that records the terminal notice: the
+    // judgment is asked once per unexpected stop and the turn ends right after.
+    assert_eq!(calls, 3);
+    assert_eq!(
+        provider.judge_calls(),
+        (horon_agent_agent_runtime::turn_recovery::MAX_AUTO_CONTINUATIONS as usize) + 1,
+        "a run judges at most one stop per continuation plus the final one"
+    );
+    assert_eq!(nudges(&agent).len(), 2);
+    assert!(
+        transcript_roles_and_text(&agent)
+            .iter()
+            .any(|(_, text)| text.starts_with(TURN_RECOVERY_EXHAUSTED_PREFIX)),
+        "the spent budget ends the turn with a notice"
+    );
+}
+
+#[tokio::test]
+async fn a_judge_that_cannot_be_reached_costs_no_turn_in_conservative_mode() {
+    let sandbox = AuthTestSandbox::new().unwrap();
+    let _flag = write_autojudge(
+        sandbox.root(),
+        "conservative",
+        JudgeOptions {
+            judge_model: None,
+            ..JudgeOptions::default()
+        },
+    );
+
+    let provider = semantic_judge_provider(0.99);
+    let (agent, calls) = run_with_provider(&provider, "do the task").await;
+
+    assert_eq!(provider.judge_calls(), 0, "an unresolved role spends no request");
+    assert_eq!(calls, 1, "conservative alone never continues a semantic stop");
+    assert!(nudges(&agent).is_empty());
 }
