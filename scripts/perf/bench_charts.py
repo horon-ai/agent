@@ -506,6 +506,18 @@ MD_TEXT = {
 }
 
 
+MD_TUI = {
+    "en": {
+        "intro": "The interactive client is a second binary; these charts are drawn from the `tui` suite only and are never mixed with the headless charts above.",
+        "header": "| TUI metric | Chart |",
+    },
+    "ko": {
+        "intro": "대화형 클라이언트는 별도 바이너리입니다. 이 차트는 `tui` 묶음만으로 그리며 위의 헤드리스 차트와 섞지 않습니다.",
+        "header": "| TUI 항목 | 차트 |",
+    },
+}
+
+
 def chart_name(stem: str, lang: str) -> str:
     return f"{stem}.svg" if lang == "en" else f"{stem}.{lang}.svg"
 
@@ -521,7 +533,147 @@ def render_charts(dirs: dict[str, Path], commit: str, lang: str, run_id: str | N
     return files
 
 
-def markdown(lang: str, has_charts: bool, folder: str = "charts") -> str:
+# --- TUI charts ----------------------------------------------------------------
+#
+# The interactive client is measured by the `tui` suite, whose numbers never share
+# a table or a chart with the headless comparison: its bars are timings of one
+# program against itself, not of horon against other tools. Two charts keep the
+# page short — latency in milliseconds, memory and size in bytes — and each OS
+# gets its own panel, as in the comparison charts.
+
+
+@dataclass(frozen=True)
+class TuiMetric:
+    stem: str
+    unit: str
+    title: dict[str, str]
+    note: dict[str, str]
+    rows: tuple[tuple[str, str], ...]
+
+
+TUI_METRICS = (
+    TuiMetric(
+        "01-latency",
+        "ms",
+        {"en": "TUI latency", "ko": "TUI 지연"},
+        {"en": "Median per run. `first_frame_ms` is the bare agent until the first screen, "
+               "`direct_tui` is `horon-tui` started on its own, `input_echo_p95` is key press "
+               "to echoed character, and `render` is one drawn frame with 1000 messages.",
+         "ko": "실행별 중앙값. `first_frame_ms` 는 맨 에이전트가 첫 화면까지, "
+               "`direct_tui` 는 `horon-tui` 를 단독 실행한 경우, `input_echo_p95` 는 키 입력에서 "
+               "글자가 화면에 찍힐 때까지, `render` 는 메시지 1000개 상태의 프레임 한 장입니다."},
+        (
+            ("first_frame_ms", "agent first frame"),
+            ("direct_tui_first_frame_ms", "tui first frame"),
+            ("input_echo_p95_ms", "input echo p95"),
+            ("render_p50_ms", "render p50"),
+            ("render_p95_ms", "render p95"),
+        ),
+    ),
+    TuiMetric(
+        "02-memory",
+        "bytes",
+        {"en": "TUI memory and size", "ko": "TUI 메모리와 크기"},
+        {"en": "Median per run. `idle` is the process tree 5 s after the first frame, `post-turn` "
+               "is after one mock turn, and `install size` is the `horon-tui` binary.",
+         "ko": "실행별 중앙값. `idle` 은 첫 화면 5초 뒤 프로세스 트리, `post-turn` 은 모의 턴 한 번 뒤, "
+               "`install size` 는 `horon-tui` 바이너리 크기입니다."},
+        (
+            ("idle_rss_bytes", "idle RSS"),
+            ("post_turn_rss_bytes", "post-turn RSS"),
+            ("install_size_bytes", "install size"),
+        ),
+    ),
+)
+
+TUI_LABELS = {
+    "en": {"agent first frame": "agent first frame", "tui first frame": "tui first frame",
+           "input echo p95": "input echo p95", "render p50": "render p50", "render p95": "render p95",
+           "idle RSS": "idle RSS", "post-turn RSS": "post-turn RSS", "install size": "install size"},
+    "ko": {"agent first frame": "에이전트 첫 화면", "tui first frame": "tui 첫 화면",
+           "input echo p95": "입력 반향 p95", "render p50": "렌더 p50", "render p95": "렌더 p95",
+           "idle RSS": "유휴 RSS", "post-turn RSS": "턴 후 RSS", "install size": "설치 크기"},
+}
+
+
+def load_tui(dirs: dict[str, Path]) -> dict[str, dict]:
+    """Read tui.json from each OS job directory; unreadable files count as absent."""
+    found: dict[str, dict] = {}
+    for key, _ in PLATFORMS:
+        directory = dirs.get(key)
+        path = directory / "tui.json" if directory else None
+        if path is None or not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("suite") == "tui":
+            found[key] = data
+    return found
+
+
+def tui_chart_names(lang: str) -> list[str]:
+    return [chart_name(f"tui-{metric.stem}", lang) for metric in TUI_METRICS]
+
+
+def tui_chart_name(lang: str) -> str:
+    """The chart the TUI section links first; both charts sit in the same folder."""
+    return tui_chart_names(lang)[0]
+
+
+def _tui_rows(run: dict | None, metric: TuiMetric) -> list[float | None]:
+    return [_number(_get(run, key, "median")) for key, _ in metric.rows]
+
+
+def render_tui_chart(metric: TuiMetric, runs: dict[str, dict], commit: str, lang: str,
+                     run_id: str | None = None) -> str:
+    text = TEXT[lang]
+    labels = TUI_LABELS[lang]
+    tools = [(key, labels[label]) for key, label in metric.rows]
+    per_os = {key: (_tui_rows(runs.get(key), metric) if key in runs else None) for key, _ in PLATFORMS}
+    everything = [v for vals in per_os.values() if vals for v in vals]
+    pseudo = Metric(metric.stem, metric.unit, metric.title, metric.note, lambda result: None)
+    divisor, unit = _scale(pseudo, everything)
+    unit_text = UNIT_LABEL[lang].get(unit, unit)
+    title = f"{metric.title[lang].replace('`', '')} ({unit_text}, {text['lower']})"
+    body = [_t(PAD, 44, title, 22, INK, weight="bold")]
+    for i, line in enumerate(_wrap(f"{metric.note[lang]}", 13, WIDTH - 2 * PAD)):
+        body.append(_t(PAD, 68 + 18 * i, line, 13, MUTED))
+    label_w = max([_text_width(label, 12.5) for _, label in tools] + [80]) + 18
+    y = 68 + 18 * max(len(_wrap(metric.note[lang], 13, WIDTH - 2 * PAD)), 1) + 14
+    for key, os_title in PLATFORMS:
+        skipped = _tui_skip_note(runs.get(key))
+        note = text["no_os" if key not in runs else "empty"].format(os=os_title)
+        if skipped:
+            note += " " + skipped
+        part, y = _panel(y, os_title, per_os[key], tools, pseudo, divisor, label_w, lang, note)
+        body += part
+    footer, y = _footer(y + 6, commit, _measured_at(runs), run_id, lang)
+    return _svg(y + 22, body + footer, title)
+
+
+def _tui_skip_note(run: dict | None) -> str:
+    """Name the recorded skip reason once instead of leaving the bars silently absent."""
+    for entry in (run or {}).get("skipped", []) or []:
+        if isinstance(entry, dict) and isinstance(entry.get("reason"), str):
+            return f"({entry['reason']})"
+    return ""
+
+
+def render_tui_charts(dirs: dict[str, Path], commit: str, lang: str,
+                      run_id: str | None = None) -> dict[str, str]:
+    """Map file name to SVG text; empty when no OS produced a TUI result."""
+    runs = load_tui(dirs)
+    if not runs:
+        return {}
+    return {
+        chart_name(f"tui-{metric.stem}", lang): render_tui_chart(metric, runs, commit, lang, run_id)
+        for metric in TUI_METRICS
+    }
+
+
+def markdown(lang: str, has_charts: bool, folder: str = "charts", has_tui: bool = False) -> str:
     text = MD_TEXT[lang]
     if not has_charts:
         return text["missing"]
@@ -536,4 +688,15 @@ def markdown(lang: str, has_charts: bool, folder: str = "charts") -> str:
     for metric in METRICS:
         name = chart_name(metric.stem, lang)
         lines.append(f"| {metric.title[lang]} | [{name}]({folder}/{name}) |")
+    if has_tui:
+        lines += [
+            "",
+            MD_TUI[lang]["intro"],
+            "",
+            MD_TUI[lang]["header"],
+            "| --- | --- |",
+        ]
+        for metric in TUI_METRICS:
+            name = chart_name(f"tui-{metric.stem}", lang)
+            lines.append(f"| {metric.title[lang]} | [{name}]({folder}/{name}) |")
     return "\n".join(lines)

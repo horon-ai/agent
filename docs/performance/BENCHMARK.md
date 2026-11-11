@@ -27,7 +27,7 @@ Each OS calls `.github/workflows/benchmark-os.yml` once, and inside it the work 
 | Job | Count | What it does |
 | --- | --- | --- |
 | `build` | 1 per OS | Builds the `horon-agent` and `loading_probe` release binaries once and uploads them as the `bench-bin-<os>-<run_id>` artifact (tar, kept 1 day). With a `baseline_ref` and `compare` selected it also builds that commit separately into `baseline/` inside the same tar. Both builds use the values `release.yml` uses for shipped binaries (`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`). The repository's `[profile.release]` is for local rebuilds (`opt-level = 1`, incremental), and the competing tools run their own shipped release builds. |
-| `measure` | 1 per OS × measurement unit | Downloads the binaries and measures exactly one unit. The units are `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, and `reload`. With a baseline build, `compare` measures it as the `horon-base` row, alternating inside the same job. |
+| `measure` | 1 per OS × measurement unit | Downloads the binaries and measures exactly one unit. The units are `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, and `tui`. With a baseline build, `compare` measures it as the `horon-base` row, alternating inside the same job. |
 | `compile` | 1 per OS | Rebuilds from source itself, so it runs separately and does not share a machine with the other measurements. |
 | `merge` | 1 per OS | Collects the per-unit results `bench-part-<os>-<unit>-<run_id>` into the same `benchmark-<os>-<run_id>` artifact as before (`scripts/perf/bench_merge.py`). |
 
@@ -46,7 +46,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | Input | Default | Meaning |
 | --- | --- | --- |
 | `os` | `all` | Comma-separated choice of `linux`, `macos`, `windows`. The jobs above start for each chosen OS. |
-| `suites` | `all` | Comma-separated choice of `compare`, `startup`, `loading`, `tools`, `reload`, `compile`. |
+| `suites` | `all` | Comma-separated choice of `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`. |
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | Tools compared with horon. `omp` (oh-my-pi) and `omo` (oh-my-openagent) are included. A tool that failed to install or lacks its runtime stays as `skipped`. |
 | `sessions` | `1 5 10` | Concurrent session counts for the session memory comparison |
 | `turns` | `3` | Turns sent per session |
@@ -78,6 +78,7 @@ There are no secrets and no API charges. Every measurement that needs a model at
 | `loading` | `bench_loading.py` | Session loading of a fixed-seed fixture, COLD and WARM |
 | `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket |
 | `reload` | `bench_reload_storm.py` | Latency until `history` arrives when reopening N sessions (1, 10, 40) at once |
+| `tui` | `bench_tui.py` | The interactive client `horon-tui`: first frame (bare `horon-agent` and a direct launch), the handoff between them, PTY input echo, idle and post-turn RSS, one drawn frame from the `render_bench` example, and install size |
 | `compile` | `bench_compile.py` | `cargo check` with no change, and rebuild time after editing `src/main.rs`, `crates/app-core`, or build-meta |
 
 ### Automatic measurement

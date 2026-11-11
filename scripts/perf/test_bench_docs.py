@@ -161,6 +161,188 @@ class Rendering(unittest.TestCase):
         self.assertEqual(en.count("\n|"), ko.count("\n|"))
         with self.assertRaises(bench_docs.DocError):
             bench_docs.render_body(results, "abc1234", now=NOW, lang="fr")
+PINNED_HEADLESS = """\
+`.github/workflows/benchmark-docs.yml` rewrites this section automatically. Do not edit it by hand.
+
+- Commit: `abc1234`
+- Measured at: 2026-11-07 03:04 UTC
+
+Each OS is measured separately on a different GitHub-hosted runner. The machines differ, so do not compare absolute values across OSes; read only the relative comparison within one OS (multiples of horon) and the trend between commits.
+
+| OS | Runner | Binary | Status |
+| --- | --- | --- | --- |
+| Linux | `ubuntu-24.04` | `horon-agent 0.9.0` | Success |
+| macOS | `—` | `—` | No result |
+| Windows | `—` | `—` | No result |
+
+### Linux
+
+#### Competitor comparison
+
+Not measured: this run did not produce `compare.md`.
+
+#### Startup
+
+```text
+serve ready 12 ms
+```
+
+#### Session loading (COLD)
+
+Not measured: this run did not produce `loading-cold.txt`.
+
+#### Session loading (WARM)
+
+Not measured: this run did not produce `loading-warm.txt`.
+
+#### Tool latency
+
+| case | ms |
+| --- | --- |
+| read | 3.0 |
+
+#### Reload storm
+
+Not measured: this run did not produce `reload.md`.
+
+#### Compile loop
+
+Not measured: this run did not produce `compile.md`.
+
+### macOS
+
+This run has no macOS result. The job did not start or did not upload its result files.
+
+### Windows
+
+This run has no Windows result. The job did not start or did not upload its result files."""
+
+
+def tui_json() -> str:
+    def stat(median: float, low: float, high: float, n: int = 5) -> dict:
+        return {"median": median, "min": low, "max": high, "samples": n}
+
+    return json.dumps({
+        "suite": "tui",
+        "schema": 1,
+        "started_at": "2026-11-11T02:00:00Z",
+        "first_frame_ms": stat(120.0, 110.0, 130.0),
+        "direct_tui_first_frame_ms": stat(95.0, 90.0, 100.0),
+        "handoff_ms": stat(25.0, 20.0, 30.0),
+        "idle_rss_bytes": stat(48e6, 47e6, 49e6),
+        "post_turn_rss_bytes": stat(52e6, 51e6, 53e6),
+        "input_echo_p95_ms": stat(4.0, 3.0, 5.0),
+        "render_p50_ms": stat(0.4, 0.35, 0.45),
+        "render_p95_ms": stat(0.9, 0.8, 1.0),
+        "install_size_bytes": {"median": 8e6, "min": 8e6, "max": 8e6, "samples": 1},
+        "skipped": [],
+        "errors": [],
+    })
+
+
+def tui_md() -> str:
+    return (
+        "### TUI (`horon-tui`)\n\n| Metric | Median | Min\u2013max | Samples |\n"
+        "| --- | --- | --- | --- |\n| First frame (bare `horon-agent`) | 120 ms | 110\u2013130 ms | 5 |\n"
+    )
+
+
+def headless_of(body: str) -> str:
+    """The headless half of a rendered block, without the separator before the TUI."""
+    return body.split("\n\n## TUI (`horon-tui`)", 1)[0]
+
+
+class TwoVersionSections(unittest.TestCase):
+    """The block carries the headless suites and the TUI side by side.
+
+    The headless half must stay byte-identical to the renderer that existed
+    before the TUI suite, so an unchanged input keeps an unchanged document; the
+    TUI half is appended and never shares a table with the headless numbers.
+    """
+
+    def fixture(self, results: Path, with_tui: bool) -> None:
+        linux = job_dir(results, "benchmark-linux-1", "linux", files={
+            "runner.txt": "ubuntu-24.04\n",
+            "horon-version.txt": "horon-agent 0.9.0\n",
+            "startup.txt": "serve ready 12 ms\n",
+            "tools.md": "### Tool latency\n\n| case | ms |\n| --- | --- |\n| read | 3.0 |\n",
+            "reload.md": "   \n",
+        })
+        if with_tui:
+            (linux / "tui.json").write_text(tui_json(), encoding="utf-8")
+            (linux / "tui.md").write_text(tui_md(), encoding="utf-8")
+
+    def test_headless_body_matches_the_pinned_renderer_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.fixture(results, with_tui=True)
+            body = bench_docs.headless_body(
+                bench_docs.find_platform_dirs(results), "abc1234", None, NOW, "en"
+            )
+        self.assertEqual(body, PINNED_HEADLESS)
+
+    def test_tui_results_add_a_second_version_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.fixture(results, with_tui=True)
+            body = bench_docs.render_body(results, "abc1234", now=NOW)
+        headless_at = body.index("## Headless (`horon-agent`)")
+        tui_at = body.index("## TUI (`horon-tui`)")
+        self.assertLess(headless_at, tui_at)
+        # The headless half is exactly the pinned bytes, wrapped in its heading.
+        self.assertEqual(headless_of(body), "## Headless (`horon-agent`)\n\n" + PINNED_HEADLESS)
+        tui = body[tui_at:]
+        self.assertIn("#### TUI (`horon-tui`)", tui)
+        self.assertIn("| First frame (bare `horon-agent`) | 120 ms |", tui)
+        # No headless label leaks into the TUI section.
+        for label in ("Compile loop", "Reload storm", "Session loading"):
+            self.assertNotIn(label, tui)
+
+    def test_a_missing_tui_result_still_renders_every_headless_fragment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.fixture(results, with_tui=False)
+            body = bench_docs.render_body(results, "abc1234", now=NOW)
+        self.assertEqual(headless_of(body), "## Headless (`horon-agent`)\n\n" + PINNED_HEADLESS)
+        for heading in ("#### Startup", "#### Tool latency", "#### Compile loop"):
+            self.assertIn(heading, body.split("## TUI (`horon-tui`)", 1)[0])
+        # The missing TUI is stated once, not fatal.
+        self.assertIn("This run did not produce `tui.md` for Linux", body)
+        self.assertIn("The job did not start or did not upload its result files.", body.split("## TUI")[1])
+
+    def test_korean_names_both_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.fixture(results, with_tui=True)
+            body = bench_docs.render_body(results, "abc1234", now=NOW, lang="ko")
+        self.assertIn("## 헤드리스 (`horon-agent`)", body)
+        self.assertIn("## TUI (`horon-tui`)", body)
+
+    def test_tui_charts_come_only_from_tui_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.fixture(results, with_tui=True)
+            dirs = bench_docs.find_platform_dirs(results)
+            files = bench_charts.render_tui_charts(dirs, "abc1234", "en", "42")
+        self.assertEqual(sorted(files), ["tui-01-latency.svg", "tui-02-memory.svg"])
+        latency = files["tui-01-latency.svg"]
+        self.assertIn("abc1234", latency)
+        self.assertIn("tui first frame", latency)
+        # The comparison numbers of the other suites never enter these charts.
+        self.assertNotIn("Tool latency", latency)
+        memory = files["tui-02-memory.svg"]
+        self.assertIn("(MB, lower is better)", memory)
+        self.assertIn("idle RSS", memory)
+        self.assertIn("install size", memory)
+
+    def test_no_tui_json_means_no_tui_charts_and_no_tui_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            self.fixture(results, with_tui=False)
+            dirs = bench_docs.find_platform_dirs(results)
+            self.assertEqual(bench_charts.render_tui_charts(dirs, "abc1234", "en"), {})
+            body = bench_docs.render_body(results, "abc1234", now=NOW)
+        self.assertNotIn("tui-01-latency.svg", body)
 
 
 class CommandLine(unittest.TestCase):
