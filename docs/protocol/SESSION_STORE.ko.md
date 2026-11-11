@@ -217,9 +217,10 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 | `restoration` | 한도가 있는 `{path, kind, note}` 참조와 바이트 예산. 파일 본문은 아니다 |
 
 `handoff`는 요약이 아니라 생성한 핸드오프 문서로 쓴 경계를 뜻한다
-(`crates/app-core/src/agent/handoff_compaction.rs`). 문서는 `summary_text`로 저장하며 검증하지
-않는다. 절이 빠진 문서도 유효한 `handoff`다. 생성이 실패하거나 취소되면 기록을 아예 쓰지
-않으므로 대화록, 이전 경계, 메시지 수가 그대로 남는다.
+(`crates/app-core/src/agent/handoff_compaction.rs`). 문서는 `summary_text`로 저장한다. 문서는
+비어 있지 않고 `Goal` 제목이 항상 있다. 빈 문서나 그 제목이 없는 문서는 쓰기 전에 거부한다.
+다른 절은 확인하지 않으므로 절이 빠진 문서도 유효한 `handoff`다. 생성이 실패하거나 취소되거나
+거부되면 기록을 아예 쓰지 않으므로 대화록, 이전 경계, 메시지 수가 그대로 남는다.
 
 진행할 수 없는 압축은 요약이 성공한 척하지 않고 이유와 함께 `compaction_blocked`를 덧붙인다
 (`context_recovery_blocked`, `context_budget_too_small`,

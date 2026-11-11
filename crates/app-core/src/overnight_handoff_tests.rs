@@ -88,7 +88,7 @@ fn overnight_handoff_provider_error_is_logged_and_the_run_continues() {
 }
 
 #[test]
-fn overnight_handoff_before_the_window_leaves_the_transcript_alone() {
+fn overnight_handoff_window_opens_at_the_ready_at_instant() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest = test_manifest(temp.path(), "overnight_handoff_early");
     let calls = Cell::new(0);
@@ -98,6 +98,19 @@ fn overnight_handoff_before_the_window_leaves_the_transcript_alone() {
         HandoffOutcome::Committed { covered: 1 }
     })
     .expect("not being due is not an error");
-    assert!(result.is_none());
-    assert_eq!(calls.get(), 0);
+    assert!(result.is_some(), "the window opens at handoff_ready_at, not after it");
+    assert_eq!(calls.get(), 1);
+
+    let before = ready_pass(
+        &manifest,
+        false,
+        manifest.handoff_ready_at - ChronoDuration::seconds(1),
+        || {
+            calls.set(calls.get() + 1);
+            HandoffOutcome::Committed { covered: 1 }
+        },
+    )
+    .expect("not being due is not an error");
+    assert!(before.is_none(), "one second earlier is before the window");
+    assert_eq!(calls.get(), 1, "the compaction must not run twice");
 }

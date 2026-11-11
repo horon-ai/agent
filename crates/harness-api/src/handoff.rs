@@ -15,7 +15,8 @@ pub enum HandoffCompaction {
     Committed { covered: usize },
     /// The recent-token budget kept every message verbatim; nothing was written.
     NothingToCover,
-    /// The completion failed. The transcript is unchanged.
+    /// The completion failed, or its document was refused (empty, or without a
+    /// `Goal` heading). The transcript is unchanged.
     ProviderError { detail: String },
     /// The request was cancelled before the completion answered. The transcript
     /// is unchanged.
