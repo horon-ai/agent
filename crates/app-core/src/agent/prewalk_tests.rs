@@ -11,12 +11,8 @@ const START_MODEL: &str = "plan-model";
 const EXEC_MODEL: &str = "exec-model";
 const PROFILE: &str = "prewalk-gw";
 
-fn write_config(sandbox: &AuthTestSandbox, prewalk: &str, plan_mode: bool) {
-    write_config_with_roles(sandbox, prewalk, plan_mode, "");
-}
-
-/// The same config, with an optional `[providers.<name>.roles]` block, so a
-/// `role:<name>` `into` can resolve through the profile chain.
+/// Write the sandbox config, with an optional `[providers.<name>.roles]` block
+/// placed before `[prewalk]` so a `role:<name>` `into` can resolve.
 fn write_config_with_roles(sandbox: &AuthTestSandbox, prewalk: &str, plan_mode: bool, roles: &str) {
     std::fs::write(
         sandbox.root().join("config.toml"),
