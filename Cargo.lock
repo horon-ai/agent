@@ -2219,10 +2219,12 @@ dependencies = [
  "horon-agent-logging",
  "horon-agent-message-types",
  "horon-agent-provider-core",
+ "horon-agent-schema-dialect",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
 ]
 
@@ -2393,6 +2395,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+ "toml_edit 0.20.2",
+ "unicode-width",
 ]
 
 [[package]]

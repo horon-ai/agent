@@ -209,11 +209,27 @@ The assistant message appended for that request carries the same receipts as
 `degradations`, written in the same append. A message whose request lost nothing
 omits the field and keeps exactly the bytes it had before.
 
-### Not covered
+### Rejected-then-retried requests
 
-The provider-rejection retry path (`recover_from_error`) has no production caller
-today, so no receipt says "rejected and retried"; only the prevention layer above
-reports.
+Prevention narrows the catalog against a declared allow-list, so a construct
+outside it never reaches the provider. The allow-list cannot be complete,
+though, and a provider that still rejects one would otherwise fail every turn
+carrying that tool.
+
+The direct Chat Completions path now recovers from that rejection inside the
+same turn. A `4xx` whose body names a schema keyword or `format` is learned,
+the tool catalog is rebuilt without it, and the request is sent once more; the
+loss appears as an ordinary `schema_keyword_dropped` receipt on the retried
+request, so a client sees the same `degradation_receipts` event it already
+handles. Learning is bounded per construct, so a second rejection naming the
+same thing is reported instead of retried.
+
+Only a client error can teach the dialect anything. A `429`, `5xx` or `401/403`
+is a transient or credential failure: recovery neither learns from it nor
+retries it, so the shared failover classification sees the status it always did.
+An error that names nothing strippable, such as #713's "schema must have a
+`type` key", is reported on the first failure with a hint saying a retry cannot
+help.
 
 ## Message delivery modes (protocol 1.18)
 

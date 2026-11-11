@@ -21,21 +21,20 @@ pub(crate) const INSTALL_HINT: &str =
     "install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client";
 
 /// What the bare command should do after the server is up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Handoff {
-    /// Replace this process with the interactive client.
-    Exec,
-    /// Stay headless and explain which condition kept us here.
+    /// Replace this process with the client at this path.
+    Exec(PathBuf),
+    /// Keep this process and explain why the client was not started.
     Headless(HeadlessReason),
 }
 
 /// Why the interactive client was not started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HeadlessReason {
-    /// stdin or stdout is a pipe or a file, so a full-screen client has nothing
-    /// to draw on.
+    /// stdin or stdout is a pipe, a file, or a closed stream.
     NotATerminal,
-    /// `HORON_NO_TUI` is set.
+    /// [`DISABLE_ENV`] is set.
     DisabledByEnv,
     /// No `horon-tui` next to the running binary.
     MissingSibling,
@@ -66,15 +65,15 @@ pub(crate) fn decide(
     if disabled_by_env {
         return Handoff::Headless(HeadlessReason::DisabledByEnv);
     }
-    if sibling.is_none() {
-        return Handoff::Headless(HeadlessReason::MissingSibling);
+    match sibling {
+        Some(sibling) => Handoff::Exec(sibling.to_path_buf()),
+        None => Handoff::Headless(HeadlessReason::MissingSibling),
     }
-    Handoff::Exec
 }
 
 /// The decision for this process: its own terminal state, environment, and
 /// sibling binary.
-pub(crate) fn decide_for_process() -> (Handoff, Option<PathBuf>) {
+pub(crate) fn decide_for_process() -> Handoff {
     // Without a resolvable executable path there is no sibling to find; the
     // headless message then says the client is missing, and the log keeps why.
     let sibling = match std::env::current_exe() {
@@ -92,13 +91,12 @@ pub(crate) fn decide_for_process() -> (Handoff, Option<PathBuf>) {
             None
         }
     };
-    let decision = decide(
+    decide(
         std::io::stdin().is_terminal(),
         std::io::stdout().is_terminal(),
         std::env::var_os(DISABLE_ENV).is_some(),
         sibling.as_deref(),
-    );
-    (decision, sibling)
+    )
 }
 
 /// Path of the interactive client beside `current_exe`, when one is installed.
@@ -108,18 +106,47 @@ pub(crate) fn sibling_tui(current_exe: Option<&Path>) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
+/// Act on the decision: start the client, or fail with the headless sentence.
+pub(crate) fn run(handoff: Handoff, resume: Option<&str>) -> anyhow::Result<()> {
+    match handoff {
+        Handoff::Exec(sibling) => {
+            let cwd =
+                std::env::current_dir().map_err(|error| anyhow::anyhow!("working directory unreadable: {error}"))?;
+            hand_off(&sibling, resume, Some(cwd.as_path()))
+        }
+        Handoff::Headless(reason) => anyhow::bail!(
+            "the interactive client is unavailable in this headless build ({}); {}; use `horon-agent serve` or `horon-agent run`",
+            reason.detail(),
+            INSTALL_HINT
+        ),
+    }
+}
+
+/// The arguments the client is started with.
+///
+/// A resumed session is passed as `--session <id>`, which is the client's
+/// "attach to this session" spelling; without it the client would open a fresh
+/// session and the resumed one would be left behind. The daemon socket is not
+/// passed: it is already exported as `HORON_AGENT_SOCKET`, and the client
+/// resolves the harness API socket itself.
+fn client_args(resume: Option<&str>, cwd: Option<&Path>) -> Vec<std::ffi::OsString> {
+    let mut args = Vec::new();
+    if let Some(resume) = resume.filter(|resume| !resume.is_empty()) {
+        args.push(std::ffi::OsString::from("--session"));
+        args.push(std::ffi::OsString::from(resume));
+    }
+    if let Some(cwd) = cwd {
+        args.push(std::ffi::OsString::from("--cwd"));
+        args.push(cwd.as_os_str().to_owned());
+    }
+    args
+}
+
 /// Replace this process with the interactive client and return only if that
 /// failed.
-///
-/// Only `--cwd` is passed. The daemon socket is already exported as
-/// `HORON_AGENT_SOCKET` for a `--socket` launch, and the client resolves its own
-/// harness API socket and starts the bridge on that daemon; passing the daemon
-/// path as `--socket` would point it at the wrong endpoint.
-pub(crate) fn hand_off(sibling: &Path, cwd: Option<&Path>) -> anyhow::Result<()> {
+pub(crate) fn hand_off(sibling: &Path, resume: Option<&str>, cwd: Option<&Path>) -> anyhow::Result<()> {
     let mut command = std::process::Command::new(sibling);
-    if let Some(cwd) = cwd {
-        command.arg("--cwd").arg(cwd);
-    }
+    command.args(client_args(resume, cwd));
     let error = horon_agent_platform::replace_process(&mut command);
     Err(anyhow::anyhow!(
         "could not start the interactive client {}: {error}",
@@ -134,7 +161,10 @@ mod tests {
     #[test]
     fn terminal_with_sibling_execs() {
         let sibling = Path::new("/opt/horon-tui");
-        assert_eq!(decide(true, true, false, Some(sibling)), Handoff::Exec);
+        assert_eq!(
+            decide(true, true, false, Some(sibling)),
+            Handoff::Exec(sibling.to_path_buf())
+        );
     }
 
     #[test]
@@ -162,6 +192,38 @@ mod tests {
         assert_eq!(
             decide(true, true, false, None),
             Handoff::Headless(HeadlessReason::MissingSibling)
+        );
+    }
+
+    #[test]
+    fn a_resumed_session_is_passed_as_the_session_flag() {
+        let cwd = Path::new("/work/project");
+        assert_eq!(
+            client_args(Some("sess-42"), Some(cwd)),
+            vec![
+                std::ffi::OsString::from("--session"),
+                std::ffi::OsString::from("sess-42"),
+                std::ffi::OsString::from("--cwd"),
+                std::ffi::OsString::from("/work/project"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_fresh_launch_passes_only_the_cwd() {
+        assert_eq!(
+            client_args(None, Some(Path::new("/work/project"))),
+            vec![
+                std::ffi::OsString::from("--cwd"),
+                std::ffi::OsString::from("/work/project"),
+            ]
+        );
+        // An empty id is what the flag parser rejects before this point; it must
+        // never become `--session ""`.
+        assert!(
+            client_args(Some(""), Some(Path::new("/work")))
+                .iter()
+                .all(|arg| arg != "--session")
         );
     }
 

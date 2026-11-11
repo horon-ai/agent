@@ -354,6 +354,128 @@ fn settings_save_refuses_to_overwrite_a_broken_file() {
 }
 
 #[test]
+fn settings_save_keeps_comments_and_layout() {
+    let fixture = Fixture::new();
+    fixture.write(
+        &fixture.global(),
+        "# my settings\n\
+         theme = \"light\" # pick one\n\
+         \n\
+         [statusline]\n\
+         # left group\n\
+         preset = \"custom\"\n",
+    );
+    let sources = fixture.sources();
+
+    save_global(&sources, "statusline.preset", &SettingValue::Str("minimal".to_string())).expect("save a nested key");
+    let saved = std::fs::read_to_string(fixture.global()).expect("read the saved file");
+    assert!(saved.contains("# my settings"), "the file comment was lost:\n{saved}");
+    assert!(saved.contains("# pick one"), "the value comment was lost:\n{saved}");
+    assert!(saved.contains("# left group"), "the group comment was lost:\n{saved}");
+    assert!(
+        saved.contains("preset = \"minimal\""),
+        "the new value is missing:\n{saved}"
+    );
+    assert!(saved.contains("theme = \"light\""), "the other key changed:\n{saved}");
+
+    let table: toml::Table = toml::from_str(&saved).expect("the saved file parses");
+    assert_eq!(
+        table
+            .get("statusline")
+            .and_then(|value| value.get("preset"))
+            .and_then(|value| value.as_str()),
+        Some("minimal")
+    );
+
+    // A key with a trailing comment keeps the comment on the same line as the
+    // new value: the decoration is carried over, not the whole line.
+    save_global(&sources, "theme", &SettingValue::Str("dark".to_string())).expect("save the commented key");
+    let saved = std::fs::read_to_string(fixture.global()).expect("read the saved file");
+    assert!(
+        saved.lines().any(|line| line.trim() == "theme = \"dark\" # pick one"),
+        "the trailing comment did not stay with the new value:\n{saved}"
+    );
+}
+
+#[test]
+fn settings_save_reports_a_scalar_where_a_table_is_needed() {
+    // `statusline` holds a string, so the dotted key below it has nowhere to
+    // go. The save refuses and names the key it stopped at.
+    let fixture = Fixture::new();
+    fixture.write(&fixture.global(), "statusline = \"custom\"\n");
+    let sources = fixture.sources();
+    let failure = match save_global(&sources, "statusline.preset", &SettingValue::Str("minimal".to_string())) {
+        Ok(()) => panic!("a scalar cannot hold a nested key"),
+        Err(failure) => failure,
+    };
+    let expected = format!(
+        "`statusline` in {} is not a table; refusing to change `statusline.preset`",
+        fixture.global().display()
+    );
+    assert_eq!(failure, expected);
+    assert_eq!(
+        std::fs::read_to_string(fixture.global()).expect("the file is untouched"),
+        "statusline = \"custom\"\n"
+    );
+}
+
+#[test]
+fn settings_save_leaves_no_temporary_file() {
+    let fixture = Fixture::new();
+    fixture.write(&fixture.global(), "theme = \"light\"\n");
+    let sources = fixture.sources();
+    save_global(&sources, "theme", &SettingValue::Str("dark".to_string())).expect("save the theme");
+
+    let temp = fixture
+        .global()
+        .parent()
+        .unwrap_or(fixture.root())
+        .join(format!(".tui.toml.{}.tmp", std::process::id()));
+    assert!(
+        !temp.exists(),
+        "the temporary file survived the save: {}",
+        temp.display()
+    );
+}
+
+#[test]
+fn settings_save_reports_a_failed_replace_and_removes_its_temporary_file() {
+    let fixture = Fixture::new();
+    // Renaming a file onto a directory fails; the error must name the target
+    // and the temporary file must not be left behind.
+    let target = fixture.root().join("blocked");
+    std::fs::create_dir_all(&target).expect("blocking directory");
+    let failure = match super::layers::write_atomic(&target, "theme = \"dark\"\n") {
+        Ok(()) => panic!("a write onto a directory must fail"),
+        Err(failure) => failure,
+    };
+    assert!(failure.contains("cannot replace"), "unhelpful error: {failure}");
+    let temp = fixture.root().join(format!(".blocked.{}.tmp", std::process::id()));
+    assert!(
+        !temp.exists(),
+        "the temporary file survived the failure: {}",
+        temp.display()
+    );
+}
+
+#[test]
+fn settings_save_does_not_reload_again_on_the_next_tick() {
+    let fixture = Fixture::new();
+    fixture.write(&fixture.global(), "theme = \"light\"\n");
+    // A zero interval makes every `tick` check, so a stale stamp shows up
+    // immediately instead of after a second.
+    let mut reloader = Reloader::with_interval(fixture.sources(), std::time::Duration::ZERO);
+    reloader
+        .save_global("theme", &SettingValue::Str("dark".to_string()))
+        .expect("save the theme");
+    assert!(
+        reloader.tick().is_none(),
+        "the tick after a save reloaded the file the save had just written"
+    );
+    assert_eq!(reloader.settings().text("theme"), Some("dark"));
+}
+
+#[test]
 fn settings_defaults_cover_the_registry() {
     let settings = Settings::defaults();
     for setting in REGISTRY {
