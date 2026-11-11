@@ -181,6 +181,7 @@ async fn prewalk_switch_lands_on_the_request_after_the_first_todo_write() {
 #[tokio::test]
 async fn prewalk_does_not_switch_twice_on_a_second_todo_write() {
     let (_home, provider, mut agent) = setup(&on(EXEC_MODEL), false);
+    run(&mut agent).await;
     write_todo(&agent, "t1");
     run(&mut agent).await;
     write_todo(&agent, "t2");
@@ -197,6 +198,7 @@ async fn prewalk_does_not_switch_twice_on_a_second_todo_write() {
 #[tokio::test]
 async fn prewalk_does_not_switch_again_after_a_resume() {
     let (_home, provider, mut agent) = setup(&on(EXEC_MODEL), false);
+    run(&mut agent).await;
     write_todo(&agent, "t1");
     run(&mut agent).await;
     let session_id = agent.session.id.clone();
