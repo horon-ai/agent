@@ -227,7 +227,7 @@ def tui_json() -> str:
         "schema": 1,
         "started_at": "2026-11-11T02:00:00Z",
         "first_frame_ms": stat(120.0, 110.0, 130.0),
-        "direct_tui_first_frame_ms": stat(95.0, 90.0, 100.0),
+        "direct_first_frame_ms": stat(95.0, 90.0, 100.0),
         "handoff_ms": stat(25.0, 20.0, 30.0),
         "idle_rss_bytes": stat(48e6, 47e6, 49e6),
         "post_turn_rss_bytes": stat(52e6, 51e6, 53e6),
@@ -327,7 +327,10 @@ class TwoVersionSections(unittest.TestCase):
         self.assertEqual(sorted(files), ["tui-01-latency.svg", "tui-02-memory.svg"])
         latency = files["tui-01-latency.svg"]
         self.assertIn("abc1234", latency)
+        # The chart reads the same key the suite writes; a mismatch shows up as
+        # "not measured" bars even though the number is in tui.json.
         self.assertIn("tui first frame", latency)
+        self.assertNotIn("not measured", latency)
         # The comparison numbers of the other suites never enter these charts.
         self.assertNotIn("Tool latency", latency)
         memory = files["tui-02-memory.svg"]

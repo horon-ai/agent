@@ -564,7 +564,7 @@ TUI_METRICS = (
                "글자가 화면에 찍힐 때까지, `render` 는 메시지 1000개 상태의 프레임 한 장입니다."},
         (
             ("first_frame_ms", "agent first frame"),
-            ("direct_tui_first_frame_ms", "tui first frame"),
+            ("direct_first_frame_ms", "tui first frame"),
             ("input_echo_p95_ms", "input echo p95"),
             ("render_p50_ms", "render p50"),
             ("render_p95_ms", "render p95"),
@@ -622,8 +622,18 @@ def tui_chart_name(lang: str) -> str:
     return tui_chart_names(lang)[0]
 
 
+def _tui_value(run: dict | None, key: str) -> float | None:
+    """A metric may be a summary object or a single value; read both."""
+    raw = _get(run, key)
+    if isinstance(raw, dict):
+        return _number(raw.get("median"))
+    return _number(raw)
+
+
 def _tui_rows(run: dict | None, metric: TuiMetric) -> list[float | None]:
-    return [_number(_get(run, key, "median")) for key, _ in metric.rows]
+    # `install_size_bytes` is a single value, not a summary. Without this the bar
+    # read "not measured" beside a table row that already showed the number.
+    return [_tui_value(run, key) for key, _ in metric.rows]
 
 
 def render_tui_chart(metric: TuiMetric, runs: dict[str, dict], commit: str, lang: str,
