@@ -38,10 +38,10 @@ pub fn build_chat_completions_request_reporting(
     tools: &[ToolDefinition],
     system: &str,
     reasoning_effort: Option<&str>,
-    mut sink: Option<&mut Vec<DegradationReceipt>>,
+    sink: Option<&mut Vec<DegradationReceipt>>,
 ) -> Value {
     let input = crate::request::build_responses_input(messages);
-    let tool_definitions = build_chat_tools_reporting(tools, sink.as_deref_mut());
+    let tool_definitions = build_chat_tools_reporting(tools, sink);
 
     let mut chat_messages = Vec::with_capacity(input.len() + 1);
     if !system.trim().is_empty() {

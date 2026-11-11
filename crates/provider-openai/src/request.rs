@@ -66,7 +66,7 @@ pub fn build_tool(t: &ToolDefinition) -> Value {
 
 /// [`build_tool`], also reporting a dropped schema keyword, a disabled string
 /// format and a lost strict-mode guarantee.
-pub fn build_tool_reporting(t: &ToolDefinition, mut sink: Option<&mut Vec<DegradationReceipt>>) -> Value {
+pub fn build_tool_reporting(t: &ToolDefinition, sink: Option<&mut Vec<DegradationReceipt>>) -> Value {
     // Only a reporting caller pays for the collector: with no sink the dialect
     // takes its disabled logging path and this stays empty without allocating.
     let mut dropped: Vec<String> = Vec::new();
@@ -85,7 +85,7 @@ pub fn build_tool_reporting(t: &ToolDefinition, mut sink: Option<&mut Vec<Degrad
     } else {
         compatible_schema
     };
-    if let Some(receipts) = sink.as_deref_mut() {
+    if let Some(receipts) = sink {
         for target in dropped {
             receipts.push(DegradationReceipt::new(
                 DegradationKind::SchemaKeywordDropped,
