@@ -7,6 +7,7 @@ IS_TERMUX=false
 tmpdir=""
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
 err()  { printf '\033[1;31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 
 valid_release_tag() {
@@ -169,18 +170,32 @@ fetch_release_asset() {
   curl -fsSL --retry 2 --connect-timeout 10 "$GITHUB_RELEASE_BASE/$1" -o "$2" 2>/dev/null
 }
 
-# The executable repeats every check in Rust before it stages anything; this
-# pass exists so an unverified file is never executed and the failure is clear.
-verify_asset_checksum() {
+# Prints why an asset fails verification and returns 1, so an optional asset can
+# be skipped instead of aborting the install.
+checksum_problem() {
   asset_name="$1"
   file="$2"
   expected=$(awk -v asset="$asset_name" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' \
     "$assets_dir/SHA256SUMS")
-  printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$' \
-    || err "Could not find a trusted SHA-256 checksum for $asset_name in $VERSION"
-  actual=$(sha256_file "$file") \
-    || err "sha256sum, shasum, sha256 or openssl is required to verify the download"
-  [ "$actual" = "$expected" ] || err "SHA-256 verification failed for $asset_name"
+  if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+    printf 'Could not find a trusted SHA-256 checksum for %s in %s' "$asset_name" "$VERSION"
+    return 1
+  fi
+  if ! actual=$(sha256_file "$file"); then
+    printf 'sha256sum, shasum, sha256 or openssl is required to verify the download'
+    return 1
+  fi
+  if [ "$actual" != "$expected" ]; then
+    printf 'SHA-256 verification failed for %s' "$asset_name"
+    return 1
+  fi
+}
+
+# The executable repeats every check in Rust before it stages anything; this
+# pass exists so an unverified file is never executed and the failure is clear.
+verify_asset_checksum() {
+  problem=$(checksum_problem "$1" "$2") \
+    || err "${problem:-SHA-256 verification failed for $1}"
 }
 
 # The downloaded executable is the only release payload this script runs, so it
@@ -286,6 +301,29 @@ if [ -n "$download_mode" ]; then
   verify_asset_checksum "$downloaded_asset" "$assets_dir/$downloaded_asset"
   info "Verified SHA-256: $downloaded_asset"
 fi
+
+# >>> horon-tui
+# The interactive client ships as its own archive beside the agent. It is
+# optional: a release that predates it, or a platform that does not publish it,
+# installs the headless agent alone. The release executable stages whatever
+# verified archives it finds in this directory, so the TUI is only downloaded
+# and checked here, never run.
+if [ -n "$download_mode" ] && [ "$OS" != "FreeBSD" ]; then
+  tui_artifact="horon-tui${ARTIFACT#horon-agent}"
+  tui_archive="$tui_artifact.tar.gz"
+  if fetch_release_asset "$tui_archive" "$assets_dir/$tui_archive"; then
+    if problem=$(checksum_problem "$tui_archive" "$assets_dir/$tui_archive"); then
+      info "Verified SHA-256: $tui_archive"
+    else
+      warn "skipped the interactive client: $problem"
+      rm -f "$assets_dir/$tui_archive"
+    fi
+  else
+    rm -f "$assets_dir/$tui_archive"
+    warn "this release does not publish $tui_archive; installed horon-agent without the interactive client"
+  fi
+fi
+# <<< horon-tui
 
 # Hand the verified assets to the release executable's own installer. It
 # re-verifies every asset in Rust, extracts the archive itself, checks the

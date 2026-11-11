@@ -881,6 +881,65 @@ if ($DownloadMode) {
     Copy-Item -LiteralPath $DownloadPath -Destination (Join-Path $AssetsDir $downloadedAssetName)
 }
 
+# The interactive client ships as its own archive beside the agent. It is
+# optional: a release that predates it, or a platform that does not publish it,
+# installs the headless agent alone. The release executable stages whatever
+# verified archives it finds in the assets directory, so the TUI is only
+# downloaded and checked here, never run.
+if ($DownloadMode) {
+    $tuiArtifact = $Artifact -replace '^horon-agent-', 'horon-tui-'
+    $tuiArchive = "$tuiArtifact.tar.gz"
+    $tuiPath = Join-Path $AssetsDir $tuiArchive
+    $tuiDownloaded = $false
+    $tuiDownloadError = $null
+    if ($ReleaseAssetsDir) {
+        $tuiSource = Join-Path $ReleaseAssetsDir $tuiArchive
+        if (Test-Path -LiteralPath $tuiSource -PathType Leaf) {
+            Copy-Item -LiteralPath $tuiSource -Destination $tuiPath
+            $tuiDownloaded = $true
+        } else {
+            $tuiDownloadError = "not present in $ReleaseAssetsDir"
+        }
+    } else {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri "$DownloadBase/$tuiArchive" -OutFile $tuiPath
+            $tuiDownloaded = $true
+        } catch {
+            $tuiDownloadError = $_.Exception.Message
+        }
+    }
+
+    $tuiChecksumFailed = $false
+    if ($tuiDownloaded) {
+        $tuiExpected = Get-HoronAgentSha256FromManifest -ManifestText $Checksums -AssetName $tuiArchive
+        if (-not $tuiExpected) {
+            $tuiChecksumFailed = $true
+            Write-Warn "skipped the interactive client: SHA256SUMS does not list $tuiArchive"
+        } else {
+            try {
+                $tuiActual = (Get-FileHash -LiteralPath $tuiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            } catch {
+                $tuiActual = $null
+            }
+            if (-not $tuiActual) {
+                $tuiChecksumFailed = $true
+                Write-Warn "skipped the interactive client: could not calculate SHA256 for $tuiArchive"
+            } elseif ($tuiActual -ne $tuiExpected) {
+                $tuiChecksumFailed = $true
+                Write-Warn "skipped the interactive client: SHA256 verification failed for $tuiArchive (expected $tuiExpected, got $tuiActual)"
+            } else {
+                Write-Info "Verified SHA256: $tuiArchive"
+            }
+        }
+    }
+
+    if (-not $tuiDownloaded) {
+        Write-Info "the interactive client $tuiArchive is not available ($tuiDownloadError); installing the headless agent alone"
+    } elseif ($tuiChecksumFailed) {
+        Remove-Item -LiteralPath $tuiPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $DestBin = Join-Path $TempDir "horon-agent.exe"
 $SourceBinary = $null
 

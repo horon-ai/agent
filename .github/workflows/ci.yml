@@ -571,6 +571,43 @@ jobs:
           echo "--- transcript ---"
           cat "$RUNNER_TEMP/tui-pty-transcript.txt"
 
+      - name: Installed layout TUI smoke
+        # Release packaging runs only in the release workflow, after the change
+        # is on `main`, so nothing on a pull request ever drove
+        # `install-release --assets` or the layout it leaves behind. This
+        # packages the binaries built above under the release asset names for
+        # this platform, installs them into a throwaway HORON_HOME, and drives
+        # the launcher symlink the terminal client starts from.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash scripts/test/install_release_layout_smoke.sh \
+            "target/${{ matrix.target }}/release/horon-agent" \
+            "target/${{ matrix.target }}/debug/horon-tui" \
+            "$RUNNER_TEMP/installed-layout"
+          python3 scripts/test/tui_pty_smoke.py \
+            --layout installed \
+            --layout-root "$RUNNER_TEMP/installed-layout/home" \
+            --transcript "$RUNNER_TEMP/tui-installed-transcript.txt"
+          echo "--- transcript ---"
+          cat "$RUNNER_TEMP/tui-installed-transcript.txt"
+
+      - name: Release rehearsal installs the optional client
+        # The update path takes the same asset directory over HTTP, and the
+        # client is optional there: a release that publishes it must install
+        # both binaries with no client warning, and an older agent-only release
+        # must still install with exactly one warning naming the missing asset.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 scripts/release/rehearse_update.py --headless-check --rate 0 --no-strip \
+            --root "$RUNNER_TEMP/update-rehearsal-tui" \
+            --binary "target/${{ matrix.target }}/release/horon-agent" \
+            --tui-binary "target/${{ matrix.target }}/debug/horon-tui"
+          python3 scripts/release/rehearse_update.py --headless-check --rate 0 --no-strip \
+            --root "$RUNNER_TEMP/update-rehearsal-agent-only" \
+            --binary "target/${{ matrix.target }}/release/horon-agent"
+
       - name: npm install smoke
         # The publish workflow is the only place the seven packages are built
         # from the real archives, and it cannot run before it is on `main`. This
