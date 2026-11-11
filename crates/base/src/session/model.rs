@@ -40,6 +40,20 @@ pub enum StoredReplayEventKind {
     /// was refused at that point.
     #[serde(rename = "plan_mode")]
     PlanMode { mode: String },
+    /// The one-shot `[prewalk]` handoff this session decided, so a replay can
+    /// name both models and a resumed session never repeats it.
+    ///
+    /// `refused` is set when the handoff was abandoned, which keeps the reason
+    /// from being re-derived (and re-warned) on every later round.
+    #[serde(rename = "prewalk")]
+    Prewalk {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        into: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refused: Option<String>,
+    },
 }
 
 pub(super) const SESSION_CONTEXT_PREFIX: &str = "<system-reminder>\n# Session Context";

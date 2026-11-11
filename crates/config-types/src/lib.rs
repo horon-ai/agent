@@ -6,6 +6,7 @@ mod gateway;
 mod irc;
 pub mod model_roles;
 mod power;
+mod prewalk;
 pub mod rewind_summary;
 mod serde_lenient;
 mod storage;
@@ -16,6 +17,7 @@ pub use {
     gateway::GatewayConfig,
     irc::IrcConfig,
     power::PowerConfig,
+    prewalk::{ModelReference, PrewalkConfig, PrewalkConfigError, parse_model_reference},
     storage::{StorageConfig, StorageSyncMode},
     swarm_spawn::SwarmSpawnMode,
 };

@@ -252,6 +252,7 @@ jobs:
         run: |
           bash scripts/npm/test_prepare_cli_packages.sh
           node --test npm/horon/test/launcher.test.mjs
+          python3 -m unittest -v scripts/npm/test_release_npm_version.py
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
@@ -569,6 +570,17 @@ jobs:
             --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
           echo "--- transcript ---"
           cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+
+      - name: npm install smoke
+        # The publish workflow is the only place the seven packages are built
+        # from the real archives, and it cannot run before it is on `main`. This
+        # installs the same two tarballs a user does, so an archive shape, a
+        # bin layout or a launcher regression fails on the pull request.
+        shell: bash
+        run: |
+          bash scripts/npm/smoke_npm_install.sh \
+            "target/${{ matrix.target }}/release/horon-agent" \
+            "target/${{ matrix.target }}/debug/horon-tui"
 
       - name: Benchmark script smoke
         # The benchmark workflow runs on demand and after a push to `main`, so
@@ -1085,6 +1097,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Windows horon-tui build failed'
           }
+
+      - name: npm install smoke
+        # The Windows archive is the one shape the other two jobs never produce:
+        # a `.exe` entry with no shell wrapper, which `npm install -g` shims as
+        # a `.cmd`. Git Bash runs the script so it shares one implementation
+        # with the Linux and macOS jobs.
+        shell: bash
+        run: |
+          bash scripts/npm/smoke_npm_install.sh \
+            target/x86_64-pc-windows-msvc/release/horon-agent.exe \
+            target/x86_64-pc-windows-msvc/debug/horon-tui.exe
 
       - name: Compile library and binary tests
         shell: pwsh
