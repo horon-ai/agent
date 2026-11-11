@@ -195,6 +195,11 @@ async fn rewind_summary_is_appended_to_the_kept_branch() {
 async fn rewind_summary_absent_flag_matches_a_plain_rewind() {
     let (_sandbox, mut plain) = summary_fixture().await;
     let mut flagged = summary_agent().await;
+    // Each session stamps the wall-clock second into its session-context
+    // reminder, so two agents built either side of a second boundary differ
+    // there. Each rewind is measured against its own baseline instead.
+    let plain_before = stored_texts(&plain);
+    let flagged_before = stored_texts(&flagged);
     let completer = ScriptedSummaryCompleter::answering(REPORT);
 
     let plain_removed = plain.rewind_to_message(2).expect("the plain rewind succeeds");
@@ -204,11 +209,19 @@ async fn rewind_summary_absent_flag_matches_a_plain_rewind() {
 
     assert_eq!(attempt.outcome, RewindSummaryOutcome::NotRequested);
     assert_eq!(attempt.removed, plain_removed);
+    let plain_after = stored_texts(&plain);
+    let flagged_after = stored_texts(&flagged);
     assert_eq!(
-        stored_texts(&flagged),
-        stored_texts(&plain),
+        plain_after.as_slice(),
+        &plain_before[..plain_before.len() - plain_removed],
+        "the plain rewind keeps its own prefix and adds nothing"
+    );
+    assert_eq!(
+        flagged_after.as_slice(),
+        &flagged_before[..flagged_before.len() - attempt.removed],
         "a rewind without the flag stores exactly what it always did"
     );
+    assert_eq!(flagged_after.len(), plain_after.len());
     assert_eq!(visible_count(&flagged), visible_count(&plain));
     assert!(completer.requests().is_empty(), "no completion is attempted");
 }
