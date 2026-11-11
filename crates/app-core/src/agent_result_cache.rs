@@ -346,10 +346,7 @@ fn load_stored(parent_session_id: &str, child_id: &str) -> Option<ResultState> {
         Err(_) => return None,
     };
     let details = match std::fs::read_to_string(details_path) {
-        Ok(json) => match serde_json::from_str::<Value>(&json) {
-            Ok(value) => Some(value),
-            Err(_) => None,
-        },
+        Ok(json) => serde_json::from_str::<Value>(&json).ok(),
         Err(_) => None,
     };
     Some(ResultState::Completed { text, details })
@@ -497,7 +494,7 @@ fn render(rest: &str, parent_session_id: &str) -> Result<String, AgentUrlError> 
     }
     let components = raw_components.map(decode_component).collect::<Result<Vec<_>, _>>()?;
 
-    let cached = lock().state_of(&child_id).map(|state| state.clone());
+    let cached = lock().state_of(&child_id).cloned();
     let state = match cached {
         Ok(state) => state,
         // The durable copy outlives this process and the cache bound, so a miss
