@@ -1,9 +1,17 @@
+mod verdict;
+
+pub use verdict::{ToolRejected, ToolVerdict};
+
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
     pub output: String,
     pub title: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub images: Vec<ToolImage>,
+    /// What became of the call, when the layer that produced this output knows.
+    /// `None` means no layer made a statement: a reader then tells success from
+    /// failure the way it did before verdicts existed.
+    pub verdict: Option<ToolVerdict>,
 }
 
 #[derive(Debug, Clone)]
@@ -20,6 +28,7 @@ impl ToolOutput {
             title: None,
             metadata: None,
             images: Vec::new(),
+            verdict: None,
         }
     }
 
@@ -30,6 +39,11 @@ impl ToolOutput {
 
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_verdict(mut self, verdict: ToolVerdict) -> Self {
+        self.verdict = Some(verdict);
         self
     }
 

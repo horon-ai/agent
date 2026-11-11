@@ -69,6 +69,10 @@ impl Config {
             .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e))?;
         let config = toml::from_str::<Self>(&content)
             .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
+        config
+            .prewalk
+            .validate()
+            .map_err(|e| anyhow::anyhow!("Invalid [prewalk] section in {}: {e}", path.display()))?;
         // An explicit discovery opt-out is authoritative. Older saves wrote the
         // default endpoint too, so table shape cannot establish user intent.
         Ok(Some(config))

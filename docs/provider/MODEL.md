@@ -136,6 +136,29 @@ Only the active named profile has a list this step may spend. `active_profile_fa
 
 Two read-only accessors expose the outcome. `Agent::fallback_models()` returns the configured entries, empty when no profile is active. `Agent::last_serving_model()` is set in `Agent::record_model_turn_usage` when a response is stored, so it still names the model that answered after the next turn has restored the session model. `get_runtime_info` reports them as `fallback_models` and `serving_model`, and the catalog push carries the same pair in its `identity` object, so a client that keeps the pushed catalog does not have to poll.
 
+### Prewalk handoff
+
+`[prewalk]` spends one model switch per session on the move from planning to execution: the session runs on the planning model while it plans, then continues on an execution model once the plan exists.
+
+```toml
+[prewalk]
+enabled = true
+into = "exec-model"
+from = "plan-model"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | Whether a session hands off at all. Off by default. |
+| `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
+
+The handoff point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it.
+
+The decision is one replay event, `prewalk` in the stored session, and that event is what makes the handoff one-shot across processes: a session that already carries one never decides again. A refused `into` is recorded the same way — an unknown model, a `role:` name outside `default`, `plan` and `aux`, or a role that resolves to nothing — so the session keeps its current model, one warning is logged, and later rounds do not repeat it. An `into` that resolves to the model the session already runs records the decision without switching.
+
+`role:<name>` resolves through the active profile's role chain described above, which is why a profile that only sets `default_model` can hand off to `into = "role:aux"` and get that same model. `crates/app-core/src/agent/prewalk.rs` holds the decision, and the acceptance cases live in `crates/app-core/src/agent/prewalk_tests.rs`.
+
 ## Prompt cache key
 
 A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 24 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.

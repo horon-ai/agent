@@ -270,6 +270,7 @@ WRAPPER_MANIFEST="$wrapper_src/package.json" WRAPPER_DIR="$wrapper_dir" VERSION=
 if host="$(host_platform)"; then
   if [ -d "$staging/$host" ]; then
     entry="$staging/$host/bin/horon-agent"
+    [ -f "$entry" ] || entry="$entry.exe"
     [ -f "$entry" ] || fail "missing $entry for host platform $host"
     output="$(version_output "$entry")"
     case "$output" in

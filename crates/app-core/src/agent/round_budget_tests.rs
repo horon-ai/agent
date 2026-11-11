@@ -687,6 +687,16 @@ async fn a_single_output_past_the_ceiling_is_bounded_on_every_admit_path() {
         via_sdk, via_tool.output,
         "an SDK result gets the same sentence as the identical tool result"
     );
+    assert_eq!(
+        via_tool.verdict,
+        Some(ToolVerdict::Withheld),
+        "the tool layer says the payload was withheld, not that the tool never ran"
+    );
+    assert_eq!(
+        via_round.verdict,
+        Some(ToolVerdict::Withheld),
+        "the round says the same"
+    );
 
     // With the opt-in all three return the prefix that fits, and the two admit
     // paths return exactly what the tool layer returns: same arithmetic, same
@@ -729,6 +739,12 @@ async fn a_single_output_past_the_ceiling_is_bounded_on_every_admit_path() {
         sdk_opted_in, tool_opted_in.output,
         "an SDK result gets the same truncated prefix and notice"
     );
+    assert_eq!(
+        tool_opted_in.verdict,
+        Some(ToolVerdict::Truncated),
+        "an opted-in cut is reported as a cut"
+    );
+    assert_eq!(round_opted_in.verdict, Some(ToolVerdict::Truncated), "by both layers");
 }
 
 /// The single-output rule must not touch an ordinary result: every path admits
@@ -750,6 +766,11 @@ async fn a_normal_sized_output_is_admitted_untouched_on_every_path() {
     let mut round = RoundTokenBudget::with_seed(PARITY_BUDGET, 0);
     let via_round = round.admit("fixed_payload", ToolOutput::new(expected.clone()));
     assert_eq!(via_round.output, expected, "admit admits it whole");
+    assert_eq!(
+        via_tool.verdict, None,
+        "a whole result needs no statement from the tool layer"
+    );
+    assert_eq!(via_round.verdict, None, "nor from the round");
     assert_eq!(
         round.current_tokens(),
         crate::util::estimate_tokens(&expected),
