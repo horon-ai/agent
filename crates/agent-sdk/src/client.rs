@@ -1350,9 +1350,19 @@ impl HoronAgentClient {
     }
 
     pub fn rewind(&self, session_id: &str, message_index: usize) -> Result<()> {
+        self.rewind_with_summary(session_id, message_index, false)
+    }
+
+    /// Rewind, asking the daemon to report on the branch it discards.
+    ///
+    /// `summarize` true only takes effect when the daemon's `[compaction]
+    /// rewind_summary` is on; otherwise the rewind happens and nothing is
+    /// appended. A summary failure never fails the rewind.
+    pub fn rewind_with_summary(&self, session_id: &str, message_index: usize, summarize: bool) -> Result<()> {
         self.request_ok(ApiRequest::Rewind {
             session_id: session_id.to_string(),
             message_index,
+            summarize: Some(summarize),
         })
         .map(drop)
     }

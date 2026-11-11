@@ -1730,6 +1730,21 @@ class HoronAgentClient:
     async def rewind(self, session_id: str, message_index: int) -> None:
         await self._request_ok({"req": "rewind", "session_id": session_id, "message_index": message_index})
 
+    async def rewind_with_summary(self, session_id: str, message_index: int, summarize: bool) -> None:
+        """Rewind and ask the daemon to report on the branch it discards.
+
+        ``summarize`` only takes effect when the daemon's ``[compaction]
+        rewind_summary`` is on; a summary failure never fails the rewind.
+        """
+        await self._request_ok(
+            {
+                "req": "rewind",
+                "session_id": session_id,
+                "message_index": message_index,
+                "summarize": summarize,
+            }
+        )
+
     async def rewind_undo(self, session_id: str) -> None:
         """Restore the history the last :meth:`rewind` removed."""
         await self._request_ok({"req": "rewind_undo", "session_id": session_id})
