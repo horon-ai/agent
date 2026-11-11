@@ -53,6 +53,12 @@ const SUMMARY_PREFIX: &str = "<system-reminder>\nThe branch that was just rewoun
 This is background for the work ahead, not a request.\n\n";
 const SUMMARY_SUFFIX: &str = "\n</system-reminder>";
 
+/// Where a model-written rewind report goes. Same reminder shape as the
+/// auxiliary summary, so both share one storage path and one rendering rule.
+const CHECKPOINT_REPORT_PREFIX: &str = "<system-reminder>\nThe model rewound to its own checkpoint. \
+The work after it is replaced by the report below, which is background for the work ahead rather \
+than a request.\n\n";
+
 impl Agent {
     /// Rewind to a 1-based visible message index, optionally summarising the
     /// branch the rewind discards.
@@ -144,11 +150,21 @@ impl Agent {
     /// the `<system-reminder>` wrapper is what the provider projection needs to
     /// hand it to the model as background rather than as a user request.
     fn append_rewind_summary(&mut self, report: &str) -> RewindSummaryOutcome {
+        self.append_reminder(SUMMARY_PREFIX, report)
+    }
+
+    /// The same record for a report the model wrote itself, which is how a
+    /// model-requested rewind keeps one storage path with #71's summary.
+    fn append_checkpoint_report(&mut self, report: &str) -> RewindSummaryOutcome {
+        self.append_reminder(CHECKPOINT_REPORT_PREFIX, report)
+    }
+
+    fn append_reminder(&mut self, prefix: &str, report: &str) -> RewindSummaryOutcome {
         let body = report.trim();
         if body.is_empty() {
             return RewindSummaryOutcome::NothingToSummarize;
         }
-        let text = format!("{SUMMARY_PREFIX}{body}{SUMMARY_SUFFIX}");
+        let text = format!("{prefix}{body}{SUMMARY_SUFFIX}");
         let bytes = text.len();
         self.add_message_with_display_role(
             Role::User,
@@ -181,6 +197,120 @@ impl Agent {
             // The history reply carries this as its status detail, so a caller
             // sees both the rewind and why the report is missing.
             self.last_status_detail = Some(format!("rewind summary failed: {detail}"));
+        }
+    }
+
+    /// Rewind to a 1-based visible message index and keep `report` in place of
+    /// the discarded branch.
+    ///
+    /// This is the rewind a model-requested `rewind` tool call performs: the
+    /// same [`Agent::rewind_to_message`] path, so a client `RewindUndo` can
+    /// restore the removed history, followed by the report as one hidden
+    /// reminder.
+    pub(crate) fn rewind_to_message_with_report(&mut self, message_index: usize, report: &str) -> Result<usize> {
+        if report.trim().is_empty() {
+            anyhow::bail!("a rewind report must not be empty");
+        }
+        let removed = self.rewind_to_message(message_index).map_err(anyhow::Error::msg)?;
+        // A report with nothing to describe would claim a branch that never
+        // existed, so an unreadable or empty outcome is left unreported.
+        self.append_checkpoint_report(report);
+        Ok(removed)
+    }
+
+    /// Apply a `checkpoint` or `rewind` request the model queued this turn.
+    ///
+    /// Called when a committed turn settles: the transcript is final, so the
+    /// marker is the last record and the retained report cannot orphan a tool
+    /// result. A failed or cancelled turn clears the request instead, because
+    /// the work it described never happened.
+    pub(super) fn apply_pending_checkpoint_rewind(&mut self) {
+        let session_id = self.session.id.clone();
+        let Some(request) = crate::tool::checkpoint::take_pending(&session_id) else {
+            return;
+        };
+        match request {
+            crate::tool::checkpoint::Pending::Checkpoint => self.commit_checkpoint_marker(&session_id),
+            crate::tool::checkpoint::Pending::Rewind { report } => {
+                self.apply_checkpoint_rewind(&session_id, &report);
+            }
+        }
+    }
+
+    /// Append the checkpoint record, unless one is already active.
+    fn commit_checkpoint_marker(&mut self, session_id: &str) {
+        let snapshot = match self.session.history_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                logging::warn(&format!(
+                    "Could not record a checkpoint for session {session_id}: {error}"
+                ));
+                return;
+            }
+        };
+        let stored = match snapshot.history_messages() {
+            Ok(stored) => stored,
+            Err(error) => {
+                logging::warn(&format!(
+                    "Could not record a checkpoint for session {session_id}: {error}"
+                ));
+                return;
+            }
+        };
+        if crate::tool::checkpoint::newest_marker_index(&stored).is_some() {
+            logging::warn(&format!(
+                "[checkpoint] session {session_id} already has an active checkpoint; not adding another"
+            ));
+            return;
+        }
+        let (role, content, display_role) = crate::tool::checkpoint::marker_message();
+        self.add_message_with_display_role(role, content, display_role);
+        if let Err(error) = self.save_session() {
+            logging::warn(&format!(
+                "Could not persist the checkpoint for session {session_id}: {error}"
+            ));
+            return;
+        }
+        logging::info(&format!("[checkpoint] session {session_id} recorded a checkpoint"));
+    }
+
+    /// Cut the transcript back to the newest active checkpoint and keep the
+    /// model's report.
+    fn apply_checkpoint_rewind(&mut self, session_id: &str, report: &str) {
+        let snapshot = match self.session.history_snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                logging::warn(&format!("Could not rewind session {session_id}: {error}"));
+                return;
+            }
+        };
+        let stored = match snapshot.history_messages() {
+            Ok(stored) => stored,
+            Err(error) => {
+                logging::warn(&format!("Could not rewind session {session_id}: {error}"));
+                return;
+            }
+        };
+        let Some(marker) = crate::tool::checkpoint::newest_marker_index(&stored) else {
+            logging::warn(&format!(
+                "[checkpoint] session {session_id} queued a rewind with no active checkpoint; dropping it"
+            ));
+            return;
+        };
+        let target = crate::tool::checkpoint::messages_before(&snapshot, marker);
+        if target == 0 {
+            logging::warn(&format!(
+                "[checkpoint] session {session_id} has nothing before its checkpoint to rewind to"
+            ));
+            return;
+        }
+        match self.rewind_to_message_with_report(target, report) {
+            Ok(removed) => logging::info(&format!(
+                "[checkpoint] session {session_id} rewound to its checkpoint, removing {removed} message(s)"
+            )),
+            Err(error) => logging::warn(&format!(
+                "Could not rewind session {session_id} to its checkpoint: {error}"
+            )),
         }
     }
 }
