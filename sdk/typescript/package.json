@@ -1,6 +1,6 @@
 {
 	"name": "@horon-ai/agent-sdk",
-	"version": "1.2.0",
+	"version": "0.1.0",
 	"description": "TypeScript SDK for the horon-agent harness API (protocol v1)",
 	"license": "MIT",
 	"type": "module",
@@ -63,11 +63,11 @@
 		"ajv": "^8.20.0"
 	},
 	"optionalDependencies": {
-		"@horon-ai/agent-darwin-arm64": "1.2.0",
-		"@horon-ai/agent-darwin-x64": "1.2.0",
-		"@horon-ai/agent-linux-arm64": "1.2.0",
-		"@horon-ai/agent-linux-x64": "1.2.0",
-		"@horon-ai/agent-win32-arm64": "1.2.0",
-		"@horon-ai/agent-win32-x64": "1.2.0"
+		"@horon-ai/agent-darwin-arm64": "0.1.0",
+		"@horon-ai/agent-darwin-x64": "0.1.0",
+		"@horon-ai/agent-linux-arm64": "0.1.0",
+		"@horon-ai/agent-linux-x64": "0.1.0",
+		"@horon-ai/agent-win32-arm64": "0.1.0",
+		"@horon-ai/agent-win32-x64": "0.1.0"
 	}
 }

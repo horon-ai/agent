@@ -247,12 +247,19 @@ jobs:
         # single-file, Windows .exe), and the launcher test covers argument and
         # environment hand-off plus the two failure messages. Node ships with
         # the hosted runner image; no setup step is needed for one test file.
+        #
+        # The TypeScript SDK is released at the same tag version as the CLI, so
+        # its committed version and six runtime pins must equal the root
+        # Cargo.toml version. The publish workflow stamps the tag version into
+        # its checkout; this is the check that keeps the tracked file honest.
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           bash scripts/npm/test_prepare_cli_packages.sh
           node --test npm/horon/test/launcher.test.mjs
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
+          python3 -m unittest -v scripts/sdk/test_sdk_release.py
+          python3 scripts/sdk/sdk_release.py check-committed
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
