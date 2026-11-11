@@ -85,6 +85,10 @@ async fn batch_executes_through_surviving_registry_clone() {
 
     assert!(output.output.contains("still alive"));
     assert!(output.output.contains("Completed: 1 succeeded, 0 failed"));
+    assert_eq!(
+        output.verdict, None,
+        "a batch whose members all came back whole makes no statement"
+    );
 }
 
 #[tokio::test]
@@ -421,6 +425,11 @@ async fn batch_subcalls_measure_the_session_budget_not_the_default_one() {
         output.output.contains("20k"),
         "the refusal must name the session budget, not the default one, got: {prefix}"
     );
+    assert_eq!(
+        output.verdict,
+        Some(ToolVerdict::Truncated),
+        "a member withheld by the guard makes the batch text a cut of what it produced"
+    );
 }
 
 #[tokio::test]
@@ -450,4 +459,139 @@ async fn batch_preserves_images_in_input_order_across_failures() {
     assert_eq!(output.images[0].label.as_deref(), Some("first.png"));
     assert_eq!(output.images[1].media_type, "image/png");
     assert!(output.output.contains("Completed: 2 succeeded, 1 failed"));
+    assert_eq!(
+        output.verdict,
+        Some(ToolVerdict::Partial),
+        "one failed member out of three is a partial run"
+    );
+}
+
+#[tokio::test]
+async fn a_batch_whose_every_member_failed_reports_failed() {
+    let registry = registry_with_batch_and_echo().await;
+    registry
+        .tools
+        .write()
+        .await
+        .insert("test_image".into(), Arc::new(ImageTool));
+    let output = registry
+        .execute(
+            "batch",
+            json!({"tool_calls": [
+                {"tool": "test_image", "intent": "Fail the first member", "parameters": {"fail": true}},
+                {"tool": "test_image", "intent": "Fail the second member", "parameters": {"fail": true}}
+            ]}),
+            test_context(),
+        )
+        .await
+        .expect("a batch returns text even when its members fail");
+
+    assert!(output.output.contains("Completed: 0 succeeded, 2 failed"));
+    assert_eq!(output.verdict, Some(ToolVerdict::Failed));
+}
+
+struct VerdictTool;
+
+#[async_trait::async_trait]
+impl Tool for VerdictTool {
+    fn name(&self) -> &str {
+        "test_verdict"
+    }
+
+    fn description(&self) -> &str {
+        "Return text under a chosen verdict"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({"type": "object"})
+    }
+
+    async fn execute(&self, input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
+        let base = ToolOutput::new(input["text"].as_str().unwrap_or_default());
+        Ok(match input["verdict"].as_str() {
+            Some("partial") => base.with_verdict(ToolVerdict::Partial),
+            Some("truncated") => base.with_verdict(ToolVerdict::Truncated),
+            Some("withheld") => base.with_verdict(ToolVerdict::Withheld),
+            _ => base,
+        })
+    }
+}
+
+async fn batch_with_verdict_members(members: Value) -> ToolOutput {
+    let registry = registry_with_batch_and_echo().await;
+    registry
+        .tools
+        .write()
+        .await
+        .insert("test_verdict".into(), Arc::new(VerdictTool));
+    registry
+        .execute("batch", json!({ "tool_calls": members }), test_context())
+        .await
+        .expect("a batch returns text even when its members are not whole")
+}
+
+#[tokio::test]
+async fn a_batch_of_whole_members_makes_no_statement() {
+    let output = batch_with_verdict_members(json!([
+        {"tool": "test_verdict", "intent": "First whole member", "parameters": {"text": "a"}},
+        {"tool": "test_verdict", "intent": "Second whole member", "parameters": {"text": "b"}}
+    ]))
+    .await;
+
+    assert_eq!(output.verdict, None);
+}
+
+#[tokio::test]
+async fn a_batch_reports_a_member_that_only_finished_in_part() {
+    let output = batch_with_verdict_members(json!([
+        {"tool": "test_verdict", "intent": "Whole member", "parameters": {"text": "a"}},
+        {
+            "tool": "test_verdict",
+            "intent": "Member that only finished in part",
+            "parameters": {"text": "b", "verdict": "partial"}
+        }
+    ]))
+    .await;
+
+    assert!(output.output.contains("Completed: 2 succeeded, 0 failed"));
+    assert_eq!(
+        output.verdict,
+        Some(ToolVerdict::Partial),
+        "the aggregate cannot be whole when a member says it was not"
+    );
+}
+
+#[tokio::test]
+async fn a_batch_reports_a_cut_among_whole_members() {
+    let output = batch_with_verdict_members(json!([
+        {"tool": "test_verdict", "intent": "Whole member", "parameters": {"text": "a"}},
+        {
+            "tool": "test_verdict",
+            "intent": "Member whose text was cut",
+            "parameters": {"text": "b", "verdict": "truncated"}
+        }
+    ]))
+    .await;
+
+    assert_eq!(output.verdict, Some(ToolVerdict::Truncated));
+}
+
+#[tokio::test]
+async fn a_batch_reports_a_member_that_was_withheld() {
+    let output = batch_with_verdict_members(json!([
+        {"tool": "test_verdict", "intent": "Whole member", "parameters": {"text": "a"}},
+        {
+            "tool": "test_verdict",
+            "intent": "Member whose result was withheld",
+            "parameters": {"text": "b", "verdict": "withheld"}
+        }
+    ]))
+    .await;
+
+    assert_eq!(
+        output.verdict,
+        Some(ToolVerdict::Truncated),
+        "a withheld member's payload is missing from the batch text, so the batch is a cut; \
+         calling it withheld would let the aggregate skip the round guard"
+    );
 }

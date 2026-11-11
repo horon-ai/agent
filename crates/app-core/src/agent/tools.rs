@@ -9,6 +9,7 @@ pub(super) fn cap_tool_output_for_history(tool_name: &str, session_id: &str, mut
         return output;
     }
     output.output = history_cap_text(tool_name, session_id, &output.output);
+    output.verdict = Some(crate::tool::ToolVerdict::after_cut(output.verdict));
     output
 }
 
@@ -266,6 +267,70 @@ mod tests {
             &capped.output[capped.output.len().saturating_sub(400)..]
         );
         assert!(capped.output.len() <= MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 1_000);
+    }
+
+    #[test]
+    fn cap_marks_the_cut_and_leaves_a_whole_output_unmarked() {
+        let whole = cap_tool_output_for_history("bash", "", ToolOutput::new("short output"));
+        assert_eq!(whole.verdict, None, "an output under the cap is not cut");
+
+        let cut = cap_tool_output_for_history(
+            "bash",
+            "",
+            ToolOutput::new("x".repeat(MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 10)),
+        );
+        assert_eq!(cut.verdict, Some(crate::tool::ToolVerdict::Truncated));
+
+        let partial = ToolOutput::new("x".repeat(MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 10))
+            .with_verdict(crate::tool::ToolVerdict::Partial);
+        assert_eq!(
+            cap_tool_output_for_history("bash", "", partial).verdict,
+            Some(crate::tool::ToolVerdict::Partial),
+            "a cut does not hide that the call only finished in part"
+        );
+    }
+
+    #[test]
+    fn the_model_reads_the_same_blocks_whatever_the_verdict() {
+        use crate::tool::post_tool_feedback::{ERROR_METADATA_KEY, NOTE_METADATA_KEY};
+        let build = || {
+            ToolOutput::new("Edited f")
+                .with_metadata(serde_json::json!({
+                    TOOL_REFERENCES_METADATA_KEY: ["mcp__github__create_issue"],
+                    ERROR_METADATA_KEY: true,
+                    NOTE_METADATA_KEY: "Check the diff before continuing.",
+                }))
+                .with_labeled_image("image/png", "data", "shot.png")
+        };
+        let render = |output: ToolOutput| {
+            serde_json::to_string(&tool_output_to_content_blocks("call".into(), output))
+                .expect("content blocks serialize")
+        };
+        let plain = render(build());
+        // Guard the fixture itself: the flags and attachments the verdict must
+        // not disturb have to be present in the baseline.
+        assert!(plain.contains("Check the diff before continuing."), "{plain}");
+        assert!(plain.contains("<system-reminder>"), "{plain}");
+        assert!(plain.contains("shot.png"), "{plain}");
+        assert!(plain.contains("tool_reference"), "{plain}");
+        assert!(plain.contains("\"is_error\":true"), "{plain}");
+
+        let verdicts = [
+            crate::tool::ToolVerdict::Ok,
+            crate::tool::ToolVerdict::Partial,
+            crate::tool::ToolVerdict::Truncated,
+            crate::tool::ToolVerdict::Withheld,
+            crate::tool::ToolVerdict::Rejected,
+            crate::tool::ToolVerdict::Failed,
+            crate::tool::ToolVerdict::Interrupted,
+        ];
+        for verdict in verdicts {
+            assert_eq!(
+                render(build().with_verdict(verdict)),
+                plain,
+                "a {verdict} verdict must not change what the model receives"
+            );
+        }
     }
 
     #[test]
