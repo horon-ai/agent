@@ -169,6 +169,41 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 `HORON_AGENT_PERF_COUNTERS=1`일 때 `snapshot().tool_arg_repairs`가 도구별
 복구 호출 수를 셉니다.
 
+## 저하 영수증(프로토콜 1.17)
+
+프로바이더의 스키마 방언이 도구 목록의 일부를 표현하지 못하면 horon-agent는 요청을
+보내기 전에 그 부분을 줄입니다. 이제 줄인 내용을 하나하나 기록합니다. 여기서 추가된
+것은 모두 덧붙이는 변경입니다. 이전 클라이언트는 예전과 같은 요청을 보내고 예전과
+같은 이벤트를 읽습니다.
+
+### 이벤트: `degradation_receipts`
+
+스트리밍 턴의 어시스턴트 메시지가 저장된 뒤, 그 요청이 이 세션에서 아직 보고하지
+않은 손실을 냈을 때만 보냅니다. 이 이벤트를 모르는 클라이언트는 무시합니다.
+
+```json
+{"ev":"degradation_receipts","session_id":"s-1","message_id":"m-7",
+ "receipts":[{"kind":"schema_keyword_dropped","tool":"bash","target":"uniqueItems"}]}
+```
+
+`kind`는 셋 중 하나입니다. `schema_keyword_dropped`는 방언 밖의 키워드나
+`format:<값>`을 뺀 경우, `strict_disabled`는 도구를 `strict: false`로 보낸 경우,
+`duplicate_tool_dropped`는 같은 이름의 두 번째 정의를 보내지 않은 경우입니다.
+같은 (kind, tool, target)은 요청마다가 아니라 세션마다 한 번 보고하며, 데몬을
+다시 시작하면 한 번 더 보고될 수 있습니다.
+
+### 저장되는 기록
+
+그 요청으로 추가된 어시스턴트 메시지는 같은 영수증을 `degradations`로 같은 추가
+쓰기에서 함께 보관합니다. 손실이 없었던 요청의 메시지는 이 필드를 생략하므로 이
+변경 전과 정확히 같은 바이트를 유지합니다.
+
+### 다루지 않는 것
+
+프로바이더가 거절한 뒤 다시 시도하는 경로(`recover_from_error`)는 지금 프로덕션에서
+호출하는 곳이 없습니다. 그래서 "거절 뒤 재시도"를 나타내는 영수증은 없고, 위의 예방
+단계만 보고합니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -291,6 +326,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 모르는 필드는 무시하고, 모르는 이벤트 종류는 건너뜁니다.
 - 실패는 `{"ev":"error","code":...,"message":...}`로 옵니다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`입니다.
 - 세션을 지목하는 요청은 `session_id`를 받습니다. 없는 세션은 빈 결과가 아니라 `unknown_session`으로 답합니다. "이 세션은 아무것도 쓰지 않았다"와 "그런 세션이 없다"는 다른 사실이기 때문입니다.
+- `session_id`는 6자 이상인 앞부분 일부도 받습니다. 온전한 id가 항상 이기고, 연결이 이미 아는 id는 다시 해석하지 않습니다. 여러 세션이 공유하는 앞부분은 `details.accepted_ids`에 최대 10개의 후보를 담고 `details.store_code`를 `ambiguous_session`으로 둔 `unknown_session`으로 답합니다. 오류 코드 자체는 `unknown_session`으로 남아 이전 빌드의 클라이언트도 응답을 해석합니다. 아무 세션도 해당하지 않는 앞부분은 그대로 `unknown_session`으로 답합니다.
 
 ### usage_report
 

@@ -94,6 +94,7 @@ fn keys_defaults_reproduce_the_shipped_keys() {
     assert_eq!(editing("right"), Some(ids::EDITOR_RIGHT));
     assert_eq!(editing("home"), Some(ids::EDITOR_HOME));
     assert_eq!(editing("end"), Some(ids::EDITOR_END));
+    assert_eq!(editing("tab"), Some(ids::EDITOR_COMPLETE));
     // The prompt's keys do not leak into the input line.
     assert_eq!(editing("y"), None);
 

@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 16;
+export const API_VERSION_MINOR = 17;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -267,6 +267,17 @@ export interface RenderedImage {
   anchor?: RenderedImageAnchor;
   /** Insert before this History.messages index (including hidden rows). Length means append. */
   history_message_index?: number;
+}
+
+/** One loss a provider request suffered to fit its schema dialect. */
+export type DegradationKind = "schema_keyword_dropped" | "strict_disabled" | "duplicate_tool_dropped";
+
+export interface DegradationReceipt {
+  kind: DegradationKind;
+  /** The tool definition the loss applies to. */
+  tool: string;
+  /** Dropped keyword, `format:<value>`, `strict`, or the duplicated tool name. */
+  target: string;
 }
 
 /** Base64 image attachment: [mediaType, base64Data]. */
@@ -725,6 +736,12 @@ export type ApiEvent =
     }
   | { ev: "side_pane_images"; session_id: string; images: RenderedImage[] }
   | {
+      ev: "degradation_receipts";
+      session_id: string;
+      message_id: string;
+      receipts: DegradationReceipt[];
+    }
+  | {
       ev: "tool_args_repaired";
       session_id: string;
       call_id: string;
@@ -1033,6 +1050,7 @@ export const KNOWN_EVENT_KINDS = [
   "tool_exec",
   "tool_done",
   "tool_args_repaired",
+  "degradation_receipts",
   "token_usage",
   "kv_cache_miss",
   "turn_done",

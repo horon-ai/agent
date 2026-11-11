@@ -79,6 +79,7 @@ pub(crate) fn forget_removed_session(session_id: &str, retired_sink: Option<&mps
     // input store. Without this a daemon that opens and closes sessions forever
     // keeps every one of them, and their threads, alive.
     crate::tool::forget_session_caches(session_id);
+    horon_agent_provider_core::degradation::forget_session(session_id);
     crate::server::session_observation::forget_session(session_id);
     crate::durable_input_runtime::forget_session(session_id);
     crate::server::control_receipts::forget_session(session_id);

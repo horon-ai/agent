@@ -39,7 +39,7 @@ pub mod rejection;
 pub use conformance::{
     ConformanceError, must_not_contain_unsupported_constructs, must_preserve_meaning, untyped_properties,
 };
-pub use dialect::{DialectSpec, DialectTransforms, LearnedQuirks};
+pub use dialect::{DialectSpec, DialectTransforms, DropLog, LearnedQuirks};
 pub use keyword::{KeywordRole, keyword_role};
 pub use rejection::{SchemaRejection, classify, is_schema_error};
 
@@ -48,11 +48,20 @@ use serde_json::Value;
 /// Normalize a tool-parameter schema for `spec`, applying anything already
 /// learned about that provider. This is the entry point provider crates use.
 pub fn normalize(schema: &Value, spec: &DialectSpec) -> Value {
+    normalize_reporting(schema, spec, &mut dialect::DropLog::disabled())
+}
+
+/// [`normalize`], also recording every keyword and format the dialect removed.
+///
+/// A caller that reports degradations uses this entry point; every other caller
+/// keeps [`normalize`], whose disabled log costs one branch per dropped keyword
+/// and nothing on the common path where nothing is dropped.
+pub fn normalize_reporting(schema: &Value, spec: &DialectSpec, drops: &mut dialect::DropLog<'_>) -> Value {
     let learned = quirks::learned_for(spec.id);
     if learned.is_empty() {
-        dialect::apply(schema, spec)
+        dialect::apply_reporting(schema, spec, drops)
     } else {
-        dialect::apply_with_quirks(schema, spec, &learned)
+        dialect::apply_with_quirks_reporting(schema, spec, &learned, drops)
     }
 }
 

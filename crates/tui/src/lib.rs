@@ -10,6 +10,7 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+pub mod commands;
 pub mod input;
 pub mod keys;
 pub mod prompts;
@@ -52,8 +53,18 @@ Options:
 
 Keys:
   Enter          send the typed message
-  /quit          leave (Ctrl-C cancels a running turn, Ctrl-D always leaves)
+  Tab            complete the slash command being typed
+  Ctrl-C         cancel a running turn, or leave when nothing is running
+  Ctrl-D         leave
   Bindings are remapped in $HORON_HOME/keybindings.toml.
+
+Commands:
+  /help          list the commands, including the harness ones and the
+                 markdown files under .horon/commands and $HORON_HOME/commands
+  /clear         clear the transcript pane
+  /model [name]  list the models, or switch to the one named
+  /quit          leave
+  //text         send the literal message /text
 ";
 
 /// Parsed command line.
@@ -229,6 +240,7 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
         Ok(directory) => app.cwd = Some(directory.display().to_string()),
         Err(error) => app.warn(format!("cannot read the working directory: {error}")),
     }
+    app.reload_commands();
     let (layout, layout_warnings) = statusline::Layout::from_settings(reloader.settings());
     app.statusline = layout;
     for warning in layout_warnings {
@@ -275,8 +287,8 @@ where
             break;
         }
         // The reloader throttles itself to one file check per second; the
-        // theme loader and the key bindings share that cadence for their own
-        // files.
+        // theme loader, the key bindings and the command directories share
+        // that cadence for their own files.
         let mut themed = false;
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
@@ -302,6 +314,9 @@ where
             }
             app.bindings = reload.bindings;
         }
+        // Command directories are only stat-ed here; the files are re-read when
+        // a directory's timestamp moved.
+        app.tick_commands();
         if themed {
             app.theme = themes.theme().clone();
             app.symbols = *themes.symbols();
@@ -348,6 +363,7 @@ fn drain_events(app: &mut App) {
         match incoming {
             Incoming::Event(event) => app.apply_event(&event),
             Incoming::Notice(message) => app.warn(message),
+            Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Closed(message) => app.disconnected(&message),
         }
     }
@@ -368,6 +384,8 @@ fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: 
             always,
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
+        Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::Model(name) => Command::Model(name),
         Action::Quit => {
             app.running = false;
             return;
@@ -394,7 +412,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
+    let hint = app.completion_hint();
     let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
+    if hint.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
     if !prompt_lines.is_empty() {
         constraints.insert(1, Constraint::Length(prompt_lines.len() as u16));
     }
@@ -462,6 +484,13 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         .saturating_add(1)
         .saturating_add(app.input.cursor_column());
     frame.set_cursor_position((cursor_x, input_area.y));
+    if let Some(hint) = hint {
+        index += 1;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(theme.core.muted)))),
+            areas[index],
+        );
+    }
 }
 
 /// The bottom line: the segments the status-line layout names, joined by the
@@ -481,7 +510,7 @@ fn transcript_widget(app: &App) -> Paragraph<'static> {
     }
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
-            "Send a message to start. /quit leaves.",
+            "Send a message to start. /help lists the commands; /quit leaves.",
             Style::default().fg(app.theme.core.muted),
         )));
     }
