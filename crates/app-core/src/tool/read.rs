@@ -741,11 +741,12 @@ fn read_history_url(params: &ReadInput, ctx: &ToolContext) -> Result<ToolOutput>
     // The scheme is matched case-insensitively, exactly as the dispatch that
     // routed here did.
     let scheme = "history://";
-    let requested = (target.len() >= scheme.len() && target.is_char_boundary(scheme.len()))
-        .then(|| target.get(..scheme.len()))
-        .flatten()
+    let requested = target
+        .get(..scheme.len())
         .filter(|prefix| prefix.eq_ignore_ascii_case(scheme))
-        .map(|_| &target[scheme.len()..])
+        // A byte slice of a longer string can split a character, and a URL
+        // that does can only be malformed anyway.
+        .and_then(|_| target.get(scheme.len()..))
         .ok_or_else(|| {
             anyhow::anyhow!("Only history://current and history://<session-id> are supported, got: {target}")
         })?;
