@@ -87,6 +87,12 @@ struct BgInput {
     /// Multi-task wait mode: any, all, first_failure
     #[serde(default)]
     wait_mode: Option<String>,
+    /// For wait: also treat child agents of this session as a source
+    #[serde(default)]
+    children: Option<bool>,
+    /// For wait: also treat queued peer (IRC) messages as a source
+    #[serde(default)]
+    messages: Option<bool>,
     /// Tail only the last N lines for output/tail and wait previews
     #[serde(default)]
     tail_lines: Option<usize>,
@@ -549,6 +555,8 @@ impl Tool for BgTool {
                 "max_wait_seconds": { "type": "integer", "description": "For wait: max seconds to block. Default 60, cap 3600, 0 = immediate check." },
                 "return_on_progress": { "type": "boolean", "description": "For wait: return on the first progress/checkpoint event too. Defaults to true." },
                 "wait_mode": { "type": "string", "enum": ["any", "all", "first_failure"], "description": "For multi-task wait, return on any completion, all completions, or first failure. Defaults to any." },
+                "children": { "type": "boolean", "description": "For wait: also wake when one of this session's child agents finishes. Each child is reported once. With no task_id this waits on children alone." },
+                "messages": { "type": "boolean", "description": "For wait: also wake on a peer message queued for this session (IRC must be on). With no task_id this waits on messages alone." },
                 "tail_lines": { "type": "integer", "description": "Return only the last N output lines for output/tail/wait preview." },
                 "lines": { "type": "integer", "description": "Alias for tail_lines." },
                 "include_output_preview": { "type": "boolean", "description": "When wait returns, include a recent output preview. Failed tasks include a preview by default." },
@@ -762,6 +770,44 @@ impl Tool for BgTool {
             }
 
             "wait" => {
+                let sources = super::bg_wait::WaitSources {
+                    children: params.children.unwrap_or(false),
+                    messages: params.messages.unwrap_or(false),
+                };
+                if sources.any() {
+                    // A caller waiting on children or messages usually names no
+                    // task at all, so the task source is optional here: only an
+                    // explicit task_id/task_ids/latest is resolved.
+                    let explicit_tasks =
+                        params.task_id.is_some() || params.task_ids.is_some() || params.latest.unwrap_or(false);
+                    let task_ids = if explicit_tasks {
+                        resolve_task_ids(manager, &ctx, &params, "wait", true).await?
+                    } else {
+                        Vec::new()
+                    };
+                    let requested_wait = params.max_wait_seconds.unwrap_or(DEFAULT_WAIT_SECONDS);
+                    let capped_wait = requested_wait.min(MAX_WAIT_SECONDS);
+                    let mode = params.wait_mode.as_deref().unwrap_or("any");
+                    let mode = if matches!(mode, "all" | "first_failure") {
+                        mode
+                    } else {
+                        "any"
+                    };
+                    return super::bg_wait::wait_with_sources(
+                        manager,
+                        &ctx,
+                        super::bg_wait::WaitRequest {
+                            sources,
+                            task_ids,
+                            max_wait: Duration::from_secs(capped_wait),
+                            mode: mode.to_string(),
+                            return_on_progress: params
+                                .return_on_progress
+                                .unwrap_or_else(default_wait_return_on_progress),
+                        },
+                    )
+                    .await;
+                }
                 let task_ids = resolve_task_ids(manager, &ctx, &params, "wait", true).await?;
                 let requested_wait = params.max_wait_seconds.unwrap_or(DEFAULT_WAIT_SECONDS);
                 let capped_wait = requested_wait.min(MAX_WAIT_SECONDS);

@@ -173,7 +173,8 @@ pub async fn accept(session_id: &str, mut message: SoftInterruptMessage) -> anyh
 /// Accept and hand back the message carrying its journal id.
 pub async fn accept_message(session_id: &str, message: SoftInterruptMessage) -> anyhow::Result<SoftInterruptMessage> {
     let owned = session_id.to_string();
-    tokio::task::spawn_blocking(move || {
+    let kind = queued_kind(&message);
+    let accepted = tokio::task::spawn_blocking(move || {
         with_store(&owned, |store| {
             let mut message = message;
             store.accept(&mut message)?;
@@ -182,7 +183,36 @@ pub async fn accept_message(session_id: &str, message: SoftInterruptMessage) -> 
         })
     })
     .await
-    .map_err(join_error)?
+    .map_err(join_error)??;
+    crate::bus::Bus::global().publish(crate::bus::BusEvent::SessionInputQueued {
+        session_id: session_id.to_string(),
+        kind,
+    });
+    Ok(accepted)
+}
+
+/// Why an accepted input is about to be queued, for [`crate::bus::BusEvent::SessionInputQueued`].
+///
+/// `bg action=wait` distinguishes a peer message (the caller wants the text) from
+/// a user or system interrupt (the caller wants to stop waiting and read the
+/// queue). The only marker separating the two is the envelope `format_envelope`
+/// produces for an IRC delivery: that function is the sole writer of the `<irc`
+/// opening tag, and it escapes the same tag inside a body, so a message body
+/// cannot be mistaken for one. [`SoftInterruptSource::System`] is shared by
+/// several notification paths, which is why the source alone cannot decide.
+///
+/// This lives here rather than at each enqueue site because this is the one
+/// choke point every durable acceptance passes through, including the
+/// `server/state.rs` wrappers that cannot take a new parameter.
+fn queued_kind(message: &SoftInterruptMessage) -> crate::bus::QueuedInputKind {
+    use crate::bus::QueuedInputKind;
+    use horon_agent_agent_runtime::SoftInterruptSource;
+
+    if message.source == SoftInterruptSource::System && message.content.starts_with("<irc ") {
+        QueuedInputKind::Message
+    } else {
+        QueuedInputKind::Interrupt
+    }
 }
 
 /// Record that these inputs are about to be injected, before the injection.
