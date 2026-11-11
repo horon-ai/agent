@@ -249,7 +249,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 ## 클라이언트 설치
 
-릴리스는 클라이언트를 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<플랫폼 접미사>.tar.gz`이고 접미사는 에이전트 자산과 같다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-darwin-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). 설치의 나머지는 달라지지 않는다.
+릴리스는 클라이언트를 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<플랫폼 접미사>.tar.gz`이고 접미사는 에이전트 자산과 같다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). 설치의 나머지는 달라지지 않는다.
 
 `scripts/install/install.sh`와 `scripts/install/install.ps1`이 이 파일을 에이전트 압축 파일 옆으로 받아 `SHA256SUMS`와 대조한다. `horon install-release`가 `builds/versions/<version>/`에 `horon-agent` 옆으로 넣으므로, 한 버전 디렉터리가 두 실행 파일을 들고 활성화가 둘을 함께 바꾼다.
 

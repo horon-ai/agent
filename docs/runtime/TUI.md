@@ -249,7 +249,7 @@ The file is parsed and edited in place, so comments, key order and layout alread
 
 ## Installing the client
 
-The release publishes the client as its own archive beside the agent: `horon-tui-<platform suffix>.tar.gz`, with the suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-darwin-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). Nothing else changes about the install.
+The release publishes the client as its own archive beside the agent: `horon-tui-<platform suffix>.tar.gz`, with the suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). Nothing else changes about the install.
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch it next to the agent archive and check it against `SHA256SUMS`. `horon install-release` stages it into `builds/versions/<version>/` beside `horon-agent`, so a version directory holds both binaries and activation swaps them together.
 
