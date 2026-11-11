@@ -9,102 +9,102 @@
 <text x="722.7" y="116.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="bold">Windows</text>
 <text x="32.0" y="158.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">--version 시간</text>
 <rect x="285.0" y="132.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">3.24 ms · 8개 중 1위</text>
-<text x="294.0" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 2.69×</text>
-<rect x="500.3" y="132.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="509.3" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">11.7 ms · 8개 중 2위</text>
-<text x="509.3" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.86×</text>
+<text x="294.0" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">3.65 ms · 8개 중 1위</text>
+<text x="294.0" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 2.32×</text>
+<rect x="500.3" y="132.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
+<text x="509.3" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">7.35 ms · 8개 중 1위</text>
+<text x="509.3" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.30×</text>
 <rect x="715.7" y="132.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">10.7 ms · 8개 중 1위</text>
-<text x="724.7" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.30×</text>
+<text x="724.7" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">12.1 ms · 8개 중 1위</text>
+<text x="724.7" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.15×</text>
 <text x="32.0" y="208.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">설치 크기</text>
 <rect x="285.0" y="182.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="294.0" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">111 MB · 8개 중 2위</text>
-<text x="294.0" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: pi 0.98×</text>
+<text x="294.0" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">112 MB · 8개 중 2위</text>
+<text x="294.0" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: pi 0.97×</text>
 <rect x="500.3" y="182.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">93.3 MB · 8개 중 1위</text>
-<text x="509.3" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: pi 1.17×</text>
+<text x="509.3" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">94.5 MB · 8개 중 1위</text>
+<text x="509.3" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: pi 1.15×</text>
 <rect x="715.7" y="182.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">93.0 MB · 8개 중 1위</text>
-<text x="724.7" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: pi 1.17×</text>
+<text x="724.7" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">94.2 MB · 8개 중 1위</text>
+<text x="724.7" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: pi 1.16×</text>
 <text x="32.0" y="258.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">원샷 프롬프트 시간</text>
 <rect x="285.0" y="232.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">80.6 ms · 8개 중 1위</text>
-<text x="294.0" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.72×</text>
+<text x="294.0" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">50.2 ms · 8개 중 1위</text>
+<text x="294.0" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 2.81×</text>
 <rect x="500.3" y="232.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">95.1 ms · 8개 중 1위</text>
-<text x="509.3" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 4.51×</text>
+<text x="509.3" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">61.3 ms · 8개 중 1위</text>
+<text x="509.3" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 4.91×</text>
 <rect x="715.7" y="232.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">184 ms · 8개 중 2위</text>
-<text x="724.7" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.69×</text>
+<text x="724.7" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">189 ms · 8개 중 2위</text>
+<text x="724.7" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.71×</text>
 <text x="32.0" y="308.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">원샷 프롬프트 메모리</text>
-<rect x="285.0" y="282.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">39.0 MB · 8개 중 1위</text>
-<text x="294.0" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.03×</text>
+<rect x="285.0" y="282.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
+<text x="294.0" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">47.0 MB · 8개 중 2위</text>
+<text x="294.0" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.89×</text>
 <rect x="500.3" y="282.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">29.4 MB · 8개 중 1위</text>
-<text x="509.3" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.16×</text>
+<text x="509.3" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">31.2 MB · 8개 중 1위</text>
+<text x="509.3" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.09×</text>
 <rect x="715.7" y="282.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">35.7 MB · 8개 중 2위</text>
-<text x="724.7" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.92×</text>
+<text x="724.7" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">35.3 MB · 8개 중 2위</text>
+<text x="724.7" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.88×</text>
 <text x="32.0" y="358.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">스킬 호출 시간</text>
 <rect x="285.0" y="332.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">42.5 ms · 8개 중 1위</text>
-<text x="294.0" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.14×</text>
+<text x="294.0" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">46.8 ms · 8개 중 1위</text>
+<text x="294.0" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.15×</text>
 <rect x="500.3" y="332.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">87.5 ms · 8개 중 1위</text>
-<text x="509.3" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 3.75×</text>
+<text x="509.3" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">56.2 ms · 8개 중 1위</text>
+<text x="509.3" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 3.61×</text>
 <rect x="715.7" y="332.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">218 ms · 8개 중 2위</text>
-<text x="724.7" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.90×</text>
+<text x="724.7" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">352 ms · 8개 중 2위</text>
+<text x="724.7" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.59×</text>
 <text x="32.0" y="408.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">MCP 도구 호출 시간</text>
 <rect x="285.0" y="382.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">66.1 ms · 8개 중 1위</text>
-<text x="294.0" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 2.50×</text>
+<text x="294.0" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">68.9 ms · 8개 중 1위</text>
+<text x="294.0" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 2.53×</text>
 <rect x="500.3" y="382.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">113 ms · 7개 중 1위</text>
-<text x="509.3" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 3.69×</text>
+<text x="509.3" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">88.1 ms · 7개 중 1위</text>
+<text x="509.3" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 3.56×</text>
 <rect x="715.7" y="382.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">271 ms · 8개 중 1위</text>
-<text x="724.7" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.15×</text>
+<text x="724.7" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">284 ms · 8개 중 1위</text>
+<text x="724.7" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.22×</text>
 <text x="32.0" y="458.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">최대 세션 수에서의 메모리</text>
 <rect x="285.0" y="432.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">47.7 MB · 8개 중 1위</text>
-<text x="294.0" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.02×</text>
+<text x="294.0" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">48.4 MB · 8개 중 1위</text>
+<text x="294.0" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.01×</text>
 <rect x="500.3" y="432.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">37.6 MB · 8개 중 1위</text>
-<text x="509.3" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.14×</text>
+<text x="509.3" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">38.1 MB · 8개 중 1위</text>
+<text x="509.3" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.13×</text>
 <rect x="715.7" y="432.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">32.4 MB · 8개 중 2위</text>
-<text x="724.7" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.94×</text>
+<text x="724.7" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">33.3 MB · 8개 중 2위</text>
+<text x="724.7" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.89×</text>
 <text x="32.0" y="508.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">세션 하나당 늘어나는 메모리</text>
 <rect x="285.0" y="482.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="294.0" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">502 KB · 8개 중 2위</text>
-<text x="294.0" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.49×</text>
+<text x="294.0" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">501 KB · 8개 중 2위</text>
+<text x="294.0" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.60×</text>
 <rect x="500.3" y="482.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="509.3" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">374 KB · 8개 중 2위</text>
-<text x="509.3" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.84×</text>
-<rect x="715.7" y="482.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">335 KB · 8개 중 1위</text>
-<text x="724.7" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.17×</text>
+<text x="509.3" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">384 KB · 8개 중 2위</text>
+<text x="509.3" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.96×</text>
+<rect x="715.7" y="482.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
+<text x="724.7" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">400 KB · 8개 중 2위</text>
+<text x="724.7" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.79×</text>
 <text x="32.0" y="558.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">원샷 프롬프트당 fsync 호출 수</text>
 <rect x="285.0" y="532.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="294.0" y="550.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">14 회 · 6개 중 4위</text>
-<text x="294.0" y="567.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: OpenCode 0.29×</text>
+<text x="294.0" y="550.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">10 회 · 6개 중 4위</text>
+<text x="294.0" y="567.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: OpenCode 0.40×</text>
 <rect x="500.3" y="532.0" width="209.3" height="42" rx="6" fill="#f2f4f6"/>
 <text x="509.3" y="550.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">측정 불가</text>
 <rect x="715.7" y="532.0" width="209.3" height="42" rx="6" fill="#f2f4f6"/>
 <text x="724.7" y="550.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">측정 불가</text>
 <text x="32.0" y="608.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">첫 세션 메모리</text>
 <rect x="285.0" y="582.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">43.3 MB · 8개 중 1위</text>
-<text x="294.0" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.07×</text>
+<text x="294.0" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">44.0 MB · 8개 중 1위</text>
+<text x="294.0" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.05×</text>
 <rect x="500.3" y="582.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">34.3 MB · 8개 중 1위</text>
-<text x="509.3" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.17×</text>
+<text x="509.3" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">34.7 MB · 8개 중 1위</text>
+<text x="509.3" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">다음: jcode 1.15×</text>
 <rect x="715.7" y="582.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">29.4 MB · 8개 중 2위</text>
-<text x="724.7" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.92×</text>
-<text x="32.0" y="650.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent c4816f4 · 측정 2026-11-10 03:47 UTC · 실행 42750483292</text>
+<text x="724.7" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">29.7 MB · 8개 중 2위</text>
+<text x="724.7" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">최저: jcode 0.91×</text>
+<text x="32.0" y="650.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 8724ad6 · 측정 2026-11-10 23:46 UTC · 실행 42924574911</text>
 <text x="32.0" y="668.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">OS마다 다른 GitHub 호스티드 러너와 모의 모델로 쟀습니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</text>
 </svg>
