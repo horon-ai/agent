@@ -740,3 +740,39 @@ The `lsp` tool asks the project's language server what the compiler knows, and c
 ### Write path
 
 An applied edit goes through the same path as `edit`: path policy and the generated-file guard on every file, per-path locks, and one undo unit for the whole call, so one `undo` restores every file. Content is compared against the bytes the plan was computed from before anything is written, and a file that changed since then fails the call with no file written. Only the applying calls (`rename` with `apply: true`, `code_actions` with `action_id`) declare a write effect.
+
+## Model checkpoints and rewind
+
+`checkpoint` and `rewind` let the model mark a point of its own session and later
+fold everything after it into a report it writes itself. They are registered only
+while `[tools] checkpoint` is on; the pair shares one switch because a checkpoint
+nothing can rewind to, or a rewind with no checkpoint, is useless alone. Both are
+absent from every default profile and are joined into a closed allow-list only by
+that switch (`crates/base/src/config/tool_selection.rs`).
+
+- `checkpoint` takes no arguments. One checkpoint is active per session; a second
+  call while one is active is refused, and so is a second call in the same turn.
+- `rewind` takes a non-empty `report`: what the abandoned branch established, why
+  it was abandoned, and what the next attempt should do differently.
+
+A call only records the intent (`crates/app-core/src/tool/checkpoint.rs`). A tool
+round cannot rebuild its own transcript: the assistant message that called the
+tool and the results still to come belong to the same turn. Both turn loops
+apply the pending request when a committed turn settles
+(`crates/app-core/src/agent/interrupts.rs`), through the same history path a
+client rewind uses, and a failed or cancelled turn drops the request.
+
+The checkpoint is stored as a hidden `<system-reminder>` record: the transcript
+view and the rewind target list skip it, while the provider still receives it as
+background. It survives a restart because it is part of the stored history. A
+rewind cuts the transcript back to the newest checkpoint and appends the report
+as one more hidden reminder, so the model keeps its conclusion and the whole
+transcript stays readable through `history://current`.
+
+Files, background tasks and process state are never restored; only conversation
+history moves. Both tools declare a write effect, so plan mode refuses them.
+
+Tests: `crates/app-core/src/tool/checkpoint_tests.rs` covers the registration
+gate, the refusals and the pending map;
+`crates/app-core/src/agent/rewind_summary_tests.rs` covers the settle path, the
+report that replaces the branch, and undo.
