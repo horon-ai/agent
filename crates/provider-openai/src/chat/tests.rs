@@ -25,10 +25,10 @@ const DEADLINE: Duration = Duration::from_secs(10);
 // Loopback HTTP mock
 
 #[derive(Clone, Debug, Default)]
-struct RecordedRequest {
+pub(super) struct RecordedRequest {
     path: String,
     headers: Vec<(String, String)>,
-    body: String,
+    pub(super) body: String,
 }
 
 impl RecordedRequest {
@@ -41,7 +41,7 @@ impl RecordedRequest {
     }
 }
 
-struct Reply {
+pub(super) struct Reply {
     status: u16,
     content_type: &'static str,
     /// Written as one HTTP chunk each when `chunked`, otherwise concatenated.
@@ -50,7 +50,7 @@ struct Reply {
 }
 
 impl Reply {
-    fn sse(parts: &[&str]) -> Self {
+    pub(super) fn sse(parts: &[&str]) -> Self {
         Self {
             status: 200,
             content_type: "text/event-stream",
@@ -59,7 +59,7 @@ impl Reply {
         }
     }
 
-    fn status(status: u16, body: &str) -> Self {
+    pub(super) fn status(status: u16, body: &str) -> Self {
         Self {
             status,
             content_type: "application/json",
@@ -69,8 +69,8 @@ impl Reply {
     }
 }
 
-struct MockServer {
-    url: String,
+pub(super) struct MockServer {
+    pub(super) url: String,
     seen: Arc<Mutex<Vec<RecordedRequest>>>,
     stop: Arc<AtomicBool>,
     accept: Option<std::thread::JoinHandle<()>>,
@@ -78,6 +78,17 @@ struct MockServer {
 
 impl MockServer {
     fn start(reply: Reply) -> Self {
+        Self::start_sequence(vec![reply])
+    }
+
+    /// Serve one reply per connection in order, repeating the last one.
+    ///
+    /// The repetition keeps a broken retry loop from hanging the test on a
+    /// connection the script never answered, and lets a two-reply script stand
+    /// for "rejection, then success".
+    pub(super) fn start_sequence(replies: Vec<Reply>) -> Self {
+        assert!(!replies.is_empty(), "a mock server needs at least one reply");
+        let replies: VecDeque<Arc<Reply>> = replies.into_iter().map(Arc::new).collect();
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
         listener.set_nonblocking(true).expect("non-blocking listener");
         let address = listener.local_addr().expect("loopback address");
@@ -85,13 +96,20 @@ impl MockServer {
         let stop = Arc::new(AtomicBool::new(false));
         let seen_thread = Arc::clone(&seen);
         let stop_thread = Arc::clone(&stop);
-        let reply = Arc::new(reply);
+        let replies = Arc::new(Mutex::new(replies));
         let accept = std::thread::spawn(move || {
             while !stop_thread.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let seen = Arc::clone(&seen_thread);
-                        let reply = Arc::clone(&reply);
+                        let reply = {
+                            let mut replies = replies.lock().expect("reply script");
+                            if replies.len() > 1 {
+                                replies.pop_front().expect("more than one reply queued")
+                            } else {
+                                Arc::clone(replies.front().expect("the last reply repeats"))
+                            }
+                        };
                         std::thread::spawn(move || {
                             let _ = serve(stream, &seen, &reply);
                         });
@@ -117,7 +135,7 @@ impl MockServer {
         }
     }
 
-    fn requests(&self) -> Vec<RecordedRequest> {
+    pub(super) fn requests(&self) -> Vec<RecordedRequest> {
         self.seen.lock().expect("request log").clone()
     }
 }
@@ -242,7 +260,7 @@ fn reason(status: u16) -> &'static str {
 // ---------------------------------------------------------------------------
 // Helpers
 
-fn provider(url: &str) -> OpenAiCompatibleProvider {
+pub(super) fn provider(url: &str) -> OpenAiCompatibleProvider {
     OpenAiCompatibleProvider::new(url, ChatAuth::Bearer, Some(TEST_KEY.to_string()), "test-model", vec![])
         .expect("provider builds")
 }
@@ -251,7 +269,7 @@ fn sse_frame(value: Value) -> String {
     format!("data: {value}\n\n")
 }
 
-async fn collect(stream: &mut EventStream) -> Vec<StreamEvent> {
+pub(super) async fn collect(stream: &mut EventStream) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     while let Some(event) = tokio::time::timeout(DEADLINE, stream.next())
         .await
