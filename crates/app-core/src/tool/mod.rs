@@ -191,7 +191,7 @@ pub(crate) use horon_agent_tool_core::intent_schema_property;
 pub use horon_agent_tool_core::{
     ConcurrencyClass, StdinInputRequest, Tool, ToolContext, ToolEffects, ToolExecutionMode,
 };
-pub use horon_agent_tool_types::{ToolImage, ToolOutput};
+pub use horon_agent_tool_types::{ToolImage, ToolOutput, ToolRejected, ToolVerdict};
 pub(crate) use session_search::spawn_recent_index_warmup;
 pub use session_search::{SearchOptions, search_sessions_blocking};
 #[cfg(test)]
@@ -644,7 +644,9 @@ pub(crate) const OUTPUT_WITHHELD_PREFIX: &str = "⚠️ OUTPUT WITHHELD:";
 /// re-deriving the guard's arithmetic.
 pub(crate) fn is_context_refusal(output: &ToolOutput) -> bool {
     let text = output.output.trim_start();
-    text.starts_with(CONTEXT_LIMIT_REFUSAL_PREFIX) || text.starts_with(OUTPUT_WITHHELD_PREFIX)
+    output.verdict == Some(ToolVerdict::Withheld)
+        || text.starts_with(CONTEXT_LIMIT_REFUSAL_PREFIX)
+        || text.starts_with(OUTPUT_WITHHELD_PREFIX)
 }
 
 /// Record the opt-in on an output that actually carries content.
@@ -2036,20 +2038,18 @@ impl Registry {
         let policy_on_self = is_custom || resolved_name != crate::config::TOOLBOX_TOOL;
         if is_custom && let Some(config) = sdk::config(&ctx.session_id) {
             let disabled = config.disabled.into_iter().collect();
-            anyhow::ensure!(
-                !self.tool_is_disabled(&disabled, resolved_name),
-                "Tool '{}' is disabled",
-                resolved_name
-            );
+            if self.tool_is_disabled(&disabled, resolved_name) {
+                return Err(ToolRejected(format!("Tool '{}' is disabled", resolved_name)).into());
+            }
         }
         if !is_custom && let Some(policy) = session_tool_policy(&ctx.session_id) {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !self.tool_is_allowed(allowed, resolved_name)
             {
-                return Err(anyhow::anyhow!("Tool '{}' is not allowed", resolved_name));
+                return Err(ToolRejected(format!("Tool '{}' is not allowed", resolved_name)).into());
             }
             if self.tool_is_disabled(&policy.disabled_tools, resolved_name) {
-                return Err(anyhow::anyhow!("Tool '{}' is disabled", resolved_name));
+                return Err(ToolRejected(format!("Tool '{}' is disabled", resolved_name)).into());
             }
         }
         // Plan mode is read-only: refuse a call that declares a barrier effect
@@ -2068,7 +2068,7 @@ impl Registry {
             let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
             fields.push(("block_reason".to_string(), "plan_mode".to_string()));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-            return Err(anyhow::anyhow!(crate::plan_mode::block_message(resolved_name)));
+            return Err(ToolRejected(crate::plan_mode::block_message(resolved_name)).into());
         }
         let tool: Arc<dyn Tool> = if is_custom {
             Arc::new(sdk::CallbackTool(resolved_name.into()))
@@ -2149,7 +2149,7 @@ impl Registry {
                 let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
                 fields.push(("block_reason".to_string(), "bash_pattern".to_string()));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-                return Err(anyhow::anyhow!("Blocked by bash pattern '{}' (deny).", verdict.pattern));
+                return Err(ToolRejected(format!("Blocked by bash pattern '{}' (deny).", verdict.pattern)).into());
             }
             let evaluation = crate::approval::evaluate_and_audit(
                 resolved_name,
@@ -2189,7 +2189,7 @@ impl Registry {
             let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
             fields.push(("block_reason".to_string(), "approval".to_string()));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-            return Err(anyhow::anyhow!(refusal));
+            return Err(ToolRejected(refusal).into());
         }
 
         // User-configured pre_tool gate: external policy hook that can block
@@ -2217,7 +2217,7 @@ impl Registry {
                 let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &restored, &ctx);
                 fields.push(("block_reason".to_string(), reason.clone()));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-                return Err(anyhow::anyhow!("Tool call blocked by pre_tool hook: {reason}"));
+                return Err(ToolRejected(format!("Tool call blocked by pre_tool hook: {reason}")).into());
             }
             restored
         } else {
@@ -2288,6 +2288,7 @@ impl Registry {
                 text,
                 artifacts::GENERIC_CONDENSE_BUDGET_BYTES,
             );
+            output.verdict = Some(ToolVerdict::after_cut(output.verdict));
         }
         output = self.guard_context_overflow(name, output, accept_large_output).await;
         if accept_large_output {
@@ -2369,9 +2370,8 @@ impl Registry {
             ));
             return ToolOutput {
                 output: Self::exhausted_context_refusal(output_tokens, current_tokens, budget),
-                title: output.title,
-                metadata: output.metadata,
-                images: output.images,
+                verdict: Some(ToolVerdict::Withheld),
+                ..output
             };
         }
 
@@ -2397,9 +2397,8 @@ impl Registry {
             ));
             return ToolOutput {
                 output: Self::oversized_output_refusal(output_tokens, max_tokens, current_tokens, budget),
-                title: output.title,
-                metadata: output.metadata,
-                images: output.images,
+                verdict: Some(ToolVerdict::Withheld),
+                ..output
             };
         }
 
@@ -2427,9 +2426,8 @@ impl Registry {
 
         ToolOutput {
             output: truncated,
-            title: output.title,
-            metadata: output.metadata,
-            images: output.images,
+            verdict: Some(ToolVerdict::after_cut(output.verdict)),
+            ..output
         }
     }
 
@@ -2543,7 +2541,7 @@ impl Registry {
             msg.push_str(&format!(" Did you mean: {}?", suggestions.join(", ")));
         }
         msg.push_str(&format!(" Available tools: {}.", names.join(", ")));
-        anyhow::anyhow!(msg)
+        ToolRejected(msg).into()
     }
 
     /// Register a tool dynamically (for MCP tools, etc.)
