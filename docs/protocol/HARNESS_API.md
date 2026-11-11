@@ -246,7 +246,7 @@ A session can hold several heads after a rewind or a branched import. The select
 
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
-The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon-agent export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
 
 Two rules a client must not break:
 

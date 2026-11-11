@@ -166,7 +166,7 @@ aux = "my-small-model"
 `provider add`가 같은 표를 `config.toml`에 쓰고, `--api-key-stdin`으로 받은 키를 키 파일에 저장한다.
 
 ```bash
-printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
+printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --base-url https://llm.example.com/v1 \
   --model my-model \
   --api-key-env MY_GW_API_KEY \

@@ -278,7 +278,7 @@ the platform can still surface separately.
 | `startup_failed` | The private instance exited before opening its API socket. Its stderr is in the message. | Fix the reported configuration, credential, or binary error before retrying. |
 | `startup_timeout` | No API socket within `startup_timeout_ms`. | Raise the timeout on a slow machine; check stderr and runtime-directory permissions. |
 | `invalid_instance_home` | The instance home or a credential path is unsafe (same directory, symlink, file, traversal). | Choose a separate real directory. |
-| `connect_failed` | The bridge is absent, dead, or listening elsewhere. | Run `horon-agent api-bridge`; check `socket_path` or `HORON_AGENT_API_SOCKET`. |
+| `connect_failed` | The bridge is absent, dead, or listening elsewhere. | Run `horon api-bridge`; check `socket_path` or `HORON_AGENT_API_SOCKET`. |
 | `handshake_failed` | The peer replied with an invalid frame during negotiation. | Confirm the socket is a harness socket and upgrade both sides. |
 | `unsupported_version` | Client and bridge share no protocol major version. | Upgrade the older side. |
 
