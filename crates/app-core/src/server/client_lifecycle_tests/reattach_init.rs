@@ -187,6 +187,8 @@ async fn close_lifecycle_socket(socket: LifecycleSocket) {
 
 fn stored_user_message(id: &str, text: &str) -> crate::session::StoredMessage {
     crate::session::StoredMessage {
+        original_input: None,
+        arg_repairs: None,
         id: id.to_string(),
         role: crate::message::Role::User,
         content: vec![ContentBlock::Text {

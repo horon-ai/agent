@@ -62,18 +62,10 @@ fn run(root: &Path, session: &str) -> Result<Value, Value> {
                 run_id: Some(run_id.clone()),
             }),
         ),
-        (
-            "run.started",
-            Payload::RunStarted(RunStarted {
-                input_id: Some(input.clone()),
-            }),
-        ),
+        ("run.started", Payload::RunStarted(RunStarted::new(Some(input.clone())))),
         (
             "run.stopped",
-            Payload::RunStopped(RunStopped {
-                cause: StopCause::Completed,
-                input_id: Some(input.clone()),
-            }),
+            Payload::RunStopped(RunStopped::new(StopCause::Completed, Some(input.clone()))),
         ),
         (
             "input.committed",

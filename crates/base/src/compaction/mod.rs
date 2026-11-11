@@ -31,26 +31,29 @@ use tokio::task::JoinHandle;
 
 pub use horon_agent_compaction_core::pruning;
 pub use horon_agent_compaction_core::{
-    CHARS_PER_TOKEN_UPPER_BOUND, COMPACTION_THRESHOLD, CRITICAL_THRESHOLD, CompactionAction, CompactionEvent,
-    CompactionStats, ContextBudget, ContextBudgetError, DEFAULT_RECENT_TOKENS, DEFAULT_RESERVE_TOKENS,
-    DEFAULT_TOKEN_BUDGET, EMBED_MAX_CHARS_PER_MSG, EMBEDDING_HISTORY_WINDOW, EMERGENCY_IMAGE_MAX_CHARS,
-    EMERGENCY_TOOL_RESULT_MAX_CHARS, MANUAL_COMPACT_MIN_THRESHOLD, MIN_TURNS_TO_KEEP, PAYLOAD_IMAGE_CHAR_BUDGET,
-    SEMANTIC_EMBED_CACHE_CAPACITY, SUMMARY_PROMPT, SYSTEM_OVERHEAD_TOKENS, Summary, TOKEN_HISTORY_WINDOW,
-    base_context_ratio, build_compaction_prompt, build_emergency_summary_text, compacted_summary_text_block,
-    compute_context_budget, conservative_context_tokens, content_char_count, effective_context_tokens_from_usage,
-    effective_context_tokens_from_usage_with, emergency_strip_large_images, emergency_truncate_large_payloads,
-    estimate_compaction_tokens_from_text, is_image_rejection_error, is_request_payload_too_large_error, mean_embedding,
-    message_char_count, message_token_count, recent_cutoff_for_token_budget, recent_tokens_for_window,
-    safe_compaction_cutoff, semantic_cache_key, semantic_goal_text, semantic_message_text,
-    strip_large_images_in_contents, summary_payload_char_count,
+    CHARS_PER_TOKEN_UPPER_BOUND, CRITICAL_THRESHOLD, CompactionAction, CompactionEvent, CompactionStats, ContextBudget,
+    ContextBudgetError, DEFAULT_RECENT_TOKENS, DEFAULT_RESERVE_TOKENS, DEFAULT_TOKEN_BUDGET, EMBED_MAX_CHARS_PER_MSG,
+    EMBEDDING_HISTORY_WINDOW, EMERGENCY_IMAGE_MAX_CHARS, EMERGENCY_TOOL_RESULT_MAX_CHARS, MANUAL_COMPACT_MIN_THRESHOLD,
+    MIN_TURNS_TO_KEEP, PAYLOAD_IMAGE_CHAR_BUDGET, SEMANTIC_EMBED_CACHE_CAPACITY, SUMMARY_PROMPT,
+    SYSTEM_OVERHEAD_TOKENS, Summary, TOKEN_HISTORY_WINDOW, base_context_ratio, build_compaction_prompt,
+    build_emergency_summary_text, compacted_summary_text_block, compute_context_budget, conservative_context_tokens,
+    content_char_count, effective_context_tokens_from_usage, effective_context_tokens_from_usage_with,
+    emergency_strip_large_images, emergency_truncate_large_payloads, estimate_compaction_tokens_from_text,
+    is_image_rejection_error, is_request_payload_too_large_error, mean_embedding, message_char_count,
+    message_token_count, recent_cutoff_for_token_budget, recent_tokens_for_window, safe_compaction_cutoff,
+    semantic_cache_key, semantic_goal_text, semantic_message_text, strip_large_images_in_contents,
+    summary_payload_char_count,
 };
 use horon_agent_config_types::CompactionStrategy;
 
+mod active_char_estimate;
 pub mod handoff;
 pub mod jobs;
 pub mod recovery;
 pub mod source_projection;
 pub mod summary;
+
+use active_char_estimate::ActiveCharEstimate;
 
 const HARD_THRESHOLD_PENDING_WAIT_MS: u64 = 15_000;
 const HARD_THRESHOLD_PENDING_POLL_MS: u64 = 50;
@@ -118,63 +121,6 @@ struct HardThresholdWait {
     waited_ms: u64,
     applied: bool,
     timed_out: bool,
-}
-
-/// Rolling character-count estimate for the active (non-compacted) message
-/// suffix.
-///
-/// Token estimation needs the size of the live message tail without rescanning
-/// the entire history on every call, so this caches that sum next to a dirty
-/// flag. The value and the flag must always move together: previously they were
-/// two independent `CompactionManager` fields, and a code path that updated one
-/// without the other silently corrupted token accounting. Keeping the raw
-/// fields private and forcing every mutation through these named operations
-/// makes that class of bug unrepresentable.
-#[derive(Debug, Clone, Default)]
-struct ActiveCharEstimate {
-    chars: usize,
-    dirty: bool,
-}
-
-impl ActiveCharEstimate {
-    /// The currently cached character count. Only trustworthy when not dirty;
-    /// readers must consult [`Self::is_dirty`] (and any external invariants)
-    /// before relying on it.
-    fn value(&self) -> usize {
-        self.chars
-    }
-
-    /// Whether the cached value is stale and must be recomputed from history.
-    fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// Mark the cached value stale so the next read recomputes from history.
-    fn invalidate(&mut self) {
-        self.dirty = true;
-    }
-
-    /// Record an exact, freshly computed count as the trusted value.
-    fn set_exact(&mut self, chars: usize) {
-        self.chars = chars;
-        self.dirty = false;
-    }
-
-    /// Extend a trusted count by a newly appended message's characters.
-    ///
-    /// Mirrors the append-only fast path: the prior value is assumed accurate,
-    /// so the running sum stays trusted (dirty cleared).
-    fn append_exact(&mut self, chars: usize) {
-        self.chars = self.chars.saturating_add(chars);
-        self.dirty = false;
-    }
-
-    /// Reset to zero after a restore/clamp. Stays dirty when there may be active
-    /// messages whose characters have not been measured yet.
-    fn reset_pending(&mut self, maybe_has_active: bool) {
-        self.chars = 0;
-        self.dirty = maybe_has_active;
-    }
 }
 
 /// Manages background compaction of conversation context.
@@ -285,6 +231,10 @@ pub struct CompactionManager {
     /// must not present this as a complete summary.
     active_lossy: bool,
 
+    /// True when `active_summary` is a generated handoff document rather than a
+    /// summarizer summary; a persisted boundary keeps the tag across restarts.
+    active_handoff: bool,
+
     /// Durable refusal of automatic context recovery for one exact source,
     /// provider, model and settings identity.
     recovery_blocked: Option<recovery::RecoveryBlocked>,
@@ -379,6 +329,7 @@ impl CompactionManager {
             active_summary_usage: (None, None),
             active_restoration: None,
             active_lossy: false,
+            active_handoff: false,
             recovery_blocked: None,
             last_recovery: None,
             mode,
@@ -864,6 +815,7 @@ impl CompactionManager {
         );
         self.active_restoration = structured.and_then(|meta| meta.restoration.clone());
         self.active_lossy = structured.is_some_and(|meta| meta.lossy_emergency);
+        self.active_handoff = structured.is_some_and(|meta| meta.handoff);
         self.recovery_blocked = structured
             .and_then(|meta| meta.recovery_blocked.clone())
             .map(|blocked| recovery::RecoveryBlocked {
@@ -940,6 +892,7 @@ impl CompactionManager {
                     restoration: self.active_restoration.clone(),
                     lossy_emergency: self.active_lossy,
                     recovery_blocked: self.stored_recovery_blocked(),
+                    handoff: self.active_handoff,
                 })
                 .filter(|meta| {
                     meta.input_tokens.is_some()
@@ -947,6 +900,7 @@ impl CompactionManager {
                         || meta.restoration.is_some()
                         || meta.lossy_emergency
                         || meta.recovery_blocked.is_some()
+                        || meta.handoff
                 }),
             })
     }
@@ -1123,6 +1077,7 @@ impl CompactionManager {
         self.active_summary_usage = (None, None);
         self.active_restoration = Some(stored_restoration(&plan.restoration));
         self.active_lossy = true;
+        self.active_handoff = false;
         self.recovery_blocked = None;
         self.observed_input_tokens = None;
         self.generation = self.generation.wrapping_add(1);
@@ -2320,6 +2275,7 @@ impl CompactionManager {
         self.active_summary_usage = (result.input_tokens, result.output_tokens);
         self.active_restoration = result.restoration.as_ref().map(stored_restoration);
         self.active_lossy = false;
+        self.active_handoff = false;
         self.recovery_blocked = None;
         self.discard_oversized_openai_native_compaction();
         self.observed_input_tokens = None;
@@ -2674,6 +2630,7 @@ impl CompactionManager {
         self.active_summary = Some(summary);
         self.active_summary_usage = (None, None);
         self.active_lossy = true;
+        self.active_handoff = false;
         self.observed_input_tokens = None;
         let post_tokens = self.effective_token_count_with(all_messages) as u64;
         self.last_compaction = Some(CompactionEvent {
@@ -3146,6 +3103,7 @@ pub async fn build_transfer_compaction_state(
             restoration: result.restoration.as_ref().map(stored_restoration),
             lossy_emergency: false,
             recovery_blocked: None,
+            handoff: false,
         }),
     }))
 }

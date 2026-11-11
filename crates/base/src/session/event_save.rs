@@ -115,9 +115,10 @@ impl Session {
                 self.updated_at = committed.updated_at;
             }
             let runtime = super::event_wire::LocalRuntime::capture(self);
+            let confirmed_binding = self.event_state.confirmed_binding.clone();
             let (runtime_paths, runtime_id) = (paths.clone(), id.clone());
             writer.call(move |_| {
-                if runtime.publish(&runtime_paths, &runtime_id)? {
+                if runtime.publish(&runtime_paths, &runtime_id, confirmed_binding.as_ref())? {
                     event_store::sync_local_state(&runtime_paths, &runtime_id)?;
                 }
                 Ok(())

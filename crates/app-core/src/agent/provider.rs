@@ -98,6 +98,9 @@ impl Agent {
     }
 
     pub(super) fn record_model_turn_usage(&mut self, turn_id: &str) {
+        // Identity is recorded even when usage is not, so runtime info can name
+        // the model that served the last response after a fallback switch.
+        self.last_serving_model = Some(self.provider_model());
         if self.session.is_debug {
             return;
         }
@@ -201,7 +204,7 @@ impl Agent {
         }
     }
 
-    fn refresh_compaction_budget(&self) {
+    pub(super) fn refresh_compaction_budget(&self) {
         let compaction = self.registry.compaction();
         let provider_name = self.provider.name().to_string();
         let model = self.provider.model();

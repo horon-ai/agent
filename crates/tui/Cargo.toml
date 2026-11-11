@@ -26,3 +26,11 @@ horon-agent-tool-types = { path = "../tool-types" }
 # stack to every build for nothing.
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 crossterm = "0.29"
+toml = "0.8"
+serde_json = "1"
+# The `time` segment shows local wall-clock time; chrono is already in the
+# workspace lock through the harness crates.
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
