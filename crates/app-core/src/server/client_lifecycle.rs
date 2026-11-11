@@ -556,6 +556,7 @@ pub(super) async fn handle_client(
 
     let initial_working_dir = match resolve_subscribe_target(&mut initial_request, &sessions, &swarm_members)
         .await
+        .map_err(|error| error.to_string())
         .and_then(|()| initial_subscribe_working_dir(&initial_request))
     {
         Ok(working_dir) => working_dir,
@@ -1270,7 +1271,7 @@ pub(super) async fn handle_client(
 
         if let Err(message) = resolve_subscribe_target(
             &mut request, &sessions, &swarm_members,
-        ).await {
+        ).await.map_err(|error| error.to_string()) {
             let _ = client_event_tx.send(ServerEvent::Error {
                 id: request.id(), message, retry_after_secs: None,
             });

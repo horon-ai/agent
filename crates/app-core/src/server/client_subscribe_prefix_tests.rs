@@ -113,7 +113,8 @@ async fn a_prefix_shared_by_two_stored_sessions_is_an_error() {
 
     let error = resolve_target_subscribe_prefix(&mut request, &empty_sessions())
         .await
-        .expect_err("two matches must not pick one");
+        .expect_err("two matches must not pick one")
+        .to_string();
     assert!(error.contains("matches 2 sessions"), "{error}");
     assert!(error.contains("session_fox_1790191044353_621ff7b9"), "{error}");
     assert_eq!(
@@ -159,13 +160,15 @@ async fn a_live_unpersisted_session_is_a_prefix_candidate() {
 async fn a_prefix_below_the_minimum_that_matches_is_rejected() {
     let _home = IsolatedHome::new();
     store_session("session_fox_1790191044353_621ff7b9");
-    let mut request = subscribe_to("sessio");
+    // Five characters: short enough to be refused, long enough to match.
+    let mut request = subscribe_to("sessi");
 
     let error = resolve_target_subscribe_prefix(&mut request, &empty_sessions())
         .await
-        .expect_err("six characters are required");
+        .expect_err("six characters are required")
+        .to_string();
     assert!(error.contains("at least 6 characters"), "{error}");
-    assert_eq!(target_of(&request), Some("sessio"));
+    assert_eq!(target_of(&request), Some("sessi"));
 }
 
 /// An agent is only needed to occupy the live map for this test; it never runs.
