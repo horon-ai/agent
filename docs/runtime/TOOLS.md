@@ -325,7 +325,7 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - `messages: true` wakes when a peer (IRC) message is queued for this session. It needs `[tools] irc = true` and a live bus, the same preconditions `irc wait` has; without them the flag changes nothing.
 - `task_id` is optional once a new source is selected. Ids are still accepted, and are then watched together with the selected sources.
 
-`wait_mode` keeps its three values. `any` (the default) returns on the first event. `all` waits until every named task and child is terminal and lists the children it saw finish. `first_failure` returns as soon as a task fails. Children and messages have no mode of their own.
+`wait_mode` keeps its three values. `any` (the default) returns on the first event. `all` waits until every named task and child is terminal and lists the children that finished; a child is marked delivered only when that report is made, so an `all` wait that reaches its deadline first leaves a finished child for a later wait. `first_failure` returns as soon as a task fails. Children and messages have no mode of their own, and a queued message ends the wait in every mode: with `wait_mode: "all"` and `messages: true` the call returns at the first message even while tasks or children are still running.
 
 | Outcome | `wait_reason` |
 | --- | --- |

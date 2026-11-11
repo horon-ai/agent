@@ -329,37 +329,38 @@ pub(crate) async fn wait_with_sources(
     {
         return Ok(message_output(&format_envelope(&message, None), &request));
     }
+    // A selection with nothing to wait for answers `nothing_to_wait_for` in
+    // every mode, before the `all` branch can report an empty "all finished".
+    let tasks = tasks_of(manager, &request.task_ids).await;
+    if pending.is_empty() && !armed_messages && tasks.is_empty() {
+        return Ok(nothing_output(&request));
+    }
     if request.mode == "all" {
-        let tasks = tasks_of(manager, &request.task_ids).await;
         if pending.running_tasks.is_empty() && pending.running_children.is_empty() {
             for (child_id, _) in &pending.finished_children {
                 mark_delivered(&me, child_id);
             }
             return Ok(all_finished_output(&tasks, &pending.finished_children));
         }
-    } else {
+    } else if tasks.iter().any(|task| task.status != BackgroundTaskStatus::Running) {
         // A task named explicitly and already finished is an event, not
         // "nothing to wait for": the preflight reports it the way the tick does.
-        let tasks = tasks_of(manager, &request.task_ids).await;
-        if tasks.iter().any(|task| task.status != BackgroundTaskStatus::Running) {
-            return Ok(task_event_output("any_finished", &tasks));
-        }
-    }
-    if pending.is_empty() && !armed_messages {
-        return Ok(nothing_output(&request));
+        let failed = tasks.iter().any(|task| task.status == BackgroundTaskStatus::Failed);
+        let reason = if request.mode == "first_failure" && failed {
+            "first_failure"
+        } else {
+            "any_finished"
+        };
+        return Ok(task_event_output(reason, &tasks));
     }
 
     let deadline = tokio::time::Instant::now() + request.max_wait;
     let mut tick = tokio::time::interval(TASK_POLL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_progress: HashMap<String, Option<crate::bus::BackgroundTaskProgress>> = HashMap::new();
-    for task in tasks_of(manager, &request.task_ids).await {
+    for task in &tasks {
         last_progress.insert(task.task_id.clone(), task.progress.clone());
     }
-    // Children already finished at preflight are carried into the loop so an
-    // `all` wait reports them instead of dropping them and leaving them for a
-    // later call.
-    let mut finished_children: Vec<(String, String)> = pending.finished_children.clone();
     // `IrcBus::wait` returns immediately when nobody owes this session a reply,
     // so it is polled at most once; later messages arrive as a bus event or on
     // the tick's mailbox read.
@@ -404,11 +405,14 @@ pub(crate) async fn wait_with_sources(
                     Ok(BusEvent::ChildAgentTerminal { parent_session_id, session_id, status })
                         if parent_session_id == me && !already_delivered(&me, &session_id) =>
                     {
-                        mark_delivered(&me, &session_id);
+                        // In mode `all` the event only wakes the completion
+                        // check. Consuming the child here would lose it when the
+                        // deadline arrives first, since the timeout summary names
+                        // running ids only.
                         if request.mode == "all" {
-                            finished_children.push((session_id, status));
                             continue;
                         }
+                        mark_delivered(&me, &session_id);
                         return Ok(child_output(&session_id, &status, &request));
                     }
                     Ok(BusEvent::SessionInputQueued { session_id, kind }) if session_id == me => {
@@ -512,13 +516,19 @@ pub(crate) async fn wait_with_sources(
                     return Ok(task_event_output("first_failure", &tasks));
                 }
                 if request.mode == "all" {
-                    let children_done = !request.sources.children
-                        || collect(manager, &me, &request).await.running_children.is_empty();
-                    if tasks.iter().all(|task| task.status != BackgroundTaskStatus::Running) && children_done {
-                        for (child_id, _) in &finished_children {
+                    // Take the finished children from the snapshot instead of a
+                    // local list: an event dropped by a lagged receiver still
+                    // shows up here, and nothing is marked delivered until the
+                    // whole selection is reported, so a deadline cannot consume
+                    // a child that was never handed to the caller.
+                    let snapshot = collect(manager, &me, &request).await;
+                    if tasks.iter().all(|task| task.status != BackgroundTaskStatus::Running)
+                        && snapshot.running_children.is_empty()
+                    {
+                        for (child_id, _) in &snapshot.finished_children {
                             mark_delivered(&me, child_id);
                         }
-                        return Ok(all_finished_output(&tasks, &finished_children));
+                        return Ok(all_finished_output(&tasks, &snapshot.finished_children));
                     }
                 } else if tasks.iter().any(|task| task.status != BackgroundTaskStatus::Running) {
                     return Ok(task_event_output("any_finished", &tasks));

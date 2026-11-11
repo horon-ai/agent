@@ -285,6 +285,41 @@ fn wait_tool_interrupt_ends_wait() {
     });
 }
 
+/// A child finished before a mode `all` deadline stays deliverable afterwards.
+///
+/// The child is consumed only when the whole selection is reported, so a
+/// deadline that arrives first must leave it for the next wait.
+#[test]
+fn wait_tool_all_timeout_keeps_finished_child() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = TestEnv::new("");
+    crate::agent_result_cache::reset_for_test();
+    let parent = "parent-all-timeout-child";
+    crate::agent_result_cache::publish_completed("done-child", parent, "done", None).expect("publish child");
+    crate::agent_result_cache::publish_running("busy-child", parent, "running");
+
+    run(async {
+        let output = wait(
+            json!({"children": true, "wait_mode": "all", "max_wait_seconds": 1}),
+            parent,
+        )
+        .await
+        .expect("wait succeeds");
+        let metadata = output.metadata.expect("metadata");
+        assert_eq!(metadata["wait_reason"], "timeout");
+        assert_eq!(metadata["timed_out"], true);
+        assert_eq!(metadata["pending_child_session_ids"], json!(["busy-child"]));
+
+        let output = wait(json!({"children": true, "max_wait_seconds": 5}), parent)
+            .await
+            .expect("second wait succeeds");
+        assert!(output.output.contains("done-child"), "output={}", output.output);
+        let metadata = output.metadata.expect("metadata");
+        assert_eq!(metadata["wait_reason"], "child_finished");
+        assert_eq!(metadata["child_session_id"], "done-child");
+    });
+}
+
 /// Without the new flags the old contract holds: a wait still needs a task.
 #[test]
 fn wait_tool_defaults_unchanged() {
