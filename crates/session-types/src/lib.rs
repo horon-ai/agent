@@ -7,6 +7,7 @@ pub mod repair_record;
 mod stored_message;
 mod title;
 mod transcription;
+pub use horon_agent_message_types::degradation::{DegradationKind, DegradationReceipt};
 pub use stored_message::StoredMessage;
 pub use title::prompt_title;
 pub use transcription::{TRANSCRIPTION_CLOSE, TRANSCRIPTION_OPEN, strip_transcription, wrap_transcription};

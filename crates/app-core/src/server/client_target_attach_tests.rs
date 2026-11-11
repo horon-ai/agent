@@ -291,6 +291,7 @@ async fn target_subscribe_refused_by_a_busy_writer_sends_the_refusal() {
         chrono::DateTime::UNIX_EPOCH,
         store::EventKind::new(store::KnownEventKind::MessageAppended),
         serde_json::json!({"message": crate::session::StoredMessage { original_input: None, arg_repairs: None,
+        degradations: None,
             turn_start: false,
             id: "m1".into(),
             role: crate::message::Role::User,

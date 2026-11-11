@@ -93,6 +93,7 @@ mod tests {
         StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             turn_start: false,
             id: String::new(),
             role,
