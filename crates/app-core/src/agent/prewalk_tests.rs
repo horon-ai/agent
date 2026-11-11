@@ -301,6 +301,7 @@ async fn prewalk_off_keeps_the_session_model() {
 #[tokio::test]
 async fn prewalk_does_not_switch_again_after_a_restore() {
     let (_home, provider, mut agent) = setup(&on(EXEC_MODEL), false);
+    run(&mut agent).await;
     write_todo(&agent, "t1");
     run(&mut agent).await;
     let session_id = agent.session.id.clone();
