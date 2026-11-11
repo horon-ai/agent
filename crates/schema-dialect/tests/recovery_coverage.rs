@@ -156,10 +156,11 @@ fn no_dialect_treats_an_operational_failure_as_a_schema_rejection() {
 /// recovery. That flaw was found by unwiring the native route and watching an
 /// earlier version of this test pass anyway.
 const RUNTIME_RECOVERY_EXPECTATIONS: &[(&str, bool)] = &[
-    // Neither retries nor learns: this is the only model path left, and it
-    // hands a schema rejection to the backend instead of holding recovery
-    // state of its own. Adding either call here has to update this claim.
-    ("../provider-openai/src/chat/mod.rs", false),
+    // The direct Chat Completions path classifies a rejection, learns the
+    // construct it names and rebuilds the body before resending. The call lives
+    // in the module the retry loop delegates to, which is why this points there
+    // rather than at the loop in `mod.rs`.
+    ("../provider-openai/src/chat/schema_recovery.rs", true),
 ];
 
 /// Every runtime's recovery wiring must match what this file claims.
