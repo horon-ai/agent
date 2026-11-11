@@ -320,13 +320,13 @@ fn rust_client_source() -> String {
         "export.rs",
         "message_modes.rs",
     ]
-        .into_iter()
-        .map(|file| {
-            std::fs::read_to_string(root.join(file))
-                .unwrap_or_else(|error| panic!("the Rust SDK source {file} must be readable: {error}"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    .into_iter()
+    .map(|file| {
+        std::fs::read_to_string(root.join(file))
+            .unwrap_or_else(|error| panic!("the Rust SDK source {file} must be readable: {error}"))
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn ts_client_source() -> Option<String> {

@@ -44,6 +44,7 @@ pub use requests::*;
 pub use sockets::{api_socket_path, legacy_socket_path, runtime_dir};
 pub use swarm_metadata::{enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state};
 
+#[cfg(test)]
 #[path = "harness_api_tests/message_modes_snapshot.rs"]
 mod message_modes_snapshot_tests;
 #[cfg(test)]
