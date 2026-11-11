@@ -9,34 +9,9 @@
 //! (harness API, ACP, SDKs) will read the marker from.
 
 use async_trait::async_trait;
-use horon_agent_app_core::message::{Message, ToolDefinition};
-use horon_agent_app_core::provider::{EventStream, Provider};
 use horon_agent_app_core::tool::{Registry, Tool, ToolContext, ToolExecutionMode, ToolOutput, ToolRejected};
 use serde_json::{Value, json};
 use std::sync::Arc;
-
-struct StubProvider;
-
-#[async_trait]
-impl Provider for StubProvider {
-    async fn complete(
-        &self,
-        _messages: &[Message],
-        _tools: &[ToolDefinition],
-        _system: &str,
-        _resume_session_id: Option<&str>,
-    ) -> anyhow::Result<EventStream> {
-        Err(anyhow::anyhow!("the stub provider never completes a request"))
-    }
-
-    fn name(&self) -> &str {
-        "stub"
-    }
-
-    fn fork(&self) -> Arc<dyn Provider> {
-        Arc::new(StubProvider)
-    }
-}
 
 /// A tool that runs and then fails, so the error is the tool's own failure
 /// rather than a refusal of the dispatcher.
