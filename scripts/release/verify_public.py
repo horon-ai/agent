@@ -14,10 +14,18 @@ import os
 
 PLATFORMS = ("linux-x86_64", "linux-aarch64", "macos-aarch64", "macos-x86_64",
              "windows-x86_64", "windows-aarch64", "freebsd-x86_64")
-REQUIRED = {f"horon-agent-{platform}.tar.gz" for platform in PLATFORMS} | {
-    "horon-agent-windows-x86_64.exe", "horon-agent-windows-aarch64.exe",
-    "SHA256SUMS", "release-provenance.json",
-}
+# horon-tui ships beside horon-agent on every platform except FreeBSD, which
+# keeps publishing the CLI only.
+TUI_PLATFORMS = tuple(platform for platform in PLATFORMS if platform != "freebsd-x86_64")
+REQUIRED = (
+    {f"horon-agent-{platform}.tar.gz" for platform in PLATFORMS}
+    | {f"horon-tui-{platform}.tar.gz" for platform in TUI_PLATFORMS}
+    | {
+        "horon-agent-windows-x86_64.exe", "horon-agent-windows-aarch64.exe",
+        "horon-tui-windows-x86_64.exe", "horon-tui-windows-aarch64.exe",
+        "SHA256SUMS", "release-provenance.json",
+    }
+)
 
 
 def select_release(pages, tag):

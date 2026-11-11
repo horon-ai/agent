@@ -37,10 +37,20 @@ esac
 EOF
 cat > "$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$TEST_REPO/target/release"
+# install_from_source.sh builds the CLI and then the interactive client as
+# separate cargo invocations. Only the CLI build carries the embedded git
+# metadata, so only that invocation asserts it and writes the version-reporting
+# stub; the client build just has to produce its own binary.
+if [[ " $* " == *" -p horon-tui "* ]]; then
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$TEST_REPO/target/release/horon-tui"
+  chmod +x "$TEST_REPO/target/release/horon-tui"
+  exit 0
+fi
 test "${HORON_AGENT_BUILD_GIT_HASH:-}" = abc123def
 test "${HORON_AGENT_BUILD_GIT_DATE:-}" = '2026-08-09 20:00:00 +0000'
 test "${HORON_AGENT_BUILD_GIT_DIRTY:-}" = "${TEST_DIRTY:-0}"
-mkdir -p "$TEST_REPO/target/release"
 cat > "$TEST_REPO/target/release/horon-agent" <<BIN
 #!/usr/bin/env bash
 if [[ "\${1:-}" == --version ]]; then
@@ -56,11 +66,16 @@ if [[ "\${1:-}" == install-release ]]; then
   mkdir -p "\$install_dir"
   cp "\$0" "\$install_dir/horon-agent"
   chmod +x "\$install_dir/horon-agent"
+  printf '%s\\n' "installed complete release at \$install_dir/horon-agent"
   exit 0
 fi
 exit 0
 BIN
 chmod +x "$TEST_REPO/target/release/horon-agent"
+# The installer copies the interactive client beside the installed binary, so
+# the fixture build has to produce that sibling too.
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$TEST_REPO/target/release/horon-tui"
+chmod +x "$TEST_REPO/target/release/horon-tui"
 EOF
 chmod +x "$fake_bin/uname" "$fake_bin/git" "$fake_bin/cargo"
 
@@ -83,6 +98,9 @@ TEST_DIRTY=1 run_install >/dev/null
 grep -Fq -- "install-release --assets $assets --agent-version 0.98.1 --source-binary $fixture/target/release/horon-agent" \
   "$tmp/cli-args.log"
 test -x "$tmp/launcher/horon-agent"
+# The CLI hands a terminal launch to the sibling client, so a complete install
+# puts it beside the installed binary.
+test -x "$tmp/launcher/horon-tui"
 
 if TEST_BINARY_HASH=stale999 TEST_DIRTY=0 run_install >"$tmp/out" 2>"$tmp/err"; then
   echo "installer accepted a binary with stale metadata" >&2
@@ -102,6 +120,7 @@ if HOME="$tmp/home" PATH="$fake_bin:/usr/bin:/bin" TEST_REPO="$fixture" HORON_AG
 fi
 grep -Fq 'needs the release assets' "$tmp/no-assets.err"
 test ! -e "$tmp/launcher/horon-agent"
+test ! -e "$tmp/launcher/horon-tui"
 
 # An assets directory without SHA256SUMS is refused before the build is installed.
 incomplete="$tmp/assets-incomplete"
@@ -124,6 +143,9 @@ if TEST_DIRTY=0 CLI_FAIL=1 run_install >/dev/null 2>"$tmp/failed.err"; then
   exit 1
 fi
 test "$(cat "$tmp/launcher/horon-agent")" = 'prior launcher'
+# The client is only copied after a release install succeeds, so a failed
+# install must not leave one behind.
+test ! -e "$tmp/launcher/horon-tui"
 
 # FreeBSD x64 is a supported host.
 freebsd_assets="$tmp/assets-freebsd"
