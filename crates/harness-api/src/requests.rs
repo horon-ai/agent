@@ -179,7 +179,15 @@ pub enum ApiRequest {
     Clear { session_id: String },
 
     /// Rewind history to the given 1-based message index.
-    Rewind { session_id: String, message_index: usize },
+    ///
+    /// `summarize` asks for a report on the branch the rewind discards; the
+    /// daemon also needs `[compaction] rewind_summary` on. Omit it for the
+    /// pre-existing behavior.
+    Rewind {
+        session_id: String,
+        message_index: usize,
+        summarize: Option<bool>,
+    },
 
     /// Reply to a `PermissionRequest` event.
     PermissionResponse {

@@ -155,6 +155,12 @@ bing_market = "en-US"
 # Model used for structured compaction summaries; empty keeps the session model.
 # Env override: HORON_AGENT_COMPACTION_SUMMARY_MODEL.
 # summary_model = ""
+# Summarise the branch a rewind throws away and append the report to the kept
+# branch. Opt-in twice: this switch and `summarize: true` on the rewind request.
+# rewind_summary = false
+# Token allowance for that report. 1500 is horon's default, not a borrowed one;
+# 0 also means "use the default", and values are clamped to 1..=4096.
+# rewind_summary_tokens = 1500
 
 [tools]
 # Controls which built-in tools are sent to the model.

@@ -742,11 +742,17 @@ impl BridgeState {
             "rewind" => {
                 let id = self.legacy_id();
                 self.pending_simple.push((id, api_id, SimpleKind::Ok));
-                vec![Outbound::Legacy(json!({
+                let mut rewind = json!({
                     "type": "rewind",
                     "id": id,
                     "message_index": request["message_index"].as_u64().unwrap_or(1),
-                }))]
+                });
+                // Only forward the summary request when it is actually asked for,
+                // so a client that never heard of the flag sends what it always did.
+                if request["summarize"].as_bool() == Some(true) {
+                    rewind["summarize"] = json!(true);
+                }
+                vec![Outbound::Legacy(rewind)]
             }
             "get_history" => {
                 let id = self.legacy_id();

@@ -6,6 +6,7 @@ mod gateway;
 mod irc;
 pub mod model_roles;
 mod power;
+pub mod rewind_summary;
 mod serde_lenient;
 mod storage;
 mod swarm_spawn;
@@ -294,6 +295,10 @@ pub struct CompactionConfig {
     /// its full text until the conversation is compacted. Off by default
     /// because it changes what the model sees.
     pub prune_tool_results: bool,
+    /// Summarise the branch a rewind discards and append the report to the kept branch.
+    pub rewind_summary: bool,
+    /// Token allowance for that summary; 0 uses the default, clamped into `1..=4096`.
+    pub rewind_summary_tokens: usize,
 }
 
 impl CompactionConfig {
@@ -335,6 +340,8 @@ impl Default for CompactionConfig {
             background: true,
             summary_model: None,
             prune_tool_results: false,
+            rewind_summary: false,
+            rewind_summary_tokens: rewind_summary::DEFAULT_REWIND_SUMMARY_TOKENS,
         }
     }
 }

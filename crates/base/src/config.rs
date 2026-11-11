@@ -3,6 +3,7 @@
 //! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
+pub use horon_agent_config_types::rewind_summary;
 pub use horon_agent_config_types::{
     AdvisorConfig, AgentsConfig, AmbientConfig, ApprovalMode, AuthConfig, AutoJudgeConfig, AutoReviewConfig,
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,

@@ -50,6 +50,7 @@ mod active_char_estimate;
 pub mod handoff;
 pub mod jobs;
 pub mod recovery;
+pub mod rewind_summary;
 pub mod source_projection;
 pub mod summary;
 

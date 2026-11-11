@@ -1078,6 +1078,21 @@ export class HoronAgentClient extends EventEmitter {
     await this.requestOk({ req: "rewind", session_id: sessionId, message_index: messageIndex });
   }
 
+  /**
+   * Rewind, asking the daemon to report on the branch it discards.
+   *
+   * `summarize` only takes effect when the daemon's `[compaction]
+   * rewind_summary` is on; a summary failure never fails the rewind.
+   */
+  async rewindWithSummary(sessionId: string, messageIndex: number, summarize: boolean): Promise<void> {
+    await this.requestOk({
+      req: "rewind",
+      session_id: sessionId,
+      message_index: messageIndex,
+      summarize,
+    });
+  }
+
   async respondToPermission(sessionId: string, requestId: string, decision: PermissionDecision): Promise<void> {
     await this.requestOk({
       req: "permission_response",

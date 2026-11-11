@@ -576,7 +576,7 @@ export type ApiRequest =
   | { req: "get_history"; session_id: string }
   | { req: "peek_session"; session_id: string; limit?: number }
   | { req: "clear"; session_id: string }
-  | { req: "rewind"; session_id: string; message_index: number }
+  | { req: "rewind"; session_id: string; message_index: number; summarize?: boolean }
   | {
       req: "permission_response";
       session_id: string;
