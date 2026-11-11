@@ -243,6 +243,7 @@ fn new_feature_and_tool_toggles_default_and_parse() {
     assert!(!defaults.tools.edit_fuzzy);
     assert!(!defaults.tools.managed_skills);
     assert!(!defaults.tools.context_notes);
+    assert!(!defaults.tools.checkpoint);
     assert!(defaults.tools.block_auto_generated);
     assert!(!defaults.tools.lsp);
     assert_eq!(defaults.tools.bash_pty, BashPtyMode::Auto);
@@ -272,6 +273,7 @@ read_summary = true
 edit_fuzzy = true
 managed_skills = true
 context_notes = true
+checkpoint = true
 block_auto_generated = false
 lsp = true
 bash_pty = "always"
@@ -299,6 +301,7 @@ browser = "essential"
     assert!(cfg.tools.edit_fuzzy);
     assert!(cfg.tools.managed_skills);
     assert!(cfg.tools.context_notes);
+    assert!(cfg.tools.checkpoint);
     assert!(!cfg.tools.block_auto_generated);
     assert!(cfg.tools.lsp);
     assert_eq!(cfg.tools.bash_pty, BashPtyMode::Always);
@@ -1005,6 +1008,7 @@ fn test_generated_default_config_has_expected_user_defaults() {
         "bash_pty = \"auto\"",
         "ask_policy = \"recommended\"",
         "plan_mode = false",
+        "checkpoint = false",
         "bash_session_cwd = true",
         "bash_non_interactive_env = true",
         "bash_interceptor = \"off\"",

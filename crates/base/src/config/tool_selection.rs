@@ -1,7 +1,8 @@
 //! Derives a tool allow-list from the tool and ambient switches.
 
 use super::{
-    AmbientConfig, CLIENTLESS_APPROVAL_TOOL, IRC_TOOL, PLAN_TOOL, ToolConfig, ToolSelection, normalize_tool_name,
+    AmbientConfig, CHECKPOINT_TOOLS, CLIENTLESS_APPROVAL_TOOL, IRC_TOOL, PLAN_TOOL, ToolConfig, ToolSelection,
+    normalize_tool_name,
 };
 use std::collections::HashSet;
 
@@ -49,6 +50,18 @@ impl ToolConfig {
             && !allowed.is_empty()
         {
             allowed.insert(IRC_TOOL.to_string());
+        }
+
+        // The checkpoint pair follows the same terms: both tools are registered
+        // only when the switch is on, and registration alone does not make them
+        // reachable past this allow-list.
+        if self.checkpoint
+            && let Some(allowed) = allowed_tools.as_mut()
+            && !allowed.is_empty()
+        {
+            for name in CHECKPOINT_TOOLS {
+                allowed.insert((*name).to_string());
+            }
         }
 
         if let Some(allowed) = allowed_tools.as_mut() {

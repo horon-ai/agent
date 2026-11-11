@@ -609,13 +609,23 @@ pub const PLAN_TOOL: &str = "submit_plan";
 /// operator turns the IRC bus on.
 pub const IRC_TOOL: &str = "irc";
 
+/// Tools joined into a non-empty allow-list when `[tools] checkpoint` is on.
+///
+/// Like [`IRC_TOOL`] they stay outside [`CORE_TOOLS`]: the eighteen-tool
+/// headless surface is unchanged, and the pair only becomes reachable when the
+/// operator opts into model-driven checkpoints. Both tools share one switch
+/// because a checkpoint nothing can rewind to, or a rewind with no checkpoint,
+/// is useless on its own.
+pub const CHECKPOINT_TOOLS: &[&str] = &["checkpoint", "rewind"];
+
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
 /// Every other registered built-in stays off because the profile is an
 /// allow-list: `batch`, `bg`, `memory`, `irc`, `schedule`, `goal`,
 /// `horon_agent_docs`, `invalid`, `conversation_search`, the opt-in
 /// `codemod`/`redo`/`hashline_edit`/`ast_grep`/`ast_edit`/`lsp`/
-/// `context_notes`/`toolbox`/`integration_tools` surface, and the per-session
+/// `context_notes`/`toolbox`/`integration_tools` surface, the opt-in
+/// `checkpoint`/`rewind` pair, and the per-session
 /// `request_permission` and `submit_plan` tools. `skill_manage` is the registry
 /// key for the skill tool (`resolve_tool_name` maps `skill` to it); `mcp` is the
 /// wildcard covering every `mcp__server__tool` plus the fixed
@@ -893,6 +903,11 @@ pub struct ToolConfig {
     /// refused until a plan is approved. Off by default so nothing changes for
     /// an existing config.
     pub plan_mode: bool,
+    /// Opt-in `checkpoint`/`rewind` pair: let the model mark a point of the
+    /// top-level conversation and later fold the exploration after it into one
+    /// written report. Off by default, so the tool surface is unchanged and
+    /// nothing rewrites history unless the operator asks for it.
+    pub checkpoint: bool,
     /// Opt-in `irc`: expose the tool that sends and receives messages between
     /// agents of the same daemon. Off by default; `HORON_AGENT_IRC` overrides.
     pub irc: bool,
@@ -971,6 +986,7 @@ impl Default for ToolConfig {
             ask_policy: AskPolicy::Recommended,
             load_mode: BTreeMap::new(),
             plan_mode: false,
+            checkpoint: false,
             irc: false,
             approval_mode: ApprovalMode::Off,
             bash_session_cwd: true,
