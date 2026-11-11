@@ -39,7 +39,8 @@ function fixture({ platform = process.platform, arch = process.arch, entry = tru
       [
         "#!/usr/bin/env node",
         "const args = process.argv.slice(2).join(',')",
-        "process.stdout.write(JSON.stringify({ args, noAutoUpdate: process.env.HORON_AGENT_NO_AUTO_UPDATE }))",
+        "const marker = process.env.HORON_TEST_MARKER ?? null",
+        "process.stdout.write(JSON.stringify({ args, marker, noAutoUpdate: process.env.HORON_AGENT_NO_AUTO_UPDATE }))",
         "process.exit(7)",
         "",
       ].join("\n"),
@@ -68,6 +69,7 @@ test("forwards arguments, disables auto-update, and returns the child status", p
   assert.equal(result.status, 7, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     args: "--version,run,--cwd,/tmp/example",
+    marker: null,
     noAutoUpdate: "1",
   });
   // The launcher resolved the platform package for this machine and nothing else.
@@ -82,7 +84,9 @@ test("passes the caller's environment through and overrides only the update swit
     { env: { HORON_AGENT_NO_AUTO_UPDATE: "0", HORON_TEST_MARKER: "kept" } },
   );
   assert.equal(result.status, 7, result.stderr);
-  assert.equal(JSON.parse(result.stdout).noAutoUpdate, "1");
+  const seen = JSON.parse(result.stdout);
+  assert.equal(seen.marker, "kept");
+  assert.equal(seen.noAutoUpdate, "1");
 });
 
 test("a missing platform package names it and points at optional dependencies", () => {
