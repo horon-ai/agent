@@ -318,6 +318,12 @@ impl HomeGuard {
         }
     }
 
+    /// A config that never mentions the switch, as a default install has it.
+    fn unset_checkpoint(&self) {
+        std::fs::write(self.home.path().join("config.toml"), "[tools]\n").expect("write config");
+        crate::config::invalidate_config_cache();
+    }
+
     fn set_checkpoint(&self, enabled: bool) {
         std::fs::write(
             self.home.path().join("config.toml"),
@@ -398,6 +404,26 @@ async fn checkpoint_pair_is_registered_only_when_the_switch_is_on() {
     assert!(
         !off.contains("checkpoint") && !off.contains("rewind"),
         "the switch is the only way into the allow-list: {off:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unset_switch_registers_nothing_and_leaves_the_surface_unchanged() {
+    let guard = HomeGuard::new();
+
+    guard.unset_checkpoint();
+    let unset = guard.registered_names().await;
+    assert!(!unset.is_empty(), "the profile still registers its own tools");
+    assert!(
+        !unset.iter().any(|name| name == "checkpoint" || name == "rewind"),
+        "an unset switch is off, not on: {unset:?}"
+    );
+
+    guard.set_checkpoint(false);
+    let explicit_off = guard.registered_names().await;
+    assert_eq!(
+        unset, explicit_off,
+        "an absent switch and an explicit false register the same surface"
     );
 }
 

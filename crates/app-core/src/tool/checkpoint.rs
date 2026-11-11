@@ -115,11 +115,11 @@ pub(crate) fn forget_session(session_id: &str) {
     pending().remove(session_id);
 }
 
-fn request_checkpoint(session_id: &str) {
+pub(crate) fn request_checkpoint(session_id: &str) {
     pending().insert(session_id.to_string(), Pending::Checkpoint);
 }
 
-fn request_rewind(session_id: &str, report: String) {
+pub(crate) fn request_rewind(session_id: &str, report: String) {
     pending().insert(session_id.to_string(), Pending::Rewind { report });
 }
 

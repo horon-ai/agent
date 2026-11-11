@@ -129,6 +129,18 @@ fn stored_texts(agent: &Agent) -> Vec<String> {
         .collect()
 }
 
+fn message_text(message: &Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn visible_count(agent: &Agent) -> usize {
     agent.session.history_snapshot().unwrap().rewind_target_count()
 }
@@ -312,5 +324,157 @@ fn rewind_summary_config_defaults_are_documented() {
     assert_eq!(
         compaction.rewind_summary_tokens,
         crate::config::rewind_summary::DEFAULT_REWIND_SUMMARY_TOKENS
+    );
+}
+
+/// A checkpoint recorded through the turn-end path, as a settled turn leaves it.
+fn record_checkpoint(agent: &mut Agent) {
+    crate::tool::checkpoint::request_checkpoint(agent.session_id());
+    agent.apply_pending_checkpoint_rewind();
+}
+
+#[tokio::test]
+async fn checkpoint_marker_is_hidden_and_is_not_a_rewind_target() {
+    let (_sandbox, mut agent) = summary_fixture().await;
+    let visible_before = visible_count(&agent);
+
+    record_checkpoint(&mut agent);
+
+    assert_eq!(
+        visible_count(&agent),
+        visible_before,
+        "the record is not a rewind target"
+    );
+    let stored = agent.session.history_messages().unwrap();
+    let marker = stored.last().expect("the checkpoint is stored");
+    assert_eq!(marker.display_role, Some(StoredDisplayRole::System));
+    assert!(
+        crate::tool::checkpoint::is_marker(marker),
+        "the stored record is what a later rewind looks for"
+    );
+    assert_eq!(
+        crate::tool::checkpoint::newest_marker_index(&stored),
+        Some(stored.len() - 1)
+    );
+}
+
+#[tokio::test]
+async fn checkpoint_reaches_the_provider_as_background() {
+    let (_sandbox, mut agent) = summary_fixture().await;
+    record_checkpoint(&mut agent);
+
+    let (messages, _) = agent.messages_for_provider();
+    let marker = messages.last().expect("the marker is sent with the next request");
+    assert!(
+        marker.content.iter().any(|block| matches!(
+            block,
+            ContentBlock::Text { text, .. } if text.starts_with("<system-reminder>")
+        )),
+        "the model reads the marker as a reminder, not as a user request: {marker:?}"
+    );
+}
+
+#[tokio::test]
+async fn rewind_to_a_checkpoint_folds_the_branch_into_the_report() {
+    let (_sandbox, mut agent) = summary_fixture().await;
+    // Mark after the second message, then add a branch to be folded away.
+    record_checkpoint(&mut agent);
+    agent.add_message(Role::User, text_block("try the lexer generator instead"));
+    agent.add_message(Role::Assistant, text_block("the generator needs a new grammar"));
+    agent.save_session().unwrap();
+    let before = visible_count(&agent);
+    assert_eq!(before, 6, "four messages, the marker, and the two-message branch");
+
+    crate::tool::checkpoint::request_rewind(
+        &agent.session_id(),
+        "the generator needs a grammar the parser lacks".to_string(),
+    );
+    agent.apply_pending_checkpoint_rewind();
+
+    assert_eq!(visible_count(&agent), 4, "the branch after the checkpoint is gone");
+    let texts = stored_texts(&agent);
+    assert!(
+        !texts.iter().any(|text| text.contains("lexer generator")),
+        "the discarded branch left no message behind: {texts:?}"
+    );
+    let report = texts.last().expect("the report is the last record");
+    assert!(
+        report.starts_with("<system-reminder>") && report.contains("the parser lacks"),
+        "the report replaces the branch as background: {report}"
+    );
+    let stored = agent.session.history_messages().unwrap();
+    assert_eq!(stored.last().unwrap().display_role, Some(StoredDisplayRole::System));
+    assert_eq!(
+        crate::tool::checkpoint::newest_marker_index(&stored),
+        None,
+        "the rewind consumes the checkpoint it targeted"
+    );
+
+    // Acceptance 2: the next request carries the report and nothing the branch
+    // between the two tool calls added.
+    let (messages, _) = agent.messages_for_provider();
+    let sent = messages.iter().map(message_text).collect::<Vec<_>>().join("\n");
+    assert!(
+        sent.contains("the parser lacks"),
+        "the report reaches the provider: {sent}"
+    );
+    assert!(
+        !sent.contains("lexer generator") && !sent.contains("needs a new grammar"),
+        "the folded branch does not: {sent}"
+    );
+}
+
+#[tokio::test]
+async fn undoing_a_checkpoint_rewind_restores_the_branch_and_drops_the_report() {
+    let (_sandbox, mut agent) = summary_fixture().await;
+    record_checkpoint(&mut agent);
+    agent.add_message(Role::User, text_block("try the lexer generator instead"));
+    agent.add_message(Role::Assistant, text_block("the generator needs a new grammar"));
+    agent.save_session().unwrap();
+    let before = stored_texts(&agent);
+
+    crate::tool::checkpoint::request_rewind(
+        &agent.session_id(),
+        "the generator needs a grammar the parser lacks".to_string(),
+    );
+    agent.apply_pending_checkpoint_rewind();
+    assert_eq!(visible_count(&agent), 4);
+
+    // Acceptance 5: undo restores the removed history, marker included, and the
+    // report goes with the rewind that wrote it.
+    let restored = agent.undo_rewind().expect("the undo succeeds");
+    assert!(restored >= 2, "the discarded branch comes back: {restored}");
+    assert_eq!(
+        stored_texts(&agent),
+        before,
+        "the restored transcript is the one recorded before the rewind"
+    );
+    let stored = agent.session.history_messages().unwrap();
+    assert!(
+        crate::tool::checkpoint::newest_marker_index(&stored).is_some(),
+        "the checkpoint marker is back in the transcript"
+    );
+    assert!(
+        !stored_texts(&agent)
+            .iter()
+            .any(|text| text.contains("the parser lacks")),
+        "the report is gone with the rewind"
+    );
+}
+
+#[tokio::test]
+async fn rewind_without_a_committed_checkpoint_is_dropped() {
+    let (_sandbox, mut agent) = summary_fixture().await;
+    let before = stored_texts(&agent);
+
+    crate::tool::checkpoint::request_rewind(&agent.session_id(), "nothing to fold".to_string());
+    agent.apply_pending_checkpoint_rewind();
+
+    assert_eq!(stored_texts(&agent), before, "the transcript is untouched");
+    assert_eq!(visible_count(&agent), 4);
+    assert_eq!(
+        crate::tool::checkpoint::take_pending(&agent.session_id()),
+        None,
+        "the request is applied or dropped exactly once"
     );
 }

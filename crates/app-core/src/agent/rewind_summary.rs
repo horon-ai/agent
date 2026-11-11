@@ -212,8 +212,9 @@ impl Agent {
             anyhow::bail!("a rewind report must not be empty");
         }
         let removed = self.rewind_to_message(message_index).map_err(anyhow::Error::msg)?;
-        // A report with nothing to describe would claim a branch that never
-        // existed, so an unreadable or empty outcome is left unreported.
+        // The body is non-empty here, so the append always writes; a save
+        // failure is logged by that path and must not fail a rewind that has
+        // already succeeded.
         self.append_checkpoint_report(report);
         Ok(removed)
     }
