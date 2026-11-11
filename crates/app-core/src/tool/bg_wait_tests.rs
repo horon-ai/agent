@@ -132,7 +132,8 @@ fn install_bus() -> Arc<IrcBus> {
     bus
 }
 
-/// A finished child is reported first; the running one is left for a later wait.
+/// A finished child is reported first; the running one is left for a later
+/// wait, which returns it once it finishes and never repeats the first.
 #[test]
 fn wait_tool_children_returns_finished_child() {
     let _guard = crate::storage::lock_test_env();
@@ -156,6 +157,21 @@ fn wait_tool_children_returns_finished_child() {
         assert_eq!(metadata["child_session_id"], "fast-child");
         assert_eq!(metadata["timed_out"], false);
         assert_eq!(metadata["sources"], json!(["children"]));
+
+        let slower = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            crate::agent_result_cache::publish_completed("slow-child", parent, "done", None)
+                .expect("publish the slower child");
+        });
+        let output = wait(json!({"children": true, "max_wait_seconds": 10}), parent)
+            .await
+            .expect("second wait succeeds");
+        slower.await.expect("the publisher task finishes");
+        assert!(output.output.contains("slow-child"), "output={}", output.output);
+        let metadata = output.metadata.expect("metadata");
+        assert_eq!(metadata["wait_reason"], "child_finished");
+        assert_eq!(metadata["child_session_id"], "slow-child");
+        assert_eq!(metadata["timed_out"], false);
     });
 }
 
