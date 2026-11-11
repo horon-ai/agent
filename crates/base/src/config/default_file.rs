@@ -446,6 +446,21 @@ cross_provider_failover = "countdown"
 # max_retries = 8
 # retry_backoff_cap_secs = 30
 
+[prewalk]
+# One-shot handoff to an execution model once planning is done. The session
+# switches at the first successful `todo` write, or at plan approval when
+# [tools] plan_mode is on, and runs on that model for the rest of the session.
+# Off by default because the handoff trades plan-following quality for cost.
+# enabled = false
+# The execution model: a model id, or `role:<name>` resolved through the active
+# profile's roles (`default`, `plan`, `aux`). Required when enabled: an enabled
+# section without a usable value fails config validation and names this key.
+# into = "role:aux"
+# Applicability only: hand off just when the session currently runs this model.
+# It never names a model to return to, and leaving it out applies to every
+# session.
+# from = "my-planner"
+
 [server]
 # Who executes autonomous wake requests from background completion/stall,
 # swarm await completion, and communication delivery.
@@ -747,6 +762,26 @@ mod tests {
 
         let parsed = toml::from_str::<Config>(&template).expect("the shipped template must parse");
         assert_eq!(parsed.messages, Config::default().messages);
+    }
+
+    /// The shipped template documents the `[prewalk]` table, stays off, and
+    /// parses to the built-in default so a fresh install never hands off.
+    #[test]
+    fn default_config_template_documents_prewalk_off_by_default() {
+        let template = Config::default_config_file_contents();
+        for key in [
+            "[prewalk]",
+            "# enabled = false",
+            "# into = \"role:aux\"",
+            "# from = \"my-planner\"",
+        ] {
+            assert!(template.contains(key), "the template should document `{key}`");
+        }
+
+        let parsed = toml::from_str::<Config>(&template).expect("the shipped template must parse");
+        assert_eq!(parsed.prewalk, Config::default().prewalk);
+        assert!(!parsed.prewalk.is_active(), "a fresh install must not hand off");
+        parsed.prewalk.validate().expect("the shipped section is valid");
     }
 
     /// The template is written once and then read by the daemon, saved back by

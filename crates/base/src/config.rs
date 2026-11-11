@@ -3,15 +3,18 @@
 //! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
+pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, resolve_role_model};
+pub use horon_agent_config_types::parse_model_reference;
 pub use horon_agent_config_types::rewind_summary;
 pub use horon_agent_config_types::{
     AdvisorConfig, AgentsConfig, AmbientConfig, ApprovalMode, AuthConfig, AutoJudgeConfig, AutoReviewConfig,
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
-    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
-    NamedProviderModelConfig, NamedProviderType, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode, StreamRuleConfig, StreamRuleDelivery,
-    StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
+    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, ModelReference, NamedProviderAuth,
+    NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig, PrewalkConfigError,
+    ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode,
+    StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel,
+    WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 pub use mcp::McpSourcesConfig;
@@ -423,6 +426,9 @@ pub struct Config {
 
     /// `[mcp]`: which MCP configs beside horon-agent's own are read.
     pub mcp: McpSourcesConfig,
+
+    /// `[prewalk]`: a one-shot handoff to an execution model after planning.
+    pub prewalk: PrewalkConfig,
 }
 
 /// Warned once per process, so a typo costs one line rather than one per write.
