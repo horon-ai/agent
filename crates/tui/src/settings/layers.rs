@@ -361,7 +361,21 @@ pub fn save_global(sources: &Sources, id: &str, value: &SettingValue) -> Result<
 
 /// `id` as nested tables: `statusline.left` becomes `[statusline] left`.
 fn set_path(table: &mut EditTable, id: &str, value: EditValue, path: &Path) -> Result<(), String> {
-    set_table_path(table, &mut id.split('.').peekable(), value, id, path)
+    set_table_path(table, &mut id.split('.').peekable(), value).map_err(|not_table| {
+        format!(
+            "`{}` in {} is not a table; refusing to change `{id}`",
+            not_table.key,
+            path.display()
+        )
+    })
+}
+
+/// A key the walk reached that holds a value, so it cannot hold the key below.
+///
+/// The dotted key is the whole payload: the caller turns it into the user-facing
+/// sentence, so the walkers need neither the setting id nor the file path.
+struct NotATable {
+    key: String,
 }
 
 /// One level of the walk, with the remaining parts still to place.
@@ -369,9 +383,7 @@ fn set_table_path(
     table: &mut EditTable,
     parts: &mut std::iter::Peekable<std::str::Split<'_, char>>,
     value: EditValue,
-    id: &str,
-    path: &Path,
-) -> Result<(), String> {
+) -> Result<(), NotATable> {
     let part = match parts.next() {
         Some(part) => part,
         None => return Ok(()),
@@ -382,12 +394,9 @@ fn set_table_path(
     }
     let item = table.entry(part).or_insert(Item::Table(EditTable::new()));
     match item {
-        Item::Table(next) => set_table_path(next, parts, value, id, path),
-        Item::Value(EditValue::InlineTable(next)) => set_inline_path(next, parts, value, id, part, path),
-        Item::None | Item::Value(_) | Item::ArrayOfTables(_) => Err(format!(
-            "`{part}` in {} is not a table; refusing to change `{id}`",
-            path.display()
-        )),
+        Item::Table(next) => set_table_path(next, parts, value),
+        Item::Value(EditValue::InlineTable(next)) => set_inline_path(next, parts, value, part),
+        Item::None | Item::Value(_) | Item::ArrayOfTables(_) => Err(NotATable { key: part.to_string() }),
     }
 }
 
@@ -418,10 +427,8 @@ fn set_inline_path(
     table: &mut InlineTable,
     parts: &mut std::iter::Peekable<std::str::Split<'_, char>>,
     value: EditValue,
-    id: &str,
     part: &str,
-    path: &Path,
-) -> Result<(), String> {
+) -> Result<(), NotATable> {
     let next = match parts.next() {
         Some(next) => next,
         None => return Ok(()),
@@ -434,11 +441,10 @@ fn set_inline_path(
     }
     let entry = table.entry(next).or_insert(EditValue::InlineTable(InlineTable::new()));
     match entry {
-        EditValue::InlineTable(nested) => set_inline_path(nested, parts, value, id, part, path),
-        _ => Err(format!(
-            "`{part}.{next}` in {} is not a table; refusing to change `{id}`",
-            path.display()
-        )),
+        EditValue::InlineTable(nested) => set_inline_path(nested, parts, value, part),
+        _ => Err(NotATable {
+            key: format!("{part}.{next}"),
+        }),
     }
 }
 
