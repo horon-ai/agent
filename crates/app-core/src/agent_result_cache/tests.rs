@@ -125,20 +125,6 @@ fn the_stored_copy_is_redacted() {
 }
 
 #[test]
-fn forgetting_a_session_removes_its_stored_results() {
-    let sandbox = StoreSandbox::new();
-    sandbox.parent("parent_forget");
-    publish_completed("child_forget", "parent_forget", "gone soon", None).expect("publish");
-    let stored = sandbox.stored("parent_forget", "child_forget", "md");
-    assert!(stored.exists());
-
-    forget_stored("parent_forget");
-    assert!(!stored.exists());
-    reset_for_test();
-    assert!(read("child_forget", "parent_forget").is_err());
-}
-
-#[test]
 fn a_child_id_cannot_escape_the_result_directory() {
     assert!(!is_path_safe(""));
     assert!(!is_path_safe("."));

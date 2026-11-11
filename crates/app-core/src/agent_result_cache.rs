@@ -380,21 +380,6 @@ fn stored_children(parent_session_id: &str) -> Vec<String> {
     ids
 }
 
-/// Delete every durable result a removed session owned.
-pub(crate) fn forget_stored(parent_session_id: &str) {
-    let Ok(dir) = results_dir(parent_session_id) else {
-        return;
-    };
-    if let Err(error) = std::fs::remove_dir_all(&dir) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            crate::logging::warn(&format!(
-                "[agent://] the stored results at {} were not removed: {error}",
-                dir.display()
-            ));
-        }
-    }
-}
-
 pub(crate) fn is_agent_url(path: &str) -> bool {
     path.get(..SCHEME.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(SCHEME))
