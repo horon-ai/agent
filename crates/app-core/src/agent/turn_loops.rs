@@ -1515,8 +1515,9 @@ impl Agent {
                     continue;
                 }
                 if saw_message_end
-                    && let Some(outcome) =
-                        self.maybe_auto_continue_unexpected_stop(stop_reason.as_deref(), &text_content)?
+                    && let Some(outcome) = self
+                        .maybe_auto_continue_unexpected_stop(stop_reason.as_deref(), &text_content)
+                        .await?
                 {
                     match outcome {
                         AutoContinuation::Continued => continue,

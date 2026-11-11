@@ -863,7 +863,9 @@ impl Agent {
         in_flight: Option<&mut InFlightGuard>,
     ) -> Result<NoToolCallOutcome> {
         if terminal_message_complete
-            && let Some(outcome) = self.maybe_auto_continue_unexpected_stop(stop_reason, final_text)?
+            && let Some(outcome) = self
+                .maybe_auto_continue_unexpected_stop(stop_reason, final_text)
+                .await?
         {
             return Ok(match outcome {
                 AutoContinuation::Continued => NoToolCallOutcome::ContinueWithoutEvent,

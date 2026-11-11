@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod autojudge;
 mod display;
 mod feature;
 mod gateway;
@@ -12,6 +13,7 @@ mod serde_lenient;
 mod storage;
 mod swarm_spawn;
 pub use {
+    autojudge::{AutoJudgeConfig, DEFAULT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS, MAX_AUTOJUDGE_ATTEMPT_TIMEOUT_MS},
     display::DisplayConfig,
     feature::FeatureConfig,
     gateway::GatewayConfig,
@@ -982,16 +984,6 @@ impl Default for SponsorsConfig {
             endpoint: "https://api.horon-agent.sh/v1/discovery".to_string(),
         }
     }
-}
-
-/// Automatic end-of-turn execution judging configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct AutoJudgeConfig {
-    /// Enable autojudge by default for new/resumed sessions (default: false)
-    pub enabled: bool,
-    /// Optional model override for autojudge sessions.
-    pub model: Option<String>,
 }
 
 /// How much automatic continuation the turn loops perform after a turn stops
