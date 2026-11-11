@@ -247,12 +247,19 @@ jobs:
         # single-file, Windows .exe), and the launcher test covers argument and
         # environment hand-off plus the two failure messages. Node ships with
         # the hosted runner image; no setup step is needed for one test file.
+        #
+        # The TypeScript SDK is released at the same tag version as the CLI, so
+        # its committed version and six runtime pins must equal the root
+        # Cargo.toml version. The publish workflow stamps the tag version into
+        # its checkout; this is the check that keeps the tracked file honest.
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           bash scripts/npm/test_prepare_cli_packages.sh
           node --test npm/horon/test/launcher.test.mjs
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
+          python3 -m unittest -v scripts/sdk/test_sdk_release.py
+          python3 scripts/sdk/sdk_release.py check-committed
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
@@ -657,7 +664,7 @@ jobs:
           set -euo pipefail
           TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
           echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-tui)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-tui)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -913,6 +920,38 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- agent::post_tool_feedback_replace_tests --nocapture
 
+      - name: Run tool verdict and prewalk cohort
+        shell: bash
+        # These tests merged with the typed tool verdict (#212) and the prewalk
+        # handoff (#202), but no step named their modules, so they compiled in
+        # every run and never executed. `horon-agent-tool-types` is small enough
+        # to run whole: the verdict wire names, the cut rule and the rejection
+        # text. In `horon-agent-app-core`, `tool::batch::batch_tests::` covers
+        # the verdict a batch reports for its members, `agent::round_budget::
+        # tests::` covers the verdict an output keeps on every admit path, and
+        # `agent::prewalk_tests::` covers the one-shot handoff to the execution
+        # model. Each `--min-passed` is the number of tests the module holds, so
+        # a renamed module or a filter that selects fewer tests fails the step
+        # instead of passing on a subset. Raise the number with the test that
+        # adds to the module. libtest accepts one filter per run, so each
+        # module needs its own call.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-tool-types \
+            --timeout 600 --min-passed 9
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 21 \
+            -- tool::batch::batch_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 16 \
+            -- agent::round_budget::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 12 \
+            -- agent::prewalk_tests:: --nocapture
+
       - name: Run memory record cohort
         shell: bash
         # `memory` update and `read memory://` both live in the
@@ -991,6 +1030,28 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- subscribe_prefix --nocapture
+
+      - name: Run checkpoint tool cohort
+        shell: bash
+        # `horon-agent-app-core` and `horon-agent-base` lib tests only run
+        # through filters, so the checkpoint and rewind tools would compile and
+        # ship unexecuted. The first filter covers the two tools and their
+        # registration switch, the second the settle path that commits the
+        # marker, folds a branch into the report and undoes it, the third the
+        # `[tools] checkpoint` config switch.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 12 \
+            -- tool::checkpoint:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 14 \
+            -- agent::rewind_summary:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 3 \
+            -- config::checkpoint_switch_tests:: --nocapture
 
       - name: Run e2e tests
         shell: bash

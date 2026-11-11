@@ -102,10 +102,31 @@ pub fn http_response_error(
     body: &str,
     api_key: Option<&str>,
 ) -> anyhow::Error {
+    http_response_error_with_hint(endpoint, status, retry_after, body, None, api_key)
+}
+
+/// [`http_response_error`], also carrying what the schema-recovery layer learned
+/// about the failure.
+///
+/// The hint is appended after the truncated body so it survives the cut: a
+/// provider error body is not something horon-agent controls, and the one line
+/// saying whether a retry can fix it must not be the part that is dropped.
+pub fn http_response_error_with_hint(
+    endpoint: &str,
+    status: u16,
+    retry_after: Option<RetryAfter>,
+    body: &str,
+    hint: Option<&str>,
+    api_key: Option<&str>,
+) -> anyhow::Error {
     let body = if body.trim().is_empty() {
         "<empty response body>".to_string()
     } else {
         snippet(body, MAX_ERROR_BODY_CHARS)
+    };
+    let body = match hint {
+        Some(hint) => format!("{body} [{hint}]"),
+        None => body,
     };
     let message = match classify_http_status(status) {
         HttpErrorKind::Authentication => {

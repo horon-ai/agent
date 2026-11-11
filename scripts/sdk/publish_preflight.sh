@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Everything that must be true before `npm publish`, checked in one place.
+# The local half of the release check, in one place.
 #
-# The point is that publishing should be a decision, not an investigation. This
-# runs the same gates CI runs, then reports the two things only a human can
-# resolve: being logged in, and owning the package name.
+# `.github/workflows/publish-typescript-sdk.yml` owns publishing: it stamps the
+# release tag's version, prepares the six runtime packages and publishes all
+# seven from a runner. This script answers what can be answered before that run:
+# do the SDK's own gates pass, is the tarball clean, and does the registry
+# already know the seven names. Nothing here publishes, and nothing here can
+# see the repository variable or the Trusted Publisher configuration.
 #
 # Usage: bash scripts/sdk/publish_preflight.sh
 set -uo pipefail
@@ -53,28 +56,27 @@ else
 fi
 
 echo
-echo "-- things only you can resolve --"
-if whoami_out="$(npm whoami 2>&1)"; then
-  echo "  ok: logged in to npm as $whoami_out"
-else
-  note_problem "not logged in. Run \`npm login\`."
-fi
-
-# A scoped name needs its scope to exist and to be yours.
-scope="${name%%/*}"
-if [ "$scope" != "$name" ]; then
-  if npm view "$name" version >/dev/null 2>&1; then
-    echo "  ok: $name already exists on the registry (this would be an update)"
+echo "-- registry --"
+# npm has no way to reserve a name, so a name npm does not know yet is expected
+# before the owner publishes its `0.0.0` placeholder. A missing placeholder is
+# not a blocker for this checkout, but the publish run cannot land without it.
+missing_placeholders=0
+while IFS= read -r package; do
+  if npm view "$package" version >/dev/null 2>&1; then
+    echo "  ok: $package exists on the registry"
   else
-    echo "  note: $name is unpublished. The $scope scope must be an org or user you own."
-    echo "        Create a free org at https://www.npmjs.com/org/create, or rename the"
-    echo "        package. See sdk/typescript/RELEASING.md."
+    echo "  note: $package is unpublished; its 0.0.0 placeholder is a one-time owner step"
+    missing_placeholders=$((missing_placeholders + 1))
   fi
+done < <(python3 "$repo_root/scripts/sdk/sdk_release.py" package-names)
+if [ "$missing_placeholders" -gt 0 ]; then
+  echo "        see the first-release section of sdk/typescript/RELEASING.md"
 fi
 
 echo
 if [ "$problems" -eq 0 ]; then
-  echo "Preflight clean. To publish: cd sdk/typescript && npm publish"
+  echo "Preflight clean. Publishing runs in .github/workflows/publish-typescript-sdk.yml"
+  echo "on a release tag; a pull request exercises the same flow as a dry run."
 else
   echo "$problems blocker(s) above. Nothing was published."
   exit 1

@@ -1,196 +1,510 @@
 name: Publish TypeScript SDK
 
+# Publishes the seven npm packages of `@horon-ai/agent-sdk`: the SDK itself and
+# the six platform runtime packages `scripts/sdk/prepare_runtime_packages.sh`
+# generates from it. The shape mirrors `publish-npm.yml`, because both
+# workflows turn one release into a set of npm packages and only one of them
+# may ever write to the registry. Three paths reach this file, and only one of
+# them can publish:
+#
+#   * `workflow_run` after "Release Tag" finishes on `main`: the normal path,
+#     taken once a tag exists for the commit that Release Tag just released. The
+#     SDK is released at that tag's version, the same version the CLI takes.
+#   * `workflow_dispatch`: an operator names a public release tag. It defaults
+#     to a dry run.
+#   * `pull_request`: the fixture path. It generates fake runtime archives and
+#     runs the same stamp, check and `npm publish --dry-run` loop, so the
+#     workflow is exercised before it reaches `main`. It never publishes: the
+#     fixture version `0.0.1` is not a release and the registry is compared
+#     before and after.
+#
+# npm trusted publishing trusts the *top-level workflow file name*, so this
+# stays a separate file: `workflow_call`ing it from `publish-npm.yml` would
+# change the workflow name npm is asked to trust.
+#
+# The real publish stays off until the owner sets the repository variable
+# `NPM_PUBLISH` to `true` and registers this workflow as each package's trusted
+# publisher. Without that variable every path is a dry run.
+#
+# The Rust surface-parity test is not repeated here. `ci.yml` runs
+# `cargo test -p horon-agent-sdk parity` on every push to `main`, and Release
+# Tag only starts from a *successful* CI push run for the same SHA, so the test
+# has already passed on exactly this commit before this workflow sees it.
+
 env:
   # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
   # about the default branch name. Naming it removes the cause of the message.
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
-  HORON_AGENT_CI: "1"
-  # CI builds without the local parallel-frontend rustc wrapper from
-  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
-  CARGO_BUILD_RUSTC_WRAPPER: ""
 
 on:
+  workflow_run:
+    # Release Tag itself starts from CI's `workflow_run`, so the run that ends
+    # here carries `event == 'workflow_run'`, never `push`.
+    workflows: ["Release Tag"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      horon_agent_release_tag:
-        description: Released horon-agent tag whose binaries should be bundled
+      release_tag:
+        description: Public release tag whose runtimes to package (e.g. v0.1.6)
         required: true
+        type: string
+      dry_run:
+        description: Package and publish with --dry-run instead of to npm
+        required: false
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - 'sdk/typescript/**'
+      - 'scripts/sdk/**'
+      - 'scripts/npm/release_npm_version.py'
+      - '.github/workflows/publish-typescript-sdk.yml'
 
 permissions:
   contents: read
 
-# Two dispatches for the same tag would race to publish one version.
+# A second run would race the first for the same version and could publish a
+# platform package the other one just published. Queue instead of cancelling:
+# the later run re-checks the registry and skips what already landed.
 concurrency:
-  group: publish-typescript-${{ inputs.horon_agent_release_tag }}
+  group: publish-npm-agent-sdk
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish @horon-ai/agent-sdk
+  plan:
+    name: Resolve source, version and mode
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      # The pinned 1.99.1 toolchain would otherwise shadow the installed stable
-      # toolchain and download it a second time.
-      RUSTUP_TOOLCHAIN: stable
+    timeout-minutes: 15
     permissions:
       contents: read
-      # npm trusted publishing and provenance use short-lived OIDC credentials.
-      id-token: write
-    defaults:
-      run:
-        working-directory: sdk/typescript
+      # The automatic path reads the finishing run's jobs to tell a release that
+      # produced no tag from a normal main run that produced nothing to publish.
+      actions: read
+    outputs:
+      source: ${{ steps.source.outputs.source }}
+      version: ${{ steps.source.outputs.version }}
+      mode: ${{ steps.source.outputs.mode }}
+      tag: ${{ steps.source.outputs.tag }}
+      ref: ${{ steps.source.outputs.ref }}
+      skip: ${{ steps.source.outputs.skip }}
     steps:
-      # npm trusted publishing needs no repository secret, but a trusted publisher
-      # can only be attached to a package that already exists. Accept either
-      # credential and decide before any build work, so a missing credential
-      # fails here with the exact setup the owner must perform.
-      - name: Verify npm publishing credentials
-        working-directory: ${{ github.workspace }}
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve the source, version and mode
+        id: source
+        shell: bash
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
         run: |
           set -euo pipefail
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            echo "::notice::Using the NPM_TOKEN repository secret for bootstrap publishing. Configure npm trusted publishing and delete the secret once all seven packages exist."
-            echo "NPM_PUBLISH_MODE=token" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-            echo "::error::Cannot publish: the NPM_TOKEN repository secret is unset and this job received no GitHub OIDC token. Either add a granular npm token as NPM_TOKEN for the first release, or grant 'permissions: id-token: write' and configure npm trusted publishing for @horon-ai/agent-sdk and its six platform packages (organization 'horon-ai', repository 'agent', workflow 'publish-typescript-sdk.yml')."
-            exit 1
-          fi
-          echo "::notice::NPM_TOKEN is unset; publishing with npm trusted publishing (OIDC) and provenance. Every package must already exist with a trusted publisher for this workflow."
-          echo "NPM_PUBLISH_MODE=oidc" >> "$GITHUB_ENV"
+          emit() {
+            printf '%s\n' "$1=$2" >>"$GITHUB_OUTPUT"
+          }
+          source=""
+          version=""
+          tag=""
+          ref="$HEAD_SHA"
+          [ -n "$ref" ] || ref="$GITHUB_SHA"
+          mode="dry-run"
 
+          # Both decisions go through `scripts/sdk/sdk_release.py`, so the rules
+          # its unit tests prove are the rules a release runs. The plan job
+          # checks out the workflow's own ref, so the helper exists on all three
+          # events.
+          if [ "$EVENT" = "pull_request" ]; then
+            source="fixture"
+            version="$(python3 scripts/sdk/sdk_release.py fixture-version)"
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            # One source only: the SDK bundles the CLI's runtime, and a workflow
+            # artifact is not a published release, so there is no run_id path to
+            # offer here. The helper validates the tag, so the rule the unit test
+            # covers runs before anything is downloaded.
+            version="$(python3 scripts/sdk/sdk_release.py tag-version "$RELEASE_TAG_INPUT")"
+            tag="$RELEASE_TAG_INPUT"
+            ref="refs/tags/$RELEASE_TAG_INPUT"
+            source="release_tag"
+            if [ "$(printf '%s' "$DRY_RUN_INPUT" | tr '[:upper:]' '[:lower:]')" = "false" ]; then
+              mode="publish"
+            fi
+          else
+            # Automatic path. Only a run of this repository, on `main`, started
+            # by another workflow and successful can mean "something released".
+            if [ "$TRIGGER_CONCLUSION" != "success" ] || [ "$TRIGGER_BRANCH" != "main" ] \
+              || [ "$TRIGGER_EVENT" != "workflow_run" ] \
+              || [ "$GITHUB_REPOSITORY" != "horon-ai/agent" ]; then
+              echo "::notice::Not a successful Release Tag run on main of horon-ai/agent; nothing to publish."
+              emit skip true
+              exit 0
+            fi
+            tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/" --paginate \
+              --jq ".[] | select(.object.sha == \"$HEAD_SHA\") | .ref" | sed 's#^refs/tags/##' | head -n 1)"
+            if [ -n "$tag" ]; then
+              if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != "false" ]; then
+                echo "::notice::$tag has no public release yet; publishing the next run will pick it up."
+                emit skip true
+                exit 0
+              fi
+              source="release_tag"
+              version="$(python3 scripts/sdk/sdk_release.py tag-version "$tag")"
+              ref="refs/tags/$tag"
+              # The automatic path is the normal release: it publishes unless
+              # the owner's master switch says otherwise (checked below).
+              mode="publish"
+            else
+              succeeded="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${TRIGGER_RUN_ID}/jobs" --paginate \
+                --jq '[.jobs[] | select(.name | startswith("Release / ")) | select(.conclusion == "success")] | length')"
+              if [ "$succeeded" != "0" ]; then
+                echo "::error::Release Tag released ${HEAD_SHA} but no tag points at it; nothing was published to npm."
+                exit 1
+              fi
+              echo "::notice::Release Tag ran on ${HEAD_SHA} without creating a tag (no release); nothing to publish."
+              emit skip true
+              exit 0
+            fi
+          fi
+
+          # The variable is the owner's master switch and the pull-request path
+          # can never publish, so a dispatch with dry_run=false stays a dry run
+          # until both are true. The rule lives in the helper rather than here.
+          allowed="$(python3 scripts/sdk/sdk_release.py mode "$EVENT" "$mode" "$NPM_PUBLISH")"
+          if [ "$mode" = "publish" ] && [ "$allowed" != "publish" ]; then
+            echo "::notice::NPM_PUBLISH is not 'true'; running the publish path as a dry run."
+          fi
+          mode="$allowed"
+
+          emit skip false
+          emit source "$source"
+          emit version "$version"
+          emit mode "$mode"
+          emit tag "$tag"
+          emit ref "$ref"
+          echo "source=${source} version=${version} mode=${mode}"
+
+  dry-run:
+    name: Package and dry-run publish
+    needs: plan
+    if: ${{ needs.plan.outputs.skip != 'true' && needs.plan.outputs.mode == 'dry-run' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      SOURCE: ${{ needs.plan.outputs.source }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+    steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.3
 
-      # Node 24 bundles npm 11.19, which supports trusted publishing
-      # (npm >= 11.5.1, Node >= 22.14) and provenance signatures.
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
+          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
-      - name: Verify npm supports trusted publishing
-        working-directory: ${{ github.workspace }}
+      - name: Check npm version
+        shell: bash
         run: |
           set -euo pipefail
           version="$(npm --version)"
-          echo "npm ${version}"
-          if [ "$(printf '%s\n' 11.5.1 "${version}" | sort -V | head -n1)" != "11.5.1" ]; then
-            echo "::error::npm ${version} is too old for trusted publishing and provenance. Use Node 24 or newer (npm 11.5.1+)."
+          echo "npm $version"
+          if [ "$(printf '%s\n' 11.5.1 "$version" | sort -V | head -n 1)" != "11.5.1" ]; then
+            echo "::error::npm $version cannot sign provenance (11.5.1 or newer is required)."
             exit 1
           fi
 
-      # npm can only attach a trusted publisher to a package that already exists.
-      # In OIDC mode an unpublished package means the registry was never
-      # bootstrapped, so fail here instead of after the full build.
-      - name: Verify npm packages exist for trusted publishing
-        if: env.NPM_PUBLISH_MODE == 'oidc'
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          missing=""
-          for package in \
-            @horon-ai/agent-sdk \
-            @horon-ai/agent-linux-x64 \
-            @horon-ai/agent-linux-arm64 \
-            @horon-ai/agent-darwin-x64 \
-            @horon-ai/agent-darwin-arm64 \
-            @horon-ai/agent-win32-x64 \
-            @horon-ai/agent-win32-arm64; do
-            output="$(npm view "$package" version 2>&1)" || {
-              case "${output}" in
-                *E404*) missing="${missing} ${package}" ;;
-                *) echo "::warning::Could not query ${package}: ${output}" ;;
-              esac
-            }
-          done
-          if [ -n "${missing}" ]; then
-            echo "::error::npm trusted publishing requires the packages to exist, but these are unpublished:${missing}. For the first release, set the NPM_TOKEN repository secret (see the notice in the first step) or publish them once manually."
-            exit 1
-          fi
-          echo "::notice::All seven packages exist; npm trusted publishing can attach to them."
-
-      # Only bootstrap token publishing writes an .npmrc. In OIDC mode npm reads
-      # the job's id-token itself and must not see a stale auth token.
-      - name: Configure npm token authentication
-        if: env.NPM_PUBLISH_MODE == 'token'
-        working-directory: ${{ github.workspace }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: printf '%s\n' "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Enforce Rust and TypeScript SDK surface parity
-        working-directory: ${{ github.workspace }}
-        run: cargo test -p horon-agent-sdk parity -- --nocapture
-
+      # Install and validate against the *committed* manifest, before any
+      # stamping: `bun install --frozen-lockfile` compares package.json with
+      # bun.lock, and the stamp changes the version and the six pins. Building
+      # first also means a broken SDK fails before a registry version is chosen.
       - name: Install dependencies
+        working-directory: sdk/typescript
+        shell: bash
         run: bun install --frozen-lockfile
 
-      - name: Validate SDK
+      - name: Validate the SDK
+        working-directory: sdk/typescript
+        shell: bash
         run: bun run check
 
+      - name: Generate fixture assets
+        if: env.SOURCE == 'fixture'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The archive names and the member the prepare script unpacks are the
+          # same as a real release, so `prepare_runtime_packages.sh` runs its
+          # real extraction path. Nothing here is downloaded or executed.
+          mkdir -p sdk-runtime-assets
+          for suffix in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64; do
+            dir="$(mktemp -d)"
+            artifact="horon-agent-$suffix"
+            case "$suffix" in
+              windows-*)
+                printf 'fixture horon-agent %s\r\n' "$VERSION" >"$dir/$artifact.exe"
+                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact.exe"
+                ;;
+              *)
+                printf '#!/bin/sh\necho "horon-agent %s (fixture)"\n' "$VERSION" >"$dir/$artifact"
+                chmod +x "$dir/$artifact"
+                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact"
+                ;;
+            esac
+            rm -rf "$dir"
+          done
+          echo "generated 6 fixture archives at version $VERSION"
+
       - name: Download released horon-agent runtimes
-        working-directory: ${{ github.workspace }}
+        if: env.SOURCE != 'fixture'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           mkdir -p sdk-runtime-assets
-          gh release download "${{ inputs.horon_agent_release_tag }}" --dir sdk-runtime-assets \
+          gh release download "$RELEASE_TAG" --dir sdk-runtime-assets \
             --pattern 'horon-agent-linux-x86_64.tar.gz' \
             --pattern 'horon-agent-linux-aarch64.tar.gz' \
             --pattern 'horon-agent-macos-x86_64.tar.gz' \
             --pattern 'horon-agent-macos-aarch64.tar.gz' \
             --pattern 'horon-agent-windows-x86_64.tar.gz' \
             --pattern 'horon-agent-windows-aarch64.tar.gz'
+          ls -l sdk-runtime-assets
 
-      # The platform packages are generated, not tracked: their manifests are
-      # derived from sdk/typescript/package.json so all seven share one version.
-      - name: Prepare platform packages
-        working-directory: ${{ github.workspace }}
+      # The tracked manifest agrees with Cargo.toml and CI checks that, but the
+      # release version is the tag's. Stamping the runner checkout is what lets
+      # the SDK, its six pins and the six generated packages all carry the tag
+      # version. It is never committed: the file is rewritten byte for byte
+      # when the version does not move.
+      - name: Stamp the release version
+        shell: bash
+        run: python3 scripts/sdk/sdk_release.py stamp "$VERSION"
+
+      - name: Prepare the six runtime packages
+        shell: bash
         run: bash scripts/sdk/prepare_runtime_packages.sh sdk-runtime-packages sdk-runtime-assets
 
-      # These must exist before the main package is published. npm selects only
-      # the package matching the consumer's os/cpu from optionalDependencies.
-      - name: Publish platform runtime packages
-        working-directory: ${{ github.workspace }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Check the seven packages agree
+        shell: bash
+        run: python3 scripts/sdk/sdk_release.py check-packages sdk-runtime-packages "$VERSION"
+
+      - name: Dry-run the publish
+        shell: bash
         run: |
           set -euo pipefail
-          if [ "${NPM_PUBLISH_MODE}" = "oidc" ]; then
-            unset NODE_AUTH_TOKEN
+          mkdir -p "$RUNNER_TEMP/npm-pack"
+          names="$(python3 scripts/sdk/sdk_release.py package-names)"
+          # Recorded so the evidence can show the registry did not change. npm
+          # answers E404 for a name that was never published; that is not an
+          # error here, it is an empty version list.
+          versions() {
+            local name
+            while IFS= read -r name; do
+              printf '%s=%s\n' "$name" "$(npm view "$name" versions --json 2>/dev/null || echo '[]')"
+            done <<<"$names"
+          }
+          before="$(versions)"
+          mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
+          for dir in "${dirs[@]}"; do
+            if [ "$dir" = "sdk" ]; then
+              package_dir="sdk/typescript"
+            else
+              package_dir="sdk-runtime-packages/$dir"
+            fi
+            name="$(node -p "require('./$package_dir/package.json').name")"
+            version="$(node -p "require('./$package_dir/package.json').version")"
+            # Packing the SDK runs its `prepack` (clean + tsc), which needs the
+            # Bun-installed devDependencies. Pack once and publish the tarball:
+            # packing again at publish time would rebuild a different artifact.
+            packed="$(cd "$package_dir" && npm pack --pack-destination "$RUNNER_TEMP/npm-pack")"
+            tarball="$(printf '%s\n' "$packed" | tail -n 1)"
+            echo "::group::$name@$version"
+            # Platform packages first, the SDK last: the SDK's optional
+            # dependencies resolve by name, so an SDK published early would
+            # offer an install whose runtime does not exist yet.
+            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run
+            echo "::endgroup::"
+          done
+          after="$(versions)"
+          if [ "$before" != "$after" ]; then
+            echo "::error::a dry run changed the registry:"
+            echo "before: $before"
+            echo "after:  $after"
+            exit 1
           fi
-          for package in sdk-runtime-packages/*; do
-            name=$(node -p "require('./$package/package.json').name")
-            version=$(node -p "require('./$package/package.json').version")
+          echo "registry unchanged: $after"
+
+  publish:
+    name: Publish to npm
+    needs: plan
+    if: ${{ needs.plan.outputs.skip != 'true' && needs.plan.outputs.mode == 'publish' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # npm trusted publishing and the provenance signature use short-lived
+      # GitHub OIDC credentials. Only this job can really publish, so only this
+      # job may request them.
+      id-token: write
+    env:
+      SOURCE: ${{ needs.plan.outputs.source }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Check npm version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(npm --version)"
+          echo "npm $version"
+          if [ "$(printf '%s\n' 11.5.1 "$version" | sort -V | head -n 1)" != "11.5.1" ]; then
+            echo "::error::npm $version cannot sign provenance or use trusted publishing (11.5.1 or newer is required)."
+            exit 1
+          fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::This job received no OIDC token, so npm trusted publishing cannot authenticate."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        working-directory: sdk/typescript
+        shell: bash
+        run: bun install --frozen-lockfile
+
+      - name: Download released horon-agent runtimes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$SOURCE" in
+            release_tag)
+              mkdir -p sdk-runtime-assets
+              gh release download "$RELEASE_TAG" --dir sdk-runtime-assets \
+                --pattern 'horon-agent-linux-x86_64.tar.gz' \
+                --pattern 'horon-agent-linux-aarch64.tar.gz' \
+                --pattern 'horon-agent-macos-x86_64.tar.gz' \
+                --pattern 'horon-agent-macos-aarch64.tar.gz' \
+                --pattern 'horon-agent-windows-x86_64.tar.gz' \
+                --pattern 'horon-agent-windows-aarch64.tar.gz'
+              echo "assets: public release $RELEASE_TAG"
+              ;;
+            *)
+              echo "::error::a $SOURCE run cannot publish; only a release tag can"
+              exit 1
+              ;;
+          esac
+          ls -l sdk-runtime-assets
+
+      - name: Stamp the release version
+        shell: bash
+        run: python3 scripts/sdk/sdk_release.py stamp "$VERSION"
+
+      - name: Prepare the six runtime packages
+        shell: bash
+        run: bash scripts/sdk/prepare_runtime_packages.sh sdk-runtime-packages sdk-runtime-assets
+
+      - name: Check the seven packages agree
+        shell: bash
+        run: python3 scripts/sdk/sdk_release.py check-packages sdk-runtime-packages "$VERSION"
+
+      - name: Publish the seven packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/npm-pack"
+          mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
+          for dir in "${dirs[@]}"; do
+            if [ "$dir" = "sdk" ]; then
+              package_dir="sdk/typescript"
+            else
+              package_dir="sdk-runtime-packages/$dir"
+            fi
+            name="$(node -p "require('./$package_dir/package.json').name")"
+            version="$(node -p "require('./$package_dir/package.json').version")"
+            # A rerun must finish the set, not fail on the packages the first
+            # run already published.
             if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version already published, skipping"
+              echo "$name@$version is already on the registry; skipping"
               continue
             fi
-            npm publish "$package" --access public --provenance --registry https://registry.npmjs.org
+            packed="$(cd "$package_dir" && npm pack --pack-destination "$RUNNER_TEMP/npm-pack")"
+            tarball="$(printf '%s\n' "$packed" | tail -n 1)"
+            echo "::group::$name@$version"
+            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance
+            echo "::endgroup::"
           done
 
-      - name: Publish SDK with npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify the registry
+        shell: bash
         run: |
           set -euo pipefail
-          if [ "${NPM_PUBLISH_MODE}" = "oidc" ]; then
-            unset NODE_AUTH_TOKEN
-          fi
-          npm publish --access public --provenance --registry https://registry.npmjs.org
+          # npm answers 404 for a few minutes after a publish, so poll for up to
+          # ten minutes before calling the release incomplete.
+          mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
+          for dir in "${dirs[@]}"; do
+            if [ "$dir" = "sdk" ]; then
+              package_dir="sdk/typescript"
+            else
+              package_dir="sdk-runtime-packages/$dir"
+            fi
+            name="$(node -p "require('./$package_dir/package.json').name")"
+            version="$(node -p "require('./$package_dir/package.json').version")"
+            published=""
+            for attempt in $(seq 1 40); do
+              if published="$(npm view "$name@$version" version 2>/dev/null)" && [ -n "$published" ]; then
+                break
+              fi
+              published=""
+              echo "$name@$version is not visible yet ($attempt/40); retrying in 15s"
+              sleep 15
+            done
+            if [ -z "$published" ]; then
+              echo "::error::$name@$version did not appear on the registry within ten minutes"
+              exit 1
+            fi
+            echo "$name@$published"
+          done
+          npm view "@horon-ai/agent-sdk@$VERSION" optionalDependencies
