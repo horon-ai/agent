@@ -52,6 +52,26 @@ This document explains what the agent does when a turn ends unexpectedly and who
 
 The default is `conservative`. Only provable truncation and unclosed structure are continued; the semantic guess is used only when the operator chooses `aggressive`.
 
+### A second opinion on the semantic class
+
+`SemanticPrematureStop` is the one class the classifier only guesses: it reads the last sentence and matches an announcement pattern. When `[autojudge] enabled = true`, the turn asks the `judge` role one `bool` question about that class alone — did the assistant stop before finishing the work the user asked for — and acts on the answer instead of the guess.
+
+| Situation | What happens |
+| --- | --- |
+| `[autojudge] enabled = false` (default) | No request. `RecoveryMode` decides exactly as it did before. |
+| Judge answers with `probability >= 0.5` | The class is acted on in every mode except `off`. |
+| Judge answers below `0.5` | The class is not acted on, even in `aggressive`. |
+| No `judge` model resolves, the reply leaves the contract, the backend fails, or the attempt outlasts `[autojudge] attempt_timeout_ms` | Fail open: `RecoveryMode` decides, and the failure is logged at most once a minute. |
+| `BudgetTruncated` or `UnclosedStructure` | Never judged. These are provable, and a judgment could only cost a request without changing the outcome. |
+
+A judgment runs on the `judge` role's model (`docs/provider/MODEL.md`), one attempt, no internal retry, and at most one judgment per unexpected stop, so a run spends no more than `MAX_AUTO_CONTINUATIONS + 1` judgments. The budget covers the whole attempt — model selection, the request and parsing — not only the network wait.
+
+`attempt_timeout_ms` defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. There is deliberately no unbounded value: a judgment holds up the turn it is judging, so a provider that never answers would stall that turn, which is the failure the budget exists to bound. The machine-readable setting is `[autojudge] attempt_timeout_ms`; `HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS` overrides it for one process.
+
+Enabling `autojudge` under `conservative` widens what that mode acts on: a judged-confident semantic stop now continues, where the guess alone would not have. That is the point of the switch — a calibrated answer is allowed to act where a pattern match is not — and it is why the switch is off by default.
+
+The `/judge` command is a different workload. It spawns a reviewer worker inside a swarm and resolves its model through the session agent-model overrides. It shares the `[autojudge] model` override with the role but never answers a typed question.
+
 ### At most two auto continuations per turn
 
 Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:215-219`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:82-100`, test `crates/agent-runtime/src/turn_state_tests.rs:18-26`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:136`).

@@ -5,6 +5,16 @@ fn roles(default: Option<&str>, plan: Option<&str>, aux: Option<&str>) -> ModelR
         default: default.map(str::to_string),
         plan: plan.map(str::to_string),
         aux: aux.map(str::to_string),
+        judge: None,
+    }
+}
+
+fn roles_with(judge: Option<&str>, aux: Option<&str>, default: Option<&str>) -> ModelRoles {
+    ModelRoles {
+        default: default.map(str::to_string),
+        plan: None,
+        aux: aux.map(str::to_string),
+        judge: judge.map(str::to_string),
     }
 }
 
@@ -160,6 +170,67 @@ fn model_role_resolution_reports_every_empty_step_and_names_the_role() {
 }
 
 #[test]
+fn model_role_resolution_reads_the_judge_entry_before_its_fallbacks() {
+    let roles = roles_with(Some("judge-model"), Some("aux-model"), Some("role-default"));
+
+    assert_eq!(
+        resolve_role_model(ModelRole::Judge, None, &roles, Some("profile"), Some("provider"))
+            .expect("judge entry wins"),
+        "judge-model"
+    );
+}
+
+#[test]
+fn model_role_resolution_falls_back_from_judge_to_aux_before_default() {
+    let roles = roles_with(None, Some("aux-model"), Some("role-default"));
+
+    assert_eq!(
+        resolve_role_model(ModelRole::Judge, None, &roles, Some("profile"), Some("provider")).expect("aux role entry"),
+        "aux-model",
+        "a judgment is a cheap side task, so it inherits the aux model before the default one"
+    );
+
+    let roles = roles_with(None, None, Some("role-default"));
+    assert_eq!(
+        resolve_role_model(ModelRole::Judge, None, &roles, Some("profile"), Some("provider"))
+            .expect("default role entry"),
+        "role-default"
+    );
+}
+
+#[test]
+fn model_role_resolution_never_inherits_a_prefixed_value_silently() {
+    // A fallback step is still a role entry, so it is refused with the role
+    // that asked for it rather than the role that wrote the value.
+    let roles = roles_with(None, Some("openai:gpt-5"), None);
+
+    let error = resolve_role_model(ModelRole::Judge, None, &roles, Some("profile"), Some("provider"))
+        .expect_err("a prefixed inherited value must be refused");
+    assert_eq!(
+        error,
+        RoleResolutionError::RoutePrefix {
+            role: ModelRole::Judge,
+            value: "openai:gpt-5".to_string(),
+            prefix: "openai".to_string(),
+        }
+    );
+}
+
+#[test]
+fn model_role_fallbacks_are_ordered_and_never_contain_the_role_itself() {
+    assert_eq!(ModelRole::Default.fallback_roles(), &[]);
+    assert_eq!(ModelRole::Plan.fallback_roles(), &[ModelRole::Default]);
+    assert_eq!(ModelRole::Aux.fallback_roles(), &[ModelRole::Default]);
+    assert_eq!(ModelRole::Judge.fallback_roles(), &[ModelRole::Aux, ModelRole::Default]);
+    for role in [ModelRole::Default, ModelRole::Plan, ModelRole::Aux, ModelRole::Judge] {
+        assert!(
+            !role.fallback_roles().contains(&role),
+            "{role} must not inherit from itself"
+        );
+    }
+}
+
+#[test]
 fn model_role_config_trims_the_fallback_list_and_drops_blank_entries() {
     let config = ModelRoleConfig {
         fallback_models: vec![" m2 ".to_string(), String::new(), "   ".to_string(), "m3".to_string()],
@@ -185,6 +256,7 @@ fallback_models = ["m2", "m3"]
 default = "my-model"
 plan = "my-planner"
 aux = "my-small-model"
+judge = "my-judge"
 "#;
     let parsed: ProfileFile = toml::from_str(raw).expect("profile table with roles and fallbacks");
     let config = parsed.providers.get("my-gw").expect("my-gw profile");
@@ -192,6 +264,7 @@ aux = "my-small-model"
     assert_eq!(config.model_roles.roles.default.as_deref(), Some("my-model"));
     assert_eq!(config.model_roles.roles.plan.as_deref(), Some("my-planner"));
     assert_eq!(config.model_roles.roles.aux.as_deref(), Some("my-small-model"));
+    assert_eq!(config.model_roles.roles.judge.as_deref(), Some("my-judge"));
 
     let encoded = toml::to_string(&parsed).expect("serialize profile table");
     let reparsed: ProfileFile = toml::from_str(&encoded).expect("reparse serialized profile table");

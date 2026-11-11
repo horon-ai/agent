@@ -7,6 +7,7 @@ pub mod failover;
 pub mod fallback_pick;
 pub mod fingerprint;
 mod http_tls;
+pub mod judge;
 pub mod model_id;
 pub mod model_names;
 pub mod models;

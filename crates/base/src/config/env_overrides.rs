@@ -399,6 +399,11 @@ impl Config {
                 Some(trimmed.to_string())
             };
         }
+        if let Ok(v) = std::env::var("HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS") {
+            if let Ok(parsed) = v.trim().parse::<u64>() {
+                self.autojudge.attempt_timeout_ms = parsed;
+            }
+        }
 
         // Ambient
         if let Ok(v) = std::env::var("HORON_AGENT_AMBIENT_ENABLED") {

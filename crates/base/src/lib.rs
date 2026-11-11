@@ -55,6 +55,7 @@ pub mod id;
 pub mod image_normalize;
 pub mod import;
 pub mod jev;
+pub mod judge;
 pub mod kv_cache_monitor;
 pub mod logging;
 pub mod managed_skills;
