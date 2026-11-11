@@ -169,6 +169,8 @@ def resolve_mode(event: str, requested: str, npm_publish: str) -> str:
 def check_packages(directory: Path, version: str, sdk_manifest: Path) -> list[str]:
     """Return every way the seven packages disagree with `version`."""
     problems: list[str] = []
+    if not directory.is_dir():
+        return [f"{directory}: package directory does not exist"]
     for platform, (os_name, cpu) in MANIFEST_PLATFORM.items():
         package_dir = directory / platform
         manifest_path = package_dir / "package.json"

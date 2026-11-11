@@ -53,9 +53,9 @@ class CargoVersionTests(unittest.TestCase):
     def test_reads_the_package_version(self) -> None:
         self.assertEqual(helper.read_cargo_version(self.write(CARGO)), "0.1.0")
 
-    def test_ignores_a_workspace_member_version(self) -> None:
-        # A `[workspace.members]` table can carry its own version; only the
-        # root `[package]` table names the release line.
+    def test_reads_only_the_package_table(self) -> None:
+        # Other tables can carry a `version` key; only the root `[package]` table
+        # names the release line, so a later table must not win.
         text = CARGO.rstrip() + '\n\n[profile.release]\nversion = "9.9.9"\n'
         self.assertEqual(helper.read_cargo_version(self.write(text)), "0.1.0")
 
@@ -167,10 +167,31 @@ class StampTests(unittest.TestCase):
         helper.stamp(self.sdk, "0.1.0")
         self.assertEqual(self.sdk.read_text(encoding="utf-8"), before)
 
-    def test_stamp_refuses_a_prerelease_or_a_tag(self) -> None:
+    def test_stamp_refuses_a_version_that_is_not_major_minor_patch(self) -> None:
+        # A tag (`v0.1.0`) and a label (`latest`) are the two shapes a caller can
+        # reach this with by mistake; the tag rule has already stripped the `v`
+        # by then, so what is left to reject is anything that is not
+        # MAJOR.MINOR.PATCH. A prerelease is a valid npm version and is accepted.
         for version in ("v0.1.0", "0.1", "latest", ""):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 helper.stamp(self.sdk, version)
+        helper.stamp(self.sdk, "0.1.0-rc.1")
+        self.assertEqual(
+            json.loads(self.sdk.read_text(encoding="utf-8"))["version"], "0.1.0-rc.1"
+        )
+
+    def test_stamp_is_byte_identical_on_the_tracked_manifest(self) -> None:
+        # The fixture above proves the shape for a file this test wrote. The
+        # tracked file is the one the workflow rewrites, so prove it there: with
+        # no version change the stamp must leave the checkout untouched, or the
+        # pull-request run would report a modified tree on every push.
+        tracked = helper.SDK_MANIFEST
+        copy = Path(self._temp.name) / "tracked" / "package.json"
+        copy.parent.mkdir()
+        copy.write_bytes(tracked.read_bytes())
+        version = json.loads(tracked.read_text(encoding="utf-8"))["version"]
+        helper.stamp(copy, version)
+        self.assertEqual(copy.read_bytes(), tracked.read_bytes())
 
     def test_stamp_leaves_other_fields_alone(self) -> None:
         manifest = json.loads(self.sdk.read_text(encoding="utf-8"))
@@ -203,8 +224,9 @@ class PublishOrderTests(unittest.TestCase):
 
 class FixtureAndTagTests(unittest.TestCase):
     def test_the_fixture_version_is_publishable(self) -> None:
-        # npm 11 refuses a dry run of an already-published version. Every package
-        # carries a 0.0.0 placeholder, so the fixture must be a different stable
+        # npm 11 refuses a dry run of a version that is already published. The
+        # owner publishes the seven names once as `0.0.0` placeholders before the
+        # first release, so the pull-request fixture must be a different stable
         # number; a prerelease would additionally need an explicit `--tag`.
         self.assertNotEqual(helper.FIXTURE_VERSION, "0.0.0")
         self.assertRegex(helper.FIXTURE_VERSION, r"^[0-9]+\.[0-9]+\.[0-9]+$")
@@ -334,6 +356,15 @@ class CheckPackagesTests(unittest.TestCase):
         self.assertEqual(
             helper.check_packages(self.directory, self.VERSION, self.sdk),
             ["freebsd-x64: unexpected package directory"],
+        )
+
+    def test_a_missing_directory_is_named(self) -> None:
+        # `prepare_runtime_packages.sh` failing to write anything must read as a
+        # named problem, not a traceback from the first `iterdir()`.
+        missing = self.directory / "never-written"
+        self.assertEqual(
+            helper.check_packages(missing, self.VERSION, self.sdk),
+            [f"{missing}: package directory does not exist"],
         )
 
 
