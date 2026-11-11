@@ -395,11 +395,11 @@ impl SettingsOverlay {
                 }
             },
             Mode::Edit { buffer, .. } => match edit_value(spec, &buffer) {
-                Ok(value) => self.settle(id, spec, value),
-                Err(error) => {
+                Some(value) => self.settle(id, spec, value),
+                None => {
                     self.mode = Mode::Edit {
                         buffer,
-                        error: Some(error),
+                        error: Some(edit_error(spec)),
                     };
                     Outcome::Handled
                 }
@@ -450,17 +450,17 @@ fn raw_text(value: &SettingValue) -> String {
     }
 }
 
-/// Turn an editor line back into the value its declaration promises.
-fn edit_value(spec: &SettingSpec, buffer: &str) -> Result<SettingValue, String> {
+/// Turn an editor line back into the value its declaration promises, or nothing
+/// when the text is not that kind.
+fn edit_value(spec: &SettingSpec, buffer: &str) -> Option<SettingValue> {
     match spec.kind {
-        SettingKind::Bool | SettingKind::Enum(_) => Err(format!("{} needs {}", spec.ui.label, spec.kind.label())),
-        SettingKind::Text => Ok(SettingValue::Str(buffer.to_string())),
-        SettingKind::Number => buffer
-            .trim()
-            .parse::<i64>()
-            .map(SettingValue::Number)
-            .map_err(|_| format!("{} needs a whole number", spec.ui.label)),
-        SettingKind::Array => Ok(SettingValue::List(
+        SettingKind::Bool | SettingKind::Enum(_) => None,
+        SettingKind::Text => Some(SettingValue::Str(buffer.to_string())),
+        SettingKind::Number => match buffer.trim().parse::<i64>() {
+            Ok(number) => Some(SettingValue::Number(number)),
+            Err(_) => None,
+        },
+        SettingKind::Array => Some(SettingValue::List(
             buffer
                 .split(',')
                 .map(str::trim)
@@ -468,6 +468,15 @@ fn edit_value(spec: &SettingSpec, buffer: &str) -> Result<SettingValue, String> 
                 .map(str::to_string)
                 .collect(),
         )),
+    }
+}
+
+/// What an editor says when its line is not the declared kind.
+fn edit_error(spec: &SettingSpec) -> String {
+    if matches!(spec.kind, SettingKind::Number) {
+        format!("{} needs a whole number", spec.ui.label)
+    } else {
+        format!("{} needs {}", spec.ui.label, spec.kind.label())
     }
 }
 

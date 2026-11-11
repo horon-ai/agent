@@ -261,17 +261,15 @@ fn overlays_bool_row_toggles_without_an_editor() {
 
     assert_eq!(app.on_key(key(KeyCode::Enter)), None, "a toggle is not a message");
     assert!(!overlay(&app).is_editing(), "a toggle opens no editor");
-    assert_eq!(
-        app.take_setting_change(),
-        Some(SettingChange {
-            id: "editor.submit_on_enter",
-            value: SettingValue::Bool(false)
-        })
-    );
 
-    // Write the first toggle so the row shows the value now in force, then
-    // toggle it back.
+    // Write the toggle so the row shows the value now in force, then toggle it
+    // back and read the reported change.
     crate::flush_setting_change(&mut app, &mut reloader, &mut themes);
+    assert_eq!(
+        reloader.settings().boolean("editor.submit_on_enter"),
+        Some(false),
+        "Enter turned the boolean off and the save kept it"
+    );
     assert_eq!(
         overlay(&app).value("editor.submit_on_enter"),
         Some(&SettingValue::Bool(false))
