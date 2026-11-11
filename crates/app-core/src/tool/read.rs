@@ -617,10 +617,10 @@ fn remember_read(
 
 #[cfg(test)]
 mod agent_url_tests;
-#[path = "read_archive.rs"]
-mod read_archive;
 #[cfg(test)]
 mod history_tests;
+#[path = "read_archive.rs"]
+mod read_archive;
 #[path = "read_memory_url.rs"]
 mod read_memory_url;
 #[path = "read_skill.rs"]
