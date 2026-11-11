@@ -9,6 +9,9 @@ impl Agent {
     /// carried into the fresh state so the following turn retries it.
     pub(crate) fn begin_turn_state(&mut self) {
         self.restore_model_fallback();
+        // An approval that arrived between turns hands off here, before the
+        // first request of this turn is formed.
+        self.apply_prewalk();
         let pending_restore = self.turn_state.take_model_fallback_original();
         self.turn_state = TurnState::new();
         if let Some(original) = pending_restore {
