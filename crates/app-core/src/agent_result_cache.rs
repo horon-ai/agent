@@ -346,7 +346,7 @@ fn load_stored(parent_session_id: &str, child_id: &str) -> Option<ResultState> {
         Err(_) => return None,
     };
     let details = match std::fs::read_to_string(details_path) {
-        Ok(json) => serde_json::from_str::<Value>(&json).ok(),
+        Ok(json) => Result::ok(serde_json::from_str::<Value>(&json)),
         Err(_) => None,
     };
     Some(ResultState::Completed { text, details })
