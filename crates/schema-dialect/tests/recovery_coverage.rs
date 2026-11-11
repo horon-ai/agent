@@ -207,3 +207,34 @@ fn each_runtime_recovery_wiring_matches_what_is_claimed() {
         mismatches.join("\n")
     );
 }
+
+/// A schema the dialect narrows must say so through the reporting entry point.
+///
+/// This file's claim is that OpenAI-family routes reject schemas by validation,
+/// which prevention already strips. A strip is a silent loss unless the caller
+/// can name it, so the same fixture that motivates the claim above must yield
+/// exactly one receipt: one dropped keyword, named, on the tool it belongs to.
+#[test]
+fn a_narrowed_schema_reports_exactly_one_loss() {
+    let spec = registry::by_id("openai").expect("registered dialect");
+    // `uniqueItems` is outside the OpenAI dialect, so it is dropped.
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {"tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}},
+        "required": ["tags"],
+    });
+
+    let mut dropped = Vec::new();
+    let narrowed = horon_agent_schema_dialect::normalize_reporting(
+        &schema,
+        spec,
+        &mut horon_agent_schema_dialect::DropLog::enabled(&mut dropped),
+    );
+
+    assert_eq!(dropped, vec!["uniqueItems".to_string()], "one loss, named");
+    assert_eq!(narrowed["properties"]["tags"].get("uniqueItems"), None);
+
+    // The ordinary entry point narrows identically and records nothing, so a
+    // caller that does not report still sends the same bytes.
+    assert_eq!(narrowed, horon_agent_schema_dialect::normalize(&schema, spec));
+}

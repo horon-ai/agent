@@ -80,24 +80,7 @@ const MAX_WALK_FILES: usize = 20_000;
 const MAX_WALK_ENTRIES: usize = 50_000;
 const MAX_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Flatten a stored message's `content` to plain text.
-///
-/// The daemon writes content either as a bare string or as an array of typed
-/// blocks, so both shapes are accepted; anything without text (a tool call, an
-/// image) contributes nothing rather than a placeholder.
-pub(crate) fn flatten_content(content: &Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-    let Some(blocks) = content.as_array() else {
-        return String::new();
-    };
-    blocks
-        .iter()
-        .filter_map(|block| block["text"].as_str())
-        .collect::<Vec<_>>()
-        .join("")
-}
+pub(crate) use crate::message_content::flatten_content;
 use serde_json::{Value, json};
 
 /// Where a translated client request should go.
@@ -1975,6 +1958,7 @@ impl BridgeState {
                 error: event["error"].as_str().map(str::to_string),
             })],
             "tool_args_repaired" => crate::tool_args_repaired::frames(session(self), event),
+            "degradation_receipts" => crate::degradation_receipts::frames(session(self), event),
             "side_pane_images" => vec![ServerFrame::event(ApiEvent::SidePaneImages {
                 session_id: event["session_id"]
                     .as_str()

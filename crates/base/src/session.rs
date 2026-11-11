@@ -13,6 +13,7 @@ use std::path::Path;
 
 mod agent_models;
 mod crash;
+mod degradation;
 pub use agent_models::AgentModelOverrides;
 mod event_actor;
 mod event_archive;
@@ -1286,6 +1287,7 @@ request in this new forked session, using the inherited conversation only as con
         self.append_stored_message(StoredMessage {
             original_input,
             arg_repairs,
+            degradations: self.take_degradations(&role),
             turn_start,
             id: id.clone(),
             role,
