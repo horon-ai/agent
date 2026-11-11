@@ -12,10 +12,16 @@ const EXEC_MODEL: &str = "exec-model";
 const PROFILE: &str = "prewalk-gw";
 
 fn write_config(sandbox: &AuthTestSandbox, prewalk: &str, plan_mode: bool) {
+    write_config_with_roles(sandbox, prewalk, plan_mode, "");
+}
+
+/// The same config, with an optional `[providers.<name>.roles]` block, so a
+/// `role:<name>` `into` can resolve through the profile chain.
+fn write_config_with_roles(sandbox: &AuthTestSandbox, prewalk: &str, plan_mode: bool, roles: &str) {
     std::fs::write(
         sandbox.root().join("config.toml"),
         format!(
-            "[tools]\nplan_mode = {plan_mode}\n\n[providers.{PROFILE}]\ndefault_model = \"{START_MODEL}\"\n\n[prewalk]\n{prewalk}"
+            "[tools]\nplan_mode = {plan_mode}\n\n[providers.{PROFILE}]\ndefault_model = \"{START_MODEL}\"\n\n{roles}[prewalk]\n{prewalk}"
         ),
     )
     .expect("write config file");
@@ -102,8 +108,12 @@ impl Provider for PrewalkProvider {
 }
 
 fn setup(prewalk: &str, plan_mode: bool) -> (AuthTestSandbox, Arc<PrewalkProvider>, Agent) {
+    setup_with_roles(prewalk, plan_mode, "")
+}
+
+fn setup_with_roles(prewalk: &str, plan_mode: bool, roles: &str) -> (AuthTestSandbox, Arc<PrewalkProvider>, Agent) {
     let sandbox = AuthTestSandbox::new().expect("isolated home");
-    write_config(&sandbox, prewalk, plan_mode);
+    write_config_with_roles(&sandbox, prewalk, plan_mode, roles);
     let provider = Arc::new(PrewalkProvider::new());
     let provider_dyn: Arc<dyn Provider> = provider.clone();
     let agent = Agent::new(provider_dyn, Registry::empty());
@@ -290,4 +300,99 @@ async fn prewalk_off_keeps_the_session_model() {
     assert_eq!(agent.provider_model(), START_MODEL);
     assert_eq!(provider.calls(), vec![START_MODEL.to_string()]);
     assert!(prewalk_events(&agent).is_empty(), "an off section records nothing");
+}
+
+#[tokio::test]
+async fn prewalk_does_not_switch_again_after_a_restore() {
+    let (_home, provider, mut agent) = setup(&on(EXEC_MODEL), false);
+    write_todo(&agent, "t1");
+    run(&mut agent).await;
+    let session_id = agent.session.id.clone();
+    agent.save_session().expect("session saved");
+
+    // `restore_session` is the path an operator's `/resume` takes: it reloads
+    // the stored session and rebinds the facade to it.
+    let mut restored = Agent::new(provider.clone(), Registry::empty());
+    restored.restore_session(&session_id).expect("restore the session");
+    write_todo(&restored, "t2");
+    run(&mut restored).await;
+
+    assert_eq!(
+        provider.calls(),
+        vec![START_MODEL.to_string(), EXEC_MODEL.to_string(), EXEC_MODEL.to_string()],
+        "the restored session runs on the execution model and never switches back"
+    );
+    assert_eq!(
+        prewalk_events(&restored).len(),
+        1,
+        "the stored decision is the one-shot marker"
+    );
+}
+
+#[tokio::test]
+async fn prewalk_from_mismatch_keeps_the_session_model() {
+    let prewalk = format!("enabled = true\ninto = \"{EXEC_MODEL}\"\nfrom = \"{EXEC_MODEL}\"\n");
+    let (_home, _provider, mut agent) = setup(&prewalk, false);
+    write_todo(&agent, "t1");
+
+    agent.apply_prewalk();
+
+    assert_eq!(
+        agent.provider_model(),
+        START_MODEL,
+        "a session that does not run the configured `from` model never hands off"
+    );
+    assert!(
+        prewalk_events(&agent).is_empty(),
+        "a non-matching `from` is not a decision, so a later match can still decide"
+    );
+}
+
+#[tokio::test]
+async fn prewalk_from_match_hands_off() {
+    let prewalk = format!("enabled = true\ninto = \"{EXEC_MODEL}\"\nfrom = \"{START_MODEL}\"\n");
+    let (_home, _provider, mut agent) = setup(&prewalk, false);
+    write_todo(&agent, "t1");
+
+    agent.apply_prewalk();
+
+    assert_eq!(
+        agent.provider_model(),
+        EXEC_MODEL,
+        "the configured `from` matches this session"
+    );
+    assert_eq!(prewalk_events(&agent).len(), 1);
+}
+
+#[tokio::test]
+async fn prewalk_into_role_resolves_through_the_profile_roles() {
+    let roles = format!("[providers.{PROFILE}.roles]\naux = \"{EXEC_MODEL}\"\n\n");
+    let (_home, _provider, mut agent) = setup_with_roles(&on("role:aux"), false, &roles);
+    write_todo(&agent, "t1");
+
+    agent.apply_prewalk();
+
+    assert_eq!(
+        agent.provider_model(),
+        EXEC_MODEL,
+        "`role:aux` resolves to the profile's auxiliary model"
+    );
+    assert_eq!(prewalk_events(&agent).len(), 1);
+}
+
+#[tokio::test]
+async fn prewalk_into_unknown_role_keeps_the_model_and_records_one_refusal() {
+    let (_home, _provider, mut agent) = setup(&on("role:nope"), false);
+    write_todo(&agent, "t1");
+
+    agent.apply_prewalk();
+    agent.apply_prewalk();
+
+    assert_eq!(agent.provider_model(), START_MODEL);
+    let events = prewalk_events(&agent);
+    assert_eq!(events.len(), 1, "an unresolvable role is warned about once");
+    assert!(
+        events[0].contains("role:nope"),
+        "the refusal names the role: {events:?}"
+    );
 }
