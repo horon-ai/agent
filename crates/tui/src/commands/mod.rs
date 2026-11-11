@@ -133,7 +133,7 @@ pub struct Registry {
     user: Option<PathBuf>,
     project: Option<PathBuf>,
     files: Vec<FileCommand>,
-    stamps: [Option<SystemTime>; 2],
+    stamps: [Option<Vec<FileStamp>>; 2],
     last_check: Instant,
     warnings: Vec<String>,
 }
@@ -185,8 +185,8 @@ impl Registry {
     /// Check the directories immediately, ignoring the interval.
     ///
     /// This is what the tests and a `:reload` style command would use, so
-    /// neither has to sleep. Only the directory stamps are compared, so an
-    /// idle check costs two `stat` calls and no directory listing.
+    /// neither has to sleep. Only the file stamps are compared, so an idle
+    /// check lists the two directories and reads none of their files.
     pub fn check_now(&mut self) -> bool {
         self.last_check = Instant::now();
         let stamps = [stamp(self.user.as_deref()), stamp(self.project.as_deref())];
@@ -498,10 +498,35 @@ fn common_prefix(names: &[String]) -> String {
     first.chars().take(length).collect()
 }
 
-/// When a command directory last changed, if it exists.
-fn stamp(directory: Option<&Path>) -> Option<SystemTime> {
-    let Ok(modified) = std::fs::metadata(directory?).and_then(|metadata| metadata.modified()) else {
+/// One command file as last seen: its path, length and modification time.
+type FileStamp = (PathBuf, u64, SystemTime);
+
+/// The markdown files a command directory holds, if it can be listed.
+///
+/// A new, removed, renamed or rewritten file changes the list. The directory's
+/// own modification time is not enough: it stays put when a file is edited in
+/// place, and a file created in the same clock tick as the last check shares
+/// it. A filesystem that cannot report a modification time reports the epoch,
+/// as the key and theme stamps do.
+fn stamp(directory: Option<&Path>) -> Option<Vec<FileStamp>> {
+    let Ok(entries) = std::fs::read_dir(directory?) else {
         return None;
     };
-    Some(modified)
+    let mut files = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        files.push((path, metadata.len(), modified));
+    }
+    files.sort();
+    Some(files)
 }

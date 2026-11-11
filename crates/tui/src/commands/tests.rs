@@ -293,6 +293,12 @@ fn commands_reload_only_when_the_directory_changes() {
     assert!(state.files().iter().any(|file| file.name == "fresh"));
     // A second check with nothing changed does no work.
     assert!(!state.check_now());
+    // A file rewritten in place is picked up too, with its new text.
+    write_command(user.path(), "fresh", "a longer body than before");
+    assert!(state.check_now(), "an edited file must be picked up");
+    let fresh = state.files().iter().find(|file| file.name == "fresh");
+    assert_eq!(fresh.map(|file| file.body.as_str()), Some("a longer body than before"));
+    assert!(!state.check_now());
 }
 
 #[test]
