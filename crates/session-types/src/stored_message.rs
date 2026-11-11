@@ -2,6 +2,7 @@
 //! repaired tool call carries.
 
 use chrono::{DateTime, Utc};
+use horon_agent_message_types::degradation::DegradationReceipt;
 use horon_agent_message_types::{ContentBlock, Message, Role};
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,12 @@ pub struct StoredMessage {
     /// One entry per repair applied to produce the arguments that ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arg_repairs: Option<Vec<String>>,
+    /// What this turn's request lost to provider schema constraints: dropped
+    /// schema keywords or string formats, a tool refused strict mode, and a
+    /// duplicate definition that was not sent. Only a narrowed request carries
+    /// it, so every other record keeps its previous bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degradations: Option<Vec<DegradationReceipt>>,
 }
 
 impl Default for StoredMessage {
@@ -52,6 +59,7 @@ impl Default for StoredMessage {
             token_usage: None,
             original_input: None,
             arg_repairs: None,
+            degradations: None,
         }
     }
 }

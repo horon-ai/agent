@@ -136,7 +136,7 @@ desktop_notifications = true
 
 #### `request_permission` 도구
 
-이 도구는 코어 15도구에 들어 있지 않다. ambient 실행기가 등록하고, 세션의 도구 허용 목록이 통과시켜야 호출된다. 클라이언트가 붙지 않은 무인 실행을 위해 `[ambient] approval_for_clientless_runs`를 켜면 그때만 허용 목록에 합쳐진다(`crates/base/src/config.rs:752-757`, `:1153-1170`). 기본값은 꺼짐이고, 코어 집합은 15개 그대로다(`crates/base/src/config.rs:779-799`, 테스트는 `crates/base/src/config_tool_tiers_tests.rs:26-40`).
+이 도구는 코어 18도구에 들어 있지 않다. ambient 실행기가 등록하고, 세션의 도구 허용 목록이 통과시켜야 호출된다. 클라이언트가 붙지 않은 무인 실행을 위해 `[ambient] approval_for_clientless_runs`를 켜면 그때만 허용 목록에 합쳐진다(`crates/base/src/config.rs:752-757`, `:1153-1170`). 기본값은 꺼짐이고, 코어 집합은 18개 그대로다(`crates/base/src/config.rs:779-799`, 테스트는 `crates/base/src/config_tool_tiers_tests.rs:26-40`).
 
 ambient 세션이 아닌 곳에서 부르면 "request_permission is only available to ambient sessions" 오류로 거절한다(`crates/app-core/src/tool/ambient.rs:105`).
 
@@ -383,7 +383,7 @@ pub enum AskPolicy {
 
 #### 언제 쓸 수 있는가
 
-`ask`는 코어 15도구 가운데 하나다(`crates/base/src/config.rs:779-796`). 그래서 기본 headless `serve`와 `run`에서도 늘 닿는다. 기본 `core` 세션은 `ask`의 스키마를 요청에 싣지 않고 시스템 프롬프트 색인에 이름만 올리며, 모델은 `toolbox`로 부른다. 권한이 필요한 동작을 물을 때 쓰는 `request_permission`과는 다르다. `request_permission`은 ambient 세션 전용이고 클라이언트가 없는 무인 실행에서만 허용 목록에 합쳐지지만, `ask`는 도구 표면에 상시 닿는다. 그래서 무인 실행에서 `ask`가 하는 일은 승인을 받아내는 것이 아니라, 답이 없는 상태에서도 턴을 멈추지 않고 다음 판단으로 넘어가는 것이다.
+`ask`는 코어 18도구 가운데 하나다(`crates/base/src/config.rs:779-796`). 그래서 기본 headless `serve`와 `run`에서도 늘 닿는다. 기본 `core` 세션은 `ask`의 스키마를 요청에 싣지 않고 시스템 프롬프트 색인에 이름만 올리며, 모델은 `toolbox`로 부른다. 권한이 필요한 동작을 물을 때 쓰는 `request_permission`과는 다르다. `request_permission`은 ambient 세션 전용이고 클라이언트가 없는 무인 실행에서만 허용 목록에 합쳐지지만, `ask`는 도구 표면에 상시 닿는다. 그래서 무인 실행에서 `ask`가 하는 일은 승인을 받아내는 것이 아니라, 답이 없는 상태에서도 턴을 멈추지 않고 다음 판단으로 넘어가는 것이다.
 
 ---
 

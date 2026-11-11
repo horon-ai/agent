@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod attempt_tracker;
 pub mod auth_mode;
 pub mod catalog_refresh;
+pub mod degradation;
 pub mod failover;
 pub mod fallback_pick;
 pub mod fingerprint;

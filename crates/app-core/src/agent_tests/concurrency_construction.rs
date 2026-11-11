@@ -139,6 +139,7 @@ fn stored_user_message(id: &str, text: &str) -> crate::session::StoredMessage {
     crate::session::StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         id: id.to_string(),
         role: crate::message::Role::User,
         content: vec![crate::message::ContentBlock::Text {

@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, PermissionDecision};
-use horon_agent_sdk::{ConnectOptions, Error, ErrorKind, EventStream, HoronAgentClient};
+use horon_agent_sdk::{ConnectOptions, Error, ErrorKind, EventStream, HoronAgentClient, RuntimeCommand};
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -44,6 +44,13 @@ pub enum Command {
     },
     /// Answer a structured question.
     Ask { ask_id: String, answers: Vec<AskSelection> },
+    /// Run one of the harness's own commands.
+    Runtime {
+        command: RuntimeCommand,
+        arguments: Vec<String>,
+    },
+    /// List the models, or switch to the one named.
+    Model(Option<String>),
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -57,6 +64,8 @@ pub enum Incoming {
     Event(Box<ApiEvent>),
     /// A local notice that is not a protocol event.
     Notice(String),
+    /// Output from a command, drawn as information rather than a warning.
+    Info(String),
     /// The connection ended; the string says why.
     Closed(String),
 }
@@ -171,13 +180,19 @@ fn run_worker(
             }
         }
         match commands.recv_timeout(COMMAND_POLL) {
-            Ok(command) => {
-                if let Err(message) = apply(&client, &session_id, command)
-                    && events.send(Incoming::Notice(message)).is_err()
-                {
-                    return;
+            Ok(command) => match apply(&client, &session_id, command) {
+                Ok(None) => {}
+                Ok(Some(message)) => {
+                    if events.send(Incoming::Info(message)).is_err() {
+                        return;
+                    }
                 }
-            }
+                Err(message) => {
+                    if events.send(Incoming::Notice(message)).is_err() {
+                        return;
+                    }
+                }
+            },
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
@@ -185,13 +200,43 @@ fn run_worker(
 }
 
 /// Perform one command against the SDK.
-fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<(), String> {
+///
+/// A command that produced something worth reading returns it, so the UI can
+/// draw the output; a failure returns the sentence explaining it.
+fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<String>, String> {
     match command {
         Command::Text(text) => client
             .send_message(session_id, &text, Vec::new(), None)
+            .map(|_| None)
             .map_err(|error| format!("could not send the message: {error}")),
+        Command::Runtime { command, arguments } => client
+            .runtime_command(session_id, command, arguments)
+            .map(|output| Some(output.message))
+            .map_err(|error| format!("could not run the command: {error}")),
+        Command::Model(Some(name)) => client
+            .set_model(session_id, &name)
+            .map(|()| Some(format!("model set to {name}")))
+            .map_err(|error| format!("could not switch the model: {error}")),
+        Command::Model(None) => client
+            .list_models(session_id)
+            .map(|(models, current)| {
+                let mut message = String::from("models:");
+                if models.is_empty() {
+                    message.push_str(" the harness reported none");
+                }
+                for model in &models {
+                    message.push_str("\n  ");
+                    message.push_str(model);
+                    if current.as_deref() == Some(model.as_str()) {
+                        message.push_str(" (current)");
+                    }
+                }
+                Some(message)
+            })
+            .map_err(|error| format!("could not list the models: {error}")),
         Command::Cancel => client
             .cancel(session_id)
+            .map(|()| None)
             .map_err(|error| format!("could not cancel the turn: {error}")),
         Command::Approval {
             request_id,
@@ -205,10 +250,12 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             };
             client
                 .respond_to_permission(session_id, &request_id, decision)
+                .map(|()| None)
                 .map_err(|error| format!("could not answer the approval: {error}"))
         }
         Command::Ask { ask_id, answers } => client
             .respond_to_ask(session_id, &ask_id, answers)
+            .map(|()| None)
             .map_err(|error| format!("could not answer the question: {error}")),
     }
 }

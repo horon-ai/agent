@@ -2106,7 +2106,7 @@ async fn loading_deferred_setup_excluded_builtin_is_not_constructed() {
     );
 }
 
-/// The core profile keeps its fifteen tools, including the ones task 11 added.
+/// The core profile keeps its eighteen tools, including the ones task 11 added.
 #[tokio::test]
 async fn loading_deferred_setup_core_profile_keeps_skill_and_mcp() {
     let skills = crate::tool::Registry::shared_skills_registry();
@@ -2141,8 +2141,8 @@ async fn loading_deferred_setup_core_profile_keeps_skill_and_mcp() {
     }
     assert_eq!(
         horon_agent_base::config::CORE_TOOLS.len(),
-        15,
-        "CORE_TOOLS itself must stay at fifteen"
+        18,
+        "CORE_TOOLS itself must stay at eighteen"
     );
 }
 

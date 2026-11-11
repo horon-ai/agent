@@ -179,6 +179,42 @@ record keeps exactly the bytes it had before.
 `snapshot().tool_arg_repairs` counts repaired calls per tool, when
 `HORON_AGENT_PERF_COUNTERS=1`.
 
+## Degradation receipts (protocol 1.17)
+
+horon-agent narrows the tool catalog before a request leaves when the
+provider's schema dialect cannot express part of it. Each narrowing is now
+recorded. Everything here is additive: a client that predates it sends the same
+requests and reads the same events as before.
+
+### Event: `degradation_receipts`
+
+Sent after the assistant message of a streamed turn is stored, only when that
+request lost something not already reported in this session. A client that does
+not know the event ignores it.
+
+```json
+{"ev":"degradation_receipts","session_id":"s-1","message_id":"m-7",
+ "receipts":[{"kind":"schema_keyword_dropped","tool":"bash","target":"uniqueItems"}]}
+```
+
+`kind` is one of `schema_keyword_dropped` (a keyword, or `format:<value>`, outside
+the dialect), `strict_disabled` (the tool was sent with `strict: false`) and
+`duplicate_tool_dropped` (a second definition of the same name was not sent).
+Each distinct (kind, tool, target) is reported once per session, not once per
+request; a daemon restart may report it once more.
+
+### Stored record
+
+The assistant message appended for that request carries the same receipts as
+`degradations`, written in the same append. A message whose request lost nothing
+omits the field and keeps exactly the bytes it had before.
+
+### Not covered
+
+The provider-rejection retry path (`recover_from_error`) has no production caller
+today, so no receipt says "rejected and retried"; only the prevention layer above
+reports.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -253,6 +289,7 @@ All three requests are additive. A client that sends none of them keeps working,
 - Unknown fields are ignored, and unknown event kinds are skipped.
 - A failure arrives as `{"ev":"error","code":...,"message":...}`. The `ErrorCode` values these surfaces use are `invalid_request`, `unknown_session` and `internal`.
 - A request that names a session takes `session_id`. A missing session answers `unknown_session` rather than an empty result, because "this session wrote nothing" and "no such session exists" are different facts.
+- `session_id` also accepts a unique leading prefix of at least 6 characters. A full id always wins, and an id the connection already knows is never rewritten. A prefix several sessions share answers `unknown_session` with up to 10 candidates in `details.accepted_ids` and `details.store_code` set to `ambiguous_session`; the code itself stays `unknown_session`, so a client built against an older build still decodes the frame. A prefix that matches nothing keeps the plain `unknown_session` answer.
 
 ### usage_report
 

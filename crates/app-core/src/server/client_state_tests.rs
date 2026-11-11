@@ -357,6 +357,7 @@ async fn assert_history_service_tier(tier: Option<&'static str>, busy: bool, rac
     session.append_stored_message(crate::session::StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "msg-busy-fallback".to_string(),
         role: crate::message::Role::User,

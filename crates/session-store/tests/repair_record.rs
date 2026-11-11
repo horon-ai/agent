@@ -59,6 +59,7 @@ fn a_repaired_record_holds_the_original_arguments_and_the_change_list() {
         message: StoredMessage {
             original_input: Some(original.clone()),
             arg_repairs: Some(changes.clone()),
+            degradations: None,
             ..StoredMessage::default()
         },
     };

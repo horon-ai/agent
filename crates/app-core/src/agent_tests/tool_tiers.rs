@@ -76,7 +76,10 @@ const CORE_BASELINE: &[&str] = &[
     "monitor",
     "read",
     "replace",
+    "session_search",
     "skill_manage",
+    "swarm",
+    "todo",
     "undo",
     "webfetch",
     "websearch",
@@ -118,7 +121,7 @@ async fn core_profile_lists_non_essential_tools() {
     let names: Vec<String> = definitions.iter().map(|definition| definition.name.clone()).collect();
     assert_eq!(
         names, expected,
-        "the core surface is the fifteen kept tools plus the dispatcher"
+        "the core surface is the eighteen kept tools plus the dispatcher"
     );
     let mut baseline: Vec<String> = CORE_BASELINE.iter().map(|name| (*name).to_string()).collect();
     baseline.sort();
@@ -384,9 +387,10 @@ async fn the_deferred_set_is_frozen_for_the_session() {
 }
 
 /// The todo tool is what an editor renders as the plan, so only a session
-/// that can call it is told about it: acp allows todo, core does not.
+/// that can call it is told about it: `core` and `acp` allow todo, an SDK
+/// `enabled` list that omits it does not.
 #[tokio::test]
-async fn todo_hint_reaches_acp_but_not_core() {
+async fn todo_hint_reaches_sessions_that_allow_todo() {
     let _guard = crate::storage::lock_test_env();
 
     let _acp = ProfileEnv::new("acp", None);
@@ -399,10 +403,9 @@ async fn todo_hint_reaches_acp_but_not_core() {
 
     let _core = ProfileEnv::new(CORE_TOOL_PROFILE, None);
     let core_agent = agent_with_mcp_management_tool().await;
-    let core_prompt = core_agent.system_prompt_for_debug();
     assert!(
-        !core_prompt.contains(crate::prompt::TODO_HINT),
-        "core has no todo tool, so its prompt carries no hint"
+        core_agent.system_prompt_for_debug().contains(crate::prompt::TODO_HINT),
+        "core allows todo now, so its prompt carries the hint"
     );
 }
 
@@ -560,7 +563,7 @@ async fn full_sdk_list_keeps_todays_deferral() {
     crate::tool::sdk::remove_session(&session_id);
 }
 
-/// The eight core tools a `core`-listed session names in its system prompt
+/// The eleven core tools a `core`-listed session names in its system prompt
 /// instead of sending their schemas eagerly.
 fn listed_core_tools() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = CORE_TOOLS
@@ -618,7 +621,7 @@ async fn core_index_names_every_listed_core_tool() {
 
     let definitions = agent.tool_definitions().await;
     let listed = listed_core_tools();
-    assert_eq!(listed.len(), 8, "fifteen core tools minus the seven essential ones");
+    assert_eq!(listed.len(), 11, "eighteen core tools minus the seven essential ones");
     for name in &listed {
         assert!(
             definition(&definitions, name).defer_loading,
@@ -1074,7 +1077,8 @@ async fn core_listed_manual_qa_transcript() {
 
 /// The swarm worker derives its allow-list from the registry, so the core
 /// allow-list joining the dispatcher would hand every worker an eager `toolbox`
-/// with nothing to list. The worker must send exactly the fifteen core tools.
+/// with nothing to list. The worker must send exactly the core tools it is
+/// allowed, minus the ones a worker never gets (`swarm`, `todo`, `session_search`).
 #[tokio::test]
 async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
     let _guard = crate::storage::lock_test_env();
@@ -1091,7 +1095,7 @@ async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
         .await;
 
     let mut allowed: HashSet<String> = registry.tool_names().await.into_iter().collect();
-    for blocked in ["subagent", "task", "todo", "todowrite", "todoread"] {
+    for blocked in ["subagent", "task", "swarm", "todo", "session_search"] {
         allowed.remove(blocked);
     }
     crate::config::config().tools.apply_to_allowed_set(&mut allowed);
@@ -1103,11 +1107,15 @@ async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
     let worker = Agent::new_with_session(provider, registry, Session::create(None, None), Some(allowed));
     let definitions = worker.tool_definitions_for_debug().await;
     let names: Vec<String> = definitions.iter().map(|definition| definition.name.clone()).collect();
-    let mut baseline: Vec<String> = CORE_BASELINE.iter().map(|name| (*name).to_string()).collect();
+    let mut baseline: Vec<String> = CORE_BASELINE
+        .iter()
+        .filter(|name| !matches!(**name, "swarm" | "todo" | "session_search"))
+        .map(|name| (*name).to_string())
+        .collect();
     baseline.sort();
     assert_eq!(
         names, baseline,
-        "a swarm worker sends the fifteen core tools and nothing else"
+        "a swarm worker sends the core tools a worker is allowed and nothing else"
     );
     assert!(
         !definitions.iter().any(|definition| definition.name == TOOLBOX_TOOL),

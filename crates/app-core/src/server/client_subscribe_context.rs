@@ -22,7 +22,100 @@ pub(super) fn initial_subscribe_working_dir(request: &Request) -> std::result::R
     }
 }
 
+/// Why a Subscribe target could not be resolved to one session.
+///
+/// The two causes answer different operator mistakes: a shared id prefix names
+/// several conversations, and a reattachment can carry a working directory the
+/// daemon cannot accept. A caller turns either into the client-facing message,
+/// so the cause stays typed here instead of collapsing to a string on return.
+#[derive(Debug)]
+pub(super) enum SubscribeTargetError {
+    /// Several sessions share the prefix; picking one would attach elsewhere.
+    Prefix(String),
+    /// The reattachment's working directory could not be resolved.
+    WorkingDir(String),
+}
+
+impl std::fmt::Display for SubscribeTargetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Prefix(message) | Self::WorkingDir(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for SubscribeTargetError {}
+
+/// Expand a unique `target_session_id` prefix to the session it names.
+///
+/// An operator attaching from a list can paste only the distinguishing head of
+/// an id. Live sessions in this daemon count as candidates too, because an idle
+/// session that has never persisted exists only in memory. A query that names
+/// no session is left untouched so the existing unknown-session error is what
+/// the client receives. A short or shared prefix is an error here rather than a
+/// silent pick: attaching to the wrong conversation is worse than retyping.
+pub(super) async fn resolve_target_subscribe_prefix(
+    request: &mut Request,
+    sessions: &SessionAgents,
+) -> std::result::Result<(), SubscribeTargetError> {
+    let Request::Subscribe {
+        target_session_id: Some(target),
+        ..
+    } = request
+    else {
+        return Ok(());
+    };
+    if target.is_empty() || crate::session::session_exists(target) || sessions.read().await.contains_key(target) {
+        return Ok(());
+    }
+    let mut candidates = horon_agent_base::session_prefix::stored_session_id_prefix_matches(target);
+    for live in sessions.read().await.keys() {
+        if live.starts_with(target.as_str()) && !candidates.iter().any(|seen| seen == live) {
+            candidates.push(live.clone());
+        }
+    }
+    match horon_agent_base::session_prefix::choose_session_prefix_match(target, candidates) {
+        Ok(full_id) => {
+            if let Request::Subscribe { target_session_id, .. } = request {
+                *target_session_id = Some(full_id);
+            }
+            Ok(())
+        }
+        Err(error @ horon_agent_base::session_prefix::SessionPrefixError::Ambiguous { .. }) => {
+            Err(SubscribeTargetError::Prefix(format!(
+                "Subscribe target_session_id {error}; send a longer prefix or the full id"
+            )))
+        }
+        // A prefix that matched something but is too short to identify one
+        // session is refused with its own reason, the same answer the harness
+        // bridge gives, instead of reading as a nonexistent session.
+        Err(error @ horon_agent_base::session_prefix::SessionPrefixError::TooShort) => Err(
+            SubscribeTargetError::Prefix(format!("Subscribe target_session_id {error}")),
+        ),
+        // Nothing on disk or in memory matches this prefix: keep the daemon's
+        // own unknown-session answer rather than inventing a second message.
+        Err(horon_agent_base::session_prefix::SessionPrefixError::NotFound) => Ok(()),
+    }
+}
+
+/// Resolve a session id prefix, then the working directory.
+///
+/// A target id prefix names a session only when it is unique, so pasting the
+/// distinguishing head of an id attaches to the right conversation. The prefix
+/// runs first because the working-dir lookup matches on the resolved id.
+pub(super) async fn resolve_subscribe_target(
+    request: &mut Request,
+    sessions: &SessionAgents,
+    members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+) -> std::result::Result<(), SubscribeTargetError> {
+    resolve_target_subscribe_prefix(request, sessions).await?;
+    resolve_target_subscribe_working_dir(request, sessions, members)
+        .await
+        .map_err(SubscribeTargetError::WorkingDir)
+}
+
 /// A reattachment names an existing session, not a new client working directory.
+///
 /// Resolve an omitted cwd before provisional initialization, never from the
 /// daemon/bridge process cwd. Idle empty sessions may exist only in memory.
 pub(super) async fn resolve_target_subscribe_working_dir(
@@ -165,3 +258,7 @@ pub(super) async fn initial_prewarm_task(
     }
     Some(spawn_deferred_prewarm(agent))
 }
+
+#[cfg(test)]
+#[path = "client_subscribe_prefix_tests.rs"]
+mod subscribe_prefix_tests;

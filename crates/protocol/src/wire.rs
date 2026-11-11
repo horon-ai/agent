@@ -770,6 +770,11 @@ pub enum Request {
         /// configured profile decides; `Some(list)` narrows it to `list`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_tools: Option<Vec<String>>,
+        /// Optional session to fork a consult child from. The child starts with
+        /// a copy of that transcript and can only read; the source session is
+        /// never written to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_session: Option<String>,
     },
 
     /// List models/routes available for spawning swarm agents

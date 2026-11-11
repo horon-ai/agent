@@ -136,7 +136,7 @@ desktop_notifications = true
 
 #### The `request_permission` tool
 
-This tool is not part of the core 15 tools. The ambient runner registers it, and the session's tool allowlist has to admit it for the call to happen. For unattended runs with no client attached, it joins the allowlist only when `[ambient] approval_for_clientless_runs` is on (`crates/base/src/config.rs:752-757`, `:1153-1170`). The default is off, and the core set stays at 15 (`crates/base/src/config.rs:779-799`, tests in `crates/base/src/config_tool_tiers_tests.rs:26-40`).
+This tool is not part of the core 18 tools. The ambient runner registers it, and the session's tool allowlist has to admit it for the call to happen. For unattended runs with no client attached, it joins the allowlist only when `[ambient] approval_for_clientless_runs` is on (`crates/base/src/config.rs:752-757`, `:1153-1170`). The default is off, and the core set stays at 18 (`crates/base/src/config.rs:779-799`, tests in `crates/base/src/config_tool_tiers_tests.rs:26-40`).
 
 Calling it outside an ambient session is refused with the error "request_permission is only available to ambient sessions" (`crates/app-core/src/tool/ambient.rs:105`).
 
@@ -383,7 +383,7 @@ One call takes up to four questions, and each question has two to five options (
 
 #### When it is available
 
-`ask` is one of the core 15 tools (`crates/base/src/config.rs:779-796`). So it is always reachable in the default headless `serve` and `run`. A default `core` session does not put the `ask` schema in the request and only lists its name in the system prompt index; the model calls it through `toolbox`. It differs from `request_permission`, which asks about actions that need permission. `request_permission` is ambient-only and joins the allowlist only for clientless unattended runs, while `ask` is always reachable on the tool surface. So what `ask` does in an unattended run is not obtain an approval but keep the turn moving to the next judgment even when no answer is available.
+`ask` is one of the core 18 tools (`crates/base/src/config.rs:779-796`). So it is always reachable in the default headless `serve` and `run`. A default `core` session does not put the `ask` schema in the request and only lists its name in the system prompt index; the model calls it through `toolbox`. It differs from `request_permission`, which asks about actions that need permission. `request_permission` is ambient-only and joins the allowlist only for clientless unattended runs, while `ask` is always reachable on the tool surface. So what `ask` does in an unattended run is not obtain an approval but keep the turn moving to the next judgment even when no answer is available.
 
 ---
 

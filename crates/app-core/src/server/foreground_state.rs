@@ -778,6 +778,7 @@ mod tests {
         let stored = |id: &str, turn_start: bool| crate::session::StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             turn_start,
             id: id.to_string(),
             role: Role::User,

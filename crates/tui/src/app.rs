@@ -10,6 +10,7 @@ use std::sync::mpsc::{self, Receiver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::{ApiEvent, AskSelection};
 
+use crate::commands::{Invocation, Local, Registry};
 use crate::input::Input;
 use crate::keys::{self, Bindings, Key};
 use crate::prompts::{Prompt, Response};
@@ -36,6 +37,13 @@ pub enum Action {
     },
     /// Answer a structured question.
     Ask { ask_id: String, answers: Vec<AskSelection> },
+    /// Ask the harness to run one of its own commands.
+    Runtime {
+        command: horon_agent_sdk::RuntimeCommand,
+        arguments: Vec<String>,
+    },
+    /// List the models, or switch to the one named.
+    Model(Option<String>),
     /// Leave.
     Quit,
 }
@@ -85,6 +93,8 @@ pub struct App {
     pub symbols: Symbols,
     /// What keystrokes mean, replaced when `keybindings.toml` changes.
     pub bindings: Bindings,
+    /// The slash commands in force, re-read when a command directory changes.
+    pub commands: Registry,
 }
 
 impl App {
@@ -112,6 +122,7 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            commands: Registry::default(),
         }
     }
 
@@ -141,6 +152,7 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            commands: Registry::default(),
         }
     }
 
@@ -348,13 +360,11 @@ impl App {
                 if text.trim().is_empty() {
                     return None;
                 }
-                if text.trim() == "/quit" {
-                    return Some(Action::Quit);
-                }
-                self.transcript.push_user(text.clone());
-                self.pending_turn = true;
-                self.session_status = Some("generating".to_string());
-                return Some(Action::Send(text));
+                return self.submit(&text);
+            }
+            Some(keys::ids::EDITOR_COMPLETE) => {
+                self.complete();
+                return None;
             }
             Some(keys::ids::APP_CANCEL) => {
                 if self.pending_turn {
@@ -377,6 +387,101 @@ impl App {
             _ => {}
         }
         None
+    }
+
+    /// Resolve one submitted line and turn it into an action.
+    ///
+    /// A slash line either names a built-in UI command, a command file or one
+    /// of the harness's commands; a line that names none of them becomes an
+    /// error line and never reaches the model.
+    fn submit(&mut self, text: &str) -> Option<Action> {
+        match self.commands.resolve(text) {
+            Invocation::Message(message) => {
+                self.transcript.push_user(message.clone());
+                Some(self.start_turn(message))
+            }
+            // A command file sends the body it expands to, while the line the
+            // user typed stays in the transcript as the message they sent.
+            Invocation::Expanded { display, text } => {
+                self.transcript.push_user(display);
+                Some(self.start_turn(text))
+            }
+            Invocation::Local { command, arguments } => self.run_local(command, &arguments),
+            Invocation::Server { command, arguments } => Some(Action::Runtime { command, arguments }),
+            Invocation::Error(message) => {
+                self.warn(message);
+                None
+            }
+        }
+    }
+
+    /// Mark a turn as running and hand the text to the bridge.
+    fn start_turn(&mut self, text: String) -> Action {
+        self.pending_turn = true;
+        self.session_status = Some("generating".to_string());
+        Action::Send(text)
+    }
+
+    /// Answer a built-in command that the client owns.
+    fn run_local(&mut self, command: Local, arguments: &str) -> Option<Action> {
+        match command {
+            Local::Quit => Some(Action::Quit),
+            Local::Help => {
+                let listing = self.commands.help();
+                self.transcript.push_notice(listing);
+                None
+            }
+            Local::Clear => {
+                self.transcript = Transcript::new();
+                None
+            }
+            Local::Model => match arguments.trim() {
+                "" => Some(Action::Model(None)),
+                name => Some(Action::Model(Some(name.to_string()))),
+            },
+        }
+    }
+
+    /// The one-line completion hint drawn under the input, if one applies.
+    pub fn completion_hint(&self) -> Option<String> {
+        let text = self.input.text();
+        let completion = self.commands.complete(&text)?;
+        Some(completion.matches.join("  "))
+    }
+
+    /// Complete the line being edited to the longest common prefix, or the
+    /// single match when there is one.
+    pub fn complete(&mut self) {
+        let text = self.input.text();
+        let Some(completion) = self.commands.complete(&text) else {
+            return;
+        };
+        if completion.insert == text {
+            return;
+        }
+        self.input.clear();
+        for character in completion.insert.chars() {
+            self.input.insert(character);
+        }
+    }
+
+    /// Point the command registry at the working directory and read the files.
+    pub fn reload_commands(&mut self) {
+        let cwd = self.cwd.clone();
+        if self.commands.sync(cwd.as_deref().map(std::path::Path::new)) {
+            for warning in self.commands.take_warnings() {
+                self.warn(format!("commands: {warning}"));
+            }
+        }
+    }
+
+    /// Re-read the command files when a directory changed.
+    pub fn tick_commands(&mut self) {
+        if self.commands.tick() {
+            for warning in self.commands.take_warnings() {
+                self.warn(format!("commands: {warning}"));
+            }
+        }
     }
 }
 
