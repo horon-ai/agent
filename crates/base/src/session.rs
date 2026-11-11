@@ -35,6 +35,7 @@ mod maintenance;
 mod memory_profile;
 mod model;
 mod persistence;
+mod prewalk;
 mod render;
 mod resume_marker;
 mod storage_paths;
@@ -1195,6 +1196,7 @@ request in this new forked session, using the inherited conversation only as con
                     }
                 }
                 StoredReplayEventKind::PlanMode { .. } => {}
+                StoredReplayEventKind::Prewalk { .. } => {}
             }
         }
         Ok(redacted)

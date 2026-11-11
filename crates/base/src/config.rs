@@ -8,8 +8,8 @@ pub use horon_agent_config_types::{
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
     ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
-    NamedProviderModelConfig, NamedProviderType, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode, StreamRuleConfig, StreamRuleDelivery,
+    NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig, ProviderConfig, ReasoningDisplayMode,
+    SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode, StreamRuleConfig, StreamRuleDelivery,
     StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
@@ -418,6 +418,9 @@ pub struct Config {
 
     /// `[mcp]`: which MCP configs beside horon-agent's own are read.
     pub mcp: McpSourcesConfig,
+
+    /// `[prewalk]`: a one-shot handoff to an execution model after planning.
+    pub prewalk: PrewalkConfig,
 }
 
 /// Warned once per process, so a typo costs one line rather than one per write.

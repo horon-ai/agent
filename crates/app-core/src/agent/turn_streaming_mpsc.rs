@@ -2158,6 +2158,10 @@ impl Agent {
                 self.save_session()?;
             }
 
+            // A `todo` write in this round is the planning handoff point, so the
+            // next request already runs on the execution model.
+            self.apply_prewalk();
+
             if !generated_image_contexts.is_empty() {
                 for blocks in generated_image_contexts.drain(..) {
                     self.add_message(Role::User, blocks);

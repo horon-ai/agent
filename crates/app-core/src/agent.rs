@@ -38,6 +38,10 @@ mod model_usage_tests;
 #[cfg(test)]
 #[path = "agent/post_tool_feedback_replace_tests.rs"]
 mod post_tool_feedback_replace_tests;
+mod prewalk;
+#[cfg(test)]
+#[path = "agent/prewalk_tests.rs"]
+mod prewalk_tests;
 mod prompting;
 mod provider;
 mod provisional_init;
