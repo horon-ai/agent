@@ -14,6 +14,7 @@ mod bash;
 mod bash_interceptor;
 mod batch;
 mod bg;
+pub(crate) mod checkpoint;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
@@ -113,6 +114,7 @@ pub(crate) fn forget_session_caches(session_id: &str) {
     monitor::forget_session(session_id);
     ask_bridge::forget_session(session_id);
     read_state::forget_session(session_id);
+    checkpoint::forget_session(session_id);
     horon_agent_session_types::repair_record::forget_session(session_id);
     // A structured-result child that never reached the completion path (or whose
     // last status update was missed) must not leave its schema slot behind.
@@ -1079,15 +1081,15 @@ impl Registry {
             Self::insert_tool(&mut tools_map, "ast_grep", ast_tools::AstGrepTool::new());
             Self::insert_tool(&mut tools_map, "ast_edit", ast_tools::AstEditTool::new());
         }
-        // The dispatcher for the surface a profile does not send eagerly exists
-        // under `full` and `core`. It is deliberately absent from `CORE_TOOLS`
-        // and from the `acp` allow-list; the `core` allow-list joins it
-        // explicitly, and the tier resolver pins it `Essential` so the one tool
-        // that can reach the listed surface is never itself deferred.
         // `lsp` is opt-in (`[tools] lsp = true`): it starts a language server
         // process, so it stays out of every default profile until asked for.
         if lsp::enabled() {
             Self::insert_tool(&mut tools_map, "lsp", lsp::LspTool::new());
+        }
+        // The checkpoint pair is opt-in (`[tools] checkpoint = true`) and useless apart.
+        if checkpoint::enabled() {
+            Self::insert_tool(&mut tools_map, "checkpoint", checkpoint::CheckpointTool::new());
+            Self::insert_tool(&mut tools_map, "rewind", checkpoint::RewindTool::new());
         }
         // Context notes are opt-in (`[tools] context_notes = true`): the notes
         // are injected into every request, so the switch also gates the prompt

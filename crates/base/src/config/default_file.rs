@@ -281,6 +281,11 @@ bash_pty = "auto"
 # until a plan is approved. Off by default, so nothing changes for an existing
 # config.
 plan_mode = false
+# Model-callable checkpoints: expose the `checkpoint` and `rewind` tools so the
+# model can mark a point of this session and later fold everything after it
+# into one written report. Files, background tasks and process state are not
+# restored. Off by default, so the tool surface and history are unchanged.
+checkpoint = false
 # IRC bus: expose the `irc` tool so agents of the same daemon can send, wait
 # for, and read each other's messages. Off by default because it opens a
 # message path between sessions. Env override: HORON_AGENT_IRC.

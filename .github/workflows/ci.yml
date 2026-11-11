@@ -999,6 +999,28 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- subscribe_prefix --nocapture
 
+      - name: Run checkpoint tool cohort
+        shell: bash
+        # `horon-agent-app-core` and `horon-agent-base` lib tests only run
+        # through filters, so the checkpoint and rewind tools would compile and
+        # ship unexecuted. The first filter covers the two tools and their
+        # registration switch, the second the settle path that commits the
+        # marker, folds a branch into the report and undoes it, the third the
+        # `[tools] checkpoint` config switch.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 12 \
+            -- tool::checkpoint:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 14 \
+            -- agent::rewind_summary:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 3 \
+            -- config::checkpoint_switch_tests:: --nocapture
+
       - name: Run e2e tests
         shell: bash
         # Same `-p` set and target as the compile step so cargo reuses the
