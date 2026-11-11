@@ -20,6 +20,7 @@ pub mod settings;
 pub mod statusline;
 pub mod theme;
 pub mod transcript;
+mod wrap;
 
 use std::time::Duration;
 
@@ -28,7 +29,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::Paragraph;
 
 use crate::app::{Action, App};
 use crate::sdk_bridge::{Command, Incoming, Runtime};
@@ -211,12 +212,16 @@ fn show_failure(message: &str) {
     let mut app = App::failure(message);
     match ratatui::try_init() {
         Ok(mut terminal) => {
-            if let Err(message) = draw(&mut terminal, &mut app) {
+            let failure = draw(&mut terminal, &mut app).err();
+            ratatui::restore();
+            if let Some(message) = failure {
                 eprintln!("horon-tui: {message}");
             }
-            ratatui::restore();
         }
-        Err(error) => eprintln!("horon-tui: cannot open a terminal: {error}"),
+        Err(error) => {
+            ratatui::restore();
+            eprintln!("horon-tui: cannot open a terminal: {error}");
+        }
     }
 }
 
@@ -239,16 +244,21 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
         Err(error) => app.warn(format!("cannot read the working directory: {error}")),
     }
     app.reload_commands();
-    install_panic_hook();
+    // `try_init` installs the restoring panic hook itself, so a panic inside
+    // the alternate screen still leaves the terminal usable.
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
         Err(error) => {
+            ratatui::restore();
             eprintln!("horon-tui: cannot open a terminal: {error}");
             return 1;
         }
     };
-    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
+    let (code, failure) = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
     ratatui::restore();
+    if let Some(message) = failure {
+        eprintln!("horon-tui: {message}");
+    }
     code
 }
 
@@ -304,16 +314,11 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
     }
 }
 
-/// Restore the terminal before the default hook prints a panic message.
-fn install_panic_hook() {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        ratatui::restore();
-        previous(info);
-    }));
-}
-
 /// The main loop: drain SDK events, redraw, then read at most one keystroke.
+///
+/// A failure that ends the loop is returned instead of printed: the alternate
+/// screen and raw mode are still on here, so a line written to stderr now would
+/// be wiped by the restore. The caller restores first and prints afterwards.
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -321,11 +326,12 @@ fn event_loop<B>(
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
     keys: &mut keys::Loader,
-) -> i32
+) -> (i32, Option<String>)
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    let mut failure = None;
     loop {
         drain_events(app);
         if !app.running {
@@ -357,17 +363,17 @@ where
         // own stamp moved.
         app.tick_commands();
         if let Err(message) = draw(terminal, app) {
-            eprintln!("horon-tui: {message}");
-            return 1;
+            failure = Some(message);
+            break;
         }
         match crossterm::event::poll(Duration::from_millis(50)) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
-                app.warn(format!("cannot read the keyboard: {error}"));
+                failure = Some(format!("cannot read the keyboard: {error}"));
                 app.running = false;
                 app.exit_code = 1;
-                continue;
+                break;
             }
         }
         match crossterm::event::read() {
@@ -384,23 +390,37 @@ where
             }
             Ok(_) => {}
             Err(error) => {
-                app.warn(format!("cannot read the keyboard: {error}"));
+                failure = Some(format!("cannot read the keyboard: {error}"));
                 app.running = false;
                 app.exit_code = 1;
             }
         }
     }
-    app.exit_code
+    (if failure.is_some() { 1 } else { app.exit_code }, failure)
 }
 
 /// Move every buffered SDK delivery into the app state.
+///
+/// A closed bridge is a real end of the session, not an empty queue: the
+/// channel only reports it once, so treating it as "nothing yet" would leave
+/// the interface redrawing a dead connection forever.
 fn drain_events(app: &mut App) {
-    while let Ok(incoming) = app.events.try_recv() {
-        match incoming {
-            Incoming::Event(event) => app.apply_event(&event),
-            Incoming::Notice(message) => app.warn(message),
-            Incoming::Info(message) => app.transcript.push_notice(message),
-            Incoming::Closed(message) => app.disconnected(&message),
+    loop {
+        match app.events.try_recv() {
+            Ok(Incoming::Event(event)) => app.apply_event(&event),
+            Ok(Incoming::Notice(message)) => app.warn(message),
+            Ok(Incoming::Info(message)) => app.transcript.push_notice(message),
+            Ok(Incoming::Closed(message)) => app.disconnected(&message),
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // A more specific banner (an unreachable daemon, say) wins over
+                // the generic one, and a session that already ended keeps its
+                // own reason.
+                if app.running {
+                    app.disconnected("the harness bridge stopped");
+                }
+                break;
+            }
         }
     }
 }
@@ -474,7 +494,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     let transcript_area: Rect = areas[index];
     app.viewport_height = Some(transcript_area.height);
-    frame.render_widget(transcript_widget(app), transcript_area);
+    frame.render_widget(transcript_widget(app, transcript_area.width), transcript_area);
     index += 1;
 
     if !prompt_lines.is_empty() {
@@ -503,15 +523,17 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     index += 1;
 
     let input_area = areas[index];
+    // The pane is one line high, so the line scrolls under the prompt marker
+    // instead of growing: a long message keeps the caret on screen.
+    let marker_width = symbols.prompt_marker_width();
+    let text_width = input_area.width.saturating_sub(marker_width).saturating_sub(1);
+    let (visible, cursor_cell) = app.input.window(text_width);
     let input = Line::from(vec![
         Span::styled(
             format!("{} ", symbols.prompt_marker),
             Style::default().fg(theme.core.accent),
         ),
-        Span::styled(
-            app.input.text().to_string(),
-            Style::default().fg(theme.prompt.prompt_text),
-        ),
+        Span::styled(visible, Style::default().fg(theme.prompt.prompt_text)),
     ]);
     frame.render_widget(Paragraph::new(input), input_area);
     if let Some(hint) = hint {
@@ -531,11 +553,16 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             }
         }
         None => {
-            let cursor_x = input_area
+            let mut cursor_x = input_area
                 .x
-                .saturating_add(symbols.prompt_marker_width())
+                .saturating_add(marker_width)
                 .saturating_add(1)
-                .saturating_add(app.input.cursor_column());
+                .saturating_add(cursor_cell);
+            if input_area.width > 0 {
+                // The caret never paints past the pane, and the terminal cannot
+                // place it at the cell after the last column.
+                cursor_x = cursor_x.min(input_area.right().saturating_sub(1));
+            }
             frame.set_cursor_position((cursor_x, input_area.y));
         }
     }
@@ -550,25 +577,35 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
 }
 
-/// The transcript pane, scrolled to its last lines.
-fn transcript_widget(app: &App) -> Paragraph<'static> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
+/// The transcript pane, scrolled to its last rows.
+///
+/// Lines are wrapped here rather than by the widget: the pane keeps the newest
+/// rows, and a logical line that wraps over the pane width occupies more than
+/// one row. Trimming logical lines first would push the newest rows off the
+/// bottom of the pane.
+fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
+    let mut rows: Vec<Line<'static>> = Vec::new();
     for item in app.transcript.items() {
-        lines.extend(render_item(item, &app.theme, app.symbols));
+        for line in render_item(item, &app.theme, app.symbols) {
+            rows.extend(wrap::wrap_line(&line, usize::from(width)));
+        }
     }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Send a message to start. /help lists the commands; /quit leaves.",
-            Style::default().fg(app.theme.core.muted),
-        )));
+    if rows.is_empty() {
+        rows.extend(wrap::wrap_line(
+            &Line::from(Span::styled(
+                "Send a message to start. /help lists the commands; /quit leaves.",
+                Style::default().fg(app.theme.core.muted),
+            )),
+            usize::from(width),
+        ));
     }
-    // Keep the newest lines: the pane has no scrollback yet, and the end of the
+    // Keep the newest rows: the pane has no scrollback yet, and the end of the
     // conversation is the part a user is reading.
-    let capacity = app.viewport_height.unwrap_or(24).max(1) as usize;
-    if lines.len() > capacity {
-        lines.drain(..lines.len() - capacity);
+    let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
+    if rows.len() > capacity {
+        rows.drain(..rows.len() - capacity);
     }
-    Paragraph::new(lines).wrap(Wrap { trim: false })
+    Paragraph::new(rows)
 }
 
 fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static>> {
@@ -657,6 +694,15 @@ mod tests {
             session_id: "s1".into(),
             text: text.into(),
             message_id: Some("m1".into()),
+        }
+    }
+
+    /// The transcript only draws finished items, so a test that wants text on
+    /// screen closes the stream the way the harness does.
+    fn turn_done() -> ApiEvent {
+        ApiEvent::TurnDone {
+            session_id: "s1".into(),
+            pending_soft_interrupts: None,
         }
     }
 
@@ -1015,5 +1061,96 @@ mod tests {
 
     fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
         crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    fn draw_at(app: &mut App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend failed: {error}"),
+        };
+        if let Err(message) = draw(&mut terminal, app) {
+            panic!("draw failed: {message}");
+        }
+        format!("{}", terminal.backend())
+    }
+
+    #[test]
+    fn a_long_line_keeps_its_tail_visible_in_a_narrow_pane() {
+        // One logical line far wider than the pane: the newest text is at its
+        // end, so the pane must show the end, not the beginning.
+        let mut app = app_with(None);
+        let text = format!("{}TAILMARK", "x".repeat(480));
+        app.apply_event(&text_event(&text));
+        app.apply_event(&turn_done());
+
+        let screen = draw_at(&mut app, 40, 12);
+        assert!(
+            screen.contains("TAILMARK"),
+            "the end of a wrapped line was pushed out of the pane:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_newest_message_wins_over_the_oldest_after_wrapping() {
+        let mut app = app_with(None);
+        app.apply_event(&ApiEvent::TextDelta {
+            session_id: "s1".into(),
+            text: format!("OLDEST {}", "a".repeat(300)),
+            message_id: Some("m-old".into()),
+        });
+        app.apply_event(&ApiEvent::TextDelta {
+            session_id: "s1".into(),
+            text: format!("NEWEST {}", "b".repeat(300)),
+            message_id: Some("m-new".into()),
+        });
+        app.apply_event(&turn_done());
+
+        let screen = draw_at(&mut app, 40, 12);
+        assert!(screen.contains("NEWEST"), "newest text missing:\n{screen}");
+        assert!(!screen.contains("OLDEST"), "the pane kept the oldest rows:\n{screen}");
+    }
+
+    #[test]
+    fn a_long_input_scrolls_instead_of_leaving_the_pane() {
+        let mut app = app_with(None);
+        for character in "q".repeat(120).chars() {
+            app.on_key(key(crossterm::event::KeyCode::Char(character)));
+        }
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend failed: {error}"),
+        };
+        if let Err(message) = draw(&mut terminal, &mut app) {
+            panic!("draw failed: {message}");
+        }
+        let position = terminal.backend().cursor_position();
+        let (column, row) = (position.x, position.y);
+        assert!(
+            column < 40,
+            "the caret was placed outside the input area: column {column}"
+        );
+        assert!(column > 0, "the caret collapsed to the left edge: column {column}");
+        // The bottom line, under the status line and the transcript pane.
+        assert_eq!(row, 11, "the caret left the input row");
+    }
+
+    #[test]
+    fn a_closed_bridge_ends_the_session_instead_of_spinning() {
+        // `app_with(None)` drops the sender, so the channel reports
+        // `Disconnected` exactly as it does when the bridge thread exits.
+        let mut app = app_with(None);
+        assert!(app.running);
+        drain_events(&mut app);
+        assert!(!app.running, "a closed bridge must stop the loop");
+        assert_eq!(app.exit_code, 1);
+        match app.banner.as_deref() {
+            Some(banner) => assert!(
+                banner.contains("bridge"),
+                "the banner did not explain the closed bridge: {banner}"
+            ),
+            None => panic!("no banner for the closed bridge"),
+        }
     }
 }
