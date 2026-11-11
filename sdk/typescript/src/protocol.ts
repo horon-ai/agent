@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 17;
+export const API_VERSION_MINOR = 18;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -290,6 +290,16 @@ export interface SessionToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+/** How the daemon delivers messages that arrive while it is busy. */
+export interface MessageModes {
+  /** Queued messages the first delivery point of a turn carries. */
+  follow_up_mode: string;
+  /** Queued messages each later delivery point of the same turn carries. */
+  steering_mode: string;
+  /** Whether a queued message waits for the running tool call or stops it. */
+  interrupt_mode: string;
+}
+
 /** Wire-level session tool policy. Callback functions never cross the wire. */
 export interface ToolConfiguration {
   enabled?: string[] | null;
@@ -543,6 +553,7 @@ export type ApiRequest =
   | { req: "detach_session"; session_id: string }
   | { req: "configure_tools"; session_id: string; tools: ToolConfiguration }
   | { req: "list_tools"; session_id: string }
+  | { req: "get_message_modes"; session_id: string }
   | { req: "tool_result"; session_id: string; call_id: string; output: string; error?: string }
   | {
       req: "send_message";
@@ -725,6 +736,7 @@ export type ApiEvent =
   | { ev: "tool_input_delta"; session_id: string; call_id: string; delta: string }
   | { ev: "tool_exec"; session_id: string; call_id: string; name: string }
   | { ev: "tools"; session_id: string; tools: SessionToolDefinition[] }
+  | { ev: "message_modes"; session_id: string; modes: MessageModes }
   | { ev: "tool_call"; session_id: string; call_id: string; name: string; input: unknown }
   | {
       ev: "tool_done";
@@ -1045,6 +1057,7 @@ export const KNOWN_EVENT_KINDS = [
   "reasoning_done",
   "tool_start",
   "tools",
+  "message_modes",
   "tool_call",
   "tool_input_delta",
   "tool_exec",
@@ -1115,6 +1128,7 @@ export const KNOWN_REQUEST_KINDS = [
   "detach_session",
   "configure_tools",
   "list_tools",
+  "get_message_modes",
   "tool_result",
   "send_message",
   "cancel",

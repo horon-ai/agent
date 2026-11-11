@@ -124,6 +124,11 @@ pub enum ApiRequest {
     /// List the effective tools available to the attached session.
     ListTools { session_id: String },
 
+    /// Read the daemon's `[messages]` delivery modes. Answered with
+    /// `MessageModes`; the values are configuration, not session state, so the
+    /// reply does not depend on the session existing.
+    GetMessageModes { session_id: String },
+
     /// Complete a client-executed custom tool call. Acknowledged with `Ok`.
     ToolResult {
         session_id: String,

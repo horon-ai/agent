@@ -88,6 +88,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("set_model", "setModel"),
     cap("configure_tools", "configureTools"),
     cap("list_tools", "listTools"),
+    cap("get_message_modes", "getMessageModes"),
     cap("submit_tool_result", "submitToolResult"),
     cap("set_reasoning_effort", "setReasoningEffort"),
     cap("compact", "compact"),
@@ -312,14 +313,20 @@ const PY_ONLY: &[(&str, &str)] = &[
 
 fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    ["client.rs", "handoff.rs", "structured.rs", "export.rs"]
-        .into_iter()
-        .map(|file| {
-            std::fs::read_to_string(root.join(file))
-                .unwrap_or_else(|error| panic!("the Rust SDK source {file} must be readable: {error}"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    [
+        "client.rs",
+        "handoff.rs",
+        "structured.rs",
+        "export.rs",
+        "message_modes.rs",
+    ]
+    .into_iter()
+    .map(|file| {
+        std::fs::read_to_string(root.join(file))
+            .unwrap_or_else(|error| panic!("the Rust SDK source {file} must be readable: {error}"))
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn ts_client_source() -> Option<String> {

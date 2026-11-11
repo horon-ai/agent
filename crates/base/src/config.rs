@@ -15,6 +15,7 @@ pub use horon_agent_config_types::{
 };
 pub use horon_agent_tool_types::AskPolicy;
 pub use mcp::McpSourcesConfig;
+pub use messages::{InterruptMode, MessageDeliveryMode, MessagesConfig};
 use serde::{Deserialize, Serialize};
 pub use skills::SkillsConfig;
 use std::collections::{BTreeMap, HashSet};
@@ -383,6 +384,9 @@ pub struct Config {
 
     /// Limits for the in-process agent IRC mailbox bus.
     pub irc: IrcConfig,
+
+    /// How messages that arrive while the agent is busy are delivered.
+    pub messages: MessagesConfig,
 
     /// Advisor: a second, independent model that files narrow notes.
     pub advisor: AdvisorConfig,
@@ -1154,6 +1158,7 @@ mod config_file;
 mod default_file;
 mod env_overrides;
 mod mcp;
+mod messages;
 mod server;
 mod skills;
 mod sponsors_default;

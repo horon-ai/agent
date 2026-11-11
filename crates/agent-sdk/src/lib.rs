@@ -139,6 +139,7 @@ mod errors;
 mod export;
 mod handoff;
 mod launch;
+mod message_modes;
 mod ssh;
 mod structured;
 pub mod turn_retry;
@@ -182,10 +183,10 @@ pub use turn_retry::{FailureKind, RetryDecision, RetryPolicy, TurnRetry, classif
 /// The protocol types, re-exported so a client needs one dependency, not two.
 pub use horon_agent_harness_api as api;
 pub use horon_agent_harness_api::{
-    ApiEvent, ApiRequest, AskSelection, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage, ModelRouteInfo,
-    PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor, RenderedImageSource, ResponseStats,
-    SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage, SessionImportResult,
-    SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, StoreErrorDetail, TextMatch, ToolConfiguration,
-    TurnStopReason, api_socket_path,
+    ApiEvent, ApiRequest, AskSelection, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage, MessageModes,
+    ModelRouteInfo, PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor, RenderedImageSource,
+    ResponseStats, SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage,
+    SessionImportResult, SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, StoreErrorDetail, TextMatch,
+    ToolConfiguration, TurnStopReason, api_socket_path,
 };
 pub use horon_agent_harness_api::{ModelUsage, RuntimeCommand, RuntimeCommandOutput, compare_model_usage};

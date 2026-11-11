@@ -107,9 +107,33 @@ There are three injection points. The event carries the point's name as is (`cra
 
 The point decisions are in `crates/app-core/src/agent/interrupts.rs:695` (B) and `:706` (D); C opens only when an urgent interrupt is pending. The streaming path uses the same points at `crates/app-core/src/agent/turn_streaming_mpsc.rs:1504` (B), `:1636` (D), and `:2231` (C).
 
+#### Delivery modes (`[messages]`)
+
+`all` and `one-at-a-time` are decided per point, not per turn
+(`crates/app-core/src/agent/interrupts.rs`). The first delivery point of a turn
+takes messages left over from the previous turn, so `[messages] follow_up_mode`
+governs it; every later point carries messages that arrived during this turn, so
+`[messages] steering_mode` governs those. `batch_limit()` in
+`crates/base/src/config/messages.rs` is the only translation from a mode to a
+count, and `transfer_prefix_to_in_flight` moves at most that many, oldest first.
+
+Both modes default to `all`, which is what horon has always done and differs from
+omp, whose default is `one-at-a-time`. Setting `one-at-a-time` keeps the
+remaining messages pending in order, so each one gets its own injection and the
+transcript reads as one message per step.
+
+`[messages] interrupt_mode` decides when a queued message stops the running
+tools. `wait` (the default, today's timing) honors the message's own `urgent`
+flag: only an urgent message cuts the round at point C. `immediate` treats every
+queued message as urgent, so the round is cut as soon as anything is queued.
+
+`get_message_modes` reports the three effective strings over the harness API, and
+the reply does not depend on the session existing, because the values are daemon
+configuration rather than session state.
+
 #### Urgent handling at point C
 
-When a message with the urgent flag set is pending, the tool round is not run to completion. The only decision function is `urgent_interrupt_pending` (`crates/app-core/src/agent/interrupts.rs:135-140`). Cutting a round first inserts a tool result with `is_error: true` for every call that has no result yet (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). The content is `[Skipped: user interrupted]` (`:12`). The user message follows, and the event reports the skipped count as `tools_skipped`.
+When a message with the urgent flag set is pending, the tool round is not run to completion. The only decision function is `urgent_interrupt_pending` (`crates/app-core/src/agent/interrupts.rs:163-166`). Cutting a round first inserts a tool result with `is_error: true` for every call that has no result yet (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). The content is `[Skipped: user interrupted]` (`:12`). The user message follows, and the event reports the skipped count as `tools_skipped`.
 
 Non-urgent interrupts are never inserted between tools. All of them wait for point D (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2104-2106`).
 

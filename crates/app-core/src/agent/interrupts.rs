@@ -1,5 +1,6 @@
 use super::Agent;
 use super::turn_recovery_wiring::AutoContinuation;
+use crate::config::MessagesConfig;
 use crate::logging;
 use crate::message::{ContentBlock, Role};
 use crate::session::StoredDisplayRole;
@@ -23,6 +24,13 @@ pub(super) struct InFlightGuard {
     /// Ids of the messages this turn appended to the active context, in the
     /// order they landed. A failed turn removes exactly these.
     appended: Vec<String>,
+    /// Whether this turn has already taken its follow-up delivery.
+    ///
+    /// The first delivery point of a turn carries messages left over from the
+    /// previous turn, so `[messages] follow_up_mode` governs it. Every later
+    /// point carries messages that arrived during this turn, so
+    /// `[messages] steering_mode` governs those.
+    follow_up_drained: bool,
     armed: bool,
 }
 
@@ -32,13 +40,23 @@ impl InFlightGuard {
             session_id,
             queue,
             appended: Vec::new(),
+            follow_up_drained: false,
             armed: true,
         }
     }
 
-    /// Move every pending message into this turn's in-flight set.
-    fn transfer(&self) -> Vec<SoftInterruptMessage> {
-        self.queue.transfer_to_in_flight()
+    /// Whether the next delivery point is this turn's follow-up delivery.
+    fn takes_follow_ups(&self) -> bool {
+        !self.follow_up_drained
+    }
+
+    /// Move at most `max` pending messages into this turn's in-flight set.
+    fn transfer(&mut self, max: usize) -> Vec<SoftInterruptMessage> {
+        let moved = self.queue.transfer_prefix_to_in_flight(max);
+        if !moved.is_empty() {
+            self.follow_up_drained = true;
+        }
+        moved
     }
 
     fn record_appended(&mut self, ids: Vec<String>) {
@@ -123,13 +141,40 @@ pub(super) enum PostToolInterruptOutcome {
     },
 }
 
+/// How many pending messages this delivery point may carry.
+///
+/// `usize::MAX` is the `all` mode. The limit depends on which delivery point
+/// this is: the first one in a turn takes messages left over from the previous
+/// turn (`follow_up_mode`), the rest take messages that arrived during this turn
+/// (`steering_mode`).
+fn delivery_limit(config: &MessagesConfig, in_flight: Option<&InFlightGuard>) -> usize {
+    let mode = match in_flight {
+        Some(guard) if !guard.takes_follow_ups() => config.steering_mode,
+        _ => config.follow_up_mode,
+    };
+    mode.batch_limit().unwrap_or(usize::MAX)
+}
+
 /// True when the queue holds a message that must skip the rest of the tools.
 ///
 /// This is the single definition of "an urgent interrupt is pending": the
 /// agent polls it between tools, and a running group polls it through a cloned
 /// queue handle so an interrupt lands mid-group instead of after it.
 pub(super) fn urgent_interrupt_pending(queue: &SoftInterruptQueue) -> bool {
-    queue.lock().map(|q| q.iter().any(|m| m.urgent)).unwrap_or(false)
+    let immediate = crate::config::config().messages.interrupts_running_tools();
+    urgent_interrupt_pending_in(queue, immediate)
+}
+
+/// The mode-independent core of [`urgent_interrupt_pending`].
+///
+/// `interrupt_mode = "immediate"` promotes every queued message to urgent, so
+/// the tool loop stops either way; the per-message flag still applies in `wait`
+/// mode, which is the timing horon has always had.
+fn urgent_interrupt_pending_in(queue: &SoftInterruptQueue, immediate: bool) -> bool {
+    queue
+        .lock()
+        .map(|pending| (immediate && !pending.is_empty()) || pending.iter().any(|message| message.urgent))
+        .unwrap_or(false)
 }
 
 impl Agent {
@@ -678,9 +723,10 @@ impl Agent {
                 queue.iter().map(|message| message.content.len()).sum::<usize>()
             ));
             drop(queue);
+            let limit = delivery_limit(&crate::config::config().messages, in_flight.as_deref());
             match reborrow_in_flight(&mut in_flight) {
-                Some(guard) => guard.transfer(),
-                None => self.soft_interrupt_queue.transfer_to_in_flight(),
+                Some(guard) => guard.transfer(limit),
+                None => self.soft_interrupt_queue.transfer_prefix_to_in_flight(limit),
             }
         };
 
@@ -846,3 +892,7 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "message_modes_tests.rs"]
+mod message_modes_tests;

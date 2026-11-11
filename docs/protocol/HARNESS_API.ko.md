@@ -243,6 +243,56 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 호출하는 곳이 없습니다. 그래서 "거절 뒤 재시도"를 나타내는 영수증은 없고, 위의 예방
 단계만 보고합니다.
 
+## 메시지 전달 모드(프로토콜 1.18)
+
+턴이 도는 중에 도착한 메시지는 세션의 대기열에 남았다가 다음 전달 지점에서 주입됩니다.
+`[messages]`는 그 지점마다 몇 개를 가져갈지와, 대기 중인 메시지가 실행 중인 도구를
+멈추는지를 정합니다. 여기서 추가된 것은 모두 덧붙이는 변경입니다. 이전 클라이언트는
+예전과 같은 요청을 보내고 예전과 같은 이벤트를 읽습니다.
+
+| 키 | 값 | 기본값 | 뜻 |
+| --- | --- | --- | --- |
+| `follow_up_mode` | `all`, `one-at-a-time` | `all` | 턴의 첫 전달 지점이 가져가는 메시지 수. 앞 턴에서 남은 메시지다 |
+| `steering_mode` | `all`, `one-at-a-time` | `all` | 같은 턴의 그 뒤 전달 지점이 가져가는 메시지 수 |
+| `interrupt_mode` | `wait`, `immediate` | `wait` | 대기 중인 메시지가 실행 중인 도구를 기다리는지, 남은 도구를 멈추는지 |
+
+두 큐 모드의 기본값 `all`은 지금까지의 horon 동작을 그대로 유지합니다. 이는 omp의
+기본값(`one-at-a-time`)과 일부러 다릅니다. 설정하지 않은 데몬이 예전에 함께 전달하던
+메시지를 나누어 보내기 시작하면 안 되기 때문입니다. `one-at-a-time`은 남은 메시지를
+순서대로 대기열에 두므로 메시지마다 따로 주입됩니다.
+
+### 요청: `get_message_modes`
+
+```json
+{"v":1,"id":7,"req":"get_message_modes","session_id":"s-1"}
+```
+
+| 필드 | 타입 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | 문자열 | 예 | 질문의 대상 세션 |
+
+### 응답: `message_modes`
+
+```json
+{"v":1,"reply_to":7,"ev":"message_modes","session_id":"s-1",
+ "modes":{"follow_up_mode":"all","steering_mode":"one-at-a-time","interrupt_mode":"wait"}}
+```
+
+문자열은 설정 파일에 쓰는 표기 그대로이므로 클라이언트가 열거형을 다시 문자로 바꾸지
+않습니다.
+
+### 동작
+
+세 값은 세션 상태가 아니라 데몬 설정입니다. 브리지가
+`crates/harness-api-server/src/message_modes.rs`에서 데몬에 묻지 않고 직접 답하며,
+지목한 세션이 있는지와 무관하게 답합니다. 클라이언트는 대화 상대인 데몬의 모드를
+세션 전이나 세션 없이 읽습니다.
+
+이 요청·응답 쌍을 게이트하는 기능은 없습니다. 추가형이므로 이 요청을 모르는 서버는
+`unknown_request`로 답하고, 그 오류를 받은 클라이언트는 기본값을 가정하지 않고 모드를
+알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
+`getMessageModes`(TypeScript)로 제공합니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -562,4 +612,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 18`
+- `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

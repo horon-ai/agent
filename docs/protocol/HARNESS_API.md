@@ -215,6 +215,59 @@ The provider-rejection retry path (`recover_from_error`) has no production calle
 today, so no receipt says "rejected and retried"; only the prevention layer above
 reports.
 
+## Message delivery modes (protocol 1.18)
+
+A message that arrives while a turn is running is held in the session's pending
+queue and injected at the next delivery point. `[messages]` decides how many of
+those each point carries and whether one stops the running tools. Everything here
+is additive: a client that predates it sends the same requests and reads the same
+events as before.
+
+| Key | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `follow_up_mode` | `all`, `one-at-a-time` | `all` | Queued messages the first delivery point of a turn carries; those are left over from the previous turn |
+| `steering_mode` | `all`, `one-at-a-time` | `all` | Queued messages each later delivery point of the same turn carries |
+| `interrupt_mode` | `wait`, `immediate` | `wait` | Whether a queued message waits for the running tool call or stops the remaining ones |
+
+Both defaults of `all` keep the behavior horon has always had. That deliberately
+differs from omp, whose default is `one-at-a-time` for both queue modes: an
+unconfigured daemon must not start splitting messages it used to deliver together.
+`one-at-a-time` leaves the rest pending, in order, so each message gets its own
+injection.
+
+### Request: `get_message_modes`
+
+```json
+{"v":1,"id":7,"req":"get_message_modes","session_id":"s-1"}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the question is about |
+
+### Response: `message_modes`
+
+```json
+{"v":1,"reply_to":7,"ev":"message_modes","session_id":"s-1",
+ "modes":{"follow_up_mode":"all","steering_mode":"one-at-a-time","interrupt_mode":"wait"}}
+```
+
+The strings are the config spellings, so a client never maps an enum back to
+text.
+
+### Behaviour
+
+The values are daemon configuration rather than session state. The bridge answers
+the request itself in `crates/harness-api-server/src/message_modes.rs` without a
+daemon round trip, and the answer does not depend on the named session existing:
+a client reads the modes of the daemon it is talking to, before or without a
+session.
+
+No capability gates the pair. The request is additive, so a server that predates
+it answers `unknown_request`; a client that gets that error treats the modes as
+unknown rather than assuming the defaults. The SDKs expose the call as
+`get_message_modes` (Rust, Python) and `getMessageModes` (TypeScript).
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -480,4 +533,5 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 18`
+- `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`

@@ -31,6 +31,7 @@ import {
   type CompactHandoffOutcome,
   type HistoryMessage,
   type ImageAttachment,
+  type MessageModes,
   type ModelRouteInfo,
   type PayloadRef,
   type PermissionDecision,
@@ -797,6 +798,16 @@ export class HoronAgentClient extends EventEmitter {
   async listTools(sessionId: string): Promise<SessionToolDefinition[]> {
     this.requireSessionTools();
     return (await this.expectReply({ req: "list_tools", session_id: sessionId }, "tools")).tools;
+  }
+
+  /**
+   * Read the daemon's `[messages]` delivery modes.
+   *
+   * These are daemon configuration rather than session state, so the answer does
+   * not depend on the session existing.
+   */
+  async getMessageModes(sessionId: string): Promise<MessageModes> {
+    return (await this.expectReply({ req: "get_message_modes", session_id: sessionId }, "message_modes")).modes;
   }
 
   /** Low-level response API for applications handling tool_call events themselves. */
