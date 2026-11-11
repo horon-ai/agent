@@ -95,10 +95,13 @@ impl Reloader {
 
     /// Change one key in the global file and reload immediately.
     ///
-    /// Returns the warnings of the reload that followed the write.
+    /// Returns the warnings of the reload that followed the write. The stamps
+    /// move with it, so the next `tick` does not treat the file this save just
+    /// wrote as an outside change and repeat the same warnings.
     pub fn save_global(&mut self, id: &str, value: &SettingValue) -> Result<Vec<String>, String> {
         save_global(&self.sources, id, value)?;
         let reload = self.reload();
+        self.stamps = self.layers.stamps();
         Ok(reload.warnings)
     }
 
