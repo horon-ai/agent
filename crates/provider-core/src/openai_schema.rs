@@ -16,6 +16,16 @@ pub fn openai_compatible_schema(schema: &Value) -> Value {
     horon_agent_schema_dialect::normalize(schema, &horon_agent_schema_dialect::registry::OPENAI)
 }
 
+/// [`openai_compatible_schema`], also appending the name of every keyword or
+/// string format the OpenAI dialect removed to `drops`.
+///
+/// A tool whose schema had to be narrowed is still sent, so the only record of
+/// what the model never saw is this list.
+pub fn openai_compatible_schema_reporting(schema: &Value, drops: &mut Vec<String>) -> Value {
+    let mut log = horon_agent_schema_dialect::DropLog::enabled(drops);
+    horon_agent_schema_dialect::normalize_reporting(schema, &horon_agent_schema_dialect::registry::OPENAI, &mut log)
+}
+
 /// Resolve the schema into the shape OpenAI's strict subset can express,
 /// before eligibility is judged.
 ///

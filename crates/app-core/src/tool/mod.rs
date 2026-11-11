@@ -4,6 +4,7 @@ pub mod ambient;
 mod apply_patch;
 pub(crate) mod approval_override;
 mod arg_repair;
+mod arg_repair_record;
 pub(crate) mod artifacts;
 mod ask;
 pub(crate) mod ask_bridge;
@@ -51,6 +52,7 @@ pub(crate) mod post_tool_feedback;
 mod read;
 mod read_selector;
 pub(crate) mod read_state;
+pub(crate) mod repair_event;
 mod replace;
 pub(crate) mod sdk;
 pub(crate) mod serde_coerce;
@@ -111,6 +113,7 @@ pub(crate) fn forget_session_caches(session_id: &str) {
     monitor::forget_session(session_id);
     ask_bridge::forget_session(session_id);
     read_state::forget_session(session_id);
+    horon_agent_session_types::repair_record::forget_session(session_id);
     // A structured-result child that never reached the completion path (or whose
     // last status update was missed) must not leave its schema slot behind.
     yield_result::discard(session_id);
@@ -2107,14 +2110,11 @@ impl Registry {
         // Repair against the tool's own schema before the gates read the input,
         // so an approval decision is made on what will actually run. Anything
         // the schema cannot prove is left alone and still fails in the tool.
-        let input = {
-            let (repaired, changes) = arg_repair::repair(&tool.parameters_schema(), input);
-            if !changes.is_empty() {
-                crate::logging::debug(&format!("[tool:{resolved_name}] repaired arguments: {changes:?}"));
-            }
-            repaired
-        };
-
+        let input = arg_repair_record::record(
+            &ctx,
+            resolved_name,
+            arg_repair::repair_recorded(&tool.parameters_schema(), input),
+        );
         // Approval mode: the user's configured floor on friction, checked before
         // the `pre_tool` hook so a call that must ask is never observed by an
         // external gate as if it had been dispatched. The command-risk hard

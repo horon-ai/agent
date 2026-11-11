@@ -127,6 +127,26 @@ pub(crate) fn split_uri_and_selector(raw: &str) -> Result<(String, Selector)> {
     Ok((raw.to_string(), Selector::None))
 }
 
+/// Splits an archive member name off its line selector: `dir/a.txt:10-20`
+/// becomes `("dir/a.txt", Lines { .. })`.
+///
+/// The member name itself may contain a colon, so the split takes the
+/// rightmost colon whose suffix parses as a selector and otherwise leaves the
+/// whole string as the member. A suffix that looks like a selector but does not
+/// parse is an error, exactly as in [`split_path_and_selector`], so a typo in a
+/// range does not silently become a member name.
+pub(crate) fn split_member_and_selector(raw: &str) -> Result<(String, Selector)> {
+    for (index, _) in raw.rmatch_indices(':') {
+        let suffix = &raw[index + 1..];
+        if !looks_like_selector(suffix) {
+            continue;
+        }
+        let selector = parse_selector(suffix)?;
+        return Ok((raw[..index].to_string(), selector));
+    }
+    Ok((raw.to_string(), Selector::None))
+}
+
 /// Whether a colon suffix could be a selector at all.
 ///
 /// Only the characters a selector can be made of count; anything else (a port

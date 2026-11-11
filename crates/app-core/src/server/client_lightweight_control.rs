@@ -642,6 +642,7 @@ pub(super) async fn handle_lightweight_control_request(
             iso_apply,
             output_schema,
             allowed_tools,
+            source_session,
         } => {
             let spawn_mode = match parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) {
                 Some(spawn_mode) => spawn_mode,
@@ -662,6 +663,7 @@ pub(super) async fn handle_lightweight_control_request(
                 super::comm_session::SpawnExtras {
                     output_schema,
                     allowed_tools,
+                    source_session,
                 },
                 &client_event_tx,
                 sessions,

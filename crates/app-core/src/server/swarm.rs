@@ -1719,7 +1719,7 @@ pub(super) async fn run_swarm_task(
     );
 
     let mut allowed: HashSet<String> = registry.tool_names().await.into_iter().collect();
-    for blocked in ["subagent", "task", "todo", "todowrite", "todoread"] {
+    for blocked in ["subagent", "task", "swarm", "todo", "session_search"] {
         allowed.remove(blocked);
     }
     crate::config::config().tools.apply_to_allowed_set(&mut allowed);

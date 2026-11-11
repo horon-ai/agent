@@ -6,6 +6,7 @@ mod advisor;
 mod advisor_tests;
 mod compaction;
 mod conversation_reset;
+mod degradation_event;
 #[cfg(test)]
 #[path = "agent/durable_input_tests.rs"]
 mod durable_input_tests;
@@ -20,6 +21,8 @@ mod goal_continuation;
 #[cfg(test)]
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
+mod handoff_compaction;
+pub use handoff_compaction::HandoffOutcome;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -51,6 +54,9 @@ mod resume_commit;
 mod round_budget;
 mod run_journal;
 mod session_replication;
+mod stable_hash;
+pub(crate) use stable_hash::{stable_hash_json, stable_hash_str, stable_json_len};
+pub(crate) use turn_failover::active_profile_fallback_models;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
 mod soft_interrupt_commit_tests;
@@ -77,10 +83,12 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+mod usage;
 mod utils;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
+pub use usage::TokenUsage;
 
 use self::streaming::{send_stream_keepalive_mpsc, stream_keepalive_ticker};
 #[cfg(test)]
@@ -105,7 +113,6 @@ use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use anyhow::Result;
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
@@ -133,23 +140,6 @@ static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> =
 static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<HashMap<PathBuf, Option<GitState>>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 const STREAM_KEEPALIVE_PONG_ID: u64 = 0;
-
-fn stable_hash_str(value: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn stable_hash_json<T: serde::Serialize + ?Sized>(value: &T) -> u64 {
-    let encoded = serde_json::to_string(value).unwrap_or_default();
-    stable_hash_str(&encoded)
-}
-
-fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
-    serde_json::to_string(value)
-        .map(|encoded| encoded.len())
-        .unwrap_or_default()
-}
 
 /// Hash the cache-relevant projection, not the raw `Message`.
 ///
@@ -352,15 +342,6 @@ fn log_agent_provider_stream_lifecycle(
     logging::event(level, "AGENT_PROVIDER_STREAM_LIFECYCLE", owned);
 }
 
-/// Token usage from the last API request
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_input_tokens: Option<u64>,
-    pub cache_creation_input_tokens: Option<u64>,
-}
-
 #[derive(Debug, Clone)]
 struct RewindUndoSnapshot {
     head_event_id: String,
@@ -426,6 +407,8 @@ pub struct Agent {
     last_connection_type: Option<String>,
     /// Last provider-supplied human-readable transport detail for this session
     last_status_detail: Option<String>,
+    /// Model id that produced the most recent stored assistant response.
+    last_serving_model: Option<String>,
     /// Pending swarm alerts to inject into the next turn
     pending_alerts: Vec<String>,
     /// Transient reminder injected into provider requests for the current turn only.
@@ -671,6 +654,7 @@ impl Agent {
             last_upstream_provider: None,
             last_connection_type: None,
             last_status_detail: None,
+            last_serving_model: None,
             pending_alerts: Vec::new(),
             current_turn_system_reminder: None,
             loop_guard: loop_guard::LoopGuard::new(),
@@ -1561,7 +1545,6 @@ impl Agent {
                 missing_repairs.push((index, missing_for_message));
             }
         }
-
         self.tool_output_scan_index = self.session.active_context().len();
 
         let mut repaired = 0usize;
@@ -1582,6 +1565,7 @@ impl Agent {
                     timestamp: Some(chrono::Utc::now()),
                     tool_duration_ms: None,
                     token_usage: None,
+                    ..StoredMessage::default()
                 };
                 self.session
                     .insert_message(index + 1 + inserted + offset, stored_message);

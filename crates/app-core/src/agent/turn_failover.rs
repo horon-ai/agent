@@ -2,6 +2,7 @@ use super::*;
 
 #[path = "model_fallback.rs"]
 mod model_fallback;
+pub(crate) use model_fallback::active_profile_fallback_models;
 #[cfg(test)]
 #[path = "model_fallback_tests.rs"]
 mod model_fallback_tests;

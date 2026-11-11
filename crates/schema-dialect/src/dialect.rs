@@ -132,6 +132,45 @@ impl LearnedQuirks {
     }
 }
 
+/// Collects the keyword names a dialect removed, for a caller that wants a
+/// receipt of the loss.
+///
+/// The ordinary normalization path constructs a disabled log, so reporting
+/// costs one branch where a keyword is about to be dropped and nothing at all
+/// while a schema is merely copied.
+#[derive(Debug, Default)]
+pub struct DropLog<'a> {
+    entries: Option<&'a mut Vec<String>>,
+}
+
+impl<'a> DropLog<'a> {
+    /// A log nobody reads.
+    pub fn disabled() -> Self {
+        Self { entries: None }
+    }
+
+    /// A log that writes every dropped keyword into `entries`.
+    pub fn enabled(entries: &'a mut Vec<String>) -> Self {
+        Self { entries: Some(entries) }
+    }
+
+    fn record_keyword(&mut self, key: &str) {
+        if let Some(entries) = self.entries.as_deref_mut() {
+            entries.push(key.to_string());
+        }
+    }
+
+    fn record_format(&mut self, value: &Value) {
+        let Some(entries) = self.entries.as_deref_mut() else {
+            return;
+        };
+        match value.as_str() {
+            Some(format) => entries.push(format!("format:{format}")),
+            None => entries.push("format".to_string()),
+        }
+    }
+}
+
 /// Normalize a tool-parameter schema into `spec`'s dialect.
 pub fn apply(schema: &Value, spec: &DialectSpec) -> Value {
     apply_with_quirks(schema, spec, &LearnedQuirks::default())
@@ -139,7 +178,23 @@ pub fn apply(schema: &Value, spec: &DialectSpec) -> Value {
 
 /// [`apply`], additionally honoring keywords learned from live rejections.
 pub fn apply_with_quirks(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks) -> Value {
-    let mut out = walk(schema, spec, quirks);
+    apply_with_quirks_reporting(schema, spec, quirks, &mut DropLog::disabled())
+}
+
+/// [`apply`], additionally honoring learned rejections and recording every
+/// keyword or format it removed into `drops`.
+pub fn apply_reporting(schema: &Value, spec: &DialectSpec, drops: &mut DropLog<'_>) -> Value {
+    apply_with_quirks_reporting(schema, spec, &LearnedQuirks::default(), drops)
+}
+
+/// [`apply_with_quirks`], also recording every keyword or format it removed.
+pub fn apply_with_quirks_reporting(
+    schema: &Value,
+    spec: &DialectSpec,
+    quirks: &LearnedQuirks,
+    drops: &mut DropLog<'_>,
+) -> Value {
+    let mut out = walk(schema, spec, quirks, drops);
 
     if spec.transforms.flatten_all_combiners {
         out = flatten_all_combiners(&out);
@@ -165,7 +220,7 @@ pub fn apply_with_quirks(schema: &Value, spec: &DialectSpec, quirks: &LearnedQui
     out
 }
 
-fn walk(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks) -> Value {
+fn walk(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks, drops: &mut DropLog<'_>) -> Value {
     match schema {
         Value::Object(map) => {
             let mut out = Map::new();
@@ -186,11 +241,11 @@ fn walk(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks) -> Value {
                 // meaningless tool, and the right answer is a real fix.
                 if (!spec.supports(out_key) || dropped_by_quirk) && is_droppable(key) {
                     if key == "const" && spec.transforms.const_as_enum {
-                        out.insert(
-                            "enum".into(),
-                            // A `const` value is data, so it moves verbatim.
-                            Value::Array(vec![value.clone()]),
-                        );
+                        // Lossless: the value survives as a one-element `enum`,
+                        // so this is a rewrite rather than a degradation.
+                        out.insert("enum".into(), Value::Array(vec![value.clone()]));
+                    } else {
+                        drops.record_keyword(key);
                     }
                     continue;
                 }
@@ -200,6 +255,7 @@ fn walk(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks) -> Value {
                         .map(|f| spec.supports_format(f) && !quirks.rejected_formats.iter().any(|r| r == f))
                         .unwrap_or(false);
                     if !ok {
+                        drops.record_format(value);
                         continue;
                     }
                     out.insert(key.clone(), value.clone());
@@ -211,16 +267,18 @@ fn walk(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks) -> Value {
                         Value::Object(children) => Value::Object(
                             children
                                 .iter()
-                                .map(|(name, child)| (name.clone(), walk(child, spec, quirks)))
+                                .map(|(name, child)| (name.clone(), walk(child, spec, quirks, drops)))
                                 .collect(),
                         ),
                         other => other.clone(),
                     },
                     KeywordRole::SubschemaArray => match value {
-                        Value::Array(items) => Value::Array(items.iter().map(|i| walk(i, spec, quirks)).collect()),
-                        other => walk(other, spec, quirks),
+                        Value::Array(items) => {
+                            Value::Array(items.iter().map(|i| walk(i, spec, quirks, drops)).collect())
+                        }
+                        other => walk(other, spec, quirks, drops),
                     },
-                    KeywordRole::Subschema => walk(value, spec, quirks),
+                    KeywordRole::Subschema => walk(value, spec, quirks, drops),
                     KeywordRole::Data => value.clone(),
                 };
                 match out.get_mut(out_key) {
@@ -249,7 +307,7 @@ fn walk(schema: &Value, spec: &DialectSpec, quirks: &LearnedQuirks) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(items) => Value::Array(items.iter().map(|i| walk(i, spec, quirks)).collect()),
+        Value::Array(items) => Value::Array(items.iter().map(|i| walk(i, spec, quirks, drops)).collect()),
         _ => schema.clone(),
     }
 }

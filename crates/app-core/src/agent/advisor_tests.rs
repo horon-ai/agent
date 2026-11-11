@@ -347,6 +347,9 @@ fn runner_budget_clamps_and_the_prompt_names_it() {
 fn delta_rendering_marks_roles_calls_and_results() {
     let messages = vec![
         StoredMessage {
+            original_input: None,
+            arg_repairs: None,
+            degradations: None,
             id: "m0".into(),
             role: Role::User,
             content: vec![ContentBlock::Text {
@@ -360,6 +363,9 @@ fn delta_rendering_marks_roles_calls_and_results() {
             turn_start: false,
         },
         StoredMessage {
+            original_input: None,
+            arg_repairs: None,
+            degradations: None,
             id: "m1".into(),
             role: Role::Assistant,
             content: vec![
@@ -381,6 +387,9 @@ fn delta_rendering_marks_roles_calls_and_results() {
             turn_start: false,
         },
         StoredMessage {
+            original_input: None,
+            arg_repairs: None,
+            degradations: None,
             id: "m2".into(),
             role: Role::User,
             content: vec![ContentBlock::ToolResult {
@@ -407,6 +416,9 @@ fn delta_rendering_marks_roles_calls_and_results() {
     // does an injected system reminder.
     let mut with_reminder = messages.clone();
     with_reminder.push(StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         id: "m3".into(),
         role: Role::User,
         content: vec![ContentBlock::Text {

@@ -10,6 +10,9 @@ type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
 
 fn barrier_stored_message(id: &str, text: &str) -> crate::session::StoredMessage {
     crate::session::StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         id: id.to_string(),
         role: crate::message::Role::User,
         content: vec![ContentBlock::Text {
@@ -196,7 +199,7 @@ async fn cold_resume_with_agent(
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        false,
     )
     .await?;
 

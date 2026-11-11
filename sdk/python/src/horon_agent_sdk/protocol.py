@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 16
+API_VERSION_MINOR = 18
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -643,6 +643,8 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "tool_input_delta",
     "tool_exec",
     "tool_done",
+    "tool_args_repaired",
+    "degradation_receipts",
     "token_usage",
     "kv_cache_miss",
     "turn_done",

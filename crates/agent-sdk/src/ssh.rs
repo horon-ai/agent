@@ -359,9 +359,9 @@ impl SharedSshTransport {
         let directory = tempfile::Builder::new()
             .prefix("horon-agent-ssh-")
             .tempdir()
-            .map_err(|e| Error::new(ErrorKind::ConnectFailed, format!("private SSH directory: {e}")))?;
+            .map_err(|e| Error::connect_failed(None, &e, format!("private SSH directory: {e}")))?;
         horon_agent_platform::fs::set_dir_permissions_owner_only(directory.path())
-            .map_err(|e| Error::new(ErrorKind::ConnectFailed, format!("private SSH permissions: {e}")))?;
+            .map_err(|e| Error::connect_failed(None, &e, format!("private SSH permissions: {e}")))?;
         if directory.path().join("master").as_os_str().len() >= 100 {
             return Err(Error::new(
                 ErrorKind::InvalidOption,
@@ -393,7 +393,11 @@ impl SharedSshTransport {
             match self.inner.master.try_lock() {
                 Ok(state) => break state,
                 Err(std::sync::TryLockError::Poisoned(_)) => {
-                    return Err(Error::new(ErrorKind::ConnectFailed, "shared SSH setup was interrupted"));
+                    return Err(Error::connect_failed(
+                        None,
+                        "setup lock was poisoned",
+                        "shared SSH setup was interrupted",
+                    ));
                 }
                 Err(std::sync::TryLockError::WouldBlock) => {
                     if std::time::Instant::now() >= deadline {
@@ -420,14 +424,12 @@ impl SharedSshTransport {
                     });
                     if exited || std::time::Instant::now() >= deadline {
                         process.shutdown();
-                        return Err(Error::new(
-                            if exited {
-                                ErrorKind::ConnectFailed
-                            } else {
-                                ErrorKind::StartupTimeout
-                            },
-                            process.diagnostic(),
-                        ));
+                        let diagnostic = process.diagnostic();
+                        return Err(if exited {
+                            Error::connect_failed(Some(&socket), diagnostic.clone(), diagnostic)
+                        } else {
+                            Error::new(ErrorKind::StartupTimeout, diagnostic)
+                        });
                     }
                     std::thread::sleep(Duration::from_millis(5));
                 }
@@ -588,7 +590,7 @@ impl SshTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| Error::new(ErrorKind::ConnectFailed, format!("could not start system ssh: {error}")))?;
+            .map_err(|error| Error::connect_failed(None, &error, format!("could not start system ssh: {error}")))?;
         let reader = child.stdout.take();
         let writer = child.stdin.take();
         let mut stderr_pipe = child.stderr.take().expect("piped stderr");

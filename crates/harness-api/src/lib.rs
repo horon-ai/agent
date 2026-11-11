@@ -18,16 +18,19 @@ use serde::{Deserialize, Serialize};
 mod client;
 mod edit_stats;
 mod events;
+mod handoff;
 mod message_modes;
 #[doc(hidden)]
 pub use edit_stats::estimate_session_edit_stats;
 pub use edit_stats::{
     SessionEditStats, enrich_sessions_from_edit_stats, enrich_sessions_from_local_edit_stats, record_session_edit,
 };
+pub use handoff::*;
 pub mod replication;
 mod requests;
 mod runtime_commands;
 pub use runtime_commands::{RuntimeCommand, RuntimeCommandOutput};
+pub mod degradation;
 mod sockets;
 mod swarm_metadata;
 
@@ -51,10 +54,14 @@ mod schema_snapshot_tests;
 #[path = "harness_api_tests/capability_coverage.rs"]
 mod capability_coverage_tests;
 
+#[cfg(test)]
+#[path = "harness_api_tests/optional_fields.rs"]
+mod optional_field_tests;
+
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 16;
+pub const API_VERSION_MINOR: u32 = 18;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.

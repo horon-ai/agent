@@ -577,6 +577,8 @@ test("GA methods send stable request shapes and map typed replies", async () => 
             session_id: "s1",
             provider: "anthropic",
             model: "claude",
+            fallback_models: ["claude-backup"],
+            serving_model: "claude-backup",
             routes: [
               {
                 model: "claude",
@@ -650,6 +652,8 @@ test("GA methods send stable request shapes and map typed replies", async () => 
     const runtime = await client.getRuntimeInfo("s1");
     assert.equal(runtime.healthy, true);
     assert.deepEqual(runtime.providers, ["anthropic"]);
+    assert.deepEqual(runtime.fallbackModels, ["claude-backup"]);
+    assert.equal(runtime.servingModel, "claude-backup");
     assert.equal(runtime.routes.length, 2);
 
     await client.setApiKey("gemini-api", "secret");

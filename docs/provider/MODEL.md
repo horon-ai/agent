@@ -126,6 +126,16 @@ The switch lasts for the rest of the turn and the next turn starts again from th
 
 An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
 
+### What the fallback list looks like at runtime
+
+`ModelRoleConfig::fallback_models()` in `crates/config-types/src/model_roles.rs` trims each entry and drops blanks, so an empty string never becomes an attempt.
+
+Only the active named profile has a list this step may spend. `active_profile_fallback_models()` in `crates/app-core/src/agent/model_fallback.rs` resolves the profile from `HORON_AGENT_NAMED_PROVIDER_PROFILE`, then `HORON_AGENT_PROVIDER_PROFILE_NAME`, and returns the entries only when they are non-empty. A session that is not on a named profile behaves exactly as it did before this step existed.
+
+`Agent::try_model_fallback` records an entry in the turn state before applying it, so a switch the provider refuses still spends that entry; otherwise the same refusal could be retried without a bound. `restore_model_fallback` puts the session's own model back at the next turn start (through `begin_turn_state`), on an interrupt, and on a failed turn. The switch never reaches `session.model`, so a reload or a client that reads the session sees the selection the user made.
+
+Two read-only accessors expose the outcome. `Agent::fallback_models()` returns the configured entries, empty when no profile is active. `Agent::last_serving_model()` is set in `Agent::record_model_turn_usage` when a response is stored, so it still names the model that answered after the next turn has restored the session model. `get_runtime_info` reports them as `fallback_models` and `serving_model`, and the catalog push carries the same pair in its `identity` object, so a client that keeps the pushed catalog does not have to poll.
+
 ## Prompt cache key
 
 A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 24 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.

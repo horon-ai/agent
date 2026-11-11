@@ -1454,6 +1454,8 @@ async fn spawn_assignment_session(ctx: &ToolContext, params: &CommunicateInput) 
         output_schema: None,
         // A plan assignment names no definition, so it keeps the profile.
         allowed_tools: None,
+        // A plan assignment starts from an empty transcript.
+        source_session: None,
     };
 
     match send_request(spawn_request).await {
@@ -1854,6 +1856,15 @@ struct CommunicateInput {
     /// override the definition's values.
     #[serde(default)]
     agent: Option<String>,
+    /// Session to fork a read-only consult child from (SWARM_TASK_GRAPH 8d).
+    #[serde(default)]
+    source_session: Option<String>,
+    /// spawn_many children; each runs the single-spawn path concurrently.
+    #[serde(default)]
+    tasks: Option<Vec<agent_spawn::SpawnBatchTask>>,
+    /// Shared background prepended to every spawn_many child's first message.
+    #[serde(default)]
+    context: Option<String>,
 }
 
 impl CommunicateInput {
@@ -1894,6 +1905,7 @@ fn canonical_swarm_action(action: &str) -> &str {
         "models" | "model_list" | "list_model" | "list_providers" | "list_routes" => "list_models",
         "plan" | "status_plan" => "plan_status",
         "agent_defs" | "agents_list" | "list_agent_definitions" | "agent_definitions" => "list_agent_defs",
+        "spawn_batch" | "spawn_tasks" | "batch_spawn" | "spawn_agents" | "spawn_many_tasks" => "spawn_many",
         "assign" => "assign_task",
         "kill" | "terminate" => "stop",
         _ => action,
@@ -1923,8 +1935,8 @@ impl Tool for CommunicateTool {
                              "status", "report", "plan_status", "summary", "read_context", "resync_plan", "assign_task", "assign_next", "fill_slots", "run_plan", "cleanup",
                              "task_graph", "expand_node", "complete_node", "inject_gap",
                              "start", "start_task", "wake", "resume", "retry", "reassign", "replace", "salvage",
-                             "subscribe_channel", "unsubscribe_channel", "await_members", "list_models", "list_agent_defs"],
-                    "description": "Action. spawn requires label and should include prompt, and may name an agent definition with agent. list_models shows available models/routes; list_agent_defs lists named agent definitions."
+                             "subscribe_channel", "unsubscribe_channel", "await_members", "list_models", "list_agent_defs", "spawn_many"],
+                    "description": "Action. spawn requires label and should include prompt, and may name an agent definition with agent; spawn_many starts several children concurrently from tasks[] with an optional shared context. To get an answer about an earlier conversation, spawn with source_session: the child forks that transcript and can only read. list_models shows available models/routes; list_agent_defs lists named agent definitions."
                 },
                 "key": {
                     "type": "string",
@@ -2125,6 +2137,7 @@ impl Tool for CommunicateTool {
                     "items": { "type": "object", "additionalProperties": true }
                 }),
             );
+            agent_spawn::spawn_schema_properties(props);
             props.insert(
                 "artifact".to_string(),
                 json!({
@@ -2747,22 +2760,9 @@ impl Tool for CommunicateTool {
                 }
             }
 
-            "spawn" => {
-                let label = params.required_spawn_label()?;
-                let request = agent_spawn::spawn_request(&ctx, &params, label)?;
+            "spawn" => agent_spawn::spawn_single(&ctx, &params).await,
 
-                match send_request(request).await {
-                    Ok(ServerEvent::CommSpawnResponse { new_session_id, .. }) if !new_session_id.is_empty() => {
-                        Ok(ToolOutput::new(format!("Spawned new agent: {}", new_session_id))
-                            .with_metadata(serde_json::json!({"session_id": new_session_id})))
-                    }
-                    Ok(response) => {
-                        ensure_success(&response)?;
-                        Err(anyhow::anyhow!("Spawn succeeded but new session ID was not returned."))
-                    }
-                    Err(e) => Err(anyhow::anyhow!("Failed to spawn agent: {}", e)),
-                }
-            }
+            "spawn_many" => agent_spawn::spawn_many(&ctx, &params).await,
 
             "list_agent_defs" => Ok(ToolOutput::new(agent_spawn::list_definitions(&ctx))),
 
@@ -3316,7 +3316,7 @@ impl Tool for CommunicateTool {
             _ => Err(anyhow::anyhow!(
                 "Unknown action '{}'. Valid actions: share, share_append, read, message, broadcast, dm, channel, list, list_channels, channel_members, \
                  propose_plan, approve_plan, reject_plan, spawn, stop, assign_role, status, report, plan_status, summary, read_context, \
-                 resync_plan, assign_task, assign_next, fill_slots, run_plan, cleanup, start, start_task, wake, resume, retry, reassign, replace, salvage, subscribe_channel, unsubscribe_channel, await_members, list_models, list_agent_defs. \
+                 resync_plan, assign_task, assign_next, fill_slots, run_plan, cleanup, start, start_task, wake, resume, retry, reassign, replace, salvage, subscribe_channel, unsubscribe_channel, await_members, list_models, list_agent_defs, spawn_many. \
                  To read messages addressed to you, use action='read'.",
                 params.action
             )),

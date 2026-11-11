@@ -52,7 +52,8 @@ fn appended(parent: &SealedEvent, text: &str) -> SealedEvent {
         OriginId::new_v4(),
         chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(1),
         EventKind::new(KnownEventKind::MessageAppended),
-        json!({"message": StoredMessage {
+        json!({"message": StoredMessage { original_input: None, arg_repairs: None,
+        degradations: None,
             turn_start: false,
             id: uuid::Uuid::new_v4().to_string(), role: Role::User,
             content: vec![ContentBlock::Text { text: text.into(), cache_control: None }],

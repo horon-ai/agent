@@ -50,6 +50,18 @@ impl Agent {
         true
     }
 
+    /// Install a forked transcript in place of this child's bootstrap
+    /// conversation, for a consult spawn.
+    ///
+    /// Only the conversation moves: the child keeps its own identity, model and
+    /// tool policy, and the fork notice tells it not to continue the source's
+    /// in-flight turn.
+    pub(crate) fn install_forked_transcript(&mut self, source: &crate::session::Session) -> anyhow::Result<()> {
+        self.session.inherit_history(source)?;
+        self.session.append_fork_notice(&source.id, source.display_name());
+        self.session.save()
+    }
+
     /// Install a restored session in place of this Agent's provisional session.
     ///
     /// A restored session is already a real conversation, so it must never be

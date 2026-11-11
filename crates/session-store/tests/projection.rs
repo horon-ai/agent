@@ -42,6 +42,9 @@ fn root() -> EventEnvelope {
 
 fn message(text: &str) -> StoredMessage {
     StoredMessage {
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: format!("legacy-{text}"),
         role: Role::User,
