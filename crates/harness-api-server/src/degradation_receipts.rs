@@ -11,12 +11,11 @@ use serde_json::Value;
 /// Frame for an assistant message whose request was narrowed to fit the
 /// provider.
 pub(crate) fn frames(session_id: String, event: &Value) -> Vec<ServerFrame> {
-    // A malformed receipt list still sends the event with the anchors intact, so
-    // a client can at least tell that this request was narrowed. Only entries
-    // that decode are carried; nothing is invented for the rest.
-    let receipts: Vec<DegradationReceipt> = match serde_json::from_value(event["receipts"].clone()) {
-        Ok(receipts) => receipts,
-        Err(_) => Vec::new(),
+    // The daemon writes this list itself, so one that does not decode is a bug
+    // on that side. Send nothing rather than an empty list that would claim the
+    // request lost nothing; the receipts stay on the stored message either way.
+    let Ok(receipts) = serde_json::from_value::<Vec<DegradationReceipt>>(event["receipts"].clone()) else {
+        return Vec::new();
     };
     vec![ServerFrame::event(ApiEvent::DegradationReceipts(
         DegradationReceiptsEvent {
@@ -59,14 +58,12 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_receipt_list_still_sends_the_event() {
+    fn a_malformed_receipt_list_sends_no_event() {
         // Given an event whose receipts are not decodable.
         let event = json!({"id": "message-8", "receipts": "not a list"});
         // When it is translated.
-        let value = serde_json::to_value(&frames("s-1".to_string(), &event)[0]).expect("frame");
-        // Then the anchor survives and no loss is claimed.
-        assert_eq!(value["ev"], json!("degradation_receipts"));
-        assert_eq!(value["message_id"], json!("message-8"));
-        assert_eq!(value["receipts"], json!([]));
+        let frames = frames("s-1".to_string(), &event);
+        // Then no frame goes out, so no client is told that nothing was lost.
+        assert!(frames.is_empty());
     }
 }
