@@ -308,14 +308,12 @@ impl Provider for ExplicitPinProvider {
         Arc::new(self.clone())
     }
 }
-
 fn content_text(content: &[ContentBlock]) -> &str {
     match content.first() {
         Some(ContentBlock::Text { text, .. }) => text,
         _ => "",
     }
 }
-
 fn message_text(message: &Message) -> &str {
     content_text(&message.content)
 }
@@ -463,7 +461,6 @@ impl Provider for DelayedProvider {
         _resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
         tokio::time::sleep(self.open_delay).await;
-
         let first_event_delay = self.first_event_delay;
         let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(8);
         tokio::spawn(async move {
@@ -475,7 +472,6 @@ impl Provider for DelayedProvider {
                 }))
                 .await;
         });
-
         Ok(Box::pin(ReceiverStream::new(rx)))
     }
 

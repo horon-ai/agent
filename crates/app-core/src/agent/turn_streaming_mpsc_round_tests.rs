@@ -168,7 +168,6 @@ async fn registry_with(tools: Vec<RoundTool>) -> Registry {
     }
     registry
 }
-
 fn provider_pair() -> (Arc<RoundProvider>, mpsc::Sender<Result<StreamEvent>>) {
     let (tx, rx) = mpsc::channel(64);
     let provider = Arc::new(RoundProvider(Arc::new(Mutex::new(Some(rx)))));
