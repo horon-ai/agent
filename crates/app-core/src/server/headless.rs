@@ -6,7 +6,7 @@ use crate::server::{
     register_session_interrupt_queue, swarm_id_for_session,
 };
 use crate::tool::Registry;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -42,6 +42,37 @@ pub(super) struct SpawnExtras {
     pub output_schema: Option<serde_json::Value>,
     /// Tool allow list for the child; `None` keeps the configured profile.
     pub allowed_tools: Option<Vec<String>>,
+    /// Session whose transcript a consult child forks; it reads only.
+    pub source_session: Option<String>,
+}
+
+/// Load the session a consult child forks from, refusing one outside the
+/// caller's spawn tree.
+///
+/// The live session wins over the stored copy when the caller is still in the
+/// sessions map, because a coordinator that has not saved yet cannot be read
+/// back from disk.
+async fn resolve_consult_source(
+    caller_id: Option<&str>,
+    source_id: &str,
+    sessions: &SessionAgents,
+) -> Result<crate::session::Session> {
+    let source = crate::session::Session::load(source_id)
+        .with_context(|| format!("source_session '{source_id}' could not be read"))?;
+    let Some(caller_id) = caller_id else {
+        return Ok(source);
+    };
+    // Clone the handle and drop the map guard before awaiting the agent lock, so
+    // a session writer never waits on this read.
+    let live_caller = sessions.read().await.get(caller_id).cloned();
+    match live_caller {
+        Some(agent) => {
+            let agent = agent.lock().await;
+            crate::session_scope::ensure_visible_from(agent.session_for_split(), &source)?;
+        }
+        None => crate::session_scope::ensure_visible(caller_id, &source)?,
+    }
+    Ok(source)
 }
 
 #[expect(
@@ -68,6 +99,9 @@ pub(super) async fn create_headless_session(
     // Tool allow list resolved from a named agent definition. `None` keeps the
     // configured profile, which is what a spawn without `agent` wants.
     narrowed_tools: Option<HashSet<String>>,
+    // Session a consult child forks its transcript from; the fork is refused
+    // unless that session is in the caller's spawn tree.
+    source_session: Option<String>,
     mcp_pool: Option<Arc<crate::mcp::SharedMcpPool>>,
     report_back_to_session_id: Option<String>,
     memory_scope: HeadlessMemoryScope,
@@ -97,6 +131,29 @@ pub(super) async fn create_headless_session(
         .register_mcp_tools_for_dir(None, mcp_pool, Some("headless".to_string()), working_dir.clone())
         .await;
 
+    // Resolve the consult source before the child exists, so an id outside the
+    // caller's spawn tree refuses the spawn instead of starting a child that
+    // could not answer.
+    let consult_source = match source_session.as_deref() {
+        Some(source_id) => {
+            Some(resolve_consult_source(report_back_to_session_id.as_deref(), source_id, sessions).await?)
+        }
+        None => None,
+    };
+    // A consult child reads a copied transcript and must never write, run a
+    // shell, or reach the network. Narrow its tools here, where every spawn
+    // path converges, so a wire client naming a source session directly cannot
+    // widen them.
+    let narrowed_tools = if consult_source.is_some() {
+        Some(
+            crate::session_scope::CONSULT_TOOLS
+                .iter()
+                .map(|tool| (*tool).to_string())
+                .collect(),
+        )
+    } else {
+        narrowed_tools
+    };
     let working_dir_string = working_dir.as_ref().map(|dir| dir.to_string_lossy().into_owned());
     let mut new_agent = Agent::new_with_parent_and_initial_working_dir(
         Arc::clone(&provider),
@@ -105,6 +162,9 @@ pub(super) async fn create_headless_session(
         report_back_to_session_id.clone(),
         narrowed_tools,
     );
+    if let Some(source) = consult_source.as_ref() {
+        new_agent.install_forked_transcript(source)?;
+    }
     new_agent.set_memory_enabled(memory_enabled);
     // Inline swarm mode renders a live gallery of worker viewports in the
     // coordinator TUI; enable the per-agent output tap so this worker streams a
