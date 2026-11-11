@@ -375,8 +375,8 @@ jobs:
             codesign --force --sign - --identifier com.horon-tui.cli dist/${{ matrix.tui_artifact }}
             codesign -dv dist/${{ matrix.tui_artifact }} 2>&1 | grep -qx 'Identifier=com.horon-tui.cli'
           fi
-          cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
-          cd dist && tar czf ${{ matrix.tui_artifact }}.tar.gz ${{ matrix.tui_artifact }}
+          ( cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }} )
+          ( cd dist && tar czf ${{ matrix.tui_artifact }}.tar.gz ${{ matrix.tui_artifact }} )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
