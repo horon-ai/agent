@@ -14,7 +14,7 @@ The handoff has three conditions, all checked before the process is replaced (`s
 - `HORON_NO_TUI` must be unset. Setting it to any value forces the headless path on a terminal.
 - `horon-tui` must be a file next to the running executable. A launcher that is a symbolic link is retried at its real location, which matters on macOS.
 
-When a condition fails, the process stays up as the headless agent and the message names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`) plus the command that installs the client. Starting `horon-tui` directly skips the decision entirely.
+When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`) plus the command that installs the client, and exits with a non-zero code. A server it started before the check keeps running. Starting `horon-tui` directly skips the decision entirely.
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
@@ -137,7 +137,7 @@ Mistakes are warnings, not refusals. An unknown action id, a value that is not a
 
 ### Command files
 
-A markdown file under `.horon/commands` (the project) or `$HORON_HOME/commands` (every project) becomes a slash command named after the file. A project file wins over a user file with the same name; a built-in or server command with that name shadows the file command entirely, and `/help` marks it `(shadowed by the built-in)`.
+A markdown file under `.horon/commands` (the project) or `$HORON_HOME/commands` (every project) becomes a slash command named after the file. A project file wins over a user file with the same name. A built-in command with that name shadows the file command entirely, and `/help` marks it `(shadowed by the built-in)`; a file wins over a harness command with the same name.
 
 The optional block between two `---` lines holds `key: value` lines; only `description` and `argument-hint` are read. Without a description, the first body line is shown in `/help`.
 
@@ -174,11 +174,9 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
 
-A terminal that sends ctrl+j as the LF control character delivers it as `enter`, so a binding can never be reached that way; bind a different key instead.
-
 ## The status line
 
-The bottom line is assembled from named segments. A segment with no data draws nothing, and an unknown name is reported once and skipped so the rest of the line still draws.
+The bottom line is assembled from named segments. A segment with no data draws nothing, and an unknown name is reported and skipped so the rest of the line still draws.
 
 | Segment | Shows |
 | --- | --- |
@@ -213,14 +211,14 @@ A line starting with `/` is resolved in this order: a built-in command, a comman
 | `/model [name]` | List the models, or switch to the one named |
 | `/settings` | Open the settings screen |
 
-The harness commands run in the attached runtime and never reach the model as a prompt. `/help` prints them six to a line:
+The harness commands run in the attached runtime and never reach the model as a prompt. `/help` prints them in name order, six to a line:
 
 ```text
-/skills /context /info /memory /swarm /agents
-/subagent_model /autoreview /autojudge /transport /fast /overnight
-/productivity /initiatives /refresh_model_list /continue /resume_all /remote
-/server_reload /review /judge /subagent /auth /logout
-/plan
+  /agents /auth /autojudge /autoreview /context /continue
+  /fast /info /initiatives /judge /logout /memory
+  /overnight /plan /productivity /refresh_model_list /remote /resume_all
+  /review /server_reload /skills /subagent /subagent_model /swarm
+  /transport
 ```
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
@@ -266,5 +264,5 @@ The archive is optional at every step, and a copy that cannot be verified never 
 
 - Windows has no PTY smoke test. The `tui` benchmark records the render and size metrics there and marks the PTY metrics with `pty unavailable on Windows` instead of failing the run.
 - FreeBSD ships `horon-agent` only, so the client is not installed there and bare `horon` reports the missing sibling.
-- The handoff is one process replacing another, so a client that exits takes the terminal command with it; the exit code is the client's.
+- On Linux and macOS the handoff is one process replacing another, so a client that exits takes the terminal command with it and the exit code is the client's. On Windows the launcher starts the client and exits with code 0 at once, so its exit code says nothing about the client.
 - `editor.submit_on_enter` and `transcript.show_reasoning` are declared and editable, and the client does not read them yet.

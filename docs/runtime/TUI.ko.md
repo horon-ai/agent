@@ -14,7 +14,7 @@
 - `HORON_NO_TUI`가 설정되어 있지 않아야 한다. 값이 무엇이든 설정하면 터미널에서도 헤드리스 경로를 쓴다.
 - 실행 중인 실행 파일 옆에 `horon-tui` 파일이 있어야 한다. 실행 파일이 심볼릭 링크인 런처는 실제 위치에서 다시 찾는다. macOS에서 필요한 처리다.
 
-조건이 하나라도 맞지 않으면 프로세스는 헤드리스 에이전트로 남고, 메시지가 그 조건(`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, `no horon-tui beside this binary`)과 클라이언트를 설치하는 명령을 함께 알려 준다. `horon-tui`를 직접 실행하면 이 판정을 거치지 않는다.
+조건이 하나라도 맞지 않으면 명령은 그 조건(`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, `no horon-tui beside this binary`)과 클라이언트를 설치하는 명령을 담은 문장을 출력하고 0이 아닌 코드로 끝난다. 판정 전에 띄운 서버는 계속 돈다. `horon-tui`를 직접 실행하면 이 판정을 거치지 않는다.
 
 재개한 세션도 그대로 넘긴다. `horon --resume <id>`는 클라이언트에 `--session <id>`를 전달하므로, 클라이언트는 새 세션을 만들지 않고 그 세션에 붙는다. 소켓은 명령줄로 넘기지 않는다. 이미 `HORON_AGENT_SOCKET`으로 내보내져 있고, 클라이언트가 하네스 API 소켓을 직접 찾는다.
 
@@ -137,7 +137,7 @@ context_window = 200000
 
 ### 명령 파일
 
-`.horon/commands`(프로젝트)나 `$HORON_HOME/commands`(모든 프로젝트) 아래의 마크다운 파일은 파일 이름을 딴 슬래시 명령이 된다. 이름이 같은 프로젝트 파일이 사용자 파일을 이긴다. 이름이 같은 내장 명령이나 서버 명령이 있으면 파일 명령을 완전히 가리며, `/help`가 그 줄에 `(shadowed by the built-in)`을 붙인다.
+`.horon/commands`(프로젝트)나 `$HORON_HOME/commands`(모든 프로젝트) 아래의 마크다운 파일은 파일 이름을 딴 슬래시 명령이 된다. 이름이 같은 프로젝트 파일이 사용자 파일을 이긴다. 이름이 같은 내장 명령이 있으면 파일 명령을 완전히 가리며, `/help`가 그 줄에 `(shadowed by the built-in)`을 붙인다. 이름이 같은 하네스 명령보다는 파일이 이긴다.
 
 두 `---` 줄 사이의 선택 블록에는 `key: value` 줄을 적는다. 읽는 키는 `description`과 `argument-hint` 둘뿐이다. 설명이 없으면 본문 첫 줄을 `/help`에 보여 준다.
 
@@ -174,11 +174,9 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 프롬프트가 열려 있으면 모든 키를 프롬프트가 받으므로, 프롬프트에 쓰려던 글자가 입력 줄에 닿지 않는다. 탭은 슬래시 명령 이름만 완성한다. 줄에 공백이 들어가면 인자 자리는 사용자의 몫이다.
 
-터미널이 ctrl+j를 LF 제어 문자로 보내면 `enter`로 도착하므로 그 경로로는 어떤 바인딩에도 닿을 수 없다. 다른 키를 지정한다.
-
 ## 상태 줄
 
-화면 맨 아래 줄은 이름 붙은 세그먼트로 조립한다. 데이터가 없는 세그먼트는 아무것도 그리지 않고, 모르는 이름은 한 번 경고한 뒤 건너뛰므로 나머지 줄은 그대로 그려진다.
+화면 맨 아래 줄은 이름 붙은 세그먼트로 조립한다. 데이터가 없는 세그먼트는 아무것도 그리지 않고, 모르는 이름은 경고를 남기고 건너뛰므로 나머지 줄은 그대로 그려진다.
 
 | 세그먼트 | 보여 주는 것 |
 | --- | --- |
@@ -213,14 +211,14 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `/model [name]` | 모델을 나열하고, 이름을 주면 그 모델로 바꾼다 |
 | `/settings` | 설정 화면을 연다 |
 
-하네스 명령은 붙어 있는 런타임에서 실행하며 모델에 프롬프트로 전달되지 않는다. `/help`는 한 줄에 여섯 개씩 보여 준다.
+하네스 명령은 붙어 있는 런타임에서 실행하며 모델에 프롬프트로 전달되지 않는다. `/help`는 이름순으로 한 줄에 여섯 개씩 보여 준다.
 
 ```text
-/skills /context /info /memory /swarm /agents
-/subagent_model /autoreview /autojudge /transport /fast /overnight
-/productivity /initiatives /refresh_model_list /continue /resume_all /remote
-/server_reload /review /judge /subagent /auth /logout
-/plan
+  /agents /auth /autojudge /autoreview /context /continue
+  /fast /info /initiatives /judge /logout /memory
+  /overnight /plan /productivity /refresh_model_list /remote /resume_all
+  /review /server_reload /skills /subagent /subagent_model /swarm
+  /transport
 ```
 
 명령 파일은 인자 힌트와 설명을 붙여 `/help`에 나온다. 명령 파일이 하나도 없으면 `/help`가 파일을 둘 위치를 알려 준다.
@@ -266,5 +264,5 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 - Windows에는 PTY 스모크 테스트가 없다. `tui` 벤치마크는 그곳에서 렌더와 크기 지표를 기록하고 PTY 지표에는 `pty unavailable on Windows`를 적으며 실행을 실패시키지 않는다.
 - FreeBSD는 `horon-agent`만 배포하므로 그곳에는 클라이언트가 설치되지 않고, 인자 없는 `horon`이 형제 파일이 없다고 알린다.
-- 핸드오프는 한 프로세스가 다른 프로세스를 대체하는 방식이므로, 클라이언트가 끝나면 터미널 명령도 함께 끝난다. 종료 코드는 클라이언트의 것이다.
+- Linux와 macOS에서 핸드오프는 한 프로세스가 다른 프로세스를 대체하는 방식이므로, 클라이언트가 끝나면 터미널 명령도 함께 끝나고 종료 코드는 클라이언트의 것이다. Windows에서는 런처가 클라이언트를 띄운 뒤 곧바로 코드 0으로 끝나므로, 런처의 종료 코드는 클라이언트에 대해 아무것도 알려 주지 않는다.
 - `editor.submit_on_enter`와 `transcript.show_reasoning`은 선언되고 편집할 수 있지만, 아직 클라이언트가 이 값을 읽지 않는다.
