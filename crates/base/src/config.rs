@@ -3,14 +3,17 @@
 //! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
+pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, resolve_role_model};
+pub use horon_agent_config_types::parse_model_reference;
 pub use horon_agent_config_types::{
     AdvisorConfig, AgentsConfig, AmbientConfig, ApprovalMode, AuthConfig, AutoJudgeConfig, AutoReviewConfig,
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
-    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
-    NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig, ProviderConfig, ReasoningDisplayMode,
-    SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode, StreamRuleConfig, StreamRuleDelivery,
-    StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
+    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, ModelReference,
+    NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig,
+    PrewalkConfigError, ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig,
+    StorageSyncMode, StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode,
+    UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 pub use mcp::McpSourcesConfig;

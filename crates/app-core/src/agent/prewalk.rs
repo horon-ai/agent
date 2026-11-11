@@ -8,8 +8,7 @@
 
 use super::*;
 
-use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, resolve_role_model};
-use horon_agent_config_types::{ModelReference, PrewalkConfig, parse_model_reference};
+use crate::config::{ModelReference, ModelRole, ModelRoles, PrewalkConfig, parse_model_reference, resolve_role_model};
 
 /// Why a configured `into` could not be used.
 #[derive(Debug, Clone, PartialEq, Eq)]

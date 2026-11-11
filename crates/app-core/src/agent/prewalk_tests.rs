@@ -1,6 +1,6 @@
 //! `[prewalk]` acceptance tests: one per line of issue #70's checklist.
 
-use super::super::*;
+use super::*;
 use async_trait::async_trait;
 use std::sync::Mutex as StdMutex;
 
