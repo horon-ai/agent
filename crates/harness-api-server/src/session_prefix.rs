@@ -189,7 +189,9 @@ mod tests {
     #[test]
     fn a_prefix_below_the_minimum_that_matches_is_refused() {
         let known = vec!["session_fox_1790191044353_621ff7b9".to_string()];
-        let mut value = request("attach_session", "sessio");
+        // Five characters: one below MIN_SESSION_ID_PREFIX, and still a real
+        // leading part of the known id, so only the length rule can refuse it.
+        let mut value = request("attach_session", "sessi");
         let frame = resolve(&mut value, None, &known).expect("short matching prefix is refused");
         match frame.event {
             ApiEvent::Error { code, message, .. } => {
@@ -198,6 +200,6 @@ mod tests {
             }
             other => panic!("expected an error frame, got {other:?}"),
         }
-        assert_eq!(value["session_id"], "sessio");
+        assert_eq!(value["session_id"], "sessi");
     }
 }
