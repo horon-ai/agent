@@ -40,7 +40,7 @@ npx @horon-ai/horon --help
 
 | 상황 | 런처가 출력하는 내용 |
 | --- | --- |
-| npm을 `--omit=optional`로 실행했거나 패키지가 불완전하게 설치됨 | `horon: the platform package @horon-ai/horon-darwin-arm64 is not installed. reinstall with optional dependencies enabled: npm install -g --include=optional @horon-ai/horon` |
+| npm을 `--omit=optional`로 실행했거나 패키지가 불완전하게 설치됨 | `horon: the platform package @horon-ai/horon-darwin-arm64 is not installed. reinstall with optional dependencies enabled: npm install -g --include=optional @horon-ai/horon` (패키지 이름은 그 컴퓨터의 것) |
 | 여섯 플랫폼에 없는 환경 | `horon: <platform>-<arch> is not a supported platform.` 뒤에 지원하는 여섯 키와 같은 재설치 안내 |
 
 ## 버전이 정해지는 방식

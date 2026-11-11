@@ -40,7 +40,7 @@ A missing platform package is a reinstall, not a broken install. The launcher pr
 
 | Situation | What the launcher prints |
 | --- | --- |
-| npm ran with `--omit=optional`, or the package was installed incompletely | `horon: the platform package @horon-ai/horon-darwin-arm64 is not installed. reinstall with optional dependencies enabled: npm install -g --include=optional @horon-ai/horon` |
+| npm ran with `--omit=optional`, or the package was installed incompletely | `horon: the platform package @horon-ai/horon-darwin-arm64 is not installed. reinstall with optional dependencies enabled: npm install -g --include=optional @horon-ai/horon` (the package name is the machine's own) |
 | The platform is not one of the six | `horon: <platform>-<arch> is not a supported platform.` followed by the six supported keys and the same reinstall hint |
 
 ## How versions work
