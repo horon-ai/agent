@@ -65,7 +65,7 @@ fn harness(
     (client, log)
 }
 
-fn reply(frame: &ClientFrame, event: ApiEvent, writer: &mut dyn Write) {
+fn reply(frame: &ClientFrame, event: ApiEvent, mut writer: &mut dyn Write) {
     write_frame(
         &mut writer,
         &ServerFrame {
