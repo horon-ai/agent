@@ -30,6 +30,7 @@
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
 | | [`IRC.ko.md`](runtime/IRC.ko.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
+| | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 명령, 설정 화면, 선택 자산 설치, 한계 |
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |

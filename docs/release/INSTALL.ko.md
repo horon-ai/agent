@@ -33,6 +33,24 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 
 Windows 설치 경로와 서명 절차는 [`WINDOWS.ko.md`](WINDOWS.ko.md)에 있다.
 
+## 선택 사항인 터미널 클라이언트
+
+릴리스는 대화형 클라이언트도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-darwin-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다.
+
+`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이므로, 한 버전 디렉터리가 두 실행 파일을 들고 활성화가 둘을 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
+
+클라이언트는 모든 단계에서 선택 사항이고, 검증하지 못한 사본은 에이전트 설치를 막지 않는다.
+
+| 상황 | 결과 |
+| --- | --- |
+| 릴리스가 그 플랫폼용 압축 파일을 배포하지 않음 | 한 줄을 남기고 `horon-agent`만 설치한다 |
+| `SHA256SUMS`에 그 압축 파일 항목이 없음 | 한 줄을 남기고 `horon-agent`만 설치한다 |
+| 다이제스트가 다름 | 한 줄을 남기고 `horon-agent`만 설치한다 |
+| `--source-binary`, 또는 FreeBSD | 배포된 클라이언트를 넣지 않는다. FreeBSD는 `horon-agent`만 배포한다 |
+| 버전 디렉터리가 이미 있음 | 파일이 없을 때만 클라이언트를 더한다. 그 밖에는 버전 디렉터리를 바꾸지 않는다 |
+
+`scripts/install/uninstall.sh`와 `scripts/install/uninstall.ps1`은 설치 디렉터리의 `horon-tui` 런처를 다른 대상과 함께 목록에 올리고 지운다. 예전 설치가 남긴 런처도 포함한다.
+
 ## Linux 서버에서 실행
 
 릴리스 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다. OpenSSL과 다른 패키지는 필요 없다. TLS는 전부 rustls로 처리하고 OpenSSL은 의존성 그래프에 없다 (`cargo tree -p horon-agent -i openssl-sys --target all`이 아무것도 찾지 않는다).

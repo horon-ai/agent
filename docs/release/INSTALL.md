@@ -34,6 +34,24 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 The Windows install locations and signing procedure are in [`WINDOWS.md`](WINDOWS.md).
 
 
+## The optional terminal client
+
+The release also publishes the interactive client as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-darwin-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together.
+
+`scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, so one version directory holds both binaries and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
+
+The client is optional at every step, and a copy that cannot be verified never blocks the agent:
+
+| Situation | Result |
+| --- | --- |
+| The release publishes no archive for the platform | One line, then `horon-agent` alone |
+| `SHA256SUMS` has no entry for the archive | One line, then `horon-agent` alone |
+| The digest does not match | One line, then `horon-agent` alone |
+| `--source-binary`, or FreeBSD | No released client is staged; FreeBSD publishes `horon-agent` only |
+| The version directory already exists | The client is added only when the file is absent; the version is immutable otherwise |
+
+`scripts/install/uninstall.sh` and `scripts/install/uninstall.ps1` list the `horon-tui` launcher in the install directory with the other targets and remove it, including one left behind by an older install.
+
 ## Running on a Linux server
 
 The release binary starts with only glibc, libm and libgcc_s present. OpenSSL and other packages are not needed. All TLS goes through rustls, and OpenSSL is absent from the dependency graph (`cargo tree -p horon-agent -i openssl-sys --target all` finds nothing).
