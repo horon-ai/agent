@@ -45,6 +45,8 @@ pub enum Local {
     Clear,
     /// List the models, or switch to the one named.
     Model,
+    /// Open the settings screen.
+    Settings,
 }
 
 impl Local {
@@ -55,6 +57,7 @@ impl Local {
             "help" => Some(Self::Help),
             "clear" => Some(Self::Clear),
             "model" => Some(Self::Model),
+            "settings" => Some(Self::Settings),
             _ => None,
         }
     }
@@ -66,6 +69,7 @@ impl Local {
             Self::Help => "help",
             Self::Clear => "clear",
             Self::Model => "model",
+            Self::Settings => "settings",
         }
     }
 }
@@ -292,6 +296,7 @@ impl Registry {
             "  /clear   clear the transcript".to_string(),
             "  /help    list commands".to_string(),
             "  /model   list models, or switch with /model <name>".to_string(),
+            "  /settings  open the settings screen".to_string(),
             "  /quit    leave".to_string(),
             "harness commands:".to_string(),
         ];
@@ -415,7 +420,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 4] = ["clear", "help", "model", "quit"];
+const LOCAL_NAMES: [&str; 5] = ["clear", "help", "model", "quit", "settings"];
 
 /// Every runtime command, in declaration order.
 const SERVER_VARIANTS: &[RuntimeCommand] = &[

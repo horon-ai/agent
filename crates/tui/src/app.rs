@@ -13,8 +13,10 @@ use horon_agent_sdk::api::{ApiEvent, AskSelection};
 use crate::commands::{Invocation, Local, Registry};
 use crate::input::Input;
 use crate::keys::{self, Bindings, Key};
+use crate::overlays::settings::{Outcome, SettingChange, SettingsOverlay};
 use crate::prompts::{Prompt, Response};
 use crate::sdk_bridge::Incoming;
+use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
 use crate::transcript::Transcript;
@@ -95,6 +97,14 @@ pub struct App {
     pub bindings: Bindings,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
+    /// The resolved settings last applied, which the settings screen draws.
+    pub settings: Settings,
+    /// Where user theme files are read from, offered by the settings screen.
+    pub themes_dir: std::path::PathBuf,
+    /// The open settings screen, if one is showing.
+    pub overlay: Option<SettingsOverlay>,
+    /// A change the settings screen confirmed, waiting for the caller to save.
+    pending_change: Option<SettingChange>,
 }
 
 impl App {
@@ -123,6 +133,10 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             commands: Registry::default(),
+            settings: Settings::defaults(),
+            themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            overlay: None,
+            pending_change: None,
         }
     }
 
@@ -153,6 +167,10 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             commands: Registry::default(),
+            settings: Settings::defaults(),
+            themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            overlay: None,
+            pending_change: None,
         }
     }
 
@@ -330,6 +348,21 @@ impl App {
     /// decides what each key means; a printable character that no action claims
     /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // An open overlay owns every key: a letter meant for a value must not
+        // reach the message being drafted underneath it.
+        if let Some(overlay) = self.overlay.as_mut() {
+            match overlay.on_key(key) {
+                Outcome::Handled => return None,
+                Outcome::Closed => {
+                    self.overlay = None;
+                    return None;
+                }
+                Outcome::Change(change) => {
+                    self.pending_change = Some(change);
+                    return None;
+                }
+            }
+        }
         if let Some(prompt) = self.prompt.as_mut() {
             match prompt.on_key_with(&self.bindings, key) {
                 Some(Response::Approval {
@@ -439,6 +472,30 @@ impl App {
                 "" => Some(Action::Model(None)),
                 name => Some(Action::Model(Some(name.to_string()))),
             },
+            Local::Settings => {
+                self.open_settings();
+                None
+            }
+        }
+    }
+
+    /// Show the settings screen, seeded from the settings in force.
+    pub fn open_settings(&mut self) {
+        let mut overlay = SettingsOverlay::new(self.themes_dir.clone());
+        overlay.refresh(&self.settings);
+        self.overlay = Some(overlay);
+    }
+
+    /// Take the change the settings screen confirmed, for the caller to write.
+    pub fn take_setting_change(&mut self) -> Option<SettingChange> {
+        self.pending_change.take()
+    }
+
+    /// Replace the settings snapshot the screen draws, keeping the selection.
+    pub fn refresh_settings(&mut self, settings: &Settings) {
+        self.settings = settings.clone();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.refresh(settings);
         }
     }
 
