@@ -174,7 +174,7 @@ def _fmt(value: float | None, unit: str) -> str:
 def _stat_row(name: str, label: str, unit: str, value) -> str:
     """One table row: median, min-max, sample count."""
     if not isinstance(value, dict):
-        return f"| {label} | — | — | — | 0 |"
+        return f"| {label} | — | — | — |"
     return (f"| {label} | {_fmt(value.get('median'), unit)} | "
             f"{_fmt(value.get('min'), unit)}–{_fmt(value.get('max'), unit)} | "
             f"{value.get('samples', 0)} |")
@@ -209,8 +209,9 @@ def markdown(report: dict) -> str:
             lines += ["", f"Render bench: {frames} frames on a {width}×{height} terminal."]
     skipped = [entry for entry in report.get("skipped", []) if isinstance(entry, dict)]
     if skipped:
-        lines += ["", "Skipped: " + "; ".join(
-            f"{entry.get('name')} ({entry.get('reason')})" for entry in skipped)]
+        # The reason already names what was skipped ("pty unavailable on
+        # Windows"), so repeating the entry name would read "pty (pty ...)".
+        lines += ["", "Skipped: " + "; ".join(str(entry.get("reason")) for entry in skipped)]
     errors = [entry for entry in report.get("errors", []) if isinstance(entry, dict)]
     if errors:
         lines += ["", "Errors: " + "; ".join(

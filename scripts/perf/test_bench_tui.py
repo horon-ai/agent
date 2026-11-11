@@ -168,7 +168,12 @@ class MarkdownTest(unittest.TestCase):
 
     def test_unmeasured_table_uses_the_missing_marker(self):
         text = bench_tui.markdown(bench_tui.report())
-        self.assertIn("| First frame (bare `horon-agent`) | — | — | — | 0 |", text)
+        self.assertIn("| First frame (bare `horon-agent`) | — | — | — |", text)
+        # Four cells against the four-column header: a row that renders a
+        # different width silently breaks the table on the docs page.
+        for line in text.splitlines():
+            if line.startswith("| ") and "---" not in line:
+                self.assertEqual(len(line.split("|")), 6, line)
 
     def test_install_size_is_a_single_value_row(self):
         self.assertIn("| Install size (`horon-tui`) | 7.6 MB | — | 1 |", bench_tui.markdown(self.report()))
@@ -176,7 +181,9 @@ class MarkdownTest(unittest.TestCase):
     def test_skip_reason_appears_in_the_table(self):
         document = self.report()
         document["skipped"] = [{"name": "pty", "reason": "pty unavailable on Windows"}]
-        self.assertIn("pty unavailable on Windows", bench_tui.markdown(document))
+        text = bench_tui.markdown(document)
+        self.assertIn("pty unavailable on Windows", text)
+        self.assertNotIn("pty (pty", text)
 
     def test_error_appears_in_the_table(self):
         document = self.report()
