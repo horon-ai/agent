@@ -76,6 +76,14 @@ make_assets() {
   fi
 }
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 json_report() {
   local dir="$1" expression="$2"
   shift 2
@@ -201,6 +209,25 @@ fi
 grep -F "checksum mismatch: horon-agent-linux-aarch64.tar.gz" "$work/corrupt.log" >/dev/null ||
   fail "failure did not name the tampered archive: $(cat "$work/corrupt.log")"
 
+# --- failure: an archive with an unexpected layout is named ----------------
+shape="$work/bad-shape"
+make_assets "$shape" "$version"
+stage="$work/shape-stage"
+rm -rf "$stage" && mkdir -p "$stage"
+tar -xzf "$shape/horon-tui-macos-aarch64.tar.gz" -C "$stage"
+printf 'stray\n' >"$stage/README.txt"
+tar -czf "$shape/horon-tui-macos-aarch64.tar.gz" -C "$stage" .
+digest="$(sha256_of "$shape/horon-tui-macos-aarch64.tar.gz")"
+awk -v name="horon-tui-macos-aarch64.tar.gz" -v sum="$digest" \
+  '($2 == name) { $1 = sum } { print }' "$shape/SHA256SUMS" >"$shape/SHA256SUMS.new"
+mv "$shape/SHA256SUMS.new" "$shape/SHA256SUMS"
+if bash "$prepare" "$work/out-shape" "$shape" "$version" >"$work/shape.log" 2>&1; then
+  fail "prepare accepted an archive with an unexpected layout"
+fi
+grep -F "unexpected members in horon-tui-macos-aarch64.tar.gz" "$work/shape.log" >/dev/null ||
+  fail "failure did not name the mis-shaped archive: $(cat "$work/shape.log")"
+[ ! -d "$work/out-shape/horon" ] || fail "prepare wrote packages despite a mis-shaped archive"
+
 # --- failure: missing platform archive is named ----------------------------
 missing="$work/missing"
 make_assets "$missing" "$version"
@@ -210,6 +237,7 @@ if bash "$prepare" "$work/out-missing" "$missing" "$version" >"$work/missing.log
 fi
 grep -F "missing release archive: horon-tui-windows-aarch64.tar.gz" "$work/missing.log" >/dev/null ||
   fail "failure did not name the missing archive: $(cat "$work/missing.log")"
+[ ! -d "$work/out-missing/horon" ] || fail "prepare wrote packages despite a missing archive"
 
 # --- failure: wrong version on the host package ----------------------------
 wrong="$work/wrong-version"
@@ -219,5 +247,6 @@ if bash "$prepare" "$work/out-wrong" "$wrong" "$version" >"$work/wrong.log" 2>&1
 fi
 grep -F "does not report $version" "$work/wrong.log" >/dev/null ||
   fail "wrong-version failure message is missing: $(cat "$work/wrong.log")"
+[ ! -d "$work/out-wrong/horon" ] || fail "prepare wrote packages despite a version mismatch"
 
-echo "ok: prepare_cli_packages happy path and three failure paths"
+echo "ok: prepare_cli_packages happy path and five failure paths"
