@@ -91,6 +91,9 @@ mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
 mod usage;
 mod utils;
+#[cfg(test)]
+#[path = "agent/verdict_store_tests.rs"]
+mod verdict_store_tests;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
