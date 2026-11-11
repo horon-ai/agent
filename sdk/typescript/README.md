@@ -696,8 +696,10 @@ case, typing every field as `unknown`.
 
 ## Releasing
 
-See [RELEASING.md](RELEASING.md). `bash scripts/sdk/publish_preflight.sh` runs
-every gate and reports what is left.
+See [RELEASING.md](RELEASING.md). Publishing runs in
+`.github/workflows/publish-typescript-sdk.yml` on a release tag;
+`bash scripts/sdk/publish_preflight.sh` checks the local half and reports what
+is left.
 
 ## Development
 
