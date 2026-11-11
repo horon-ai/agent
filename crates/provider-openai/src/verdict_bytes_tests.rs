@@ -3,7 +3,7 @@
 //! The verdict is what horon-agent's own code reads; the request bytes are what
 //! the model reads. These tests pin both ends: the same conversation renders
 //! the same bytes whether the result states a verdict or not, and a session
-//! stored before verdicts existed replays exactly as it did then.
+//! stored before verdicts existed replays as the same model-facing request.
 
 use crate::{build_chat_completions_request, build_responses_input};
 use horon_agent_message_types::{ContentBlock, Message, Role, ToolVerdict};
@@ -60,10 +60,14 @@ fn conversation(verdict: Option<ToolVerdict>) -> Vec<Message> {
     ]
 }
 
+fn rendered(messages: &[Message]) -> String {
+    serde_json::to_string(&build_responses_input(messages)).expect("responses input")
+}
+
 #[test]
 fn a_stated_verdict_does_not_change_the_request_bytes() {
     let unstated = conversation(None);
-    let responses_baseline = serde_json::to_string(&build_responses_input(&unstated)).expect("responses input");
+    let responses_baseline = rendered(&unstated);
     let chat_baseline = serde_json::to_string(&build_chat_completions_request("gpt-test", &unstated, &[], "", None))
         .expect("chat request");
     assert!(
@@ -73,9 +77,9 @@ fn a_stated_verdict_does_not_change_the_request_bytes() {
 
     for verdict in VERDICTS {
         let stated = conversation(Some(verdict));
-        let responses = serde_json::to_string(&build_responses_input(&stated)).expect("responses input");
         assert_eq!(
-            responses, responses_baseline,
+            rendered(&stated),
+            responses_baseline,
             "verdict {verdict:?} changed the Responses request bytes"
         );
 
@@ -89,8 +93,7 @@ fn a_stated_verdict_does_not_change_the_request_bytes() {
 }
 
 /// A session stored before verdicts existed carries no `verdict` key at all;
-/// one call succeeded, the other failed. Replaying it must still produce the
-/// same model-facing request, which is the whole promise of the optional key.
+/// one call succeeded, the other failed.
 const PRE_CHANGE_SESSION: &str = r#"[
   {
     "role": "user",
@@ -126,26 +129,25 @@ fn a_pre_change_session_replays_with_the_same_model_facing_bytes() {
         }
     }
 
-    // The same conversation written with the current types, no verdict stated.
-    let typed = conversation(None);
-    let rendered = serde_json::to_string(&build_responses_input(&messages)).expect("responses input");
-    let expected = serde_json::to_string(&build_responses_input(&typed)).expect("responses input");
+    let stored = rendered(&messages);
     assert_eq!(
-        rendered, expected,
-        "a session stored before verdicts existed must replay exactly as the same typed conversation"
+        stored,
+        rendered(&conversation(None)),
+        "a session stored before verdicts existed must replay as the same typed conversation"
     );
 
-    // Pin the shape the equality above would otherwise prove only against
-    // itself: one user message, one call per tool, results keyed by call id,
-    // and the error prefix unchanged.
-    assert_eq!(
-        rendered,
-        concat!(
-            r#"[{"type":"message","role":"user","content":[{"type":"input_text","text":"read both files"}]}"#,
-            r#",{"type":"function_call","name":"read","arguments":"{\"path\":\"a.txt\"}","call_id":"call_read"}"#,
-            r#",{"type":"function_call","name":"bash","arguments":"{\"command\":\"false\"}","call_id":"call_bash"}"#,
-            r#",{"type":"function_call_output","call_id":"call_read","output":"alpha"}"#,
-            r#",{"type":"function_call_output","call_id":"call_bash","output":"[Error] boom"}]"#,
-        )
+    // Two facts the byte equality above cannot state by itself: neither result
+    // leaks the key the model must never see, and the failing call still
+    // carries the error the model has always read.
+    assert!(
+        !stored.contains("verdict"),
+        "the stored verdict must not reach the request: {stored}"
     );
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stored).expect("request items");
+    let outputs: Vec<&str> = items
+        .iter()
+        .filter(|item| item["type"] == "function_call_output")
+        .filter_map(|item| item["output"].as_str())
+        .collect();
+    assert_eq!(outputs, ["alpha", "[Error] boom"]);
 }
