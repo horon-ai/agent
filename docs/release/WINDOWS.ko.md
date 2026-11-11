@@ -66,8 +66,8 @@ $script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
 
 ```powershell
 horon --version
-Get-Command horon-agent
-Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
+Get-Command horon
+Get-FileHash (Get-Command horon).Source -Algorithm SHA256
 ```
 
 해시를 해당 [GitHub 릴리스](https://github.com/horon-ai/agent/releases/latest)의 `SHA256SUMS`와 비교한다.
@@ -75,7 +75,7 @@ Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
 Authenticode 서명을 켠 뒤에는 다음 명령이 `Valid`를 보고해야 한다.
 
 ```powershell
-Get-AuthenticodeSignature (Get-Command horon-agent).Source | Format-List Status,StatusMessage,SignerCertificate
+Get-AuthenticodeSignature (Get-Command horon).Source | Format-List Status,StatusMessage,SignerCertificate
 ```
 
 ## Microsoft Defender와 SmartScreen

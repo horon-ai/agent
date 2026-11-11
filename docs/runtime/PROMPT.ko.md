@@ -175,7 +175,7 @@ Rust 호출자는 `create_session_with_options(CreateSessionOptions { working_di
 지킨다. `chillax`는 강도를 올리지 않고 `ultrathink`는 내리지 않는다. `swarm`과 `swarm-deep`은
 추론 단계가 아니라 오케스트레이션 모드이므로 키워드가 만들지도, 맞추지도 않는다.
 
-키워드는 사용자가 쓴 턴 본문에서만 읽는다. 클라이언트 메시지 턴, REPL 사용자 입력, `horon-agent
+키워드는 사용자가 쓴 턴 본문에서만 읽는다. 클라이언트 메시지 턴, REPL 사용자 입력, `horon
 run`의 첫 반복이 그렇다. 합성 메시지나 에이전트가 만든 메시지(swarm 배정, 재개 복구, 라이브
 턴, overnight, advisor, ambient, debug, swarm 플래너, 자동 재촉 연속 턴)는 키워드를 세우지
 않는다.

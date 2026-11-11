@@ -107,7 +107,7 @@ horon run "summarize this repo"
   "agent_servers": {
     "horon agent": {
       "type": "custom",
-      "command": "/absolute/path/to/horon-agent",
+      "command": "/absolute/path/to/horon",
       "args": ["acp"]
     }
   }

@@ -27,7 +27,7 @@ Zed (`settings.json`):
   "agent_servers": {
     "horon agent": {
       "type": "custom",
-      "command": "/absolute/path/horon-agent",
+      "command": "/absolute/path/horon",
       "args": ["acp"]
     }
   }
@@ -40,7 +40,7 @@ JetBrains (`~/.jetbrains/acp.json`):
 {
   "agent_servers": {
     "horon agent": {
-      "command": "/absolute/path/horon-agent",
+      "command": "/absolute/path/horon",
       "args": ["acp"]
     }
   }

@@ -27,7 +27,7 @@ Zed(`settings.json`):
   "agent_servers": {
     "horon agent": {
       "type": "custom",
-      "command": "/절대/경로/horon-agent",
+      "command": "/절대/경로/horon",
       "args": ["acp"]
     }
   }
@@ -40,7 +40,7 @@ JetBrains(`~/.jetbrains/acp.json`):
 {
   "agent_servers": {
     "horon agent": {
-      "command": "/절대/경로/horon-agent",
+      "command": "/절대/경로/horon",
       "args": ["acp"]
     }
   }

@@ -265,7 +265,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이 응답은 복제 프로토콜에 속하지 않으므로 `protocol_version`이 필요 없다.
 다른 저장 세션 읽기를 이미 막는 `session_replication_v1` 기능을 요구한다. 없는
 세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
-`horon-agent export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
+`horon export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
 같은 바이트를 쓴다.
 
 클라이언트가 어겨서는 안 되는 규칙 두 가지:

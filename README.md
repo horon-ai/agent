@@ -107,7 +107,7 @@ Register `horon` (or `horon-agent`) with the argument `acp` as an external agent
   "agent_servers": {
     "horon agent": {
       "type": "custom",
-      "command": "/absolute/path/to/horon-agent",
+      "command": "/absolute/path/to/horon",
       "args": ["acp"]
     }
   }

@@ -66,8 +66,8 @@ A source build needs Git, Rust and Visual Studio 2022 Build Tools with the **Des
 
 ```powershell
 horon --version
-Get-Command horon-agent
-Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
+Get-Command horon
+Get-FileHash (Get-Command horon).Source -Algorithm SHA256
 ```
 
 Compare the hash with `SHA256SUMS` in the matching [GitHub release](https://github.com/horon-ai/agent/releases/latest).
@@ -75,7 +75,7 @@ Compare the hash with `SHA256SUMS` in the matching [GitHub release](https://gith
 Once Authenticode signing is on, this command must report `Valid`:
 
 ```powershell
-Get-AuthenticodeSignature (Get-Command horon-agent).Source | Format-List Status,StatusMessage,SignerCertificate
+Get-AuthenticodeSignature (Get-Command horon).Source | Format-List Status,StatusMessage,SignerCertificate
 ```
 
 ## Microsoft Defender and SmartScreen
