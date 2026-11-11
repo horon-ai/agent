@@ -64,6 +64,11 @@ is_cli_bundle() {
 TARGETS=()
 [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ] && TARGETS+=("$LAUNCHER (launcher)")
 [ -d "$BUILDS_DIR" ] && TARGETS+=("$BUILDS_DIR (installed binaries: stable/current/canary/versions)")
+# The interactive client lives inside the version directories above. A copy
+# beside the launcher is defensive: earlier layouts and wrappers could leave one.
+if [ -e "$LAUNCHER_DIR/horon-tui${LAUNCHER##*horon-agent}" ]; then
+  TARGETS+=("$LAUNCHER_DIR/horon-tui${LAUNCHER##*horon-agent} (interactive client)")
+fi
 if [ "$OS" = "Darwin" ]; then
   # Only CLI-generated bundles. A HoronAgent Desktop app placed in ~/Applications
   # has a different bundle identifier and is left alone.

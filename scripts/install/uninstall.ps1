@@ -301,6 +301,10 @@ if ($Purge -and -not (Test-HoronAgentSafePurgePath $userDataDir)) {
 
 $targets = @()
 if (Test-Path -LiteralPath $launcherPath) { $targets += "$launcherPath (launcher)" }
+# The interactive client lives inside the version directories above. A copy
+# beside the launcher is defensive: earlier layouts and wrappers could leave one.
+$tuiLauncherPath = Join-Path $InstallDir "horon-tui.exe"
+if (Test-Path -LiteralPath $tuiLauncherPath) { $targets += "$tuiLauncherPath (interactive client)" }
 foreach ($path in $launcherBackupPaths) { $targets += "$path (previous live-upgrade launcher)" }
 if (Test-Path -LiteralPath $buildsDir) { $targets += "$buildsDir (installed binaries)" }
 if (Test-Path -LiteralPath $startupShortcutPath) { $targets += "$startupShortcutPath (launch-hotkey startup shortcut)" }
@@ -383,6 +387,10 @@ foreach ($alias in @("horon.exe", "hrn.exe")) {
 if (Test-Path -LiteralPath $launcherPath) {
     Remove-Item -LiteralPath $launcherPath -Force
     Write-Info "Removed $launcherPath"
+}
+if (Test-Path -LiteralPath $tuiLauncherPath) {
+    Remove-Item -LiteralPath $tuiLauncherPath -Force
+    Write-Info "Removed $tuiLauncherPath"
 }
 
 foreach ($path in $launcherBackupPaths) {
