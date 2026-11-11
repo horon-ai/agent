@@ -331,6 +331,49 @@ request, the stored transcript, and one rollover per request;
 `crates/app-core/src/tool/new_context_tests.rs` covers the plan-mode refusal, the
 registration gate, and one pending request per turn.
 
+## Handoff compaction
+
+A handoff compaction writes a generated handoff document as the boundary instead
+of a model summary. The document describes what the session was doing, what it
+decided and what is left, so a successor session can continue from it
+(`crates/app-core/src/agent/handoff_compaction.rs`).
+
+### Trigger
+
+Three callers can ask for it. The harness API takes the existing `compact`
+request with `method: "handoff"`; the reply is the outcome, not an
+acknowledgement. An overnight supervisor runs it once at its handoff-ready point,
+thirty minutes or a quarter of the run before the target wake time, so the
+coordinator turns after it read the document instead of the night's transcript.
+ACP has no compaction command in this build, so an ACP client cannot trigger one.
+
+### The token-budget tail
+
+The recent-token budget (`[compaction] recent_tokens`, 20,000 by default) stays
+verbatim. The document covers everything before that tail and the outcome reports
+how many messages it covered. When every message fits inside the budget there is
+nothing to cover, and the request reports that instead of writing an empty
+document.
+
+### The document is not validated
+
+Generation is one completion. Its text is committed as-is: a missing heading or
+an omitted section is not a failure, and the boundary still keeps the document
+plus the verbatim tail. Nothing re-reads the document to grade it.
+
+### Failure and cancellation
+
+A provider error or a cancellation commits nothing: the message count, the
+transcript and the previous boundary are exactly what they were. Both are
+reported to the caller as outcomes, and an overnight run logs them and continues
+with its remaining turns.
+
+Tests: `crates/app-core/src/agent/handoff_compaction_tests.rs` covers the
+committed boundary, the uncovered tail, the provider error and the cancellation;
+`crates/app-core/src/overnight_handoff_tests.rs` covers the supervisor pass and
+its failure path; `crates/harness-api-server/src/translate_handoff_tests.rs`
+covers the request field and the reported outcomes.
+
 ## `--resume` behaviour
 
 This build has no interactive session picker. Session resume is a single global `--resume`

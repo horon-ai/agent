@@ -65,6 +65,46 @@ Four events were added: `runtime_state`, `control_receipt`, `snapshot_marker` an
 
 The protocol shape and SDK methods of `apply_control`/`get_control_receipt` and `get_snapshot` are settled, but the storage and observation implementation behind them belongs to separate work. Until that work lands, the bridge answers these requests with `unsupported`. From the client's side that is the same "this server does not offer it yet" answer, so no branching changes.
 
+## Handoff compaction
+
+`compact` takes an optional `method`. Absent is the model summary a client has
+always requested: the reply is `compacted` and means the request was accepted,
+because the daemon summarizes at its next safe point.
+
+`method: "handoff"` writes a generated handoff document as the boundary instead,
+and the reply arrives after that write. It is the outcome, not an
+acknowledgement.
+
+Request:
+
+```json
+{"id": 4, "req": "compact", "session_id": "s-1", "method": "handoff"}
+```
+
+Response, the same `compacted` event with `handoff` attached:
+
+```json
+{"id": 4, "event": "compacted", "session_id": "s-1", "message": "Committed a handoff document covering the first 120 messages.",
+ "handoff": {"outcome": "committed", "covered": 120}}
+```
+
+| `handoff.outcome` | Meaning |
+| --- | --- |
+| `committed` | The document became the boundary. `covered` is how many messages it covers; the recent-token tail stays verbatim |
+| `nothing_to_cover` | Every message fits inside the recent-token budget, so no document was written |
+| `provider_error` | The completion failed. `detail` carries the provider's message. The transcript is unchanged |
+| `cancelled` | The generation was cancelled before it answered. The transcript is unchanged |
+
+No capability gates this field: a server that predates it ignores an unknown
+field on the request and answers without `handoff`, so a client that sends
+`method` to an older daemon must treat a missing `handoff` as "not supported by
+this server" rather than as `nothing_to_cover`. A value the server does not know
+is refused as `invalid_request`.
+
+The request itself has no cancel signal. One bounded completion decides it, so a
+client that stops waiting leaves the generation running; it does not roll back a
+boundary that is already committed.
+
 ## Tool argument repair (protocol 1.16)
 
 A provider's JSON writer sometimes types a tool argument wrong: `"5000"` where a

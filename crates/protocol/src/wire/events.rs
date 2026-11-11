@@ -889,6 +889,10 @@ pub enum ServerEvent {
         message: String,
         /// Whether compaction was started successfully
         success: bool,
+        /// Present when the request asked for a handoff document. Absent for
+        /// the summary path, so older clients see the frame they always saw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff: Option<HandoffCompactionReport>,
     },
 
     /// Response to resume_all_sessions — summary of which sessions were continued.

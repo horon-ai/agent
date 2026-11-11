@@ -21,6 +21,7 @@ mod goal_continuation;
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
 mod handoff_compaction;
+pub use handoff_compaction::HandoffOutcome;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
