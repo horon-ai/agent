@@ -13,6 +13,7 @@ pub mod app;
 pub mod commands;
 pub mod input;
 pub mod keys;
+pub mod overlays;
 pub mod prompts;
 pub mod sdk_bridge;
 pub mod settings;
@@ -63,6 +64,7 @@ Commands:
                  markdown files under .horon/commands and $HORON_HOME/commands
   /clear         clear the transcript pane
   /model [name]  list the models, or switch to the one named
+  /settings      open the settings screen, generated from the registry
   /quit          leave
   //text         send the literal message /text
 ";
@@ -231,21 +233,12 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
         app.warn(format!("keys: {warning}"));
     }
     app.bindings = keys.bindings().clone();
-    for warning in themes.apply(reloader.settings()) {
-        app.warn(format!("theme: {warning}"));
-    }
-    app.theme = themes.theme().clone();
-    app.symbols = *themes.symbols();
+    apply_settings(&mut app, reloader.settings(), &mut themes);
     match std::env::current_dir() {
         Ok(directory) => app.cwd = Some(directory.display().to_string()),
         Err(error) => app.warn(format!("cannot read the working directory: {error}")),
     }
     app.reload_commands();
-    let (layout, layout_warnings) = statusline::Layout::from_settings(reloader.settings());
-    app.statusline = layout;
-    for warning in layout_warnings {
-        app.warn(format!("statusline: {warning}"));
-    }
     install_panic_hook();
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -257,6 +250,58 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
     ratatui::restore();
     code
+}
+
+/// Apply a resolved settings snapshot to the app and the theme loader.
+///
+/// Startup, a file change, and a save from the settings screen all end here, so
+/// a value reaches the renderer by one path and a warning is reported once.
+pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, themes: &mut ThemeLoader) {
+    for warning in themes.apply(settings) {
+        app.warn(format!("theme: {warning}"));
+    }
+    let (layout, layout_warnings) = statusline::Layout::from_settings(settings);
+    app.statusline = layout;
+    for warning in layout_warnings {
+        app.warn(format!("statusline: {warning}"));
+    }
+    app.refresh_settings(settings);
+    app.theme = themes.theme().clone();
+    app.symbols = *themes.symbols();
+}
+
+/// Write the change the settings screen confirmed, then re-apply it.
+///
+/// A rejected save changes nothing in memory: the banner names the file and the
+/// error, and the screen keeps showing the value that is still in force.
+pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloader, themes: &mut ThemeLoader) {
+    let Some(change) = app.take_setting_change() else {
+        return;
+    };
+    match reloader.save_global(change.id, &change.value) {
+        Ok(warnings) => {
+            for warning in warnings {
+                app.warn(format!("settings: {warning}"));
+            }
+            app.banner = None;
+            app.transcript.push_notice(format!(
+                "settings: saved {} to {}",
+                change.id,
+                reloader.sources().global.display()
+            ));
+            let settings = reloader.settings().clone();
+            apply_settings(app, &settings, themes);
+        }
+        Err(error) => {
+            app.banner = Some(format!(
+                "settings: cannot save {} to {}: {error}",
+                change.id,
+                reloader.sources().global.display()
+            ));
+            let current = reloader.settings().clone();
+            app.refresh_settings(&current);
+        }
+    }
 }
 
 /// Restore the terminal before the default hook prints a panic message.
@@ -289,24 +334,18 @@ where
         // The reloader throttles itself to one file check per second; the
         // theme loader, the key bindings and the command directories share
         // that cadence for their own files.
-        let mut themed = false;
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
             }
-            for warning in themes.apply(&reload.settings) {
+            apply_settings(app, &reload.settings, themes);
+        }
+        let theme_warnings = themes.tick();
+        if !theme_warnings.is_empty() {
+            for warning in theme_warnings {
                 app.warn(format!("theme: {warning}"));
             }
-            let (layout, layout_warnings) = statusline::Layout::from_settings(&reload.settings);
-            app.statusline = layout;
-            for warning in layout_warnings {
-                app.warn(format!("statusline: {warning}"));
-            }
-            themed = true;
-        }
-        for warning in themes.tick() {
-            app.warn(format!("theme: {warning}"));
-            themed = true;
+            apply_settings(app, reloader.settings(), themes);
         }
         if let Some(reload) = keys.tick() {
             for warning in reload.warnings {
@@ -314,13 +353,9 @@ where
             }
             app.bindings = reload.bindings;
         }
-        // Command directories are only stat-ed here; the files are re-read when
-        // a directory's timestamp moved.
+        // Command directories are only stat-ed here; a file is re-read when its
+        // own stamp moved.
         app.tick_commands();
-        if themed {
-            app.theme = themes.theme().clone();
-            app.symbols = *themes.symbols();
-        }
         if let Err(message) = draw(terminal, app) {
             eprintln!("horon-tui: {message}");
             return 1;
@@ -345,6 +380,7 @@ where
                 if let Some(action) = app.on_key(key) {
                     dispatch(app, commands, action);
                 }
+                flush_setting_change(app, reloader, themes);
             }
             Ok(_) => {}
             Err(error) => {
@@ -478,18 +514,30 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         ),
     ]);
     frame.render_widget(Paragraph::new(input), input_area);
-    let cursor_x = input_area
-        .x
-        .saturating_add(symbols.prompt_marker_width())
-        .saturating_add(1)
-        .saturating_add(app.input.cursor_column());
-    frame.set_cursor_position((cursor_x, input_area.y));
     if let Some(hint) = hint {
         index += 1;
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(theme.core.muted)))),
             areas[index],
         );
+    }
+    // The settings screen covers the conversation rather than the input, so
+    // closing it reveals the transcript unchanged and the message being typed
+    // stays visible under it.
+    match app.overlay.as_ref() {
+        Some(overlay) => {
+            if let Some((x, y)) = overlays::settings::draw(frame, transcript_area, overlay, theme, symbols) {
+                frame.set_cursor_position((x, y));
+            }
+        }
+        None => {
+            let cursor_x = input_area
+                .x
+                .saturating_add(symbols.prompt_marker_width())
+                .saturating_add(1)
+                .saturating_add(app.input.cursor_column());
+            frame.set_cursor_position((cursor_x, input_area.y));
+        }
     }
 }
 
