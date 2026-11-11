@@ -240,6 +240,19 @@ jobs:
         shell: bash
         run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py
 
+      - name: npm CLI package gate
+        # The npm distribution is generated, so its shape is only real when
+        # something builds it: the script assembles the six platform packages
+        # from fake archives, one per archive shape (linux wrapper + payload,
+        # single-file, Windows .exe), and the launcher test covers argument and
+        # environment hand-off plus the two failure messages. Node ships with
+        # the hosted runner image; no setup step is needed for one test file.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          bash scripts/npm/test_prepare_cli_packages.sh
+          node --test npm/horon/test/launcher.test.mjs
+
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
         shell: bash
