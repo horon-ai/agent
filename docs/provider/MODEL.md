@@ -72,6 +72,7 @@ A model role is a named workload-to-model mapping shared by every feature that n
 | `default` | Every turn of the session unless a more specific role applies. A bare `--model` or `/model` names this role for the run. | `default` |
 | `plan` | Planning turns: the model that writes a plan before execution hands off (#70). | `plan` |
 | `aux` | Cheap auxiliary work: compaction summaries, titles, classification, memory extraction. | `aux` |
+| `judge` | Typed judgments: one bounded call answering a `bool`, `choice`, or `score` question about text the turn already produced. Today the single caller is unexpected-stop recovery (`docs/runtime/TURNS.md`). | `judge` |
 
 No other role exists. A new role is added only together with the workload that calls it. Reason: a role with no named caller is a second spelling of `default`, and a role that appears before its consumer cannot be reviewed for the model it should point at.
 
@@ -103,12 +104,12 @@ A workload that asks for a role resolves it in this order, and the first step th
 
 1. The override for this run or turn (`--model` names `default`; a handoff sets `plan` through the existing model switch).
 2. The role's own entry under `[providers.<name>.roles]`.
-3. The `default` role's entry.
+3. The entry of each role this role inherits from, in that role's declared order: `plan` and `aux` inherit `default`, and `judge` inherits `aux` then `default`.
 4. The profile's `default_model`.
 5. `[provider] default_model`.
 6. An error that names the workload and the keys that were empty.
 
-An empty string counts as unset at every step. `aux` walks the same chain, so a profile with only `default_model` uses today's model for auxiliary work. Reason: steps 1, 4, and 5 are the order the agent already resolves one model today; roles slot in above them, so every existing file resolves to the same model it resolves to now, and an unset role inherits instead of failing.
+An empty string counts as unset at every step. `aux` walks the same chain, so a profile with only `default_model` uses today's model for auxiliary work. `judge` inherits `aux` before `default` so a profile that already names one cheap model for side work judges with it instead of spending the session model. Reason: steps 1, 4, and 5 are the order the agent already resolves one model today; roles slot in above them, so every existing file resolves to the same model it resolves to now, and an unset role inherits instead of failing.
 
 ### Fallback and failover order
 
@@ -125,6 +126,14 @@ The switch lasts for the rest of the turn and the next turn starts again from th
 #73 writes the shared type: the `roles` table on `NamedProviderConfig` in `crates/config-types/src/lib.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
 
 An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
+
+### The `judge` role in practice
+
+`crates/provider-core/src/judge.rs` owns the pure half of a judgment: the prompt (`JudgeRequest::prompt`), the response schema (`response_schema`), the limits (64 questions, 48 KiB of state, 4 KiB of instructions per question, 64 choice labels, 64 score levels), and a strict parser that rejects an invented label, an out-of-range probability, a missing or duplicated id, and any extra field. `crates/base/src/judge.rs` owns the half that needs configuration: `resolve_judge_model` walks the chain above, and `judge_with` forks the caller's provider, selects the resolved model, waits inside the attempt budget, and returns the parsed answers with the provider's usage.
+
+A judgment is an ordinary `/chat/completions` call, so this role adds no endpoint and no credential; that keeps the build's one-model-path rule intact. A model that cannot be selected is an error, never a silent inheritance of the session model: the point of a judgment is a second model's opinion. The attempt budget is `[autojudge] attempt_timeout_ms`: it defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. The budget covers the whole attempt, model selection included, because a judgment holds up the turn it is judging.
+
+The role is named `judge` and the `/judge` command is a different workload: `/judge` spawns a reviewer worker inside a swarm and resolves its model through the session agent-model overrides (`/model judge`, `/agents judge <model>`). Both read `[autojudge] model` as their model override, so one setting names the model in both places, but a judgment never spawns a worker and a worker never answers a typed question.
 
 ### What the fallback list looks like at runtime
 

@@ -52,6 +52,26 @@
 
 기본값은 `conservative`다. 증명 가능한 잘림과 닫히지 않은 구조만 이어 붙이고, 의미 추정은 운영자가 `aggressive`를 고를 때만 쓴다.
 
+### 의미 분류에 대한 두 번째 의견
+
+`SemanticPrematureStop`은 분류기가 추측만 하는 유일한 분류다. 마지막 문장을 읽고 다음에 하겠다는 패턴에 맞춰 본다. `[autojudge] enabled = true`이면 턴이 `judge` 역할에 그 분류 하나만 묻는 `bool` 질문을 보낸다. 사용자가 요청한 일을 끝내기 전에 멈췄는지이고, 추측 대신 그 답으로 판단한다.
+
+| 상황 | 동작 |
+| --- | --- |
+| `[autojudge] enabled = false`(기본값) | 요청하지 않는다. `RecoveryMode`가 이전과 똑같이 정한다. |
+| 판단이 `probability >= 0.5`로 답함 | `off`를 뺀 모든 모드에서 그 분류에 따라 행동한다. |
+| 판단이 `0.5` 미만으로 답함 | `aggressive`에서도 행동하지 않는다. |
+| `judge` 모델을 해석하지 못함, 응답이 규격을 벗어남, 백엔드 실패, `[autojudge] attempt_timeout_ms` 초과 | 페일 오픈. `RecoveryMode`가 정하고 실패는 1분에 최대 한 번 기록한다. |
+| `BudgetTruncated`, `UnclosedStructure` | 판단하지 않는다. 증명 가능한 분류라 판단은 결과를 바꾸지 못하고 요청만 쓴다. |
+
+판단은 `judge` 역할의 모델로 실행하고(`docs/provider/MODEL.ko.md`) 시도는 한 번이며 내부 재시도가 없다. 예상 밖 종료 하나에 판단은 최대 한 번이므로 한 실행의 판단은 `MAX_AUTO_CONTINUATIONS + 1`을 넘지 않는다. 예산은 모델 선택, 요청, 파싱을 모두 포함한 시도 전체에 적용되며 네트워크 대기에만 걸리지 않는다.
+
+`attempt_timeout_ms` 기본값은 3000이고 `0`은 기한을 없애는 대신 기본값을 뜻하며 30초를 넘는 값은 30초로 자른다. 기한 없는 값은 일부러 두지 않았다. 판단은 판정 대상 턴을 붙잡으므로 응답하지 않는 제공자에 턴이 멈추는 것이야말로 이 예산이 막으려는 실패다. 설정 키는 `[autojudge] attempt_timeout_ms`이고 `HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS`가 프로세스 하나에 한해 덮어쓴다.
+
+`conservative`에서 `autojudge`를 켜면 그 모드가 행동하는 범위가 넓어진다. 판단이 확신한 의미상 조기 종료는 이제 이어지고, 추측만으로는 이어지지 않았다. 이것이 이 스위치의 요점이다. 보정된 답은 패턴 일치가 할 수 없는 곳에서 행동할 수 있고, 그래서 기본값이 꺼짐이다.
+
+`/judge` 명령은 다른 작업이다. 스웜 안에서 검토 워커를 띄우고 세션 에이전트 모델 덮어쓰기로 모델을 고른다. 역할과 `[autojudge] model` 덮어쓰기를 함께 쓰지만 타입 있는 질문에는 답하지 않는다.
+
 ### 자동 계속은 턴당 두 번까지다
 
 합성 계속은 `MAX_AUTO_CONTINUATIONS = 2`로 제한된다(`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState`는 이 값을 넘기지 않고(`crates/agent-runtime/src/turn_state.rs:215-219` `record_auto_continuation`이 상한으로 자른다), 새 턴은 `TurnState::new()`가 0에서 시작하므로 예산이 초기화된다(`crates/agent-runtime/src/turn_state.rs:82-100`, 테스트 `crates/agent-runtime/src/turn_state_tests.rs:18-26`). 한도를 다 쓰면 복구를 멈추고 사용자에게 알린다(`crates/app-core/src/agent/turn_recovery_wiring.rs:136`).
