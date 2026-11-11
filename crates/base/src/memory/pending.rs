@@ -9,12 +9,12 @@ type InjectedMemoryIdsBySession = HashMap<String, HashMap<String, Instant>>;
 /// Keyed by session ID so each session gets its own pending memory.
 static PENDING_MEMORY: Mutex<Option<HashMap<String, QueuedPendingMemory>>> = Mutex::new(None);
 
-/// Keep scope validation private so legacy PendingMemory struct literals and
-/// consumers remain source-compatible. None is an unscoped legacy publication,
-/// not a global-only publication (whose binding has project_dir = None).
+/// A queued result always carries the binding it was validated against, so a
+/// payload can never be consumed by a session whose project scope differs.
+/// `project_dir = None` means global-only, never the process cwd.
 struct QueuedPendingMemory {
     pending: PendingMemory,
-    binding: Option<PendingBinding>,
+    binding: PendingBinding,
 }
 
 #[derive(PartialEq, Eq)]
@@ -197,26 +197,16 @@ fn snapshot_selected_memories(
     Ok((snapshots, entries))
 }
 
-/// Take pending memory if available and fresh for the given session.
-pub fn take_pending_memory(session_id: &str) -> Option<PendingMemory> {
-    take_pending_memory_inner(session_id, None)
-}
-
-/// Take pending memory only for the exact current project binding. None means
-/// global-only, never the process cwd. Validation happens before dedup or IDs
-/// are marked injected, and failed payloads are removed rather than recycled.
-pub fn take_pending_memory_for_project(session_id: &str, project_dir: Option<&str>) -> Option<PendingMemory> {
-    take_pending_memory_inner(session_id, Some(project_dir))
-}
-
-fn take_pending_memory_inner(session_id: &str, expected_project: Option<Option<&str>>) -> Option<PendingMemory> {
+/// Take pending memory only for the exact current project binding of the given
+/// session. None means global-only, never the process cwd. Validation happens
+/// before dedup or IDs are marked injected, and failed payloads are removed
+/// rather than recycled.
+pub fn take_pending_memory(session_id: &str, project_dir: Option<&str>) -> Option<PendingMemory> {
     let queued = {
         let mut guard = PENDING_MEMORY.lock().ok()?;
         guard.as_mut()?.remove(session_id)?
     };
-    if let Some(expected) = expected_project
-        && queued.binding.as_ref().map(|binding| binding.project_dir.as_deref()) != Some(expected)
-    {
+    if queued.binding.project_dir.as_deref() != project_dir {
         crate::memory_log::log_pending_discarded(session_id, "project binding changed or missing");
         return None;
     }
@@ -224,13 +214,11 @@ fn take_pending_memory_inner(session_id: &str, expected_project: Option<Option<&
         crate::memory_log::log_pending_discarded(session_id, "stale (>120s)");
         return None;
     }
-    if let Some(binding) = &queued.binding {
-        let valid = snapshot_selected_memories(binding.project_dir.as_deref(), &queued.pending.memory_ids)
-            .is_ok_and(|(current, _)| current == binding.snapshots);
-        if !valid {
-            crate::memory_log::log_pending_discarded(session_id, "selected memory changed, forgotten, or unreadable");
-            return None;
-        }
+    let valid = snapshot_selected_memories(queued.binding.project_dir.as_deref(), &queued.pending.memory_ids)
+        .is_ok_and(|(current, _)| current == queued.binding.snapshots);
+    if !valid {
+        crate::memory_log::log_pending_discarded(session_id, "selected memory changed, forgotten, or unreadable");
+        return None;
     }
     let pending = queued.pending;
 
@@ -286,31 +274,14 @@ fn take_pending_memory_inner(session_id: &str, expected_project: Option<Option<&
     Some(pending)
 }
 
-/// Store a pending memory result for the given session.
-pub fn set_pending_memory(session_id: &str, prompt: String, count: usize) {
-    set_pending_memory_with_ids(session_id, prompt, count, Vec::new());
-}
-
-/// Store a pending memory result with associated memory IDs for dedup tracking.
-pub fn set_pending_memory_with_ids(session_id: &str, prompt: String, count: usize, memory_ids: Vec<String>) {
-    set_pending_memory_with_ids_and_display(session_id, prompt, count, memory_ids, None);
-}
-
-/// Store a pending memory result with associated memory IDs and optional display-only content.
-pub fn set_pending_memory_with_ids_and_display(
-    session_id: &str,
-    prompt: String,
-    count: usize,
-    memory_ids: Vec<String>,
-    display_prompt: Option<String>,
-) {
-    store_pending_memory(session_id, prompt, count, memory_ids, display_prompt, None);
-}
-
 /// Publish a result bound to the selected project and its current memory
 /// content. Verify the canonical prompt too, closing the race where a fact was
 /// edited during the async judge call, before this publication could snapshot it.
-pub fn set_pending_memory_for_project(
+///
+/// Every publication is bound to a project scope (`None` is global-only) and
+/// validated against stored memory IDs; there is no unscoped entry point, so a
+/// result computed for one project can never surface in another.
+pub fn set_pending_memory(
     session_id: &str,
     prompt: String,
     count: usize,
@@ -324,7 +295,7 @@ pub fn set_pending_memory_for_project(
 /// Automatic publishers must retain the entries actually judged by Jev. A
 /// canonical prompt alone cannot detect tags-only edits while inference was in
 /// flight, because tags are model input but not part of the rendered prompt.
-pub(crate) fn set_pending_memory_for_project_with_selection(
+pub(crate) fn set_pending_memory_with_selection(
     session_id: &str,
     prompt: String,
     count: usize,
@@ -388,10 +359,10 @@ fn publish_scoped_memory(
         count,
         memory_ids,
         display_prompt,
-        Some(PendingBinding {
+        PendingBinding {
             project_dir: project_dir.map(str::to_owned),
             snapshots,
-        }),
+        },
     );
 }
 
@@ -401,7 +372,7 @@ fn store_pending_memory(
     count: usize,
     memory_ids: Vec<String>,
     display_prompt: Option<String>,
-    binding: Option<PendingBinding>,
+    binding: PendingBinding,
 ) {
     crate::memory_log::log_pending_prepared(session_id, &prompt, count, &memory_ids);
 
@@ -507,17 +478,6 @@ pub fn is_memory_injected(session_id: &str, id: &str) -> bool {
     false
 }
 
-/// Check if a memory ID has already been injected in ANY session.
-/// Used by the singleton memory agent which doesn't track per-session state.
-pub fn is_memory_injected_any(id: &str) -> bool {
-    if let Ok(guard) = INJECTED_MEMORY_IDS.lock()
-        && let Some(outer) = guard.as_ref()
-    {
-        return outer.values().any(|set| set.get(id).is_some_and(injected_recently));
-    }
-    false
-}
-
 /// Clear injected memory tracking for a session (call on session reset or topic change).
 pub fn clear_injected_memories(session_id: &str) {
     if let Ok(mut guard) = LAST_INJECTED_PROMPT_SIGNATURE.lock()
@@ -611,15 +571,6 @@ pub fn has_pending_memory(session_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Check if there's any pending memory across all sessions.
-pub fn has_any_pending_memory() -> bool {
-    PENDING_MEMORY
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|m| !m.is_empty()))
-        .unwrap_or(false)
-}
-
 pub(super) fn begin_memory_check(session_id: &str) -> bool {
     if let Ok(mut guard) = MEMORY_CHECK_IN_PROGRESS.lock() {
         let set = guard.get_or_insert_with(HashSet::new);
@@ -637,10 +588,13 @@ pub(super) fn finish_memory_check(session_id: &str) {
 }
 
 #[cfg(test)]
-pub(super) fn insert_pending_memory_for_test(session_id: &str, pending: PendingMemory) {
+pub(super) fn backdate_pending_memory_for_test(session_id: &str, age: std::time::Duration) {
     let mut guard = PENDING_MEMORY.lock().expect("pending memory lock");
-    let map = guard.get_or_insert_with(HashMap::new);
-    map.insert(session_id.to_string(), QueuedPendingMemory { pending, binding: None });
+    if let Some(map) = guard.as_mut()
+        && let Some(queued) = map.get_mut(session_id)
+    {
+        queued.pending.computed_at = Instant::now() - age;
+    }
 }
 
 #[cfg(test)]
@@ -655,301 +609,5 @@ pub(super) fn backdate_injected_memory_for_test(session_id: &str, id: &str, age:
 }
 
 #[cfg(test)]
-mod scoped_tests {
-    use super::*;
-    use crate::memory::{MemoryCategory, MemoryEntry, MemoryManager};
-    use crate::memory_graph::MemoryGraph;
-
-    struct HomeGuard {
-        previous: Option<std::ffi::OsString>,
-        _dir: tempfile::TempDir,
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            clear_all_pending_memory();
-            match self.previous.take() {
-                Some(home) => crate::env::set_var("HORON_HOME", home),
-                None => crate::env::remove_var("HORON_HOME"),
-            }
-        }
-    }
-
-    fn fixture(test: impl FnOnce()) {
-        let _env = crate::storage::lock_test_env();
-        let _pending = super::super::tests::PENDING_MEMORY_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let home = HomeGuard {
-            previous: std::env::var_os("HORON_HOME"),
-            _dir: tempfile::tempdir().expect("isolated memory home"),
-        };
-        crate::env::set_var("HORON_HOME", home._dir.path());
-        clear_all_pending_memory();
-        test();
-    }
-
-    fn manager(project: Option<&str>) -> MemoryManager {
-        match project {
-            Some(project) => MemoryManager::new().with_project_dir(project),
-            None => MemoryManager::new(),
-        }
-    }
-
-    fn fact(content: &str) -> MemoryEntry {
-        MemoryEntry::new(MemoryCategory::Fact, content)
-    }
-
-    fn save(project: Option<&str>, global: bool, entries: &[MemoryEntry]) {
-        let mut graph = MemoryGraph::new();
-        for entry in entries {
-            graph.add_memory(entry.clone());
-        }
-        let manager = manager(project);
-        if global {
-            manager.save_global_graph(&graph).unwrap();
-        } else {
-            manager.save_project_graph(&graph).unwrap();
-        }
-    }
-
-    fn publish(session: &str, project: Option<&str>, entries: &[MemoryEntry]) {
-        set_pending_memory_for_project(
-            session,
-            super::super::format_relevant_prompt(entries, entries.len()).unwrap(),
-            entries.len(),
-            entries.iter().map(|entry| entry.id.clone()).collect(),
-            None,
-            project,
-        );
-    }
-
-    #[test]
-    fn project_switch_drops_payload_before_injected_bookkeeping() {
-        fixture(|| {
-            let entry = fact("Project-specific build command");
-            save(Some("/project/a"), false, std::slice::from_ref(&entry));
-            // Even an identical ID/content in another project cannot authorize
-            // a result selected against the previous project's context.
-            save(Some("/project/b"), false, std::slice::from_ref(&entry));
-            publish("switch", Some("/project/a"), std::slice::from_ref(&entry));
-            assert!(take_pending_memory_for_project("switch", Some("/project/b")).is_none());
-            assert!(!is_memory_injected("switch", &entry.id));
-            assert!(!has_pending_memory("switch"));
-            publish("switch", Some("/project/b"), std::slice::from_ref(&entry));
-            assert!(take_pending_memory_for_project("switch", Some("/project/b")).is_some());
-            assert!(is_memory_injected("switch", &entry.id));
-        });
-    }
-
-    #[test]
-    fn new_project_publication_replaces_same_prompt_from_old_project() {
-        fixture(|| {
-            let entry = fact("A globally stored preference");
-            save(None, true, std::slice::from_ref(&entry));
-            publish("replace", Some("/project/a"), std::slice::from_ref(&entry));
-            publish("replace", Some("/project/b"), std::slice::from_ref(&entry));
-            assert!(take_pending_memory_for_project("replace", Some("/project/b")).is_some());
-        });
-    }
-
-    #[test]
-    fn forgotten_after_selection_drops_whole_payload() {
-        fixture(|| {
-            let first = fact("First selected fact");
-            let second = fact("Second selected fact");
-            let entries = [first.clone(), second.clone()];
-            save(Some("/project/a"), false, &entries);
-            publish("forgotten", Some("/project/a"), &entries);
-            assert!(manager(Some("/project/a")).forget(&first.id).unwrap());
-            assert!(take_pending_memory_for_project("forgotten", Some("/project/a")).is_none());
-            assert!(!is_memory_injected("forgotten", &first.id));
-            assert!(!is_memory_injected("forgotten", &second.id));
-        });
-    }
-
-    #[test]
-    fn inactive_or_superseded_memory_is_not_consumed() {
-        fixture(|| {
-            for superseded in [false, true] {
-                let mut entry = fact("Old database port");
-                save(None, true, std::slice::from_ref(&entry));
-                publish("inactive", None, std::slice::from_ref(&entry));
-                if superseded {
-                    entry.superseded_by = Some("replacement-id".into());
-                } else {
-                    entry.active = false;
-                }
-                save(None, true, std::slice::from_ref(&entry));
-                assert!(take_pending_memory_for_project("inactive", None).is_none());
-                assert!(!is_memory_injected("inactive", &entry.id));
-            }
-        });
-    }
-
-    #[test]
-    fn updated_fact_is_rejected_even_when_disk_mtime_matches_cache() {
-        fixture(|| {
-            let mut entry = fact("Database port is 5432");
-            save(Some("/project/a"), false, std::slice::from_ref(&entry));
-            publish("updated", Some("/project/a"), std::slice::from_ref(&entry));
-            let path = manager(Some("/project/a")).project_memory_path().unwrap().unwrap();
-            let old_mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
-            entry.content = "Database port is 6432".into();
-            let mut graph = MemoryGraph::new();
-            graph.add_memory(entry.clone());
-            // Rewrite outside MemoryManager, preserving mtime, so a cached graph
-            // would still show the old content. Scoped validation must not use it.
-            std::fs::write(&path, serde_json::to_vec(&graph).unwrap()).unwrap();
-            std::fs::File::options()
-                .write(true)
-                .open(&path)
-                .unwrap()
-                .set_times(std::fs::FileTimes::new().set_modified(old_mtime))
-                .unwrap();
-            assert!(take_pending_memory_for_project("updated", Some("/project/a")).is_none());
-            assert!(!is_memory_injected("updated", &entry.id));
-            publish("updated", Some("/project/a"), std::slice::from_ref(&entry));
-            let fresh = take_pending_memory_for_project("updated", Some("/project/a")).unwrap();
-            assert!(fresh.prompt.contains("6432"));
-        });
-    }
-
-    #[test]
-    fn changed_before_publication_cannot_bind_new_signature_to_old_prompt() {
-        fixture(|| {
-            let old = fact("Database port is 5432");
-            let mut current = old.clone();
-            current.content = "Database port is 6432".into();
-            save(None, true, std::slice::from_ref(&current));
-            publish("publish-race", None, std::slice::from_ref(&old));
-            assert!(!has_pending_memory("publish-race"));
-            assert!(!is_memory_injected("publish-race", &old.id));
-            publish("publish-race", None, std::slice::from_ref(&current));
-            assert!(take_pending_memory_for_project("publish-race", None).is_some());
-        });
-    }
-
-    #[test]
-    fn tags_only_change_during_selection_is_rejected_before_publication() {
-        fixture(|| {
-            let mut selected = fact("Use the documented database configuration");
-            selected.tags = vec!["postgres".into()];
-            let mut current = selected.clone();
-            current.tags = vec!["sqlite".into()];
-            // Keep content, category and timestamps identical: canonical prompt
-            // comparison cannot detect this changed input to the Jev decision.
-            let prompt = super::super::format_relevant_prompt(std::slice::from_ref(&selected), 1).unwrap();
-            assert_eq!(
-                Some(prompt.clone()),
-                super::super::format_relevant_prompt(std::slice::from_ref(&current), 1)
-            );
-            save(Some("/project/a"), false, std::slice::from_ref(&current));
-            set_pending_memory_for_project_with_selection(
-                "tags-race",
-                prompt.clone(),
-                1,
-                std::slice::from_ref(&selected),
-                None,
-                Some("/project/a"),
-            );
-            assert!(!has_pending_memory("tags-race"));
-            assert!(!is_memory_injected("tags-race", &selected.id));
-
-            // An evaluation performed against the new metadata remains usable.
-            set_pending_memory_for_project_with_selection(
-                "tags-race",
-                prompt,
-                1,
-                std::slice::from_ref(&current),
-                None,
-                Some("/project/a"),
-            );
-            assert!(take_pending_memory_for_project("tags-race", Some("/project/a")).is_some());
-        });
-    }
-
-    #[test]
-    fn global_only_binding_never_becomes_an_implicit_project() {
-        fixture(|| {
-            let global = fact("Prefer concise messages");
-            let local = fact("Local-only database setting");
-            save(None, true, std::slice::from_ref(&global));
-            save(Some("/project/a"), false, std::slice::from_ref(&local));
-            publish("global", None, std::slice::from_ref(&global));
-            assert!(take_pending_memory_for_project("global", None).is_some());
-            publish("local-without-scope", None, std::slice::from_ref(&local));
-            assert!(!has_pending_memory("local-without-scope"));
-            publish("global-switched", None, std::slice::from_ref(&global));
-            assert!(take_pending_memory_for_project("global-switched", Some("/project/a")).is_none());
-            assert!(!is_memory_injected("global-switched", &global.id));
-        });
-    }
-
-    #[test]
-    fn distinct_sessions_keep_independent_pending_and_injected_state() {
-        fixture(|| {
-            let entry = fact("Shared project fact");
-            save(Some("/project/a"), false, std::slice::from_ref(&entry));
-            for sid in ["session-a", "session-b"] {
-                publish(sid, Some("/project/a"), std::slice::from_ref(&entry));
-            }
-            assert!(take_pending_memory_for_project("session-a", Some("/project/a")).is_some());
-            assert!(has_pending_memory("session-b"));
-            assert!(!is_memory_injected("session-b", &entry.id));
-            assert!(take_pending_memory_for_project("session-b", Some("/project/a")).is_some());
-        });
-    }
-
-    #[test]
-    fn graph_load_error_fails_closed_even_for_selected_global_memory() {
-        fixture(|| {
-            let entry = fact("Globally stored selected fact");
-            save(None, true, std::slice::from_ref(&entry));
-            save(Some("/project/a"), false, &[]);
-            publish("corrupt", Some("/project/a"), std::slice::from_ref(&entry));
-            let path = manager(Some("/project/a")).project_memory_path().unwrap().unwrap();
-            std::fs::write(path, b"not a memory graph").unwrap();
-            assert!(take_pending_memory_for_project("corrupt", Some("/project/a")).is_none());
-            assert!(!is_memory_injected("corrupt", &entry.id));
-            publish("corrupt-publish", Some("/project/a"), std::slice::from_ref(&entry));
-            assert!(!has_pending_memory("corrupt-publish"));
-        });
-    }
-
-    #[test]
-    fn scoped_take_rejects_legacy_payload_but_legacy_api_still_works() {
-        fixture(|| {
-            set_pending_memory("legacy-scoped", "legacy prompt".into(), 1);
-            assert!(take_pending_memory_for_project("legacy-scoped", None).is_none());
-            set_pending_memory("legacy", "legacy prompt".into(), 1);
-            assert_eq!(take_pending_memory("legacy").unwrap().prompt, "legacy prompt");
-        });
-    }
-
-    #[test]
-    fn same_id_in_project_and_global_is_ambiguous_and_rejected() {
-        fixture(|| {
-            let entry = fact("Ambiguous stored fact");
-            save(Some("/project/a"), false, std::slice::from_ref(&entry));
-            save(None, true, std::slice::from_ref(&entry));
-            publish("ambiguous", Some("/project/a"), std::slice::from_ref(&entry));
-            assert!(!has_pending_memory("ambiguous"));
-            assert!(!is_memory_injected("ambiguous", &entry.id));
-        });
-    }
-
-    #[test]
-    fn publication_and_validation_preserve_selected_id_order() {
-        fixture(|| {
-            let first = fact("First selected fact");
-            let second = fact("Second selected fact");
-            let entries = [second.clone(), first.clone()];
-            save(None, true, &entries);
-            publish("ordered", None, &entries);
-            let pending = take_pending_memory_for_project("ordered", None).unwrap();
-            assert_eq!(pending.memory_ids, [second.id, first.id]);
-            assert!(pending.prompt.find("Second selected").unwrap() < pending.prompt.find("First selected").unwrap());
-        });
-    }
-}
+#[path = "pending_tests.rs"]
+mod scoped_tests;
