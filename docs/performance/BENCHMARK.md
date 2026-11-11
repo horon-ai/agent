@@ -214,6 +214,31 @@ Each scenario gets its own home and workspace under `<scenario>/run<N>` beneath 
 
 It accepts `--json-out` and `--markdown-out`. A measurement failure records `null` and `error` rather than 0. A missing tool or binary records the reason in `skipped` and exits with code 0. Statistics are median, p95, minimum, maximum, and sample count. Daemon connection, process termination, and memory use `ipc_connect`, `new_group_kwargs`, `terminate_pgroup`, and `process_tree_rss_bytes` from `bench_common.py`, so the same code runs on all three OSes.
 
+### The interactive client (`tui`)
+
+`scripts/perf/bench_tui.py` measures the second binary, `horon-tui`, and nothing else in CI times it. The suite writes `tui.json` and `tui.md` beside the other suites' results.
+
+| Metric | What it measures |
+| --- | --- |
+| `first_frame_ms` | Spawn of bare `horon-agent` on a PTY to the first-screen text, including the sibling lookup, the `exec` and the daemon start |
+| `direct_first_frame_ms` | Spawn of `horon-tui` against an already-running daemon to its first-screen text |
+| `handoff_ms` | Paired difference per run: bare first frame minus the direct first frame of the same run index |
+| `idle_rss_bytes` | RSS of the client process 5 s after its first frame |
+| `post_turn_rss_bytes` | RSS after one mock-model turn |
+| `input_echo_p95_ms` | PTY key press to the echoed character on screen, median and nearest-rank p95 |
+| `render_p50_ms`, `render_p95_ms` | Per-frame draw time from `crates/tui`'s `render_bench` example, 1000 streamed deltas on a `TestBackend` |
+| `install_size_bytes` | Size of the `horon-tui` binary |
+
+The two binaries never share a table. `first_frame_ms` and `direct_first_frame_ms` are two launches of two different programs, and `handoff_ms` is the difference between them; `bench_docs.py` renders them in their own section, below the headless tables and never compared with them.
+
+Dispatch the suite the same way as the others:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui
+```
+
+The PTY metrics need `pty` and a POSIX executable bit, so they run on Linux and macOS only. Windows still records the render and size metrics and writes `pty unavailable on Windows` for the rest, and the suite succeeds. A missing `horon-tui` is recorded as a skip of this suite alone, never as a failure of the run. A step that times out is recorded with its error and left out of its metric, so a refusal never looks like a fast number.
+
 ## Structural gate
 
 `.github/workflows/structural-perf.yml` owns this. It runs on `dev` and `main` PRs and pushes and on manual dispatch. It uses no release build, no secrets, and no external network, only `cargo test` in the debug profile.
