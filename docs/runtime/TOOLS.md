@@ -317,6 +317,28 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - ACP plan entries have only three states, so `blocked` is exported as `pending` (`crates/app-core/src/tool/todo.rs` `plan_entries`). That means an open item nobody is working on right now, and the reason stays on the item's own `blocker`.
 - The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
 
+## Waiting on background work
+
+`bg action=wait` blocks on background tasks. Two optional flags widen it to other events, and a call that sets neither keeps the behaviour it always had (`crates/app-core/src/tool/bg_wait.rs`).
+
+- `children: true` wakes when one of this session's child agents finishes. A child is reported once per daemon process: a delivered-once ledger keyed by parent and child stops a second wait from repeating it, and the result points at `agent://<session_id>` for the body.
+- `messages: true` wakes when a peer (IRC) message is queued for this session. It needs `[tools] irc = true` and a live bus, the same preconditions `irc wait` has; without them the flag changes nothing.
+- `task_id` is optional once a new source is selected. Ids are still accepted, and are then watched together with the selected sources.
+
+`wait_mode` keeps its three values. `any` (the default) returns on the first event. `all` waits until every named task and child is terminal and lists the children that finished; a child is marked delivered only when that report is made, so an `all` wait that reaches its deadline first leaves a finished child for a later wait. `first_failure` returns as soon as a task fails. Children and messages have no mode of their own, and a queued message ends the wait in every mode: with `wait_mode: "all"` and `messages: true` the call returns at the first message even while tasks or children are still running.
+
+| Outcome | `wait_reason` |
+| --- | --- |
+| A child finished | `child_finished` |
+| A message is queued | `message`, or `message_queued` when the mailbox was drained between the event and the read |
+| New input interrupted the wait | `interrupted` |
+| No selected source holds anything | `nothing_to_wait_for` |
+| The deadline passed | `timeout`, with `max_wait_seconds` and `pending_child_session_ids` |
+
+A selection with nothing pending returns `nothing_to_wait_for` immediately instead of parking until the deadline, and the bus subscription is taken before that preflight read, so a terminal landing in between is still reported.
+
+Only a wait that selects a source reacts to new input: `SessionInputQueued` ends it with `interrupted`, while the default wait ignores it. With `[messages] interrupt_mode = "immediate"` an ordinary queued message already stops the remaining tool calls, so the wait sees the interrupt; the default `wait` mode stops only for a message marked urgent (`crates/base/src/config/messages.rs` `interrupts_running_tools`).
+
 ## Ancestor AGENTS.md attached to read results
 
 When `read` returns a file body, it looks for `AGENTS.md` in directories above that file and appends them to the end of the result. The point is that a session reading a directory sees that directory's rules together with the file. This document describes the behaviour of the current tree. The code is `inject_for_read` in `crates/app-core/src/tool/nested_agents.rs`, called from `execute` in `crates/app-core/src/tool/read.rs`.

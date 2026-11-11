@@ -980,6 +980,19 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- memory_update --nocapture
 
+      - name: Run bg wait sources cohort
+        shell: bash
+        # `bg action=wait` gained two event sources, child agents and queued
+        # peer messages, and their tests live in the `horon-agent-app-core` lib
+        # suite, which this workflow only runs through filtered cohorts. The
+        # filter `wait_tool_` names all seven, so a change that quietly stops
+        # running them fails on the pass count instead of passing vacuously.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 7 \
+            -- wait_tool_ --nocapture
+
       - name: Run session durability cohort
         shell: bash
         # The fsync reductions change which originals a session flushes, and
@@ -1671,6 +1684,10 @@ jobs:
         # pair set to check.
         if: ${{ !cancelled() && hashFiles('scripts/ci/check_docs_pairs.py') != '' }}
         run: python3 scripts/ci/check_docs_pairs.py
+
+      - name: Documentation pair gate unit tests
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest -v scripts/ci/test_check_docs_pairs.py
 
       - name: Documentation benchmark block contract
         if: ${{ !cancelled() }}

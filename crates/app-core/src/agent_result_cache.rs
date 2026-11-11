@@ -406,6 +406,47 @@ pub(crate) fn publish_running(child_id: &str, parent_session_id: &str, status: &
     );
 }
 
+/// Announce a child's terminal state on the bus.
+///
+/// Published from here rather than from the swarm layer because this cache is
+/// the one place that already holds both ids for every child, whatever turn or
+/// coordinator finished it. A parent running `bg action=wait` subscribes to this
+/// event instead of polling the cache. The lock is released first so a slow bus
+/// subscriber can never block a result write.
+fn publish_terminal(parent_session_id: &str, child_id: &str, status: &str) {
+    if parent_session_id.is_empty() {
+        return;
+    }
+    crate::bus::Bus::global().publish(crate::bus::BusEvent::ChildAgentTerminal {
+        parent_session_id: parent_session_id.to_string(),
+        session_id: child_id.to_string(),
+        status: status.to_string(),
+    });
+}
+
+/// One child of this session and the status the cache holds for it.
+pub(crate) struct ChildSnapshot {
+    pub(crate) session_id: String,
+    pub(crate) status: String,
+}
+
+/// Every child the in-memory cache still holds for one parent.
+///
+/// Used by `bg action=wait children=true` to decide, before it blocks, whether
+/// anything is still running. The durable copies are deliberately not consulted:
+/// a stored result is already terminal, so it can never be something to wait
+/// for.
+pub(crate) fn children_snapshot(parent_session_id: &str) -> Vec<ChildSnapshot> {
+    lock()
+        .children_of(parent_session_id)
+        .into_iter()
+        .map(|(session_id, status)| ChildSnapshot {
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+        })
+        .collect()
+}
+
 /// An oversized result still occupies a slot and reads back as a typed error
 /// instead of vanishing into "unknown".
 pub(crate) fn publish_completed(
@@ -419,6 +460,8 @@ pub(crate) fn publish_completed(
     let mut store = lock();
     if bytes > MAX_RESULT_BYTES {
         store.insert(child_id, parent_session_id, ResultState::TooLarge { bytes }, 0);
+        drop(store);
+        publish_terminal(parent_session_id, child_id, "too_large");
         return Err(AgentUrlError::ResultTooLarge {
             child_id: child_id.to_string(),
             bytes,
@@ -438,6 +481,8 @@ pub(crate) fn publish_completed(
         },
         bytes,
     );
+    drop(store);
+    publish_terminal(parent_session_id, child_id, "completed");
     Ok(())
 }
 
@@ -449,6 +494,8 @@ pub(crate) fn publish_failed(child_id: &str, parent_session_id: &str, status: &s
     let mut store = lock();
     if bytes > MAX_RESULT_BYTES {
         store.insert(child_id, parent_session_id, ResultState::TooLarge { bytes }, 0);
+        drop(store);
+        publish_terminal(parent_session_id, child_id, "too_large");
         return;
     }
     store.insert(
@@ -460,6 +507,8 @@ pub(crate) fn publish_failed(child_id: &str, parent_session_id: &str, status: &s
         },
         bytes,
     );
+    drop(store);
+    publish_terminal(parent_session_id, child_id, status);
 }
 
 /// Test-only view of the retention ledger: what one child is charged and the running total.

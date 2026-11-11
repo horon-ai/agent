@@ -317,6 +317,28 @@ memory = "essential"
 - ACP 계획 항목은 세 상태만 있어 `blocked`를 `pending`으로 내보냅니다 (`crates/app-core/src/tool/todo.rs` `plan_entries`). 지금 아무도 하지 않는 열린 일이라는 뜻이고, 이유는 항목 자체의 `blocker`에 남습니다.
 - 도구 결과의 JSON에 `blocker`가 함께 나오므로 목록을 보는 쪽이 이유를 읽을 수 있습니다.
 
+## 백그라운드 작업 기다리기
+
+`bg action=wait`는 백그라운드 작업을 기다립니다. 선택 플래그 두 개가 기다리는 대상을 넓히고, 둘 다 주지 않은 호출은 예전과 똑같이 동작합니다 (`crates/app-core/src/tool/bg_wait.rs`).
+
+- `children: true`는 이 세션의 자식 에이전트가 끝날 때 깨어납니다. 자식은 데몬 프로세스마다 한 번만 보고합니다. 부모와 자식으로 묶은 전달 완료 원장이 두 번째 기다림에서 같은 자식을 다시 돌려주지 않고, 결과는 본문 위치로 `agent://<session_id>`를 가리킵니다.
+- `messages: true`는 이 세션 앞으로 피어(IRC) 메시지가 대기열에 들어올 때 깨어납니다. `[tools] irc = true`와 살아 있는 버스가 필요하고, 이것은 `irc wait`가 요구하는 조건과 같습니다. 둘 중 하나가 없으면 플래그는 아무것도 바꾸지 않습니다.
+- 새 소스를 고르면 `task_id`는 선택 사항입니다. 아이디를 줘도 되고, 그때는 고른 소스와 함께 지켜봅니다.
+
+`wait_mode`의 세 값은 그대로입니다. `any`(기본)는 첫 사건에서 돌아옵니다. `all`은 이름으로 지정한 작업과 자식이 모두 끝날 때까지 기다린 뒤 끝난 자식을 나열합니다. 자식은 이 보고를 낼 때만 전달된 것으로 표시되므로, 마감 시간이 먼저 온 `all` 대기는 이미 끝난 자식을 다음 대기에 남겨 둡니다. `first_failure`는 작업 하나가 실패하는 즉시 돌아옵니다. 자식과 메시지에는 따로 모드가 없고, 대기 중인 메시지는 어느 모드에서나 대기를 끝냅니다. `wait_mode: "all"`과 `messages: true`를 함께 주면 작업이나 자식이 아직 실행 중이어도 첫 메시지에서 돌아옵니다.
+
+| 결과 | `wait_reason` |
+| --- | --- |
+| 자식이 끝남 | `child_finished` |
+| 메시지가 대기 중 | `message`, 사건과 읽기 사이에 메일박스가 비었으면 `message_queued` |
+| 새 입력이 기다림을 끊음 | `interrupted` |
+| 고른 소스에 대기 중인 것이 없음 | `nothing_to_wait_for` |
+| 기한이 지남 | `timeout`, `max_wait_seconds`와 `pending_child_session_ids`를 함께 씀 |
+
+대기 중인 것이 없는 선택은 기한까지 자리를 지키지 않고 곧바로 `nothing_to_wait_for`를 돌려주며, 버스 구독은 그 사전 확인보다 먼저 걸어서 그 사이에 도착한 종료도 놓치지 않습니다.
+
+새 입력에 반응하는 것은 소스를 고른 기다림뿐입니다. `SessionInputQueued`가 그 기다림을 `interrupted`로 끝내고, 기본 기다림은 이 사건을 무시합니다. `[messages] interrupt_mode = "immediate"`이면 보통 메시지도 남은 도구 호출을 멈추므로 기다림이 그 중단을 보게 되고, 기본 `wait` 모드는 급한 표시가 붙은 메시지에만 멈춥니다 (`crates/base/src/config/messages.rs` `interrupts_running_tools`).
+
 ## read 결과에 붙는 중첩 AGENTS.md
 
 `read` 도구는 파일 본문을 돌려줄 때, 그 파일 위쪽 디렉터리에 있는 `AGENTS.md`를 찾아 결과 끝에 덧붙입니다. 세션이 실제로 읽는 디렉터리의 규칙을 그 파일과 함께 보게 하려는 장치입니다. 이 문서는 현재 트리의 동작을 설명합니다. 코드는 `crates/app-core/src/tool/nested_agents.rs`의 `inject_for_read`와, `crates/app-core/src/tool/read.rs`의 `execute`가 그 함수를 부르는 자리에 있습니다.

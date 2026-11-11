@@ -214,6 +214,31 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 `--json-out`과 `--markdown-out`을 받는다. 측정 실패는 0이 아니라 `null`과 `error`로 남긴다. 도구나 바이너리가 없으면 `skipped`에 사유를 적고 종료 코드 0으로 끝난다. 통계는 중앙값, p95, 최소, 최대, 표본 수다. 데몬 연결·프로세스 종료·메모리는 `bench_common.py`의 `ipc_connect`, `new_group_kwargs`, `terminate_pgroup`, `process_tree_rss_bytes`를 써서 세 OS에서 같은 코드로 돈다.
 
+### 대화형 클라이언트(`tui`)
+
+`scripts/perf/bench_tui.py`는 두 번째 바이너리 `horon-tui`를 잰다. CI에서 이 클라이언트를 재는 곳은 이 묶음뿐이다. 묶음은 다른 결과 옆에 `tui.json`과 `tui.md`를 쓴다.
+
+| 지표 | 재는 것 |
+| --- | --- |
+| `first_frame_ms` | PTY에서 맨 `horon-agent`를 띄워 첫 화면 텍스트가 나올 때까지. 형제 탐색, `exec`, 데몬 기동을 포함한다 |
+| `direct_first_frame_ms` | 이미 도는 데몬에 `horon-tui`를 붙여 첫 화면 텍스트가 나올 때까지 |
+| `handoff_ms` | 실행별 짝 차이. 같은 실행 번호의 맨 실행 첫 프레임에서 직접 실행 첫 프레임을 뺀 값 |
+| `idle_rss_bytes` | 첫 프레임 5초 뒤 클라이언트 프로세스의 RSS |
+| `post_turn_rss_bytes` | 모의 모델 턴 하나를 마친 뒤의 RSS |
+| `input_echo_p95_ms` | PTY 키 입력에서 화면에 반향된 글자까지. 중앙값과 최근접 p95 |
+| `render_p50_ms`, `render_p95_ms` | `crates/tui`의 `render_bench` 예제가 `TestBackend`에 델타 1000개를 그릴 때 프레임당 시간 |
+| `install_size_bytes` | `horon-tui` 바이너리 크기 |
+
+두 바이너리는 같은 표에 들어가지 않는다. `first_frame_ms`와 `direct_first_frame_ms`는 서로 다른 두 프로그램을 각각 띄운 값이고 `handoff_ms`는 그 둘의 차이다. `bench_docs.py`는 이 수치를 헤드리스 표 아래의 별도 구간에 그리며 헤드리스 표와 비교하지 않는다.
+
+묶음은 다른 묶음과 같은 방식으로 보낸다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui
+```
+
+PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에서만 돈다. Windows는 렌더와 크기 지표는 그대로 기록하고 나머지에는 `pty unavailable on Windows`를 적으며, 묶음은 성공한다. `horon-tui`가 없으면 이 묶음만 건너뛴 것으로 기록하고 실행을 실패시키지 않는다. 시간 초과 단계는 오류와 함께 기록하고 그 지표에서 빼므로, 거절이 빠른 수치처럼 보이지 않는다.
+
 ## 구조 게이트
 
 `.github/workflows/structural-perf.yml`이 소유한다. `dev`·`main` PR과 push, 수동 실행에서 뜬다. 릴리스 빌드, 시크릿, 외부 네트워크 없이 디버그 프로필의 `cargo test`만 쓴다.
