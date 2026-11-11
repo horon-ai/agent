@@ -25,6 +25,7 @@ impl Catalog {
             provider_model: snapshot.provider_model,
             available_models: snapshot.available_models,
             available_model_routes: snapshot.model_routes,
+            identity: None,
         };
         let dedup_key = Arc::from(available_models_dedup_key(&event));
         let encoded_len = crate::protocol::encode_event(&event).len();
@@ -40,6 +41,7 @@ impl Catalog {
                     provider_model: provider_model.clone(),
                     available_models: available_models.clone(),
                     available_model_routes: Vec::new(),
+                    identity: None,
                 },
                 _ => event.clone(),
             };
@@ -70,6 +72,7 @@ impl Catalog {
                 provider_model,
                 available_models,
                 available_model_routes,
+                ..
             } => ModelCatalogSnapshot::new(
                 provider_name.clone(),
                 provider_model.clone(),

@@ -98,6 +98,9 @@ impl Agent {
     }
 
     pub(super) fn record_model_turn_usage(&mut self, turn_id: &str) {
+        // Identity is recorded even when usage is not, so runtime info can name
+        // the model that served the last response after a fallback switch.
+        self.last_serving_model = Some(self.provider_model());
         if self.session.is_debug {
             return;
         }

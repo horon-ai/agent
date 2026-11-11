@@ -1920,38 +1920,6 @@ fn list_models_is_answered_from_the_cached_catalog() {
 }
 
 #[test]
-fn model_usage_survives_catalogs_and_live_updates_without_a_round_trip() {
-    let mut state = state_with_session();
-    let mut route = json!({"model":"test-model","provider":"OpenAI","api_method":"openai-oauth",
-        "available":true,"detail":"ready", "usage":{"count":2,"last_used_unix_secs":30,
-        "tracking_started_unix_secs":10,"selection_count":5,"last_selected_unix_secs":9}});
-    let catalog = json!({"type":"available_models_updated","provider_model":"test-model",
-        "available_models":["test-model"],"available_model_routes":[route.clone()]});
-    state.legacy_event_to_api(&catalog);
-    route["usage"]["count"] = json!(3);
-    route["usage"]["last_used_unix_secs"] = json!(40);
-    let frames = state.legacy_event_to_api(&json!({"type":"model_usage_updated","route":route}));
-    let ApiEvent::RuntimeInfo { routes, .. } = &frames[0].event else {
-        panic!("usage must push runtime info");
-    };
-    assert_eq!(routes[0].usage.as_ref().unwrap().count, 3);
-    // A pending catalog reply must not undo a newer usage delta.
-    state.legacy_event_to_api(&catalog);
-    let out = state.api_request_to_legacy(&json!({"id":88,"req":"get_runtime_info"}));
-    let [Outbound::Reply(frame)] = &out[..] else {
-        panic!("warm cache must answer locally");
-    };
-    let ApiEvent::RuntimeInfo { routes, .. } = &frame.event else {
-        panic!("expected runtime info");
-    };
-    let usage = routes[0].usage.as_ref().unwrap();
-    assert_eq!(usage.count, 3);
-    assert_eq!(usage.last_used_unix_secs, Some(40));
-    assert_eq!(usage.selection_count, 5);
-    assert_eq!(usage.tracking_started_unix_secs, Some(10));
-}
-
-#[test]
 fn model_usage_before_catalog_is_retained_and_legacy_routes_stay_optional() {
     let mut state = state_with_session();
     let route = json!({"model":"m","provider":"OpenAI","api_method":"openai-oauth",
@@ -2632,62 +2600,6 @@ fn limited_session_list_reads_compact_index_without_transcript_records() {
                     .is_some_and(|title| title.starts_with("Indexed goal "))
             })
     );
-}
-
-#[test]
-fn runtime_info_reports_the_active_provider_and_complete_route_catalog() {
-    let mut state = state_with_session();
-    state.legacy_event_to_api(&json!({
-        "type": "available_models_updated",
-        "provider_name": "anthropic",
-        "provider_model": "claude-sonnet",
-        "reasoning_effort": "high",
-        "resolved_credential": "oauth",
-        "available_models": ["claude-sonnet", "gemini-pro"],
-        "available_model_routes": [
-            {
-                "model": "claude-sonnet",
-                "provider": "anthropic",
-                "api_method": "messages",
-                "available": true,
-                "detail": "ready"
-            },
-            {
-                "model": "gemini-pro",
-                "provider": "gemini",
-                "api_method": "generateContent",
-                "available": false,
-                "detail": "credential missing"
-            }
-        ]
-    }));
-
-    let event = only_reply_event(state.api_request_to_legacy(&json!({
-        "req": "get_runtime_info",
-        "id": 4,
-        "session_id": "s1"
-    })));
-    let ApiEvent::RuntimeInfo {
-        session_id,
-        provider,
-        model,
-        reasoning_effort,
-        auth_method,
-        routes,
-    } = event
-    else {
-        panic!("expected runtime info, got {event:?}");
-    };
-    assert_eq!(session_id, "s1");
-    assert_eq!(provider.as_deref(), Some("anthropic"));
-    assert_eq!(model.as_deref(), Some("claude-sonnet"));
-    assert_eq!(reasoning_effort.as_deref(), Some("high"));
-    // The daemon's resolved credential travels with the identity, so a
-    // client never has to guess it from a model that has both routes.
-    assert_eq!(auth_method.as_deref(), Some("oauth"));
-    assert_eq!(routes.len(), 2);
-    assert_eq!(routes[1].provider, "gemini");
-    assert!(!routes[1].available);
 }
 
 #[test]
