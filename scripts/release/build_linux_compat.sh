@@ -146,6 +146,8 @@ docker run --rm \
 	      # Hosted Ubuntu cannot produce our glibc 2.17 baseline yet. Run the
 	      # static justrust client inside the existing manylinux2014 container.
 	      export JUSTRUST_TOOLCHAIN=system JUSTRUST_SLOTS=0 JUSTRUST_NO_TELEMETRY=1
+	      # justrust 0.1.0-alpha.24 requires a stated reason for a local build.
+	      export JUSTRUST_LOCAL_REASON="compatibility packaging runs inside the release container"
 	      export JUSTRUST_INSTALL_DIR=/root/.local/bin
 	      bash scripts/ci/install_justrust.sh
 	      export PATH="$JUSTRUST_INSTALL_DIR:$PATH"

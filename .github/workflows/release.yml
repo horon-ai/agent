@@ -27,6 +27,10 @@ env:
   # Keep packaging paths deterministic and CI installation noninteractive.
   JUSTRUST_SLOTS: "0"
   JUSTRUST_NO_TELEMETRY: "1"
+  # justrust 0.1.0-alpha.24 refuses `build --local` without a stated reason.
+  # Every release build is local to the runner, so name that reason once here
+  # instead of repeating it on each invocation.
+  JUSTRUST_LOCAL_REASON: "release builds run on the hosted runner"
 
 on:
   workflow_dispatch:
