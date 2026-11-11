@@ -14,6 +14,13 @@ against the mock model server:
 3. a missing `horon-tui` does the same on a terminal.
 4. `HORON_NO_TUI=1` does the same on a terminal.
 
+`--layout build` (default) takes the two built binaries and copies them into one
+directory, which is what the compiler leaves behind. `--layout installed` takes
+the `HORON_HOME` an installer produced and drives its `bin/horon` launcher
+symlink instead: cases 1 and 2 run through that symlink, and the run first
+proves the launcher resolves into `builds/` and that the installed client sits
+beside the agent it resolves to.
+
 Linux and macOS only: the script needs `pty` plus the POSIX executable bit.
 """
 
@@ -107,14 +114,13 @@ def start_mock_server(retry_denied: bool) -> tuple[subprocess.Popen, str]:
 # ---------------------------------------------------------------------------
 
 
-def write_config(root: str, base_url: str) -> str:
+def write_config(home: str, base_url: str) -> str:
     """An isolated HORON_HOME whose only provider is the mock server.
 
     `approval_mode = "write"` is what makes the first tool call ask: the turn
     types `ls`, the write-classed shell call parks for approval, and the `y`
     keystroke is the answer the round-trip assertion depends on.
     """
-    home = os.path.join(root, "home")
     os.makedirs(home, exist_ok=True)
     config = f"""[provider]
 default_provider = "mock"
@@ -139,20 +145,51 @@ approval_mode = "write"
     return home
 
 
-def install_binaries(root: str, agent: str, tui: str | None) -> str:
+class Launch:
+    """Where the client is started from and which HORON_HOME it reads."""
+
+    def __init__(self, argv0: str, home: str) -> None:
+        self.argv0 = argv0
+        self.home = home
+
+
+def build_launch(case_root: str, agent: str, tui: str | None) -> Launch:
     """A bin directory holding the two binaries under their shipped names.
 
     The handoff looks for `horon-tui` beside `current_exe`, so the pair must sit
     in one directory with exactly those names regardless of the build layout.
     """
-    bin_dir = os.path.join(root, "bin")
+    bin_dir = os.path.join(case_root, "bin")
     os.makedirs(bin_dir, exist_ok=True)
     suffix = ".exe" if os.name == "nt" else ""
     shutil.copy2(agent, os.path.join(bin_dir, f"horon-agent{suffix}"))
     if tui is not None:
         shutil.copy2(tui, os.path.join(bin_dir, f"horon-tui{suffix}"))
-    os.chmod(os.path.join(bin_dir, f"horon-agent{suffix}"), 0o755)
-    return bin_dir
+    agent_path = os.path.join(bin_dir, f"horon-agent{suffix}")
+    os.chmod(agent_path, 0o755)
+    return Launch(agent_path, os.path.join(case_root, "home"))
+
+
+def installed_launch(layout_root: str) -> Launch:
+    """The launcher symlink an installer left behind, and its version directory.
+
+    `bin/horon` is the name the installer puts on PATH; it points at the channel
+    the update moves, so the client has to be found beside whatever it resolves
+    to. An installed client that is not there proves nothing, so it is checked
+    before the screen is.
+    """
+    launcher = os.path.join(layout_root, "bin", "horon")
+    if not os.path.islink(launcher):
+        raise Failure(f"{launcher} is not the launcher symlink the installer creates")
+    resolved = os.path.realpath(launcher)
+    builds = os.path.realpath(os.path.join(layout_root, "builds"))
+    if os.path.commonpath([resolved, builds]) != builds:
+        raise Failure(f"{launcher} resolves to {resolved}, outside {builds}")
+    tui = os.path.join(os.path.dirname(resolved), "horon-tui")
+    if not os.path.isfile(tui) or not os.access(tui, os.X_OK):
+        raise Failure(f"{tui} is missing beside the installed agent {resolved}")
+    log(f"installed layout: {launcher} -> {resolved}, client at {tui}")
+    return Launch(launcher, layout_root)
 
 
 def horon_env(root: str, home: str) -> dict:
@@ -276,13 +313,11 @@ class Terminal:
 # ---------------------------------------------------------------------------
 
 
-def happy_path(agent: str, tui: str, root: str, base_url: str) -> str:
-    home = write_config(root, base_url)
-    bin_dir = install_binaries(root, agent, tui)
-    env = horon_env(root, home)
+def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url)
+    env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
-    argv = [os.path.join(bin_dir, "horon-agent")]
-    terminal = Terminal(argv, cwd=root, env=env)
+    terminal = Terminal([launch.argv0], cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
 
@@ -295,7 +330,7 @@ def happy_path(agent: str, tui: str, root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
         terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
-        written = os.path.join(root, TOOL_FILE)
+        written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
                 content = handle.read().strip()
@@ -313,18 +348,22 @@ def happy_path(agent: str, tui: str, root: str, base_url: str) -> str:
         terminal.close()
 
 
-def headless_case(agent: str, tui: str | None, root: str, base_url: str, label: str, extra_env: dict | None = None,
-                  use_pty: bool = True) -> str:
+def headless_case(
+    launch: Launch,
+    case_root: str,
+    base_url: str,
+    label: str,
+    extra_env: dict | None = None,
+    use_pty: bool = True,
+) -> str:
     """A launch that must stop at the headless message with the install hint."""
-    home = write_config(root, base_url)
-    bin_dir = install_binaries(root, agent, tui)
-    env = horon_env(root, home)
+    home = write_config(launch.home, base_url)
+    env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
     env.update(extra_env or {})
-    argv = [os.path.join(bin_dir, "horon-agent")]
 
     if use_pty:
-        terminal = Terminal(argv, cwd=root, env=env)
+        terminal = Terminal([launch.argv0], cwd=case_root, env=env)
         try:
             code = terminal.wait(STARTUP_TIMEOUT)
             transcript = terminal.transcript
@@ -332,8 +371,8 @@ def headless_case(agent: str, tui: str | None, root: str, base_url: str, label: 
             terminal.close()
     else:
         completed = subprocess.run(
-            argv,
-            cwd=root,
+            [launch.argv0],
+            cwd=case_root,
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -354,10 +393,80 @@ def headless_case(agent: str, tui: str | None, root: str, base_url: str, label: 
     return transcript
 
 
+def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript: str | None) -> int:
+    log("case 1: bare horon hands a terminal over to horon-tui")
+    launch = build_launch(os.path.join(root, "happy"), agent, tui)
+    text = happy_path(launch, os.path.join(root, "happy"), base_url)
+    if transcript:
+        with open(transcript, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    log("case 1 passed")
+
+    log("case 2: piped stdin keeps the headless message")
+    headless_case(
+        build_launch(os.path.join(root, "pipe"), agent, tui),
+        os.path.join(root, "pipe"),
+        base_url,
+        "stdin pipe",
+        use_pty=False,
+    )
+    log("case 2 passed")
+
+    log("case 3: a missing horon-tui keeps the headless message")
+    headless_case(
+        build_launch(os.path.join(root, "missing"), agent, None),
+        os.path.join(root, "missing"),
+        base_url,
+        "missing horon-tui",
+    )
+    log("case 3 passed")
+
+    log("case 4: HORON_NO_TUI keeps the headless message")
+    headless_case(
+        build_launch(os.path.join(root, "disabled"), agent, tui),
+        os.path.join(root, "disabled"),
+        base_url,
+        "HORON_NO_TUI",
+        extra_env={"HORON_NO_TUI": "1"},
+    )
+    log("case 4 passed")
+    return 0
+
+
+def run_installed_layout(layout_root: str, root: str, base_url: str, transcript: str | None) -> int:
+    # The launcher is resolved once: an installed client that is absent or
+    # outside the channel it should live in is the failure this layout catches.
+    launch = installed_launch(layout_root)
+
+    log("case 1: the installed horon launcher reaches the installed horon-tui")
+    case_root = os.path.join(root, "installed")
+    text = happy_path(launch, case_root, base_url)
+    if transcript:
+        with open(transcript, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    log("case 1 passed")
+
+    log("case 2: piped stdin still keeps the headless message")
+    headless_case(launch, case_root, base_url, "stdin pipe", use_pty=False)
+    log("case 2 passed")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", required=True, help="path to the built horon-agent binary")
-    parser.add_argument("--tui", required=True, help="path to the built horon-tui binary")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--agent", help="path to the built horon-agent binary (build layout)")
+    parser.add_argument("--tui", help="path to the built horon-tui binary (build layout)")
+    parser.add_argument(
+        "--layout",
+        choices=("build", "installed"),
+        default="build",
+        help="build: copy the two built binaries into one directory (default); "
+        "installed: drive the launcher symlink an installer left in --layout-root",
+    )
+    parser.add_argument(
+        "--layout-root",
+        help="the HORON_HOME an installer populated; required by --layout installed",
+    )
     parser.add_argument(
         "--transcript",
         default=None,
@@ -365,9 +474,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    for path, label in ((args.agent, "horon-agent"), (args.tui, "horon-tui")):
-        if not os.path.isfile(path):
-            raise Failure(f"{label} binary not found at {path}")
+    if args.layout == "installed":
+        if not args.layout_root:
+            parser.error("--layout installed needs --layout-root <HORON_HOME>")
+        if args.agent or args.tui:
+            parser.error("--layout installed reads the binaries from --layout-root; drop --agent/--tui")
+        if not os.path.isdir(args.layout_root):
+            raise Failure(f"layout root not found at {args.layout_root}")
+    else:
+        missing = [flag for flag, value in (("--agent", args.agent), ("--tui", args.tui)) if not value]
+        if missing:
+            parser.error(f"--layout build needs {' and '.join(missing)}")
+        for path, label in ((args.agent, "horon-agent"), (args.tui, "horon-tui")):
+            if not os.path.isfile(path):
+                raise Failure(f"{label} binary not found at {path}")
 
     server, base_url = start_mock_server(retry_denied=True)
     # Unix socket paths are capped near 104 bytes (SUN_LEN), and macOS puts the
@@ -375,39 +495,9 @@ def main(argv: list[str] | None = None) -> int:
     # directly under /tmp to keep `<root>/<case>/run/horon-agent-api.sock` short.
     root = tempfile.mkdtemp(prefix="htui-", dir="/tmp")
     try:
-        log("case 1: bare horon hands a terminal over to horon-tui")
-        transcript = happy_path(args.agent, args.tui, os.path.join(root, "happy"), base_url)
-        if args.transcript:
-            with open(args.transcript, "w", encoding="utf-8") as handle:
-                handle.write(transcript)
-        log("case 1 passed")
-
-        log("case 2: piped stdin keeps the headless message")
-        headless_case(
-            args.agent,
-            args.tui,
-            os.path.join(root, "pipe"),
-            base_url,
-            "stdin pipe",
-            use_pty=False,
-        )
-        log("case 2 passed")
-
-        log("case 3: a missing horon-tui keeps the headless message")
-        headless_case(args.agent, None, os.path.join(root, "missing"), base_url, "missing horon-tui")
-        log("case 3 passed")
-
-        log("case 4: HORON_NO_TUI keeps the headless message")
-        headless_case(
-            args.agent,
-            args.tui,
-            os.path.join(root, "disabled"),
-            base_url,
-            "HORON_NO_TUI",
-            extra_env={"HORON_NO_TUI": "1"},
-        )
-        log("case 4 passed")
-        return 0
+        if args.layout == "installed":
+            return run_installed_layout(args.layout_root, root, base_url, args.transcript)
+        return run_build_layout(args.agent, args.tui, root, base_url, args.transcript)
     except Failure as failure:
         print(f"[tui-pty] FAILED: {failure}", file=sys.stderr, flush=True)
         return 1

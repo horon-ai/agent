@@ -10,6 +10,12 @@ HORON_HOME is sandboxed.
 
 Every run wipes the sandbox, so the experience is exactly repeatable.
 
+By default the fake release publishes only the agent archive, which is what a
+release from before the interactive client looked like: the installer must then
+warn once and install the headless agent. Passing `--tui-binary` adds the
+optional `horon-tui-<platform>.tar.gz` archive beside it, and the check asserts
+the two binaries land in the same immutable version directory.
+
 Usage:
   scripts/release/rehearse_update.py                  # default: auto-update on launch
   scripts/release/rehearse_update.py --rate 5         # slow link (MiB/s)
@@ -17,6 +23,7 @@ Usage:
   scripts/release/rehearse_update.py --bad-checksum   # checksum mismatch failure
   scripts/release/rehearse_update.py --manual         # no auto-update; run `horon-agent update` yourself
   scripts/release/rehearse_update.py --up-to-date     # release is not newer
+  scripts/release/rehearse_update.py --tui-binary target/debug/horon-tui   # two-asset release
 """
 
 from __future__ import annotations
@@ -58,6 +65,12 @@ def asset_stem() -> str:
     if key not in ASSET_STEM:
         sys.exit(f"unsupported platform for rehearsal: {key}")
     return ASSET_STEM[key]
+
+
+def tui_stem() -> str:
+    """The interactive client's archive name for this platform, as the agent derives it."""
+    stem = asset_stem()
+    return "horon-tui" + stem[len("horon-agent"):]
 
 
 def default_root() -> Path:
@@ -130,10 +143,12 @@ def prepare_payload(binary: Path, cache_dir: Path, strip: bool) -> Path:
     payload = cache_dir / f"payload-{key}.bin"
     if payload.exists():
         return payload
+    # A stale snapshot invalidates only the tarballs built from it. Deleting by
+    # name keeps the other binary's archive when both are prepared in one run.
     for stale in cache_dir.glob("payload-*.bin"):
         stale.unlink()
-    for stale in cache_dir.glob("release-*.tar.gz"):
-        stale.unlink()
+        for tarball in cache_dir.glob(f"release-{stale.stem}-*.tar.gz"):
+            tarball.unlink()
     cache_dir.mkdir(parents=True, exist_ok=True)
     tmp = payload.with_suffix(".tmp")
     log(f"snapshotting {binary} ({st.st_size / MIB:.0f} MiB)" + (" and stripping" if strip else ""))
@@ -169,6 +184,39 @@ def build_release_tarball(payload: Path, version: str, stem: str, cache_dir: Pat
             sys.exit("gzip failed while packaging fake release")
     tmp.rename(tarball)
     return tarball
+
+
+def build_tui_tarball(binary: Path, version: str, stem: str, cache_dir: Path) -> Path:
+    """Package the interactive client exactly as it ships: one bare-stem member."""
+    st = binary.stat()
+    tarball = cache_dir / f"release-tui-{st.st_size}-{int(st.st_mtime)}-{version}.tar.gz"
+    if tarball.exists():
+        return tarball
+    log(f"packaging fake {stem} v{version} (one-time per build, gzip -1)")
+    tmp = tarball.with_suffix(".tmp")
+    with open(tmp, "wb") as raw:
+        gz = subprocess.Popen(["gzip", "-1", "-c"], stdin=subprocess.PIPE, stdout=raw)
+        with tarfile.open(fileobj=gz.stdin, mode="w|") as tar:
+            info = tarfile.TarInfo(stem)
+            info.size = st.st_size
+            info.mode = 0o755
+            info.mtime = int(time.time())
+            with open(binary, "rb") as payload:
+                tar.addfile(info, payload)
+        gz.stdin.close()
+        if gz.wait() != 0:
+            sys.exit("gzip failed while packaging the fake interactive client")
+    tmp.rename(tarball)
+    return tarball
+
+
+def cached_checksum(tarball: Path) -> str:
+    cache = tarball.with_suffix(".sha256")
+    if cache.exists():
+        return cache.read_text().strip()
+    digest = sha256_file(tarball)
+    cache.write_text(digest)
+    return digest
 
 
 def sha256_file(path: Path) -> str:
@@ -218,19 +266,33 @@ def write_sandbox_config(home: Path, manual: bool) -> None:
 
 
 class Scenario:
-    def __init__(self, args: argparse.Namespace, tarball: Path, checksum: str, stem: str, new_version: str):
+    """The fake release: the agent archive, plus the client archive when requested."""
+
+    def __init__(self, args: argparse.Namespace, assets: list[tuple[str, Path, str]], new_version: str):
         self.args = args
-        self.tarball = tarball
-        self.size = tarball.stat().st_size
-        self.checksum = checksum
-        self.stem = stem
+        self.assets = [(name, path, path.stat().st_size, checksum) for name, path, checksum in assets]
+        self.paths = {name: path for name, path, _, _ in self.assets}
+        self.sizes = {name: size for name, _, size, _ in self.assets}
+        self.checksums = {name: checksum for name, _, _, checksum in self.assets}
         self.new_version = new_version
         self.dropped = False
         self.lock = threading.Lock()
         self.base_url = ""
 
+    @property
+    def agent_name(self) -> str:
+        return self.assets[0][0]
+
+    @property
+    def size(self) -> int:
+        return self.sizes[self.agent_name]
+
     def release_json(self) -> bytes:
-        asset_name = f"{self.stem}.tar.gz"
+        assets = [
+            {"name": name, "browser_download_url": f"{self.base_url}/{name}", "size": size}
+            for name, _, size, _ in self.assets
+        ]
+        assets.append({"name": "SHA256SUMS", "browser_download_url": f"{self.base_url}/SHA256SUMS", "size": 0})
         return json.dumps(
             {
                 "tag_name": f"v{self.new_version}",
@@ -238,16 +300,18 @@ class Scenario:
                 "html_url": "https://example.invalid/rehearsal",
                 "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "target_commitish": "main",
-                "assets": [
-                    {"name": asset_name, "browser_download_url": f"{self.base_url}/{asset_name}", "size": self.size},
-                    {"name": "SHA256SUMS", "browser_download_url": f"{self.base_url}/SHA256SUMS", "size": 0},
-                ],
+                "assets": assets,
             }
         ).encode()
 
     def sums(self) -> bytes:
-        digest = "0" * 64 if self.args.bad_checksum else self.checksum
-        return f"{digest}  {self.stem}.tar.gz\n".encode()
+        lines = []
+        for name, _, _, checksum in self.assets:
+            # A mismatching digest must fail the agent download; the client is
+            # served correctly so its own path stays observable.
+            digest = "0" * 64 if self.args.bad_checksum and name == self.agent_name else checksum
+            lines.append(f"{digest}  {name}")
+        return ("\n".join(lines) + "\n").encode()
 
 
 def make_handler(sc: Scenario):
@@ -272,19 +336,21 @@ def make_handler(sc: Scenario):
                 return self.send_bytes(sc.release_json())
             if self.path == "/SHA256SUMS":
                 return self.send_bytes(sc.sums(), "text/plain")
-            if self.path == f"/{sc.stem}.tar.gz":
-                return self.serve_asset()
+            name = self.path.lstrip("/")
+            if name in sc.paths:
+                return self.serve_asset(name)
             self.send_error(404)
 
-        def serve_asset(self):
+        def serve_asset(self, name: str):
+            size = sc.sizes[name]
             start = 0
             rng = self.headers.get("Range")
             if rng and rng.startswith("bytes="):
                 start = int(rng[6:].split("-")[0] or 0)
-            remaining = sc.size - start
+            remaining = size - start
             if start:
                 self.send_response(206)
-                self.send_header("Content-Range", f"bytes {start}-{sc.size - 1}/{sc.size}")
+                self.send_header("Content-Range", f"bytes {start}-{size - 1}/{size}")
             else:
                 self.send_response(200)
             self.send_header("Content-Type", "application/gzip")
@@ -294,14 +360,16 @@ def make_handler(sc: Scenario):
 
             rate = sc.args.rate * MIB if sc.args.rate > 0 else 0
             drop_at = None
-            with sc.lock:
-                if sc.args.drop_at is not None and not sc.dropped:
-                    drop_at = int(sc.size * sc.args.drop_at / 100)
+            # Only the agent download resumes, so only it is dropped.
+            if sc.args.drop_at is not None and name == sc.agent_name:
+                with sc.lock:
+                    if not sc.dropped:
+                        drop_at = int(size * sc.args.drop_at / 100)
             chunk = 256 * 1024
             sent_total = start
             began = time.monotonic()
             sent_here = 0
-            with open(sc.tarball, "rb") as f:
+            with open(sc.paths[name], "rb") as f:
                 f.seek(start)
                 while True:
                     data = f.read(chunk)
@@ -410,7 +478,15 @@ def run_version(launcher: Path, env: dict[str, str]) -> str:
     return text.splitlines()[0] if text else ""
 
 
+def version_dir_contents(home: Path, version: str) -> list[str]:
+    directory = home / "builds" / "versions" / version
+    if not directory.is_dir():
+        return []
+    return sorted(p.name for p in directory.iterdir())
+
+
 def headless_check(launcher, env, workspace, home, old, new, server, args) -> int:
+    output = ""
     try:
         before = run_version(launcher, env)
         log(f"before: {before}")
@@ -425,8 +501,8 @@ def headless_check(launcher, env, workspace, home, old, new, server, args) -> in
             timeout=600,
         )
         elapsed = time.monotonic() - started
-        tail = (result.stdout + result.stderr).strip().splitlines()[-8:]
-        for line in tail:
+        output = result.stdout + result.stderr
+        for line in output.strip().splitlines()[-8:]:
             print(f"    | {line}")
         after = run_version(launcher, env)
         log(f"after:  {after}  (update took {elapsed:.1f}s, exit {result.returncode})")
@@ -439,11 +515,48 @@ def headless_check(launcher, env, workspace, home, old, new, server, args) -> in
         for line in drops:
             print(f"    server: {line}")
 
+    warnings = [line.strip() for line in output.splitlines() if line.strip().startswith("warning:")]
+    client_warnings = [line for line in warnings if "horon-tui" in line]
     expect_new = not (args.bad_checksum or args.up_to_date)
     current = (home / "builds" / "current-version").read_text().strip()
     ok = (f"v{new}" in after and current == new) if expect_new else (f"v{old}" in after and current == old)
-    log("PASS" if ok else "FAIL")
-    return 0 if ok else 1
+    if not ok:
+        log(f"FAIL: version did not move as expected (after={after!r}, current={current!r})")
+        return 1
+
+    if not expect_new:
+        log("PASS")
+        return 0
+
+    installed = version_dir_contents(home, new)
+    agent = home / "builds" / "versions" / new / "horon-agent"
+    if not agent.is_file():
+        log(f"FAIL: {agent} is missing (version dir holds {installed})")
+        return 1
+
+    if args.tui_binary is not None:
+        tui = home / "builds" / "versions" / new / "horon-tui"
+        if not tui.is_file() or not os.access(tui, os.X_OK):
+            log(f"FAIL: {tui} is missing or not executable (version dir holds {installed})")
+            return 1
+        if client_warnings:
+            log(f"FAIL: a published client must install without a client warning, got {client_warnings}")
+            return 1
+        log(f"installed both binaries: {', '.join(installed)}")
+        log("PASS")
+        return 0
+
+    if "horon-tui" in installed:
+        log(f"FAIL: horon-tui must not be installed here (version dir holds {installed})")
+        return 1
+    expected_name = f"{tui_stem()}.tar.gz"
+    named = [line for line in client_warnings if expected_name in line]
+    if len(client_warnings) != 1 or not named:
+        log(f"FAIL: expected exactly one warning naming {expected_name}, got {warnings}")
+        return 1
+    log(f"agent installed without a client, warned once: {named[0]}")
+    log("PASS")
+    return 0
 
 
 def main() -> int:
@@ -460,6 +573,12 @@ def main() -> int:
     p.add_argument("--up-to-date", action="store_true", help="serve a release that is not newer")
     p.add_argument("--manual", action="store_true", help="disable auto-update; trigger it yourself with /update")
     p.add_argument("--no-strip", action="store_true", help="package the binary unstripped (bigger, slower)")
+    p.add_argument(
+        "--tui-binary",
+        type=Path,
+        metavar="PATH",
+        help="also publish this horon-tui binary as the optional release asset (default: agent-only release)",
+    )
     p.add_argument("--keep", action="store_true", help="leave sandbox horon-agent processes running after exit")
     p.add_argument("--prepare-only", action="store_true", help="build the sandbox and fake release, then exit")
     p.add_argument(
@@ -497,17 +616,18 @@ def main() -> int:
 
     payload = prepare_payload(binary, cache_dir, strip=not args.no_strip)
     tarball = build_release_tarball(payload, new, stem, cache_dir)
-    checksum_cache = tarball.with_suffix(".sha256")
-    if checksum_cache.exists():
-        checksum = checksum_cache.read_text().strip()
-    else:
-        checksum = sha256_file(tarball)
-        checksum_cache.write_text(checksum)
+    assets = [(f"{stem}.tar.gz", tarball, cached_checksum(tarball))]
+    if args.tui_binary is not None:
+        tui = args.tui_binary.resolve()
+        if not tui.is_file():
+            sys.exit(f"interactive client binary not found: {tui}")
+        tui_tarball = build_tui_tarball(tui, new, tui_stem(), cache_dir)
+        assets.append((f"{tui_stem()}.tar.gz", tui_tarball, cached_checksum(tui_tarball)))
 
     launcher = install_old_version(home, payload, old, stem)
     write_sandbox_config(home, args.manual)
 
-    sc = Scenario(args, tarball, checksum, stem, new)
+    sc = Scenario(args, assets, new)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), make_handler(sc))
     sc.base_url = f"http://127.0.0.1:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()

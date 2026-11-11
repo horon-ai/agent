@@ -247,12 +247,19 @@ jobs:
         # single-file, Windows .exe), and the launcher test covers argument and
         # environment hand-off plus the two failure messages. Node ships with
         # the hosted runner image; no setup step is needed for one test file.
+        #
+        # The TypeScript SDK is released at the same tag version as the CLI, so
+        # its committed version and six runtime pins must equal the root
+        # Cargo.toml version. The publish workflow stamps the tag version into
+        # its checkout; this is the check that keeps the tracked file honest.
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           bash scripts/npm/test_prepare_cli_packages.sh
           node --test npm/horon/test/launcher.test.mjs
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
+          python3 -m unittest -v scripts/sdk/test_sdk_release.py
+          python3 scripts/sdk/sdk_release.py check-committed
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
@@ -570,6 +577,43 @@ jobs:
             --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
           echo "--- transcript ---"
           cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+
+      - name: Installed layout TUI smoke
+        # Release packaging runs only in the release workflow, after the change
+        # is on `main`, so nothing on a pull request ever drove
+        # `install-release --assets` or the layout it leaves behind. This
+        # packages the binaries built above under the release asset names for
+        # this platform, installs them into a throwaway HORON_HOME, and drives
+        # the launcher symlink the terminal client starts from.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash scripts/test/install_release_layout_smoke.sh \
+            "target/${{ matrix.target }}/release/horon-agent" \
+            "target/${{ matrix.target }}/debug/horon-tui" \
+            "$RUNNER_TEMP/installed-layout"
+          python3 scripts/test/tui_pty_smoke.py \
+            --layout installed \
+            --layout-root "$RUNNER_TEMP/installed-layout/home" \
+            --transcript "$RUNNER_TEMP/tui-installed-transcript.txt"
+          echo "--- transcript ---"
+          cat "$RUNNER_TEMP/tui-installed-transcript.txt"
+
+      - name: Release rehearsal installs the optional client
+        # The update path takes the same asset directory over HTTP, and the
+        # client is optional there: a release that publishes it must install
+        # both binaries with no client warning, and an older agent-only release
+        # must still install with exactly one warning naming the missing asset.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          python3 scripts/release/rehearse_update.py --headless-check --rate 0 --no-strip \
+            --root "$RUNNER_TEMP/update-rehearsal-tui" \
+            --binary "target/${{ matrix.target }}/release/horon-agent" \
+            --tui-binary "target/${{ matrix.target }}/debug/horon-tui"
+          python3 scripts/release/rehearse_update.py --headless-check --rate 0 --no-strip \
+            --root "$RUNNER_TEMP/update-rehearsal-agent-only" \
+            --binary "target/${{ matrix.target }}/release/horon-agent"
 
       - name: npm install smoke
         # The publish workflow is the only place the seven packages are built
@@ -954,6 +998,28 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- subscribe_prefix --nocapture
+
+      - name: Run checkpoint tool cohort
+        shell: bash
+        # `horon-agent-app-core` and `horon-agent-base` lib tests only run
+        # through filters, so the checkpoint and rewind tools would compile and
+        # ship unexecuted. The first filter covers the two tools and their
+        # registration switch, the second the settle path that commits the
+        # marker, folds a branch into the report and undoes it, the third the
+        # `[tools] checkpoint` config switch.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 12 \
+            -- tool::checkpoint:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 14 \
+            -- agent::rewind_summary:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 3 \
+            -- config::checkpoint_switch_tests:: --nocapture
 
       - name: Run e2e tests
         shell: bash

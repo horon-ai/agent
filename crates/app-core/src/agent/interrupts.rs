@@ -418,9 +418,16 @@ impl Agent {
             guard.disarm();
         }
         if committed {
+            // The model's own checkpoint/rewind applies before any rollover:
+            // both are model-visible history edits, and the rollover boundary
+            // must be computed against the transcript that survives them.
+            self.apply_pending_checkpoint_rewind();
             self.apply_pending_context_rollover();
         } else {
             crate::tool::new_context::clear_rollover(&self.session.id);
+            // The work a queued checkpoint or rewind describes was abandoned
+            // with the turn, so the request must not survive into the next one.
+            crate::tool::checkpoint::clear_pending(&self.session.id);
             // A turn that fell back and then failed must not leave the session
             // running on a fallback model.
             self.restore_model_fallback();

@@ -589,29 +589,12 @@ async fn run_default_command(args: Args) -> Result<()> {
         spawn_server(&args.provider, args.model.as_deref(), args.provider_profile.as_deref()).await?;
     }
 
-    startup_profile::mark("client_unavailable");
+    startup_profile::mark("tui_handoff");
     // The interactive client is a separate binary. On a terminal, and with one
-    // installed beside this executable, this process becomes that client; every
-    // other shape (a pipe, `HORON_NO_TUI`, no sibling) keeps the headless
-    // message so scripts and CI still see it.
-    let (handoff, sibling) = super::tui_handoff::decide_for_process();
-    match handoff {
-        super::tui_handoff::Handoff::Exec => {
-            let cwd =
-                std::env::current_dir().map_err(|error| anyhow::anyhow!("working directory unreadable: {error}"))?;
-            match sibling {
-                Some(sibling) => super::tui_handoff::hand_off(&sibling, Some(cwd.as_path())),
-                // `decide` only answers `Exec` for a resolved path, so this is
-                // unreachable rather than a case worth a message.
-                None => anyhow::bail!("the interactive client could not be located beside this binary"),
-            }
-        }
-        super::tui_handoff::Handoff::Headless(reason) => anyhow::bail!(
-            "the interactive client is unavailable in this headless build ({}); {}; use `horon-agent serve` or `horon-agent run`",
-            reason.detail(),
-            super::tui_handoff::INSTALL_HINT
-        ),
-    }
+    // installed beside this executable, this process becomes that client, with
+    // a resumed session passed along; every other shape (a pipe, `HORON_NO_TUI`,
+    // no sibling) keeps the headless message so scripts and CI still see it.
+    super::tui_handoff::run(super::tui_handoff::decide_for_process(), args.resume.as_deref())
 }
 
 pub(crate) async fn server_is_running() -> bool {

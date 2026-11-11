@@ -8,10 +8,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use toml::{Table, Value};
+use toml_edit::{Array, Decor, Document, Entry, InlineTable, Item, Table as EditTable, Value as EditValue};
 
 use super::registry::{self, SettingKind, SettingSpec};
 
@@ -331,7 +333,9 @@ impl LayerSet {
 /// Write one key into the global file, leaving every other key as it is.
 ///
 /// The file is re-read immediately before the change, so a key edited by hand
-/// (or by another window) since the client started survives. A file that no
+/// (or by another window) since the client started survives; comments and the
+/// file's own layout survive too, because the edit applies to the parsed
+/// document instead of re-serializing a copy of its values. A file that no
 /// longer parses is left untouched: overwriting it would lose the user's work.
 pub fn save_global(sources: &Sources, id: &str, value: &SettingValue) -> Result<(), String> {
     let setting = registry::spec(id).ok_or_else(|| format!("unknown setting `{id}`"))?;
@@ -344,55 +348,128 @@ pub fn save_global(sources: &Sources, id: &str, value: &SettingValue) -> Result<
         ));
     }
     let path = &sources.global;
-    let mut table = match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str::<Table>(&text)
+    let mut document = match std::fs::read_to_string(path) {
+        Ok(text) => text
+            .parse::<Document>()
             .map_err(|error| format!("cannot parse {}: {error}; refusing to overwrite it", path.display()))?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Table::new(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Document::new(),
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
-    set_path(&mut table, setting.id, to_toml(value), path)?;
-    let text =
-        toml::to_string_pretty(&table).map_err(|error| format!("cannot serialize {}: {error}", path.display()))?;
-    write_atomic(path, &text)
+    set_path(document.as_table_mut(), setting.id, to_edit(value), path)?;
+    write_atomic(path, &document.to_string())
 }
 
 /// `id` as nested tables: `statusline.left` becomes `[statusline] left`.
-fn set_path(table: &mut Table, id: &str, value: Value, path: &Path) -> Result<(), String> {
-    let mut parts = id.split('.').peekable();
-    let mut current = table;
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            current.insert(part.to_string(), value);
-            return Ok(());
-        }
-        let entry = current
-            .entry(part.to_string())
-            .or_insert_with(|| Value::Table(Table::new()));
-        current = match entry {
-            Value::Table(next) => next,
-            _ => {
-                return Err(format!(
-                    "`{part}` in {} is not a table; refusing to change `{id}`",
-                    path.display()
-                ));
-            }
-        };
-    }
-    Ok(())
+fn set_path(table: &mut EditTable, id: &str, value: EditValue, path: &Path) -> Result<(), String> {
+    set_table_path(table, &mut id.split('.').peekable(), value).map_err(|not_table| {
+        format!(
+            "`{}` in {} is not a table; refusing to change `{id}`",
+            not_table.key,
+            path.display()
+        )
+    })
 }
 
-fn to_toml(value: &SettingValue) -> Value {
+/// A key the walk reached that holds a value, so it cannot hold the key below.
+///
+/// The dotted key is the whole payload: the caller turns it into the user-facing
+/// sentence, so the walkers need neither the setting id nor the file path.
+struct NotATable {
+    key: String,
+}
+
+/// One level of the walk, with the remaining parts still to place.
+fn set_table_path(
+    table: &mut EditTable,
+    parts: &mut std::iter::Peekable<std::str::Split<'_, char>>,
+    value: EditValue,
+) -> Result<(), NotATable> {
+    let part = match parts.next() {
+        Some(part) => part,
+        None => return Ok(()),
+    };
+    if parts.peek().is_none() {
+        insert_leaf(table, part, value);
+        return Ok(());
+    }
+    let item = table.entry(part).or_insert(Item::Table(EditTable::new()));
+    match item {
+        Item::Table(next) => set_table_path(next, parts, value),
+        Item::Value(EditValue::InlineTable(next)) => set_inline_path(next, parts, value, part),
+        Item::None | Item::Value(_) | Item::ArrayOfTables(_) => Err(NotATable { key: part.to_string() }),
+    }
+}
+
+/// Set a leaf while keeping the comment written above the key.
+///
+/// `Table::insert` would replace the key and with it that comment, so the value
+/// goes through the existing entry when there is one; only its decoration (the
+/// whitespace and comment around the value) is carried over.
+fn insert_leaf(table: &mut EditTable, part: &str, value: EditValue) {
+    match table.entry(part) {
+        Entry::Occupied(mut entry) => {
+            let decor = match entry.get() {
+                Item::Value(old) => old.decor().clone(),
+                Item::None | Item::Table(_) | Item::ArrayOfTables(_) => Decor::default(),
+            };
+            let mut value = value;
+            *value.decor_mut() = decor;
+            entry.insert(Item::Value(value));
+        }
+        Entry::Vacant(entry) => {
+            entry.insert(Item::Value(value));
+        }
+    }
+}
+
+/// The same walk inside an inline table, whose entries are values, not items.
+fn set_inline_path(
+    table: &mut InlineTable,
+    parts: &mut std::iter::Peekable<std::str::Split<'_, char>>,
+    value: EditValue,
+    part: &str,
+) -> Result<(), NotATable> {
+    let next = match parts.next() {
+        Some(next) => next,
+        None => return Ok(()),
+    };
+    if parts.peek().is_none() {
+        // `InlineTable::insert` hands back the replaced value; the caller asked
+        // for the new one, so the old one goes no further.
+        drop(table.insert(next, value));
+        return Ok(());
+    }
+    let entry = table.entry(next).or_insert(EditValue::InlineTable(InlineTable::new()));
+    match entry {
+        EditValue::InlineTable(nested) => set_inline_path(nested, parts, value, part),
+        _ => Err(NotATable {
+            key: format!("{part}.{next}"),
+        }),
+    }
+}
+
+fn to_edit(value: &SettingValue) -> EditValue {
     match value {
-        SettingValue::Bool(value) => Value::Boolean(*value),
-        SettingValue::Str(value) => Value::String(value.clone()),
-        SettingValue::Number(value) => Value::Integer(*value),
-        SettingValue::List(items) => Value::Array(items.iter().map(|item| Value::String(item.clone())).collect()),
+        SettingValue::Bool(value) => EditValue::from(*value),
+        SettingValue::Str(value) => EditValue::from(value.clone()),
+        SettingValue::Number(value) => EditValue::from(*value),
+        SettingValue::List(items) => {
+            let mut array = Array::new();
+            for item in items {
+                array.push(item.as_str());
+            }
+            EditValue::Array(array)
+        }
     }
 }
 
 /// Write through a temporary file in the same directory and rename it into
 /// place, so a reader never sees half a file.
-fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+///
+/// The bytes reach the disk before the rename, so a crash cannot leave the new
+/// name pointing at an empty file, and a failed write removes its temporary
+/// file instead of leaving it behind.
+pub(super) fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
         Some(_) | None => PathBuf::from("."),
@@ -403,21 +480,28 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "tui.toml".to_string());
     let temp = parent.join(format!(".{name}.{}.tmp", std::process::id()));
-    if let Err(error) = std::fs::write(&temp, text) {
-        return Err(format!("cannot write {}: {error}", temp.display()));
+    if let Err(error) = write_temp(&temp, text) {
+        return Err(format!("cannot write {}: {error}{}", temp.display(), removed(&temp)));
     }
     if let Err(error) = std::fs::rename(&temp, path) {
-        discard(&temp);
-        return Err(format!("cannot replace {}: {error}", path.display()));
+        return Err(format!("cannot replace {}: {error}{}", path.display(), removed(&temp)));
     }
     Ok(())
 }
 
-/// Remove a temporary file after a failed rename, reporting a second failure
-/// instead of hiding it.
-fn discard(path: &Path) {
-    if let Err(error) = std::fs::remove_file(path) {
-        eprintln!("horon-tui: cannot remove {}: {error}", path.display());
+/// Create the temporary file and get its bytes onto the disk.
+fn write_temp(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
+}
+
+/// Remove a temporary file after a failure, reporting a second failure in the
+/// same sentence instead of hiding it.
+fn removed(path: &Path) -> String {
+    match std::fs::remove_file(path) {
+        Ok(()) => String::new(),
+        Err(error) => format!("; cannot remove {}: {error}", path.display()),
     }
 }
 

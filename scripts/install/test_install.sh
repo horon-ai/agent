@@ -112,8 +112,33 @@ build_assets() {
   rm -rf "$dest/stage"
 }
 
+# The interactive client ships as a second archive beside the agent. Linux
+# x86_64 uses the compatibility layout: a wrapper plus its `.bin` payload.
+# Other platforms publish the executable alone.
+build_tui_asset() {
+  dest="$1"
+  tui_artifact="$2"
+  layout="${3:-compat}"
+  archive="${tui_artifact%.exe}"
+  mkdir -p "$dest/tui-stage"
+  printf '%s\n' 'tui executable' > "$dest/tui-stage/$tui_artifact"
+  chmod +x "$dest/tui-stage/$tui_artifact"
+  if [ "$layout" = compat ]; then
+    printf '%s\n' 'tui payload' > "$dest/tui-stage/$tui_artifact.bin"
+    tar -czf "$dest/$archive.tar.gz" -C "$dest/tui-stage" "$tui_artifact" "$tui_artifact.bin"
+  else
+    tar -czf "$dest/$archive.tar.gz" -C "$dest/tui-stage" "$tui_artifact"
+  fi
+  (
+    cd "$dest"
+    printf '%s  %s\n' "$(sha256 "$archive.tar.gz")" "$archive.tar.gz"
+  ) >> "$dest/SHA256SUMS"
+  rm -rf "$dest/tui-stage"
+}
+
 assets="$tmp/assets"
 build_assets "$assets" horon-agent-linux-x86_64
+build_tui_asset "$assets" horon-tui-linux-x86_64
 
 desktop_setup_log="$tmp/desktop-setup.log"
 url_log="$tmp/urls.log"
@@ -141,7 +166,7 @@ PATH="$tmp/bin:$PATH" \
   DESKTOP_SETUP_LOG="$desktop_setup_log" \
   DOWNLOAD_URL_LOG="$url_log" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
-  bash "$repo_dir/scripts/install/install.sh" >/dev/null
+  bash "$repo_dir/scripts/install/install.sh" >"$tmp/full.out" 2>"$tmp/full.err"
 
 test ! -e "$desktop_setup_log"
 test "$(cat "$tmp/home/.horon/builds/current-version")" = "1.2.3"
@@ -151,15 +176,23 @@ test "$(cat "$tmp/home/.horon/builds/current-version")" = "1.2.3"
 grep -Fq -- "--agent-version 1.2.3" "$cli_arg_log"
 grep -Fq -- "install-release --assets " "$cli_arg_log"
 test "$(grep -c -- '--source-binary' "$cli_arg_log")" = 0
-for required in SHA256SUMS horon-agent-linux-x86_64.tar.gz; do
+for required in SHA256SUMS horon-agent-linux-x86_64.tar.gz horon-tui-linux-x86_64.tar.gz; do
   grep -qx -- "asset:$required" "$cli_arg_log" \
     || { echo "installer did not hand $required to the release executable" >&2; exit 1; }
 done
+# A verified client is reported, and nothing warns about it.
+grep -Fq 'Verified SHA-256: horon-tui-linux-x86_64.tar.gz' "$tmp/full.out"
+if grep -q '^warning: .*horon-tui' "$tmp/full.err"; then
+  echo "installer warned about a complete release" >&2
+  cat "$tmp/full.err" >&2
+  exit 1
+fi
 
 # Every asset comes from the canonical horon-ai/agent release, and no other host
 # is consulted for release bytes.
 grep -q '^https://github.com/horon-ai/agent/releases/download/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$url_log"
 grep -q '^https://github.com/horon-ai/agent/releases/download/v1.2.3/SHA256SUMS$' "$url_log"
+grep -q '^https://github.com/horon-ai/agent/releases/download/v1.2.3/horon-tui-linux-x86_64.tar.gz$' "$url_log"
 if grep -v -e '^https://github.com/horon-ai/agent/' "$url_log" | grep -q .; then
   echo "installer contacted a non-canonical release host" >&2
   exit 1
@@ -241,6 +274,7 @@ fi
 # installer must fetch that platform's executable.
 windows_assets="$tmp/assets-windows"
 build_assets "$windows_assets" horon-agent-windows-aarch64.exe
+build_tui_asset "$windows_assets" horon-tui-windows-aarch64.exe single
 windows_url_log="$tmp/windows-arm64-urls.log"
 PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-windows" \
@@ -304,6 +338,87 @@ if PATH="$tmp/bin:$PATH" \
 fi
 grep -q 'unexpected member: surprise.txt' "$tmp/odd.err"
 test ! -e "$tmp/cli-args-odd.log"
+
+# A release that predates the interactive client installs the headless agent
+# after exactly one warning, and never hands the missing archive to the
+# executable.
+legacy_release="$tmp/assets-no-tui"
+build_assets "$legacy_release" horon-agent-linux-x86_64
+mkdir -p "$tmp/home-no-tui" "$tmp/install-no-tui"
+PATH="$tmp/bin:$PATH" \
+  HOME="$tmp/home-no-tui" \
+  HORON_HOME="$tmp/home-no-tui/.horon" \
+  HORON_AGENT_INSTALL_DIR="$tmp/install-no-tui" \
+  ASSET_SOURCE_DIR="$legacy_release" \
+  CLI_ARG_LOG="$tmp/cli-args-no-tui.log" \
+  HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+  bash "$repo_dir/scripts/install/install.sh" >/dev/null 2>"$tmp/no-tui.err"
+test "$(cat "$tmp/home-no-tui/.horon/builds/current-version")" = "1.2.3"
+grep -Fq 'does not publish horon-tui-linux-x86_64.tar.gz' "$tmp/no-tui.err"
+test "$(grep -c '^warning: ' "$tmp/no-tui.err")" = 1
+if grep -q 'asset:horon-tui' "$tmp/cli-args-no-tui.log"; then
+  echo "installer handed an absent interactive client to the executable" >&2
+  exit 1
+fi
+grep -qx -- "asset:horon-agent-linux-x86_64.tar.gz" "$tmp/cli-args-no-tui.log"
+
+# A corrupted interactive-client archive is dropped: the agent still installs,
+# the bad bytes never reach the executable, and the warning names the file.
+mkdir -p "$tmp/home-tui-corrupt" "$tmp/install-tui-corrupt"
+PATH="$tmp/bin:$PATH" \
+  HOME="$tmp/home-tui-corrupt" \
+  HORON_HOME="$tmp/home-tui-corrupt/.horon" \
+  HORON_AGENT_INSTALL_DIR="$tmp/install-tui-corrupt" \
+  ASSET_SOURCE_DIR="$assets" \
+  CORRUPT_ASSET=horon-tui-linux-x86_64.tar.gz \
+  CLI_ARG_LOG="$tmp/cli-args-tui-corrupt.log" \
+  HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+  bash "$repo_dir/scripts/install/install.sh" >/dev/null 2>"$tmp/tui-corrupt.err"
+test "$(cat "$tmp/home-tui-corrupt/.horon/builds/current-version")" = "1.2.3"
+grep -Fq 'skipped the interactive client: SHA-256 verification failed for horon-tui-linux-x86_64.tar.gz' \
+  "$tmp/tui-corrupt.err"
+test "$(grep -c '^warning: ' "$tmp/tui-corrupt.err")" = 1
+if grep -q 'asset:horon-tui' "$tmp/cli-args-tui-corrupt.log"; then
+  echo "installer handed a corrupted interactive client to the executable" >&2
+  exit 1
+fi
+
+# The installer from before this change ignores the extra archive entirely: it
+# installs and uninstalls a new-format release without touching the client.
+old_installer="$tmp/install-before-tui.sh"
+sed '/# >>> horon-tui/,/# <<< horon-tui/d' "$repo_dir/scripts/install/install.sh" > "$old_installer"
+if grep -q 'horon-tui' "$old_installer"; then
+  echo "the pre-TUI installer fixture still mentions the interactive client" >&2
+  exit 1
+fi
+mkdir -p "$tmp/home-old-installer" "$tmp/install-old-installer"
+PATH="$tmp/bin:$PATH" \
+  HOME="$tmp/home-old-installer" \
+  HORON_HOME="$tmp/home-old-installer/.horon" \
+  HORON_AGENT_INSTALL_DIR="$tmp/install-old-installer" \
+  ASSET_SOURCE_DIR="$assets" \
+  CLI_ARG_LOG="$tmp/cli-args-old-installer.log" \
+  HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+  bash "$old_installer" >/dev/null 2>"$tmp/old-installer.err"
+test "$(cat "$tmp/home-old-installer/.horon/builds/current-version")" = "1.2.3"
+grep -qx -- "asset:horon-agent-linux-x86_64.tar.gz" "$tmp/cli-args-old-installer.log"
+if grep -q 'asset:horon-tui' "$tmp/cli-args-old-installer.log"; then
+  echo "the pre-TUI installer fetched the interactive client" >&2
+  exit 1
+fi
+# Uninstall still works on that layout, including the version directory the
+# interactive client would live in.
+mkdir -p "$tmp/home-old-installer/.horon/builds/versions/1.2.3"
+printf '#!/bin/sh\n' > "$tmp/home-old-installer/.horon/builds/versions/1.2.3/horon-tui"
+printf '#!/bin/sh\n' > "$tmp/install-old-installer/horon-tui"
+PATH="$tmp/bin:$PATH" \
+  HOME="$tmp/home-old-installer" \
+  HORON_HOME="$tmp/home-old-installer/.horon" \
+  HORON_AGENT_INSTALL_DIR="$tmp/install-old-installer" \
+  bash "$repo_dir/scripts/install/uninstall.sh" --yes >/dev/null 2>&1
+test ! -e "$tmp/home-old-installer/.horon/builds"
+test ! -e "$tmp/install-old-installer/horon-agent"
+test ! -e "$tmp/install-old-installer/horon-tui"
 
 if grep -q 'api.github.com' "$url_log"; then
   echo "installer must not depend on the rate-limited unauthenticated GitHub API" >&2
