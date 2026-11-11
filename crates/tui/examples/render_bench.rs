@@ -33,23 +33,21 @@ const HEIGHT: u16 = 40;
 const MESSAGES: usize = 1000;
 /// Frames timed. Enough for a stable p95 without making the run slow.
 const FRAMES: usize = 200;
-/// Bytes of text per delta, so the transcript holds a realistic amount.
+/// Text per delta, so the transcript holds a realistic amount.
 const DELTA: &str = "the quick brown fox jumps over the lazy dog and keeps running ";
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(line) => {
+    match measurement() {
+        Some(line) => {
             println!("{line}");
             ExitCode::SUCCESS
         }
-        Err(message) => {
-            eprintln!("render_bench: {message}");
-            ExitCode::FAILURE
-        }
+        None => ExitCode::FAILURE,
     }
 }
 
-fn run() -> Result<String, String> {
+/// The one-line result, or `None` after the reason was printed to stderr.
+fn measurement() -> Option<String> {
     let (_sender, receiver) = mpsc::channel();
     let mut app = App::new("render bench".to_string(), receiver);
     for index in 0..MESSAGES {
@@ -60,17 +58,26 @@ fn run() -> Result<String, String> {
         });
     }
     let backend = TestBackend::new(WIDTH, HEIGHT);
-    let mut terminal = Terminal::new(backend).map_err(|error| format!("test backend: {error}"))?;
+    let mut terminal = match Terminal::new(backend) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            eprintln!("render_bench: test backend: {error}");
+            return None;
+        }
+    };
     let mut samples = Vec::with_capacity(FRAMES);
     for _ in 0..FRAMES {
         let started = Instant::now();
-        draw(&mut terminal, &mut app)?;
+        if let Err(message) = draw(&mut terminal, &mut app) {
+            eprintln!("render_bench: draw failed: {message}");
+            return None;
+        }
         samples.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     samples.sort_by(|left, right| left.total_cmp(right));
     let p50 = percentile(&samples, 50.0);
     let p95 = percentile(&samples, 95.0);
-    Ok(format!(
+    Some(format!(
         "{{\"render_p50_ms\":{p50:.4},\"render_p95_ms\":{p95:.4},\"frames\":{FRAMES},\"width\":{WIDTH},\"height\":{HEIGHT}}}"
     ))
 }
