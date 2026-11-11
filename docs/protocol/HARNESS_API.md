@@ -105,6 +105,48 @@ The request itself has no cancel signal. One bounded completion decides it, so a
 client that stops waiting leaves the generation running; it does not roll back a
 boundary that is already committed.
 
+## Rewind branch summary
+
+`rewind` takes an optional `summarize`. Absent or `false` is the request a client
+has always sent and the daemon behaves identically.
+
+`summarize: true` asks the daemon to write a report on the branch the rewind
+discards and append it to the kept branch as one hidden system reminder, so the
+model sees why the abandoned attempt failed without the transcript carrying the
+whole dead branch. The report covers what was tried, what failed and why, and
+which facts the branch established.
+
+The feature is off unless the daemon's `[compaction] rewind_summary` is on. The
+allowance for the report comes from `[compaction] rewind_summary_tokens`; its
+default 1500 is horon's own choice, and values are clamped to `1..=4096`, with
+`0` meaning "use the default".
+
+Request:
+
+```json
+{"id": 7, "req": "rewind", "session_id": "s-1", "message_index": 12, "summarize": true}
+```
+
+The rewind happens first and the report second, so a summary failure never leaves
+the conversation where it was:
+
+| What happened | Message history |
+| --- | --- |
+| Setting off | Rewound, no report appended |
+| Report written | Rewound, one hidden `<system-reminder>` message appended after the stop point |
+| Nothing to discard | Rewound, nothing appended |
+| Completion failed | Rewound, nothing appended; the reason appears in `status_detail` on the `history` reply and in the daemon log |
+| Completion cancelled | Rewound, nothing appended |
+
+The appended report is not a visible transcript message and not a rewind target,
+so a later `/rewind N` counts the same entries it counted before. `rewind_undo`
+restores the head recorded before the rewind, which removes the report together
+with everything else the rewind discarded.
+
+No capability gates this field: a server that predates it ignores the unknown
+field and answers with a plain rewind, so a client that sends `summarize` to an
+older daemon gets the old behavior rather than an error.
+
 ## Tool argument repair (protocol 1.16)
 
 A provider's JSON writer sometimes types a tool argument wrong: `"5000"` where a

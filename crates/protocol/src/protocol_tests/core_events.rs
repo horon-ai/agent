@@ -293,6 +293,7 @@ fn test_rewind_request_roundtrip() -> Result<()> {
     let req = Request::Rewind {
         id: 8,
         message_index: 3,
+        summarize: false,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"rewind\""));

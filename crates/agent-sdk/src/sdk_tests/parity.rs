@@ -63,6 +63,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("peek_session", "peekSession"),
     cap("clear", "clear"),
     cap("rewind", "rewind"),
+    cap("rewind_with_summary", "rewindWithSummary"),
     cap("rewind_undo", "rewindUndo"),
     cap("respond_to_permission", "respondToPermission"),
     cap("respond_to_ask", "respondToAsk"),

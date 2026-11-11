@@ -1556,7 +1556,7 @@ pub(super) async fn handle_client(
                 .await;
             }
 
-            Request::Rewind { id, message_index } => {
+            Request::Rewind { id, message_index, summarize } => {
                 if client_is_processing {
                     let _ = client_event_tx.send(ServerEvent::Error {
                         id,
@@ -1568,7 +1568,7 @@ pub(super) async fn handle_client(
 
                 let rewind_result = {
                     let mut agent_guard = agent.lock().await;
-                    agent_guard.rewind_to_message(message_index)
+                    agent_guard.rewind_to_message_with_summary(message_index, summarize)
                 };
 
                 match rewind_result {
@@ -1610,7 +1610,7 @@ pub(super) async fn handle_client(
                     Err(message) => {
                         let _ = client_event_tx.send(ServerEvent::Error {
                             id,
-                            message,
+                            message: message.to_string(),
                             retry_after_secs: None,
                         });
                     }

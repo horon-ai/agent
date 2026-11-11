@@ -241,8 +241,17 @@ pub enum Request {
     Clear { id: u64 },
 
     /// Rewind conversation history to the given 1-based message index.
+    ///
+    /// `summarize` asks the daemon to append a report on the branch the rewind
+    /// discards. It is off unless both this flag and `[compaction]
+    /// rewind_summary` are set, and an absent flag is exactly the old request.
     #[serde(rename = "rewind")]
-    Rewind { id: u64, message_index: usize },
+    Rewind {
+        id: u64,
+        message_index: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        summarize: bool,
+    },
 
     /// Undo the most recent rewind, if one is available.
     #[serde(rename = "rewind_undo")]
