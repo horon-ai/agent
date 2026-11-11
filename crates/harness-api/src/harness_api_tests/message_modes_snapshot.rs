@@ -1,4 +1,4 @@
-//! Minor 16 wire shape: `get_message_modes` and its reply.
+//! Protocol 1.18 wire shape: `get_message_modes` and its reply.
 //!
 //! Both are additions, so a client that predates them neither sends nor reads
 //! the pair. The reply is a new event kind, which an older client skips as an

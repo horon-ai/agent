@@ -162,6 +162,20 @@ bing_market = "en-US"
 # 0 also means "use the default", and values are clamped to 1..=4096.
 # rewind_summary_tokens = 1500
 
+[messages]
+# How messages that arrive while a turn is running are delivered. Both queue
+# modes default to `all`, which is what horon has always done; omp defaults to
+# `one-at-a-time`. The first delivery point of a turn carries messages left over
+# from the previous turn (`follow_up_mode`), later points carry messages that
+# arrived during this turn (`steering_mode`). `one-at-a-time` leaves the rest
+# pending, in order, so each message gets its own injection.
+# follow_up_mode = "all"
+# steering_mode = "all"
+# Whether a queued message waits for the running tool call (`wait`, the timing
+# horon has always had; only an urgent message cuts the round) or stops the
+# remaining calls at the next safe point (`immediate`).
+# interrupt_mode = "wait"
+
 [tools]
 # Controls which built-in tools are sent to the model.
 # Profiles: "core" (headless default), "full", "acp", "minimal"/"lite", or "none".
@@ -716,6 +730,23 @@ mod tests {
             ReasoningDisplayMode::Full,
             "the shipped user config must keep the full reasoning trace visible"
         );
+    }
+
+    /// The shipped template documents the `[messages]` table and its defaults.
+    #[test]
+    fn default_config_template_documents_message_modes() {
+        let template = Config::default_config_file_contents();
+        for key in [
+            "[messages]",
+            "follow_up_mode = \"all\"",
+            "steering_mode = \"all\"",
+            "interrupt_mode = \"wait\"",
+        ] {
+            assert!(template.contains(key), "the template should document `{key}`");
+        }
+
+        let parsed = toml::from_str::<Config>(&template).expect("the shipped template must parse");
+        assert_eq!(parsed.messages, Config::default().messages);
     }
 
     /// The template is written once and then read by the daemon, saved back by
