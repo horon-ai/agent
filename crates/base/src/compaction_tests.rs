@@ -527,11 +527,7 @@ fn test_safe_cutoff_preserves_tool_pairs() {
         },
         Message {
             role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                content: "file1.txt\nfile2.txt".to_string(),
-                is_error: Some(false),
-            }],
+            content: vec![ContentBlock::tool_result("tool_1", "file1.txt\nfile2.txt", Some(false))],
             timestamp: None,
             tool_duration_ms: None,
         },
@@ -580,11 +576,7 @@ fn test_safe_cutoff_handles_chained_tool_dependencies_without_rescan() {
         Message {
             role: Role::Assistant,
             content: vec![
-                ContentBlock::ToolResult {
-                    tool_use_id: "tool_a".to_string(),
-                    content: "a contents".to_string(),
-                    is_error: Some(false),
-                },
+                ContentBlock::tool_result("tool_a", "a contents", Some(false)),
                 ContentBlock::ToolUse {
                     id: "tool_b".to_string(),
                     name: "grep".to_string(),
@@ -597,11 +589,7 @@ fn test_safe_cutoff_handles_chained_tool_dependencies_without_rescan() {
         },
         Message {
             role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool_b".to_string(),
-                content: "foo".to_string(),
-                is_error: Some(false),
-            }],
+            content: vec![ContentBlock::tool_result("tool_b", "foo", Some(false))],
             timestamp: None,
             tool_duration_ms: None,
         },
@@ -636,11 +624,7 @@ fn test_emergency_truncate_large_tool_results() {
         },
         Message {
             role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                content: big_result.clone(),
-                is_error: Some(false),
-            }],
+            content: vec![ContentBlock::tool_result("tool_1", &big_result, Some(false))],
             timestamp: None,
             tool_duration_ms: None,
         },
@@ -670,11 +654,7 @@ fn test_emergency_truncate_skips_small_results() {
     let mut manager = CompactionManager::new().with_budget(1_000);
     let mut messages = vec![Message {
         role: Role::User,
-        content: vec![ContentBlock::ToolResult {
-            tool_use_id: "tool_1".to_string(),
-            content: "small output".to_string(),
-            is_error: Some(false),
-        }],
+        content: vec![ContentBlock::tool_result("tool_1", "small output", Some(false))],
         timestamp: None,
         tool_duration_ms: None,
     }];
@@ -1045,11 +1025,11 @@ fn test_recover_within_budget_truncates_when_tail_still_too_large() {
         manager.notify_message_added();
         messages.push(Message {
             role: Role::User,
-            content: vec![ContentBlock::ToolResult {
-                tool_use_id: id,
-                content: format!("huge {} {}", i, "y".repeat(20_000)),
-                is_error: Some(false),
-            }],
+            content: vec![ContentBlock::tool_result(
+                &id,
+                &format!("huge {} {}", i, "y".repeat(20_000)),
+                Some(false),
+            )],
             timestamp: None,
             tool_duration_ms: None,
         });
@@ -1267,11 +1247,11 @@ fn compaction_policy_tool_pairs_survive_recent_cutoff() {
         } else {
             messages.push(Message {
                 role: Role::User,
-                content: vec![ContentBlock::ToolResult {
-                    tool_use_id: format!("call_{}", index - 1),
-                    content: "y".repeat(4_000),
-                    is_error: None,
-                }],
+                content: vec![ContentBlock::tool_result(
+                    &format!("call_{}", index - 1),
+                    &"y".repeat(4_000),
+                    None,
+                )],
                 timestamp: None,
                 tool_duration_ms: None,
             });

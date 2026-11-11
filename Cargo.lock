@@ -2031,6 +2031,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "horon-agent-token-estimate",
+ "horon-agent-tool-types",
  "serde",
  "serde_json",
 ]

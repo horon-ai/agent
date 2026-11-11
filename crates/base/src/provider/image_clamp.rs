@@ -715,6 +715,7 @@ mod tests {
             tool_use_id: id.to_string(),
             content: content.to_string(),
             is_error: None,
+            verdict: None,
         }
     }
 

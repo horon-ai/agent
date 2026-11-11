@@ -98,6 +98,7 @@ async fn rollover_fixture() -> (crate::auth::test_sandbox::AuthTestSandbox, Agen
             tool_use_id: "call-read".to_string(),
             content: "fn main() { /* parser stub */ }".to_string(),
             is_error: None,
+            verdict: None,
         }],
     );
     agent.add_message(Role::Assistant, text_block("I read the file."));

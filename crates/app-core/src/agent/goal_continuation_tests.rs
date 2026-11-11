@@ -204,6 +204,7 @@ async fn tool_rounds_in_the_tail_do_not_stop_the_count() {
                 tool_use_id: format!("call-{round}"),
                 content: "file body".to_string(),
                 is_error: None,
+                verdict: None,
             }],
         );
         push_assistant_text(&mut agent, &format!("round {round} done"));
@@ -259,6 +260,7 @@ async fn todo_auto_pokes_do_not_reset_the_continuation_cap() {
                 tool_use_id: format!("call-{round}"),
                 content: "todos updated".to_string(),
                 is_error: None,
+                verdict: None,
             }],
         );
     }
@@ -305,6 +307,7 @@ async fn image_visual_context_does_not_reset_the_continuation_cap() {
                 tool_use_id: format!("call-{round}"),
                 content: "file body".to_string(),
                 is_error: None,
+                verdict: None,
             }],
         );
     }
@@ -356,6 +359,7 @@ async fn response_recovery_prompt_does_not_reset_the_continuation_cap() {
                 tool_use_id: format!("call-{round}"),
                 content: "file body".to_string(),
                 is_error: None,
+                verdict: None,
             }],
         );
     }

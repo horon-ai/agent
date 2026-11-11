@@ -616,6 +616,7 @@ fn tool_output_to_content_blocks_preserves_labeled_images() {
             tool_use_id,
             content,
             is_error,
+            ..
         } => {
             assert_eq!(tool_use_id, "call_1");
             assert_eq!(content, "Image ready");
@@ -3527,6 +3528,7 @@ pub(super) fn shared_tool_results(agent: &Agent) -> Vec<(String, String, Option<
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } => Some((tool_use_id.clone(), content.clone(), *is_error)),
             _ => None,
         })

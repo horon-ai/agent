@@ -1589,6 +1589,7 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content: "[Skipped - server reloading]".to_string(),
                             is_error: Some(true),
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         }],
                     );
                 }
@@ -1718,6 +1719,7 @@ impl Agent {
                                     tool_use_id: remaining_tc.id.clone(),
                                     content: RELOAD_SKIP.to_string(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                         }
@@ -1750,6 +1752,7 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content: error_msg,
                             is_error: Some(true),
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         }],
                     );
                     tool_results_dirty = true;
@@ -1783,6 +1786,11 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: sdk_content,
                                 is_error: if sdk_is_error { Some(true) } else { None },
+                                verdict: Some(if sdk_is_error {
+                                    crate::tool::ToolVerdict::Failed
+                                } else {
+                                    crate::tool::ToolVerdict::Ok
+                                }),
                             }],
                         );
                         tool_results_dirty = true;
@@ -1833,6 +1841,7 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: message,
                                 is_error: Some(true),
+                                verdict: Some(crate::tool::ToolVerdict::Rejected),
                             }],
                         );
                         tool_results_dirty = true;
@@ -1999,6 +2008,11 @@ impl Agent {
                                         tool_use_id: tc.id.clone(),
                                         content: error_msg,
                                         is_error: Some(true),
+                                        verdict: Some(if e.downcast_ref::<crate::tool::ToolRejected>().is_some() {
+                                            crate::tool::ToolVerdict::Rejected
+                                        } else {
+                                            crate::tool::ToolVerdict::Failed
+                                        }),
                                     }],
                                     Some(tool_elapsed.as_millis() as u64),
                                 );
@@ -2054,6 +2068,7 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: interrupted_msg,
                                 is_error: Some(is_error),
+                                verdict: Some(crate::tool::ToolVerdict::Interrupted),
                             }],
                             Some(tool_elapsed.as_millis() as u64),
                         );
@@ -2067,6 +2082,7 @@ impl Agent {
                                     tool_use_id: remaining_tc.id.clone(),
                                     content: "[Skipped - server reloading]".to_string(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                         }
@@ -2133,6 +2149,7 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: bg_msg,
                                 is_error: None,
+                                verdict: None,
                             }],
                             Some(tool_elapsed.as_millis() as u64),
                         );
@@ -2256,6 +2273,7 @@ impl Agent {
                 tool_use_id: tc.id.clone(),
                 content: message.to_string(),
                 is_error: Some(true),
+                verdict: Some(crate::tool::ToolVerdict::Rejected),
             }],
         );
     }
@@ -2285,6 +2303,7 @@ impl Agent {
                     tool_use_id: skipped_tc.id.clone(),
                     content: USER_INTERRUPT_SKIP.to_string(),
                     is_error: Some(true),
+                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                 }],
             );
         }
@@ -2573,6 +2592,7 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content: error.clone(),
                             is_error: Some(true),
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         }],
                     );
                     *tool_results_dirty = true;
@@ -2594,6 +2614,11 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content,
                             is_error: if *is_error { Some(true) } else { None },
+                            verdict: Some(if *is_error {
+                                crate::tool::ToolVerdict::Failed
+                            } else {
+                                crate::tool::ToolVerdict::Ok
+                            }),
                         }],
                     );
                     *tool_results_dirty = true;
@@ -2690,6 +2715,11 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: error_msg,
                                     is_error: Some(true),
+                                    verdict: Some(if e.downcast_ref::<crate::tool::ToolRejected>().is_some() {
+                                        crate::tool::ToolVerdict::Rejected
+                                    } else {
+                                        crate::tool::ToolVerdict::Failed
+                                    }),
                                 }],
                                 Some(tool_elapsed.as_millis() as u64),
                             );
@@ -2720,6 +2750,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: skipped,
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                             *tool_results_dirty = true;

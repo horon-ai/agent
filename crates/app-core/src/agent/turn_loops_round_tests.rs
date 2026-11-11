@@ -226,6 +226,7 @@ fn tool_result_sequence(agent: &Agent) -> Vec<(String, String, Option<bool>)> {
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } => Some((tool_use_id.clone(), content.clone(), *is_error)),
             _ => None,
         })

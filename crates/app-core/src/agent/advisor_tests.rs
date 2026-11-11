@@ -396,6 +396,7 @@ fn delta_rendering_marks_roles_calls_and_results() {
                 tool_use_id: "t1".into(),
                 content: "fn parse_x() {}".into(),
                 is_error: None,
+                verdict: None,
             }],
             display_role: None,
             timestamp: None,

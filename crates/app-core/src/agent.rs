@@ -1561,6 +1561,7 @@ impl Agent {
                     tool_use_id: id.clone(),
                     content: TOOL_OUTPUT_MISSING_TEXT.to_string(),
                     is_error: Some(true),
+                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                 };
                 let stored_message = StoredMessage {
                     turn_start: false,

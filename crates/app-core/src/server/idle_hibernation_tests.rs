@@ -85,6 +85,7 @@ async fn session_with_projection() -> (Arc<Mutex<Agent>>, String) {
             tool_use_id: "tool_sweep".to_string(),
             content: "result ".repeat(10_000),
             is_error: None,
+            verdict: None,
         }],
     );
     let mut agent = Agent::new_with_session(provider, registry, session, None);

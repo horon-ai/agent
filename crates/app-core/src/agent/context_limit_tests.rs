@@ -164,6 +164,7 @@ fn orphan_tool_result_agent(provider: Arc<dyn Provider>, registry: Registry) -> 
             tool_use_id: "call-without-a-call".to_string(),
             content: "result with no matching call".to_string(),
             is_error: None,
+            verdict: None,
         }],
     );
     agent

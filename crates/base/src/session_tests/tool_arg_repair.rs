@@ -13,6 +13,7 @@ fn tool_result(call_id: &str) -> ContentBlock {
         tool_use_id: call_id.to_string(),
         content: "output".into(),
         is_error: None,
+        verdict: None,
     }
 }
 

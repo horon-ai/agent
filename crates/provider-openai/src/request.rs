@@ -331,6 +331,7 @@ pub fn build_responses_input_with_logger(
                             tool_use_id,
                             content,
                             is_error,
+                            ..
                         } => {
                             if !content_parts.is_empty() {
                                 items.push(serde_json::json!({
@@ -993,6 +994,7 @@ mod tests {
                         tool_use_id: "call_1".into(),
                         content: "found".into(),
                         is_error: None,
+                        verdict: None,
                     },
                     ContentBlock::ToolReference {
                         tool_use_id: "call_1".into(),

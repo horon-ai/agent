@@ -152,11 +152,7 @@ fn test_debug_memory_profile_reports_messages_and_provider_cache() {
                 input: serde_json::json!({"command": "echo hi"}),
                 thought_signature: None,
             },
-            ContentBlock::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                content: "hi".to_string(),
-                is_error: None,
-            },
+            ContentBlock::tool_result("tool_1", "hi", None),
         ],
     );
 
@@ -939,11 +935,11 @@ fn test_save_persists_full_session_content() -> Result<()> {
                 input: serde_json::json!({}),
                 thought_signature: None,
             },
-            ContentBlock::ToolResult {
-                tool_use_id: "tool_1".to_string(),
-                content: "OPENROUTER_API_KEY=sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789".to_string(),
-                is_error: None,
-            },
+            ContentBlock::tool_result(
+                "tool_1",
+                "OPENROUTER_API_KEY=sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789",
+                None,
+            ),
         ],
     );
 
@@ -1290,14 +1286,7 @@ fn test_interrupted_checkpoint_does_not_duplicate_journal_messages() -> Result<(
         }],
     );
     save_legacy_fixture(&mut session)?;
-    session.add_message(
-        Role::User,
-        vec![ContentBlock::ToolResult {
-            tool_use_id: "toolu_1".into(),
-            content: "ok".into(),
-            is_error: None,
-        }],
-    );
+    session.add_message(Role::User, vec![ContentBlock::tool_result("toolu_1", "ok", None)]);
     save_legacy_fixture(&mut session)?;
 
     let journal_path = session_journal_path(session_id)?;
@@ -1486,11 +1475,11 @@ fn test_redacted_for_export_redacts_tool_result_and_tool_input() -> Result<()> {
 
     session.add_message(
         Role::User,
-        vec![ContentBlock::ToolResult {
-            tool_use_id: "tool_1".to_string(),
-            content: "OPENROUTER_API_KEY=sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789".to_string(),
-            is_error: None,
-        }],
+        vec![ContentBlock::tool_result(
+            "tool_1",
+            "OPENROUTER_API_KEY=sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789",
+            None,
+        )],
     );
 
     session.add_message(
@@ -2372,11 +2361,7 @@ fn test_render_messages_and_images_share_tool_resolution_and_labels() {
                 input: serde_json::json!({"file_path": "/tmp/screenshot.png"}),
                 thought_signature: None,
             },
-            ContentBlock::ToolResult {
-                tool_use_id: "tool_img_1".to_string(),
-                content: "rendered image".to_string(),
-                is_error: None,
-            },
+            ContentBlock::tool_result("tool_img_1", "rendered image", None),
             ContentBlock::Image {
                 media_type: "image/png".to_string(),
                 data: "abcd".to_string(),
@@ -2507,11 +2492,7 @@ fn test_render_images_anchors_tool_and_user_images() {
     session.add_message(
         Role::User,
         vec![
-            ContentBlock::ToolResult {
-                tool_use_id: "tool-call-1".to_string(),
-                content: "read image".to_string(),
-                is_error: None,
-            },
+            ContentBlock::tool_result("tool-call-1", "read image", None),
             ContentBlock::Image {
                 media_type: "image/png".to_string(),
                 data: "tool-image-data".to_string(),
@@ -2557,11 +2538,7 @@ fn test_render_images_attached_label_message_does_not_shift_prompt_ordinals() {
     session.add_message(
         Role::User,
         vec![
-            ContentBlock::ToolResult {
-                tool_use_id: "tool-call-2".to_string(),
-                content: "read image".to_string(),
-                is_error: None,
-            },
+            ContentBlock::tool_result("tool-call-2", "read image", None),
             ContentBlock::Image {
                 media_type: "image/png".to_string(),
                 data: "tool-image-data".to_string(),
@@ -2831,11 +2808,7 @@ fn test_rewind_targets_match_rendered_transcript_numbering() {
     // counted them as rewind targets even though the UI never numbers them.
     session.add_message(
         Role::User,
-        vec![ContentBlock::ToolResult {
-            tool_use_id: "tool_1".to_string(),
-            content: "file-a file-b".to_string(),
-            is_error: None,
-        }],
+        vec![ContentBlock::tool_result("tool_1", "file-a file-b", None)],
     );
     session.add_message(
         Role::Assistant,
@@ -2976,11 +2949,7 @@ fn restored_tool_image_boundaries_follow_returned_history_rows() {
         text: text.into(),
         cache_control: None,
     };
-    let result = |id: &str| ContentBlock::ToolResult {
-        tool_use_id: id.into(),
-        content: "read image".into(),
-        is_error: None,
-    };
+    let result = |id: &str| ContentBlock::tool_result(&id.into(), "read image", None);
     let image = |data: &str| ContentBlock::Image {
         media_type: "image/png".into(),
         data: data.into(),
@@ -3050,11 +3019,7 @@ fn restored_tool_image_boundary_can_be_history_end() {
     session.add_message(
         Role::User,
         vec![
-            ContentBlock::ToolResult {
-                tool_use_id: "orphan".into(),
-                content: String::new(),
-                is_error: None,
-            },
+            ContentBlock::tool_result("orphan", "", None),
             ContentBlock::Image {
                 media_type: "image/png".into(),
                 data: "image".into(),
@@ -3284,11 +3249,11 @@ fn screenshot_message(index: usize) -> StoredMessage {
                 input: serde_json::json!({}),
                 thought_signature: None,
             },
-            ContentBlock::ToolResult {
-                tool_use_id: format!("call_{index}"),
-                content: format!("Captured main display #{index}"),
-                is_error: None,
-            },
+            ContentBlock::tool_result(
+                &format!("call_{index}"),
+                &format!("Captured main display #{index}"),
+                None,
+            ),
             ContentBlock::Image {
                 media_type: "image/png".to_string(),
                 data: "A".repeat(4 * 1024),
@@ -3443,11 +3408,11 @@ fn provider_projection_digest_matches_the_pre_change_baseline() {
                     input: serde_json::json!({"path": "src/main.rs"}),
                     thought_signature: None,
                 },
-                ContentBlock::ToolResult {
-                    tool_use_id: format!("call_{index}"),
-                    content: format!("Captured main display #{index}"),
-                    is_error: None,
-                },
+                ContentBlock::tool_result(
+                    &format!("call_{index}"),
+                    &format!("Captured main display #{index}"),
+                    None,
+                ),
                 ContentBlock::Image {
                     media_type: "image/png".to_string(),
                     data: "A".repeat(4 * 1024),
