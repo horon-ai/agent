@@ -103,7 +103,7 @@ async fn handoff_generates_a_non_empty_document_from_a_fixture_transcript() {
     let completer = ScriptedCompleter::answering("## Goal\nship it\n\n## Done\nmost of it\n");
     let cancel = not_cancelled();
 
-    let document = generate_handoff(&messages, budget, &completer, &cancel)
+    let document = generate_handoff(&messages, budget, None, &completer, &cancel)
         .await
         .expect("handoff generation");
 
@@ -141,7 +141,7 @@ async fn handoff_returns_a_document_with_only_a_goal_as_is() {
     ] {
         let completer = ScriptedCompleter::answering(partial);
 
-        let document = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+        let document = generate_handoff(&messages, covering_budget(), None, &completer, &cancel)
             .await
             .expect("a document with a Goal heading is accepted");
 
@@ -160,7 +160,7 @@ async fn handoff_rejects_an_empty_document() {
     for empty in ["", " \n\t\n"] {
         let completer = ScriptedCompleter::answering(empty);
 
-        let error = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+        let error = generate_handoff(&messages, covering_budget(), None, &completer, &cancel)
             .await
             .expect_err("an empty document cannot replace the covered messages");
 
@@ -183,7 +183,7 @@ async fn handoff_rejects_a_document_without_a_goal_heading() {
     ] {
         let completer = ScriptedCompleter::answering(goalless);
 
-        let error = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+        let error = generate_handoff(&messages, covering_budget(), None, &completer, &cancel)
             .await
             .expect_err("a document that never states the goal is refused");
 
@@ -200,10 +200,10 @@ async fn handoff_small_budget_keeps_fewer_messages_than_a_large_one() {
     let completer = ScriptedCompleter::answering("## Goal\nx\n");
     let cancel = not_cancelled();
 
-    let small = generate_handoff(&messages, minimal_budget(), &completer, &cancel)
+    let small = generate_handoff(&messages, minimal_budget(), None, &completer, &cancel)
         .await
         .expect("small-budget handoff");
-    let large = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+    let large = generate_handoff(&messages, covering_budget(), None, &completer, &cancel)
         .await
         .expect("large-budget handoff");
 
@@ -221,7 +221,7 @@ async fn handoff_with_a_budget_that_keeps_everything_reports_nothing_to_cover() 
     let completer = ScriptedCompleter::answering("unused");
     let cancel = not_cancelled();
 
-    let error = generate_handoff(&messages, usize::MAX / 2, &completer, &cancel)
+    let error = generate_handoff(&messages, usize::MAX / 2, None, &completer, &cancel)
         .await
         .expect_err("everything is kept verbatim");
 
@@ -235,7 +235,7 @@ async fn handoff_provider_error_is_reported_with_its_detail() {
     let completer = ScriptedCompleter::failing("upstream returned 503");
     let cancel = not_cancelled();
 
-    let error = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+    let error = generate_handoff(&messages, covering_budget(), None, &completer, &cancel)
         .await
         .expect_err("the provider failed");
 
@@ -264,7 +264,7 @@ async fn handoff_cancellation_reports_cancelled_not_success() {
 
     let error = tokio::time::timeout(
         Duration::from_secs(30),
-        generate_handoff(&messages, budget, &PendingCompleter, &cancel),
+        generate_handoff(&messages, budget, None, &PendingCompleter, &cancel),
     )
     .await
     .expect("cancellation must settle the call")

@@ -251,6 +251,7 @@ async fn compaction_jobs_happy_tail_append_applies_exactly_once() {
         input_tokens: None,
         output_tokens: None,
         restoration: None,
+        handoff: false,
     };
     manager.pending_job = Some(job);
     manager.pending_cutoff = cutoff;
