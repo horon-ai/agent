@@ -78,6 +78,7 @@ const CORE_BASELINE: &[&str] = &[
     "replace",
     "session_search",
     "skill_manage",
+    "swarm",
     "todo",
     "undo",
     "webfetch",
@@ -120,7 +121,7 @@ async fn core_profile_lists_non_essential_tools() {
     let names: Vec<String> = definitions.iter().map(|definition| definition.name.clone()).collect();
     assert_eq!(
         names, expected,
-        "the core surface is the seventeen kept tools plus the dispatcher"
+        "the core surface is the eighteen kept tools plus the dispatcher"
     );
     let mut baseline: Vec<String> = CORE_BASELINE.iter().map(|name| (*name).to_string()).collect();
     baseline.sort();
@@ -562,7 +563,7 @@ async fn full_sdk_list_keeps_todays_deferral() {
     crate::tool::sdk::remove_session(&session_id);
 }
 
-/// The ten core tools a `core`-listed session names in its system prompt
+/// The eleven core tools a `core`-listed session names in its system prompt
 /// instead of sending their schemas eagerly.
 fn listed_core_tools() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = CORE_TOOLS
@@ -620,7 +621,7 @@ async fn core_index_names_every_listed_core_tool() {
 
     let definitions = agent.tool_definitions().await;
     let listed = listed_core_tools();
-    assert_eq!(listed.len(), 10, "seventeen core tools minus the seven essential ones");
+    assert_eq!(listed.len(), 11, "eighteen core tools minus the seven essential ones");
     for name in &listed {
         assert!(
             definition(&definitions, name).defer_loading,
@@ -1077,7 +1078,7 @@ async fn core_listed_manual_qa_transcript() {
 /// The swarm worker derives its allow-list from the registry, so the core
 /// allow-list joining the dispatcher would hand every worker an eager `toolbox`
 /// with nothing to list. The worker must send exactly the core tools it is
-/// allowed, minus the ones a worker never gets (`todo`, `session_search`).
+/// allowed, minus the ones a worker never gets (`swarm`, `todo`, `session_search`).
 #[tokio::test]
 async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
     let _guard = crate::storage::lock_test_env();
@@ -1094,7 +1095,7 @@ async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
         .await;
 
     let mut allowed: HashSet<String> = registry.tool_names().await.into_iter().collect();
-    for blocked in ["subagent", "task", "todo", "session_search"] {
+    for blocked in ["subagent", "task", "swarm", "todo", "session_search"] {
         allowed.remove(blocked);
     }
     crate::config::config().tools.apply_to_allowed_set(&mut allowed);
@@ -1108,7 +1109,7 @@ async fn swarm_worker_allow_list_never_carries_the_dispatcher() {
     let names: Vec<String> = definitions.iter().map(|definition| definition.name.clone()).collect();
     let mut baseline: Vec<String> = CORE_BASELINE
         .iter()
-        .filter(|name| !matches!(**name, "todo" | "session_search"))
+        .filter(|name| !matches!(**name, "swarm" | "todo" | "session_search"))
         .map(|name| (*name).to_string())
         .collect();
     baseline.sort();
