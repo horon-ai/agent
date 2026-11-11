@@ -122,19 +122,23 @@ jobs:
           [ -n "$ref" ] || ref="$GITHUB_SHA"
           mode="dry-run"
 
+          # Both decisions go through `scripts/sdk/sdk_release.py`, so the rules
+          # its unit tests prove are the rules a release runs. The plan job
+          # checks out the workflow's own ref, so the helper exists on all three
+          # events.
           if [ "$EVENT" = "pull_request" ]; then
             source="fixture"
-            version="$(python3 scripts/npm/release_npm_version.py fixture-version)"
+            version="$(python3 scripts/sdk/sdk_release.py fixture-version)"
           elif [ "$EVENT" = "workflow_dispatch" ]; then
             # One source only: the SDK bundles the CLI's runtime, and a workflow
             # artifact is not a published release, so there is no run_id path to
             # offer here. The helper validates the tag, so the rule the unit test
             # covers runs before anything is downloaded.
-            version="$(python3 scripts/npm/release_npm_version.py tag-version "$RELEASE_TAG_INPUT")"
+            version="$(python3 scripts/sdk/sdk_release.py tag-version "$RELEASE_TAG_INPUT")"
             tag="$RELEASE_TAG_INPUT"
             ref="refs/tags/$RELEASE_TAG_INPUT"
             source="release_tag"
-            if [ "${DRY_RUN_INPUT,,}" = "false" ]; then
+            if [ "$(printf '%s' "$DRY_RUN_INPUT" | tr '[:upper:]' '[:lower:]')" = "false" ]; then
               mode="publish"
             fi
           else
@@ -156,7 +160,7 @@ jobs:
                 exit 0
               fi
               source="release_tag"
-              version="$(python3 scripts/npm/release_npm_version.py tag-version "$tag")"
+              version="$(python3 scripts/sdk/sdk_release.py tag-version "$tag")"
               ref="refs/tags/$tag"
               # The automatic path is the normal release: it publishes unless
               # the owner's master switch says otherwise (checked below).
@@ -176,13 +180,12 @@ jobs:
 
           # The variable is the owner's master switch and the pull-request path
           # can never publish, so a dispatch with dry_run=false stays a dry run
-          # until both are true.
-          if [ "$mode" = "publish" ]; then
-            if [ "$NPM_PUBLISH" != "true" ] || [ "$EVENT" = "pull_request" ]; then
-              echo "::notice::NPM_PUBLISH is not 'true'; running the publish path as a dry run."
-              mode="dry-run"
-            fi
+          # until both are true. The rule lives in the helper rather than here.
+          allowed="$(python3 scripts/sdk/sdk_release.py mode "$EVENT" "$mode" "$NPM_PUBLISH")"
+          if [ "$mode" = "publish" ] && [ "$allowed" != "publish" ]; then
+            echo "::notice::NPM_PUBLISH is not 'true'; running the publish path as a dry run."
           fi
+          mode="$allowed"
 
           emit skip false
           emit source "$source"

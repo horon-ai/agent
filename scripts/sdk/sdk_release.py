@@ -17,9 +17,9 @@ The tag parsing, fixture version and platform table are imported from
 `scripts/npm/release_npm_version.py` rather than copied: both workflows publish
 the same release line, and two copies of the tag rule could drift apart.
 
-Commands:
+Commands, each one called by the workflow, `ci.yml` or
+`scripts/sdk/publish_preflight.sh`:
 
-  cargo-version [CARGO]       print the root Cargo.toml [package].version
   tag-version TAG             print the SDK version a release tag names
   check-committed             assert the committed SDK version and pins agree
   stamp VERSION               write VERSION into the SDK manifest (runner only)
@@ -27,9 +27,11 @@ Commands:
   publish-order               print the publish targets, runtime packages first
   package-names               print the seven npm package names
   fixture-version             print the version the pull-request run uses
-  mode --event E --requested R --npm-publish V
+  mode EVENT REQUESTED NPM_PUBLISH
                               print the mode the run is allowed to take
 
+The workflow's `plan` job resolves the version and the mode by calling this
+file, so the rule the unit tests cover is the rule a release runs.
 Exit status is 0 when the answer is good, 1 when a check fails (every failure
 is named) and 2 for a usage error.
 """
@@ -232,9 +234,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    cargo = commands.add_parser("cargo-version", help="print the release version from Cargo.toml")
-    cargo.add_argument("cargo", nargs="?", type=Path, default=CARGO_MANIFEST)
-
     tag = commands.add_parser("tag-version", help="print the SDK version a release tag names")
     tag.add_argument("tag")
 
@@ -256,19 +255,11 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("fixture-version", help="print the version the pull-request run uses")
 
     mode = commands.add_parser("mode", help="print the mode the run may take")
-    mode.add_argument("--event", default="")
-    mode.add_argument("--requested", default="")
-    mode.add_argument("--npm-publish", default="")
+    mode.add_argument("event")
+    mode.add_argument("requested")
+    mode.add_argument("npm_publish")
 
     args = parser.parse_args(argv)
-
-    if args.command == "cargo-version":
-        try:
-            print(read_cargo_version(args.cargo))
-        except (OSError, ValueError) as error:
-            print(f"::error::{error}" if _in_actions() else error, file=sys.stderr)
-            return 1
-        return 0
 
     if args.command == "tag-version":
         try:

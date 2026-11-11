@@ -36,6 +36,11 @@ entry points and only one of them can write to npm.
 | `workflow_dispatch` | An operator names a published release tag | Dry run by default; `dry_run: false` publishes when the switch is on |
 | `pull_request` | A change to `sdk/typescript`, `scripts/sdk`, or the workflow | Generates fixture runtimes and dry-runs the whole flow |
 
+A dispatch only works for a tag created after this workflow reached `main`. The
+run checks out the tag, and a tree older than `scripts/sdk/sdk_release.py`
+(`v0.1.6` and earlier) has no helper to call, so it stops at the stamp step
+before anything is packed. Dispatch the next release instead.
+
 The SDK is released at the same version as the CLI, because it bundles that
 CLI's runtime: a tag `v0.1.6` publishes `@horon-ai/agent-sdk@0.1.6` together
 with the six `0.1.6` runtime packages. There is no separate SDK version line to
@@ -43,10 +48,15 @@ keep in step, and no dispatch input can substitute a different run.
 
 Each run does the same six things:
 
-1. Resolve the version from the tag (`scripts/npm/release_npm_version.py
-   tag-version`), which refuses anything that is not `vMAJOR.MINOR.PATCH`.
-2. Install and validate the SDK in `sdk/typescript` (`bun install
-   --frozen-lockfile`, `bun run check`), against the committed manifest.
+1. Resolve the version from the tag (`scripts/sdk/sdk_release.py tag-version`),
+   which refuses anything that is not `vMAJOR.MINOR.PATCH`. The `plan` job also
+   decides the mode through the same helper, so the rule the unit tests prove is
+   the rule a release runs.
+2. Install the SDK in `sdk/typescript` (`bun install --frozen-lockfile`) against
+   the committed manifest. A dry run then also validates it with `bun run
+   check`; a publish run does not build anything here, because it is already
+   running on a commit whose CI on `main` passed and `prepack` rebuilds `dist/`
+   from a clean slate when the tarball is packed.
 3. Download the release's six `horon-agent-*.tar.gz` assets. The pull-request
    path generates stand-ins with the same archive names and members instead.
 4. Stamp the version into `sdk/typescript/package.json` and its six
