@@ -1611,6 +1611,10 @@ jobs:
         if: ${{ !cancelled() && hashFiles('scripts/ci/check_docs_pairs.py') != '' }}
         run: python3 scripts/ci/check_docs_pairs.py
 
+      - name: Documentation pair gate unit tests
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest -v scripts/ci/test_check_docs_pairs.py
+
       - name: Documentation benchmark block contract
         if: ${{ !cancelled() }}
         run: python3 -m unittest -v scripts/perf/test_bench_docs.py
