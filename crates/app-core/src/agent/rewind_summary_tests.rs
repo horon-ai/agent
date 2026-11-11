@@ -148,6 +148,10 @@ fn visible_count(agent: &Agent) -> usize {
 #[tokio::test]
 async fn rewind_summary_is_appended_to_the_kept_branch() {
     let (_sandbox, mut agent) = summary_fixture().await;
+    // The stored transcript also carries the session-context reminder the
+    // session writes ahead of the first user message, so every count is taken
+    // against the baseline rather than an absolute number.
+    let before = stored_texts(&agent);
     let completer = ScriptedSummaryCompleter::answering(REPORT);
 
     let attempt = agent
@@ -162,7 +166,16 @@ async fn rewind_summary_is_appended_to_the_kept_branch() {
     );
     assert_eq!(visible_count(&agent), 2, "the summary is not a visible message");
     let texts = stored_texts(&agent);
-    assert_eq!(texts.len(), 3, "kept branch plus one hidden summary message: {texts:?}");
+    assert_eq!(
+        texts.len(),
+        before.len() - 2 + 1,
+        "the two discarded texts are replaced by one hidden summary: {texts:?}"
+    );
+    assert_eq!(
+        &texts[..texts.len() - 1],
+        &before[..before.len() - 2],
+        "everything before the rewind target is untouched"
+    );
     let summary = texts.last().unwrap();
     assert!(summary.starts_with("<system-reminder>"), "{summary}");
     assert!(summary.contains("## What failed and why"), "{summary}");
@@ -203,6 +216,7 @@ async fn rewind_summary_absent_flag_matches_a_plain_rewind() {
 #[tokio::test]
 async fn rewind_summary_disabled_setting_still_rewinds() {
     let (_sandbox, mut agent) = summary_fixture().await;
+    let before = stored_texts(&agent);
     let completer = ScriptedSummaryCompleter::answering(REPORT);
 
     let attempt = agent
@@ -212,7 +226,11 @@ async fn rewind_summary_disabled_setting_still_rewinds() {
     assert_eq!(attempt.outcome, RewindSummaryOutcome::Disabled);
     assert_eq!(attempt.removed, 2);
     assert_eq!(visible_count(&agent), 2);
-    assert_eq!(stored_texts(&agent).len(), 2, "nothing is appended");
+    assert_eq!(
+        stored_texts(&agent),
+        before[..before.len() - 2],
+        "nothing is appended: the stored transcript is the kept branch"
+    );
     assert!(completer.requests().is_empty(), "the setting gates the network call");
 }
 
@@ -241,6 +259,7 @@ async fn rewind_summary_undo_removes_the_report_and_restores_messages() {
 #[tokio::test]
 async fn rewind_summary_provider_error_still_rewinds_and_reports() {
     let (_sandbox, mut agent) = summary_fixture().await;
+    let before = stored_texts(&agent);
     let completer = ScriptedSummaryCompleter::failing("quota exhausted");
 
     let attempt = agent
@@ -255,7 +274,11 @@ async fn rewind_summary_provider_error_still_rewinds_and_reports() {
         other => panic!("expected a provider error, got {other:?}"),
     }
     assert_eq!(visible_count(&agent), 2);
-    assert_eq!(stored_texts(&agent).len(), 2, "a failure appends nothing");
+    assert_eq!(
+        stored_texts(&agent),
+        before[..before.len() - 2],
+        "a failure appends nothing"
+    );
 
     agent.record_rewind_summary_outcome(&attempt.outcome);
     let detail = agent.last_status_detail().expect("the failure is reported");
