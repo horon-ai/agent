@@ -62,13 +62,13 @@ fn endpoint(id: &'static str, handle: Option<&'static str>) -> Endpoint {
     }
 }
 
-struct FakeDirectory {
+pub(in crate::tool) struct FakeDirectory {
     peers: Vec<(&'static str, Option<&'static str>)>,
     broadcast: Vec<&'static str>,
 }
 
 impl FakeDirectory {
-    fn peers(peers: Vec<(&'static str, Option<&'static str>)>) -> Self {
+    pub(in crate::tool) fn peers(peers: Vec<(&'static str, Option<&'static str>)>) -> Self {
         Self {
             peers,
             broadcast: Vec::new(),

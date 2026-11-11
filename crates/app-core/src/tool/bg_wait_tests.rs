@@ -8,11 +8,10 @@
 //! async test harness.
 
 use crate::tool::bg::BgTool;
+use crate::tool::irc::irc_tests::FakeDirectory;
 use crate::tool::{Tool, ToolContext, ToolExecutionMode};
 use futures::future::BoxFuture;
-use horon_agent_irc_core::{
-    Deliver, DeliverResult, Directory, Endpoint, IrcBus, IrcLimits, IrcMessage, SendRequest, global,
-};
+use horon_agent_irc_core::{Deliver, DeliverResult, Endpoint, IrcBus, IrcLimits, IrcMessage, SendRequest, global};
 use serde_json::json;
 use std::ffi::OsString;
 use std::future::Future;
@@ -78,31 +77,6 @@ async fn wait(params: serde_json::Value, session: &str) -> anyhow::Result<crate:
     BgTool::new().execute(wait_params(params), ctx(session)).await
 }
 
-/// Resolves every name and reports no peers, which is all a buffered send needs.
-struct AnyDirectory;
-
-impl Directory for AnyDirectory {
-    fn resolve<'a>(&'a self, _sender: &'a str, target: &'a str) -> BoxFuture<'a, Result<Endpoint, String>> {
-        let id: Arc<str> = Arc::from(target);
-        Box::pin(async move {
-            Ok(Endpoint {
-                id,
-                handle: None,
-                parent: None,
-                status: Arc::from("ready"),
-            })
-        })
-    }
-
-    fn broadcast_targets<'a>(&'a self, _sender: &'a str) -> BoxFuture<'a, Result<Vec<Endpoint>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    fn roster<'a>(&'a self, _sender: &'a str) -> BoxFuture<'a, Vec<Endpoint>> {
-        Box::pin(async { Vec::new() })
-    }
-}
-
 /// A target that is not live, so the send is parked in the mailbox exactly as
 /// it is for a busy session.
 struct OfflineDeliver;
@@ -126,8 +100,11 @@ impl Deliver for OfflineDeliver {
     }
 }
 
-fn install_bus() -> Arc<IrcBus> {
-    let bus = IrcBus::new(IrcLimits::default(), Arc::new(AnyDirectory), Arc::new(OfflineDeliver));
+/// Installs a bus whose directory knows `session` only: the one buffered send
+/// in this file targets it, and nothing here broadcasts or lists peers.
+fn install_bus(session: &'static str) -> Arc<IrcBus> {
+    let directory = FakeDirectory::peers(vec![(session, None)]);
+    let bus = IrcBus::new(IrcLimits::default(), Arc::new(directory), Arc::new(OfflineDeliver));
     global::install(bus.clone());
     bus
 }
@@ -232,8 +209,8 @@ fn wait_tool_children_timeout_lists_running_ids() {
 fn wait_tool_messages_wakes_on_irc_message() {
     let _guard = crate::storage::lock_test_env();
     let _env = TestEnv::new("[tools]\nirc = true\n");
-    let bus = install_bus();
     let me = "parent-message-wake";
+    let bus = install_bus(me);
     // No unanswered send exists, so `IrcBus::wait` cannot park on this session;
     // the message has to reach the wait through the mailbox instead.
     assert!(bus.unanswered_sends(me).is_empty());
