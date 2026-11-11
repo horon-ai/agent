@@ -350,8 +350,8 @@ fn plan_tool_joins_allow_list_only_when_enabled() {
     );
     assert_eq!(
         crate::config::CORE_TOOLS.len(),
-        15,
-        "the headless core surface stays at fifteen tools"
+        17,
+        "the headless core surface stays at seventeen tools"
     );
     plan_mode::clear_state(session);
 }

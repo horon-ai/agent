@@ -176,6 +176,30 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "statusline.path_max",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_STATUSLINE_PATH_MAX",
+        default: DefaultValue::Number(40),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Segments",
+            label: "Path length",
+            description: "Longest directory the path segment shows before it is shortened; 0 keeps it whole.",
+        },
+    },
+    SettingSpec {
+        id: "statusline.context_window",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_STATUSLINE_CONTEXT_WINDOW",
+        default: DefaultValue::Number(0),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Segments",
+            label: "Context window",
+            description: "Tokens the model can hold, used for the context percentage; 0 hides the segment.",
+        },
+    },
+    SettingSpec {
         id: "editor.submit_on_enter",
         kind: SettingKind::Bool,
         env: "HORON_TUI_EDITOR_SUBMIT_ON_ENTER",

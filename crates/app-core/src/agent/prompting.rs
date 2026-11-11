@@ -247,16 +247,29 @@ impl Agent {
     }
 
     /// The `todo` tool is what an editor renders as the plan, so the prompt only
-    /// mentions it when this session can actually call it. `core` has no `todo`
-    /// tool and gets nothing; `acp` keeps the hint. The answer follows the
+    /// mentions it when this session can actually call it: `core` and `acp`
+    /// allow it, an SDK `enabled` list that omits it does not, and
+    /// `[tools.load_mode] todo = "off"` removes it too. The answer follows the
     /// session-start tool selection, so the hint is stable for the session.
     fn append_todo_hint(&self, split: &mut crate::prompt::SplitSystemPrompt) {
         const TODO_TOOL: &str = "todo";
+        // An SDK `enabled` list is the client's exact tool surface; a client
+        // that did not name `todo` gets no hint about it.
+        if crate::tool::sdk::config(&self.session.id).is_some_and(|config| {
+            config
+                .enabled
+                .is_some_and(|enabled| !enabled.iter().any(|tool| tool == TODO_TOOL))
+        }) {
+            return;
+        }
         let allowed = self
             .allowed_tools
             .as_ref()
             .is_none_or(|allowed| crate::tool::tool_name_is_allowed(allowed, TODO_TOOL));
-        if !allowed || crate::tool::tool_name_is_disabled(&self.disabled_tools, TODO_TOOL) {
+        if !allowed
+            || crate::tool::tool_name_is_disabled(&self.disabled_tools, TODO_TOOL)
+            || self.load_tiers.tier(TODO_TOOL) == crate::config::LoadMode::Off
+        {
             return;
         }
         if !split.static_part.is_empty() {

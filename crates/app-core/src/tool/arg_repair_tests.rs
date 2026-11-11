@@ -1,10 +1,17 @@
-use super::repair;
+use super::repair_recorded;
 use crate::message::{Message, ToolDefinition};
 use crate::provider::{EventStream, Provider};
 use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
+
+/// The value to run and the notes explaining each change, in the shape the
+/// checks below read.
+fn repair(schema: &Value, input: Value) -> (Value, Vec<String>) {
+    let repaired = repair_recorded(schema, input);
+    (repaired.input, repaired.changes)
+}
 
 /// The repair pass runs on every dispatch, so these are all pure-function
 /// checks against the shapes a provider's JSON writer actually produces.

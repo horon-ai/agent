@@ -317,3 +317,68 @@ async fn sdk_nested_alias_and_deferred_mcp_use_callbacks() {
     assert!(error.to_string().contains("not allowed"));
     assert!(rx.try_recv().is_err());
 }
+
+/// An SDK-driven session gets `todo` but not `session_search`: the session
+/// index costs a cold-start scan, so a client pays for it only by naming it.
+#[tokio::test]
+async fn sdk_session_keeps_todo_and_drops_session_search() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let _home = TestHomeGuard::new(home.path());
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let agent = crate::agent::Agent::new(provider, registry);
+    let session = agent.session_id().to_owned();
+    let _cleanup = Cleanup(session.clone());
+
+    sdk::configure(&session, "default-surface-owner", SessionToolConfig::default(), tx).unwrap();
+    let definitions = agent.tool_definitions_for_debug().await;
+    assert!(
+        definitions.iter().any(|definition| definition.name == "todo"),
+        "todo stays on for an SDK session that names no tools"
+    );
+    assert!(
+        !definitions.iter().any(|definition| definition.name == "session_search"),
+        "session search stays off"
+    );
+    let error = agent
+        .execute_tool("session_search", json!({"query": "anything"}))
+        .await
+        .expect_err("session search is unreachable without being named");
+    assert!(error.to_string().contains("disabled"), "{error}");
+    assert!(
+        agent.system_prompt_for_debug().contains(crate::prompt::TODO_HINT),
+        "todo is available, so the prompt carries its hint"
+    );
+}
+
+/// A client that names `session_search` gets it back, and the rest of the
+/// default-off surface stays off.
+#[tokio::test]
+async fn sdk_enabled_list_can_name_session_search() {
+    let _lock = crate::storage::lock_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let _home = TestHomeGuard::new(home.path());
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let agent = crate::agent::Agent::new(provider, registry);
+    let session = agent.session_id().to_owned();
+    let _cleanup = Cleanup(session.clone());
+
+    let config = SessionToolConfig {
+        enabled: Some(vec!["bash".into(), "session_search".into()]),
+        ..Default::default()
+    };
+    sdk::configure(&session, "named-surface-owner", config, tx).unwrap();
+    let definitions = agent.tool_definitions_for_debug().await;
+    assert!(
+        definitions.iter().any(|definition| definition.name == "session_search"),
+        "a named tool is part of the overlay"
+    );
+    assert!(
+        !definitions.iter().any(|definition| definition.name == "todo"),
+        "an enabled list is exact"
+    );
+}

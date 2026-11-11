@@ -133,7 +133,7 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 
 ## 기능
 
-- **핵심 도구 15개.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 여덟 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 해서 첫 요청을 작게 유지한다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
+- **핵심 도구 17개.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 해서 첫 요청을 작게 유지한다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
 - **추가만 하는 세션.** 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session inspect|doctor|export|import|migrate|recover-to`로 저장소를 다룬다([docs/protocol/SESSION_STORE.ko.md](docs/protocol/SESSION_STORE.ko.md)).
 - **편집 안전 장치.** 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 켜야 쓴다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
 - **MCP와 스킬.** `horon mcp`는 설정된 MCP 서버를 나열하고 원격 서버의 OAuth 자격 증명을 관리한다. 스킬은 `skill://`로 읽고 `skill_manage`로 관리한다.

@@ -6,7 +6,7 @@
 
 ## 도구 발견과 지연 로딩
 
-`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열다섯 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다.
+`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열일곱 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다.
 
 ### 세 단계
 
@@ -31,8 +31,8 @@ memory = "essential"
 ### 기본 배치
 
 - `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:803` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
-- `CORE_TOOLS`는 여전히 열다섯 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:779` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다.
-- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 여덟 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:889` `ToolLoadTiers::tier`).
+- `CORE_TOOLS`는 열일곱 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:779` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다. `todo`와 `session_search`가 마지막으로 합류했고, SDK 구동 세션은 `enabled` 목록이 이름을 대지 않는 한 `session_search`를 끈 채로 둡니다 (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
+- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:889` `ToolLoadTiers::tier`).
 - 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
 - `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:861` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
 - `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:889` `ToolLoadTiers::tier`).
@@ -45,7 +45,7 @@ memory = "essential"
 
 - `[tools.load_mode] ask = "essential"`처럼 적으면 그 도구는 목록 모드 세션에서도 스키마와 함께 실립니다. 명시 항목이 기본 배치보다 우선합니다.
 - `monitor = "off"`는 그 도구를 요청에서도 색인에서도 뺍니다.
-- `toolbox = "off"`로 두거나 `[tools] disabled`에 `toolbox`를 넣으면 목록 모드가 꺼지고 코어 열다섯 도구가 모두 다시 즉시 실립니다. 닿을 방법이 없는 도구를 만들지 않기 위한 동작입니다.
+- `toolbox = "off"`로 두거나 `[tools] disabled`에 `toolbox`를 넣으면 목록 모드가 꺼지고 코어 열일곱 도구가 모두 다시 즉시 실립니다. 닿을 방법이 없는 도구를 만들지 않기 위한 동작입니다.
 
 ### 목록 색인
 
@@ -57,7 +57,7 @@ memory = "essential"
 - 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
 - SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:175`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
 - 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다.
-- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`acp` 등)에만 붙고, 목록 모드 `core`에는 `todo`가 없으므로 붙지 않습니다 (`prompting.rs:233` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
+- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:233` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
 
 ### toolbox
 
@@ -91,7 +91,7 @@ memory = "essential"
 
 ### core가 닫혀 있는 이유
 
-`core`는 허용 목록입니다. 기본 headless 표면을 코어 열다섯 도구와 `toolbox` 하나로 고정하고, 나머지 모듈은 트리에 두되 노출하지 않습니다. 허용 목록은 닫힌 채 그대로이고 바뀐 것은 전달 방식뿐입니다. 일곱 도구는 스키마와 함께, 여덟 도구는 색인과 `toolbox`로 닿습니다. 마지막으로 합류한 `monitor`는 파일·명령 감시를 재시작 뒤에도 이어 가는 도구입니다. 이 선택은 세 가지를 지킵니다.
+`core`는 허용 목록입니다. 기본 headless 표면을 코어 열일곱 도구와 `toolbox` 하나로 고정하고, 나머지 모듈은 트리에 두되 노출하지 않습니다. 허용 목록은 닫힌 채 그대로이고 바뀐 것은 전달 방식뿐입니다. 일곱 도구는 스키마와 함께, 열 도구는 색인과 `toolbox`로 닿습니다. 마지막으로 합류한 `todo`와 `session_search`도 같은 방식으로 스키마를 접두사 밖에 둡니다. 이 선택은 세 가지를 지킵니다.
 
 - 기본 표면의 크기가 바뀌지 않아 요청 접두사와 프롬프트 캐시가 안정적입니다.
 - 쓰기와 셸을 포함한 기본 권한 범위가 예측 가능합니다.
@@ -208,6 +208,26 @@ memory = "essential"
 자동 승인에는 감사 기록이 붙습니다. 새 파일이나 새 큐를 만들지 않고 기존 로그 이벤트 `TOOL_APPROVAL`을 씁니다 (`crates/app-core/src/approval.rs:139`). 필드는 도구 이름, 모드, 사유, 호출 ID 넷입니다 (`crates/app-core/src/approval.rs:125`).
 
 `off` 모드는 감사 줄을 쓰지 않습니다. 승인 등급이 없던 시절과 로그가 같아야 하기 때문입니다. 읽기 전용 호출도 감사 대상이 아닙니다. 그래서 `off`가 읽기 전용 분기보다 먼저 반환합니다.
+
+## 인자 복구
+
+프로바이더의 JSON 작성기는 때때로 인자의 타입을 틀리게 씁니다. 불리언 자리에
+`"true"`를, 숫자 자리에 `"5000"`을 보내는 식입니다. 도구가 실행되기 전에
+디스패처가 스키마가 지정한 값으로 형을 맞추고 무엇을 바꿨는지 기록합니다. 처음
+호출이 스키마와 맞았던 경우에는 복구 경로도, 추가 할당도 없습니다.
+
+복구된 호출은 세 자리에 흔적을 남깁니다.
+
+- 디버그 로그 한 줄, `[tool:<name>] repaired arguments: [...]`;
+- `HORON_AGENT_PERF_COUNTERS=1`일 때 `snapshot().tool_arg_repairs`에 도구 이름별
+  항목 하나;
+- 저장된 도구 결과. 모델이 보낸 그대로의 인자를 `original_input`에, 복구를 한
+  줄에 하나씩 `arg_repairs`에 담습니다.
+
+복구가 필요 없었던 호출에서는 두 값을 모두 생략하므로, 기존 세션 파일은 이전과
+정확히 같은 바이트를 유지하고 예전에 쓰인 파일도 그대로 불러옵니다. 같은 두
+값은 호출 결과 바로 앞에 `tool_args_repaired` 이벤트로 나가며, 자세한 내용은
+`docs/protocol/HARNESS_API.md`에 있습니다.
 
 ## 편집 안전 장치
 
@@ -414,15 +434,20 @@ config 하위 디렉터리 규칙 본문
 
 ## 스킬 관리
 
-`skill_manage`의 `create`, `update`, `delete`는 모델이 직접 쓴 스킬만 다룹니다. 그 스킬은 `~/.horon/managed-skills/<이름>/SKILL.md`에 있고, 사람이 쓴 스킬과 이름이 겹치면 언제나 사람이 쓴 쪽이 이깁니다. 그래서 세 동작 모두 사람이 쓴 스킬을 고치거나 지우지 못합니다.
+`skill_manage`의 `create`, `update`, `delete`, `install`은 관리 디렉터리의 스킬만 다룹니다. 그 스킬은 `~/.horon/managed-skills/<이름>/SKILL.md`에 있고, 사람이 쓴 스킬과 이름이 겹치면 언제나 사람이 쓴 쪽이 이깁니다. 그래서 네 동작 모두 사람이 쓴 스킬을 고치거나, 지우거나, 그 위에 설치하지 못합니다.
 
 | 동작 | 하는 일 | 거절하는 경우 |
 | --- | --- | --- |
 | `create` | 관리 스킬을 새로 씁니다. | 같은 이름의 스킬이 이미 로드되거나 관리 디렉터리에 있으면 거절합니다. |
 | `update` | 관리 스킬의 설명과 본문을 바꿉니다. | 관리 스킬이 없으면 `create`를 쓰라고 알립니다. |
 | `delete` | 관리 스킬 디렉터리를 지우고 스킬 목록을 다시 읽습니다. | 같은 이름이 사람이 쓴 스킬로 로드되면 그 출처를 밝히고 아무 파일도 지우지 않습니다. |
+| `install` | 스킬 하나를 관리 디렉터리에 복제하고 잠금 기록을 남긴 뒤 스킬 목록을 다시 읽습니다. | 이름이 이미 있거나, 원본에 `SKILL.md`가 없거나, 추천 이름을 찾지 못하면 거절합니다. |
 
-`create`와 `update`는 `[tools] managed_skills`가 켜져 있어야 실행됩니다. `delete`는 이 스위치를 보지 않습니다. 스위치를 끈 뒤에 남은 관리 스킬도 정리해야 하기 때문입니다.
+`create`, `update`, `install`은 `[tools] managed_skills`가 켜져 있어야 실행됩니다. `delete`는 이 스위치를 보지 않습니다. 스위치를 끈 뒤에 남은 관리 스킬도 정리해야 하기 때문입니다.
+
+### 스킬 설치
+
+`{"action": "install", "name": "<추천 이름>"}`은 추천 목록 항목이 밝힌 고정 저장소에서 설치합니다. 모델이 명령을 넘기지 않습니다. `{"action": "install", "source": "<git URL 또는 경로>", "ref": "<브랜치, 태그, 커밋>"}`은 그 밖의 스킬을 설치하고, `source`와 함께 준 `name`은 스킬이 여럿 든 저장소에서 하나를 고릅니다. 복제는 얕게 하고 대상 옆 준비 디렉터리에 받은 뒤, `SKILL.md` 해석과 이름 검증을 마쳐야 이름 하나로 제자리에 옮깁니다. 그래서 거절된 설치는 아무것도 쓰지 않습니다. 이름과 설명은 frontmatter에서 읽고, 관리 디렉터리의 `install-lock.json`이 설치마다 이름, 출처, 요청한 ref, 확정된 커밋을 기록합니다. 설치기는 `crates/base/src/skill_install.rs`에 있습니다.
 
 `delete`의 안전 규칙은 `crates/base/src/managed_skills.rs`의 `remove` 한 곳에 모여 있습니다.
 
@@ -434,7 +459,7 @@ config 하위 디렉터리 규칙 본문
 
 거절 문구는 이름이 어느 출처에 속하는지 밝힙니다. 예를 들어 작업 폴더의 `.agents/skills`에서 온 스킬이면 "a project skill from the agents source (<디렉터리>)"처럼 나옵니다. 이 문구는 스킬 출처 표(`crates/base/src/skill/sources.rs`의 `SOURCES`)를 그대로 읽어 만들므로, 표에 없는 디렉터리를 지어내지 않습니다.
 
-계획 모드에서는 세 동작이 모두 거절됩니다. `skill_manage`는 쓰기 효과를 선언하고, 계획 모드 게이트는 쓰기 효과를 가진 호출을 실행 전에 막습니다. 그 게이트는 [도구 효과, 계획 모드, 승인 등급](#도구-효과-계획-모드-승인-등급)에 설명되어 있습니다.
+계획 모드에서는 쓰는 동작이 모두 거절됩니다. `install`도 포함되며, 이 동작은 복제를 위해 네트워크 효과까지 선언합니다. `skill_manage`는 동작마다 이 효과를 선언하고, 계획 모드 게이트는 쓰기 효과를 가진 호출을 실행 전에 막습니다. 그 게이트는 [도구 효과, 계획 모드, 승인 등급](#도구-효과-계획-모드-승인-등급)에 설명되어 있습니다.
 
 ## 압축 파일과 SQLite 데이터베이스 읽기
 
