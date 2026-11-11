@@ -58,11 +58,21 @@ impl Agent {
             .iter()
             .map(crate::session::StoredMessage::to_message)
             .collect();
-        let document = match run_off_thread(generate_handoff(&messages, recent_tokens, completer, cancel)) {
+        // A second handoff replaces the first one's boundary, so the earlier
+        // document travels into the prompt: the goal and constraints it recorded
+        // are the ones the covered range no longer carries.
+        let prior = self.session.compaction.as_ref().map(|state| state.summary_text.clone());
+        let document = match run_off_thread(generate_handoff(
+            &messages,
+            recent_tokens,
+            prior.as_deref(),
+            completer,
+            cancel,
+        )) {
             Ok(document) => document,
             Err(HandoffError::NothingToCover) => return HandoffOutcome::NothingToCover,
             Err(HandoffError::Provider { detail }) => return HandoffOutcome::ProviderError(detail),
-            Err(error @ HandoffError::InvalidDocument { .. }) => {
+            Err(error @ (HandoffError::InvalidDocument { .. } | HandoffError::CoveredRangeTooLarge { .. })) => {
                 return HandoffOutcome::ProviderError(error.to_string());
             }
             Err(HandoffError::Cancelled) => return HandoffOutcome::Cancelled,

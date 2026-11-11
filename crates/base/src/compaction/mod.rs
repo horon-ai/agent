@@ -48,6 +48,7 @@ use horon_agent_config_types::CompactionStrategy;
 
 mod active_char_estimate;
 pub mod handoff;
+mod handoff_provider;
 pub mod jobs;
 pub mod recovery;
 pub mod rewind_summary;
@@ -91,6 +92,9 @@ struct CompactionResult {
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
     restoration: Option<summary::RestorationManifest>,
+    /// True when `summary_text` is a handoff document rather than a summarizer
+    /// summary; the boundary is presented to the successor as its own writing.
+    handoff: bool,
 }
 
 /// Why a job's provider call did not produce a result.
@@ -1761,6 +1765,7 @@ impl CompactionManager {
 
         let active_snapshot = active.to_vec();
         let native_route = self.current_native_route();
+        let handoff = self.strategy == CompactionStrategy::Handoff;
         let msg_count = cutoff;
         let label = trigger.as_str().to_string();
         self.pending_job = Some(job);
@@ -1777,6 +1782,7 @@ impl CompactionManager {
                 existing_summary.as_ref(),
                 limits,
                 native_route,
+                handoff,
                 deadline,
                 cancel_rx,
             )
@@ -2276,7 +2282,7 @@ impl CompactionManager {
         self.active_summary_usage = (result.input_tokens, result.output_tokens);
         self.active_restoration = result.restoration.as_ref().map(stored_restoration);
         self.active_lossy = false;
-        self.active_handoff = false;
+        self.active_handoff = result.handoff;
         self.recovery_blocked = None;
         self.discard_oversized_openai_native_compaction();
         self.observed_input_tokens = None;
@@ -2378,8 +2384,13 @@ impl CompactionManager {
                         encrypted_content: encrypted_content.clone(),
                         window,
                     },
+                    // A handoff is the same agent's earlier writing, not
+                    // third-party notes, so it gets its own introduction.
                     None => ContentBlock::Text {
-                        text: compacted_summary_text_block(&summary.text),
+                        text: horon_agent_compaction_core::handoff_frame::boundary_text_block(
+                            &summary.text,
+                            self.active_handoff,
+                        ),
                         cache_control: None,
                     },
                 };
@@ -2806,6 +2817,7 @@ async fn run_compaction_job(
     existing_summary: Option<&Summary>,
     limits: SummaryLimits,
     native_route: Option<crate::session::StoredNativeRoute>,
+    handoff: bool,
     job_deadline: tokio::time::Instant,
     mut cancel: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<CompactionResult, JobFailure> {
@@ -2830,6 +2842,7 @@ async fn run_compaction_job(
                     existing_summary,
                     limits,
                     native_route.clone(),
+                    handoff,
                 ),
             ) => attempt,
         };
@@ -2873,8 +2886,17 @@ async fn generate_compaction_artifact(
     existing_summary: Option<&Summary>,
     limits: SummaryLimits,
     native_route: Option<crate::session::StoredNativeRoute>,
+    handoff: bool,
 ) -> Result<CompactionResult> {
     let start = Instant::now();
+    // A configured handoff owns this job's boundary; a failure falls through to
+    // the structured summary below, so the turn is still compacted.
+    if handoff
+        && let Some(result) =
+            handoff_provider::try_handoff(provider.clone(), active, candidate_end, existing_summary, start).await
+    {
+        return Ok(result);
+    }
     let mut existing_summary = existing_summary.cloned();
     if let Some(summary) = existing_summary.as_mut()
         && let Some(encrypted_content) = summary.openai_encrypted_content.as_ref()
@@ -2925,6 +2947,7 @@ async fn generate_compaction_artifact(
                     input_tokens: None,
                     output_tokens: None,
                     restoration: None,
+                    handoff: false,
                 });
             }
             Err(reason) => crate::logging::warn(&format!(
@@ -2968,6 +2991,7 @@ async fn generate_compaction_artifact(
         input_tokens: bound.input_tokens,
         output_tokens: bound.output_tokens,
         restoration: (!bound.restoration.entries.is_empty()).then_some(bound.restoration),
+        handoff: false,
     })
 }
 
@@ -3079,6 +3103,7 @@ pub async fn build_transfer_compaction_state(
         existing_summary.as_ref(),
         limits,
         None,
+        false,
     )
     .await?;
     let total_turns = prior_turns + messages.len();
@@ -3124,3 +3149,11 @@ mod structured_summary_tests;
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "handoff_shrink_tests.rs"]
+mod handoff_shrink_tests;
+
+#[cfg(test)]
+#[path = "handoff_strategy_tests.rs"]
+mod handoff_strategy_tests;

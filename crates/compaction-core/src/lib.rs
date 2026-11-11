@@ -5,6 +5,7 @@ use horon_agent_token_estimate::{
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+pub mod handoff_frame;
 pub mod pruning;
 
 /// Default token budget (200k tokens - matches Claude's actual context limit)
