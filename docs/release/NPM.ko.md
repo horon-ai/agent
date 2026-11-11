@@ -59,13 +59,13 @@ npx @horon-ai/horon --help
 | `workflow_dispatch` | 운영자가 릴리스 태그를, 또는 `package_only` Release 실행과 버전을 지정했을 때 | 기본은 드라이런이고, 스위치가 켜져 있으면 `dry_run=false`가 게시한다 |
 | `pull_request` | `npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
 
-워크플로는 npm 11.5.1 이상을 요구한다. provenance 서명과 trusted publishing에 이 버전이 필요하다. 계획 잡은 `contents: read`를 들고 끝난 실행의 잡을 읽으며, `id-token: write`는 게시 잡만 받는다. 이 권한이 주는 단명 자격 증명을 npm이 한 번짜리 게시 허가로 바꾼다. `cancel-in-progress: false`인 동시성 그룹은 두 번째 실행을 취소하지 않고 줄 세우므로, 뒤 실행이 레지스트리를 다시 읽고 이미 올라간 것은 건너뛴다.
+워크플로는 npm 11.5.1 이상을 요구한다. provenance 서명과 trusted publishing에 이 버전이 필요하다. 계획 잡은 `contents: read`와 `actions: read`를 들고, 뒤의 권한으로 끝난 실행의 잡을 읽는다. `id-token: write`는 게시 잡만 받는다. 이 권한이 주는 단명 자격 증명을 npm이 한 번짜리 게시 허가로 바꾼다. `cancel-in-progress: false`인 동시성 그룹은 두 번째 실행을 취소하지 않고 줄 세우므로, 뒤 실행이 레지스트리를 다시 읽고 이미 올라간 것은 건너뛴다.
 
 다음 조건이 모두 성립할 때만 게시 실행이 된다. 이벤트가 pull request가 아니고, 계획 잡이 `mode=publish`로 정했고, 저장소 변수 `NPM_PUBLISH`가 정확히 `true`이다. 자동 경로는 여기에 더해 `horon-ai/agent`의 `main`에서 성공한 "Release Tag" 실행, 그 실행의 헤드 커밋을 가리키는 태그, 초안이 아닌 공개 릴리스를 요구한다.
 
 두 흐름 모두 `scripts/npm/release_npm_version.py publish-order`가 출력하는 순서대로 플랫폼 패키지 여섯을 먼저, 래퍼를 마지막에 게시한다. 래퍼가 선택적 의존성을 이름으로 찾기 때문이다. 실제 경로는 게시 전에 `npm view <name>@<version> version`으로 그 버전이 이미 있는지 묻고, 답이 오면 건너뛰므로 재실행이 일부만 올라간 묶음을 실패 없이 마무리한다. 실행 끝에는 모든 `name@version`을 최대 10분 동안 확인한 뒤 래퍼의 `optionalDependencies`를 출력한다. 그래서 성공한 실행 자체가 일곱이 함께 올라갔다는 증거가 된다.
 
-드라이런은 패키지를 `npm pack`으로 묶은 뒤 `npm publish <tarball> --access public --provenance --dry-run`을 돌리고, 실행 전후의 레지스트리를 비교한다. pull request 경로는 여기에 가짜 버전 `0.0.1`을 쓴다. npm 11.5.1은 이미 레지스트리에 있는 버전의 드라이런 게시를 거부하고, 일곱 이름 모두 `0.0.0` 자리 패키지를 들고 있으며, 프리릴리스 버전이라면 `--tag`를 따로 줘야 하기 때문이다.
+드라이런은 패키지를 `npm pack`으로 묶은 뒤 `npm publish <tarball> --access public --provenance --dry-run`을 돌리고, 실행 전후의 래퍼 버전 목록을 비교해 레지스트리에 쓴 드라이런이 있으면 잡을 실패시킨다. pull request 경로는 여기에 가짜 버전 `0.0.1`을 쓴다. npm 11.5.1은 이미 레지스트리에 있는 버전의 드라이런 게시를 거부하고, 첫 준비 단계가 모든 이름에 `0.0.0` 자리 패키지를 남기며, 프리릴리스 버전이라면 `--tag`를 따로 줘야 하기 때문이다.
 
 중간에 멈춘 릴리스를 다시 시작하려면 같은 태그로 다시 디스패치한다. 이미 있는 플랫폼 패키지와 래퍼를 건너뛰므로 게시 잡은 여러 번 실행해도 같은 결과에 이른다.
 
