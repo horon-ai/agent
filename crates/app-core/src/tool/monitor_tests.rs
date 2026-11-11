@@ -92,7 +92,7 @@ fn monitor_tool_is_registered_in_the_core_surface() {
         "monitor must be in the core allow-list, got {:?}",
         crate::config::CORE_TOOLS
     );
-    assert_eq!(crate::config::CORE_TOOLS.len(), 17);
+    assert_eq!(crate::config::CORE_TOOLS.len(), 18);
 
     let registry = runtime().block_on(async { Registry::new(Arc::new(MockProvider) as Arc<dyn Provider>).await });
     runtime().block_on(async {

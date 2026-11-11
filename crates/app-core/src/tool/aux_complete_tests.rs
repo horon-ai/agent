@@ -148,8 +148,8 @@ fn tool_is_outside_core_tools() {
     );
     assert_eq!(
         crate::config::CORE_TOOLS.len(),
-        17,
-        "the headless core surface stays at seventeen tools"
+        18,
+        "the headless core surface stays at eighteen tools"
     );
 
     let core = crate::config::ToolConfig {

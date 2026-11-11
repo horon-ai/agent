@@ -87,7 +87,7 @@ fn clientless_approval_joins_the_core_allow_list() {
         CORE_TOOLS.len() + 2,
         "exactly one tool joins the core surface"
     );
-    assert_eq!(CORE_TOOLS.len(), 17, "CORE_TOOLS itself grows to seventeen");
+    assert_eq!(CORE_TOOLS.len(), 18, "CORE_TOOLS itself grows to eighteen");
 }
 
 #[test]

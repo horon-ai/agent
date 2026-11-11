@@ -342,6 +342,10 @@ async fn sdk_session_keeps_todo_and_drops_session_search() {
         !definitions.iter().any(|definition| definition.name == "session_search"),
         "session search stays off"
     );
+    assert!(
+        !definitions.iter().any(|definition| definition.name == "swarm"),
+        "swarm stays off unless the client names it"
+    );
     let error = agent
         .execute_tool("session_search", json!({"query": "anything"}))
         .await
