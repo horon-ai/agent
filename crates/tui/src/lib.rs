@@ -583,11 +583,22 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
 /// rows, and a logical line that wraps over the pane width occupies more than
 /// one row. Trimming logical lines first would push the newest rows off the
 /// bottom of the pane.
+///
+/// Items are walked from the newest one so the work is bounded by the pane: an
+/// idle frame rebuilds at least twenty times a second, and wrapping the whole
+/// conversation each time would cost more as the session grows.
 fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
+    let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
     let mut rows: Vec<Line<'static>> = Vec::new();
-    for item in app.transcript.items() {
+    for item in app.transcript.items().iter().rev() {
+        let mut item_rows: Vec<Line<'static>> = Vec::new();
         for line in render_item(item, &app.theme, app.symbols) {
-            rows.extend(wrap::wrap_line(&line, usize::from(width)));
+            item_rows.extend(wrap::wrap_line(&line, usize::from(width)));
+        }
+        item_rows.extend(rows);
+        rows = item_rows;
+        if rows.len() >= capacity {
+            break;
         }
     }
     if rows.is_empty() {
@@ -601,7 +612,6 @@ fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
     }
     // Keep the newest rows: the pane has no scrollback yet, and the end of the
     // conversation is the part a user is reading.
-    let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
     if rows.len() > capacity {
         rows.drain(..rows.len() - capacity);
     }

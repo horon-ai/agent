@@ -9,45 +9,81 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
+/// One character, its cell width, and the style of the span it came from.
+type Cell = (char, usize, Style);
+
 /// Break `line` into rows of at most `width` cells, keeping each span's style.
 ///
-/// A wide character that does not fit on the current row starts the next one
-/// instead of being split, and a row is only wider than `width` when one
+/// A row that overflows ends after its last whitespace character, which stays
+/// at the end of the row: nothing is trimmed, so a word is never split when the
+/// row has somewhere else to break. A row with no whitespace is broken at the
+/// cell limit instead, and a wide character that does not fit starts the next
+/// row rather than being split, so a row is only wider than `width` when one
 /// character alone is wider than the pane.
 pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
+    let cells: Vec<Cell> = line
+        .spans
+        .iter()
+        .flat_map(|span| {
+            span.content
+                .chars()
+                .map(move |character| (character, UnicodeWidthChar::width(character).unwrap_or(0), span.style))
+        })
+        .collect();
     let mut rows: Vec<Line<'static>> = Vec::new();
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut text = String::new();
-    let mut style = Style::default();
-    let mut used = 0;
-    for span in &line.spans {
-        if !text.is_empty() && span.style != style {
-            spans.push(Span::styled(std::mem::take(&mut text), style));
-        }
-        style = span.style;
-        for character in span.content.chars() {
-            let cells = UnicodeWidthChar::width(character).unwrap_or(0);
-            if used > 0 && used + cells > width {
-                if !text.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut text), style));
-                }
-                rows.push(row(std::mem::take(&mut spans), line));
-                used = 0;
+    let mut start = 0;
+    while start < cells.len() {
+        let mut used = 0;
+        let mut end = start;
+        let mut space = None;
+        while end < cells.len() {
+            let cell_width = cells[end].1;
+            if used > 0 && used + cell_width > width {
+                break;
             }
-            text.push(character);
-            used += cells;
+            used += cell_width;
+            if cells[end].0.is_whitespace() {
+                space = Some(end + 1);
+            }
+            end += 1;
         }
+        // `end < cells.len()` means the row overflowed. Breaking after the last
+        // space keeps whole words; without one the cell limit is the only
+        // place left to break.
+        let end = if end < cells.len() {
+            space.filter(|space| *space > start).unwrap_or(end)
+        } else {
+            end
+        };
+        rows.push(row_of(&cells[start..end], line));
+        start = end;
     }
-    if !text.is_empty() {
-        spans.push(Span::styled(text, style));
-    }
-    // An empty line still occupies one row; anything else has been flushed
-    // only when a character overflowed it.
-    if !spans.is_empty() || rows.is_empty() {
-        rows.push(row(spans, line));
+    // An empty line still occupies one row.
+    if rows.is_empty() {
+        rows.push(row(Vec::new(), line));
     }
     rows
+}
+
+/// One row of cells, with adjacent cells of the same style in one span.
+fn row_of(cells: &[Cell], line: &Line<'static>) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut text = String::new();
+    let mut style: Option<Style> = None;
+    for &(character, _, cell_style) in cells {
+        if style != Some(cell_style) {
+            if let Some(previous) = style {
+                spans.push(Span::styled(std::mem::take(&mut text), previous));
+            }
+            style = Some(cell_style);
+        }
+        text.push(character);
+    }
+    if let Some(previous) = style {
+        spans.push(Span::styled(text, previous));
+    }
+    row(spans, line)
 }
 
 /// One row keeps the line's alignment and style but only its own spans.
@@ -123,5 +159,37 @@ mod tests {
         let rows = wrap_line(&Line::default(), 10);
         assert_eq!(rows.len(), 1);
         assert!(rows[0].spans.is_empty());
+    }
+
+    #[test]
+    fn a_sentence_breaks_between_words() {
+        // Word boundaries are where a reader expects the break; the trailing
+        // space stays on the row it ended, as `Wrap { trim: false }` did.
+        let rows = wrap_line(&Line::from("hello world"), 8);
+        let texts: Vec<String> = rows.iter().map(text_of).collect();
+        assert_eq!(texts, vec!["hello ", "world"]);
+    }
+
+    #[test]
+    fn a_word_wider_than_the_pane_hard_breaks() {
+        // No whitespace to break at, so the cell limit is the only option and
+        // the word still reaches the next rows instead of being lost.
+        let rows = wrap_line(&Line::from("supercalifragilistic"), 6);
+        let texts: Vec<String> = rows.iter().map(text_of).collect();
+        assert_eq!(texts, vec!["superc", "alifra", "gilist", "ic"]);
+    }
+
+    #[test]
+    fn a_space_break_keeps_both_styles() {
+        let line = Line::from(vec![
+            Span::styled("ab", Style::default().fg(Color::Green)),
+            Span::styled(" cd", Style::default().fg(Color::Blue)),
+        ]);
+        let rows = wrap_line(&line, 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(text_of(&rows[0]), "ab ");
+        assert_eq!(rows[0].spans[0].style.fg, Some(Color::Green));
+        assert_eq!(text_of(&rows[1]), "cd");
+        assert_eq!(rows[1].spans[0].style.fg, Some(Color::Blue));
     }
 }
