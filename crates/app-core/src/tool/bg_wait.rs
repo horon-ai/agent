@@ -1,6 +1,6 @@
 //! `bg action=wait` with the extra event sources: child agents and IRC messages.
 //!
-//! The default wait (background tasks only) stays in [`super::bg`] untouched, so
+//! The default wait (background tasks only) stays in [`super`] untouched, so
 //! a call without the new flags behaves exactly as before. This module owns the
 //! path where `children`, `messages`, or both are selected: one loop that
 //! returns the first event across background tasks, child agents, and queued
@@ -100,11 +100,24 @@ fn mark_delivered(parent: &str, child: &str) {
 
 /// What a child's cache status means for the wait.
 ///
-/// The cache labels a live child `running`, `streaming`, or `thinking`; every
-/// other label is terminal. An unrecognised label is treated as terminal so an
-/// unknown state can never park the wait until its deadline.
+/// The cache writes exactly `running`, `streaming`, and `thinking` for a live
+/// child (`server/swarm.rs`); every other label is terminal. An unrecognised
+/// label is treated as terminal so an unknown state can never park the wait
+/// until its deadline.
 fn child_is_running(status: &str) -> bool {
-    matches!(status, "running" | "streaming" | "thinking" | "queued" | "pending")
+    matches!(status, "running" | "streaming" | "thinking")
+}
+
+/// The first terminal child that has not been reported to this parent yet.
+///
+/// The tick uses this so a terminal published while the listener was not yet
+/// subscribed is still reported in mode `any` instead of sleeping to the
+/// deadline.
+fn first_finished_child(parent: &str) -> Option<(String, String)> {
+    agent_result_cache::children_snapshot(parent)
+        .into_iter()
+        .find(|child| !child_is_running(&child.status) && !already_delivered(parent, &child.session_id))
+        .map(|child| (child.session_id, child.status))
 }
 
 /// The still-pending and already-finished work of one instant.
@@ -144,7 +157,20 @@ async fn collect(manager: &background::BackgroundTaskManager, parent: &str, requ
         }
     }
     if request.sources.children {
-        for child in agent_result_cache::children_snapshot(parent) {
+        let snapshot = agent_result_cache::children_snapshot(parent);
+        // Keep the ledger bounded by the cache: a child the cache has dropped
+        // can never be reported again, so its id need not be remembered.
+        let live: HashSet<&str> = snapshot.iter().map(|child| child.session_id.as_str()).collect();
+        {
+            let mut ledger = consumed_guard();
+            if let Some(delivered) = ledger.get_mut(parent) {
+                delivered.retain(|child| live.contains(child.as_str()));
+                if delivered.is_empty() {
+                    ledger.remove(parent);
+                }
+            }
+        }
+        for child in snapshot {
             if already_delivered(parent, &child.session_id) {
                 continue;
             }
@@ -282,6 +308,10 @@ pub(crate) async fn wait_with_sources(
 ) -> Result<ToolOutput> {
     let me = ctx.session_id.clone();
     let armed_messages = messages_armed(&request);
+    // Subscribe before the preflight read: a terminal that lands between the
+    // read and the loop would otherwise be missed in mode `any` and the call
+    // would sleep to its deadline.
+    let mut receiver = Bus::global().subscribe();
 
     // Preflight: anything already waiting is returned without sleeping, and a
     // selection with nothing in it at all reports `nothing_to_wait_for` instead
@@ -307,20 +337,33 @@ pub(crate) async fn wait_with_sources(
             }
             return Ok(all_finished_output(&tasks, &pending.finished_children));
         }
+    } else {
+        // A task named explicitly and already finished is an event, not
+        // "nothing to wait for": the preflight reports it the way the tick does.
+        let tasks = tasks_of(manager, &request.task_ids).await;
+        if tasks.iter().any(|task| task.status != BackgroundTaskStatus::Running) {
+            return Ok(task_event_output("any_finished", &tasks));
+        }
     }
     if pending.is_empty() && !armed_messages {
         return Ok(nothing_output(&request));
     }
 
     let deadline = tokio::time::Instant::now() + request.max_wait;
-    let mut receiver = Bus::global().subscribe();
     let mut tick = tokio::time::interval(TASK_POLL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_progress: HashMap<String, Option<crate::bus::BackgroundTaskProgress>> = HashMap::new();
     for task in tasks_of(manager, &request.task_ids).await {
         last_progress.insert(task.task_id.clone(), task.progress.clone());
     }
-    let mut finished_children: Vec<(String, String)> = Vec::new();
+    // Children already finished at preflight are carried into the loop so an
+    // `all` wait reports them instead of dropping them and leaving them for a
+    // later call.
+    let mut finished_children: Vec<(String, String)> = pending.finished_children.clone();
+    // `IrcBus::wait` returns immediately when nobody owes this session a reply,
+    // so it is polled at most once; later messages arrive as a bus event or on
+    // the tick's mailbox read.
+    let mut message_wait_live = armed_messages;
     let shutdown = ctx.graceful_shutdown_signal.clone();
     let shutdown_signal = async move {
         match shutdown {
@@ -329,14 +372,10 @@ pub(crate) async fn wait_with_sources(
         }
     };
     tokio::pin!(shutdown_signal);
+    let deadline_signal = tokio::time::sleep_until(deadline);
+    tokio::pin!(deadline_signal);
 
     loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            let pending = collect(manager, &me, &request).await;
-            return Ok(timeout_output(&pending, &request));
-        }
-
         // A dropped IRC wait unregisters its parked waiter, so recreating this
         // future on each iteration cannot strand or lose a message.
         let message_wait = async {
@@ -348,7 +387,7 @@ pub(crate) async fn wait_with_sources(
                             from: None,
                             direct_only: false,
                         },
-                        remaining,
+                        request.max_wait,
                         std::future::pending::<()>(),
                     )
                     .await
@@ -376,19 +415,22 @@ pub(crate) async fn wait_with_sources(
                         // Only reachable when a new source is selected, which is
                         // what keeps the default wait's behaviour unchanged.
                         return Ok(match kind {
-                            QueuedInputKind::Message => ToolOutput::new(INTERRUPTED.to_string())
-                                .with_title("bg wait message")
-                                .with_metadata(json!({
-                                    "wait_reason": "message_queued",
-                                    "timed_out": false,
-                                    "sources": request.sources.names(),
-                                })),
+                            QueuedInputKind::Message => match irc_global::get().and_then(|bus| bus.take(&me, None)) {
+                                Some(message) => message_output(&format_envelope(&message, None), &request),
+                                None => ToolOutput::new(INTERRUPTED.to_string())
+                                    .with_title("bg wait message")
+                                    .with_metadata(json!({
+                                        "wait_reason": "message_queued",
+                                        "timed_out": false,
+                                        "sources": request.sources.names(),
+                                    })),
+                            },
                             QueuedInputKind::Interrupt => interrupted_output(&request),
                         });
                     }
                     Ok(_) => {}
-                    // A lagged receiver still lets the loop re-read task and
-                    // child state on its next tick instead of failing the wait.
+                    // A lagged receiver still lets the tick re-read task, child,
+                    // and mailbox state instead of failing the wait.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         return Ok(nothing_output(&request));
@@ -396,7 +438,7 @@ pub(crate) async fn wait_with_sources(
                 }
             }
             _ = &mut shutdown_signal => return Ok(interrupted_output(&request)),
-            outcome = message_wait, if armed_messages => {
+            outcome = message_wait, if message_wait_live => {
                 match outcome {
                     WaitOutcome::Message(message) => {
                         return Ok(message_output(&format_envelope(&message, None), &request));
@@ -411,15 +453,34 @@ pub(crate) async fn wait_with_sources(
                         .with_title("bg wait message")
                         .with_metadata(json!({"wait_reason": "unanswerable", "timed_out": false})));
                     }
-                    // Nobody owes a reply, so the message source cannot wake
-                    // this call; keep waiting on the other sources to the deadline.
-                    WaitOutcome::NothingToWaitFor => {}
-                    WaitOutcome::Timeout => {}
+                    // Nobody owes a reply, so the parked wait cannot help; stop
+                    // polling it and let the event arm and the tick pick up a
+                    // message that arrives later.
+                    WaitOutcome::NothingToWaitFor | WaitOutcome::Timeout => {
+                        message_wait_live = false;
+                    }
                     WaitOutcome::Cancelled => return Ok(interrupted_output(&request)),
                 }
             }
+            _ = &mut deadline_signal => {
+                let pending = collect(manager, &me, &request).await;
+                return Ok(timeout_output(&pending, &request));
+            }
             _ = tick.tick() => {
                 let tasks = tasks_of(manager, &request.task_ids).await;
+                if armed_messages
+                    && let Some(bus) = irc_global::get()
+                    && let Some(message) = bus.take(&me, None)
+                {
+                    return Ok(message_output(&format_envelope(&message, None), &request));
+                }
+                if request.sources.children
+                    && request.mode != "all"
+                    && let Some((child_id, status)) = first_finished_child(&me)
+                {
+                    mark_delivered(&me, &child_id);
+                    return Ok(child_output(&child_id, &status, &request));
+                }
                 if request.return_on_progress && request.mode != "all" {
                     for task in &tasks {
                         if task.status != BackgroundTaskStatus::Running {
@@ -451,9 +512,9 @@ pub(crate) async fn wait_with_sources(
                     return Ok(task_event_output("first_failure", &tasks));
                 }
                 if request.mode == "all" {
-                    let children_left = !request.sources.children
+                    let children_done = !request.sources.children
                         || collect(manager, &me, &request).await.running_children.is_empty();
-                    if tasks.iter().all(|task| task.status != BackgroundTaskStatus::Running) && children_left {
+                    if tasks.iter().all(|task| task.status != BackgroundTaskStatus::Running) && children_done {
                         for (child_id, _) in &finished_children {
                             mark_delivered(&me, child_id);
                         }

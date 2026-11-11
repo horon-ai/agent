@@ -398,10 +398,12 @@ pub enum BusEvent {
 
 /// Why a session received queued input.
 ///
-/// The distinction is explicit rather than derived from
-/// [`horon_agent_agent_runtime::SoftInterruptSource`]: that source is shared by
-/// several enqueue paths, so a peer message and a generic system interrupt would
-/// otherwise be indistinguishable to a waiter.
+/// The publisher derives the kind at the accept seam
+/// (`durable_input_runtime::accept_message`): a `System`-sourced interrupt whose
+/// content opens with the IRC envelope tag is a [`QueuedInputKind::Message`],
+/// and everything else is an [`QueuedInputKind::Interrupt`]. The content test is
+/// reliable because the envelope formatter is the only writer of that opening
+/// tag and escapes it inside message bodies, so a body cannot forge one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueuedInputKind {
     /// A message from another agent over the IRC mailbox bus.

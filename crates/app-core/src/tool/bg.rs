@@ -31,6 +31,9 @@ const DEFAULT_TAIL_LINES: usize = 80;
 const DEFAULT_WAIT_PREVIEW_LINES: usize = 40;
 const MAX_OUTPUT_BYTES: usize = 50_000;
 
+#[path = "bg_wait.rs"]
+mod bg_wait;
+
 pub struct BgTool;
 
 impl BgTool {
@@ -770,7 +773,7 @@ impl Tool for BgTool {
             }
 
             "wait" => {
-                let sources = super::bg_wait::WaitSources {
+                let sources = bg_wait::WaitSources {
                     children: params.children.unwrap_or(false),
                     messages: params.messages.unwrap_or(false),
                 };
@@ -793,10 +796,10 @@ impl Tool for BgTool {
                     } else {
                         "any"
                     };
-                    return super::bg_wait::wait_with_sources(
+                    return bg_wait::wait_with_sources(
                         manager,
                         &ctx,
-                        super::bg_wait::WaitRequest {
+                        bg_wait::WaitRequest {
                             sources,
                             task_ids,
                             max_wait: Duration::from_secs(capped_wait),

@@ -14,7 +14,6 @@ mod bash;
 mod bash_interceptor;
 mod batch;
 mod bg;
-mod bg_wait;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
