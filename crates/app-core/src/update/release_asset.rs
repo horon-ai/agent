@@ -599,6 +599,41 @@ mod tests {
         archive_name
     }
 
+    /// A tarred archive whose members each carry their own bytes.
+    fn archive_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, contents) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o755);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(contents.len() as u64);
+            header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+            header.set_cksum();
+            builder.append(&header, *contents).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    /// Add an interactive-client archive to an existing asset directory.
+    fn add_tui_archive(directory: &Path, members: &[(&str, &[u8])]) -> String {
+        let name = tui_asset_name(super::super::get_asset_name()).unwrap();
+        let bytes = archive_with(members);
+        let mut sums = std::fs::read_to_string(directory.join("SHA256SUMS")).unwrap();
+        sums.push_str(&format!("{:x}  {name}\n", Sha256::digest(&bytes)));
+        std::fs::write(directory.join(&name), &bytes).unwrap();
+        std::fs::write(directory.join("SHA256SUMS"), sums).unwrap();
+        name
+    }
+
+    /// The interactive client's own member name for the running platform.
+    fn tui_tarball_member() -> String {
+        tui_asset_name(super::super::get_asset_name())
+            .unwrap()
+            .trim_end_matches(".tar.gz")
+            .to_owned()
+    }
+
     fn archive(entries: &[(&str, tar::EntryType)], contents: &[u8]) -> Vec<u8> {
         let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         let mut builder = tar::Builder::new(encoder);
@@ -666,6 +701,153 @@ mod tests {
 
         assert!(error.to_string().contains("different bytes"), "{error}");
         assert_eq!(std::fs::read(&installed).unwrap(), b"different-bytes");
+    }
+
+    #[test]
+    fn the_interactive_client_lands_beside_the_agent() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let member = tui_tarball_member();
+        add_tui_archive(assets.path(), &[(&member, b"tui-binary")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        let directory = installed.parent().unwrap();
+        assert_eq!(directory, versions.path().join("1.2.3"));
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert_eq!(std::fs::read(directory.join(tui_binary_name())).unwrap(), b"tui-binary");
+    }
+
+    #[test]
+    fn a_compat_payload_beside_the_wrapper_is_kept_and_executable() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let base = tui_tarball_member();
+        let payload = format!("{base}.bin");
+        add_tui_archive(assets.path(), &[(&base, b"wrapper"), (&payload, b"payload")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        let directory = installed.parent().unwrap();
+        let payload = directory.join(&payload);
+        assert_eq!(std::fs::read(&payload).unwrap(), b"payload");
+        assert!(horon_agent_platform::fs::is_executable(&payload));
+        assert!(horon_agent_platform::fs::is_executable(
+            &directory.join(tui_binary_name())
+        ));
+    }
+
+    #[test]
+    fn a_release_without_the_client_still_installs_the_agent() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!installed.parent().unwrap().join(tui_binary_name()).exists());
+        assert_eq!(tui_warning(&TuiOutcome::NotRequested), None);
+        assert_eq!(tui_warning(&TuiOutcome::Installed), None);
+        assert_eq!(tui_warning(&TuiOutcome::AlreadyPresent), None);
+    }
+
+    #[test]
+    fn a_client_with_a_bad_checksum_is_skipped_and_named() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let member = tui_tarball_member();
+        let name = add_tui_archive(assets.path(), &[(&member, b"tui-binary")]);
+        let sums = std::fs::read_to_string(assets.path().join("SHA256SUMS")).unwrap();
+        let zeroed = format!("{}  {name}", "0".repeat(64));
+        let corrupted: String = sums
+            .lines()
+            .map(|line| {
+                if line.ends_with(&name) {
+                    format!("{zeroed}\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect();
+        assert!(corrupted.contains(&zeroed));
+        std::fs::write(assets.path().join("SHA256SUMS"), &corrupted).unwrap();
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!installed.parent().unwrap().join(tui_binary_name()).exists());
+        // The warning text is built from the real verification failure.
+        let reason = super::super::verify_asset_checksum_text(&corrupted, &name, b"tui-binary")
+            .unwrap_err()
+            .to_string();
+        let warning = tui_warning(&TuiOutcome::Skipped {
+            asset: name.clone(),
+            reason,
+        })
+        .unwrap();
+        assert!(warning.contains(&name), "{warning}");
+        assert!(warning.contains("could not install"), "{warning}");
+        assert!(warning.contains("Checksum mismatch"), "{warning}");
+    }
+
+    #[test]
+    fn a_client_archive_with_a_nested_member_is_skipped() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        add_tui_archive(assets.path(), &[("nested/horon-tui", b"tui-binary")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!installed.parent().unwrap().join(tui_binary_name()).exists());
+    }
+
+    #[test]
+    fn a_client_is_added_to_an_already_installed_version() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+        let directory = installed.parent().unwrap().to_path_buf();
+        let member = tui_tarball_member();
+        add_tui_archive(assets.path(), &[(&member, b"tui-binary")]);
+
+        stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(directory.join(tui_binary_name())).unwrap(), b"tui-binary");
+        assert_eq!(
+            std::fs::read(directory.join(crate::build::binary_name())).unwrap(),
+            b"agent-binary"
+        );
+    }
+
+    #[test]
+    fn the_client_asset_name_mirrors_the_agent_asset_name() {
+        assert_eq!(
+            tui_asset_name("horon-agent-linux-x86_64").as_deref(),
+            Some("horon-tui-linux-x86_64.tar.gz")
+        );
+        assert_eq!(
+            tui_asset_name("horon-agent-macos-aarch64").as_deref(),
+            Some("horon-tui-macos-aarch64.tar.gz")
+        );
+        assert_eq!(
+            tui_asset_name("horon-agent-windows-x86_64.exe").as_deref(),
+            Some("horon-tui-windows-x86_64.tar.gz")
+        );
+        assert_eq!(
+            tui_asset_name("horon-agent-windows-aarch64.exe").as_deref(),
+            Some("horon-tui-windows-aarch64.tar.gz")
+        );
+        assert_eq!(tui_asset_name("horon-agent-freebsd-x86_64"), None);
+        assert_eq!(tui_asset_name("horon-agent-unknown"), None);
+        assert_eq!(tui_asset_name("horon-other"), None);
+        assert_eq!(tui_binary_name().trim_end_matches(".exe"), "horon-tui");
     }
 
     #[test]

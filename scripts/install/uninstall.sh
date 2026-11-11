@@ -146,6 +146,9 @@ for alias in horon hrn; do
   fi
 done
 remove "$LAUNCHER"
+# A copy of the interactive client beside the launcher is not inside the version
+# directories, so it is removed explicitly when present.
+remove "$LAUNCHER_DIR/horon-tui${LAUNCHER##*horon-agent}"
 if [ "$OS" = "Darwin" ]; then
   for app in "$HOME/Applications/HoronAgent.app" "$HOME/Applications/horon-agent.app" "$HOME/Applications/HoronAgent Notifications.app"; do
     if is_cli_bundle "$app"; then
