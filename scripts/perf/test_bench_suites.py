@@ -17,6 +17,8 @@ No sockets, no binaries, no cargo: everything below runs pure or on tmp files.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -159,8 +161,24 @@ class JobSelection(unittest.TestCase):
 
     def test_all_splits_loading_and_leaves_compile_to_its_own_job(self) -> None:
         units = {entry["unit"] for entry in bench_select.jobs("linux", "all")}
-        self.assertEqual(units, {"compare", "startup", "loading-cold", "loading-warm", "tools", "reload"})
+        self.assertEqual(
+            units,
+            {"compare", "startup", "loading-cold", "loading-warm", "tools", "reload", "tui"},
+        )
         self.assertEqual(bench_select.compile_jobs("linux", "all"), [{"os": "linux", "runner": "ubuntu-24.04"}])
+
+    def test_tui_is_its_own_suite_and_runs_as_one_unit(self) -> None:
+        self.assertEqual(bench_select.SUITE_UNITS["tui"], ("tui",))
+        self.assertIn("tui", bench_select.SUITES)
+        entries = bench_select.jobs("macos", "tui")
+        self.assertEqual([(e["os"], e["unit"]) for e in entries], [("macos", "tui")])
+        # The second binary's suite never drags the compile job in with it.
+        self.assertEqual(bench_select.compile_jobs("all", "tui"), [])
+
+    def test_tui_can_be_combined_with_the_headless_suites(self) -> None:
+        units = [entry["unit"] for entry in bench_select.jobs("linux", "startup,tui")]
+        self.assertEqual(units, ["startup", "tui"])
+        self.assertEqual(bench_select.expected_units("startup,tui"), ["startup", "tui"])
 
     def test_subset_measures_only_the_chosen_units_on_every_chosen_os(self) -> None:
         entries = bench_select.jobs("linux,windows", "tools")
@@ -175,6 +193,70 @@ class JobSelection(unittest.TestCase):
         self.assertEqual(
             bench_select.expected_units("loading,compile"), ["loading-cold", "loading-warm", "compile"]
         )
+
+    def test_merge_expects_tui_before_compile(self) -> None:
+        self.assertEqual(
+            bench_select.expected_units("all"),
+            ["compare", "startup", "loading-cold", "loading-warm", "tools", "reload", "tui", "compile"],
+        )
+        # Naming tui alone still ends with compile last when compile is named too.
+        self.assertEqual(bench_select.expected_units("tui,compile"), ["tui", "compile"])
+
+    def test_an_input_without_tui_measures_exactly_what_it_measured_before(self) -> None:
+        # The pre-change selector's unit lists, pinned so a new suite cannot leak
+        # into an existing selection.
+        self.assertEqual(bench_select.jobs("linux", "compare"), [
+            {"os": "linux", "runner": "ubuntu-24.04", "unit": "compare"}])
+        self.assertEqual(bench_select.expected_units("tools,reload"),
+                         ["tools", "reload"])
+        self.assertEqual(bench_select.expected_units("startup"), ["startup"])
+        self.assertEqual(bench_select.expected_units("loading"), ["loading-cold", "loading-warm"])
+
+    def test_unknown_suite_still_lists_the_known_ones(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            bench_select.select("nope")
+        message = str(raised.exception)
+        self.assertIn("unknown suite(s): nope", message)
+        self.assertIn("tui", message)
+
+
+class SelectorCli(unittest.TestCase):
+    """The printed contract the workflows parse, not just the data behind it."""
+
+    def _stdout(self, argv: list[str]) -> list[str]:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            bench_select.main(argv)
+        return buffer.getvalue().strip().splitlines()
+
+    def test_plain_form_adds_only_the_tui_line_for_an_input_without_tui(self) -> None:
+        lines = self._stdout(["bench_select.py", "tools"])
+        self.assertEqual(
+            lines,
+            ["compare=false", "startup=false", "loading=false", "tools=true",
+             "reload=false", "tui=false", "compile=false"],
+        )
+
+    def test_plain_form_of_all_enables_tui(self) -> None:
+        lines = self._stdout(["bench_select.py", "all"])
+        self.assertIn("tui=true", lines)
+        self.assertEqual(len(lines), len(bench_select.SUITES))
+
+    def test_plain_form_of_tui_alone(self) -> None:
+        lines = self._stdout(["bench_select.py", "tui"])
+        self.assertEqual([line for line in lines if line.endswith("=true")], ["tui=true"])
+
+    def test_jobs_and_compile_and_expect_are_unchanged_without_tui(self) -> None:
+        jobs = self._stdout(["bench_select.py", "--jobs", "linux", "tools"])
+        self.assertEqual(jobs[0], 'matrix={"include":[{"os":"linux","runner":"ubuntu-24.04","unit":"tools"}]}')
+        self.assertEqual(jobs[1], "has_jobs=true")
+        compile_lines = self._stdout(["bench_select.py", "--compile", "linux", "tools"])
+        self.assertEqual(compile_lines, ['matrix={"include":[]}', "has_jobs=false"])
+        self.assertEqual(self._stdout(["bench_select.py", "--expect", "tools"]), ["units=tools"])
+
+    def test_jobs_of_tui_is_one_tui_unit(self) -> None:
+        jobs = self._stdout(["bench_select.py", "--jobs", "windows", "tui"])
+        self.assertEqual(jobs[0], 'matrix={"include":[{"os":"windows","runner":"windows-latest","unit":"tui"}]}')
 
 
 def _part(root: Path, name: str, status: str | None, files: dict[str, str]) -> None:

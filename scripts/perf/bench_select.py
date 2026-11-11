@@ -23,16 +23,18 @@ from __future__ import annotations
 import json
 import sys
 
-SUITES = ("compare", "startup", "loading", "tools", "reload", "compile")
+SUITES = ("compare", "startup", "loading", "tools", "reload", "tui", "compile")
 
 # The units a suite is measured as. `loading` is two units, and `compile` is not
-# a measurement unit of the prebuilt binary: it rebuilds from source.
+# a measurement unit of the prebuilt binary: it rebuilds from source. `tui` is
+# the second binary's suite and runs as one unit like the others.
 SUITE_UNITS = {
     "compare": ("compare",),
     "startup": ("startup",),
     "loading": ("loading-cold", "loading-warm"),
     "tools": ("tools",),
     "reload": ("reload",),
+    "tui": ("tui",),
     "compile": ("compile",),
 }
 

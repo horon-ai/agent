@@ -238,7 +238,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_common_platform.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}

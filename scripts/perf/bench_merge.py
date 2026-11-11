@@ -51,6 +51,7 @@ UNIT_FILES = {
     "loading-warm": ("loading-warm.json", "loading-warm.txt"),
     "tools": ("tools.json", "tools.md"),
     "reload": ("reload.json", "reload.md"),
+    "tui": ("tui.json", "tui.md"),
     "compile": ("compile.json", "compile.md"),
 }
 
