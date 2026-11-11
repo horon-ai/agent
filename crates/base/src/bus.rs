@@ -381,6 +381,33 @@ pub enum BusEvent {
     GitInfoRefreshed,
     /// Productivity report finished generating off the UI thread
     ProductivityReportReady(ProductivityReportReady),
+    /// A child agent reached a terminal state, so a parent waiting on its
+    /// children can return without polling the result cache.
+    ChildAgentTerminal {
+        parent_session_id: String,
+        session_id: String,
+        status: String,
+    },
+    /// Input was queued for a session that is busy, so a `bg action=wait` on the
+    /// `messages` source can return instead of sleeping to its deadline.
+    SessionInputQueued {
+        session_id: String,
+        kind: QueuedInputKind,
+    },
+}
+
+/// Why a session received queued input.
+///
+/// The distinction is explicit rather than derived from
+/// [`horon_agent_agent_runtime::SoftInterruptSource`]: that source is shared by
+/// several enqueue paths, so a peer message and a generic system interrupt would
+/// otherwise be indistinguishable to a waiter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueuedInputKind {
+    /// A message from another agent over the IRC mailbox bus.
+    Message,
+    /// User or system input injected at the next step boundary.
+    Interrupt,
 }
 
 pub struct Bus {
