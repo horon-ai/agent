@@ -326,6 +326,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 모르는 필드는 무시하고, 모르는 이벤트 종류는 건너뜁니다.
 - 실패는 `{"ev":"error","code":...,"message":...}`로 옵니다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`입니다.
 - 세션을 지목하는 요청은 `session_id`를 받습니다. 없는 세션은 빈 결과가 아니라 `unknown_session`으로 답합니다. "이 세션은 아무것도 쓰지 않았다"와 "그런 세션이 없다"는 다른 사실이기 때문입니다.
+- `session_id`는 6자 이상인 앞부분 일부도 받습니다. 온전한 id가 항상 이기고, 연결이 이미 아는 id는 다시 해석하지 않습니다. 여러 세션이 공유하는 앞부분은 `details.accepted_ids`에 최대 10개의 후보를 담고 `details.store_code`를 `ambiguous_session`으로 둔 `unknown_session`으로 답합니다. 오류 코드 자체는 `unknown_session`으로 남아 이전 빌드의 클라이언트도 응답을 해석합니다. 아무 세션도 해당하지 않는 앞부분은 그대로 `unknown_session`으로 답합니다.
 
 ### usage_report
 

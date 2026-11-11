@@ -247,6 +247,7 @@ All three requests are additive. A client that sends none of them keeps working,
 - Unknown fields are ignored, and unknown event kinds are skipped.
 - A failure arrives as `{"ev":"error","code":...,"message":...}`. The `ErrorCode` values these surfaces use are `invalid_request`, `unknown_session` and `internal`.
 - A request that names a session takes `session_id`. A missing session answers `unknown_session` rather than an empty result, because "this session wrote nothing" and "no such session exists" are different facts.
+- `session_id` also accepts a unique leading prefix of at least 6 characters. A full id always wins, and an id the connection already knows is never rewritten. A prefix several sessions share answers `unknown_session` with up to 10 candidates in `details.accepted_ids` and `details.store_code` set to `ambiguous_session`; the code itself stays `unknown_session`, so a client built against an older build still decodes the frame. A prefix that matches nothing keeps the plain `unknown_session` answer.
 
 ### usage_report
 
