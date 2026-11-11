@@ -7,7 +7,7 @@
 //! from a plain `#[test]`: the guard is then never held across an `await` by an
 //! async test harness.
 
-use super::BgTool;
+use crate::tool::bg::BgTool;
 use crate::tool::{Tool, ToolContext, ToolExecutionMode};
 use futures::future::BoxFuture;
 use horon_agent_irc_core::{
