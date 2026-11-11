@@ -906,6 +906,9 @@ pub fn replace_text_suffix(text: &mut String, old_text: &str, new_text: &str) ->
 }
 
 #[cfg(test)]
+mod verdict_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -1901,11 +1901,9 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content,
                                     is_error: if *is_error { Some(true) } else { None },
-                                    verdict: Some(if *is_error {
-                                        crate::tool::ToolVerdict::Failed
-                                    } else {
-                                        crate::tool::ToolVerdict::Ok
-                                    }),
+                                    // A plain answer stores no key; only a
+                                    // refused one says what became of it.
+                                    verdict: (*is_error).then_some(crate::tool::ToolVerdict::Failed),
                                 }],
                             );
                             tool_results_dirty = true;
