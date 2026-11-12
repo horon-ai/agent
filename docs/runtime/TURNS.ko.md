@@ -428,6 +428,23 @@ work; do not summarize it back"). 이전 경계는 프롬프트로 넘어가므�
 `crates/harness-api-server/src/translate_handoff_tests.rs`는 요청 필드와 결과 보고를
 다룬다.
 
+### 핸드오프 뒤의 복원 정보
+
+문서는 산문이라 후임자는 덮인 작업이 어떤 파일에 기대었는지 알 수 없다. 그래서 모든
+핸드오프 경계는 문서 옆에 복원 매니페스트를 함께 담는다. 구조화 요약이 저장하는 것과
+같은 형태로, 최대 `MAX_RESTORATION_ENTRIES`(10)개 경로에 각 경로의 종류(`file` 또는
+`skill`)와 그 경로를 만진 도구를 기록한다. 허용량은 컨텍스트 윈도의 15%이고
+`MAX_RESTORATION_BYTES`(50,000)를 넘지 않는다.
+
+매니페스트는 모델의 응답이 아니라 덮인 메시지에서 수집한다. 문서가 빠뜨린 파일도
+매니페스트에는 남는다. `StoredSummaryMetadata.restoration`에 기록하므로 재시작을
+견디고, 압축된 이벤트 페이로드에도 구조화 요약과 같은 방식으로 실린다. 목록이 비면 빈
+매니페스트가 아니라 없는 것으로 저장한다.
+
+테스트: `crates/base/src/compaction/handoff_tests.rs`가 수집된 항목과 빈 경우를,
+`crates/app-core/src/agent/handoff_compaction_tests.rs`가 커밋된 경계와 이벤트
+그래프의 매니페스트를 다룬다.
+
 ### 여러 방법을 순서대로: `method_order`
 
 `strategy`는 방법 하나를 고른다. `[compaction] method_order`는 사슬을 고르므로, 이번 턴의
@@ -466,6 +483,24 @@ method_order = ["handoff", "structured"]
 
 테스트: `crates/base/src/compaction/method_order_tests.rs`가 해석, 퇴역 예산, 사슬 실행을
 다룬다.
+
+### horon이 이미 구현한 세 가지 개념
+
+이 저장소 밖에서는 압축에 재작성 방지, 다중 신호 트리거, 최신 관측 규칙이 필요하다고
+설명하기도 합니다. 셋 다 새 코드 없이 여기에 있습니다.
+
+- **한 번 바꾼 바이트는 다시 바꾸지 않습니다.** 축약된 결과는 `AGED_MARKER_PREFIX`를
+  달고 다음 차례에 건너뜁니다(`crates/app-core/src/agent/tool_result_aging.rs`). 가지치기한
+  도구 호출은 원장에 남겨 두 번 계획하지 않습니다(`crates/compaction-core/src/pruning.rs`).
+- **축약에는 질량, 이득, 주기가 모두 필요합니다.** 압박 비율(`AGING_PRESSURE_RATIO`,
+  임계의 0.75)과 최소 묶음 크기(`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB)를 넘고, 같은
+  구간을 지날 때 한 번만 실행합니다.
+- **대상마다 최신 관측만 남습니다.** 가지치기는 `newest_by_key`와
+  `newest_complete_by_path`를 유지하므로, 같은 경로의 부분 읽기·실패 호출·나중 전체 읽기는
+  지금도 유효한 한 항목으로 정리됩니다.
+
+시험: `crates/app-core/src/agent/tool_result_aging/tests.rs`가 접두어 방지와 묶음 게이트를,
+`crates/compaction-core/src/pruning.rs`가 최신 선택을 다룹니다.
 
 ## `--resume` 동작
 

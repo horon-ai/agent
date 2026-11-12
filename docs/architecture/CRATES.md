@@ -470,6 +470,18 @@ These boundaries hold when you move crates or widen the tool surface. Each item 
 - Step 2 writes the new kind only after every supported reader can read it. That change updates the `ALL` array length, `as_str` and `parse`, `typed_payload_ok`, the `Payload` and `Projection` fields, and the session event format table in the same commit. Writing a new variant first and shipping readers later leaves old builds unable to open that session.
 - Do not push extension state into `ProjectedMessage`. That mixes it into the model conversation history, and tool validation and compaction boundary math then count the entry as conversation. Keep separate fields and per-kind accessors.
 
+### A boundary's restoration manifest has one stored shape
+
+A compaction boundary may name the files and skills its covered prefix touched
+(`docs/protocol/SESSION_STORE.md`). Two producers write that list: the structured
+summary, which collects it from the range it binds, and a handoff document,
+which collects it over exactly the range it covers. Both build
+`summary::RestorationManifest` and convert it with its one `to_stored` method, so
+the persisted `StoredRestorationManifest` cannot drift between them. A new
+producer must reuse that conversion rather than copying the mapping: the stored
+shape is a session contract, and two private copies of it is how the event graph
+and the session file start disagreeing.
+
 ### Wire version constants are written with their owning crate
 
 - Wire version constants belong in one contract, with each constant's owning crate named beside it. Four constants are spread across two crates today and the unified type is not in the code yet.

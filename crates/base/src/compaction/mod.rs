@@ -3012,18 +3012,7 @@ pub fn native_replayable_window(
 }
 
 fn stored_restoration(manifest: &summary::RestorationManifest) -> crate::session::StoredRestorationManifest {
-    crate::session::StoredRestorationManifest {
-        entries: manifest
-            .entries
-            .iter()
-            .map(|entry| crate::session::StoredRestorationEntry {
-                path: entry.path.clone(),
-                kind: entry.kind.clone(),
-                note: entry.note.clone(),
-            })
-            .collect(),
-        total_bytes: manifest.total_bytes,
-    }
+    manifest.to_stored()
 }
 
 pub async fn build_transfer_compaction_state(

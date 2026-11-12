@@ -62,9 +62,11 @@ impl Agent {
         // document travels into the prompt: the goal and constraints it recorded
         // are the ones the covered range no longer carries.
         let prior = self.session.compaction.as_ref().map(|state| state.summary_text.clone());
+        let context_window = self.provider.context_window();
         let document = match run_off_thread(generate_handoff(
             &messages,
             recent_tokens,
+            context_window,
             prior.as_deref(),
             completer,
             cancel,
@@ -97,6 +99,9 @@ impl Agent {
             original_turn_count: offset + active_len,
             compacted_count: covered,
             structured: Some(crate::session::StoredSummaryMetadata {
+                // A document is prose, so the paths it covered travel beside
+                // it exactly like a structured summary's manifest.
+                restoration: (!document.restoration.entries.is_empty()).then(|| document.restoration.to_stored()),
                 handoff: true,
                 ..Default::default()
             }),

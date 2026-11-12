@@ -439,6 +439,25 @@ committed boundary, the uncovered tail, the provider error and the cancellation;
 its failure path; `crates/harness-api-server/src/translate_handoff_tests.rs`
 covers the request field and the reported outcomes.
 
+### Restoration after a handoff
+
+A document is prose, so a successor cannot tell which files the covered work
+relied on. Every handoff boundary therefore carries a restoration manifest
+beside the document, the same shape a structured summary stores: at most
+`MAX_RESTORATION_ENTRIES` (10) paths, each with its kind (`file` or `skill`) and
+the tool that touched it, inside an allowance of 15% of the context window and
+never above `MAX_RESTORATION_BYTES` (50,000).
+
+The manifest is collected from the covered messages, never from the model's
+answer, so a document that forgets a file still reports it. It is written to
+`StoredSummaryMetadata.restoration`, which means it survives a restart and
+travels in the compacted event payload exactly like a structured summary's. An
+empty list is stored as absent rather than as an empty manifest.
+
+Tests: `crates/base/src/compaction/handoff_tests.rs` covers the collected
+entries and the empty case; `crates/app-core/src/agent/handoff_compaction_tests.rs`
+covers the manifest on the committed boundary and in the event graph.
+
 ### Running more than one method: `method_order`
 
 `strategy` names one method. `[compaction] method_order` names a chain, so a
@@ -482,6 +501,29 @@ a position relative to another method.
 
 Tests: `crates/base/src/compaction/method_order_tests.rs` covers resolution, the
 retirement budget and the chain's execution.
+
+### Three ideas horon already implements
+
+Compaction outside this tree is sometimes described as needing a rewrite guard, a
+multi-signal trigger, and a newest-observation rule. All three exist here without
+new code:
+
+- **A rewritten byte is never rewritten again.** An aged result carries
+  `AGED_MARKER_PREFIX` and is skipped on the next pass
+  (`crates/app-core/src/agent/tool_result_aging.rs`), and a pruned tool use is
+  recorded in a persisted ledger so it is never planned twice
+  (`crates/compaction-core/src/pruning.rs`).
+- **Reduction needs mass, gain and cadence.** A batch fires only above a pressure
+  ratio (`AGING_PRESSURE_RATIO`, 0.75 of the threshold) and a minimum batch size
+  (`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB), and at most once per crossing.
+- **Only the newest observation of a target survives.** Pruning keeps
+  `newest_by_key` and `newest_complete_by_path`, so a partial read, a failed call
+  and a later full read of the same path resolve to the one entry that is still
+  current.
+
+Tests: `crates/app-core/src/agent/tool_result_aging/tests.rs` covers the marker
+guard and the batch gate; `crates/compaction-core/src/pruning.rs` covers the
+newest selection.
 
 ## `--resume` behaviour
 
