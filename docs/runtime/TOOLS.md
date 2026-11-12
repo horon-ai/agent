@@ -295,6 +295,42 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 
 The crate never reads the file system, so it cannot detect outside changes by itself. Detection happens when the caller compares current bytes with the recorded state through `BlobId::of`. History never leaves the process and is not shared with another process or a restarted session.
 
+## `generate_image`
+
+The one tool whose model does not speak Chat Completions. Registered only when
+`[tools] generate_image = true` **and** the active profile names
+`roles.image = "<model>"`; with either missing the name is neither registered nor
+in an index row, so a session that never generates an image pays nothing for the
+tool existing. `docs/provider/INTEGRATIONS.md` has the MCP recipe for anything this
+tool does not cover.
+
+| Input | Meaning |
+| --- | --- |
+| `prompt` (required) | What to draw, or what change to make when `input` is given. At most 32 KiB. |
+| `size` | `1024x1024` (default), `1536x1024`, or `1024x1536`. |
+| `count` | 1 to 4, default 1. A larger value is clamped rather than refused. |
+| `input` | Image paths to edit. With it the tool posts `/images/edits` as multipart; without it, `/images/generations`. Together at most 35 MiB, at most 16 files. |
+| `model` | Overrides `roles.image` for this call. |
+
+A call declares `WRITE | NETWORK`, so under `approval_mode = "write"` it asks
+first and an unattended run without approval does not spend. It is never
+parallel-safe, because the request and the file are one step.
+
+The result is text, not image bytes: the model receives one line per file with
+its path, byte size and MIME type, plus the provider's revised prompt when it
+sends one. Files land in `~/.horon/generated-images/` under a generated name
+(`image-<millis>.png`), never a provider-supplied id and never over an existing
+file. The model reads a path with `read` if it needs the contents.
+
+| Situation | Behaviour |
+| --- | --- |
+| No `roles.image` in the active profile | Refused before a request, naming the profile and the key to add. |
+| Provider returns `data: []` | Reported as "returned no images", verdict `partial`. Not an error: a filtered prompt succeeded and produced nothing, and a failure verdict would make the model retry it. |
+| Fewer images than `count` | Verdict `partial`; the files that did arrive are usable. |
+| `b64_json` that is not base64 | Error. Silently dropping it would turn a corrupt response into an empty success. |
+| A URL-only `data` entry | Error. The tool never fetches a second host. |
+| Call runs past 180 s | Error. An image is slow, so the bound is generous, but it exists. |
+
 ## Executable files that write creates
 
 When `write` creates a new file whose content starts with `#!`, it also grants the execute permission on Unix (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). The point is to stop a freshly written script from burning a turn on a permission error when it is next run as `bash ./script.sh`.

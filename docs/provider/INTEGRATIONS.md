@@ -4,6 +4,34 @@ Language: **English** | [한국어](INTEGRATIONS.ko.md)
 
 Remote MCP servers and custom web search.
 
+## Image generation
+
+The `generate_image` tool (`docs/runtime/TOOLS.md`) covers the OpenAI Images
+shape: `/images/generations` and `/images/edits` on a profile that names
+`roles.image`. That covers any gateway that speaks the same shape, including the
+Horon AI Gateway.
+
+An endpoint with its own wire format — Gemini's `generateContent`, a hosted
+Responses image tool — is reached over MCP instead of through the tool. That keeps
+the one exception to the model path bounded to one shape:
+
+```json
+{
+  "mcpServers": {
+    "images": {
+      "type": "http",
+      "url": "https://mcp.example.com/images/mcp",
+      "headers": { "Authorization": "Bearer ${IMAGE_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+An MCP image server returns its result as a tool result, so it does not need a
+role, a config switch, or a change to this crate. The trade is that its output
+counts against the tool-result budget rather than landing in
+`~/.horon/generated-images/`.
+
 ## Remote MCP servers
 
 HoronAgent connects to local stdio servers, Streamable HTTP servers, and legacy

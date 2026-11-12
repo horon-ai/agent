@@ -53,6 +53,7 @@ pub mod goal;
 pub mod hooks;
 pub mod id;
 pub mod image_normalize;
+pub mod image_tool;
 pub mod import;
 pub mod jev;
 pub mod judge;
