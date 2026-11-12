@@ -484,6 +484,24 @@ method_order = ["handoff", "structured"]
 테스트: `crates/base/src/compaction/method_order_tests.rs`가 해석, 퇴역 예산, 사슬 실행을
 다룬다.
 
+### horon이 이미 구현한 세 가지 개념
+
+이 저장소 밖에서는 압축에 재작성 방지, 다중 신호 트리거, 최신 관측 규칙이 필요하다고
+설명하기도 합니다. 셋 다 새 코드 없이 여기에 있습니다.
+
+- **한 번 바꾼 바이트는 다시 바꾸지 않습니다.** 축약된 결과는 `AGED_MARKER_PREFIX`를
+  달고 다음 차례에 건너뜁니다(`crates/app-core/src/agent/tool_result_aging.rs`). 가지치기한
+  도구 호출은 원장에 남겨 두 번 계획하지 않습니다(`crates/compaction-core/src/pruning.rs`).
+- **축약에는 질량, 이득, 주기가 모두 필요합니다.** 압박 비율(`AGING_PRESSURE_RATIO`,
+  임계의 0.75)과 최소 묶음 크기(`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB)를 넘고, 같은
+  구간을 지날 때 한 번만 실행합니다.
+- **대상마다 최신 관측만 남습니다.** 가지치기는 `newest_by_key`와
+  `newest_complete_by_path`를 유지하므로, 같은 경로의 부분 읽기·실패 호출·나중 전체 읽기는
+  지금도 유효한 한 항목으로 정리됩니다.
+
+시험: `crates/app-core/src/agent/tool_result_aging/tests.rs`가 접두어 방지와 묶음 게이트를,
+`crates/compaction-core/src/pruning.rs`가 최신 선택을 다룹니다.
+
 ## `--resume` 동작
 
 이 빌드에는 대화형 세션 선택기가 없다. 세션 재개는 전역 `--resume` 플래그 하나로 한다
