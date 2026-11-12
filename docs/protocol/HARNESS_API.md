@@ -284,6 +284,55 @@ it answers `unknown_request`; a client that gets that error treats the modes as
 unknown rather than assuming the defaults. The SDKs expose the call as
 `get_message_modes` (Rust, Python) and `getMessageModes` (TypeScript).
 
+## Tool verdict (protocol 1.19)
+
+The harness API keeps major version 1 and moved from minor version 18 to 19.
+Everything here is additive: a client that never looks at the new field reads
+the same events it did before.
+
+A tool call used to report only text plus an error flag, so a client that wanted
+to know whether a call ran, ran in part, or was refused had to read the
+sentence. The stored `tool_result` already carries a typed verdict; this version
+puts the same value on the event that closes the call.
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `verdict` | string | No | What became of the call, when the daemon stored a verdict for it |
+
+The values are the seven wire spellings the stored result uses.
+
+| Value | Meaning |
+| --- | --- |
+| `ok` | The tool ran and its whole result was returned |
+| `partial` | The tool ran, but only part of the work finished |
+| `truncated` | The tool ran to the end; the returned text is a cut of the full text |
+| `withheld` | The tool ran, and a refusal sentence was returned in place of its result |
+| `rejected` | The call was refused before the tool ran |
+| `failed` | The tool ran and returned an error |
+| `interrupted` | The call was skipped or cut short by the user, a reload, or a cancellation |
+
+The field is absent when no layer made a statement about the call. Most tools
+say nothing about a call that simply succeeded, so the usual successful
+`tool_done` carries no verdict; `ok` appears only where a tool states it. A call
+that moved to the background carries none, and neither does a tool the provider
+runs on its own side (a hosted search, for example), even when that tool reports
+an error. A result the provider supplies for a tool call the model made is
+`failed` when it comes with an error flag. An absent field leaves the frame
+byte-identical to protocol 1.18, and a reader then tells success from failure by
+`error`, exactly as before.
+
+### Event: `tool_done`
+
+```json
+{"v":1,"ev":"tool_done","session_id":"s-1","call_id":"call-1","name":"bash",
+ "output":"Error: command timed out","error":"Error: command timed out",
+ "verdict":"failed"}
+```
+
+No capability gates the field. It rides on an event every client already reads,
+so a client that predates it ignores the key; a client that wants the verdict
+reads it and falls back to `error` when it is missing.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -549,5 +598,5 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 18`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 19`
 - `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`

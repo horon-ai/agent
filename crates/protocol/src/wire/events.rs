@@ -104,6 +104,11 @@ pub enum ServerEvent {
         output: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// What became of the call, when the layer that stored the result
+        /// recorded one. Absent means no layer made a statement, and a reader
+        /// falls back to `is_error` as it did before verdicts existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verdict: Option<horon_agent_tool_types::ToolVerdict>,
     },
 
     /// A tool call's arguments were rewritten before the tool ran, because the
@@ -1145,4 +1150,24 @@ pub enum ServerEvent {
     /// same message, so a client can add the row it did not see arrive.
     #[serde(rename = "soft_interrupt_stored")]
     SoftInterruptStored { message_id: String, content: String },
+}
+
+impl ServerEvent {
+    /// A `ToolDone` whose verdict no layer recorded. Producing the event this
+    /// way keeps the absent verdict explicit at the call site instead of
+    /// leaving a field for a later reader to misread as "not considered".
+    pub fn tool_done(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        output: impl Into<String>,
+        error: Option<String>,
+    ) -> Self {
+        Self::ToolDone {
+            id: id.into(),
+            name: name.into(),
+            output: output.into(),
+            error,
+            verdict: None,
+        }
+    }
 }

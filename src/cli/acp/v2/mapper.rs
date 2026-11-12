@@ -199,6 +199,7 @@ impl V2Mapper {
                 name,
                 output,
                 error,
+                ..
             } => {
                 self.round_pending = true;
                 self.tool_done(&id, &name, output, error.as_deref())

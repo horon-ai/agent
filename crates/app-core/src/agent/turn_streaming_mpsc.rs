@@ -11,7 +11,7 @@ mod tool_wait;
 /// Result text of a call the user cancelled, shared with the blocking turn
 /// loop so both paths record the same thing for the same event.
 pub(crate) use tool_wait::USER_CANCELLED as CANCELLED_TOOL_RESULT;
-use tool_wait::{reload_interrupted_tool_result, send_tool_diff, send_tool_exit};
+use tool_wait::{reload_interrupted_tool_result, send_tool_diff, send_tool_exit, tool_failure_verdict};
 
 /// Result text for a call skipped because the user interrupted the turn. Both
 /// the group-boundary check and a mid-group interrupt write this, so the
@@ -690,6 +690,7 @@ impl Agent {
                                     name,
                                     output,
                                     error: is_error.then(|| "Provider tool error".to_string()),
+                                    verdict: None,
                                 });
                             }
                             None => {}
@@ -884,6 +885,7 @@ impl Agent {
                             name: tool_name,
                             output: content.clone(),
                             error: if is_error { Some("Tool error".to_string()) } else { None },
+                            verdict: is_error.then_some(crate::tool::ToolVerdict::Failed),
                         });
                         sdk_tool_results.insert(tool_use_id, (content, is_error));
                     }
@@ -1745,6 +1747,7 @@ impl Agent {
                         name: tc.name.clone(),
                         output: error_msg.clone(),
                         error: Some(error_msg.clone()),
+                        verdict: Some(crate::tool::ToolVerdict::Interrupted),
                     });
                     self.add_message(
                         Role::User,
@@ -1832,6 +1835,7 @@ impl Agent {
                             name: tc.name.clone(),
                             output: message.clone(),
                             error: Some(message.clone()),
+                            verdict: Some(crate::tool::ToolVerdict::Rejected),
                         });
                         self.add_message(
                             Role::User,
@@ -1951,6 +1955,7 @@ impl Agent {
                                     name: tc.name.clone(),
                                     output: output.output.clone(),
                                     error: None,
+                                    verdict: output.verdict,
                                 });
 
                                 let side_pane_images =
@@ -1992,11 +1997,13 @@ impl Agent {
                                     break;
                                 }
                                 let error_msg = format!("Error: {}", e);
+                                let verdict = tool_failure_verdict(&e);
                                 let _ = event_tx.send(ServerEvent::ToolDone {
                                     id: tc.id.clone(),
                                     name: tc.name.clone(),
                                     output: error_msg.clone(),
                                     error: Some(error_msg.clone()),
+                                    verdict: Some(verdict),
                                 });
 
                                 crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
@@ -2006,11 +2013,7 @@ impl Agent {
                                         tool_use_id: tc.id.clone(),
                                         content: error_msg,
                                         is_error: Some(true),
-                                        verdict: Some(if e.downcast_ref::<crate::tool::ToolRejected>().is_some() {
-                                            crate::tool::ToolVerdict::Rejected
-                                        } else {
-                                            crate::tool::ToolVerdict::Failed
-                                        }),
+                                        verdict: Some(verdict),
                                     }],
                                     Some(tool_elapsed.as_millis() as u64),
                                 );
@@ -2057,6 +2060,7 @@ impl Agent {
                             } else {
                                 None
                             },
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         });
 
                         crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
@@ -2138,6 +2142,7 @@ impl Agent {
                             name: tc.name.clone(),
                             output: bg_msg.clone(),
                             error: None,
+                            verdict: None,
                         });
 
                         crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
@@ -2264,6 +2269,7 @@ impl Agent {
             name: tc.name.clone(),
             output: message.to_string(),
             error: Some(message.to_string()),
+            verdict: Some(crate::tool::ToolVerdict::Rejected),
         });
         self.add_message(
             Role::User,
@@ -2583,6 +2589,7 @@ impl Agent {
                         name: tc.name.clone(),
                         output: error.clone(),
                         error: Some(error.clone()),
+                        verdict: Some(crate::tool::ToolVerdict::Interrupted),
                     });
                     self.add_message(
                         Role::User,
@@ -2675,6 +2682,7 @@ impl Agent {
                                 name: tc.name.clone(),
                                 output: output.output.clone(),
                                 error: None,
+                                verdict: output.verdict,
                             });
 
                             let side_pane_images = tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
@@ -2698,11 +2706,13 @@ impl Agent {
                         }
                         Some(Err(e)) => {
                             let error_msg = format!("Error: {}", e);
+                            let verdict = tool_failure_verdict(&e);
                             let _ = event_tx.send(ServerEvent::ToolDone {
                                 id: tc.id.clone(),
                                 name: tc.name.clone(),
                                 output: error_msg.clone(),
                                 error: Some(error_msg.clone()),
+                                verdict: Some(verdict),
                             });
                             crate::tool::repair_event::send(event_tx, &self.session.id, &tc.id, &tc.name);
                             self.add_message_with_duration(
@@ -2711,11 +2721,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: error_msg,
                                     is_error: Some(true),
-                                    verdict: Some(if e.downcast_ref::<crate::tool::ToolRejected>().is_some() {
-                                        crate::tool::ToolVerdict::Rejected
-                                    } else {
-                                        crate::tool::ToolVerdict::Failed
-                                    }),
+                                    verdict: Some(verdict),
                                 }],
                                 Some(tool_elapsed.as_millis() as u64),
                             );
@@ -2739,6 +2745,7 @@ impl Agent {
                                 name: tc.name.clone(),
                                 output: skipped.clone(),
                                 error: Some(error),
+                                verdict: Some(crate::tool::ToolVerdict::Interrupted),
                             });
                             self.add_message(
                                 Role::User,

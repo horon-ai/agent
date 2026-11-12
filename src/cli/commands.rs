@@ -1548,16 +1548,21 @@ fn emit_ndjson_event(
             name,
             output,
             error,
-        } => write_json_line(
-            stdout,
-            &serde_json::json!({
+            verdict,
+        } => {
+            let mut line = serde_json::json!({
                 "type": "tool_done",
                 "id": id,
                 "name": name,
                 "output": output,
                 "error": error,
-            }),
-        ),
+            });
+            // A call no layer judged keeps the line it had before verdicts existed.
+            if let Some(verdict) = verdict {
+                line["verdict"] = serde_json::json!(verdict);
+            }
+            write_json_line(stdout, &line)
+        }
         ServerEvent::TokenUsage {
             input,
             output,

@@ -149,6 +149,7 @@ impl EventMapper {
                 name,
                 output,
                 error,
+                ..
             } => {
                 self.round_pending = true;
                 let text = json!({

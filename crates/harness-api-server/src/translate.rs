@@ -1965,6 +1965,9 @@ impl BridgeState {
                 name: event["name"].as_str().unwrap_or("").to_string(),
                 output: event["output"].as_str().unwrap_or("").to_string(),
                 error: event["error"].as_str().map(str::to_string),
+                // Copied, not judged: the daemon already decided what became of
+                // the call when it stored the result.
+                verdict: Option::deserialize(&event["verdict"]).unwrap_or_default(),
             })],
             "tool_args_repaired" => crate::tool_args_repaired::frames(session(self), event),
             "degradation_receipts" => crate::degradation_receipts::frames(session(self), event),

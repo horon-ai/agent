@@ -784,6 +784,7 @@ fn run_collects_one_turn() {
                     name: "bash".to_string(),
                     output: "ok".to_string(),
                     error: None,
+                    verdict: None,
                 },
                 writer,
             );

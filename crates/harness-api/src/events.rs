@@ -140,6 +140,11 @@ pub enum ApiEvent {
         output: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// What became of the call, when the layer that stored the result
+        /// recorded one. Absent means no layer made a statement, and a reader
+        /// falls back to `error` as it did before verdicts existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verdict: Option<horon_agent_tool_types::ToolVerdict>,
     },
 
     /// Images the model just received from a tool result or image generator.
@@ -757,6 +762,26 @@ impl ApiEvent {
             Self::RuntimeState { .. } | Self::ControlReceipt { .. } => Some(crate::CAPABILITY_DURABLE_RUNTIME_V1),
             Self::Snapshot { .. } | Self::SnapshotMarker { .. } => Some(crate::CAPABILITY_SNAPSHOT_MARKER_V1),
             _ => None,
+        }
+    }
+
+    /// A `ToolDone` whose verdict no layer recorded. Producing the event this
+    /// way keeps the absent verdict explicit at the call site instead of
+    /// leaving a field for a later reader to misread as "not considered".
+    pub fn tool_done(
+        session_id: impl Into<String>,
+        call_id: impl Into<String>,
+        name: impl Into<String>,
+        output: impl Into<String>,
+        error: Option<String>,
+    ) -> Self {
+        Self::ToolDone {
+            session_id: session_id.into(),
+            call_id: call_id.into(),
+            name: name.into(),
+            output: output.into(),
+            error,
+            verdict: None,
         }
     }
 }
