@@ -52,17 +52,21 @@ impl Ask {
     }
 
     /// Toggle or set the option at `index` of the current question.
-    fn choose(&mut self, index: usize) {
+    ///
+    /// Returns whether `index` named an option of the current question. A digit
+    /// past the last option changes nothing, so the caller can leave the
+    /// question where it is instead of moving past an empty answer.
+    fn choose(&mut self, index: usize) -> bool {
         let Some(question) = self.questions.get(self.current) else {
-            return;
+            return false;
         };
         let Some(option) = question.options.get(index) else {
-            return;
+            return false;
         };
         let label = option.label.clone();
         let multi = question.multi;
         let Some(slot) = self.chosen.get_mut(self.current) else {
-            return;
+            return false;
         };
         if multi {
             if let Some(position) = slot.iter().position(|held| *held == label) {
@@ -74,9 +78,9 @@ impl Ask {
             slot.clear();
             slot.push(label);
         }
+        true
     }
 
-    /// Move to the next unanswered question, or finish when none is left.
     /// Answers for every question, in the order they were asked.
     ///
     /// `chosen` is built with one slot per question and only ever written
@@ -92,6 +96,7 @@ impl Ask {
             .collect()
     }
 
+    /// Move to the next unanswered question, or finish when none is left.
     fn advance(&mut self) -> bool {
         while self.current < self.questions.len() {
             let answered = self.chosen.get(self.current).is_some_and(|held| !held.is_empty());
@@ -247,11 +252,18 @@ impl Prompt {
                             return None;
                         }
                         let index = character.to_digit(10)?.checked_sub(1)?;
-                        ask.choose(index as usize);
+                        // A digit past the last option selects nothing. Leaving
+                        // the question untouched keeps the prompt on it, rather
+                        // than stepping past an empty answer the daemon would
+                        // fill in with a default the user never chose.
+                        if !ask.choose(index as usize) {
+                            return None;
+                        }
                         if multi {
                             return None;
                         }
-                        ask.current = ask.current.saturating_add(1);
+                        // `advance` steps past every answered question, so the
+                        // just-answered one is behind it without a manual bump.
                     }
                 }
                 if !ask.advance() {
@@ -366,6 +378,86 @@ mod tests {
         match prompt.on_key(key(KeyCode::Enter)) {
             Some(Response::Ask { answers, .. }) => {
                 assert_eq!(answers[0].selected, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("unexpected response {other:?}"),
+        }
+    }
+
+    /// The ask state a test inspects after a keystroke.
+    fn ask_of(prompt: &Prompt) -> &Ask {
+        match prompt {
+            Prompt::Ask(ask) => ask,
+            Prompt::Approval(approval) => panic!("expected an ask, got {approval:?}"),
+        }
+    }
+
+    #[test]
+    fn a_digit_past_the_last_option_leaves_a_single_choice_question_alone() {
+        let mut prompt = Prompt::ask("a1".into(), vec![question(Some("q"), false, &["one", "two", "three"])]);
+        assert_eq!(prompt.on_key(key(KeyCode::Char('5'))), None);
+        let ask = ask_of(&prompt);
+        assert_eq!(ask.current, 0, "an out-of-range digit moved the question");
+        assert_eq!(
+            ask.chosen[0],
+            Vec::<String>::new(),
+            "an out-of-range digit selected something"
+        );
+    }
+
+    #[test]
+    fn zero_leaves_a_single_choice_question_alone() {
+        let mut prompt = Prompt::ask("a1".into(), vec![question(Some("q"), false, &["one", "two"])]);
+        assert_eq!(prompt.on_key(key(KeyCode::Char('0'))), None);
+        let ask = ask_of(&prompt);
+        assert_eq!(ask.current, 0);
+        assert!(ask.chosen[0].is_empty());
+    }
+
+    #[test]
+    fn an_out_of_range_digit_on_the_last_question_does_not_answer() {
+        let mut prompt = Prompt::ask("a1".into(), vec![question(Some("q"), false, &["only"])]);
+        assert_eq!(
+            prompt.on_key(key(KeyCode::Char('9'))),
+            None,
+            "an answer was sent for a question nobody chose an option for"
+        );
+        assert_eq!(ask_of(&prompt).current, 0);
+    }
+
+    #[test]
+    fn a_valid_digit_after_an_invalid_one_still_answers() {
+        let mut prompt = Prompt::ask("a1".into(), vec![question(Some("q"), false, &["one", "two"])]);
+        assert_eq!(prompt.on_key(key(KeyCode::Char('7'))), None);
+        assert_eq!(ask_of(&prompt).current, 0);
+        match prompt.on_key(key(KeyCode::Char('2'))) {
+            Some(Response::Ask { answers, .. }) => {
+                assert_eq!(answers[0].selected, vec!["two".to_string()]);
+            }
+            other => panic!("unexpected response {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_multi_question_flow_skips_a_stray_digit_and_completes() {
+        let mut prompt = Prompt::ask(
+            "a1".into(),
+            vec![
+                question(Some("first"), false, &["one", "two"]),
+                question(Some("second"), false, &["three", "four"]),
+            ],
+        );
+        assert_eq!(prompt.on_key(key(KeyCode::Char('4'))), None);
+        assert_eq!(ask_of(&prompt).current, 0);
+        assert_eq!(prompt.on_key(key(KeyCode::Char('2'))), None);
+        assert_eq!(ask_of(&prompt).current, 1);
+        match prompt.on_key(key(KeyCode::Char('1'))) {
+            Some(Response::Ask { ask_id, answers }) => {
+                assert_eq!(ask_id, "a1");
+                assert_eq!(answers.len(), 2);
+                assert_eq!(answers[0].question_id, "first");
+                assert_eq!(answers[0].selected, vec!["two".to_string()]);
+                assert_eq!(answers[1].question_id, "second");
+                assert_eq!(answers[1].selected, vec!["three".to_string()]);
             }
             other => panic!("unexpected response {other:?}"),
         }
