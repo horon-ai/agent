@@ -178,7 +178,9 @@ broadcast_concurrency = 16
 
 Plan mode refuses write-barrier calls, so `irc` calls are blocked with the `plan_mode` reason in a session with plan mode on. They work again after the plan is approved.
 
-Approval tiers are decided from the tool's effect bits (`crates/app-core/src/approval.rs`). `off` never asks, `write` auto-approves effects that correspond to a file mutation, and `all` auto-approves every call that is not read-only. `irc` has the write bit and no process or network bit, so all three modes classify it as auto-approved. That means `irc` is treated like an ordinary file mutation under `approval_mode = "write"` and raises no approval prompt. It also hits no danger class in `dual_confirm_classes` (`danger_class` in `crates/app-core/src/approval.rs` classifies shell commands only).
+Approval tiers are decided from the tool's effect bits and the paths a call names (`crates/app-core/src/approval.rs`). `off` never asks. `write` asks before a call that runs a process, reaches the network, or mutates a file it names. `all` asks before every call that is not read-only.
+
+`irc` has the write bit, no process or network bit, and names no filesystem path, so `write` does not ask about it: there is no file to approve. `all` asks, because an `irc` call is not read-only. It hits no danger class in `dual_confirm_classes` (`danger_class` in `crates/app-core/src/approval.rs` classifies shell commands only).
 
 ### Performance ceilings and the gate
 

@@ -125,6 +125,18 @@ pub(crate) fn forget_session_caches(session_id: &str) {
 use std::sync::{LazyLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 
+/// The four values every approval request is built from.
+///
+/// The refuse-and-retry path and the ACP permission bridge build the same
+/// request from the same decision, so they share this instead of passing the
+/// four through two positional argument lists.
+pub(crate) struct ApprovalPromptRef<'a> {
+    pub(crate) resolved_name: &'a str,
+    pub(crate) reason: &'a str,
+    pub(crate) is_dual_confirm: bool,
+    pub(crate) input: &'a Value,
+}
+
 /// Marker error for a tool call that stopped its own turn on purpose.
 ///
 /// The ambient approval tool fires the turn's cancel signal when the runner
@@ -1362,71 +1374,6 @@ impl Registry {
         crate::util::estimate_tokens(s)
     }
 
-    /// Paths a tool call names in its input, labelled by the input key they
-    /// came from, resolved against the session working directory. Covers the
-    /// common path keys, `paths` arrays (first 8), and `apply_patch` file
-    /// headers (Codex envelope and unified diff).
-    fn touched_paths(input: &Value, ctx: &ToolContext) -> Vec<(&'static str, std::path::PathBuf)> {
-        let mut touched = Vec::new();
-        let Some(object) = input.as_object() else {
-            return touched;
-        };
-        let resolve = |path: &str| ctx.resolve_path(std::path::Path::new(path));
-        for key in ["file_path", "path", "target", "target_path", "old_path", "new_path"] {
-            if let Some(path) = object.get(key).and_then(Value::as_str) {
-                touched.push((key, resolve(path)));
-            }
-        }
-        if let Some(paths) = object.get("paths").and_then(Value::as_array) {
-            for path in paths.iter().filter_map(Value::as_str).take(8) {
-                touched.push(("paths", resolve(path)));
-            }
-        }
-        if let Some(patch) = object.get("patch_text").and_then(Value::as_str) {
-            for path in Self::patch_paths(patch) {
-                if !touched.iter().any(|(_, existing)| *existing == resolve(path)) {
-                    touched.push(("patch", resolve(path)));
-                }
-            }
-        }
-        touched
-    }
-
-    /// File paths named in patch headers. Deletions are included because the
-    /// path was still touched; `/dev/null` sides of unified diffs are not.
-    fn patch_paths(patch: &str) -> Vec<&str> {
-        let mut paths = Vec::new();
-        for line in patch.lines() {
-            let path = [
-                "*** Add File: ",
-                "*** Update File: ",
-                "*** Delete File: ",
-                "*** Move to: ",
-            ]
-            .iter()
-            .find_map(|prefix| line.strip_prefix(prefix))
-            .or_else(|| {
-                let header = line.strip_prefix("+++ ").or_else(|| line.strip_prefix("--- "))?;
-                let header = header.split('\t').next().unwrap_or(header).trim();
-                if header == "/dev/null" {
-                    return None;
-                }
-                Some(
-                    header
-                        .strip_prefix("a/")
-                        .or_else(|| header.strip_prefix("b/"))
-                        .unwrap_or(header),
-                )
-            });
-            if let Some(path) = path.map(str::trim).filter(|path| !path.is_empty())
-                && !paths.contains(&path)
-            {
-                paths.push(path);
-            }
-        }
-        paths
-    }
-
     /// The request already opened for one approval decision, keyed by session,
     /// tool and input.
     ///
@@ -1479,6 +1426,7 @@ impl Registry {
         reason: &str,
         is_dual_confirm: bool,
         input: &Value,
+        effects: ToolEffects,
         ctx: &ToolContext,
     ) -> Option<String> {
         use crate::safety::PermissionResult;
@@ -1556,10 +1504,13 @@ impl Registry {
 
         let request = Self::gate_permission_request(
             crate::safety::new_request_id(),
-            resolved_name,
-            reason,
-            is_dual_confirm,
-            input,
+            &ApprovalPromptRef {
+                resolved_name,
+                reason,
+                is_dual_confirm,
+                input,
+            },
+            effects,
             ctx,
             // The answer arrives through the approval surface after this call
             // returns; blocking here would hold the turn open for it.
@@ -1637,16 +1588,24 @@ impl Registry {
     /// actually blocks on the answer.
     fn gate_permission_request(
         id: String,
-        resolved_name: &str,
-        reason: &str,
-        is_dual_confirm: bool,
-        input: &Value,
+        prompt: &ApprovalPromptRef<'_>,
+        effects: ToolEffects,
         ctx: &ToolContext,
         wait: bool,
     ) -> crate::safety::PermissionRequest {
         use crate::safety::{ApprovalDefault, PermissionRequest, Urgency};
 
+        let resolved_name = prompt.resolved_name;
+        let reason = prompt.reason;
+        let is_dual_confirm = prompt.is_dual_confirm;
+        let input = prompt.input;
         let now = chrono::Utc::now();
+        // A scoped answer ("allow this file", "allow this folder") is written by
+        // whoever records the decision, and that writer has only the queued
+        // request to read: it cannot ask the registry for effects. So the
+        // capability travels in the context, and only when a grant could mean
+        // something.
+        let grant_capability = crate::approval_grants::GrantCapability::from_effects(effects);
         PermissionRequest {
             id,
             action: resolved_name.to_string(),
@@ -1672,6 +1631,7 @@ impl Registry {
                 "working_dir": ctx.working_dir.as_ref().map(|dir| dir.display().to_string()),
                 "requested_at": now.to_rfc3339(),
                 "input": input,
+                "grant_capability": grant_capability.map(|capability| capability.as_str()),
             })),
             run_id: None,
             expires_at: None,
@@ -1769,7 +1729,7 @@ impl Registry {
             keys.sort();
             fields.push(("input_keys".to_string(), keys.join(",")));
 
-            let touched_paths = Self::touched_paths(input, ctx)
+            let touched_paths = path_policy::touched_paths(input, ctx)
                 .into_iter()
                 .map(|(key, path)| format!("{key}:{}", path.display()))
                 .collect::<Vec<_>>();
@@ -1872,7 +1832,7 @@ impl Registry {
         latency_ms: u64,
     ) -> crate::hooks::HookEvent {
         let mut unique_paths: Vec<String> = Vec::new();
-        for (_, path) in Self::touched_paths(input, ctx) {
+        for (_, path) in path_policy::touched_paths(input, ctx) {
             let path = path.display().to_string();
             if !unique_paths.contains(&path) {
                 unique_paths.push(path);
@@ -2155,15 +2115,48 @@ impl Registry {
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Blocked by bash pattern '{}' (deny).", verdict.pattern)).into());
             }
+            // The paths this call names, and the `restricted_paths` glob that
+            // matched one of them. Both are computed once here so the evaluation
+            // and the grant lookup below see the same answer.
+            let approval_paths =
+                crate::tool::path_policy::named_paths(resolved_name, &input, ctx.working_dir.as_deref());
+            let restricted =
+                crate::approval_grants::restricted_match(resolved_name, &input, ctx.working_dir.as_deref());
             let evaluation = crate::approval::evaluate_and_audit(
-                resolved_name,
-                approval_effects,
-                approval_mode,
-                &dual_confirm,
-                danger,
-                bash_pattern.as_ref(),
+                crate::approval::ApprovalCall {
+                    tool: resolved_name,
+                    effects: approval_effects,
+                    mode: approval_mode,
+                    dual_confirm: &dual_confirm,
+                    danger,
+                    bash_pattern: bash_pattern.as_ref(),
+                    paths: &approval_paths,
+                    restricted: restricted.as_deref(),
+                },
                 &ctx.tool_call_id,
             );
+            // A scoped grant answers a call the mode would otherwise ask about.
+            // It never answers a dual-confirm class, a restricted path, a bash
+            // pattern verdict, or a call that mutates nothing a grant can name.
+            let evaluation = match evaluation {
+                crate::approval::ApprovalEvaluation::RequiresApproval {
+                    is_dual_confirm: false, ..
+                } if restricted.is_none()
+                    && bash_pattern.is_none()
+                    && crate::approval_grants::covered(
+                        resolved_name,
+                        &input,
+                        ctx.working_dir.as_deref(),
+                        approval_effects,
+                    ) =>
+                {
+                    crate::approval::audit_granted_call(resolved_name, approval_mode, &ctx.tool_call_id);
+                    crate::approval::ApprovalEvaluation::AutoApproved {
+                        reason: "grant".to_string(),
+                    }
+                }
+                other => other,
+            };
             match evaluation {
                 crate::approval::ApprovalEvaluation::RequiresApproval {
                     reason,
@@ -2174,15 +2167,20 @@ impl Registry {
                     Some(bridge) => {
                         permission_bridge::await_permission(
                             &bridge,
-                            resolved_name,
-                            &reason,
-                            is_dual_confirm,
-                            &input,
+                            &ApprovalPromptRef {
+                                resolved_name,
+                                reason: &reason,
+                                is_dual_confirm,
+                                input: &input,
+                            },
+                            approval_effects,
                             &ctx,
                         )
                         .await
                     }
-                    None => Self::approval_refusal(resolved_name, &reason, is_dual_confirm, &input, &ctx),
+                    None => {
+                        Self::approval_refusal(resolved_name, &reason, is_dual_confirm, &input, approval_effects, &ctx)
+                    }
                 },
                 crate::approval::ApprovalEvaluation::AutoApproved { .. } => None,
             }

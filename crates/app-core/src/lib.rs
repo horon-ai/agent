@@ -37,6 +37,7 @@ pub mod ambient;
 pub mod ambient_runner;
 pub mod ambient_scheduler;
 pub mod approval;
+pub mod approval_grants;
 pub mod build;
 pub mod catchup;
 pub mod durable_input_runtime;

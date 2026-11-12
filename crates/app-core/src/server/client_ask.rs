@@ -378,6 +378,8 @@ pub(super) fn handle_permission_decision(
     }
     // `allow_always` is an approval: this daemon has no persistent always-allow
     // store, and inventing one here would claim a rule the user never got.
+    // `allow_path`/`allow_folder` are approvals too, with the additional effect
+    // that the place they name stops asking; see `record_scoped_grant`.
     let approved = !matches!(decision, PermissionDecision::Deny);
     let bridge_waits = match bridge.map(|bridge| bridge.begin_editor_answer(&request_id)) {
         Some(EditorAnswer::AlreadyDecided) => {
@@ -394,6 +396,12 @@ pub(super) fn handle_permission_decision(
         Some(EditorAnswer::Pending) => bridge,
         Some(EditorAnswer::Unknown) | None => None,
     };
+    // A scoped answer is stored before the decision is recorded. Recording
+    // removes the request from the queue and writes the history file the bridge
+    // waiter polls, so a grant written afterwards could lose a race with the
+    // next call and ask again. The reverse failure is harmless: a stored grant
+    // whose decision never landed still means the user said yes to this place.
+    record_scoped_grant(&request_id, decision);
     match crate::safety::record_permission_via_file(&request_id, approved, PERMISSION_DECISION_VIA, None) {
         Ok(()) => {
             if let Some(bridge) = bridge_waits {
@@ -425,6 +433,38 @@ pub(super) fn handle_permission_decision(
                 },
             );
         }
+    }
+}
+
+/// Turn a scoped answer into a stored grant.
+///
+/// The request is read from the queue, never from the client: the paths and the
+/// workspace come from the snapshot the daemon itself built when it asked, so a
+/// client cannot widen what its answer covers by sending different arguments.
+/// Every failure here is a warning and no grant, which fails closed: the call
+/// was approved either way, and the next one asks again.
+fn record_scoped_grant(request_id: &str, decision: PermissionDecision) {
+    use crate::approval_grants::GrantScope;
+
+    let scope = match decision {
+        PermissionDecision::AllowPath => GrantScope::Path,
+        PermissionDecision::AllowFolder => GrantScope::Folder,
+        _ => return,
+    };
+    let queued = crate::safety::pending_request(request_id);
+    let Ok(Some(request)) = queued else {
+        crate::logging::warn(&format!(
+            "permission request `{request_id}` was answered with a scoped allow but is no longer queued; \
+             the call is approved and the next one asks again"
+        ));
+        return;
+    };
+    if !crate::approval_grants::record_answer(&request, scope) {
+        crate::logging::warn(&format!(
+            "permission request `{request_id}` could not be remembered for tool `{}`; \
+             the call is approved and the next one asks again",
+            request.action
+        ));
     }
 }
 

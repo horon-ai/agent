@@ -164,7 +164,7 @@ A session has three modes.
 | Mode id | Behaviour | Daemon approval setting it maps to |
 |---|---|---|
 | `default` | Follow the daemon setting (`approval_mode`) as it is | Clears the session override |
-| `ask-commands` | Asks for shell and network tools, runs file edits immediately | `write` |
+| `ask-commands` | Asks before shell, network and file-mutating tools | `write` |
 | `auto` | Runs without asking | `off` |
 
 The mode appears in two places: `modes` and the first entry of `configOptions` (`mode`, category `mode`). The mode can change while a prompt is running through `session/set_mode` or `session/set_config_option`, and the change emits `current_mode_update` and `config_option_update`. An unknown mode id is `-32602`.
@@ -175,8 +175,12 @@ When a tool needs approval, `session/request_permission` goes to the editor and 
 |---|---|
 | `allow-once` | Allow this once |
 | `allow-always` | Allow. The same tool name is not asked again for the session |
+| `allow-path` | v2 only. Allow this file from now on, recorded as a scoped grant |
+| `allow-folder` | v2 only. Allow this file's folder from now on, recorded as a scoped grant |
 | `reject-once` | Reject this once |
 | `reject-always` | Reject. The same tool name is not asked again for the session |
+
+A v1 session gets the four options it always had, in the same order, so an existing editor is unaffected. A v2 session gets `allow-path` and `allow-folder` only when the call names exactly one filesystem path: one answer must not decide several places the user was never shown. Neither scoped option touches the per-tool memory that `allow-always` writes, because the grant is about a place, not a tool. The daemon stores the grant itself (`docs/runtime/TOOLS.md`, "Scoped grants") and repeats the single-path check, so a client cannot widen its own answer.
 
 A cancellation result, an unknown optionId, a malformed response and a client error are all treated as rejection. When another view decides first, the editor's question is withdrawn with `$/cancel_request`.
 

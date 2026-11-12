@@ -164,7 +164,7 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 | 모드 id | 동작 | 데몬 승인 설정으로 바뀌는 값 |
 |---|---|---|
 | `default` | 데몬 설정(`approval_mode`)을 그대로 따른다 | 세션 덮어쓰기를 해제 |
-| `ask-commands` | 셸과 네트워크 도구는 묻고, 파일 편집은 바로 실행 | `write` |
+| `ask-commands` | 셸·네트워크·파일 변이 도구 앞에서 묻음 | `write` |
 | `auto` | 묻지 않고 실행 | `off` |
 
 모드는 `modes`와 `configOptions`의 첫 항목(`mode`, category `mode`) 두 곳에 나온다. 모드는 prompt가 진행 중이어도 `session/set_mode`나 `session/set_config_option`으로 바꿀 수 있고, 바꾸면 `current_mode_update`와 `config_option_update`가 나간다. 모르는 모드 id는 `-32602`다.
@@ -175,8 +175,12 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 |---|---|
 | `allow-once` | 이번 한 번 허용 |
 | `allow-always` | 허용. 같은 도구 이름은 세션 동안 다시 묻지 않음 |
+| `allow-path` | v2 전용. 이 파일을 앞으로 허용. 범위 승인으로 기록됨 |
+| `allow-folder` | v2 전용. 이 파일의 폴더를 앞으로 허용. 범위 승인으로 기록됨 |
 | `reject-once` | 이번 한 번 거절 |
 | `reject-always` | 거절. 같은 도구 이름은 세션 동안 다시 묻지 않음 |
+
+v1 세션은 늘 그렇던 네 옵션을 같은 순서로 받으므로 기존 에디터는 영향받지 않는다. v2 세션은 호출이 파일시스템 경로를 정확히 하나만 댈 때만 `allow-path`와 `allow-folder`를 받는다. 한 번의 답이 사용자가 보지 못한 여러 자리를 결정해서는 안 되기 때문이다. 두 범위 옵션은 `allow-always`가 쓰는 도구별 기억을 건드리지 않는다. 승인은 도구가 아니라 자리에 대한 것이기 때문이다. 승인은 데몬이 직접 저장하고(`docs/runtime/TOOLS.md`의 "범위 승인") 단일 경로 검사를 다시 하므로, 클라이언트가 자기 답의 범위를 넓힐 수 없다.
 
 취소 결과, 모르는 optionId, 깨진 응답, 클라이언트 오류는 모두 거절로 처리한다. 다른 화면에서 먼저 결정하면 에디터의 질문은 `$/cancel_request`로 거둔다.
 
