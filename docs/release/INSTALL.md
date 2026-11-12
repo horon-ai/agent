@@ -33,6 +33,16 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 The Windows install locations and signing procedure are in [`WINDOWS.md`](WINDOWS.md).
 
+## Installing from npm
+
+`@horon-ai/horon` on npm installs the same two binaries without a release download: one small launcher and one platform package pinned to the same version. npm picks the platform package through `optionalDependencies`, so a global install fetches only the one that matches the machine.
+
+```bash
+npm i -g @horon-ai/horon
+npx @horon-ai/horon --help
+```
+
+The npm installation is updated with npm, not with the agent's own updater: the launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` for the binary it starts, because the package pins one release for both binaries. Package layout, the error a missing platform package prints, the version rule, and the publish procedure are in [`NPM.md`](NPM.md).
 
 ## The optional terminal client
 

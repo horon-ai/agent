@@ -252,6 +252,12 @@ jobs:
         # its committed version and six runtime pins must equal the root
         # Cargo.toml version. The publish workflow stamps the tag version into
         # its checkout; this is the check that keeps the tracked file honest.
+        #
+        # The seven npm names also need a `0.0.0` placeholder before a Trusted
+        # Publisher can be registered, and the maintainer publishes those by
+        # hand. That placeholder is generated here and packed, because the
+        # tarball a first publish would upload is exactly what this prints: one
+        # manifest and one README, no payload that could shadow a release.
         if: ${{ !cancelled() }}
         shell: bash
         run: |
@@ -260,6 +266,23 @@ jobs:
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
           python3 scripts/sdk/sdk_release.py check-committed
+          placeholders="$(mktemp -d)"
+          bash scripts/npm/prepare_placeholders.sh "$placeholders" >/dev/null
+          for dir in "$placeholders"/*/; do
+            name="$(node -p 'require(process.argv[1]).name' "$dir/package.json")"
+            packed="$(cd "$dir" && npm pack --dry-run --json)"
+            node -e '
+              const name = process.argv[1];
+              const packed = JSON.parse(process.argv[2]);
+              const files = packed[0].files.map((file) => file.path).sort();
+              const expected = ["README.md", "package.json"];
+              if (JSON.stringify(files) !== JSON.stringify(expected)) {
+                throw new Error(name + " placeholder packs " + JSON.stringify(files));
+              }
+              console.log(name + ": npm pack --dry-run packs " + files.join(" "));
+            ' "$name" "$packed"
+          done
+          rm -rf "$placeholders"
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
