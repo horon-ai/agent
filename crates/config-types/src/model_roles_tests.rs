@@ -6,6 +6,7 @@ fn roles(default: Option<&str>, plan: Option<&str>, aux: Option<&str>) -> ModelR
         plan: plan.map(str::to_string),
         aux: aux.map(str::to_string),
         judge: None,
+        image: None,
     }
 }
 
@@ -15,6 +16,7 @@ fn roles_with(judge: Option<&str>, aux: Option<&str>, default: Option<&str>) -> 
         plan: None,
         aux: aux.map(str::to_string),
         judge: judge.map(str::to_string),
+        image: None,
     }
 }
 
@@ -257,6 +259,7 @@ default = "my-model"
 plan = "my-planner"
 aux = "my-small-model"
 judge = "my-judge"
+image = "my-image"
 "#;
     let parsed: ProfileFile = toml::from_str(raw).expect("profile table with roles and fallbacks");
     let config = parsed.providers.get("my-gw").expect("my-gw profile");
@@ -265,6 +268,7 @@ judge = "my-judge"
     assert_eq!(config.model_roles.roles.plan.as_deref(), Some("my-planner"));
     assert_eq!(config.model_roles.roles.aux.as_deref(), Some("my-small-model"));
     assert_eq!(config.model_roles.roles.judge.as_deref(), Some("my-judge"));
+    assert_eq!(config.model_roles.roles.image.as_deref(), Some("my-image"));
 
     let encoded = toml::to_string(&parsed).expect("serialize profile table");
     let reparsed: ProfileFile = toml::from_str(&encoded).expect("reparse serialized profile table");
@@ -301,4 +305,63 @@ default_model = "my-model"
     assert!(!encoded.contains("roles"), "no roles key may appear: {encoded}");
     let reparsed: ProfileFile = toml::from_str(&encoded).expect("reparse serialized profile table");
     assert_eq!(reparsed.providers["my-gw"], *config);
+}
+
+fn roles_with_image(image: Option<&str>, default: Option<&str>) -> ModelRoles {
+    ModelRoles {
+        default: default.map(str::to_string),
+        plan: None,
+        aux: None,
+        judge: None,
+        image: image.map(str::to_string),
+    }
+}
+
+#[test]
+fn the_image_role_resolves_its_own_entry() {
+    let roles = roles_with_image(Some("image-model"), Some("text-default"));
+    assert_eq!(
+        resolve_role_model(ModelRole::Image, None, &roles, Some("profile"), None).expect("the image entry resolves"),
+        "image-model"
+    );
+}
+
+#[test]
+fn the_image_role_has_no_inherited_fallback() {
+    // A text model cannot answer an image request, so falling back would send a
+    // call that must fail. An unset `image` entry is "not configured", not
+    // "use the default".
+    let roles = roles_with_image(None, Some("text-default"));
+    let error = resolve_role_model(ModelRole::Image, None, &roles, Some("profile"), None)
+        .expect_err("no image model is configured");
+    let message = error.to_string();
+    assert!(message.contains("image"), "{message}");
+    assert!(
+        !message.contains("roles.default"),
+        "the error names the role that failed: {message}"
+    );
+}
+
+#[test]
+fn the_image_role_refuses_a_route_prefix_like_every_other_role() {
+    let roles = roles_with_image(Some("gateway:an-image"), None);
+    let error =
+        resolve_role_model(ModelRole::Image, None, &roles, Some("profile"), None).expect_err("a route is not a model");
+    assert!(error.to_string().contains("image"), "{error}");
+}
+
+#[test]
+fn a_run_override_beats_the_image_entry() {
+    let roles = roles_with_image(Some("image-model"), None);
+    assert_eq!(
+        resolve_role_model(ModelRole::Image, Some("override-image"), &roles, Some("profile"), None,)
+            .expect("the override resolves"),
+        "override-image"
+    );
+}
+
+#[test]
+fn an_image_entry_alone_makes_the_roles_non_empty() {
+    let roles = roles_with_image(Some("image-model"), None);
+    assert!(!roles.is_empty());
 }

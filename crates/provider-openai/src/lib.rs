@@ -1,5 +1,6 @@
 pub mod chat;
 mod citations;
+pub mod images;
 pub mod request;
 pub mod stream;
 pub mod websocket_health;
