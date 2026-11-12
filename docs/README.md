@@ -28,7 +28,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | Session event storage format, delivery contract, writer pool, durable runtime journal |
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
-| | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, runtime commands, `--resume` |
+| | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, goal continuation and its token budget, runtime commands, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
 | | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, commands, the settings screen, installing the optional asset, limits |
 | | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
