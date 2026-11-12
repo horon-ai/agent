@@ -185,6 +185,7 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 
 | Topic | Read |
 | --- | --- |
+| Documentation site source (`agent.horon.ai`) | [packages/docs](packages/docs) |
 | Index and fixed requirements | [docs/README.md](docs/README.md) |
 | Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
 | Editors and ACP | [docs/protocol/ACP.md](docs/protocol/ACP.md) |

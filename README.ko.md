@@ -185,6 +185,7 @@ macOS에서는 한 턴(104.7 ms 대 361.6 ms), 스킬(118.4 ms 대 270.0 ms), MC
 
 | 주제 | 문서 |
 | --- | --- |
+| 문서 사이트 원본(`agent.horon.ai`) | [packages/docs](packages/docs) |
 | 색인과 고정 요구사항 | [docs/README.ko.md](docs/README.ko.md) |
 | 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |
 | 에디터와 ACP | [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md) |
