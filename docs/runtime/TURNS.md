@@ -408,6 +408,24 @@ with the reason in `detail`, and nothing is committed. Any other missing heading
 or omitted section is not a failure: the text is committed as the model wrote
 it, and the boundary keeps the document plus the verbatim tail.
 
+### As a strategy
+
+Setting `[compaction] strategy = "handoff"` makes the ordinary automatic and
+manual compaction run write a handoff document instead of a summary. The job is
+the same one every other strategy uses, so it keeps the same cutoff, deadline,
+cancellation and single-slot rules, and the result is tagged as a handoff: the
+next request frames the document as the successor's own earlier writing
+(`## Handoff From Your Earlier Self`, "continue the work; do not summarize it
+back") rather than as third-party notes. A previous boundary travels into the
+prompt, so a second handoff in one session keeps the goal and constraints the
+first one recorded.
+
+A prompt that cannot carry the whole covered range shrinks the range instead of
+clipping the prompt, because a document written over a silently shortened range
+would move the boundary past messages it never read. When even the smallest range
+does not fit, the document is refused and the job falls back to a structured
+summary over the same range; the turn is compacted either way.
+
 ### Failure and cancellation
 
 A provider error or a cancellation commits nothing: the message count, the

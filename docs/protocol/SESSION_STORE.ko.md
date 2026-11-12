@@ -227,8 +227,11 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 `provider_error`, `overflow_no_progress`, `stale_source`). 길이 알림이나 빈 구조 요약은 성공한
 `summary`로 기록하지 않는다. `summary_text`가 빈 유효한 네이티브 윈도는 기록한다.
 
-압축을 소유하는 전략은 `[compaction]` 아래 `strategy`다. `structured`(기본), `openai_auto`,
-`openai_explicit` 중 하나다. `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
+압축을 소유하는 전략은 `[compaction]` 아래 `strategy`다. `structured`(기본), `handoff`,
+`openai_auto`, `openai_explicit` 중 하나다. `handoff`는 평소 압축 잡을 그대로 돌려 생성한
+핸드오프 문서를 경계로 저장하고, `handoff` 표시를 붙여 다음 요청이 그 문서를 같은 에이전트가
+앞서 쓴 글로 소개하게 한다(`crates/base/src/compaction/handoff_provider.rs`). 핸드오프를 쓸 수
+없으면 같은 잡에서 구조화 요약으로 대체한다. `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
 둔 경우 `strategy`가 설정되지 않았을 때만 존중한다. 없음, 빈 값, `off`는 모두 `structured`로
 해석한다. 같은 절의 예산 기본값은 `recent_tokens` 20,000, `reserve_tokens` 16,384를
 `min(window * 0.04, 49,152)`까지 올린 값, 그리고 16k에서 0.45부터 512k 초과에서 0.80까지 가는 윈도
