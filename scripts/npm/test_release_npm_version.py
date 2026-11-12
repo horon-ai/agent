@@ -183,6 +183,7 @@ class CheckPackagesTests(unittest.TestCase):
             companion = "horon-tui.exe" if os_name == "win32" else "horon-tui"
             (package_dir / entry).write_text("", encoding="utf-8")
             (package_dir / companion).write_text("", encoding="utf-8")
+            (package_dir.parent / "LICENSE").write_text("MIT License\n", encoding="utf-8")
             manifest = {
                 "name": f"{helper.WRAPPER}-{platform}",
                 "version": version,
@@ -193,6 +194,7 @@ class CheckPackagesTests(unittest.TestCase):
         wrapper_dir = self.directory / helper.WRAPPER_DIR
         (wrapper_dir / "bin").mkdir(parents=True)
         (wrapper_dir / "bin" / "horon.js").write_text("", encoding="utf-8")
+        (wrapper_dir / "LICENSE").write_text("MIT License\n", encoding="utf-8")
         wrapper = {
             "name": helper.WRAPPER,
             "version": version,
@@ -241,6 +243,15 @@ class CheckPackagesTests(unittest.TestCase):
         self.assertEqual(
             helper.check_packages(self.directory, self.VERSION),
             ["linux-x64: bin/horon-tui is missing"],
+        )
+
+    def test_a_missing_license_is_named(self) -> None:
+        # A package without the licence ships binaries without their terms.
+        (self.directory / "linux-x64" / "LICENSE").unlink()
+        (self.directory / helper.WRAPPER_DIR / "LICENSE").unlink()
+        self.assertEqual(
+            helper.check_packages(self.directory, self.VERSION),
+            ["linux-x64: LICENSE is missing", "horon: LICENSE is missing"],
         )
 
     def test_an_install_script_is_named(self) -> None:

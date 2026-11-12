@@ -9,10 +9,10 @@
 # installs them with the command the shell installer hands over, and leaves a
 # layout the terminal smoke can drive through `bin/horon`.
 #
-# The agent archive is one member named exactly the platform asset stem,
-# because `release_asset::stage_package` requires exactly one top-level
-# executable with that name. The optional client ships the same way under its
-# own stem.
+# The agent archive holds the platform asset stem and the licence the release
+# ships with it, because `release_asset::stage_package` requires exactly one
+# top-level executable with that name and installs the LICENSE beside it. The
+# optional client ships the same way under its own stem.
 #
 # Usage: install_release_layout_smoke.sh <horon-agent> <horon-tui> <work-dir>
 
@@ -51,11 +51,14 @@ mkdir -p "$assets" "$stage/agent" "$stage/client"
 cp "$agent" "$stage/agent/$stem"
 cp "$tui" "$stage/client/$tui_stem"
 chmod +x "$stage/agent/$stem" "$stage/client/$tui_stem"
+# The repository licence travels in every archive, so the smoke packages it too.
+cp "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/LICENSE" "$stage/agent/LICENSE"
+cp "$stage/agent/LICENSE" "$stage/client/LICENSE"
 
 # COPYFILE_DISABLE keeps macOS tar from adding `._` members, which the
 # extractor would reject as an unexpected member.
-COPYFILE_DISABLE=1 tar -czf "$assets/$stem.tar.gz" -C "$stage/agent" "$stem"
-COPYFILE_DISABLE=1 tar -czf "$assets/$tui_stem.tar.gz" -C "$stage/client" "$tui_stem"
+COPYFILE_DISABLE=1 tar -czf "$assets/$stem.tar.gz" -C "$stage/agent" "$stem" LICENSE
+COPYFILE_DISABLE=1 tar -czf "$assets/$tui_stem.tar.gz" -C "$stage/client" "$tui_stem" LICENSE
 
 # GNU sha256sum is on the ubuntu runner, shasum on macOS.
 if command -v sha256sum >/dev/null 2>&1; then
@@ -80,9 +83,15 @@ version_dir="$home/builds/versions/0.0.0"
 echo "--- installed version directory ---"
 ls -l "$version_dir"
 
+for name in horon-agent horon-tui LICENSE; do
+  if [ ! -f "$version_dir/$name" ]; then
+    echo "installed layout is missing $version_dir/$name" >&2
+    exit 1
+  fi
+done
 for name in horon-agent horon-tui; do
   if [ ! -x "$version_dir/$name" ]; then
-    echo "installed layout is missing $version_dir/$name" >&2
+    echo "installed layout has a non-executable $version_dir/$name" >&2
     exit 1
   fi
 done

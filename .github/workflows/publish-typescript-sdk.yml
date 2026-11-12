@@ -263,15 +263,17 @@ jobs:
           for suffix in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64; do
             dir="$(mktemp -d)"
             artifact="horon-agent-$suffix"
+            # Every published archive carries the licence beside its binary.
+            cp LICENSE "$dir/LICENSE"
             case "$suffix" in
               windows-*)
                 printf 'fixture horon-agent %s\r\n' "$VERSION" >"$dir/$artifact.exe"
-                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact.exe"
+                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact.exe" LICENSE
                 ;;
               *)
                 printf '#!/bin/sh\necho "horon-agent %s (fixture)"\n' "$VERSION" >"$dir/$artifact"
                 chmod +x "$dir/$artifact"
-                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact"
+                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact" LICENSE
                 ;;
             esac
             rm -rf "$dir"

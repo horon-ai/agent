@@ -102,12 +102,14 @@ class ReleaseTests(unittest.TestCase):
         for name in ("release.sh", "check_ci.py"):
             shutil.copy2(ROOT / "scripts" / "release" / name, self.repo / "scripts" / "release" / name)
         (self.repo / "Cargo.toml").write_text('[package]\nname = "release-fixture"\nversion = "1.2.3"\n')
+        # Every archive carries the licence, so the fixture tree has one.
+        (self.repo / "LICENSE").write_text("MIT License\n")
         self.git("init", "-b", "master")
         self.git("config", "user.name", "Release Fixture")
         self.git("config", "user.email", "fixture@example.invalid")
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "tag.gpgsign", "false")
-        self.git("add", "scripts", "Cargo.toml")
+        self.git("add", "scripts", "Cargo.toml", "LICENSE")
         self.git("commit", "-m", "Initial fixture")
         self.git("commit", "--allow-empty", "-m", "Release metadata")
         self.sha = self.git("rev-parse", "HEAD").stdout.strip()

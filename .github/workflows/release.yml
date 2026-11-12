@@ -375,8 +375,8 @@ jobs:
             codesign --force --sign - --identifier com.horon-tui.cli dist/${{ matrix.tui_artifact }}
             codesign -dv dist/${{ matrix.tui_artifact }} 2>&1 | grep -qx 'Identifier=com.horon-tui.cli'
           fi
-          ( cd dist && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }} )
-          ( cd dist && tar czf ${{ matrix.tui_artifact }}.tar.gz ${{ matrix.tui_artifact }} )
+          ( cd dist && cp ../LICENSE LICENSE && tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }} LICENSE )
+          ( cd dist && tar czf ${{ matrix.tui_artifact }}.tar.gz ${{ matrix.tui_artifact }} LICENSE )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -757,6 +757,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
+          # MIT requires the notice to travel with every copy, so each archive
+          # carries it beside the executable.
+          Copy-Item -LiteralPath LICENSE -Destination dist/LICENSE -Force
           $assets = @(
             @{ Name = 'horon-agent-windows-x86_64'; Path = 'artifacts/windows-unsigned-x86_64/horon-agent-windows-x86_64.exe'; Required = $true },
             @{ Name = 'horon-tui-windows-x86_64'; Path = 'artifacts/windows-unsigned-x86_64/horon-tui-windows-x86_64.exe'; Required = $true },
@@ -784,7 +787,7 @@ jobs:
 
             $destination = Join-Path dist "$($asset.Name).exe"
             Copy-Item -LiteralPath $source -Destination $destination -Force
-            tar -czf "dist/$($asset.Name).tar.gz" -C dist "$($asset.Name).exe"
+            tar -czf "dist/$($asset.Name).tar.gz" -C dist "$($asset.Name).exe" "LICENSE"
             $packaged += $asset.Name
           }
 
@@ -956,8 +959,9 @@ jobs:
 
             mkdir -p dist
             cp target/release/horon-agent dist/horon-agent-freebsd-x86_64
+            cp LICENSE dist/LICENSE
             chmod +x dist/horon-agent-freebsd-x86_64
-            cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64
+            cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64 LICENSE
 
       - name: Upload artifact
         if: ${{ inputs.package_only != true }}
@@ -1050,6 +1054,26 @@ jobs:
             echo "Keeping the release as a draft until every platform succeeds" >&2
             exit 1
           fi
+
+      # An archive that is missing the licence is a licensing failure, not a
+      # packaging preference, so the release stops here rather than publishing.
+      - name: Require the licence in every release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(artifacts/horon-*/*.tar.gz)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "No release archives were downloaded" >&2
+            exit 1
+          fi
+          for archive in "${archives[@]}"; do
+            if ! tar tzf "$archive" | sed 's#^\./##' | grep -qx LICENSE; then
+              echo "Release archive has no top-level LICENSE: $archive" >&2
+              exit 1
+            fi
+          done
+          printf 'Licence present in %d release archives\n' "${#archives[@]}"
 
       # Build jobs normally attach their own assets to the draft. Upload them
       # again here so a late per-platform upload failure cannot leave a built

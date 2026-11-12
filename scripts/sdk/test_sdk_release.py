@@ -280,6 +280,7 @@ class CheckPackagesTests(unittest.TestCase):
             package_dir.mkdir(parents=True)
             binary = "horon-agent.exe" if os_name == "win32" else "horon-agent"
             (package_dir / binary).write_text("", encoding="utf-8")
+            (package_dir.parent / "LICENSE").write_text("MIT License\n", encoding="utf-8")
             manifest = {"name": helper.RUNTIME_NAMES[platform], "version": version, "os": [os_name], "cpu": [cpu]}
             (package_dir.parent / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -320,6 +321,13 @@ class CheckPackagesTests(unittest.TestCase):
         self.assertEqual(
             helper.check_packages(self.directory, self.VERSION, self.sdk),
             ["linux-arm64: missing package.json"],
+        )
+
+    def test_a_missing_license_is_named(self) -> None:
+        (self.directory / "linux-x64" / "LICENSE").unlink()
+        self.assertEqual(
+            helper.check_packages(self.directory, self.VERSION, self.sdk),
+            ["linux-x64: LICENSE is missing"],
         )
 
     def test_a_missing_binary_is_named(self) -> None:

@@ -47,7 +47,7 @@ prepare() {
         license: sdk.license,
         os: [process.env.OS],
         cpu: [process.env.CPU],
-        files: ["bin", "README.md"],
+        files: ["bin", "LICENSE", "README.md"],
         exports: { "./package.json": "./package.json" },
         repository: sdk.repository,
         publishConfig: { access: "public" },
@@ -64,6 +64,9 @@ prepare() {
     tar -xzf "$assets/$archive" -C "$package_dir/bin"
     mv "$package_dir/bin/$archived_binary" "$package_dir/bin/$installed_binary"
     chmod +x "$package_dir/bin/$installed_binary"
+    # The archive carries the licence beside the binary; in the package it
+    # belongs at the root, where `files` lists it for `npm pack`.
+    mv "$package_dir/bin/LICENSE" "$package_dir/LICENSE"
   fi
 }
 

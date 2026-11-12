@@ -3,6 +3,10 @@ use anyhow::{Context, Result, bail};
 use std::io::{Cursor, Write};
 use std::path::{Component, Path, PathBuf};
 
+/// Every release archive carries the licence text beside the binaries; the
+/// installers and the updater both have to accept it as a known member.
+const LICENSE_MEMBER: &str = "LICENSE";
+
 fn asset<'a>(release: &'a super::GitHubRelease, name: &str) -> Result<&'a super::GitHubAsset> {
     let mut matches = release.assets.iter().filter(|asset| asset.name == name);
     let found = matches
@@ -460,7 +464,7 @@ fn stage_tui(source: TuiSource, sums: &str, versions: &Path) -> StagedTui {
             if candidate.replace(path.clone()).is_some() {
                 return skip("archive must contain exactly one interactive client executable".to_owned());
             }
-        } else if name != payload {
+        } else if name != payload && name != LICENSE_MEMBER {
             return skip(format!("archive contains an unexpected member: {name}"));
         }
     }
@@ -476,6 +480,11 @@ fn stage_tui(source: TuiSource, sums: &str, versions: &Path) -> StagedTui {
         .map(|path| if path == candidate { renamed.clone() } else { path })
         .collect();
     for path in &files {
+        // The licence is documentation, not a payload; only the client and its
+        // wrapper are given the executable bit.
+        if path.ends_with(LICENSE_MEMBER) {
+            continue;
+        }
         if let Err(error) = horon_agent_platform::set_permissions_executable(path) {
             return skip(error.to_string());
         }
@@ -737,6 +746,64 @@ mod tests {
         assert!(horon_agent_platform::fs::is_executable(
             &directory.join(tui_binary_name())
         ));
+    }
+
+    #[test]
+    fn a_licence_beside_the_client_is_installed_as_documentation() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let member = tui_tarball_member();
+        add_tui_archive(
+            assets.path(),
+            &[(&member, b"tui-binary"), ("LICENSE", b"MIT License\n")],
+        );
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        let directory = installed.parent().unwrap();
+        assert_eq!(std::fs::read(directory.join(tui_binary_name())).unwrap(), b"tui-binary");
+        let license = directory.join("LICENSE");
+        assert_eq!(std::fs::read(&license).unwrap(), b"MIT License\n");
+        // A licence is documentation, so it must not come out executable.
+        assert!(!horon_agent_platform::fs::is_executable(&license));
+    }
+
+    #[test]
+    fn an_unexpected_member_beside_the_client_is_still_refused() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let member = tui_tarball_member();
+        add_tui_archive(assets.path(), &[(&member, b"tui-binary"), ("surprise.txt", b"extra")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        let directory = installed.parent().unwrap();
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!directory.join(tui_binary_name()).exists());
+        assert!(!directory.join("surprise.txt").exists());
+    }
+
+    #[test]
+    fn a_licence_beside_the_agent_does_not_hide_the_executable() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        let name = super::super::get_asset_name();
+        let base = name.trim_end_matches(".exe");
+        let bytes = archive_with(&[(base, b"agent-binary"), ("LICENSE", b"MIT License\n")]);
+        let archive_name = format!("{base}.tar.gz");
+        let sums = format!("{:x}  {archive_name}\n", Sha256::digest(&bytes));
+        std::fs::write(assets.path().join(&archive_name), &bytes).unwrap();
+        std::fs::write(assets.path().join("SHA256SUMS"), sums).unwrap();
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert_eq!(
+            std::fs::read(installed.parent().unwrap().join("LICENSE")).unwrap(),
+            b"MIT License\n"
+        );
     }
 
     #[test]

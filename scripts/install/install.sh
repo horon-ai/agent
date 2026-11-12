@@ -222,6 +222,11 @@ extract_bootstrap_executable() {
           || err "Failed to extract $member from the downloaded agent archive"
         extracted=$((extracted + 1))
         ;;
+      LICENSE)
+        # The licence travels with every archive; the executable that stages the
+        # version keeps it. Nothing here needs a copy, so this member is accepted
+        # and skipped rather than treated as an unexpected name.
+        ;;
       *)
         err "Downloaded agent archive contains an unexpected member: $member"
         ;;

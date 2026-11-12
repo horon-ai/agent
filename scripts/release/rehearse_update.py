@@ -160,6 +160,12 @@ def prepare_payload(binary: Path, cache_dir: Path, strip: bool) -> Path:
     return payload
 
 
+def add_license(tar: tarfile.TarFile) -> None:
+    """Add the repository LICENSE as a member, as every published archive does."""
+    license_path = REPO_DIR / "LICENSE"
+    tar.add(license_path, arcname="LICENSE")
+
+
 def build_release_tarball(payload: Path, version: str, stem: str, cache_dir: Path) -> Path:
     wrapper = wrapper_script(version, f"{stem}.bin").encode()
     tag = hashlib.sha256(wrapper).hexdigest()[:8]
@@ -179,6 +185,7 @@ def build_release_tarball(payload: Path, version: str, stem: str, cache_dir: Pat
             info.mtime = int(time.time())
             tar.addfile(info, io.BytesIO(wrapper))
             tar.add(payload, arcname=f"{stem}.bin")
+            add_license(tar)
         gz.stdin.close()
         if gz.wait() != 0:
             sys.exit("gzip failed while packaging fake release")
@@ -187,7 +194,7 @@ def build_release_tarball(payload: Path, version: str, stem: str, cache_dir: Pat
 
 
 def build_tui_tarball(binary: Path, version: str, stem: str, cache_dir: Path) -> Path:
-    """Package the interactive client exactly as it ships: one bare-stem member."""
+    """Package the interactive client as it ships: the bare stem plus LICENSE."""
     st = binary.stat()
     tarball = cache_dir / f"release-tui-{st.st_size}-{int(st.st_mtime)}-{version}.tar.gz"
     if tarball.exists():
@@ -203,6 +210,7 @@ def build_tui_tarball(binary: Path, version: str, stem: str, cache_dir: Path) ->
             info.mtime = int(time.time())
             with open(binary, "rb") as payload:
                 tar.addfile(info, payload)
+            add_license(tar)
         gz.stdin.close()
         if gz.wait() != 0:
             sys.exit("gzip failed while packaging the fake interactive client")

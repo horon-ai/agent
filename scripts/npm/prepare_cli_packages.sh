@@ -45,6 +45,7 @@ assets="$(cd "$2" && pwd)"
 [ -f "$wrapper_src/package.json" ] || fail "missing $wrapper_src/package.json"
 [ -f "$wrapper_src/bin/horon.js" ] || fail "missing $wrapper_src/bin/horon.js"
 [ -f "$wrapper_src/README.md" ] || fail "missing $wrapper_src/README.md"
+[ -f "$wrapper_src/LICENSE" ] || fail "missing $wrapper_src/LICENSE"
 
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -131,15 +132,18 @@ unpack() {
 
   members="$(tar -tzf "$assets/$archive" | sed 's#^\./##' | awk 'NF' | LC_ALL=C sort | tr '\n' ' ')"
   case "$shape" in
-    wrapper) expected="$artifact $artifact.bin " ;;
-    exe) expected="$artifact.exe " ;;
-    *) expected="$artifact " ;;
+    wrapper) expected="LICENSE $artifact $artifact.bin " ;;
+    exe) expected="LICENSE $artifact.exe " ;;
+    *) expected="LICENSE $artifact " ;;
   esac
   if [ "$members" != "$expected" ]; then
     fail "unexpected members in $archive: got [$members], expected [$expected]"
   fi
 
   tar -xzf "$assets/$archive" -C "$bin_dir"
+  # The archive carries the licence beside the binaries; in the package it
+  # belongs at the root, where `files` lists it for `npm pack`.
+  mv "$bin_dir/LICENSE" "$(dirname "$bin_dir")/LICENSE"
   case "$shape" in
     wrapper)
       mv "$bin_dir/$artifact" "$bin_dir/$entry"
@@ -227,7 +231,7 @@ for platform in $platforms; do
         license: wrapper.license,
         os: [process.env.OS],
         cpu: [process.env.CPU],
-        files: ["bin", "README.md"],
+        files: ["bin", "LICENSE", "README.md"],
         repository: wrapper.repository,
         publishConfig: { access: "public" },
       };
@@ -246,6 +250,7 @@ wrapper_dir="$staging/horon"
 mkdir -p "$wrapper_dir/bin"
 cp "$wrapper_src/bin/horon.js" "$wrapper_dir/bin/horon.js"
 cp "$wrapper_src/README.md" "$wrapper_dir/README.md"
+cp "$wrapper_src/LICENSE" "$wrapper_dir/LICENSE"
 chmod +x "$wrapper_dir/bin/horon.js"
 WRAPPER_MANIFEST="$wrapper_src/package.json" WRAPPER_DIR="$wrapper_dir" VERSION="$version" \
   node -e '

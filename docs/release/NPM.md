@@ -10,15 +10,15 @@ The seven names are one wrapper and six platform packages. The wrapper holds no 
 
 | Package | Contents |
 | --- | --- |
-| `@horon-ai/horon` | Launcher `bin/horon.js` and README. `bin` maps both `horon` and `hrn` to that file. |
-| `@horon-ai/horon-linux-x64` | `bin/horon-agent` and `bin/horon-tui` for Linux x86_64. |
-| `@horon-ai/horon-linux-arm64` | The same pair for Linux aarch64. |
-| `@horon-ai/horon-darwin-x64` | The same pair for macOS Intel. |
-| `@horon-ai/horon-darwin-arm64` | The same pair for macOS Apple Silicon. |
-| `@horon-ai/horon-win32-x64` | `bin/horon-agent.exe` and `bin/horon-tui.exe` for Windows x86_64. |
-| `@horon-ai/horon-win32-arm64` | The same pair for Windows ARM64. |
+| `@horon-ai/horon` | Launcher `bin/horon.js`, `LICENSE` and README. `bin` maps both `horon` and `hrn` to that file. |
+| `@horon-ai/horon-linux-x64` | `bin/horon-agent`, `bin/horon-tui` and `LICENSE` for Linux x86_64. |
+| `@horon-ai/horon-linux-arm64` | The same two binaries and `LICENSE`, for Linux aarch64. |
+| `@horon-ai/horon-darwin-x64` | The same two binaries and `LICENSE`, for macOS Intel. |
+| `@horon-ai/horon-darwin-arm64` | The same two binaries and `LICENSE`, for macOS Apple Silicon. |
+| `@horon-ai/horon-win32-x64` | `bin/horon-agent.exe`, `bin/horon-tui.exe` and `LICENSE` for Windows x86_64. |
+| `@horon-ai/horon-win32-arm64` | The same two executables and `LICENSE`, for Windows ARM64. |
 
-npm picks a platform package through `optionalDependencies`, so a global install downloads only the one that matches the machine. Three properties make the set safe to publish:
+Every package carries the repository's `LICENSE` at its root, taken from the release archive it was built from, so the terms travel with the binaries. npm picks a platform package through `optionalDependencies`, so a global install downloads only the one that matches the machine. Three properties make the set safe to publish:
 
 - Every platform pin in the wrapper is an exact version, never a range. `scripts/npm/release_npm_version.py check-packages` fails the run when a pin differs from the version being published, so a wrapper can never offer an install whose platform package does not exist at that version.
 - No package declares an install script. `preinstall`, `install` and `postinstall` are absent from the generated manifests and from `packages/npm/horon/package.json`, and the same check rejects a platform package that declares dependencies.
