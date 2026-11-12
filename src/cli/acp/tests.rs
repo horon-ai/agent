@@ -116,12 +116,7 @@ fn event_mapper_maps_tool_lifecycle() {
     });
     assert_eq!(input[0]["rawInput"]["command"], "true");
 
-    let done = mapper.map_event(ServerEvent::ToolDone {
-        id: "tool1".to_string(),
-        name: "bash".to_string(),
-        output: "ok".to_string(),
-        error: None,
-    });
+    let done = mapper.map_event(ServerEvent::tool_done("tool1", "bash", "ok", None));
     assert_eq!(done[0]["status"], "completed");
     assert_eq!(done[0]["content"][0]["content"]["text"], "ok");
 }

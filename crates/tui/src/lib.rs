@@ -828,6 +828,7 @@ mod tests {
             name: "bash".into(),
             output: "ok".into(),
             error: None,
+            verdict: None,
         });
         app.apply_event(&ApiEvent::TurnDone {
             session_id: "s1".into(),
@@ -929,6 +930,7 @@ mod tests {
             name: "write".into(),
             output: String::new(),
             error: Some("permission denied".into()),
+            verdict: None,
         });
         assert_eq!(
             app.transcript.items().last(),

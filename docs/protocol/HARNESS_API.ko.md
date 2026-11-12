@@ -306,6 +306,51 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
 `getMessageModes`(TypeScript)로 제공합니다.
 
+## 도구 판정(프로토콜 1.19)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼습니다. 아래 내용은 모두
+추가형입니다. 새 필드를 보지 않는 클라이언트는 이전과 같은 이벤트를 읽습니다.
+
+도구 호출은 텍스트와 오류 표시만 보고했으므로, 호출이 실행됐는지, 일부만 끝났는지,
+거부됐는지 알려면 문장을 읽어야 했습니다. 저장된 `tool_result`는 이미 타입이 붙은
+판정을 담고 있고, 이 버전은 같은 값을 호출을 끝내는 이벤트에도 싣습니다.
+
+| 필드 | 타입 | 필수 | 의미 |
+| --- | --- | --- | --- |
+| `verdict` | string | 아니오 | 데몬이 판정을 저장했을 때, 그 호출이 어떻게 됐는지 |
+
+값은 저장된 결과가 쓰는 일곱 가지 전송 표기입니다.
+
+| 값 | 의미 |
+| --- | --- |
+| `ok` | 도구가 실행됐고 결과 전체를 돌려줬습니다 |
+| `partial` | 도구가 실행됐지만 작업 일부만 끝났습니다 |
+| `truncated` | 도구가 끝까지 실행됐고 돌려준 텍스트는 전체의 일부입니다 |
+| `withheld` | 도구가 실행됐고 결과 대신 거부 문장을 돌려줬습니다 |
+| `rejected` | 도구가 실행되기 전에 호출이 거부됐습니다 |
+| `failed` | 도구가 실행됐고 오류를 돌려줬습니다 |
+| `interrupted` | 사용자, 재적재, 취소로 호출이 건너뛰어지거나 중단됐습니다 |
+
+어떤 계층도 호출에 판정을 남기지 않으면 필드는 없습니다. 대부분의 도구는 그냥 성공한
+호출에 아무것도 남기지 않으므로, 보통의 성공한 `tool_done`에는 판정이 없고 `ok`는
+도구가 직접 밝힌 경우에만 나옵니다. 백그라운드로 넘어간 호출에는 판정이 없고, 제공자가
+자기 쪽에서 실행하는 도구(예: 호스팅 검색)에도 그 도구가 오류를 보고하더라도 판정이
+없습니다. 모델이 낸 도구 호출에 제공자가 준 결과는 오류 표시가 붙어 있으면
+`failed`입니다. 필드가 없으면 프레임은 프로토콜 1.18과 바이트 단위로 같고, 읽는 쪽은
+이전처럼 `error`로 성공과 실패를 가릅니다.
+
+### 이벤트: `tool_done`
+
+```json
+{"v":1,"ev":"tool_done","session_id":"s-1","call_id":"call-1","name":"bash",
+ "output":"Error: command timed out","error":"Error: command timed out",
+ "verdict":"failed"}
+```
+
+이 필드를 게이트하는 기능은 없습니다. 모든 클라이언트가 이미 읽는 이벤트에 실리므로
+이전 클라이언트는 키를 무시하고, 판정을 원하는 클라이언트는 값을 읽고 없으면 `error`로
+대체합니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -625,5 +670,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 18`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 19`
 - `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

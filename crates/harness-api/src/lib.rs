@@ -59,10 +59,14 @@ mod capability_coverage_tests;
 #[path = "harness_api_tests/optional_fields.rs"]
 mod optional_field_tests;
 
+#[cfg(test)]
+#[path = "harness_api_tests/tool_done_verdict.rs"]
+mod tool_done_verdict_tests;
+
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 18;
+pub const API_VERSION_MINOR: u32 = 19;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.

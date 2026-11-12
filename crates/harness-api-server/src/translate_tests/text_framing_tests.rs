@@ -184,6 +184,23 @@ fn citation_suffix_replacement_ignores_malformed_mismatched_and_closed_messages(
 }
 
 #[test]
+fn tool_done_carries_the_verdict_the_daemon_stored() {
+    let mut state = state_with_session();
+    let event = json!({"type":"tool_done","id":"call-1","name":"bash","output":"ok","verdict":"rejected"});
+    let frames = state.legacy_event_to_api(&event);
+    let encoded = serde_json::to_value(&frames[0].event).unwrap();
+    assert_eq!(
+        encoded["verdict"], "rejected",
+        "the bridge copies the stored verdict instead of re-deriving it: {encoded}"
+    );
+    // A call no layer judged keeps the field absent rather than inventing one.
+    let event = json!({"type":"tool_done","id":"call-2","name":"bash","output":"ok"});
+    let frames = state.legacy_event_to_api(&event);
+    let encoded = serde_json::to_value(&frames[0].event).unwrap();
+    assert!(encoded.get("verdict").is_none(), "no layer judged this call: {encoded}");
+}
+
+#[test]
 fn provider_native_web_search_reaches_sdk_as_tool_events_without_tool_call() {
     // The agent renders a provider-executed search (Anthropic `srvtoolu_*`,
     // OpenAI `ws_*`) as a normal tool row. SDK clients must see the full
