@@ -5,6 +5,7 @@ mod compact_handoff;
 mod credentials;
 mod runtime_identity;
 mod search_artifacts;
+mod session_delete;
 mod usage_report;
 
 use crate::background_progress::parse_background_notification;
@@ -330,7 +331,7 @@ impl From<&RecentSessionIndexEntry> for PersistedSessionMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum SimpleKind {
+pub(super) enum SimpleKind {
     RuntimeCommand,
     Detach,
     Tools,
@@ -377,7 +378,7 @@ pub fn legacy_event_may_block(event: &Value) -> bool {
 }
 
 impl BridgeState {
-    fn legacy_id(&mut self) -> u64 {
+    pub(super) fn legacy_id(&mut self) -> u64 {
         NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -604,39 +605,7 @@ impl BridgeState {
                     Err(message) => Self::error_reply(api_id, ErrorCode::Internal, &message),
                 }
             }
-            "delete_session" => {
-                let Some(session_id) = Self::request_session(request, api_id) else {
-                    return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");
-                };
-                let Some(path) = Self::session_original_path(&session_id) else {
-                    return Self::error_reply(api_id, ErrorCode::UnknownSession, "session does not exist");
-                };
-                if !path.is_file() {
-                    return Self::error_reply(api_id, ErrorCode::UnknownSession, "session does not exist");
-                }
-                // A session this connection is attached to cannot be deleted:
-                // the daemon owns that writer and refuses, but the bridge can
-                // say so before the round trip and leave its own attachment
-                // untouched.
-                if self.session_id.as_deref() == Some(session_id.as_str()) {
-                    return Self::error_reply(
-                        api_id,
-                        ErrorCode::InvalidRequest,
-                        "session is attached to this connection; detach before deleting it",
-                    );
-                }
-                let id = self.legacy_id();
-                // `confirm` is always true here: an API client sends the
-                // request only after its own confirmation, and the field exists
-                // to stop an archive-shaped call from erasing a transcript.
-                self.pending_simple.push((id, api_id, SimpleKind::Delete));
-                vec![Outbound::Legacy(json!({
-                    "type": "delete_session",
-                    "id": id,
-                    "session_id": session_id,
-                    "confirm": true,
-                }))]
-            }
+            "delete_session" => session_delete::handle(self, api_id, request),
             "set_retention_policy" => {
                 let days = match request.get("archive_after_days") {
                     None | Some(Value::Null) => None,

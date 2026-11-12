@@ -5,11 +5,12 @@
 //! told was gone, so every test here drives the real handler rather than a copy
 //! of its conditions.
 
-use super::*;
+use super::handle_delete_session;
 use crate::message::{Message, ToolDefinition};
 use crate::protocol::ServerEvent;
 use crate::provider::EventStream;
-use crate::server::client_session_delete::handle_delete_session;
+use crate::server::*;
+use crate::tool::Registry;
 
 /// A sandboxed home plus runtime dir, so no test reads or writes the real store.
 struct Sandbox {

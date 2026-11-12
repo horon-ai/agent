@@ -18,6 +18,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
+/// Send one reply, naming a dropped transport in the log.
+///
+/// A failed send means the connection closed before the answer could be
+/// delivered. There is nobody left to tell and nothing to retry, but a delete
+/// that answered nothing must still be visible in the log.
+fn reply(client_event_tx: &mpsc::UnboundedSender<ServerEvent>, event: ServerEvent) {
+    if client_event_tx.send(event).is_err() {
+        crate::logging::warn("a session delete reply could not be delivered: the connection closed first");
+    }
+}
+
 /// Why a delete was refused before any file was touched.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum DeleteRefusal {
@@ -192,11 +203,14 @@ pub(super) async fn handle_delete_session(
                     ("reason", refusal.message()),
                 ],
             );
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: refusal.message(),
-                retry_after_secs: None,
-            });
+            reply(
+                client_event_tx,
+                ServerEvent::Error {
+                    id,
+                    message: refusal.message(),
+                    retry_after_secs: None,
+                },
+            );
             return;
         }
     };
@@ -217,11 +231,14 @@ pub(super) async fn handle_delete_session(
                         ("reason", DeleteRefusal::Open.message()),
                     ],
                 );
-                let _ = client_event_tx.send(ServerEvent::Error {
-                    id,
-                    message: DeleteRefusal::Open.message(),
-                    retry_after_secs: None,
-                });
+                reply(
+                    client_event_tx,
+                    ServerEvent::Error {
+                        id,
+                        message: DeleteRefusal::Open.message(),
+                        retry_after_secs: None,
+                    },
+                );
                 return;
             }
         },
@@ -250,7 +267,7 @@ pub(super) async fn handle_delete_session(
                     ("elapsed_ms", started.elapsed().as_millis().to_string()),
                 ],
             );
-            let _ = client_event_tx.send(ServerEvent::Done { id });
+            reply(client_event_tx, ServerEvent::Done { id });
         }
         Err(error) => {
             crate::logging::event_warn(
@@ -263,11 +280,18 @@ pub(super) async fn handle_delete_session(
                     ("elapsed_ms", started.elapsed().as_millis().to_string()),
                 ],
             );
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: crate::util::format_error_chain(&error),
-                retry_after_secs: None,
-            });
+            reply(
+                client_event_tx,
+                ServerEvent::Error {
+                    id,
+                    message: crate::util::format_error_chain(&error),
+                    retry_after_secs: None,
+                },
+            );
         }
     }
 }
+
+#[cfg(test)]
+#[path = "client_session_delete_tests.rs"]
+mod tests;

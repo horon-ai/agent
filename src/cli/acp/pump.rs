@@ -45,6 +45,9 @@ const IDLE_PROBES: usize = 6;
 const IDLE_PROBE_GAP: Duration = Duration::from_millis(50);
 pub(super) const IDLE_GATE_BOUND: Duration = Duration::from_millis(2000);
 
+/// How long a close waits for the daemon to confirm it released the attachment.
+const DETACH_REPLY_BOUND: Duration = Duration::from_secs(20);
+
 /// How long a released turn keeps its successor's stream clean.
 ///
 /// A turn that answered before its own terminal reply is still streaming on
@@ -569,7 +572,15 @@ impl DaemonSession {
         let Ok(mut reply) = self.request(id, &request).await else {
             return;
         };
-        let _ = wait_for_done(&mut reply, id).await;
+        // The reply is best effort: a daemon that does not answer must not hold
+        // a close open forever. Twenty seconds is far beyond a local round trip
+        // and short enough that an operator sees the close finish.
+        if tokio::time::timeout(DETACH_REPLY_BOUND, wait_for_done(&mut reply, id))
+            .await
+            .is_err()
+        {
+            crate::logging::warn("ACP: prepare_disconnect got no reply; closing without it");
+        }
     }
 
     /// Send a request whose replies come back by id: the waiter is registered
