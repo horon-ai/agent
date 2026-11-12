@@ -394,6 +394,12 @@ Spent tokens are the same aggregate the daemon already reports:
 added rather than discounted. A provider bills cached input at a lower rate, but
 a budget that ignored it would let a cache-heavy goal run far past its ceiling.
 
+The sum covers the whole transcript, not the part since the goal was attached.
+A goal attached to a session that already spent more than its budget therefore
+wraps up at the next turn end. That is the honest reading of a ceiling on the
+session: a budget that restarted at attach would let the same session spend the
+ceiling twice, once before and once after the goal existed.
+
 Reaching the budget does not stop the run dead. It buys one more turn with a
 different message (`GOAL_BUDGET_WRAP_UP_MESSAGE`), which tells the model to stop
 starting work and record what it has, and at the same moment the goal moves to

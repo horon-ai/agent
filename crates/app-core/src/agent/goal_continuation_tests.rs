@@ -972,3 +972,26 @@ async fn a_stored_goal_written_before_budgets_existed_still_loads() {
         "a goal created without a ceiling carries none"
     );
 }
+
+#[tokio::test]
+async fn a_budget_attached_to_an_already_spent_session_wraps_up_once() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (mut agent, _provider) = new_agent();
+    // Spend first, then attach: the ceiling covers the transcript, so this is
+    // already over budget before the goal exists.
+    record_usage(&mut agent, 5_000);
+    attach_goal_with_budget(&agent, "late ceiling", 1_000);
+
+    assert!(
+        agent.maybe_continue_goal().expect("the hook runs"),
+        "the wrap-up turn still runs once"
+    );
+    assert_eq!(load_attached(&agent).status, crate::goal::GoalStatus::BudgetLimited);
+
+    let after_one = stored_len(&agent);
+    assert!(
+        !agent.maybe_continue_goal().expect("the second hook runs"),
+        "and the run ends on the turn after it"
+    );
+    assert_eq!(stored_len(&agent), after_one, "no second wrap-up message");
+}

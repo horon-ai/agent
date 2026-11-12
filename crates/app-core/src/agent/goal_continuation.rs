@@ -78,17 +78,14 @@ impl Agent {
             }
             GoalContinuation::WrapUp => {
                 // One bounded turn, then the goal leaves `active` so the next
-                // turn end stops instead of wrapping up forever. The status is
-                // written first: a crash between the two leaves a goal that
-                // stops, never one that keeps spending.
-                self.add_message_with_display_role(
-                    Role::User,
-                    vec![ContentBlock::Text {
-                        text: GOAL_BUDGET_WRAP_UP_MESSAGE.to_string(),
-                        cache_control: None,
-                    }],
-                    Some(crate::session::StoredDisplayRole::System),
-                );
+                // turn end stops instead of wrapping up forever.
+                //
+                // The status is written before the message on purpose. The goal
+                // file and the transcript are two writes, and a crash between
+                // them must leave a goal that stops rather than one that keeps
+                // spending. In this order the loss is the wrap-up message: the
+                // status is already stored, so the next turn end sees
+                // `budget_limited` and ends the run with a shorter summary.
                 if let Some(goal) = goal.as_ref() {
                     crate::goal::update_goal(
                         &goal.id,
@@ -101,6 +98,14 @@ impl Agent {
                         },
                     )?;
                 }
+                self.add_message_with_display_role(
+                    Role::User,
+                    vec![ContentBlock::Text {
+                        text: GOAL_BUDGET_WRAP_UP_MESSAGE.to_string(),
+                        cache_control: None,
+                    }],
+                    Some(crate::session::StoredDisplayRole::System),
+                );
                 self.save_session()?;
                 logging::info(&goal_stop_log_line("budget", self.session_id()));
                 Ok(true)
