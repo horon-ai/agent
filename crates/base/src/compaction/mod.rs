@@ -50,12 +50,14 @@ mod active_char_estimate;
 pub mod handoff;
 mod handoff_provider;
 pub mod jobs;
+mod method_order;
 pub mod recovery;
 pub mod rewind_summary;
 pub mod source_projection;
 pub mod summary;
 
 use active_char_estimate::ActiveCharEstimate;
+use method_order::{Method, MethodChain, MethodFailures};
 
 const HARD_THRESHOLD_PENDING_WAIT_MS: u64 = 15_000;
 const HARD_THRESHOLD_PENDING_POLL_MS: u64 = 50;
@@ -102,6 +104,8 @@ struct CompactionResult {
 struct JobFailure {
     kind: jobs::JobOutcomeKind,
     detail: String,
+    /// The method that failed, so the chain retires it after repeated failures.
+    method: Option<Method>,
 }
 
 impl std::fmt::Display for JobFailure {
@@ -175,6 +179,10 @@ pub struct CompactionManager {
     /// `[compaction] background`: proactive and idle jobs. Reactive and manual
     /// compaction stay available when this is off.
     background_enabled: bool,
+
+    /// Consecutive per-method failures, so a method that cannot produce a
+    /// boundary is retired from `method_order` without suspending compaction.
+    method_failures: MethodFailures,
 
     /// Last observed provider route, used to detect a model change.
     route_identity: Option<(String, String)>,
@@ -318,6 +326,7 @@ impl CompactionManager {
             job_slot: jobs::SingleFlight::new(),
             last_job_report: None,
             background_enabled: cfg.background,
+            method_failures: MethodFailures::default(),
             route_identity: None,
             route_identity_method: None,
             pending_trigger: None,
@@ -415,6 +424,18 @@ impl CompactionManager {
         }
     }
 
+    /// The methods this session may run, in order, with their corrections noted.
+    ///
+    /// Resolved from the live config each time so a reload takes effect on the
+    /// next job rather than at construction.
+    fn method_chain(&self) -> MethodChain {
+        let chain = MethodChain::resolve(&self.compaction_config.method_order, self.strategy);
+        for note in chain.notes() {
+            crate::logging::warn(note);
+        }
+        chain
+    }
+
     /// Digest of the knobs a summary was planned under. A change makes an
     /// in-flight result stale because its payload would claim settings that no
     /// longer hold.
@@ -431,6 +452,10 @@ impl CompactionManager {
         text.push_str(&self.compaction_config.recent_tokens.to_string());
         text.push('|');
         text.push_str(&self.compaction_config.max_context_tokens.to_string());
+        text.push('|');
+        // The order decides which boundary a job may commit, so a reorder makes
+        // an in-flight result the wrong product for this session.
+        text.push_str(&self.method_chain().digest());
         jobs::text_digest(&text)
     }
 
@@ -584,6 +609,7 @@ impl CompactionManager {
         self.compaction_config.reserve_tokens = crate::config::config().compaction.reserve_tokens;
         self.compaction_config.recent_tokens = crate::config::config().compaction.recent_tokens;
         self.background_enabled = crate::config::config().compaction.background;
+        self.compaction_config.method_order = crate::config::config().compaction.method_order.clone();
         self.strategy = self
             .compaction_config
             .resolved_strategy(&crate::config::config().provider);
@@ -1765,7 +1791,7 @@ impl CompactionManager {
 
         let active_snapshot = active.to_vec();
         let native_route = self.current_native_route();
-        let handoff = self.strategy == CompactionStrategy::Handoff;
+        let chain = self.method_chain().without_exhausted(&self.method_failures);
         let msg_count = cutoff;
         let label = trigger.as_str().to_string();
         self.pending_job = Some(job);
@@ -1782,7 +1808,7 @@ impl CompactionManager {
                 existing_summary.as_ref(),
                 limits,
                 native_route,
-                handoff,
+                &chain,
                 deadline,
                 cancel_rx,
             )
@@ -2105,7 +2131,7 @@ impl CompactionManager {
             }
             Ok(Err(failure)) => {
                 crate::logging::error(&format!("[compaction] Failed to generate summary: {}", failure));
-                self.finish_failed_job(failure.kind, now);
+                self.finish_failed_job(failure.kind, failure.method, now);
                 if matches!(
                     failure.kind,
                     jobs::JobOutcomeKind::Failed | jobs::JobOutcomeKind::TimedOut
@@ -2115,14 +2141,17 @@ impl CompactionManager {
             }
             Err(e) => {
                 crate::logging::error(&format!("[compaction] Task panicked: {}", e));
-                self.finish_failed_job(jobs::JobOutcomeKind::Failed, now);
+                self.finish_failed_job(jobs::JobOutcomeKind::Failed, None, now);
             }
         }
     }
 
     /// Release the slot for a job that never produced a result and record the
     /// failure in the breaker.
-    fn finish_failed_job(&mut self, kind: jobs::JobOutcomeKind, now: tokio::time::Instant) {
+    fn finish_failed_job(&mut self, kind: jobs::JobOutcomeKind, method: Option<Method>, now: tokio::time::Instant) {
+        if let Some(method) = method {
+            self.method_failures.record(method);
+        }
         let Some(job) = self.pending_job.take() else {
             self.pending_cancel = None;
             self.pending_cutoff = 0;
@@ -2333,6 +2362,7 @@ impl CompactionManager {
         self.job_slot.mark_applied(job.id);
         self.job_slot.finish(job.id);
         self.job_slot.record_success();
+        self.method_failures.reset();
         self.last_job_report = Some(jobs::JobReport {
             job_id: job.id,
             trigger: job.trigger,
@@ -2777,38 +2807,14 @@ impl Default for CompactionManager {
     }
 }
 
-/// Whether a provider error is worth retrying inside the same job deadline.
-///
-/// Overflow errors are not transient: they are handled by shrinking the
-/// covered range inside [`summary::generate_structured_summary`].
-fn is_transient_provider_error(detail: &str) -> bool {
-    let lowered = detail.to_ascii_lowercase();
-    const MARKERS: &[&str] = &[
-        "rate limit",
-        "429",
-        "500",
-        "502",
-        "503",
-        "504",
-        "timeout",
-        "timed out",
-        "connection reset",
-        "connection refused",
-        "connection closed",
-        "temporarily unavailable",
-        "service unavailable",
-        "overloaded",
-    ];
-    MARKERS.iter().any(|marker| lowered.contains(marker))
-}
-
 /// Run one job's provider call under its deadline and cancellation signal.
 ///
-/// Transient failures are retried at most [`jobs::MAX_TRANSIENT_RETRIES`] times
-/// after the first attempt, all inside the same job deadline. Each attempt is
-/// additionally capped by [`jobs::STREAM_IDLE_DEADLINE`] measured from the
-/// moment the attempt started, so a provider that stops responding cannot hold
-/// the slot forever while a slow but progressing attempt keeps its budget.
+/// The chain runs inside one job slot: each method gets the full job deadline,
+/// transient failures are retried at most [`jobs::MAX_TRANSIENT_RETRIES`] times
+/// on the same method, and each attempt is capped by
+/// [`jobs::STREAM_IDLE_DEADLINE`] measured from the moment the attempt started, so
+/// a provider that stops responding cannot hold the slot forever while a slow but
+/// progressing attempt keeps its budget.
 #[allow(clippy::too_many_arguments)]
 async fn run_compaction_job(
     provider: Arc<dyn Provider>,
@@ -2817,68 +2823,29 @@ async fn run_compaction_job(
     existing_summary: Option<&Summary>,
     limits: SummaryLimits,
     native_route: Option<crate::session::StoredNativeRoute>,
-    handoff: bool,
+    chain: &MethodChain,
     job_deadline: tokio::time::Instant,
-    mut cancel: tokio::sync::oneshot::Receiver<()>,
+    cancel: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<CompactionResult, JobFailure> {
-    let mut retries = 0u32;
-    loop {
-        let idle_deadline = tokio::time::Instant::now() + jobs::STREAM_IDLE_DEADLINE;
-        let deadline = job_deadline.min(idle_deadline);
-        let attempt = tokio::select! {
-            biased;
-            _ = &mut cancel => {
-                return Err(JobFailure {
-                    kind: jobs::JobOutcomeKind::Cancelled(jobs::CancelReason::Manual),
-                    detail: "compaction job cancelled".to_string(),
-                });
-            }
-            attempt = tokio::time::timeout_at(
-                deadline,
-                generate_compaction_artifact(
-                    provider.clone(),
-                    active,
-                    candidate_end,
-                    existing_summary,
-                    limits,
-                    native_route.clone(),
-                    handoff,
-                ),
-            ) => attempt,
-        };
-        match attempt {
-            Err(_elapsed) => {
-                return Err(JobFailure {
-                    kind: jobs::JobOutcomeKind::TimedOut,
-                    detail: format!(
-                        "compaction job exceeded its deadline ({})",
-                        jobs::JOB_DEADLINE.as_secs()
-                    ),
-                });
-            }
-            Ok(Ok(result)) => {
-                return Ok(result);
-            }
-            Ok(Err(error)) => {
-                let detail = error.to_string();
-                if is_transient_provider_error(&detail) && retries < jobs::MAX_TRANSIENT_RETRIES {
-                    retries += 1;
-                    crate::logging::warn(&format!(
-                        "[compaction/job] transient provider error (retry {retries}/{}): {detail}",
-                        jobs::MAX_TRANSIENT_RETRIES
-                    ));
-                    continue;
-                }
-                return Err(JobFailure {
-                    kind: jobs::JobOutcomeKind::Failed,
-                    detail,
-                });
-            }
-        }
-    }
+    method_order::run_chain(
+        provider,
+        active,
+        candidate_end,
+        existing_summary,
+        limits,
+        native_route,
+        chain,
+        job_deadline,
+        cancel,
+    )
+    .await
 }
 
-/// Generate summary using the provider
+/// Generate one compaction artifact by one method.
+///
+/// `method` names the boundary this attempt commits; the chain decides which
+/// method runs, and a method that cannot write one reports
+/// [`method_order::MethodFailure`] with whether another method may try.
 async fn generate_compaction_artifact(
     provider: Arc<dyn Provider>,
     active: &[Message],
@@ -2886,16 +2853,11 @@ async fn generate_compaction_artifact(
     existing_summary: Option<&Summary>,
     limits: SummaryLimits,
     native_route: Option<crate::session::StoredNativeRoute>,
-    handoff: bool,
-) -> Result<CompactionResult> {
+    method: Method,
+) -> Result<CompactionResult, method_order::MethodFailure> {
     let start = Instant::now();
-    // A configured handoff owns this job's boundary; a failure falls through to
-    // the structured summary below, so the turn is still compacted.
-    if handoff
-        && let Some(result) =
-            handoff_provider::try_handoff(provider.clone(), active, candidate_end, existing_summary, start).await
-    {
-        return Ok(result);
+    if method == Method::Handoff {
+        return handoff_provider::attempt_handoff(provider, active, candidate_end, existing_summary, start).await;
     }
     let mut existing_summary = existing_summary.cloned();
     if let Some(summary) = existing_summary.as_mut()
@@ -2977,7 +2939,7 @@ async fn generate_compaction_artifact(
         &limits,
     )
     .await
-    .map_err(|error| anyhow::anyhow!(error))?;
+    .map_err(|error| method_order::MethodFailure::advance(error.to_string()))?;
 
     Ok(CompactionResult {
         job_id: 0,
@@ -3103,9 +3065,10 @@ pub async fn build_transfer_compaction_state(
         existing_summary.as_ref(),
         limits,
         None,
-        false,
+        Method::Structured,
     )
-    .await?;
+    .await
+    .map_err(|failure| anyhow::anyhow!(failure.detail))?;
     let total_turns = prior_turns + messages.len();
 
     Ok(Some(crate::session::StoredCompactionState {
@@ -3157,3 +3120,7 @@ mod handoff_shrink_tests;
 #[cfg(test)]
 #[path = "handoff_strategy_tests.rs"]
 mod handoff_strategy_tests;
+
+#[cfg(test)]
+#[path = "method_order_tests.rs"]
+mod method_order_tests;

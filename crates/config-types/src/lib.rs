@@ -276,6 +276,14 @@ pub struct CompactionConfig {
     /// `handoff` is also selectable and commits a generated document.
     pub strategy: Option<CompactionStrategy>,
 
+    /// Ordered fallback chain over the methods that write a boundary.
+    ///
+    /// Absent or empty keeps `strategy` alone. A listed chain must end in
+    /// `structured`, the last method with no further fallback; anything else is
+    /// corrected when a job starts, never at load time.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub method_order: Vec<String>,
+
     /// Headroom kept free below the compaction trigger. Raised to
     /// `min(window * 0.04, 49152)` when the window needs more room.
     pub reserve_tokens: usize,
@@ -339,6 +347,7 @@ impl Default for CompactionConfig {
             goal_window_turns: 5,
             max_context_tokens: 0,
             strategy: None,
+            method_order: Vec::new(),
             reserve_tokens: 16_384,
             recent_tokens: 20_000,
             background: true,

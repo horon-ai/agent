@@ -439,6 +439,50 @@ committed boundary, the uncovered tail, the provider error and the cancellation;
 its failure path; `crates/harness-api-server/src/translate_handoff_tests.rs`
 covers the request field and the reported outcomes.
 
+### Running more than one method: `method_order`
+
+`strategy` names one method. `[compaction] method_order` names a chain, so a
+method that cannot produce a boundary for this turn hands the same job to the
+next one instead of leaving the turn uncompacted:
+
+```toml
+[compaction]
+method_order = ["handoff", "structured"]
+```
+
+The trigger, cutoff, deadline, single slot and cancellation rules are the job's
+own and do not change; only the producer of the boundary walks down the list.
+The boundary that lands carries the tag of the method that wrote it, so a
+structured fallback is never introduced as the successor's own earlier writing.
+Transient provider failures (rate limits, 5xx, timeouts, dropped connections)
+are retried on the same method up to `MAX_TRANSIENT_RETRIES`; an overflow is not
+transient and is answered by shrinking the covered range.
+
+Resolution happens when a job starts, never at config load, and it is lenient so
+a bad entry can never fail a reload (`crates/base/src/compaction/method_order.rs`):
+
+- An absent or empty order reproduces the strategy: `handoff` still has its one
+  structured fallback, and a native strategy still runs no method of ours.
+- A list that does not end in `structured` is ignored as a whole, because the
+  last method is the only one with no further fallback.
+- A provider-native name (`openai_auto`, `openai_explicit`) also discards the
+  list: native compaction owns the transcript exclusively.
+- An unknown name is dropped and the rest of the list is kept.
+
+One method that fails twice in a row is skipped by later jobs until a boundary is
+committed, which resets every count. Two, not one, because a single provider
+hiccup should not retire a method; when every method is retired the full chain is
+used again, since a job with no method could never compact and the circuit
+breaker already owns suspending compaction.
+
+`tool_result_aging` is deliberately outside the chain. It runs before any
+summarization and fires on cache temperature and threshold proximity rather than
+turn order, so its effect ("the history already changed") cannot be expressed as
+a position relative to another method.
+
+Tests: `crates/base/src/compaction/method_order_tests.rs` covers resolution, the
+retirement budget and the chain's execution.
+
 ## `--resume` behaviour
 
 This build has no interactive session picker. Session resume is a single global `--resume`
