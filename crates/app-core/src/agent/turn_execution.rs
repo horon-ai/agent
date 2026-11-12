@@ -1240,6 +1240,7 @@ impl Agent {
                 tool_use_id: tool_call_id,
                 content: error,
                 is_error: Some(true),
+                verdict: Some(crate::tool::ToolVerdict::Failed),
             }],
             Some(duration_ms),
         );

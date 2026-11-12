@@ -41,7 +41,8 @@
 | `performance/` | [`BENCHMARK.ko.md`](performance/BENCHMARK.ko.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
 | | [`RESULTS.ko.md`](performance/RESULTS.ko.md) | 측정 결과와 한계 |
 | | [`MEMORY.ko.md`](performance/MEMORY.ko.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
-| `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |
+| `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, npm 설치, Linux 서버 실행, TLS 신뢰 집합 |
+| | [`NPM.ko.md`](release/NPM.ko.md) | CLI의 npm 패키지 구성, 설치와 실행, 버전 규칙, 게시 워크플로, 한 번만 하는 trusted publisher 설정, provenance |
 | | [`WINDOWS.ko.md`](release/WINDOWS.ko.md) | Windows 빌드와 서명 |
 
 ## 갱신 규칙

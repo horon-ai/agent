@@ -91,6 +91,9 @@ mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
 mod usage;
 mod utils;
+#[cfg(test)]
+#[path = "agent/verdict_store_tests.rs"]
+mod verdict_store_tests;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
@@ -1561,6 +1564,7 @@ impl Agent {
                     tool_use_id: id.clone(),
                     content: TOOL_OUTPUT_MISSING_TEXT.to_string(),
                     is_error: Some(true),
+                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                 };
                 let stored_message = StoredMessage {
                     turn_start: false,

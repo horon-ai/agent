@@ -657,6 +657,30 @@ An aged result starts with `[horon: condensed older tool output: ...]` and keeps
 
 `process.stage_counters` in `horon debug 'server:memory'` reports `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, and `tool_result_aged_bytes`. The `context` section of the structural gate (`scripts/perf/check_structural.py`) checks that a 1 MiB output lands inside 48 KiB, that a repeated read stays under 512 bytes, and that crossing the pressure band twice produces exactly one aging batch.
 
+## Tool result verdicts
+
+A tool result used to be text plus an error flag, so a caller that wanted to know whether the call ran had to read the sentence. The stored `tool_result` block now also carries `verdict`, an optional name for what became of the call (`crates/tool-types/src/verdict.rs`).
+
+| Verdict | Meaning |
+| --- | --- |
+| `ok` | The tool ran and its whole result was returned. |
+| `partial` | The tool ran, but only part of the work finished. |
+| `truncated` | The tool ran to the end; the returned text is a cut of the full text. |
+| `withheld` | The tool ran and a refusal sentence replaced its result. Side effects did happen. |
+| `rejected` | The call was refused before the tool ran. |
+| `failed` | The tool ran and returned an error. |
+| `interrupted` | The call was skipped or cut short by the user, a reload, or a cancellation. |
+
+The key is `verdict`, not `tool_verdict`: the same name every later surface uses. It is `Option<ToolVerdict>` with `#[serde(default, skip_serializing_if = "Option::is_none")]`, so a result that states no verdict serializes without the key.
+
+```json
+{ "type": "tool_result", "tool_use_id": "call_1", "content": "alpha", "verdict": "ok" }
+```
+
+A record written before this field existed has no `verdict` key and loads unchanged; readers that only know `is_error` keep deriving `ok` or `failed` from it. The key is never shown to the model: `crates/provider-openai` destructures the block without the field, so a stored conversation renders the same request bytes whether a result states a verdict or not, and a pre-change session replays identically.
+
+An unknown verdict name refuses the whole record rather than guessing, the same way an unknown block `type` already does: a result written by a later build with a new name does not load in an older build.
+
 ## Auxiliary completion and the secret round trip
 
 This explains the contract of one side call that does not touch the conversation, and the round trip in which a credential leaves for the provider and returns to the tool as its real value. The two devices address different problems but draw their boundary the same way: what the caller may and may not decide is split by types, and values crossing the boundary are refused with named errors.

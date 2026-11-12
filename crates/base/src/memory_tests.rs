@@ -329,6 +329,7 @@ fn format_context_includes_roles_and_tools() {
                 tool_use_id: "tool-2".to_string(),
                 content: "boom".to_string(),
                 is_error: Some(true),
+                verdict: None,
             }],
             timestamp: None,
             tool_duration_ms: None,
@@ -948,6 +949,7 @@ fn focused_query_excludes_multiline_tool_errors_but_keeps_later_user_prose() {
                 content: "This command was not run.\nUNIQUE_MULTILINE_ERROR_PAYLOAD\nThe target cannot be confirmed.\nThe operation is irreversible."
                     .to_string(),
                 is_error: Some(true),
+                verdict: None,
             },
             ContentBlock::Text {
                 text: "Keep the token rotation behavior unchanged.".to_string(),

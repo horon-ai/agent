@@ -103,6 +103,7 @@ async fn renderer_rewind_undo_and_restart_keep_original_events() {
             tool_use_id: "rewind-tool".into(),
             content: "original tool result".into(),
             is_error: None,
+            verdict: None,
         }],
     );
     agent.add_message(Role::Assistant, text("answer one"));

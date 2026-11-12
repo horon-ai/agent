@@ -25,6 +25,7 @@ fn tool_result(id: &str, content: &str) -> Message {
             tool_use_id: id.to_string(),
             content: content.to_string(),
             is_error: None,
+            verdict: None,
         }],
         timestamp: None,
         tool_duration_ms: Some(1),

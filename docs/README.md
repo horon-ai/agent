@@ -41,7 +41,8 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
 | | [`RESULTS.md`](performance/RESULTS.md) | Measured results and their limits |
 | | [`MEMORY.md`](performance/MEMORY.md) | Memory regression budgets, idle session derived-cache release, incident response procedure |
-| `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, running on a Linux server, the TLS trust set |
+| `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, installing from npm, running on a Linux server, the TLS trust set |
+| | [`NPM.md`](release/NPM.md) | The npm packages of the CLI, installing and running them, versioning, the publish workflow, the one-time trusted publisher setup, provenance |
 | | [`WINDOWS.md`](release/WINDOWS.md) | Windows build and signing |
 
 ## Update rules
