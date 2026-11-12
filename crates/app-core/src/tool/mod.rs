@@ -125,6 +125,18 @@ pub(crate) fn forget_session_caches(session_id: &str) {
 use std::sync::{LazyLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 
+/// The four values every approval request is built from.
+///
+/// The refuse-and-retry path and the ACP permission bridge build the same
+/// request from the same decision, so they share this instead of passing the
+/// four through two positional argument lists.
+pub(crate) struct ApprovalPromptRef<'a> {
+    pub(crate) resolved_name: &'a str,
+    pub(crate) reason: &'a str,
+    pub(crate) is_dual_confirm: bool,
+    pub(crate) input: &'a Value,
+}
+
 /// Marker error for a tool call that stopped its own turn on purpose.
 ///
 /// The ambient approval tool fires the turn's cancel signal when the runner
@@ -1492,10 +1504,12 @@ impl Registry {
 
         let request = Self::gate_permission_request(
             crate::safety::new_request_id(),
-            resolved_name,
-            reason,
-            is_dual_confirm,
-            input,
+            &ApprovalPromptRef {
+                resolved_name,
+                reason,
+                is_dual_confirm,
+                input,
+            },
             effects,
             ctx,
             // The answer arrives through the approval surface after this call
@@ -1574,16 +1588,17 @@ impl Registry {
     /// actually blocks on the answer.
     fn gate_permission_request(
         id: String,
-        resolved_name: &str,
-        reason: &str,
-        is_dual_confirm: bool,
-        input: &Value,
+        prompt: &ApprovalPromptRef<'_>,
         effects: ToolEffects,
         ctx: &ToolContext,
         wait: bool,
     ) -> crate::safety::PermissionRequest {
         use crate::safety::{ApprovalDefault, PermissionRequest, Urgency};
 
+        let resolved_name = prompt.resolved_name;
+        let reason = prompt.reason;
+        let is_dual_confirm = prompt.is_dual_confirm;
+        let input = prompt.input;
         let now = chrono::Utc::now();
         // A scoped answer ("allow this file", "allow this folder") is written by
         // whoever records the decision, and that writer has only the queued
@@ -2108,14 +2123,16 @@ impl Registry {
             let restricted =
                 crate::approval_grants::restricted_match(resolved_name, &input, ctx.working_dir.as_deref());
             let evaluation = crate::approval::evaluate_and_audit(
-                resolved_name,
-                approval_effects,
-                approval_mode,
-                &dual_confirm,
-                danger,
-                bash_pattern.as_ref(),
-                &approval_paths,
-                restricted.as_deref(),
+                crate::approval::ApprovalCall {
+                    tool: resolved_name,
+                    effects: approval_effects,
+                    mode: approval_mode,
+                    dual_confirm: &dual_confirm,
+                    danger,
+                    bash_pattern: bash_pattern.as_ref(),
+                    paths: &approval_paths,
+                    restricted: restricted.as_deref(),
+                },
                 &ctx.tool_call_id,
             );
             // A scoped grant answers a call the mode would otherwise ask about.
@@ -2150,10 +2167,12 @@ impl Registry {
                     Some(bridge) => {
                         permission_bridge::await_permission(
                             &bridge,
-                            resolved_name,
-                            &reason,
-                            is_dual_confirm,
-                            &input,
+                            &ApprovalPromptRef {
+                                resolved_name,
+                                reason: &reason,
+                                is_dual_confirm,
+                                input: &input,
+                            },
                             approval_effects,
                             &ctx,
                         )

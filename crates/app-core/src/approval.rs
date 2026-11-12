@@ -207,7 +207,8 @@ pub fn danger_class(
     }
 }
 
-/// Decide one call, without writing anything.
+/// Everything one approval decision reads, so a caller cannot pass the same
+/// seven values in a different order at each call site.
 ///
 /// `danger` names the command-risk class the call fell into, when the caller
 /// classified one. `dual_confirm` lists the classes that must always ask.
@@ -216,20 +217,29 @@ pub fn danger_class(
 /// call names, and `restricted` is the `[tools] restricted_paths` pattern that
 /// matched one of them, if any: a restricted path asks in every mode, including
 /// `Off`.
-///
-/// The last four `Option`/slice parameters are all path- or command-shaped, so
-/// the order is documented here and at the call site: `danger`,
-/// `bash_pattern`, `paths`, `restricted`.
-pub fn evaluate(
-    tool: &str,
-    effects: ToolEffects,
-    mode: ApprovalMode,
-    dual_confirm: &[String],
-    danger: Option<&str>,
-    bash_pattern: Option<&BashPatternVerdict>,
-    paths: &[std::path::PathBuf],
-    restricted: Option<&str>,
-) -> ApprovalEvaluation {
+pub struct ApprovalCall<'a> {
+    pub tool: &'a str,
+    pub effects: ToolEffects,
+    pub mode: ApprovalMode,
+    pub dual_confirm: &'a [String],
+    pub danger: Option<&'a str>,
+    pub bash_pattern: Option<&'a BashPatternVerdict>,
+    pub paths: &'a [std::path::PathBuf],
+    pub restricted: Option<&'a str>,
+}
+
+/// Decide one call, without writing anything.
+pub fn evaluate(call: ApprovalCall<'_>) -> ApprovalEvaluation {
+    let ApprovalCall {
+        tool,
+        effects,
+        mode,
+        dual_confirm,
+        danger,
+        bash_pattern,
+        paths,
+        restricted,
+    } = call;
     if let Some(danger) = danger
         && dual_confirm.iter().any(|class| class.as_str() == danger)
     {
@@ -346,27 +356,10 @@ fn audit(tool: &str, mode: ApprovalMode, reason: &str, tool_call_id: &str) {
 /// Every auto-approval except the `Off` early return is recorded. `Off` writes
 /// nothing, which is what keeps an unconfigured session identical to what it did
 /// before approval modes existed.
-pub fn evaluate_and_audit(
-    tool: &str,
-    effects: ToolEffects,
-    mode: ApprovalMode,
-    dual_confirm: &[String],
-    danger: Option<&str>,
-    bash_pattern: Option<&BashPatternVerdict>,
-    paths: &[std::path::PathBuf],
-    restricted: Option<&str>,
-    tool_call_id: &str,
-) -> ApprovalEvaluation {
-    let evaluation = evaluate(
-        tool,
-        effects,
-        mode,
-        dual_confirm,
-        danger,
-        bash_pattern,
-        paths,
-        restricted,
-    );
+pub fn evaluate_and_audit(call: ApprovalCall<'_>, tool_call_id: &str) -> ApprovalEvaluation {
+    let mode = call.mode;
+    let tool = call.tool;
+    let evaluation = evaluate(call);
     if let ApprovalEvaluation::AutoApproved { reason } = &evaluation
         && mode != ApprovalMode::Off
     {

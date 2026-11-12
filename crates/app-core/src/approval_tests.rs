@@ -17,16 +17,16 @@ fn off_mode_never_asks() {
         ToolEffects::process(),
         ToolEffects::write().union(ToolEffects::process()),
     ] {
-        let evaluation = evaluate(
-            "bash",
+        let evaluation = evaluate(ApprovalCall {
+            tool: "bash",
             effects,
-            ApprovalMode::Off,
-            &no_dual(),
-            None,
-            None,
-            &named(),
-            None,
-        );
+            mode: ApprovalMode::Off,
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: None,
+            paths: &named(),
+            restricted: None,
+        });
         assert!(
             evaluation.is_auto_approved(),
             "off mode must never ask, got {evaluation:?}"
@@ -44,7 +44,16 @@ fn write_mode_asks_before_a_file_mutation() {
         ToolEffects::append(),
         ToolEffects::write().union(ToolEffects::append()),
     ] {
-        let evaluation = evaluate("write", effects, ApprovalMode::Write, &dual, None, None, &named(), None);
+        let evaluation = evaluate(ApprovalCall {
+            tool: "write",
+            effects,
+            mode: ApprovalMode::Write,
+            dual_confirm: &dual,
+            danger: None,
+            bash_pattern: None,
+            paths: &named(),
+            restricted: None,
+        });
         assert!(
             matches!(evaluation, ApprovalEvaluation::RequiresApproval { .. }),
             "write mode asks before a call that mutates a file, got {evaluation:?}"
@@ -66,7 +75,16 @@ fn write_mode_asks_before_a_file_mutation() {
         ("bash", ToolEffects::process()),
         ("webfetch_write", ToolEffects::write().union(ToolEffects::network())),
     ] {
-        let evaluation = evaluate(tool, effects, ApprovalMode::Write, &dual, None, None, &named(), None);
+        let evaluation = evaluate(ApprovalCall {
+            tool,
+            effects,
+            mode: ApprovalMode::Write,
+            dual_confirm: &dual,
+            danger: None,
+            bash_pattern: None,
+            paths: &named(),
+            restricted: None,
+        });
         assert!(
             matches!(evaluation, ApprovalEvaluation::RequiresApproval { .. }),
             "{tool} with {effects:?} must ask in write mode, got {evaluation:?}"
@@ -79,16 +97,16 @@ fn write_mode_asks_before_a_file_mutation() {
 /// with nothing behind it.
 #[test]
 fn write_mode_runs_a_path_less_write_effect() {
-    let evaluation = evaluate(
-        "todo",
-        ToolEffects::write(),
-        ApprovalMode::Write,
-        &no_dual(),
-        None,
-        None,
-        &[],
-        None,
-    );
+    let evaluation = evaluate(ApprovalCall {
+        tool: "todo",
+        effects: ToolEffects::write(),
+        mode: ApprovalMode::Write,
+        dual_confirm: &no_dual(),
+        danger: None,
+        bash_pattern: None,
+        paths: &[],
+        restricted: None,
+    });
     assert!(
         evaluation.is_auto_approved(),
         "a path-less write effect has nothing to approve in write mode: {evaluation:?}"
@@ -98,32 +116,32 @@ fn write_mode_runs_a_path_less_write_effect() {
 #[test]
 fn all_mode_asks_for_a_file_mutation_and_lets_reads_run() {
     for effects in [ToolEffects::write(), ToolEffects::append()] {
-        let evaluation = evaluate(
-            "write",
+        let evaluation = evaluate(ApprovalCall {
+            tool: "write",
             effects,
-            ApprovalMode::All,
-            &no_dual(),
-            None,
-            None,
-            &named(),
-            None,
-        );
+            mode: ApprovalMode::All,
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: None,
+            paths: &named(),
+            restricted: None,
+        });
         assert!(
             matches!(evaluation, ApprovalEvaluation::RequiresApproval { .. }),
             "all mode asks before a non-read-only call, got {evaluation:?}"
         );
     }
 
-    let evaluation = evaluate(
-        "read",
-        ToolEffects::read(),
-        ApprovalMode::All,
-        &no_dual(),
-        None,
-        None,
-        &named(),
-        None,
-    );
+    let evaluation = evaluate(ApprovalCall {
+        tool: "read",
+        effects: ToolEffects::read(),
+        mode: ApprovalMode::All,
+        dual_confirm: &no_dual(),
+        danger: None,
+        bash_pattern: None,
+        paths: &named(),
+        restricted: None,
+    });
     assert!(
         evaluation.is_auto_approved(),
         "all mode still lets a pure read run: {evaluation:?}"
@@ -137,7 +155,16 @@ fn all_mode_asks_about_execution() {
         ToolEffects::write().union(ToolEffects::process()),
         ToolEffects::network(),
     ] {
-        let evaluation = evaluate("bash", effects, ApprovalMode::All, &no_dual(), None, None, &[], None);
+        let evaluation = evaluate(ApprovalCall {
+            tool: "bash",
+            effects,
+            mode: ApprovalMode::All,
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: None,
+            paths: &[],
+            restricted: None,
+        });
         assert!(
             matches!(evaluation, ApprovalEvaluation::RequiresApproval { .. }),
             "all mode asks about {effects:?}, got {evaluation:?}"
@@ -148,16 +175,16 @@ fn all_mode_asks_about_execution() {
 #[test]
 fn read_only_calls_never_ask_in_any_mode() {
     for mode in [ApprovalMode::Off, ApprovalMode::Write, ApprovalMode::All] {
-        let evaluation = evaluate(
-            "read",
-            ToolEffects::read(),
+        let evaluation = evaluate(ApprovalCall {
+            tool: "read",
+            effects: ToolEffects::read(),
             mode,
-            &no_dual(),
-            None,
-            None,
-            &named(),
-            None,
-        );
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: None,
+            paths: &named(),
+            restricted: None,
+        });
         assert!(
             evaluation.is_auto_approved(),
             "{mode:?} must not ask for a pure read, got {evaluation:?}"
@@ -167,16 +194,16 @@ fn read_only_calls_never_ask_in_any_mode() {
 
 #[test]
 fn network_only_call_asks_in_write_mode() {
-    let evaluation = evaluate(
-        "webfetch",
-        ToolEffects::read().union(ToolEffects::network()),
-        ApprovalMode::Write,
-        &no_dual(),
-        None,
-        None,
-        &[],
-        None,
-    );
+    let evaluation = evaluate(ApprovalCall {
+        tool: "webfetch",
+        effects: ToolEffects::read().union(ToolEffects::network()),
+        mode: ApprovalMode::Write,
+        dual_confirm: &no_dual(),
+        danger: None,
+        bash_pattern: None,
+        paths: &[],
+        restricted: None,
+    });
     assert!(
         matches!(evaluation, ApprovalEvaluation::RequiresApproval { .. }),
         "write mode asks about the network, so a network call asks: {evaluation:?}"
@@ -186,16 +213,16 @@ fn network_only_call_asks_in_write_mode() {
 #[test]
 fn a_restricted_path_asks_in_every_mode() {
     for mode in [ApprovalMode::Off, ApprovalMode::Write, ApprovalMode::All] {
-        let evaluation = evaluate(
-            "write",
-            ToolEffects::write(),
+        let evaluation = evaluate(ApprovalCall {
+            tool: "write",
+            effects: ToolEffects::write(),
             mode,
-            &no_dual(),
-            None,
-            None,
-            &named(),
-            Some("secrets.env"),
-        );
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: None,
+            paths: &named(),
+            restricted: Some("secrets.env"),
+        });
         assert_eq!(
             evaluation,
             ApprovalEvaluation::RequiresApproval {
@@ -213,16 +240,16 @@ fn a_restricted_path_outranks_an_allow_pattern() {
         pattern: "git status*".to_string(),
         approval: BashPatternApproval::Allow,
     };
-    let evaluation = evaluate(
-        "bash",
-        ToolEffects::process(),
-        ApprovalMode::Off,
-        &no_dual(),
-        None,
-        Some(&verdict),
-        &[],
-        Some("secrets.env"),
-    );
+    let evaluation = evaluate(ApprovalCall {
+        tool: "bash",
+        effects: ToolEffects::process(),
+        mode: ApprovalMode::Off,
+        dual_confirm: &no_dual(),
+        danger: None,
+        bash_pattern: Some(&verdict),
+        paths: &[],
+        restricted: Some("secrets.env"),
+    });
     assert!(
         matches!(evaluation, ApprovalEvaluation::RequiresApproval { .. }),
         "a restricted path asks even when a bash pattern allows the command: {evaluation:?}"
@@ -234,16 +261,16 @@ fn dual_confirm_wins_over_every_mode() {
     let dual = vec![DESTRUCTIVE_SHELL.to_string()];
 
     for mode in [ApprovalMode::Off, ApprovalMode::Write, ApprovalMode::All] {
-        let evaluation = evaluate(
-            "bash",
-            ToolEffects::read(),
+        let evaluation = evaluate(ApprovalCall {
+            tool: "bash",
+            effects: ToolEffects::read(),
             mode,
-            &dual,
-            Some(DESTRUCTIVE_SHELL),
-            None,
-            &[],
-            None,
-        );
+            dual_confirm: &dual,
+            danger: Some(DESTRUCTIVE_SHELL),
+            bash_pattern: None,
+            paths: &[],
+            restricted: None,
+        });
         assert_eq!(
             evaluation,
             ApprovalEvaluation::RequiresApproval {
@@ -254,16 +281,16 @@ fn dual_confirm_wins_over_every_mode() {
         );
     }
 
-    let unrelated = evaluate(
-        "bash",
-        ToolEffects::process(),
-        ApprovalMode::Off,
-        &dual,
-        Some("noisy-shell"),
-        None,
-        &[],
-        None,
-    );
+    let unrelated = evaluate(ApprovalCall {
+        tool: "bash",
+        effects: ToolEffects::process(),
+        mode: ApprovalMode::Off,
+        dual_confirm: &dual,
+        danger: Some("noisy-shell"),
+        bash_pattern: None,
+        paths: &[],
+        restricted: None,
+    });
     assert!(
         unrelated.is_auto_approved(),
         "a class that is not listed must not trigger dual confirmation: {unrelated:?}"
@@ -294,14 +321,16 @@ fn danger_class_reuses_the_command_risk_verdict() {
 fn auto_approval_is_audited_with_its_mode() {
     let call_id = "audit-write-mode-call";
     let evaluation = evaluate_and_audit(
-        "todo",
-        ToolEffects::write(),
-        ApprovalMode::Write,
-        &no_dual(),
-        None,
-        None,
-        &[],
-        None,
+        ApprovalCall {
+            tool: "todo",
+            effects: ToolEffects::write(),
+            mode: ApprovalMode::Write,
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: None,
+            paths: &[],
+            restricted: None,
+        },
         call_id,
     );
     assert!(evaluation.is_auto_approved());
@@ -320,14 +349,16 @@ fn off_mode_writes_no_audit_line_for_reads_or_writes() {
     for (index, effects) in [ToolEffects::read(), ToolEffects::write()].into_iter().enumerate() {
         let call_id = format!("off-mode-call-{index}");
         let evaluation = evaluate_and_audit(
-            "write",
-            effects,
-            ApprovalMode::Off,
-            &no_dual(),
-            None,
-            None,
-            &named(),
-            None,
+            ApprovalCall {
+                tool: "write",
+                effects,
+                mode: ApprovalMode::Off,
+                dual_confirm: &no_dual(),
+                danger: None,
+                bash_pattern: None,
+                paths: &named(),
+                restricted: None,
+            },
             &call_id,
         );
         assert!(evaluation.is_auto_approved());
@@ -579,16 +610,16 @@ fn a_prompt_pattern_asks_even_in_off_mode() {
         approval: BashPatternApproval::Prompt,
     };
     assert_eq!(
-        evaluate(
-            "bash",
-            ToolEffects::process(),
-            ApprovalMode::Off,
-            &no_dual(),
-            None,
-            Some(&verdict),
-            &[],
-            None,
-        ),
+        evaluate(ApprovalCall {
+            tool: "bash",
+            effects: ToolEffects::process(),
+            mode: ApprovalMode::Off,
+            dual_confirm: &no_dual(),
+            danger: None,
+            bash_pattern: Some(&verdict),
+            paths: &[],
+            restricted: None,
+        }),
         ApprovalEvaluation::RequiresApproval {
             reason: "bash pattern 'git push *' requires approval".to_string(),
             is_dual_confirm: false,
@@ -602,16 +633,16 @@ fn an_allow_pattern_approves_a_bash_call() {
         pattern: "git status*".to_string(),
         approval: BashPatternApproval::Allow,
     };
-    let evaluation = evaluate(
-        "bash",
-        ToolEffects::write().union(ToolEffects::process()),
-        ApprovalMode::Write,
-        &no_dual(),
-        None,
-        Some(&verdict),
-        &[],
-        None,
-    );
+    let evaluation = evaluate(ApprovalCall {
+        tool: "bash",
+        effects: ToolEffects::write().union(ToolEffects::process()),
+        mode: ApprovalMode::Write,
+        dual_confirm: &no_dual(),
+        danger: None,
+        bash_pattern: Some(&verdict),
+        paths: &[],
+        restricted: None,
+    });
     assert_eq!(
         evaluation,
         ApprovalEvaluation::AutoApproved {
@@ -627,16 +658,16 @@ fn a_bash_pattern_cannot_override_dual_confirm() {
         pattern: "rm *".to_string(),
         approval: BashPatternApproval::Allow,
     };
-    let evaluation = evaluate(
-        "bash",
-        ToolEffects::process(),
-        ApprovalMode::All,
-        &dual,
-        Some(DESTRUCTIVE_SHELL),
-        Some(&verdict),
-        &[],
-        None,
-    );
+    let evaluation = evaluate(ApprovalCall {
+        tool: "bash",
+        effects: ToolEffects::process(),
+        mode: ApprovalMode::All,
+        dual_confirm: &dual,
+        danger: Some(DESTRUCTIVE_SHELL),
+        bash_pattern: Some(&verdict),
+        paths: &[],
+        restricted: None,
+    });
     assert_eq!(
         evaluation,
         ApprovalEvaluation::RequiresApproval {

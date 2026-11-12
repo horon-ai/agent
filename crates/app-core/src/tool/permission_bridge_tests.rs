@@ -8,7 +8,7 @@ use crate::config::ApprovalMode;
 use crate::tool::{Tool, ToolEffects, ToolExecutionMode, ToolOutput, approval_override};
 use async_trait::async_trait;
 use horon_agent_agent_runtime::InterruptSignal;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
