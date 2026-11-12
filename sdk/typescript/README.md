@@ -115,6 +115,14 @@ console.log("tokens:", turn.usage);
 client.close();
 ```
 
+Each entry of `turn.toolCalls` has `callId`, `name`, `output`, an optional
+`error`, and an optional `verdict` (protocol 1.19): `ok`, `partial`,
+`truncated`, `withheld`, `rejected`, `failed` or `interrupted`. The daemon sends
+a verdict only when a layer made a statement about the call, so most successful
+calls and every call on an older daemon have none. A missing verdict is not
+`ok`: read `error` then. A name a newer daemon adds arrives as the string it
+sent.
+
 ### Full system prompt override
 
 ```ts

@@ -130,6 +130,14 @@ Low-level clients that handle `tool_call` events themselves call
 - `reasoning`, `tool_calls`, `usage`, `stop_reason`, and `stop_message` carry
   the rest of the turn.
 
+Each `ToolCall` in `tool_calls` has `call_id`, `name`, `output`, an optional
+`error`, and an optional `verdict` (protocol 1.19): `ok`, `partial`,
+`truncated`, `withheld`, `rejected`, `failed` or `interrupted`, typed as
+`ToolVerdict`. The daemon sends a verdict only when a layer made a statement
+about the call, so most successful calls and every call on an older daemon have
+`None`. A missing verdict is not `ok`: read `error` then. A name a newer daemon
+adds arrives as the string it sent.
+
 ## Structured output
 
 `run_structured()` wraps a turn in a JSON-only contract and validates the final

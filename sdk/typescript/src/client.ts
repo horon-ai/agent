@@ -53,6 +53,7 @@ import {
   type TextMatch,
   type TodoEffects,
   type TodoSnapshot,
+  type ToolVerdictName,
   type TurnStopReason,
 } from "./protocol.js";
 
@@ -2217,14 +2218,19 @@ export class HoronAgentClient extends EventEmitter {
         case "reasoning_delta":
           result.reasoning += event.text;
           break;
-        case "tool_done":
-          result.toolCalls.push({
+        case "tool_done": {
+          const call: ToolCallResult = {
             callId: event.call_id,
             name: event.name,
             output: event.output,
             error: event.error,
-          });
+          };
+          // The key is set only when the daemon sent one, so a call without a
+          // verdict has the same shape it had before protocol 1.19.
+          if (typeof event.verdict === "string") call.verdict = event.verdict;
+          result.toolCalls.push(call);
           break;
+        }
         case "token_usage":
           result.usage = {
             input: event.input,
@@ -2315,7 +2321,7 @@ export interface TurnResult {
   /** Completed text messages. Empty when the bridge does not support framing. */
   messages: AssistantTextMessage[];
   reasoning: string;
-  toolCalls: Array<{ callId: string; name: string; output: string; error?: string }>;
+  toolCalls: ToolCallResult[];
   usage?: { input: number; output: number; cacheReadInput?: number };
 }
 
@@ -2333,3 +2339,18 @@ export interface StructuredTurnResult<T> extends TurnResult {
 }
 
 export { HarnessError };
+
+/** One finished tool call of a turn. */
+export interface ToolCallResult {
+  callId: string;
+  name: string;
+  output: string;
+  error?: string;
+  /**
+   * What became of the call, when the daemon stored a verdict for it
+   * (protocol 1.19). Absent means no layer made a statement, which is the usual
+   * case for a call that simply succeeded and every call on an older daemon:
+   * read `error` then, and never take a missing verdict for `"ok"`.
+   */
+  verdict?: ToolVerdictName;
+}

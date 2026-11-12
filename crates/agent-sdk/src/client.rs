@@ -2300,12 +2300,14 @@ impl HoronAgentClient {
                     name,
                     output,
                     error,
+                    verdict,
                     ..
                 } => result.tool_calls.push(ToolCall {
                     call_id,
                     name,
                     output,
                     error,
+                    verdict,
                 }),
                 ApiEvent::TokenUsage {
                     input,

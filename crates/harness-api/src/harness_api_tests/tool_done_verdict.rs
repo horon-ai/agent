@@ -43,3 +43,24 @@ fn tool_done_decodes_a_frame_that_predates_the_verdict() {
     };
     assert_eq!(verdict, None, "an absent verdict is not a judgment");
 }
+
+#[test]
+fn tool_done_reads_an_unfamiliar_verdict_as_absent() {
+    let newer =
+        r#"{"ev":"tool_done","session_id":"s1","call_id":"call-1","name":"bash","output":"ok","verdict":"deferred"}"#;
+    let ApiEvent::ToolDone { verdict, output, .. } = serde_json::from_str(newer).unwrap() else {
+        panic!("expected tool_done");
+    };
+    assert_eq!(
+        verdict, None,
+        "a name from a newer daemon is not a judgment this build can state"
+    );
+    assert_eq!(output, "ok", "the rest of the frame must still be read");
+
+    let malformed =
+        r#"{"ev":"tool_done","session_id":"s1","call_id":"call-1","name":"bash","output":"ok","verdict":7}"#;
+    assert!(
+        serde_json::from_str::<ApiEvent>(malformed).is_err(),
+        "a verdict that is not a string is a broken frame, not a newer one"
+    );
+}

@@ -159,7 +159,7 @@ pub use errors::{Error, ErrorKind, Result};
 pub use horon_agent_harness_api::{
     HandoffCompaction, RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary,
     RuntimeQueueSummary, RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary,
-    SessionEditStats, SessionSnapshot, SnapshotMarkerInfo, enrich_sessions_from_edit_stats,
+    SessionEditStats, SessionSnapshot, SnapshotMarkerInfo, ToolVerdict, enrich_sessions_from_edit_stats,
     enrich_sessions_from_local_edit_stats, enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state,
 };
 /// Auto-poke and todo quality-gate policy, identical to the TUI's. Fetch a

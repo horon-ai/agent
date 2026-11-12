@@ -472,6 +472,10 @@ class ToolCall:
     name: str
     output: str
     error: str | None = None
+    #: The daemon's verdict for the call (protocol 1.19). A known name is a
+    #: ``ToolVerdict``; a name this SDK does not know arrives unchanged. ``None``
+    #: means the daemon sent none, which is not the same as ``"ok"``.
+    verdict: str | None = None
 
 
 @dataclass
@@ -2583,12 +2587,14 @@ class HoronAgentClient:
                 elif kind == "reasoning_delta":
                     result.reasoning += str(event.get("text", ""))
                 elif kind == "tool_done":
+                    verdict = event.get("verdict")
                     result.tool_calls.append(
                         ToolCall(
                             call_id=str(event.get("call_id", "")),
                             name=str(event.get("name", "")),
                             output=str(event.get("output", "")),
                             error=event.get("error"),
+                            verdict=verdict if isinstance(verdict, str) else None,
                         )
                     )
                 elif kind == "token_usage":

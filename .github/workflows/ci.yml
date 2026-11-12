@@ -353,6 +353,18 @@ jobs:
         shell: bash
         run: cargo test --locked -p horon-agent-sdk parity -- --nocapture
 
+      - name: Run Rust SDK tool verdict tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        # The `parity` filter above selects nothing in this integration target,
+        # so it is named here. The count is the number of tests in
+        # `crates/agent-sdk/tests/tool_verdict.rs`: a run that matched fewer
+        # fails instead of passing over a smaller set.
+        run: |
+          cargo test --locked -p horon-agent-sdk --test tool_verdict -- --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/sdk-tool-verdict.log"
+          grep -q '^test result: ok\. 4 passed' "$RUNNER_TEMP/sdk-tool-verdict.log"
+
       - name: Enforce wildcard re-export ratchet
         if: ${{ !cancelled() }}
         shell: bash
@@ -1102,7 +1114,7 @@ jobs:
             -- tool_done_ --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
-            --timeout 600 --min-passed 3 \
+            --timeout 600 --min-passed 4 \
             -- tool_done_verdict_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
