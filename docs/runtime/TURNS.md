@@ -415,6 +415,10 @@ tool, which is also where a budget is set: `create` and `update` accept
 already the way to say unbounded, and a zero that reached the decision would wrap
 the goal up at its first turn end, which looks like a defect instead of a policy.
 
+Getting the goal back is an operator decision with two moves: raise
+`budget_tokens` and set the status to `active`. `resume` alone will not pick it up,
+because a spent goal that resumed itself would spend again.
+
 Tests: `crates/agent-runtime/src/goal_continuation.rs` covers the decision table,
 including that the budget beats the cap and that user input beats both;
 `crates/app-core/src/agent/goal_continuation_tests.rs` covers the stored wrap-up

@@ -407,6 +407,10 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 값이고, 0이 판정에 닿으면 첫 턴 끝에서 목표를 랩업해 버려서 정책이 아니라 결함처럼
 보이기 때문이다.
 
+목표를 되살리는 것은 운영자의 결정이고 두 동작이 필요하다. `budget_tokens`를 올리고
+상태를 `active`로 되돌린다. `resume`만으로는 집히지 않는다. 예산을 다 쓴 목표가 스스로
+재개하면 다시 쓰게 되기 때문이다.
+
 시험: `crates/agent-runtime/src/goal_continuation.rs`가 판정 표를 덮는다. 예산이 상한을
 이기고 사용자 입력이 둘 다를 이기는 경우가 포함된다.
 `crates/app-core/src/agent/goal_continuation_tests.rs`는 저장되는 랩업 메시지, 상태 전이,

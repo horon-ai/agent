@@ -106,3 +106,63 @@ fn a_budget_limited_goal_is_not_resumed_automatically() {
         crate::env::remove_var("HORON_HOME");
     }
 }
+
+#[test]
+fn raising_the_budget_and_reactivating_resumes_a_spent_goal() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let project = temp.path().join("repo");
+    std::fs::create_dir_all(&project).expect("project dir");
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
+
+    let goal = create_goal(
+        GoalCreateInput {
+            title: "Spend more".to_string(),
+            scope: GoalScope::Project,
+            budget_tokens: Some(10),
+            ..GoalCreateInput::default()
+        },
+        Some(&project),
+    )
+    .expect("create goal");
+    attach_goal_to_session("ses_budget_raise", &goal, Some(&project)).expect("attach");
+    update_goal(
+        &goal.id,
+        Some(GoalScope::Project),
+        Some(&project),
+        GoalUpdateInput {
+            status: Some(GoalStatus::BudgetLimited),
+            ..GoalUpdateInput::default()
+        },
+    )
+    .expect("limit")
+    .expect("goal exists");
+
+    let raised = update_goal(
+        &goal.id,
+        Some(GoalScope::Project),
+        Some(&project),
+        GoalUpdateInput {
+            status: Some(GoalStatus::Active),
+            budget_tokens: Some(Some(20)),
+            ..GoalUpdateInput::default()
+        },
+    )
+    .expect("raise")
+    .expect("goal exists");
+    assert_eq!(raised.budget_tokens, Some(20));
+    assert_eq!(raised.status, GoalStatus::Active);
+    assert!(
+        resume_goal("ses_budget_raise", Some(&project))
+            .expect("resume")
+            .is_some(),
+        "an operator who raised the ceiling and reactivated the goal gets it back"
+    );
+
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("HORON_HOME", prev_home);
+    } else {
+        crate::env::remove_var("HORON_HOME");
+    }
+}
