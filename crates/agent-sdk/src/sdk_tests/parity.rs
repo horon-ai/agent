@@ -335,7 +335,8 @@ fn ts_client_source() -> Option<String> {
 }
 
 fn python_client_source() -> Option<String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/sdk/python/src/horon_agent_sdk/client.py");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/sdk/python/src/horon_agent_sdk/client.py");
     std::fs::read_to_string(path).ok()
 }
 

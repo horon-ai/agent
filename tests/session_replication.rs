@@ -987,7 +987,10 @@ fn typescript_sdk_drives_the_same_sockets() {
     };
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/sdk/typescript");
     let entry = sdk.join("dist/index.js");
-    assert!(entry.is_file(), "build packages/sdk/typescript before running the TS leg");
+    assert!(
+        entry.is_file(),
+        "build packages/sdk/typescript before running the TS leg"
+    );
     let _serial = instance_lock();
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/replication_ts_client.mjs");
     let root = scratch_root("ts");
