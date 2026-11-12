@@ -1080,7 +1080,17 @@ jobs:
         # `overnight_handoff` is the subset of the overnight trigger that crosses
         # into compaction; it is not selected by `compaction` alone because the
         # module is named for the run, not the mechanism.
+        #
+        # `HORON_HOME` points at a throwaway directory with mode 700. The
+        # compaction tests in `agent::tests` save and reload a session, and the
+        # store refuses a home whose path components are not owner-private; on a
+        # hosted runner `$HOME` is world-readable, so those tests pass on a
+        # developer machine and fail here. One directory serves the whole step:
+        # the three calls run in sequence and share the session store they build.
         run: |
+          export HORON_HOME="$(mktemp -d)"
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
