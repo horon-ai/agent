@@ -594,6 +594,14 @@ impl BashPtyMode {
 /// widened back to `full`.
 pub const CORE_TOOL_PROFILE: &str = "core";
 
+/// Default lifetime of a scoped `path`/`folder` approval grant, in days.
+///
+/// A grant is the user answering "stop asking about this file" once. Seven days
+/// keeps that answer useful for a work week without turning it into a permanent
+/// policy the user has forgotten they gave; see `[tools] approval_grant_ttl_days`
+/// for the knob and `0` to disable grants.
+pub const DEFAULT_APPROVAL_GRANT_TTL_DAYS: u64 = 7;
+
 /// Tool joined into a non-empty allow-list when
 /// `ambient.approval_for_clientless_runs` is on.
 ///
@@ -970,6 +978,18 @@ pub struct ToolConfig {
     /// default.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dual_confirm_classes: Vec<String>,
+    /// Paths that always require approval, in every mode including `off`.
+    /// Each entry is a glob matched against the path a call names, in its raw,
+    /// resolved and canonical forms; `*` matches across separators, so a
+    /// pattern that is too broad asks more often rather than fewer. Empty by
+    /// default. An unparseable pattern restricts everything, because a rule
+    /// that cannot be read must not silently stop asking.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub restricted_paths: Vec<String>,
+    /// How long a scoped path or folder grant stays usable, in days. `0`
+    /// disables grants: none is written and none is consulted. Applies only to
+    /// grants a client issued by scope; it has no effect on `approval_mode`.
+    pub approval_grant_ttl_days: u64,
 }
 
 impl Default for ToolConfig {
@@ -1011,6 +1031,8 @@ impl Default for ToolConfig {
             generate_image: false,
             secrets_mode: SecretsMode::Off,
             dual_confirm_classes: Vec::new(),
+            restricted_paths: Vec::new(),
+            approval_grant_ttl_days: DEFAULT_APPROVAL_GRANT_TTL_DAYS,
         }
     }
 }
