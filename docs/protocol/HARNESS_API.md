@@ -92,7 +92,7 @@ Response, the same `compacted` event with `handoff` attached:
 | --- | --- |
 | `committed` | The document became the boundary. `covered` is how many messages it covers; the recent-token tail stays verbatim |
 | `nothing_to_cover` | Every message fits inside the recent-token budget, so no document was written |
-| `provider_error` | The completion failed. `detail` carries the provider's message. The transcript is unchanged |
+| `provider_error` | The completion failed, or its document was refused (empty, or without a `Goal` heading). `detail` carries the provider's message or the refusal reason. The transcript is unchanged |
 | `cancelled` | The generation was cancelled before it answered. The transcript is unchanged |
 
 No capability gates this field: a server that predates it ignores an unknown

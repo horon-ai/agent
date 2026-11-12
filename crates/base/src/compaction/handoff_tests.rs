@@ -130,20 +130,68 @@ async fn handoff_generates_a_non_empty_document_from_a_fixture_transcript() {
 }
 
 #[tokio::test]
-async fn handoff_returns_a_document_missing_a_heading_as_is() {
+async fn handoff_returns_a_document_with_only_a_goal_as_is() {
     let messages = fixture_transcript();
-    let partial = "## Goal\nfinish the migration\n\n## Next steps\nrun the gate\n";
-    let completer = ScriptedCompleter::answering(partial);
     let cancel = not_cancelled();
 
-    let document = generate_handoff(&messages, covering_budget(), &completer, &cancel)
-        .await
-        .expect("a missing heading is not an error");
+    for partial in [
+        "## Goal\nfinish the migration\n",
+        "# goal\nfinish the migration\n\n## Next steps\nrun the gate\n",
+        "Here is the handoff.\n\n  ### GOAL:\nfinish the migration\n",
+    ] {
+        let completer = ScriptedCompleter::answering(partial);
 
-    assert_eq!(
-        document.document, partial,
-        "the response is returned verbatim, without parsing or repair"
-    );
+        let document = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+            .await
+            .expect("a document with a Goal heading is accepted");
+
+        assert_eq!(
+            document.document, partial,
+            "the response is returned verbatim, without parsing or repair"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handoff_rejects_an_empty_document() {
+    let messages = fixture_transcript();
+    let cancel = not_cancelled();
+
+    for empty in ["", " \n\t\n"] {
+        let completer = ScriptedCompleter::answering(empty);
+
+        let error = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+            .await
+            .expect_err("an empty document cannot replace the covered messages");
+
+        assert!(
+            matches!(&error, HandoffError::InvalidDocument { reason } if reason.contains("empty")),
+            "got {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handoff_rejects_a_document_without_a_goal_heading() {
+    let messages = fixture_transcript();
+    let cancel = not_cancelled();
+
+    for goalless in [
+        "## Done\nmost of it\n\n## Next steps\nrun the gate\n",
+        "The goal is to finish the migration.\n",
+        "## Goals and non-goals\nfinish the migration\n",
+    ] {
+        let completer = ScriptedCompleter::answering(goalless);
+
+        let error = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+            .await
+            .expect_err("a document that never states the goal is refused");
+
+        assert!(
+            matches!(&error, HandoffError::InvalidDocument { reason } if reason.contains("Goal")),
+            "got {error}"
+        );
+    }
 }
 
 #[tokio::test]

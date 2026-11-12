@@ -6,9 +6,11 @@
 //! verbatim tail, so the next request is the document plus that tail. Nothing
 //! is deleted: `history://current` still serves the whole transcript.
 //!
-//! A failed or cancelled generation commits nothing. The transcript, the
-//! message count and the previous boundary all stay as they were, which is why
-//! the outcome type names the failure instead of returning a partial document.
+//! A failed or cancelled generation commits nothing, and neither does a
+//! document the generator refuses (empty, or without a `Goal` heading). The
+//! transcript, the message count and the previous boundary all stay as they
+//! were, which is why the outcome type names the failure instead of returning a
+//! partial document.
 
 use super::*;
 use crate::compaction::handoff::{HandoffCompleter, HandoffDocument, HandoffError, generate_handoff};
@@ -22,7 +24,8 @@ pub enum HandoffOutcome {
     Committed { covered: usize },
     /// The recent-token budget kept every message verbatim; nothing was written.
     NothingToCover,
-    /// The completion failed. The transcript is unchanged.
+    /// The completion failed, or its document was refused (empty, or without a
+    /// `Goal` heading). The transcript is unchanged.
     ProviderError(String),
     /// The caller cancelled before the completion answered. The transcript is
     /// unchanged.
@@ -59,6 +62,9 @@ impl Agent {
             Ok(document) => document,
             Err(HandoffError::NothingToCover) => return HandoffOutcome::NothingToCover,
             Err(HandoffError::Provider { detail }) => return HandoffOutcome::ProviderError(detail),
+            Err(error @ HandoffError::InvalidDocument { .. }) => {
+                return HandoffOutcome::ProviderError(error.to_string());
+            }
             Err(HandoffError::Cancelled) => return HandoffOutcome::Cancelled,
         };
         HandoffOutcome::Committed {

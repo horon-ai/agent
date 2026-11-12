@@ -14,10 +14,11 @@
 //! Everything covered by the cut is rendered into one prompt through
 //! [`render_source_range`], which bounds each message and labels it with the
 //! event it came from. The prompt asks for the six sections a resuming agent
-//! needs (Goal, Done, In progress, Next steps, Open risks, Key files) and the
-//! answer is returned exactly as the model wrote it. Nothing here parses,
-//! repairs or validates the Markdown: a document that drops a heading is still
-//! a document, and the caller commits it as-is.
+//! needs (Goal, Done, In progress, Next steps, Open risks, Key files). Nothing
+//! here repairs the Markdown, but two answers are refused before they can become
+//! a boundary: one with no text, and one without a `Goal` heading. A document
+//! that drops any other heading is still a document, and the caller commits it
+//! exactly as the model wrote it.
 //!
 //! The completion goes through [`aux_completion`], the tool-free one-shot path.
 //! [`HandoffCompleter`] and [`generate_handoff`] exist so tests can supply an
@@ -26,9 +27,11 @@
 //!
 //! Failure modes are distinct on purpose. [`HandoffError::NothingToCover`] means
 //! the budget kept every message verbatim, so there is nothing to hand off.
-//! [`HandoffError::Provider`] carries the completion error. [`HandoffError::Cancelled`]
-//! is reported as cancellation, never as a successful empty document, so a
-//! caller can tell "the model failed" from "we stopped waiting".
+//! [`HandoffError::Provider`] carries the completion error.
+//! [`HandoffError::InvalidDocument`] means the completion answered but its text
+//! cannot stand in for the covered messages. [`HandoffError::Cancelled`] is
+//! reported as cancellation, never as a successful empty document, so a caller
+//! can tell "the model failed" from "we stopped waiting".
 
 use super::source_projection::{CoveredRange, SourceProjection, render_source_range};
 use crate::aux_completion::{self, CompletionRequest, MAX_PROMPT_BYTES};
@@ -72,7 +75,8 @@ End of conversation. Write the handoff document now.
 /// A generated handoff document and where the verbatim tail begins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffDocument {
-    /// Markdown exactly as the model produced it, unparsed and unvalidated.
+    /// Markdown exactly as the model produced it. It is never empty and always
+    /// has a `Goal` heading; nothing else about it is checked.
     pub document: String,
     /// Index of the first message kept verbatim in the caller's message slice.
     pub cutoff: usize,
@@ -85,6 +89,9 @@ pub enum HandoffError {
     NothingToCover,
     /// The completion itself failed, or the request could not be built.
     Provider { detail: String },
+    /// The completion answered, but the document was refused: it was empty or
+    /// had no `Goal` heading.
+    InvalidDocument { reason: &'static str },
     /// The caller cancelled before the completion answered.
     Cancelled,
 }
@@ -97,6 +104,7 @@ impl std::fmt::Display for HandoffError {
                 "nothing to cover: the recent-token budget keeps every message verbatim"
             ),
             Self::Provider { detail } => write!(f, "handoff generation failed: {detail}"),
+            Self::InvalidDocument { reason } => write!(f, "handoff document rejected: {reason}"),
             Self::Cancelled => write!(f, "handoff generation was cancelled"),
         }
     }
@@ -158,7 +166,7 @@ pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
         biased;
         () = await_cancellation(cancel) => Err(HandoffError::Cancelled),
         result = completer.complete(request) => match result {
-            Ok(document) => Ok(HandoffDocument { document, cutoff }),
+            Ok(document) => validate_document(&document).map(|()| HandoffDocument { document, cutoff }),
             Err(error) => Err(HandoffError::Provider {
                 detail: format!("{error:#}"),
             }),
@@ -173,6 +181,38 @@ pub async fn generate_handoff_with_aux(
     cancel: &AtomicBool,
 ) -> Result<HandoffDocument, HandoffError> {
     generate_handoff(messages, recent_tokens, &AuxCompletion, cancel).await
+}
+
+/// Refuse an answer that cannot stand in for the covered messages.
+///
+/// A boundary replaces the covered prefix in every later request, so an answer
+/// with no text, or one that never states the goal, would drop that prefix and
+/// leave the successor nothing to resume from. The heading is matched on its
+/// title alone: `# Goal`, `### goal` and `## Goal:` all count.
+fn validate_document(document: &str) -> Result<(), HandoffError> {
+    if document.trim().is_empty() {
+        return Err(HandoffError::InvalidDocument {
+            reason: "the document is empty",
+        });
+    }
+    if !document.lines().any(is_goal_heading) {
+        return Err(HandoffError::InvalidDocument {
+            reason: "the document has no Goal section",
+        });
+    }
+    Ok(())
+}
+
+/// Whether `line` is a Markdown heading whose title is `Goal`.
+fn is_goal_heading(line: &str) -> bool {
+    let line = line.trim();
+    let title = line.trim_start_matches('#');
+    title.len() < line.len()
+        && title
+            .trim()
+            .trim_end_matches(':')
+            .trim_end()
+            .eq_ignore_ascii_case("goal")
 }
 
 /// Index of the first message the handoff keeps verbatim.
