@@ -67,6 +67,24 @@ async fn handoff_fixture() -> (crate::auth::test_sandbox::AuthTestSandbox, Agent
     agent.session.model = Some("handoff-test-model".to_string());
     agent.session.route_api_method = Some("handoff-test-route".to_string());
 
+    agent.add_message(
+        Role::Assistant,
+        vec![ContentBlock::ToolUse {
+            id: "call-read-handoff".to_string(),
+            name: "read".to_string(),
+            input: serde_json::json!({"file_path": "crates/app-core/src/agent/handoff_compaction.rs"}),
+            thought_signature: None,
+        }],
+    );
+    agent.add_message(
+        Role::User,
+        vec![ContentBlock::ToolResult {
+            tool_use_id: "call-read-handoff".to_string(),
+            content: "the commit hook".to_string(),
+            is_error: None,
+            verdict: None,
+        }],
+    );
     agent.add_message(Role::User, text_block("plan the handoff boundary work"));
     agent.add_message(Role::Assistant, text_block("I will write the commit hook."));
     agent.add_message(Role::User, text_block("keep going"));
@@ -123,6 +141,17 @@ async fn handoff_compaction_commits_a_document_as_the_boundary() {
         state.structured.as_ref().is_some_and(|meta| meta.handoff),
         "the boundary is tagged as a handoff"
     );
+    let restoration = state
+        .structured
+        .as_ref()
+        .and_then(|meta| meta.restoration.as_ref())
+        .expect("the covered prefix named a file, so a manifest is stored");
+    assert_eq!(restoration.entries.len(), 1);
+    assert_eq!(
+        restoration.entries[0].path,
+        "crates/app-core/src/agent/handoff_compaction.rs"
+    );
+    assert_eq!(restoration.entries[0].kind, "file");
 
     // The stored event carries the handoff outcome, not a plain summary.
     agent.save_session().expect("persist the boundary");
@@ -137,6 +166,14 @@ async fn handoff_compaction_commits_a_document_as_the_boundary() {
         .expect("a compacted event exists");
     assert_eq!(payload.outcome, store::CompactionOutcome::Handoff);
     assert_eq!(payload.summary_text, COMPLETE_DOCUMENT);
+    let stored = payload
+        .restoration
+        .as_ref()
+        .expect("the manifest reaches the event graph");
+    assert_eq!(
+        stored.entries[0].path,
+        "crates/app-core/src/agent/handoff_compaction.rs"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

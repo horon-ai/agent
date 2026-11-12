@@ -428,6 +428,23 @@ work; do not summarize it back"). 이전 경계는 프롬프트로 넘어가므�
 `crates/harness-api-server/src/translate_handoff_tests.rs`는 요청 필드와 결과 보고를
 다룬다.
 
+### 핸드오프 뒤의 복원 정보
+
+문서는 산문이라 후임자는 덮인 작업이 어떤 파일에 기대었는지 알 수 없다. 그래서 모든
+핸드오프 경계는 문서 옆에 복원 매니페스트를 함께 담는다. 구조화 요약이 저장하는 것과
+같은 형태로, 최대 `MAX_RESTORATION_ENTRIES`(10)개 경로에 각 경로의 종류(`file` 또는
+`skill`)와 그 경로를 만진 도구를 기록한다. 허용량은 컨텍스트 윈도의 15%이고
+`MAX_RESTORATION_BYTES`(50,000)를 넘지 않는다.
+
+매니페스트는 모델의 응답이 아니라 덮인 메시지에서 수집한다. 문서가 빠뜨린 파일도
+매니페스트에는 남는다. `StoredSummaryMetadata.restoration`에 기록하므로 재시작을
+견디고, 압축된 이벤트 페이로드에도 구조화 요약과 같은 방식으로 실린다. 목록이 비면 빈
+매니페스트가 아니라 없는 것으로 저장한다.
+
+테스트: `crates/base/src/compaction/handoff_tests.rs`가 수집된 항목과 빈 경우를,
+`crates/app-core/src/agent/handoff_compaction_tests.rs`가 커밋된 경계와 이벤트
+그래프의 매니페스트를 다룬다.
+
 ### 여러 방법을 순서대로: `method_order`
 
 `strategy`는 방법 하나를 고른다. `[compaction] method_order`는 사슬을 고르므로, 이번 턴의
