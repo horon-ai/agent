@@ -47,6 +47,25 @@ impl ToolVerdict {
         }
     }
 
+    /// The verdict a wire name stands for, or `None` for a name this build
+    /// does not know.
+    ///
+    /// Reading through serde refuses an unknown name with an error. This is
+    /// for a reader that has to keep going when a newer peer sends a name it
+    /// has not learned yet.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "ok" => Self::Ok,
+            "partial" => Self::Partial,
+            "truncated" => Self::Truncated,
+            "withheld" => Self::Withheld,
+            "rejected" => Self::Rejected,
+            "failed" => Self::Failed,
+            "interrupted" => Self::Interrupted,
+            _ => return None,
+        })
+    }
+
     /// The verdict of a result whose text was cut after `earlier` was decided.
     ///
     /// A cut only replaces "ran and returned everything". A result that already
@@ -104,6 +123,7 @@ mod tests {
             assert_eq!(serde_json::json!(verdict), serde_json::json!(name));
             assert_eq!(verdict.as_str(), name);
             assert_eq!(verdict.to_string(), name);
+            assert_eq!(ToolVerdict::from_name(name), Some(verdict));
             assert!(
                 matches!(serde_json::from_value::<ToolVerdict>(serde_json::json!(name)), Ok(read) if read == verdict),
                 "{name} must read back as {verdict:?}"
@@ -114,6 +134,7 @@ mod tests {
     #[test]
     fn an_unknown_wire_name_is_an_error_not_a_guess() {
         assert!(serde_json::from_value::<ToolVerdict>(serde_json::json!("done")).is_err());
+        assert_eq!(ToolVerdict::from_name("done"), None);
     }
 
     #[test]

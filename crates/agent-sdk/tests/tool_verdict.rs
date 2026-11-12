@@ -5,23 +5,28 @@
 //! `None`, and so does a verdict name this build does not know, without ending
 //! the connection. A client built before the field keeps reading the frame.
 
-#![cfg(unix)]
-
 use horon_agent_harness_api::{
     API_VERSION_MAJOR, ApiEvent, ApiRequest, ClientFrame, ServerFrame, read_frame, write_frame,
 };
 use horon_agent_sdk::{ConnectOptions, HoronAgentClient, ToolVerdict, Transport, TurnResult};
 use serde::Deserialize;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::io::{BufRead, BufReader, PipeReader, PipeWriter, Write};
 use std::time::Duration;
 
-struct PairTransport(UnixStream);
+/// The client's end of two anonymous pipes, one per direction. Pipes exist on
+/// every platform the SDK builds for, so this file needs no OS gate.
+struct PipeTransport {
+    from_harness: PipeReader,
+    to_harness: PipeWriter,
+}
 
-impl Transport for PairTransport {
+impl Transport for PipeTransport {
     fn split(self: Box<Self>) -> horon_agent_sdk::Result<(Box<dyn BufRead + Send>, Box<dyn Write + Send>)> {
-        let writer = self.0.try_clone().expect("socket pair must clone");
-        Ok((Box::new(BufReader::new(self.0)), Box::new(writer)))
+        let Self {
+            from_harness,
+            to_harness,
+        } = *self;
+        Ok((Box::new(BufReader::new(from_harness)), Box::new(to_harness)))
     }
 }
 
@@ -41,12 +46,13 @@ fn send_line(writer: &mut dyn Write, line: &str) {
 }
 
 /// Runs one turn against a harness that answers `send_message` with the given
-/// `tool_done` lines, written to the socket exactly as given.
+/// `tool_done` lines, written to the pipe exactly as given.
 fn turn_with(tool_done_lines: Vec<String>) -> TurnResult {
-    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    let (from_client, to_harness) = std::io::pipe().expect("pipe to the harness");
+    let (from_harness, to_client) = std::io::pipe().expect("pipe from the harness");
     std::thread::spawn(move || {
-        let mut reader = BufReader::new(theirs.try_clone().expect("clone"));
-        let mut writer = theirs;
+        let mut reader = BufReader::new(from_client);
+        let mut writer = to_client;
         while let Ok(frame) = read_frame::<_, ClientFrame>(&mut reader) {
             match frame.request {
                 ApiRequest::Hello { .. } => {
@@ -80,7 +86,10 @@ fn turn_with(tool_done_lines: Vec<String>) -> TurnResult {
         }
     });
     let client = HoronAgentClient::connect_with(
-        Box::new(PairTransport(ours)),
+        Box::new(PipeTransport {
+            from_harness,
+            to_harness,
+        }),
         ConnectOptions {
             request_timeout: Some(Duration::from_secs(5)),
             ensure_runtime: false,

@@ -1159,9 +1159,6 @@ fn known_verdict<'de, D>(deserializer: D) -> Result<Option<horon_agent_tool_type
 where
     D: serde::Deserializer<'de>,
 {
-    let Some(name) = Option::<String>::deserialize(deserializer)? else {
-        return Ok(None);
-    };
-    let name = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&name);
-    Ok(horon_agent_tool_types::ToolVerdict::deserialize(name).ok())
+    let name = Option::<String>::deserialize(deserializer)?;
+    Ok(name.as_deref().and_then(horon_agent_tool_types::ToolVerdict::from_name))
 }
