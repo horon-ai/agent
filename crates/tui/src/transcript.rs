@@ -259,8 +259,11 @@ mod tests {
         transcript.text_delta(Some("m1"), "  \n\t");
         assert_eq!(transcript.open_text(), None, "whitespace is never published");
 
+        // Deltas append, so the whitespace that was hidden on its own is now
+        // part of the message; drawing anything but the raw buffer would make
+        // the open row differ from the item `finish_stream` commits.
         transcript.text_delta(Some("m1"), "draft");
-        assert_eq!(transcript.open_text(), Some("draft"));
+        assert_eq!(transcript.open_text(), Some("  \n\tdraft"));
         transcript.text_replace(Some("m1"), "");
         assert_eq!(transcript.open_text(), None, "a retraction must not be drawn");
     }
