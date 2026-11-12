@@ -375,6 +375,57 @@ request, the stored transcript, and one rollover per request;
 `crates/app-core/src/tool/new_context_tests.rs` covers the plan-mode refusal, the
 registration gate, and one pending request per turn.
 
+## A goal's token budget
+
+A goal keeps the run going: at the end of a turn the continuation hook reads the
+attached goal, and while its status is `active` it stores one synthetic message
+and asks for another turn, up to `GOAL_CONTINUATION_CAP`. A goal can also carry
+`budget_tokens`, an optional ceiling on what the whole session may spend before
+that stops.
+
+The decision lives in `horon_agent_agent_runtime::goal_continuation` and is pure:
+it reads the goal status, the pending input, the continuations already spent, the
+tokens spent so far, and the budget. First match wins, and the budget is checked
+before the cap, because a goal that ran out of money should stop with
+`reason=budget` rather than `reason=cap`.
+
+Spent tokens are the same aggregate the daemon already reports:
+`TokenUsageTotals` summed over the transcript, with cache reads and cache writes
+added rather than discounted. A provider bills cached input at a lower rate, but
+a budget that ignored it would let a cache-heavy goal run far past its ceiling.
+
+The sum covers the whole transcript, not the part since the goal was attached.
+A goal attached to a session that already spent more than its budget therefore
+wraps up at the next turn end. That is the honest reading of a ceiling on the
+session: a budget that restarted at attach would let the same session spend the
+ceiling twice, once before and once after the goal existed.
+
+Reaching the budget does not stop the run dead. It buys one more turn with a
+different message (`GOAL_BUDGET_WRAP_UP_MESSAGE`), which tells the model to stop
+starting work and record what it has, and at the same moment the goal moves to
+`budget_limited`. The order matters: the status is written before the turn is
+requested, so a crash between the two leaves a goal that stops, never one that
+keeps spending. The next turn end then sees a status that is not `active` and
+stops without a further turn.
+
+`budget_limited` is its own status rather than `paused` because nothing resumes
+it automatically. Resuming is an operator decision, taken through the `goal`
+tool, which is also where a budget is set: `create` and `update` accept
+`budget_tokens`, and a zero is refused rather than read as unlimited. `None` is
+already the way to say unbounded, and a zero that reached the decision would wrap
+the goal up at its first turn end, which looks like a defect instead of a policy.
+
+Getting the goal back is an operator decision with two moves: raise
+`budget_tokens` and set the status to `active`. `resume` alone will not pick it up,
+because a spent goal that resumed itself would spend again.
+
+Tests: `crates/agent-runtime/src/goal_continuation.rs` covers the decision table,
+including that the budget beats the cap and that user input beats both;
+`crates/app-core/src/agent/goal_continuation_tests.rs` covers the stored wrap-up
+message, the status transition, the stop on the following turn, a goal with no
+budget never wrapping up, the refusal of a zero budget, and the round trip and
+the older-file load.
+
 ## Handoff compaction
 
 A handoff compaction writes a generated handoff document as the boundary instead

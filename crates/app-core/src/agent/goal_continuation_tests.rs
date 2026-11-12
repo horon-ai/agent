@@ -727,6 +727,271 @@ fn the_policy_under_test_still_continues_an_active_goal() {
         is_graceful_shutdown: false,
         pending_user_interrupt: false,
         consecutive_continuations: 0,
+        tokens_spent: 0,
+        budget_tokens: None,
     };
     assert_eq!(decide_goal_continuation(&input), GoalContinuation::Continue);
+}
+
+fn attach_goal_with_budget(agent: &Agent, title: &str, budget: u64) -> crate::goal::Goal {
+    let goal = crate::goal::create_goal(
+        crate::goal::GoalCreateInput {
+            title: title.to_string(),
+            scope: crate::goal::GoalScope::Global,
+            budget_tokens: Some(budget),
+            ..crate::goal::GoalCreateInput::default()
+        },
+        None,
+    )
+    .expect("create the goal");
+    crate::goal::attach_goal_to_session(agent.session_id(), &goal, None).expect("attach the goal");
+    goal
+}
+
+fn load_attached(agent: &Agent) -> crate::goal::Goal {
+    crate::goal::load_attached_goal(agent.session_id(), None)
+        .expect("read the goal")
+        .expect("the goal is attached")
+}
+
+/// Record one provider request worth `total_tokens` against the transcript.
+///
+/// The budget reads the same aggregate the daemon reports, so the test has to
+/// store usage on a message rather than set a counter: that keeps the assertion
+/// honest about where the number comes from.
+fn record_usage(agent: &mut Agent, total_tokens: u64) {
+    agent.session.add_message_ext_with_display_role(
+        Role::Assistant,
+        vec![ContentBlock::Text {
+            text: "working".to_string(),
+            cache_control: None,
+        }],
+        None,
+        Some(horon_agent_session_types::StoredTokenUsage {
+            prompt_tokens: Some(total_tokens),
+            input_tokens: total_tokens,
+            output_tokens: 0,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        }),
+        None,
+    );
+}
+
+#[tokio::test]
+async fn a_goal_under_its_budget_keeps_continuing() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (mut agent, _provider) = new_agent();
+    attach_goal_with_budget(&agent, "ship the release", 1_000);
+    record_usage(&mut agent, 999);
+
+    let continued = agent.maybe_continue_goal().expect("the hook runs");
+
+    assert!(continued, "one token under the budget must continue");
+    assert_eq!(
+        load_attached(&agent).status,
+        crate::goal::GoalStatus::Active,
+        "continuing must not change the status"
+    );
+}
+
+#[tokio::test]
+async fn reaching_the_budget_wraps_up_and_marks_the_goal() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (mut agent, _provider) = new_agent();
+    attach_goal_with_budget(&agent, "ship the release", 1_000);
+    record_usage(&mut agent, 1_000);
+    let before = stored_len(&agent);
+
+    let continued = agent.maybe_continue_goal().expect("the hook runs");
+
+    assert!(continued, "the wrap-up turn still runs once");
+    assert_eq!(stored_len(&agent), before + 1, "exactly one message is stored");
+    let last = agent.session.active_context().last().expect("the wrap-up message");
+    assert_eq!(last.role, Role::User);
+    let stored_text = last.content.iter().find_map(|block| match block {
+        ContentBlock::Text { text, .. } => Some(text.as_str()),
+        _ => None,
+    });
+    assert_eq!(
+        stored_text,
+        Some(horon_agent_agent_runtime::goal_continuation::GOAL_BUDGET_WRAP_UP_MESSAGE),
+        "the wrap-up turn must be told to stop starting new work"
+    );
+
+    let goal = load_attached(&agent);
+    assert_eq!(
+        goal.status,
+        crate::goal::GoalStatus::BudgetLimited,
+        "the goal must leave active so the next turn end stops"
+    );
+    assert!(
+        goal.updates
+            .iter()
+            .any(|update| update.summary.contains("token budget")),
+        "the checkpoint records why the goal stopped"
+    );
+}
+
+#[tokio::test]
+async fn the_turn_after_the_wrap_up_stops_instead_of_wrapping_up_again() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (mut agent, _provider) = new_agent();
+    attach_goal_with_budget(&agent, "ship the release", 1_000);
+    record_usage(&mut agent, 1_000);
+
+    assert!(agent.maybe_continue_goal().expect("first hook"), "wrap-up runs");
+    let after_one = stored_len(&agent);
+
+    let continued = agent.maybe_continue_goal().expect("second hook runs");
+
+    assert!(!continued, "a budget-limited goal must not take another turn");
+    assert_eq!(
+        stored_len(&agent),
+        after_one,
+        "the second call stores nothing, so the run cannot loop on the wrap-up"
+    );
+}
+
+#[tokio::test]
+async fn a_goal_without_a_budget_is_never_wrapped_up() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (mut agent, _provider) = new_agent();
+    attach_goal(&agent, "ship the release");
+    record_usage(&mut agent, u64::from(u32::MAX));
+
+    let continued = agent.maybe_continue_goal().expect("the hook runs");
+
+    assert!(continued, "an unbounded goal keeps working");
+    assert_eq!(
+        load_attached(&agent).status,
+        crate::goal::GoalStatus::Active,
+        "the absence of a budget must never stop a goal"
+    );
+}
+
+#[tokio::test]
+async fn a_zero_budget_is_refused_at_the_write_path() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (agent, _provider) = new_agent();
+    let error = crate::goal::create_goal(
+        crate::goal::GoalCreateInput {
+            title: "ship the release".to_string(),
+            scope: crate::goal::GoalScope::Global,
+            budget_tokens: Some(0),
+            ..crate::goal::GoalCreateInput::default()
+        },
+        None,
+    )
+    .expect_err("a zero ceiling cannot mean anything");
+    assert!(
+        error.to_string().contains("greater than zero"),
+        "the refusal must say what is wrong, got: {error}"
+    );
+    assert!(
+        crate::goal::list_relevant_goals(None).expect("list").is_empty(),
+        "a refused goal must not be written"
+    );
+
+    let goal = attach_goal(&agent, "ship the release");
+    let error = crate::goal::update_goal(
+        &goal.id,
+        Some(crate::goal::GoalScope::Global),
+        None,
+        crate::goal::GoalUpdateInput {
+            budget_tokens: Some(Some(0)),
+            ..crate::goal::GoalUpdateInput::default()
+        },
+    )
+    .expect_err("update must refuse a zero ceiling too");
+    assert!(error.to_string().contains("greater than zero"), "got: {error}");
+    assert_eq!(
+        load_attached(&agent).budget_tokens,
+        None,
+        "a refused update must leave the stored goal unchanged"
+    );
+}
+
+#[tokio::test]
+async fn a_budget_survives_being_written_and_read() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (agent, _provider) = new_agent();
+    let goal = attach_goal_with_budget(&agent, "ship the release", 250_000);
+
+    let reloaded = crate::goal::load_goal(&goal.id, Some(crate::goal::GoalScope::Global), None)
+        .expect("read the goal")
+        .expect("the goal exists");
+    assert_eq!(
+        reloaded.budget_tokens,
+        Some(250_000),
+        "the ceiling must round trip through the store"
+    );
+}
+
+#[tokio::test]
+async fn a_stored_goal_written_before_budgets_existed_still_loads() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (agent, _provider) = new_agent();
+    let goal = attach_goal(&agent, "ship the release");
+
+    // The file a v0.1.x build wrote: every field this goal has, none of the
+    // budget. Re-reading the just-written goal would not prove the old shape
+    // loads, so the test writes the old shape itself.
+    let goals_dir = crate::storage::horon_agent_dir()
+        .expect("home")
+        .join("goals")
+        .join("global");
+    std::fs::create_dir_all(&goals_dir).expect("goals dir");
+    let old_shape = serde_json::json!({
+        "id": "pre-budget-goal",
+        "title": "written before budgets",
+        "scope": "global",
+        "status": "active",
+        "description": "",
+        "why": "",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+    });
+    std::fs::write(
+        goals_dir.join("pre-budget-goal.json"),
+        serde_json::to_vec_pretty(&old_shape).expect("serialize"),
+    )
+    .expect("write the old file");
+
+    let reloaded = crate::goal::load_goal("pre-budget-goal", Some(crate::goal::GoalScope::Global), None)
+        .expect("an older file still parses")
+        .expect("the goal exists");
+    assert_eq!(
+        reloaded.budget_tokens, None,
+        "a missing field means unbounded, not zero"
+    );
+    assert_eq!(reloaded.title, "written before budgets");
+
+    assert!(
+        !goal.budget_tokens.is_some(),
+        "a goal created without a ceiling carries none"
+    );
+}
+
+#[tokio::test]
+async fn a_budget_attached_to_an_already_spent_session_wraps_up_once() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (mut agent, _provider) = new_agent();
+    // Spend first, then attach: the ceiling covers the transcript, so this is
+    // already over budget before the goal exists.
+    record_usage(&mut agent, 5_000);
+    attach_goal_with_budget(&agent, "late ceiling", 1_000);
+
+    assert!(
+        agent.maybe_continue_goal().expect("the hook runs"),
+        "the wrap-up turn still runs once"
+    );
+    assert_eq!(load_attached(&agent).status, crate::goal::GoalStatus::BudgetLimited);
+
+    let after_one = stored_len(&agent);
+    assert!(
+        !agent.maybe_continue_goal().expect("the second hook runs"),
+        "and the run ends on the turn after it"
+    );
+    assert_eq!(stored_len(&agent), after_one, "no second wrap-up message");
 }

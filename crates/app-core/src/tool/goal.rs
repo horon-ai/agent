@@ -42,6 +42,8 @@ struct GoalInput {
     #[serde(default)]
     progress_percent: Option<u8>,
     #[serde(default)]
+    budget_tokens: Option<u64>,
+    #[serde(default)]
     checkpoint_summary: Option<String>,
 }
 
@@ -98,6 +100,11 @@ impl Tool for InitiativeTool {
                 "blockers": {"type": "array", "items": {"type": "string"}},
                 "current_milestone_id": {"type": "string"},
                 "progress_percent": {"type": "integer"},
+                "budget_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Total tokens this goal may spend before it stops. Omit for no limit."
+                },
                 "checkpoint_summary": {"type": "string"}
             }
         })
@@ -138,6 +145,7 @@ impl Tool for InitiativeTool {
                         blockers: params.blockers.unwrap_or_default(),
                         current_milestone_id: params.current_milestone_id.clone(),
                         progress_percent: params.progress_percent,
+                        budget_tokens: params.budget_tokens,
                     },
                     working_dir,
                 )?;
@@ -227,6 +235,7 @@ impl Tool for InitiativeTool {
                         } else {
                             None
                         },
+                        budget_tokens: params.budget_tokens.map(Some),
                         checkpoint_summary: if params.action == "checkpoint" {
                             params.checkpoint_summary.clone().or(params.description.clone())
                         } else {
