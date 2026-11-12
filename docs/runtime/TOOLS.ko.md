@@ -6,7 +6,7 @@
 
 ## 도구 발견과 지연 로딩
 
-`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열다섯 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다.
+`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열여덟 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다.
 
 ### 세 단계
 
@@ -31,8 +31,8 @@ memory = "essential"
 ### 기본 배치
 
 - `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:803` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
-- `CORE_TOOLS`는 여전히 열다섯 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:779` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다.
-- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 여덟 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:889` `ToolLoadTiers::tier`).
+- `CORE_TOOLS`는 열여덟 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:779` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다. `swarm`, `todo`, `session_search`가 마지막으로 합류했고, SDK 구동 세션은 `enabled` 목록이 이름을 대지 않는 한 `session_search`와 `swarm`을 끈 채로 둡니다 (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
+- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:889` `ToolLoadTiers::tier`).
 - 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
 - `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:861` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
 - `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:889` `ToolLoadTiers::tier`).
@@ -45,7 +45,7 @@ memory = "essential"
 
 - `[tools.load_mode] ask = "essential"`처럼 적으면 그 도구는 목록 모드 세션에서도 스키마와 함께 실립니다. 명시 항목이 기본 배치보다 우선합니다.
 - `monitor = "off"`는 그 도구를 요청에서도 색인에서도 뺍니다.
-- `toolbox = "off"`로 두거나 `[tools] disabled`에 `toolbox`를 넣으면 목록 모드가 꺼지고 코어 열다섯 도구가 모두 다시 즉시 실립니다. 닿을 방법이 없는 도구를 만들지 않기 위한 동작입니다.
+- `toolbox = "off"`로 두거나 `[tools] disabled`에 `toolbox`를 넣으면 목록 모드가 꺼지고 코어 열여덟 도구가 모두 다시 즉시 실립니다. 닿을 방법이 없는 도구를 만들지 않기 위한 동작입니다.
 
 ### 목록 색인
 
@@ -57,7 +57,7 @@ memory = "essential"
 - 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
 - SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:175`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
 - 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다.
-- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`acp` 등)에만 붙고, 목록 모드 `core`에는 `todo`가 없으므로 붙지 않습니다 (`prompting.rs:233` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
+- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:233` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
 
 ### toolbox
 
@@ -91,7 +91,7 @@ memory = "essential"
 
 ### core가 닫혀 있는 이유
 
-`core`는 허용 목록입니다. 기본 headless 표면을 코어 열다섯 도구와 `toolbox` 하나로 고정하고, 나머지 모듈은 트리에 두되 노출하지 않습니다. 허용 목록은 닫힌 채 그대로이고 바뀐 것은 전달 방식뿐입니다. 일곱 도구는 스키마와 함께, 여덟 도구는 색인과 `toolbox`로 닿습니다. 마지막으로 합류한 `monitor`는 파일·명령 감시를 재시작 뒤에도 이어 가는 도구입니다. 이 선택은 세 가지를 지킵니다.
+`core`는 허용 목록입니다. 기본 headless 표면을 코어 열여덟 도구와 `toolbox` 하나로 고정하고, 나머지 모듈은 트리에 두되 노출하지 않습니다. 허용 목록은 닫힌 채 그대로이고 바뀐 것은 전달 방식뿐입니다. 일곱 도구는 스키마와 함께, 열한 도구는 색인과 `toolbox`로 닿습니다. 마지막으로 합류한 `swarm`, `todo`, `session_search`도 같은 방식으로 스키마를 접두사 밖에 둡니다. 이 선택은 세 가지를 지킵니다.
 
 - 기본 표면의 크기가 바뀌지 않아 요청 접두사와 프롬프트 캐시가 안정적입니다.
 - 쓰기와 셸을 포함한 기본 권한 범위가 예측 가능합니다.
@@ -142,8 +142,8 @@ memory = "essential"
 
 레지스트리는 이름만으로 효과를 묻지 않고 그 호출의 입력까지 넘겨 묻습니다.
 
-- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1036`).
-- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1044`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
+- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1269`).
+- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1281`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
 - 두 함수 모두 `None`을 "분류할 수 없음"으로 씁니다. 호출자는 그 값을 쓰기 배리어로 읽습니다. 읽기 전용 게이트는 자기가 볼 수 없는 영향 범위를 가진 도구 때문에 열리지 않습니다.
 
 ### 두 게이트
@@ -152,12 +152,12 @@ memory = "essential"
 
 | 경로 | 위치 | 무엇을 하는가 |
 | --- | --- | --- |
-| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1450`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:1513`)를 지나 도구를 꺼내고 승인 게이트(`:1561`)와 `pre_tool` 훅(`:1582`)을 차례로 지납니다. |
+| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1983`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:2027`)를 지나 도구를 꺼내고 승인 게이트(`:2087`)와 `pre_tool` 훅(`:2202`)을 차례로 지납니다. |
 | 에이전트 | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | 라운드가 호출을 내보내기 전에 이름 하나를 검사합니다. 계획 모드 게이트가 `:1081`에 있습니다. |
 
 에이전트 경로가 계획 모드 검사를 함수 맨 앞에 두는 이유는 그 아래 SDK 분기 때문입니다. SDK가 켠 도구나 콜백 도구는 허용 목록 검사에서 곧바로 `Ok`로 빠져나갑니다. 그 분기 뒤에 게이트를 두면 정확히 영향 범위를 볼 수 없는 호출이 검사를 지나칩니다. 그래서 계획 모드 검사는 그 분기보다 먼저 돌고, 레지스트리 경로도 같은 이유로 같은 기본값을 씁니다.
 
-두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:1517`, `:1573`).
+두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:2031`, `:2190`).
 
 ### 계획 모드 상태 기계
 
@@ -185,27 +185,47 @@ memory = "essential"
 
 ### 승인 등급
 
-`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:511`). 기본값은 `off`이고 (`crates/base/src/config.rs:922`), 이는 지금까지처럼 묻지 않는 동작입니다.
+`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:357`). 기본값은 `off`이고 (`crates/base/src/config.rs:1017`), 이는 지금까지처럼 묻지 않는 동작입니다.
 
-판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:70`). 순서가 중요합니다.
+판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:232`). 순서가 중요합니다.
 
 1. `dual_confirm_classes`에 든 위험 등급이면 모드와 무관하게 승인을 요구합니다. 이 목록에 등급을 넣는 이유가 바로 어떤 모드도 그것을 자동 승인하지 못하게 하는 것입니다.
-2. 모드가 `off`면 여기서 곧바로 자동 승인으로 돌려줍니다. 읽기 전용 분기보다 앞입니다. 순서가 뒤집히면 아무것도 바꾸지 않아야 할 모드가 호출마다 감사 줄을 쓰기 시작합니다.
-3. 읽기만 하는 호출은 어떤 모드에서도 묻지 않습니다 (`crates/app-core/src/approval.rs:43`).
-4. `write` 모드는 파일 변이만 자동 승인합니다. 프로세스나 네트워크가 섞이면 승인을 요구합니다.
-5. `all` 모드는 읽기 전용이 아닌 모든 호출을 자동 승인합니다.
+2. `[tools] restricted_paths`에 걸리는 경로는 모드와 무관하게 승인을 요구합니다. `off` 반환보다도, bash 패턴 `allow`보다도 앞입니다. 등록된 경로는 상시 "물어봐 달라"는 뜻이고, 범위 승인도 이것을 덮지 못합니다.
+3. 다음으로 `[[tools.bash_patterns]]` 판정이 결정합니다. `allow`는 자동 승인하고 `prompt`와 `deny`는 묻습니다. 위의 이중 확인 등급과 제한 경로가 이미 앞서 있습니다.
+4. 모드가 `off`면 여기서 곧바로 자동 승인으로 돌려줍니다. 읽기 전용 분기보다 앞입니다. 순서가 뒤집히면 아무것도 바꾸지 않아야 할 모드가 호출마다 감사 줄을 쓰기 시작합니다.
+5. 읽기만 하는 호출은 어떤 모드에서도 묻지 않습니다 (`crates/app-core/src/approval.rs:45`).
+6. `write` 모드는 프로세스를 실행하거나 네트워크에 닿거나, 이름을 댄 파일을 바꾸는 호출 앞에서 묻습니다. 쓰기 효과가 있어도 경로를 대지 않는 도구(할 일 목록, `ask`, `undo`, `monitor`, `checkpoint`, 컨텍스트 노트)는 묻지 않고 실행됩니다. 사용자가 승인할 파일이 없기 때문입니다.
+7. `all` 모드는 읽기 전용이 아닌 모든 호출 앞에서 묻습니다.
 
-위험 등급은 새로 분류하지 않고 기존 명령 위험 분류기의 판정을 그대로 씁니다 (`crates/app-core/src/approval.rs:52`). 이름이 붙는 등급은 `destructive-shell` 하나입니다 (`crates/app-core/src/approval.rs:20`). 셸 명령만이 영향 범위를 따질 대상이기 때문입니다.
+위험 등급은 새로 분류하지 않고 기존 명령 위험 분류기의 판정을 그대로 씁니다 (`crates/app-core/src/approval.rs:182`). 이름이 붙는 등급은 `destructive-shell` 하나입니다 (`crates/app-core/src/approval.rs:22`). 셸 명령만이 영향 범위를 따질 대상이기 때문입니다.
 
-`dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:940`, `crates/base/src/config/default_file.rs:476`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
+`dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:1026`, `crates/base/src/config/default_file.rs:341`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
 
-게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:1561`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
+게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:2072`, 훅은 `:2176`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
 
-`irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없어서 `write` 모드에서 파일 변이와 같은 자동 승인을 받고, `all` 모드에서도 묻지 않습니다. 승인 창이 뜨는 도구가 아닙니다.
+`irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없으며 파일시스템 경로를 대지 않아서, `write` 모드는 묻지 않습니다. 승인할 파일이 없기 때문입니다. `all` 모드는 묻습니다. `irc` 호출이 읽기 전용이 아니기 때문입니다.
+
+### 범위 승인
+
+답이 한 번의 호출이 아니라 한 자리를 덮을 수 있습니다. `allow_path`는 요청이 지목한 파일 하나를, `allow_folder`는 그 폴더와 그 아래 전체를 승인합니다. 승인은 `<agent home>/approvals.json`에 저장되고, `approvals/.grants.lock` 잠금 아래 모드 0600으로 쓰이며, 만료 시각을 가집니다(`[tools] approval_grant_ttl_days`, 기본 7, `0`이면 범위 승인을 끕니다).
+
+범위 승인은 `evaluate`가 "묻는다"고 판정한 뒤에만 조회되고, 그것도 승인이 답할 수 있는 사유일 때만입니다. 이중 확인 등급이 아니고, 제한 경로가 아니고, bash 패턴 판정이 아니고, 효과가 파일 변이일 때입니다. 맞으면 사유 `grant`의 자동 승인이 되므로 감사 줄에 왜 묻지 않았는지 남습니다. 범위 승인이 아닌 것 다섯 가지입니다.
+
+- **작업 공간을 넘지 않습니다.** 작업 공간 루트는 세션 작업 디렉터리의 정규화 경로입니다. 승인은 그 루트를 기록하고, 루트가 다른 승인은 절대 경로가 같아도 아무것도 덮지 않습니다.
+- **효과보다 넓지 않습니다.** 덧붙이기용으로 발급한 승인은 덧붙이기만 덮습니다. 쓰기 승인은 둘 다 덮습니다. 파일을 교체하는 쪽이 덧붙이는 쪽보다 강한 답이기 때문입니다.
+- **경로가 느슨하지 않습니다.** 승인과 호출 양쪽을 정규화하므로 `..`와 심볼릭 링크는 실제로 가리키는 자리를 냅니다. 정규화할 수 없는 경로는 승인을 받지 못하고 묻습니다.
+- **여러 경로를 덮지 않습니다.** 경로를 정확히 하나만 대는 호출만 승인할 수 있습니다. 파일 셋을 건드리는 `apply_patch`는 한 번 승인되고 다음에 다시 묻습니다. 한 번의 답이 사용자가 보지 못한 세 자리를 결정해서는 안 되기 때문입니다.
+- **제한 경로를 우회하지 않습니다.** `restricted_paths`에 걸리면 `off`를 포함한 모든 모드에서 묻고, 승인 표면이 없는 헤드리스 세션에서는 거절됩니다.
+
+요청은 `context.grant_capability`(`append` 또는 `write`)로 효과를 실어 보내므로, 승인을 저장하는 쪽은 큐에 든 요청만 읽으면 되고 레지스트리를 조회하지 않습니다. 경로는 데몬이 만든 요청 스냅숏에서 오고 클라이언트에서 오지 않으므로, 클라이언트가 자기 답의 범위를 넓힐 수 없습니다.
+
+`[tools] restricted_paths`는 글롭 목록이고, 모델이 쓴 경로, 작업 디렉터리 기준으로 해석한 경로, 정규화 경로 셋에 차례로 대어 봅니다. 구분자가 없는 패턴은 파일 이름에도 대므로 `secrets.env`가 `/srv/app/secrets.env`를 덮습니다. 해석할 수 없는 패턴은 모든 경로를 제한합니다. 읽을 수 없는 제한이 제한 없음이 되어서는 안 되기 때문입니다. `bash`는 여기서 경로를 대지 않으며 `[[tools.bash_patterns]]`가 그 역할을 합니다.
+
+ACP에서는 두 범위 옵션(`allow-path`, `allow-folder`)을 v2 세션에서만, 그것도 호출이 경로를 하나만 댈 때만 제공합니다. v1 세션은 늘 그렇듯 네 개 옵션만 제공합니다.
 
 ### 감사 기록
 
-자동 승인에는 감사 기록이 붙습니다. 새 파일이나 새 큐를 만들지 않고 기존 로그 이벤트 `TOOL_APPROVAL`을 씁니다 (`crates/app-core/src/approval.rs:139`). 필드는 도구 이름, 모드, 사유, 호출 ID 넷입니다 (`crates/app-core/src/approval.rs:125`).
+자동 승인에는 감사 기록이 붙습니다. 새 파일이나 새 큐를 만들지 않고 기존 로그 이벤트 `TOOL_APPROVAL`을 씁니다 (`crates/app-core/src/approval.rs:341`). 필드는 도구 이름, 모드, 사유, 호출 ID 넷입니다 (`crates/app-core/src/approval.rs:341`).
 
 `off` 모드는 감사 줄을 쓰지 않습니다. 승인 등급이 없던 시절과 로그가 같아야 하기 때문입니다. 읽기 전용 호출도 감사 대상이 아닙니다. 그래서 `off`가 읽기 전용 분기보다 먼저 반환합니다.
 
@@ -295,6 +315,31 @@ memory = "essential"
 
 크레이트는 파일 시스템을 읽지 않으므로 외부 변경을 스스로 감지하지 않습니다. 감지는 호출자가 `BlobId::of`로 현재 바이트를 기록된 상태와 비교할 때 일어납니다. 이력은 프로세스 밖으로 나가지 않으며, 다른 프로세스나 재시작한 세션과 공유하지 않습니다.
 
+## `generate_image`
+
+Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[tools] generate_image = true`이면서 활성 프로파일에 `roles.image = "<model>"`이 있을 때만 등록된다. 둘 중 하나가 빠지면 이름이 등록되지도 색인 행에 들어가지도 않으므로, 이미지를 만들지 않는 세션은 도구가 존재하는 값으로 아무것도 치르지 않는다. 이 도구가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
+
+| 입력 | 뜻 |
+| --- | --- |
+| `prompt` (필수) | 그릴 내용, 또는 `input`이 있으면 만들 변경. 최대 32 KiB. |
+| `size` | `1024x1024`(기본), `1536x1024`, `1024x1536`. |
+| `count` | 1~4, 기본 1. 더 큰 값은 거부하지 않고 자른다. |
+| `input` | 편집할 이미지 경로. 있으면 멀티파트로 `/images/edits`, 없으면 `/images/generations`로 보낸다. 합쳐 35 MiB 이하, 최대 16개. |
+| `model` | 이 호출에서 `roles.image`를 덮는다. |
+
+호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`에서는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다. 요청과 파일 쓰기가 한 단계이므로 병렬 실행 대상이 아니다.
+
+결과는 이미지 바이트가 아니라 텍스트다. 파일마다 경로, 바이트 크기, MIME 타입을 한 줄씩 주고 프로바이더가 수정 프롬프트를 보내면 함께 알린다. 파일은 `~/.horon/generated-images/`에 생성한 이름(`image-<millis>.png`)으로 놓인다. 프로바이더가 준 id를 파일명으로 쓰지 않고 기존 파일을 덮어쓰지도 않는다. 내용이 필요하면 모델이 그 경로를 `read`로 읽는다.
+
+| 상황 | 동작 |
+| --- | --- |
+| 활성 프로파일에 `roles.image`가 없음 | 요청 전에 거부하고 프로파일과 추가할 키를 알린다. |
+| 프로바이더가 `data: []` 반환 | "이미지를 반환하지 않음"으로 보고하고 판정은 `partial`이다. 오류가 아니다. 걸러진 프롬프트는 성공했고 아무것도 만들지 않았으며, 실패로 보고하면 모델이 성공한 요청을 다시 보내기 때문이다. |
+| `count`보다 적게 반환 | 판정은 `partial`. 도착한 파일은 쓸 수 있다. |
+| base64가 아닌 `b64_json` | 오류. 조용히 버리면 손상된 응답이 빈 성공이 된다. |
+| URL만 있는 `data` 항목 | 오류. 도구는 다른 호스트를 가져오지 않는다. |
+| 호출이 180초를 넘김 | 오류. 이미지는 느리므로 한도가 넉넉하지만 존재한다. |
+
 ## write가 새로 만든 실행 파일
 
 `write`가 새 파일을 만들 때 내용이 `#!`로 시작하면 유닉스에서 실행 권한을 함께 줍니다 (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). 방금 쓴 스크립트를 다음 턴에 `bash ./script.sh`로 부르다 권한 오류로 한 턴을 쓰는 일을 없애려는 처리입니다.
@@ -316,6 +361,28 @@ memory = "essential"
 - 완료 검사는 `blocked`를 완료로 보지 않습니다. 남은 항목이 `blocked` 하나뿐인 목록은 완료가 아니고, 자동 재촉도 그 항목을 남은 일로 셉니다 (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). 진행 중 항목을 하나만 두는 규칙에서도 `in_progress`로 세지 않습니다.
 - ACP 계획 항목은 세 상태만 있어 `blocked`를 `pending`으로 내보냅니다 (`crates/app-core/src/tool/todo.rs` `plan_entries`). 지금 아무도 하지 않는 열린 일이라는 뜻이고, 이유는 항목 자체의 `blocker`에 남습니다.
 - 도구 결과의 JSON에 `blocker`가 함께 나오므로 목록을 보는 쪽이 이유를 읽을 수 있습니다.
+
+## 백그라운드 작업 기다리기
+
+`bg action=wait`는 백그라운드 작업을 기다립니다. 선택 플래그 두 개가 기다리는 대상을 넓히고, 둘 다 주지 않은 호출은 예전과 똑같이 동작합니다 (`crates/app-core/src/tool/bg_wait.rs`).
+
+- `children: true`는 이 세션의 자식 에이전트가 끝날 때 깨어납니다. 자식은 데몬 프로세스마다 한 번만 보고합니다. 부모와 자식으로 묶은 전달 완료 원장이 두 번째 기다림에서 같은 자식을 다시 돌려주지 않고, 결과는 본문 위치로 `agent://<session_id>`를 가리킵니다.
+- `messages: true`는 이 세션 앞으로 피어(IRC) 메시지가 대기열에 들어올 때 깨어납니다. `[tools] irc = true`와 살아 있는 버스가 필요하고, 이것은 `irc wait`가 요구하는 조건과 같습니다. 둘 중 하나가 없으면 플래그는 아무것도 바꾸지 않습니다.
+- 새 소스를 고르면 `task_id`는 선택 사항입니다. 아이디를 줘도 되고, 그때는 고른 소스와 함께 지켜봅니다.
+
+`wait_mode`의 세 값은 그대로입니다. `any`(기본)는 첫 사건에서 돌아옵니다. `all`은 이름으로 지정한 작업과 자식이 모두 끝날 때까지 기다린 뒤 끝난 자식을 나열합니다. 자식은 이 보고를 낼 때만 전달된 것으로 표시되므로, 마감 시간이 먼저 온 `all` 대기는 이미 끝난 자식을 다음 대기에 남겨 둡니다. `first_failure`는 작업 하나가 실패하는 즉시 돌아옵니다. 자식과 메시지에는 따로 모드가 없고, 대기 중인 메시지는 어느 모드에서나 대기를 끝냅니다. `wait_mode: "all"`과 `messages: true`를 함께 주면 작업이나 자식이 아직 실행 중이어도 첫 메시지에서 돌아옵니다.
+
+| 결과 | `wait_reason` |
+| --- | --- |
+| 자식이 끝남 | `child_finished` |
+| 메시지가 대기 중 | `message`, 사건과 읽기 사이에 메일박스가 비었으면 `message_queued` |
+| 새 입력이 기다림을 끊음 | `interrupted` |
+| 고른 소스에 대기 중인 것이 없음 | `nothing_to_wait_for` |
+| 기한이 지남 | `timeout`, `max_wait_seconds`와 `pending_child_session_ids`를 함께 씀 |
+
+대기 중인 것이 없는 선택은 기한까지 자리를 지키지 않고 곧바로 `nothing_to_wait_for`를 돌려주며, 버스 구독은 그 사전 확인보다 먼저 걸어서 그 사이에 도착한 종료도 놓치지 않습니다.
+
+새 입력에 반응하는 것은 소스를 고른 기다림뿐입니다. `SessionInputQueued`가 그 기다림을 `interrupted`로 끝내고, 기본 기다림은 이 사건을 무시합니다. `[messages] interrupt_mode = "immediate"`이면 보통 메시지도 남은 도구 호출을 멈추므로 기다림이 그 중단을 보게 되고, 기본 `wait` 모드는 급한 표시가 붙은 메시지에만 멈춥니다 (`crates/base/src/config/messages.rs` `interrupts_running_tools`).
 
 ## read 결과에 붙는 중첩 AGENTS.md
 
@@ -612,6 +679,30 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 `horon debug 'server:memory'`의 `process.stage_counters`에 `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, `tool_result_aged_bytes`가 나옵니다. 구조 게이트(`scripts/perf/check_structural.py`)의 `context` 섹션은 1 MiB 출력이 48 KiB 안에 들어오는지, 반복 읽기가 512바이트 미만인지, 압박 구간을 두 번 지나도 축약 묶음이 정확히 한 번인지 확인합니다.
 
+## 도구 결과 판정
+
+도구 결과는 본문과 오류 플래그뿐이어서, 호출이 실제로 실행됐는지 알려면 문장을 읽어야 했습니다. 저장되는 `tool_result` 블록이 이제 `verdict`를 함께 가집니다. 호출이 어떻게 끝났는지를 이름으로 적은 선택 필드입니다 (`crates/tool-types/src/verdict.rs`).
+
+| 판정 | 뜻 |
+| --- | --- |
+| `ok` | 도구가 실행됐고 결과 전체를 돌려줬습니다. |
+| `partial` | 도구가 실행됐지만 작업 일부만 끝났습니다. |
+| `truncated` | 도구가 끝까지 실행됐고 돌려준 본문은 전체의 잘린 일부입니다. |
+| `withheld` | 도구가 실행됐고 결과 대신 거절 문장을 돌려줬습니다. 부수 효과는 있었습니다. |
+| `rejected` | 도구가 실행되기 전에 호출이 거절됐습니다. |
+| `failed` | 도구가 실행됐고 오류를 돌려줬습니다. |
+| `interrupted` | 사용자, 재시작, 취소로 호출이 건너뛰어지거나 중단됐습니다. |
+
+키 이름은 `tool_verdict`가 아니라 `verdict`입니다. 이후 표면이 모두 쓰는 같은 이름입니다. 타입은 `Option<ToolVerdict>`이고 `#[serde(default, skip_serializing_if = "Option::is_none")]`이라, 판정을 적지 않은 결과는 키 없이 직렬화됩니다.
+
+```json
+{ "type": "tool_result", "tool_use_id": "call_1", "content": "alpha", "verdict": "ok" }
+```
+
+이 필드가 생기기 전에 저장된 기록은 `verdict` 키가 없고 그대로 읽힙니다. `is_error`만 아는 읽기는 계속 그 값으로 `ok`나 `failed`를 유도합니다. 이 키는 모델에게 가지 않습니다. `crates/provider-openai`가 이 필드 없이 블록을 분해하므로, 판정을 적든 안 적든 같은 대화는 같은 요청 바이트로 렌더링되고 변경 전 세션도 똑같이 재생됩니다.
+
+모르는 판정 이름은 추측하지 않고 기록 전체를 거절합니다. 모르는 블록 `type`이 이미 그렇게 동작합니다. 이후 빌드가 새 이름으로 쓴 기록은 이전 빌드에서 읽히지 않습니다.
+
 ## 보조 완료와 비밀값 왕복
 
 대화를 건드리지 않는 곁가지 호출 하나의 계약과, 자격증명이 프로바이더로 나갔다가 도구에서 실제 값으로 돌아오는 왕복을 설명합니다. 두 장치는 서로 다른 문제를 다루지만 경계를 긋는 방식이 같습니다. 호출자가 정할 수 있는 것과 정할 수 없는 것을 타입으로 가르고, 경계를 넘는 값은 이름이 붙은 오류로 거절합니다.
@@ -718,3 +809,36 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 ### 쓰기 경로
 
 적용된 편집은 `edit`와 같은 경로를 지납니다. 모든 파일에 경로 정책과 생성 파일 가드를 적용하고, 경로별로 잠그며, 호출 전체를 변이 단위 하나로 남기므로 `undo` 한 번이 모든 파일을 되돌립니다. 쓰기 전에 계획을 세울 때 읽은 바이트와 현재 내용을 대조하고, 그 사이에 바뀐 파일이 있으면 아무것도 쓰지 않고 호출을 실패시킵니다. 쓰기 효과를 선언하는 것은 적용하는 호출(`apply: true`인 `rename`, `action_id`가 있는 `code_actions`)뿐입니다.
+
+## 모델 체크포인트와 되감기
+
+`checkpoint`와 `rewind`는 모델이 자기 세션의 한 지점을 표시하고, 나중에 그 뒤의
+모든 것을 자기가 쓴 보고로 접어 넣게 합니다. `[tools] checkpoint`가 켜져 있을 때만
+등록되며, 두 도구는 한 스위치를 공유합니다. 되감을 수 없는 체크포인트나
+체크포인트 없는 되감기는 따로 쓸모가 없기 때문입니다. 어느 기본 프로필에도 없고,
+그 스위치만이 닫힌 허용 목록에 둘을 넣습니다
+(`crates/base/src/config/tool_selection.rs`).
+
+- `checkpoint`는 인자를 받지 않습니다. 세션마다 활성 체크포인트는 하나이며,
+  활성 상태에서 다시 호출하면 거부하고, 같은 턴에서 두 번째로 호출해도 거부합니다.
+- `rewind`는 비어 있지 않은 `report`를 받습니다. 버린 갈래가 무엇을 밝혔는지,
+  왜 버렸는지, 다음 시도가 무엇을 다르게 해야 하는지를 적습니다.
+
+호출은 의도만 기록합니다(`crates/app-core/src/tool/checkpoint.rs`). 도구 왕복은
+자기 대화록을 다시 만들 수 없습니다. 도구를 호출한 어시스턴트 메시지와 아직
+나오지 않은 결과가 같은 턴에 속하기 때문입니다. 두 턴 루프 모두 커밋된 턴이
+끝날 때 대기 요청을 적용하며(`crates/app-core/src/agent/interrupts.rs`), 클라이언트
+되감기와 같은 이력 경로를 지납니다. 실패하거나 취소된 턴은 요청을 버립니다.
+
+체크포인트는 숨은 `<system-reminder>` 레코드로 저장됩니다. 대화록 보기와 되감기
+대상 목록은 이 레코드를 건너뛰고, 프로바이더는 배경 정보로 받습니다. 저장된
+이력의 일부라 재시작해도 남습니다. 되감기는 대화록을 가장 최근 체크포인트까지
+자르고 보고를 숨은 알림 하나로 덧붙입니다. 그래서 모델은 자기 결론을 유지하고,
+전체 대화록은 `history://current`로 계속 읽을 수 있습니다.
+
+파일, 백그라운드 작업, 프로세스 상태는 복원하지 않습니다. 움직이는 것은 대화
+이력뿐입니다. 두 도구 모두 쓰기 효과를 선언하므로 계획 모드가 거부합니다.
+
+테스트: `crates/app-core/src/tool/checkpoint_tests.rs`가 등록 게이트, 거부 사유,
+대기 요청 표를 다루고, `crates/app-core/src/agent/rewind_summary_tests.rs`가 정착
+경로, 갈래를 대신하는 보고, 되돌리기를 다룹니다.

@@ -12,6 +12,7 @@ fn message(role: Role, content: Vec<ContentBlock>) -> StoredMessage {
     StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         id: "m1".to_string(),
         role,
         content,
@@ -62,6 +63,7 @@ fn export_markdown_redacts_secret_in_tool_result() {
             tool_use_id: "call_1".to_string(),
             content: format!("GITHUB_TOKEN={token}"),
             is_error: None,
+            verdict: None,
         }],
     )];
 
@@ -106,6 +108,7 @@ fn export_markdown_truncates_long_tool_result() {
             tool_use_id: "call_1".to_string(),
             content: long.clone(),
             is_error: Some(true),
+            verdict: None,
         }],
     )];
 
@@ -129,6 +132,7 @@ fn export_markdown_keeps_short_tool_result_verbatim() {
             tool_use_id: "call_1".to_string(),
             content: "exit code 0".to_string(),
             is_error: None,
+            verdict: None,
         }],
     )];
 

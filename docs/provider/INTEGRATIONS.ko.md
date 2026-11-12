@@ -4,6 +4,26 @@
 
 원격 MCP 서버와 사용자 정의 웹 검색을 다룬다.
 
+## 이미지 생성
+
+`generate_image` 도구(`docs/runtime/TOOLS.ko.md`)는 OpenAI Images 형태를 다룬다. `roles.image`를 지정한 프로파일의 `/images/generations`와 `/images/edits`다. 같은 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다.
+
+자체 전송 형식을 쓰는 끝점, 예를 들어 Gemini의 `generateContent`나 Responses 내장 이미지 도구는 도구 대신 MCP로 연결한다. 모델 경로의 예외를 한 형태로 묶어 두는 방법이다.
+
+```json
+{
+  "mcpServers": {
+    "images": {
+      "type": "http",
+      "url": "https://mcp.example.com/images/mcp",
+      "headers": { "Authorization": "Bearer ${IMAGE_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+MCP 이미지 서버는 결과를 도구 결과로 돌려주므로 역할도 설정 스위치도 이 크레이트의 변경도 필요 없다. 대신 출력이 `~/.horon/generated-images/`가 아니라 도구 결과 예산에 들어간다.
+
 ## 원격 MCP 서버
 
 HoronAgent는 로컬 stdio 서버, Streamable HTTP 서버, 레거시

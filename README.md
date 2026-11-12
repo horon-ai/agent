@@ -19,7 +19,7 @@
 
 `horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. The headless binary never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
-- **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the separate `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary.
+- **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the separate `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary; `HORON_NO_TUI=1` keeps the headless path, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
 - **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 69.8 ms on Linux and 104.7 ms on macOS ([numbers and caveats](#benchmarks)).
@@ -38,7 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install
 irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
-The installer downloads the release archive and `SHA256SUMS`, then hands them to `horon-agent install-release`, which verifies the checksum, stages an immutable version directory and switches the `stable`/`current` links. A version directory that already holds different bytes is refused, not overwritten ([details](docs/release/INSTALL.md)).
+The installer downloads the release archive and `SHA256SUMS`, then hands them to `horon install-release`, which verifies the checksum, stages an immutable version directory and switches the `stable`/`current` links. A version directory that already holds different bytes is refused, not overwritten ([details](docs/release/INSTALL.md)).
+
+The installer links three launchers: `horon`, the command every example in these docs uses; `hrn`, the same command under a shorter name; and `horon-agent`, the executable's own name.
 
 **Container (Linux, amd64 and arm64)**
 
@@ -79,7 +81,7 @@ horon run "summarize this repo"
 ```
 
 <p align="center">
-  <img src="docs/assets/terminal-run.svg" alt="Terminal transcript: provider current reports ready, then horon-agent run executes an ls tool call and the model answers mock-ok" width="860">
+  <img src="docs/assets/terminal-run.svg" alt="Terminal transcript: provider current reports ready, then horon run executes an ls tool call and the model answers mock-ok" width="860">
 </p>
 
 <sub>Captured from a real run of a `dev` build against the repository's deterministic mock model server (`scripts/perf/mock_llm_server.py`), with an isolated home directory. The model reply is the mock's fixed text.</sub>
@@ -90,6 +92,7 @@ With no profile configured, a model call stops before the network and names the 
 
 | Command | What it does |
 | --- | --- |
+| `horon` (no subcommand) | On a terminal, start the server and replace itself with the `horon-tui` client beside it, with keys, user files and a settings screen ([docs/runtime/TUI.md](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling keeps the headless path. |
 | `horon run "<message>"` | Send one message, run tools until the turn ends, exit. |
 | `horon repl` | Simple line-based REPL (no TUI). |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
@@ -105,7 +108,7 @@ Register `horon` (or `horon-agent`) with the argument `acp` as an external agent
   "agent_servers": {
     "horon agent": {
       "type": "custom",
-      "command": "/absolute/path/to/horon-agent",
+      "command": "/absolute/path/to/horon",
       "args": ["acp"]
     }
   }
@@ -133,7 +136,7 @@ Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](
 
 ## Features
 
-- **A core tool set of 15.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo` and `ask`. A core session sends seven of them up front plus `toolbox`, names the other eight in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
+- **A core tool set of 18.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search` and `swarm`. A core session sends seven of them up front plus `toolbox`, names the other eleven in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
 - **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon session inspect|doctor|export|import|migrate|recover-to` work on the store ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
 - **Edit safety.** A journal backs `undo` for file edits, and `redo` and hashline anchors are opt-in ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
 - **MCP and skills.** `horon mcp` lists configured MCP servers and manages remote-server OAuth credentials; skills are read through `skill://` and managed with `skill_manage`.

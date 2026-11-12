@@ -20,6 +20,15 @@ pub enum ModelRole {
     Plan,
     /// Cheap auxiliary work: compaction summaries, titles, classification.
     Aux,
+    /// Typed judgments: a calibrated probability, label or level instead of
+    /// free text. Falls back to `aux` first because a judgment is the same
+    /// class of cheap side task, then to `default`.
+    Judge,
+    /// Image generation and editing. This is the one role that names a model
+    /// which does not speak Chat Completions: its caller posts to
+    /// `/images/generations` on the same profile. It has no inherited fallback,
+    /// because a text model cannot answer an image request.
+    Image,
 }
 
 impl ModelRole {
@@ -28,7 +37,41 @@ impl ModelRole {
             Self::Default => "default",
             Self::Plan => "plan",
             Self::Aux => "aux",
+            Self::Judge => "judge",
+            Self::Image => "image",
         }
+    }
+
+    /// The roles this role inherits from, closest first, excluding itself.
+    ///
+    /// Resolving through this list is what keeps one chain in
+    /// [`resolve_role_model`]: a role only declares which other role entries
+    /// stand in for it, and the shared function keeps the order.
+    pub fn fallback_roles(self) -> &'static [Self] {
+        match self {
+            Self::Default => &[],
+            Self::Plan => &[Self::Default],
+            Self::Aux => &[Self::Default],
+            Self::Judge => &[Self::Aux, Self::Default],
+            // Deliberately empty: falling back to a text model would send an
+            // image request to a model that cannot answer it. An unset `image`
+            // entry means image generation is unavailable, which the tool
+            // reports, rather than a call that always fails at the endpoint.
+            Self::Image => &[],
+        }
+    }
+}
+
+impl ModelRole {
+    /// Whether a text-model default is a valid substitute for this role.
+    ///
+    /// Every role here speaks Chat Completions, so a text default is a working
+    /// answer for all of them except `image`: that role names a model whose
+    /// caller posts an image request, and a chat model cannot answer it. The
+    /// distinction has to be stated once, in the resolution function's own
+    /// terms, rather than by each caller checking the role.
+    pub fn accepts_text_default(self) -> bool {
+        !matches!(self, Self::Image)
     }
 }
 
@@ -52,11 +95,19 @@ pub struct ModelRoles {
     pub plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aux: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 impl ModelRoles {
     pub fn is_empty(&self) -> bool {
-        self.default.is_none() && self.plan.is_none() && self.aux.is_none()
+        self.default.is_none()
+            && self.plan.is_none()
+            && self.aux.is_none()
+            && self.judge.is_none()
+            && self.image.is_none()
     }
 
     fn value_for(&self, role: ModelRole) -> Option<&str> {
@@ -64,6 +115,8 @@ impl ModelRoles {
             ModelRole::Default => self.default.as_deref(),
             ModelRole::Plan => self.plan.as_deref(),
             ModelRole::Aux => self.aux.as_deref(),
+            ModelRole::Judge => self.judge.as_deref(),
+            ModelRole::Image => self.image.as_deref(),
         }
     }
 }
@@ -123,10 +176,23 @@ impl std::fmt::Display for RoleResolutionError {
                 formatter,
                 "model role `{role}` must name a bare model id inside its provider profile, but `{value}` carries the route prefix `{prefix}:`",
             ),
-            Self::Unresolved { role } => write!(
-                formatter,
-                "no model resolved for role `{role}`: the run override, `roles.{role}`, `roles.default`, the profile `default_model`, and `[provider] default_model` were all empty",
-            ),
+            Self::Unresolved { role } => {
+                let inherited = role
+                    .fallback_roles()
+                    .iter()
+                    .map(|role| format!("`roles.{role}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let inherited = if inherited.is_empty() {
+                    String::new()
+                } else {
+                    format!("{inherited}, ")
+                };
+                write!(
+                    formatter,
+                    "no model resolved for role `{role}`: the run override, `roles.{role}`, {inherited}the profile `default_model`, and `[provider] default_model` were all empty",
+                )
+            }
         }
     }
 }
@@ -136,11 +202,12 @@ impl std::error::Error for RoleResolutionError {}
 /// Resolve the model a role asks for.
 ///
 /// The first step that yields a non-empty value wins: the run override, the
-/// role's own entry, the `default` role's entry, the profile `default_model`,
-/// then `[provider] default_model`. An empty string counts as unset at every
-/// step, and a step that resolves nothing ends in an error naming the role.
+/// role's own entry, each role in [`ModelRole::fallback_roles`] in order, the
+/// profile `default_model`, then `[provider] default_model`. An empty string
+/// counts as unset at every step, and a step that resolves nothing ends in an
+/// error naming the role.
 ///
-/// Only the two `roles` steps refuse a route prefix. The other three are the
+/// Only the `roles` steps refuse a route prefix. The other three are the
 /// chain this build already resolves, where a `--model` value such as
 /// `<profile>:<model>` is consumed by the existing prefix handling before it
 /// reaches a role, so refusing it here would change today's behaviour.
@@ -157,20 +224,23 @@ pub fn resolve_role_model(
     if let Some(value) = usable(roles.value_for(role)) {
         return role_model(role, value);
     }
-    // `default` already had its turn above; reading it twice would hide an
-    // empty `roles.plan` behind the same value it inherits anyway.
-    let default_entry = match role {
-        ModelRole::Default => None,
-        ModelRole::Plan | ModelRole::Aux => usable(roles.default.as_deref()),
-    };
-    if let Some(value) = default_entry {
-        return role_model(role, value);
+    // The role's own entry already had its turn above, so the fallback walk
+    // never reads it twice: a role that inherits from itself is unrepresentable.
+    for inherited in role.fallback_roles() {
+        if let Some(value) = usable(roles.value_for(*inherited)) {
+            return role_model(role, value);
+        }
     }
-    if let Some(value) = usable(profile_default_model) {
-        return Ok(value.to_string());
-    }
-    if let Some(value) = usable(provider_default_model) {
-        return Ok(value.to_string());
+    // A role that cannot use a text model says so, and then no default is a
+    // substitute for its own entry: `image` without `roles.image` is "not
+    // configured", not "send an image request to the chat model".
+    if role.accepts_text_default() {
+        if let Some(value) = usable(profile_default_model) {
+            return Ok(value.to_string());
+        }
+        if let Some(value) = usable(provider_default_model) {
+            return Ok(value.to_string());
+        }
     }
     Err(RoleResolutionError::Unresolved { role })
 }

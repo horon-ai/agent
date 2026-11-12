@@ -12,7 +12,7 @@ TypeScript와 Rust SDK다. 이들은 Unix 소켓으로 서버에 붙고 연결�
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              SERVER (🔥 blazing)                              │
 │                                                                             │
-│  horon-agent serve                                                                │
+│  horon serve                                                                │
 │  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
 │  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
 │  ├── Registry:     ~/.horon/servers.json                                    │
@@ -54,7 +54,7 @@ Combined: "🔥 blazing 🦊 fox" = server + session
 ```
   START                          CONNECT                     RELOAD
   ─────                          ───────                     ──────
-  horon-agent (first run)              horon-agent (subsequent)          /reload
+  horon (first run)                    horon (subsequent)                /reload
        │                              │                          │
        ├─▶ No server? Spawn daemon    ├─▶ Server exists?         ├─▶ Server execs into
        ├─▶ Wait for socket            │   Connect directly       │   new binary (same PID)

@@ -398,11 +398,8 @@ fn convert_content_blocks(content: &ClaudeCodeContent) -> Vec<ContentBlock> {
                     tool_use_id,
                     content,
                     is_error,
-                } => Some(ContentBlock::ToolResult {
-                    tool_use_id: tool_use_id.clone(),
-                    content: content.clone(),
-                    is_error: *is_error,
-                }),
+                    ..
+                } => Some(ContentBlock::tool_result(tool_use_id, content, *is_error)),
                 ClaudeCodeContentBlock::Unknown => None,
             })
             .collect(),
@@ -442,6 +439,7 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } => {
                 changed = true;
                 let outcome = if *is_error == Some(true) { "error" } else { "result" };
@@ -529,6 +527,7 @@ fn normalize_imported_history(session: &mut Session, apply_limits: bool) -> bool
             kept_reversed.insert(
                 0,
                 StoredMessage { original_input: None, arg_repairs: None,
+                degradations: None,
                     turn_start: false,
                     id: crate::id::new_id("message"),
                     role: Role::User,
@@ -801,6 +800,7 @@ fn import_session_from_file_with_target(
             imported_messages.push(StoredMessage {
                 original_input: None,
                 arg_repairs: None,
+                degradations: None,
                 turn_start: false,
                 id: msg_id,
                 role,
@@ -946,6 +946,7 @@ fn append_text_message(session: &mut Session, role: Role, text: String, timestam
     session.append_stored_message(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: crate::id::new_id("msg"),
         role,

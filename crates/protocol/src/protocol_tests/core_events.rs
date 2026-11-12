@@ -293,6 +293,7 @@ fn test_rewind_request_roundtrip() -> Result<()> {
     let req = Request::Rewind {
         id: 8,
         message_index: 3,
+        summarize: false,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"rewind\""));
@@ -569,6 +570,7 @@ fn test_history_event_roundtrip_preserves_messages() -> Result<()> {
             content: "hello".to_string(),
             tool_calls: None,
             tool_data: None,
+            verdict: None,
         }],
         images: Vec::new(),
         provider_name: Some("openai".to_string()),

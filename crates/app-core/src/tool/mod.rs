@@ -14,6 +14,7 @@ mod bash;
 mod bash_interceptor;
 mod batch;
 mod bg;
+pub(crate) mod checkpoint;
 pub(crate) mod client_bridge;
 pub(crate) mod client_fs;
 mod codemode;
@@ -27,6 +28,7 @@ mod edit;
 mod edit_stats;
 mod file_diff;
 pub(crate) mod file_lock;
+pub(crate) mod generate_image;
 mod generated_guard;
 mod git_guard;
 mod goal;
@@ -113,6 +115,7 @@ pub(crate) fn forget_session_caches(session_id: &str) {
     monitor::forget_session(session_id);
     ask_bridge::forget_session(session_id);
     read_state::forget_session(session_id);
+    checkpoint::forget_session(session_id);
     horon_agent_session_types::repair_record::forget_session(session_id);
     // A structured-result child that never reached the completion path (or whose
     // last status update was missed) must not leave its schema slot behind.
@@ -121,6 +124,18 @@ pub(crate) fn forget_session_caches(session_id: &str) {
 
 use std::sync::{LazyLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
+
+/// The four values every approval request is built from.
+///
+/// The refuse-and-retry path and the ACP permission bridge build the same
+/// request from the same decision, so they share this instead of passing the
+/// four through two positional argument lists.
+pub(crate) struct ApprovalPromptRef<'a> {
+    pub(crate) resolved_name: &'a str,
+    pub(crate) reason: &'a str,
+    pub(crate) is_dual_confirm: bool,
+    pub(crate) input: &'a Value,
+}
 
 /// Marker error for a tool call that stopped its own turn on purpose.
 ///
@@ -191,7 +206,7 @@ pub(crate) use horon_agent_tool_core::intent_schema_property;
 pub use horon_agent_tool_core::{
     ConcurrencyClass, StdinInputRequest, Tool, ToolContext, ToolEffects, ToolExecutionMode,
 };
-pub use horon_agent_tool_types::{ToolImage, ToolOutput};
+pub use horon_agent_tool_types::{ToolImage, ToolOutput, ToolRejected, ToolVerdict};
 pub(crate) use session_search::spawn_recent_index_warmup;
 pub use session_search::{SearchOptions, search_sessions_blocking};
 #[cfg(test)]
@@ -644,7 +659,9 @@ pub(crate) const OUTPUT_WITHHELD_PREFIX: &str = "⚠️ OUTPUT WITHHELD:";
 /// re-deriving the guard's arithmetic.
 pub(crate) fn is_context_refusal(output: &ToolOutput) -> bool {
     let text = output.output.trim_start();
-    text.starts_with(CONTEXT_LIMIT_REFUSAL_PREFIX) || text.starts_with(OUTPUT_WITHHELD_PREFIX)
+    output.verdict == Some(ToolVerdict::Withheld)
+        || text.starts_with(CONTEXT_LIMIT_REFUSAL_PREFIX)
+        || text.starts_with(OUTPUT_WITHHELD_PREFIX)
 }
 
 /// Record the opt-in on an output that actually carries content.
@@ -1077,15 +1094,15 @@ impl Registry {
             Self::insert_tool(&mut tools_map, "ast_grep", ast_tools::AstGrepTool::new());
             Self::insert_tool(&mut tools_map, "ast_edit", ast_tools::AstEditTool::new());
         }
-        // The dispatcher for the surface a profile does not send eagerly exists
-        // under `full` and `core`. It is deliberately absent from `CORE_TOOLS`
-        // and from the `acp` allow-list; the `core` allow-list joins it
-        // explicitly, and the tier resolver pins it `Essential` so the one tool
-        // that can reach the listed surface is never itself deferred.
         // `lsp` is opt-in (`[tools] lsp = true`): it starts a language server
         // process, so it stays out of every default profile until asked for.
         if lsp::enabled() {
             Self::insert_tool(&mut tools_map, "lsp", lsp::LspTool::new());
+        }
+        // The checkpoint pair is opt-in (`[tools] checkpoint = true`) and useless apart.
+        if checkpoint::enabled() {
+            Self::insert_tool(&mut tools_map, "checkpoint", checkpoint::CheckpointTool::new());
+            Self::insert_tool(&mut tools_map, "rewind", checkpoint::RewindTool::new());
         }
         // Context notes are opt-in (`[tools] context_notes = true`): the notes
         // are injected into every request, so the switch also gates the prompt
@@ -1133,6 +1150,7 @@ impl Registry {
         // ambient session.
         registry.register_approval_tool_if_enabled().await;
         registry.register_aux_completion_tool_if_enabled().await;
+        registry.register_generate_image_tool_if_enabled().await;
         registry.register_plan_tool_if_enabled().await;
         registry
     }
@@ -1356,71 +1374,6 @@ impl Registry {
         crate::util::estimate_tokens(s)
     }
 
-    /// Paths a tool call names in its input, labelled by the input key they
-    /// came from, resolved against the session working directory. Covers the
-    /// common path keys, `paths` arrays (first 8), and `apply_patch` file
-    /// headers (Codex envelope and unified diff).
-    fn touched_paths(input: &Value, ctx: &ToolContext) -> Vec<(&'static str, std::path::PathBuf)> {
-        let mut touched = Vec::new();
-        let Some(object) = input.as_object() else {
-            return touched;
-        };
-        let resolve = |path: &str| ctx.resolve_path(std::path::Path::new(path));
-        for key in ["file_path", "path", "target", "target_path", "old_path", "new_path"] {
-            if let Some(path) = object.get(key).and_then(Value::as_str) {
-                touched.push((key, resolve(path)));
-            }
-        }
-        if let Some(paths) = object.get("paths").and_then(Value::as_array) {
-            for path in paths.iter().filter_map(Value::as_str).take(8) {
-                touched.push(("paths", resolve(path)));
-            }
-        }
-        if let Some(patch) = object.get("patch_text").and_then(Value::as_str) {
-            for path in Self::patch_paths(patch) {
-                if !touched.iter().any(|(_, existing)| *existing == resolve(path)) {
-                    touched.push(("patch", resolve(path)));
-                }
-            }
-        }
-        touched
-    }
-
-    /// File paths named in patch headers. Deletions are included because the
-    /// path was still touched; `/dev/null` sides of unified diffs are not.
-    fn patch_paths(patch: &str) -> Vec<&str> {
-        let mut paths = Vec::new();
-        for line in patch.lines() {
-            let path = [
-                "*** Add File: ",
-                "*** Update File: ",
-                "*** Delete File: ",
-                "*** Move to: ",
-            ]
-            .iter()
-            .find_map(|prefix| line.strip_prefix(prefix))
-            .or_else(|| {
-                let header = line.strip_prefix("+++ ").or_else(|| line.strip_prefix("--- "))?;
-                let header = header.split('\t').next().unwrap_or(header).trim();
-                if header == "/dev/null" {
-                    return None;
-                }
-                Some(
-                    header
-                        .strip_prefix("a/")
-                        .or_else(|| header.strip_prefix("b/"))
-                        .unwrap_or(header),
-                )
-            });
-            if let Some(path) = path.map(str::trim).filter(|path| !path.is_empty())
-                && !paths.contains(&path)
-            {
-                paths.push(path);
-            }
-        }
-        paths
-    }
-
     /// The request already opened for one approval decision, keyed by session,
     /// tool and input.
     ///
@@ -1473,6 +1426,7 @@ impl Registry {
         reason: &str,
         is_dual_confirm: bool,
         input: &Value,
+        effects: ToolEffects,
         ctx: &ToolContext,
     ) -> Option<String> {
         use crate::safety::PermissionResult;
@@ -1550,10 +1504,13 @@ impl Registry {
 
         let request = Self::gate_permission_request(
             crate::safety::new_request_id(),
-            resolved_name,
-            reason,
-            is_dual_confirm,
-            input,
+            &ApprovalPromptRef {
+                resolved_name,
+                reason,
+                is_dual_confirm,
+                input,
+            },
+            effects,
             ctx,
             // The answer arrives through the approval surface after this call
             // returns; blocking here would hold the turn open for it.
@@ -1631,16 +1588,24 @@ impl Registry {
     /// actually blocks on the answer.
     fn gate_permission_request(
         id: String,
-        resolved_name: &str,
-        reason: &str,
-        is_dual_confirm: bool,
-        input: &Value,
+        prompt: &ApprovalPromptRef<'_>,
+        effects: ToolEffects,
         ctx: &ToolContext,
         wait: bool,
     ) -> crate::safety::PermissionRequest {
         use crate::safety::{ApprovalDefault, PermissionRequest, Urgency};
 
+        let resolved_name = prompt.resolved_name;
+        let reason = prompt.reason;
+        let is_dual_confirm = prompt.is_dual_confirm;
+        let input = prompt.input;
         let now = chrono::Utc::now();
+        // A scoped answer ("allow this file", "allow this folder") is written by
+        // whoever records the decision, and that writer has only the queued
+        // request to read: it cannot ask the registry for effects. So the
+        // capability travels in the context, and only when a grant could mean
+        // something.
+        let grant_capability = crate::approval_grants::GrantCapability::from_effects(effects);
         PermissionRequest {
             id,
             action: resolved_name.to_string(),
@@ -1666,6 +1631,7 @@ impl Registry {
                 "working_dir": ctx.working_dir.as_ref().map(|dir| dir.display().to_string()),
                 "requested_at": now.to_rfc3339(),
                 "input": input,
+                "grant_capability": grant_capability.map(|capability| capability.as_str()),
             })),
             run_id: None,
             expires_at: None,
@@ -1763,7 +1729,7 @@ impl Registry {
             keys.sort();
             fields.push(("input_keys".to_string(), keys.join(",")));
 
-            let touched_paths = Self::touched_paths(input, ctx)
+            let touched_paths = path_policy::touched_paths(input, ctx)
                 .into_iter()
                 .map(|(key, path)| format!("{key}:{}", path.display()))
                 .collect::<Vec<_>>();
@@ -1866,7 +1832,7 @@ impl Registry {
         latency_ms: u64,
     ) -> crate::hooks::HookEvent {
         let mut unique_paths: Vec<String> = Vec::new();
-        for (_, path) in Self::touched_paths(input, ctx) {
+        for (_, path) in path_policy::touched_paths(input, ctx) {
             let path = path.display().to_string();
             if !unique_paths.contains(&path) {
                 unique_paths.push(path);
@@ -2036,20 +2002,18 @@ impl Registry {
         let policy_on_self = is_custom || resolved_name != crate::config::TOOLBOX_TOOL;
         if is_custom && let Some(config) = sdk::config(&ctx.session_id) {
             let disabled = config.disabled.into_iter().collect();
-            anyhow::ensure!(
-                !self.tool_is_disabled(&disabled, resolved_name),
-                "Tool '{}' is disabled",
-                resolved_name
-            );
+            if self.tool_is_disabled(&disabled, resolved_name) {
+                return Err(ToolRejected(format!("Tool '{}' is disabled", resolved_name)).into());
+            }
         }
         if !is_custom && let Some(policy) = session_tool_policy(&ctx.session_id) {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !self.tool_is_allowed(allowed, resolved_name)
             {
-                return Err(anyhow::anyhow!("Tool '{}' is not allowed", resolved_name));
+                return Err(ToolRejected(format!("Tool '{}' is not allowed", resolved_name)).into());
             }
             if self.tool_is_disabled(&policy.disabled_tools, resolved_name) {
-                return Err(anyhow::anyhow!("Tool '{}' is disabled", resolved_name));
+                return Err(ToolRejected(format!("Tool '{}' is disabled", resolved_name)).into());
             }
         }
         // Plan mode is read-only: refuse a call that declares a barrier effect
@@ -2068,7 +2032,7 @@ impl Registry {
             let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
             fields.push(("block_reason".to_string(), "plan_mode".to_string()));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-            return Err(anyhow::anyhow!(crate::plan_mode::block_message(resolved_name)));
+            return Err(ToolRejected(crate::plan_mode::block_message(resolved_name)).into());
         }
         let tool: Arc<dyn Tool> = if is_custom {
             Arc::new(sdk::CallbackTool(resolved_name.into()))
@@ -2149,17 +2113,50 @@ impl Registry {
                 let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
                 fields.push(("block_reason".to_string(), "bash_pattern".to_string()));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-                return Err(anyhow::anyhow!("Blocked by bash pattern '{}' (deny).", verdict.pattern));
+                return Err(ToolRejected(format!("Blocked by bash pattern '{}' (deny).", verdict.pattern)).into());
             }
+            // The paths this call names, and the `restricted_paths` glob that
+            // matched one of them. Both are computed once here so the evaluation
+            // and the grant lookup below see the same answer.
+            let approval_paths =
+                crate::tool::path_policy::named_paths(resolved_name, &input, ctx.working_dir.as_deref());
+            let restricted =
+                crate::approval_grants::restricted_match(resolved_name, &input, ctx.working_dir.as_deref());
             let evaluation = crate::approval::evaluate_and_audit(
-                resolved_name,
-                approval_effects,
-                approval_mode,
-                &dual_confirm,
-                danger,
-                bash_pattern.as_ref(),
+                crate::approval::ApprovalCall {
+                    tool: resolved_name,
+                    effects: approval_effects,
+                    mode: approval_mode,
+                    dual_confirm: &dual_confirm,
+                    danger,
+                    bash_pattern: bash_pattern.as_ref(),
+                    paths: &approval_paths,
+                    restricted: restricted.as_deref(),
+                },
                 &ctx.tool_call_id,
             );
+            // A scoped grant answers a call the mode would otherwise ask about.
+            // It never answers a dual-confirm class, a restricted path, a bash
+            // pattern verdict, or a call that mutates nothing a grant can name.
+            let evaluation = match evaluation {
+                crate::approval::ApprovalEvaluation::RequiresApproval {
+                    is_dual_confirm: false, ..
+                } if restricted.is_none()
+                    && bash_pattern.is_none()
+                    && crate::approval_grants::covered(
+                        resolved_name,
+                        &input,
+                        ctx.working_dir.as_deref(),
+                        approval_effects,
+                    ) =>
+                {
+                    crate::approval::audit_granted_call(resolved_name, approval_mode, &ctx.tool_call_id);
+                    crate::approval::ApprovalEvaluation::AutoApproved {
+                        reason: "grant".to_string(),
+                    }
+                }
+                other => other,
+            };
             match evaluation {
                 crate::approval::ApprovalEvaluation::RequiresApproval {
                     reason,
@@ -2170,15 +2167,20 @@ impl Registry {
                     Some(bridge) => {
                         permission_bridge::await_permission(
                             &bridge,
-                            resolved_name,
-                            &reason,
-                            is_dual_confirm,
-                            &input,
+                            &ApprovalPromptRef {
+                                resolved_name,
+                                reason: &reason,
+                                is_dual_confirm,
+                                input: &input,
+                            },
+                            approval_effects,
                             &ctx,
                         )
                         .await
                     }
-                    None => Self::approval_refusal(resolved_name, &reason, is_dual_confirm, &input, &ctx),
+                    None => {
+                        Self::approval_refusal(resolved_name, &reason, is_dual_confirm, &input, approval_effects, &ctx)
+                    }
                 },
                 crate::approval::ApprovalEvaluation::AutoApproved { .. } => None,
             }
@@ -2189,7 +2191,7 @@ impl Registry {
             let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
             fields.push(("block_reason".to_string(), "approval".to_string()));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-            return Err(anyhow::anyhow!(refusal));
+            return Err(ToolRejected(refusal).into());
         }
 
         // User-configured pre_tool gate: external policy hook that can block
@@ -2217,7 +2219,7 @@ impl Registry {
                 let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &restored, &ctx);
                 fields.push(("block_reason".to_string(), reason.clone()));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
-                return Err(anyhow::anyhow!("Tool call blocked by pre_tool hook: {reason}"));
+                return Err(ToolRejected(format!("Tool call blocked by pre_tool hook: {reason}")).into());
             }
             restored
         } else {
@@ -2288,6 +2290,7 @@ impl Registry {
                 text,
                 artifacts::GENERIC_CONDENSE_BUDGET_BYTES,
             );
+            output.verdict = Some(ToolVerdict::after_cut(output.verdict));
         }
         output = self.guard_context_overflow(name, output, accept_large_output).await;
         if accept_large_output {
@@ -2369,9 +2372,8 @@ impl Registry {
             ));
             return ToolOutput {
                 output: Self::exhausted_context_refusal(output_tokens, current_tokens, budget),
-                title: output.title,
-                metadata: output.metadata,
-                images: output.images,
+                verdict: Some(ToolVerdict::Withheld),
+                ..output
             };
         }
 
@@ -2397,9 +2399,8 @@ impl Registry {
             ));
             return ToolOutput {
                 output: Self::oversized_output_refusal(output_tokens, max_tokens, current_tokens, budget),
-                title: output.title,
-                metadata: output.metadata,
-                images: output.images,
+                verdict: Some(ToolVerdict::Withheld),
+                ..output
             };
         }
 
@@ -2427,9 +2428,8 @@ impl Registry {
 
         ToolOutput {
             output: truncated,
-            title: output.title,
-            metadata: output.metadata,
-            images: output.images,
+            verdict: Some(ToolVerdict::after_cut(output.verdict)),
+            ..output
         }
     }
 
@@ -2543,7 +2543,7 @@ impl Registry {
             msg.push_str(&format!(" Did you mean: {}?", suggestions.join(", ")));
         }
         msg.push_str(&format!(" Available tools: {}.", names.join(", ")));
-        anyhow::anyhow!(msg)
+        ToolRejected(msg).into()
     }
 
     /// Register a tool dynamically (for MCP tools, etc.)
@@ -3054,20 +3054,12 @@ impl Registry {
     }
 
     /// Register `aux_complete` when `[tools] aux_completion` is on.
-    ///
-    /// The tool is opt-in because every call spends a model request on a side
-    /// task. With the switch off it is never registered, so it neither appears
-    /// in a definition list nor resolves as a callable name. Registration is
-    /// idempotent (the registry is a map keyed by name).
     pub async fn register_aux_completion_tool_if_enabled(&self) {
-        if !aux_complete::enabled() {
-            return;
-        }
-        self.register(
-            aux_complete::AUX_COMPLETE_TOOL.to_string(),
-            Arc::new(aux_complete::AuxCompleteTool::new()) as Arc<dyn Tool>,
-        )
-        .await;
+        aux_complete::register(self).await;
+    }
+
+    pub async fn register_generate_image_tool_if_enabled(&self) {
+        generate_image::register(self).await;
     }
 
     /// Register `submit_plan` when `[tools] plan_mode` is on.

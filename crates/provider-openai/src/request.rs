@@ -1,8 +1,10 @@
+use horon_agent_message_types::degradation::{DegradationKind, DegradationReceipt};
 use horon_agent_message_types::{
     ContentBlock, Message as ChatMessage, Role, TOOL_OUTPUT_MISSING_TEXT, ToolDefinition, sanitize_tool_id,
 };
 use horon_agent_provider_core::openai_schema::{
-    openai_compatible_schema, prepare_strict_schema, schema_supports_strict, strict_normalize_schema,
+    openai_compatible_schema, openai_compatible_schema_reporting, prepare_strict_schema, schema_supports_strict,
+    strict_normalize_schema,
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -45,12 +47,34 @@ pub fn is_openai_encrypted_content_too_large_error(error: &str) -> bool {
 }
 
 pub fn build_tools(tools: &[ToolDefinition]) -> Vec<Value> {
-    tools.iter().filter(|t| !t.defer_loading).map(build_tool).collect()
+    build_tools_reporting(tools, None)
+}
+
+/// [`build_tools`], also reporting what each schema lost to the dialect.
+pub fn build_tools_reporting(tools: &[ToolDefinition], mut sink: Option<&mut Vec<DegradationReceipt>>) -> Vec<Value> {
+    let mut built = Vec::with_capacity(tools.len());
+    for tool in tools.iter().filter(|t| !t.defer_loading) {
+        built.push(build_tool_reporting(tool, sink.as_deref_mut()));
+    }
+    built
 }
 
 /// Build the Responses API function definition for one tool.
 pub fn build_tool(t: &ToolDefinition) -> Value {
-    let compatible_schema = openai_compatible_schema(&t.input_schema);
+    build_tool_reporting(t, None)
+}
+
+/// [`build_tool`], also reporting a dropped schema keyword, a disabled string
+/// format and a lost strict-mode guarantee.
+pub fn build_tool_reporting(t: &ToolDefinition, sink: Option<&mut Vec<DegradationReceipt>>) -> Value {
+    // Only a reporting caller pays for the collector: with no sink the dialect
+    // takes its disabled logging path and this stays empty without allocating.
+    let mut dropped: Vec<String> = Vec::new();
+    let compatible_schema = if sink.is_some() {
+        openai_compatible_schema_reporting(&t.input_schema, &mut dropped)
+    } else {
+        openai_compatible_schema(&t.input_schema)
+    };
     // Inline `$ref`s, collapse single-branch `allOf` and expand union types
     // first: each is expressible in the strict subset, so giving up on strict
     // mode for them would cost the structured-output guarantee for nothing.
@@ -61,6 +85,24 @@ pub fn build_tool(t: &ToolDefinition) -> Value {
     } else {
         compatible_schema
     };
+    if let Some(receipts) = sink {
+        for target in dropped {
+            receipts.push(DegradationReceipt::new(
+                DegradationKind::SchemaKeywordDropped,
+                t.name.clone(),
+                target,
+            ));
+        }
+        if !supports_strict {
+            // The tool is still offered; only the structured-output guarantee
+            // the strict subset provides is gone.
+            receipts.push(DegradationReceipt::new(
+                DegradationKind::StrictDisabled,
+                t.name.clone(),
+                "strict",
+            ));
+        }
+    }
     serde_json::json!({
         "type": "function",
         "name": t.name,
@@ -289,6 +331,7 @@ pub fn build_responses_input_with_logger(
                             tool_use_id,
                             content,
                             is_error,
+                            ..
                         } => {
                             if !content_parts.is_empty() {
                                 items.push(serde_json::json!({
@@ -951,6 +994,7 @@ mod tests {
                         tool_use_id: "call_1".into(),
                         content: "found".into(),
                         is_error: None,
+                        verdict: None,
                     },
                     ContentBlock::ToolReference {
                         tool_use_id: "call_1".into(),

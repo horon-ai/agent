@@ -69,6 +69,20 @@ impl Transcript {
         &self.items
     }
 
+    /// The assistant text still streaming, if any.
+    ///
+    /// `None` once the message is committed by [`finish_stream`](Self::finish_stream),
+    /// retracted by [`text_replace`](Self::text_replace), or when the open
+    /// message holds only whitespace, which `finish_stream` would drop rather
+    /// than publish. The renderer draws this as its newest entry, so a message
+    /// appears while it streams instead of all at once when it ends.
+    pub fn open_text(&self) -> Option<&str> {
+        if !self.streaming.open || self.streaming.text.trim().is_empty() {
+            return None;
+        }
+        Some(&self.streaming.text)
+    }
+
     /// Record a user message, closing any partly streamed reply first.
     pub fn push_user(&mut self, text: impl Into<String>) {
         self.finish_stream();
@@ -219,6 +233,39 @@ mod tests {
                 state: ToolState::Done
             }]
         );
+    }
+
+    #[test]
+    fn open_text_reports_the_message_until_it_is_committed() {
+        let mut transcript = Transcript::new();
+        assert_eq!(transcript.open_text(), None, "nothing is open yet");
+
+        transcript.text_delta(Some("m1"), "partial");
+        assert_eq!(transcript.open_text(), Some("partial"));
+
+        transcript.text_delta(Some("m1"), " more");
+        assert_eq!(transcript.open_text(), Some("partial more"));
+
+        // The committed item is the same text, so the renderer must stop
+        // drawing the open one or the reply would appear twice.
+        transcript.finish_stream();
+        assert_eq!(transcript.open_text(), None);
+        assert_eq!(transcript.items(), &[Item::Assistant("partial more".to_string())]);
+    }
+
+    #[test]
+    fn open_text_hides_blank_and_retracted_messages() {
+        let mut transcript = Transcript::new();
+        transcript.text_delta(Some("m1"), "  \n\t");
+        assert_eq!(transcript.open_text(), None, "whitespace is never published");
+
+        // Deltas append, so the whitespace that was hidden on its own is now
+        // part of the message; drawing anything but the raw buffer would make
+        // the open row differ from the item `finish_stream` commits.
+        transcript.text_delta(Some("m1"), "draft");
+        assert_eq!(transcript.open_text(), Some("  \n\tdraft"));
+        transcript.text_replace(Some("m1"), "");
+        assert_eq!(transcript.open_text(), None, "a retraction must not be drawn");
     }
 
     #[test]

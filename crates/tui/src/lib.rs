@@ -10,14 +10,21 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+pub mod commands;
 pub mod input;
 pub mod keys;
+pub mod overlays;
 pub mod prompts;
 pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
 pub mod theme;
 pub mod transcript;
+mod wrap;
+
+#[cfg(test)]
+#[path = "streaming_tests.rs"]
+mod streaming_tests;
 
 use std::time::Duration;
 
@@ -26,7 +33,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::Paragraph;
 
 use crate::app::{Action, App};
 use crate::sdk_bridge::{Command, Incoming, Runtime};
@@ -52,8 +59,19 @@ Options:
 
 Keys:
   Enter          send the typed message
-  /quit          leave (Ctrl-C cancels a running turn, Ctrl-D always leaves)
+  Tab            complete the slash command being typed
+  Ctrl-C         cancel a running turn, or leave when nothing is running
+  Ctrl-D         leave
   Bindings are remapped in $HORON_HOME/keybindings.toml.
+
+Commands:
+  /help          list the commands, including the harness ones and the
+                 markdown files under .horon/commands and $HORON_HOME/commands
+  /clear         clear the transcript pane
+  /model [name]  list the models, or switch to the one named
+  /settings      open the settings screen, generated from the registry
+  /quit          leave
+  //text         send the literal message /text
 ";
 
 /// Parsed command line.
@@ -198,12 +216,16 @@ fn show_failure(message: &str) {
     let mut app = App::failure(message);
     match ratatui::try_init() {
         Ok(mut terminal) => {
-            if let Err(message) = draw(&mut terminal, &mut app) {
+            let failure = draw(&mut terminal, &mut app).err();
+            ratatui::restore();
+            if let Some(message) = failure {
                 eprintln!("horon-tui: {message}");
             }
-            ratatui::restore();
         }
-        Err(error) => eprintln!("horon-tui: cannot open a terminal: {error}"),
+        Err(error) => {
+            ratatui::restore();
+            eprintln!("horon-tui: cannot open a terminal: {error}");
+        }
     }
 }
 
@@ -220,43 +242,87 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
         app.warn(format!("keys: {warning}"));
     }
     app.bindings = keys.bindings().clone();
-    for warning in themes.apply(reloader.settings()) {
-        app.warn(format!("theme: {warning}"));
-    }
-    app.theme = themes.theme().clone();
-    app.symbols = *themes.symbols();
+    apply_settings(&mut app, reloader.settings(), &mut themes);
     match std::env::current_dir() {
         Ok(directory) => app.cwd = Some(directory.display().to_string()),
         Err(error) => app.warn(format!("cannot read the working directory: {error}")),
     }
-    let (layout, layout_warnings) = statusline::Layout::from_settings(reloader.settings());
-    app.statusline = layout;
-    for warning in layout_warnings {
-        app.warn(format!("statusline: {warning}"));
-    }
-    install_panic_hook();
+    app.reload_commands();
+    // `try_init` installs the restoring panic hook itself, so a panic inside
+    // the alternate screen still leaves the terminal usable.
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
         Err(error) => {
+            ratatui::restore();
             eprintln!("horon-tui: cannot open a terminal: {error}");
             return 1;
         }
     };
-    let code = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
+    let (code, failure) = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
     ratatui::restore();
+    if let Some(message) = failure {
+        eprintln!("horon-tui: {message}");
+    }
     code
 }
 
-/// Restore the terminal before the default hook prints a panic message.
-fn install_panic_hook() {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        ratatui::restore();
-        previous(info);
-    }));
+/// Apply a resolved settings snapshot to the app and the theme loader.
+///
+/// Startup, a file change, and a save from the settings screen all end here, so
+/// a value reaches the renderer by one path and a warning is reported once.
+pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, themes: &mut ThemeLoader) {
+    for warning in themes.apply(settings) {
+        app.warn(format!("theme: {warning}"));
+    }
+    let (layout, layout_warnings) = statusline::Layout::from_settings(settings);
+    app.statusline = layout;
+    for warning in layout_warnings {
+        app.warn(format!("statusline: {warning}"));
+    }
+    app.refresh_settings(settings);
+    app.theme = themes.theme().clone();
+    app.symbols = *themes.symbols();
+}
+
+/// Write the change the settings screen confirmed, then re-apply it.
+///
+/// A rejected save changes nothing in memory: the banner names the file and the
+/// error, and the screen keeps showing the value that is still in force.
+pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloader, themes: &mut ThemeLoader) {
+    let Some(change) = app.take_setting_change() else {
+        return;
+    };
+    match reloader.save_global(change.id, &change.value) {
+        Ok(warnings) => {
+            for warning in warnings {
+                app.warn(format!("settings: {warning}"));
+            }
+            app.banner = None;
+            app.transcript.push_notice(format!(
+                "settings: saved {} to {}",
+                change.id,
+                reloader.sources().global.display()
+            ));
+            let settings = reloader.settings().clone();
+            apply_settings(app, &settings, themes);
+        }
+        Err(error) => {
+            app.banner = Some(format!(
+                "settings: cannot save {} to {}: {error}",
+                change.id,
+                reloader.sources().global.display()
+            ));
+            let current = reloader.settings().clone();
+            app.refresh_settings(&current);
+        }
+    }
 }
 
 /// The main loop: drain SDK events, redraw, then read at most one keystroke.
+///
+/// A failure that ends the loop is returned instead of printed: the alternate
+/// screen and raw mode are still on here, so a line written to stderr now would
+/// be wiped by the restore. The caller restores first and prints afterwards.
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -264,37 +330,32 @@ fn event_loop<B>(
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
     keys: &mut keys::Loader,
-) -> i32
+) -> (i32, Option<String>)
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    let mut failure = None;
     loop {
         drain_events(app);
         if !app.running {
             break;
         }
         // The reloader throttles itself to one file check per second; the
-        // theme loader and the key bindings share that cadence for their own
-        // files.
-        let mut themed = false;
+        // theme loader, the key bindings and the command directories share
+        // that cadence for their own files.
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
             }
-            for warning in themes.apply(&reload.settings) {
+            apply_settings(app, &reload.settings, themes);
+        }
+        let theme_warnings = themes.tick();
+        if !theme_warnings.is_empty() {
+            for warning in theme_warnings {
                 app.warn(format!("theme: {warning}"));
             }
-            let (layout, layout_warnings) = statusline::Layout::from_settings(&reload.settings);
-            app.statusline = layout;
-            for warning in layout_warnings {
-                app.warn(format!("statusline: {warning}"));
-            }
-            themed = true;
-        }
-        for warning in themes.tick() {
-            app.warn(format!("theme: {warning}"));
-            themed = true;
+            apply_settings(app, reloader.settings(), themes);
         }
         if let Some(reload) = keys.tick() {
             for warning in reload.warnings {
@@ -302,22 +363,21 @@ where
             }
             app.bindings = reload.bindings;
         }
-        if themed {
-            app.theme = themes.theme().clone();
-            app.symbols = *themes.symbols();
-        }
+        // Command directories are only stat-ed here; a file is re-read when its
+        // own stamp moved.
+        app.tick_commands();
         if let Err(message) = draw(terminal, app) {
-            eprintln!("horon-tui: {message}");
-            return 1;
+            failure = Some(message);
+            break;
         }
         match crossterm::event::poll(Duration::from_millis(50)) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
-                app.warn(format!("cannot read the keyboard: {error}"));
+                failure = Some(format!("cannot read the keyboard: {error}"));
                 app.running = false;
                 app.exit_code = 1;
-                continue;
+                break;
             }
         }
         match crossterm::event::read() {
@@ -330,25 +390,41 @@ where
                 if let Some(action) = app.on_key(key) {
                     dispatch(app, commands, action);
                 }
+                flush_setting_change(app, reloader, themes);
             }
             Ok(_) => {}
             Err(error) => {
-                app.warn(format!("cannot read the keyboard: {error}"));
+                failure = Some(format!("cannot read the keyboard: {error}"));
                 app.running = false;
                 app.exit_code = 1;
             }
         }
     }
-    app.exit_code
+    (if failure.is_some() { 1 } else { app.exit_code }, failure)
 }
 
 /// Move every buffered SDK delivery into the app state.
+///
+/// A closed bridge is a real end of the session, not an empty queue: the
+/// channel only reports it once, so treating it as "nothing yet" would leave
+/// the interface redrawing a dead connection forever.
 fn drain_events(app: &mut App) {
-    while let Ok(incoming) = app.events.try_recv() {
-        match incoming {
-            Incoming::Event(event) => app.apply_event(&event),
-            Incoming::Notice(message) => app.warn(message),
-            Incoming::Closed(message) => app.disconnected(&message),
+    loop {
+        match app.events.try_recv() {
+            Ok(Incoming::Event(event)) => app.apply_event(&event),
+            Ok(Incoming::Notice(message)) => app.warn(message),
+            Ok(Incoming::Info(message)) => app.transcript.push_notice(message),
+            Ok(Incoming::Closed(message)) => app.disconnected(&message),
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // A more specific banner (an unreachable daemon, say) wins over
+                // the generic one, and a session that already ended keeps its
+                // own reason.
+                if app.running {
+                    app.disconnected("the harness bridge stopped");
+                }
+                break;
+            }
         }
     }
 }
@@ -368,6 +444,8 @@ fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: 
             always,
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
+        Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::Model(name) => Command::Model(name),
         Action::Quit => {
             app.running = false;
             return;
@@ -394,7 +472,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
+    let hint = app.completion_hint();
     let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
+    if hint.is_some() {
+        constraints.push(Constraint::Length(1));
+    }
     if !prompt_lines.is_empty() {
         constraints.insert(1, Constraint::Length(prompt_lines.len() as u16));
     }
@@ -416,7 +498,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     let transcript_area: Rect = areas[index];
     app.viewport_height = Some(transcript_area.height);
-    frame.render_widget(transcript_widget(app), transcript_area);
+    frame.render_widget(transcript_widget(app, transcript_area.width), transcript_area);
     index += 1;
 
     if !prompt_lines.is_empty() {
@@ -445,23 +527,49 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     index += 1;
 
     let input_area = areas[index];
+    // The pane is one line high, so the line scrolls under the prompt marker
+    // instead of growing: a long message keeps the caret on screen.
+    let marker_width = symbols.prompt_marker_width();
+    let text_width = input_area.width.saturating_sub(marker_width).saturating_sub(1);
+    let (visible, cursor_cell) = app.input.window(text_width);
     let input = Line::from(vec![
         Span::styled(
             format!("{} ", symbols.prompt_marker),
             Style::default().fg(theme.core.accent),
         ),
-        Span::styled(
-            app.input.text().to_string(),
-            Style::default().fg(theme.prompt.prompt_text),
-        ),
+        Span::styled(visible, Style::default().fg(theme.prompt.prompt_text)),
     ]);
     frame.render_widget(Paragraph::new(input), input_area);
-    let cursor_x = input_area
-        .x
-        .saturating_add(symbols.prompt_marker_width())
-        .saturating_add(1)
-        .saturating_add(app.input.cursor_column());
-    frame.set_cursor_position((cursor_x, input_area.y));
+    if let Some(hint) = hint {
+        index += 1;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(theme.core.muted)))),
+            areas[index],
+        );
+    }
+    // The settings screen covers the conversation rather than the input, so
+    // closing it reveals the transcript unchanged and the message being typed
+    // stays visible under it.
+    match app.overlay.as_ref() {
+        Some(overlay) => {
+            if let Some((x, y)) = overlays::settings::draw(frame, transcript_area, overlay, theme, symbols) {
+                frame.set_cursor_position((x, y));
+            }
+        }
+        None => {
+            let mut cursor_x = input_area
+                .x
+                .saturating_add(marker_width)
+                .saturating_add(1)
+                .saturating_add(cursor_cell);
+            if input_area.width > 0 {
+                // The caret never paints past the pane, and the terminal cannot
+                // place it at the cell after the last column.
+                cursor_x = cursor_x.min(input_area.right().saturating_sub(1));
+            }
+            frame.set_cursor_position((cursor_x, input_area.y));
+        }
+    }
 }
 
 /// The bottom line: the segments the status-line layout names, joined by the
@@ -473,25 +581,71 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
 }
 
-/// The transcript pane, scrolled to its last lines.
-fn transcript_widget(app: &App) -> Paragraph<'static> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for item in app.transcript.items() {
-        lines.extend(render_item(item, &app.theme, app.symbols));
+/// The transcript pane, scrolled to its last rows.
+///
+/// Lines are wrapped here rather than by the widget: the pane keeps the newest
+/// rows, and a logical line that wraps over the pane width occupies more than
+/// one row. Trimming logical lines first would push the newest rows off the
+/// bottom of the pane.
+///
+/// Items are walked from the newest one so the work is bounded by the pane: an
+/// idle frame rebuilds at least twenty times a second, and wrapping the whole
+/// conversation each time would cost more as the session grows.
+///
+/// A message that is still streaming is drawn first as the newest entry, so
+/// text appears while it arrives instead of all at once when the turn ends.
+/// It is not also in `items`, and `finish_stream` moves it there exactly once.
+fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
+    let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    if let Some(text) = app.transcript.open_text() {
+        rows.extend(wrapped_rows(assistant_lines(text, &app.theme), width));
     }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Send a message to start. /quit leaves.",
-            Style::default().fg(app.theme.core.muted),
-        )));
+    if rows.len() < capacity {
+        for item in app.transcript.items().iter().rev() {
+            let item_rows = wrapped_rows(render_item(item, &app.theme, app.symbols), width);
+            rows.splice(0..0, item_rows);
+            if rows.len() >= capacity {
+                break;
+            }
+        }
     }
-    // Keep the newest lines: the pane has no scrollback yet, and the end of the
+    if rows.is_empty() {
+        rows.extend(wrap::wrap_line(
+            &Line::from(Span::styled(
+                "Send a message to start. /help lists the commands; /quit leaves.",
+                Style::default().fg(app.theme.core.muted),
+            )),
+            usize::from(width),
+        ));
+    }
+    // Keep the newest rows: the pane has no scrollback yet, and the end of the
     // conversation is the part a user is reading.
-    let capacity = app.viewport_height.unwrap_or(24).max(1) as usize;
-    if lines.len() > capacity {
-        lines.drain(..lines.len() - capacity);
+    if rows.len() > capacity {
+        rows.drain(..rows.len() - capacity);
     }
-    Paragraph::new(lines).wrap(Wrap { trim: false })
+    Paragraph::new(rows)
+}
+
+/// Wrap a rendered item's lines to the pane width, keeping their styles.
+fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for line in lines {
+        rows.extend(wrap::wrap_line(&line, usize::from(width)));
+    }
+    rows
+}
+
+/// The rows of one assistant message, committed or still streaming.
+fn assistant_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
+    text.lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.transcript.assistant_text),
+            ))
+        })
+        .collect()
 }
 
 fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static>> {
@@ -501,15 +655,7 @@ fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static
             text,
             Style::default().fg(theme.transcript.user_text),
         ),
-        Item::Assistant(text) => text
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.transcript.assistant_text),
-                ))
-            })
-            .collect(),
+        Item::Assistant(text) => assistant_lines(text, theme),
         Item::Tool { name, state } => {
             let (glyph, color) = match state {
                 ToolState::Running => (symbols.tool_running, theme.transcript.tool_running),
@@ -580,6 +726,15 @@ mod tests {
             session_id: "s1".into(),
             text: text.into(),
             message_id: Some("m1".into()),
+        }
+    }
+
+    /// The transcript only draws finished items, so a test that wants text on
+    /// screen closes the stream the way the harness does.
+    fn turn_done() -> ApiEvent {
+        ApiEvent::TurnDone {
+            session_id: "s1".into(),
+            pending_soft_interrupts: None,
         }
     }
 
@@ -673,6 +828,7 @@ mod tests {
             name: "bash".into(),
             output: "ok".into(),
             error: None,
+            verdict: None,
         });
         app.apply_event(&ApiEvent::TurnDone {
             session_id: "s1".into(),
@@ -774,6 +930,7 @@ mod tests {
             name: "write".into(),
             output: String::new(),
             error: Some("permission denied".into()),
+            verdict: None,
         });
         assert_eq!(
             app.transcript.items().last(),
@@ -938,5 +1095,96 @@ mod tests {
 
     fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
         crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    fn draw_at(app: &mut App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend failed: {error}"),
+        };
+        if let Err(message) = draw(&mut terminal, app) {
+            panic!("draw failed: {message}");
+        }
+        format!("{}", terminal.backend())
+    }
+
+    #[test]
+    fn a_long_line_keeps_its_tail_visible_in_a_narrow_pane() {
+        // One logical line far wider than the pane: the newest text is at its
+        // end, so the pane must show the end, not the beginning.
+        let mut app = app_with(None);
+        let text = format!("{}TAILMARK", "x".repeat(480));
+        app.apply_event(&text_event(&text));
+        app.apply_event(&turn_done());
+
+        let screen = draw_at(&mut app, 40, 12);
+        assert!(
+            screen.contains("TAILMARK"),
+            "the end of a wrapped line was pushed out of the pane:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_newest_message_wins_over_the_oldest_after_wrapping() {
+        let mut app = app_with(None);
+        app.apply_event(&ApiEvent::TextDelta {
+            session_id: "s1".into(),
+            text: format!("OLDEST {}", "a".repeat(300)),
+            message_id: Some("m-old".into()),
+        });
+        app.apply_event(&ApiEvent::TextDelta {
+            session_id: "s1".into(),
+            text: format!("NEWEST {}", "b".repeat(300)),
+            message_id: Some("m-new".into()),
+        });
+        app.apply_event(&turn_done());
+
+        let screen = draw_at(&mut app, 40, 12);
+        assert!(screen.contains("NEWEST"), "newest text missing:\n{screen}");
+        assert!(!screen.contains("OLDEST"), "the pane kept the oldest rows:\n{screen}");
+    }
+
+    #[test]
+    fn a_long_input_scrolls_instead_of_leaving_the_pane() {
+        let mut app = app_with(None);
+        for character in "q".repeat(120).chars() {
+            app.on_key(key(crossterm::event::KeyCode::Char(character)));
+        }
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend failed: {error}"),
+        };
+        if let Err(message) = draw(&mut terminal, &mut app) {
+            panic!("draw failed: {message}");
+        }
+        let position = terminal.backend().cursor_position();
+        let (column, row) = (position.x, position.y);
+        assert!(
+            column < 40,
+            "the caret was placed outside the input area: column {column}"
+        );
+        assert!(column > 0, "the caret collapsed to the left edge: column {column}");
+        // The bottom line, under the status line and the transcript pane.
+        assert_eq!(row, 11, "the caret left the input row");
+    }
+
+    #[test]
+    fn a_closed_bridge_ends_the_session_instead_of_spinning() {
+        // `app_with(None)` drops the sender, so the channel reports
+        // `Disconnected` exactly as it does when the bridge thread exits.
+        let mut app = app_with(None);
+        assert!(app.running);
+        drain_events(&mut app);
+        assert!(!app.running, "a closed bridge must stop the loop");
+        assert_eq!(app.exit_code, 1);
+        match app.banner.as_deref() {
+            Some(banner) => assert!(
+                banner.contains("bridge"),
+                "the banner did not explain the closed bridge: {banner}"
+            ),
+            None => panic!("no banner for the closed bridge"),
+        }
     }
 }

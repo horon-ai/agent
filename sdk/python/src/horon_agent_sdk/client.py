@@ -29,6 +29,7 @@ from .protocol import (
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
     CanonicalRecordRef,
+    MessageModes,
     SessionToolDefinition,
 )
 from .sockets import api_socket_path, transport_endpoint
@@ -73,6 +74,8 @@ class RuntimeInfo(TypedDict, total=False):
     session_id: str
     provider: str
     model: str
+    fallback_models: list[str]
+    serving_model: str
     providers: list[str]
     routes: list[dict[str, Any]]
 
@@ -469,6 +472,10 @@ class ToolCall:
     name: str
     output: str
     error: str | None = None
+    #: The daemon's verdict for the call (protocol 1.19). A known name is a
+    #: ``ToolVerdict``; a name this SDK does not know arrives unchanged. ``None``
+    #: means the daemon sent none, which is not the same as ``"ok"``.
+    verdict: str | None = None
 
 
 @dataclass
@@ -1497,6 +1504,16 @@ class HoronAgentClient:
         tools = frame.get("tools")
         return list(tools) if isinstance(tools, list) else []
 
+    async def get_message_modes(self, session_id: str) -> MessageModes:
+        """Read the daemon's ``[messages]`` delivery modes.
+
+        These are daemon configuration rather than session state, so the answer
+        does not depend on the session existing.
+        """
+        frame = await self._expect_reply({"req": "get_message_modes", "session_id": session_id}, "message_modes")
+        modes = frame.get("modes")
+        return cast(MessageModes, modes if isinstance(modes, dict) else {})
+
     async def submit_tool_result(
         self,
         session_id: str,
@@ -1728,6 +1745,21 @@ class HoronAgentClient:
     async def rewind(self, session_id: str, message_index: int) -> None:
         await self._request_ok({"req": "rewind", "session_id": session_id, "message_index": message_index})
 
+    async def rewind_with_summary(self, session_id: str, message_index: int, summarize: bool) -> None:
+        """Rewind and ask the daemon to report on the branch it discards.
+
+        ``summarize`` only takes effect when the daemon's ``[compaction]
+        rewind_summary`` is on; a summary failure never fails the rewind.
+        """
+        await self._request_ok(
+            {
+                "req": "rewind",
+                "session_id": session_id,
+                "message_index": message_index,
+                "summarize": summarize,
+            }
+        )
+
     async def rewind_undo(self, session_id: str) -> None:
         """Restore the history the last :meth:`rewind` removed."""
         await self._request_ok({"req": "rewind_undo", "session_id": session_id})
@@ -1831,6 +1863,11 @@ class HoronAgentClient:
             info["provider"] = provider
         if isinstance(frame.get("model"), str):
             info["model"] = frame["model"]
+        fallbacks = frame.get("fallback_models")
+        if isinstance(fallbacks, list):
+            info["fallback_models"] = [model for model in fallbacks if isinstance(model, str)]
+        if isinstance(frame.get("serving_model"), str):
+            info["serving_model"] = frame["serving_model"]
         return info
 
     # --- credentials --------------------------------------------------------
@@ -1959,6 +1996,22 @@ class HoronAgentClient:
         """
         frame = await self._expect_reply({"req": "compact", "session_id": session_id}, "compacted")
         return str(frame.get("message", ""))
+
+    async def compact_handoff(self, session_id: str) -> dict[str, Any]:
+        """Write a handoff document as the compaction boundary.
+
+        Synchronous, unlike :meth:`compact`: this resolves after the boundary is
+        written, and the returned ``handoff`` mapping names the outcome
+        (``committed`` with the covered count, ``nothing_to_cover``,
+        ``provider_error`` with its detail, or ``cancelled``). A failure or a
+        cancellation leaves the transcript unchanged and is reported as that
+        outcome rather than raised.
+        """
+        frame = await self._expect_reply({"req": "compact", "session_id": session_id, "method": "handoff"}, "compacted")
+        outcome = frame.get("handoff")
+        if not isinstance(outcome, dict):
+            raise HarnessError("unexpected_reply", "the daemon answered a handoff compaction without an outcome")
+        return dict(outcome)
 
     async def rename_session(self, session_id: str, title: str | None = None) -> None:
         """Set a session's title. Omit ``title`` to restore the generated one."""
@@ -2534,12 +2587,14 @@ class HoronAgentClient:
                 elif kind == "reasoning_delta":
                     result.reasoning += str(event.get("text", ""))
                 elif kind == "tool_done":
+                    verdict = event.get("verdict")
                     result.tool_calls.append(
                         ToolCall(
                             call_id=str(event.get("call_id", "")),
                             name=str(event.get("name", "")),
                             output=str(event.get("output", "")),
                             error=event.get("error"),
+                            verdict=verdict if isinstance(verdict, str) else None,
                         )
                     )
                 elif kind == "token_usage":

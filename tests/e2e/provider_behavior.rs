@@ -137,6 +137,7 @@ async fn test_resume_restores_model_and_tool_history() -> Result<()> {
             tool_use_id: "tool-1".to_string(),
             content: "hi\n".to_string(),
             is_error: None,
+            verdict: None,
         }],
     );
     session.save()?;
@@ -368,6 +369,7 @@ async fn test_resume_session_reports_reload_interruption_for_peer_sessions() -> 
             tool_use_id: "tool_bash_1".to_string(),
             content: "[Tool 'bash' interrupted by server reload after 0.2s]".to_string(),
             is_error: Some(true),
+            verdict: None,
         }],
     );
     session.save()?;

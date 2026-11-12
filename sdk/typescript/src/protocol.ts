@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 16;
+export const API_VERSION_MINOR = 19;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -269,6 +269,17 @@ export interface RenderedImage {
   history_message_index?: number;
 }
 
+/** One loss a provider request suffered to fit its schema dialect. */
+export type DegradationKind = "schema_keyword_dropped" | "strict_disabled" | "duplicate_tool_dropped";
+
+export interface DegradationReceipt {
+  kind: DegradationKind;
+  /** The tool definition the loss applies to. */
+  tool: string;
+  /** Dropped keyword, `format:<value>`, `strict`, or the duplicated tool name. */
+  target: string;
+}
+
 /** Base64 image attachment: [mediaType, base64Data]. */
 export type ImageAttachment = [string, string];
 
@@ -277,6 +288,16 @@ export interface SessionToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+}
+
+/** How the daemon delivers messages that arrive while it is busy. */
+export interface MessageModes {
+  /** Queued messages the first delivery point of a turn carries. */
+  follow_up_mode: string;
+  /** Queued messages each later delivery point of the same turn carries. */
+  steering_mode: string;
+  /** Whether a queued message waits for the running tool call or stops it. */
+  interrupt_mode: string;
 }
 
 /** Wire-level session tool policy. Callback functions never cross the wire. */
@@ -532,6 +553,7 @@ export type ApiRequest =
   | { req: "detach_session"; session_id: string }
   | { req: "configure_tools"; session_id: string; tools: ToolConfiguration }
   | { req: "list_tools"; session_id: string }
+  | { req: "get_message_modes"; session_id: string }
   | { req: "tool_result"; session_id: string; call_id: string; output: string; error?: string }
   | {
       req: "send_message";
@@ -554,7 +576,7 @@ export type ApiRequest =
   | { req: "get_history"; session_id: string }
   | { req: "peek_session"; session_id: string; limit?: number }
   | { req: "clear"; session_id: string }
-  | { req: "rewind"; session_id: string; message_index: number }
+  | { req: "rewind"; session_id: string; message_index: number; summarize?: boolean }
   | {
       req: "permission_response";
       session_id: string;
@@ -607,7 +629,7 @@ export type ApiRequest =
   | { req: "ack_todo_follow_up"; session_id: string; effects: TodoEffects }
   | { req: "set_model"; session_id: string; model: string }
   | { req: "set_reasoning_effort"; session_id: string; effort: string }
-  | { req: "compact"; session_id: string }
+  | { req: "compact"; session_id: string; method?: "handoff" }
   | { req: "rename_session"; session_id: string; title?: string }
   | { req: "set_session_saved"; session_id: string; saved: boolean; label?: string }
   | { req: "rewind_undo"; session_id: string }
@@ -688,6 +710,13 @@ export type ApiRequest =
   | { req: "get_snapshot"; session_id: string; tail?: number; max_bytes?: number }
   | { req: "ping" };
 
+/** What a `compactHandoff` request did. */
+export type CompactHandoffOutcome =
+  | { outcome: "committed"; covered: number }
+  | { outcome: "nothing_to_cover" }
+  | { outcome: "provider_error"; detail: string }
+  | { outcome: "cancelled" };
+
 export type ApiEvent =
   | { ev: "hello_ok"; version: number; server: string; capabilities?: string[] }
   | { ev: "ok" }
@@ -707,6 +736,7 @@ export type ApiEvent =
   | { ev: "tool_input_delta"; session_id: string; call_id: string; delta: string }
   | { ev: "tool_exec"; session_id: string; call_id: string; name: string }
   | { ev: "tools"; session_id: string; tools: SessionToolDefinition[] }
+  | { ev: "message_modes"; session_id: string; modes: MessageModes }
   | { ev: "tool_call"; session_id: string; call_id: string; name: string; input: unknown }
   | {
       ev: "tool_done";
@@ -715,8 +745,16 @@ export type ApiEvent =
       name: string;
       output: string;
       error?: string;
+      /** Protocol 1.19. Absent when no layer made a statement about the call. */
+      verdict?: ToolVerdictName;
     }
   | { ev: "side_pane_images"; session_id: string; images: RenderedImage[] }
+  | {
+      ev: "degradation_receipts";
+      session_id: string;
+      message_id: string;
+      receipts: DegradationReceipt[];
+    }
   | {
       ev: "tool_args_repaired";
       session_id: string;
@@ -859,6 +897,8 @@ export type ApiEvent =
       model?: string;
       reasoning_effort?: string;
       auth_method?: string;
+      fallback_models?: string[];
+      serving_model?: string;
       routes: ModelRouteInfo[];
     }
   | { ev: "credential_updated"; provider: string; configured: boolean }
@@ -901,7 +941,12 @@ export type ApiEvent =
       pricing: string;
       estimated_cost: number | null;
     }
-  | { ev: "compacted"; session_id: string; message: string }
+  | {
+      ev: "compacted";
+      session_id: string;
+      message: string;
+      handoff?: CompactHandoffOutcome;
+    }
   | {
       ev: "session_renamed";
       session_id: string;
@@ -1014,11 +1059,13 @@ export const KNOWN_EVENT_KINDS = [
   "reasoning_done",
   "tool_start",
   "tools",
+  "message_modes",
   "tool_call",
   "tool_input_delta",
   "tool_exec",
   "tool_done",
   "tool_args_repaired",
+  "degradation_receipts",
   "token_usage",
   "kv_cache_miss",
   "turn_done",
@@ -1083,6 +1130,7 @@ export const KNOWN_REQUEST_KINDS = [
   "detach_session",
   "configure_tools",
   "list_tools",
+  "get_message_modes",
   "tool_result",
   "send_message",
   "cancel",
@@ -1143,3 +1191,12 @@ export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {
 
 /** Natural completion has no stop reason. Transport loss is not proof of a crash. */
 export type TurnStopReason = "interrupted" | "failure" | "crash" | "provider_guardrail" | "limit_reached" | "unknown";
+
+/** The verdict names protocol 1.19 defines for a finished tool call. */
+export type ToolVerdict = "ok" | "partial" | "truncated" | "withheld" | "rejected" | "failed" | "interrupted";
+
+/**
+ * A verdict as it arrives on `tool_done`: one of {@link ToolVerdict}, or a name
+ * a newer daemon added, which is passed through unchanged instead of dropped.
+ */
+export type ToolVerdictName = ToolVerdict | (string & {});

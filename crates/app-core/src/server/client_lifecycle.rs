@@ -554,25 +554,25 @@ pub(super) async fn handle_client(
         }
     };
 
-    let initial_working_dir =
-        match resolve_target_subscribe_working_dir(&mut initial_request, &sessions, &swarm_members)
-            .await
-            .and_then(|()| initial_subscribe_working_dir(&initial_request))
-        {
-            Ok(working_dir) => working_dir,
-            Err(message) => {
-                write_direct_event(
-                    &writer,
-                    &ServerEvent::Error {
-                        id: initial_request.id(),
-                        message,
-                        retry_after_secs: None,
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
-        };
+    let initial_working_dir = match resolve_subscribe_target(&mut initial_request, &sessions, &swarm_members)
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|()| initial_subscribe_working_dir(&initial_request))
+    {
+        Ok(working_dir) => working_dir,
+        Err(message) => {
+            write_direct_event(
+                &writer,
+                &ServerEvent::Error {
+                    id: initial_request.id(),
+                    message,
+                    retry_after_secs: None,
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+    };
     let mut active_terminal_env = initial_subscribe_terminal_env(&initial_request);
 
     // Per-client state
@@ -1269,9 +1269,9 @@ pub(super) async fn handle_client(
             provisional_session = false;
         }
 
-        if let Err(message) = resolve_target_subscribe_working_dir(
+        if let Err(message) = resolve_subscribe_target(
             &mut request, &sessions, &swarm_members,
-        ).await {
+        ).await.map_err(|error| error.to_string()) {
             let _ = client_event_tx.send(ServerEvent::Error {
                 id: request.id(), message, retry_after_secs: None,
             });
@@ -1556,7 +1556,7 @@ pub(super) async fn handle_client(
                 .await;
             }
 
-            Request::Rewind { id, message_index } => {
+            Request::Rewind { id, message_index, summarize } => {
                 if client_is_processing {
                     let _ = client_event_tx.send(ServerEvent::Error {
                         id,
@@ -1568,7 +1568,7 @@ pub(super) async fn handle_client(
 
                 let rewind_result = {
                     let mut agent_guard = agent.lock().await;
-                    agent_guard.rewind_to_message(message_index)
+                    agent_guard.rewind_to_message_with_summary(message_index, summarize)
                 };
 
                 match rewind_result {
@@ -1610,7 +1610,7 @@ pub(super) async fn handle_client(
                     Err(message) => {
                         let _ = client_event_tx.send(ServerEvent::Error {
                             id,
-                            message,
+                            message: message.to_string(),
                             retry_after_secs: None,
                         });
                     }
@@ -2330,8 +2330,8 @@ pub(super) async fn handle_client(
                 handle_transfer(id, &client_session_id, &agent, &client_event_tx).await;
             }
 
-            Request::Compact { id } => {
-                handle_compact(id, &agent, &client_event_tx);
+            Request::Compact { id, method } => {
+                handle_compact(id, method, &agent, &client_event_tx);
             }
 
             Request::AskResponse {
@@ -2870,10 +2870,10 @@ pub(super) async fn handle_client(
                 iso_apply,
                 output_schema,
                 allowed_tools,
+                source_session,
             } => {
-                let spawn_mode = match parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) {
-                    Some(spawn_mode) => spawn_mode,
-                    None => return Ok(()),
+                let Some(spawn_mode) = parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) else {
+                    return Ok(());
                 };
                 handle_comm_spawn(
                     id,
@@ -2887,7 +2887,7 @@ pub(super) async fn handle_client(
                     label,
                     isolation,
                     iso_apply,
-                    super::comm_session::SpawnExtras { output_schema, allowed_tools },
+                    super::comm_session::SpawnExtras { output_schema, allowed_tools, source_session },
                     &client_event_tx,
                     &sessions,
                     &global_session_id,

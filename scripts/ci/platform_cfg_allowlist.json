@@ -28,6 +28,10 @@
       "count": 1,
       "reason": "test fixture drives a stub daemon over a Unix socket."
     },
+    "crates/agent-sdk/tests/message_modes_api.rs": {
+      "count": 1,
+      "reason": "whole test file drives the client over a Unix socket-pair fake harness (#![cfg(unix)]); Windows has no socket pair to hand the client."
+    },
     "crates/agent-sdk/tests/session_replication.rs": {
       "count": 1,
       "reason": "test fixture replicates sessions over a Unix socket pair."
@@ -35,6 +39,10 @@
     "crates/agent-sdk/tests/structured_output.rs": {
       "count": 1,
       "reason": "test fixture serves structured output from a stub daemon over a Unix socket."
+    },
+    "crates/agent-sdk/tests/typed_errors.rs": {
+      "count": 1,
+      "reason": "whole test file drives the client over a Unix socket-pair fake harness (#![cfg(unix)]), like client_behavior.rs; Windows has no socket pair to hand the client."
     },
     "crates/agent-sdk/tests/user_response_capability.rs": {
       "count": 1,

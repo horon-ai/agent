@@ -1288,7 +1288,7 @@ fn acp_permission_modes_real_daemon() {
     run.new_session();
     run.set_mode("ask-commands");
     let (_, _) = run.prompt("T11_WRITE write the file");
-    assert_eq!(run.permission_requests(), 3, "plain file edits run in ask-commands");
+    assert_eq!(run.permission_requests(), 4, "ask-commands asks before a file mutation");
     assert_eq!(
         std::fs::read_to_string(run.work.join("t11-write.txt")).expect("the write ran"),
         "t11 written\n"

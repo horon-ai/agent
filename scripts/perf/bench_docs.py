@@ -77,6 +77,14 @@ FRAGMENTS = (
 
 LANGS = ("en", "ko")
 
+# The block holds two version sections. The headless one is the whole body the
+# renderer produced before the TUI existed, byte for byte: the six suites and the
+# run header stay exactly where they were, so an unchanged input still produces
+# an unchanged document. The TUI section is appended after it and is the only
+# place `horon-tui` numbers appear, so the two binaries never share a table.
+HEADLESS_LEVEL = 2
+TUI_FRAGMENT = "tui.md"
+
 TEXT = {
     "en": {
         "compare": "Competitor comparison",
@@ -100,6 +108,11 @@ TEXT = {
         "run_note": "(raw JSON is in the per-OS `benchmark-<os>-<run_id>` artifacts)",
         "runners": "Each OS is measured separately on a different GitHub-hosted runner. The machines differ, so do not compare absolute values across OSes; read only the relative comparison within one OS (multiples of horon) and the trend between commits.",
         "header": "| OS | Runner | Binary | Status |",
+        "headless": "Headless (`horon-agent`)",
+        "tui": "TUI (`horon-tui`)",
+        "tui_intro": "The interactive client is a second binary and is measured on its own. These numbers come from the `tui` suite and are never compared with the headless tables above: `first_frame_ms` and `direct_first_frame_ms` are two launches of two different programs, and the handoff is the difference between them.",
+        "tui_missing": "This run did not produce `tui.md` for {title}, so the TUI was not measured on this OS.",
+        "tui_no_platform": "This run has no {title} TUI result. The job did not start or did not upload its result files.",
     },
     "ko": {
         "compare": "경쟁 도구 비교",
@@ -123,6 +136,11 @@ TEXT = {
         "run_note": "(원본 JSON 은 OS별 `benchmark-<os>-<run_id>` 아티팩트)",
         "runners": "OS마다 다른 GitHub 호스티드 러너에서 따로 잽니다. 기계가 다르므로 OS끼리 절대값을 비교하지 않고, 같은 OS 안의 상대 비교(horon 대비 배수)와 커밋 사이의 추세만 읽습니다.",
         "header": "| OS | 러너 | 바이너리 | 상태 |",
+        "headless": "헤드리스 (`horon-agent`)",
+        "tui": "TUI (`horon-tui`)",
+        "tui_intro": "대화형 클라이언트는 별도 바이너리이고 따로 잽니다. 이 수치는 `tui` 묶음에서 나오며 위의 헤드리스 표와 비교하지 않습니다. `first_frame_ms` 와 `direct_first_frame_ms` 는 서로 다른 두 프로그램을 각각 띄운 값이고, 핸드오프는 그 둘의 차이입니다.",
+        "tui_missing": "이 실행에서 {title} 의 `tui.md` 가 만들어지지 않아 그 OS의 TUI를 재지 못했습니다.",
+        "tui_no_platform": "이 실행에서 {title} TUI 결과가 없습니다. 작업이 시작되지 못했거나 결과 파일을 올리지 못했습니다.",
     },
 }
 
@@ -185,13 +203,15 @@ def write_charts(text: str, doc: Path, results: Path, commit: str, run_url: str 
     span = charts_span(text)
     if span is None:
         return text
-    files = bench_charts.render_charts(find_platform_dirs(results), commit, lang, _run_id(run_url))
+    dirs = find_platform_dirs(results)
+    files = bench_charts.render_charts(dirs, commit, lang, _run_id(run_url))
+    tui_files = bench_charts.render_tui_charts(dirs, commit, lang, _run_id(run_url))
     folder = doc.parent / CHARTS_DIR
     if files:
         folder.mkdir(parents=True, exist_ok=True)
-        for name, svg in files.items():
+        for name, svg in {**files, **tui_files}.items():
             (folder / name).write_text(svg, encoding="utf-8", newline="\n")
-    body = bench_charts.markdown(lang, bool(files), CHARTS_DIR)
+    body = bench_charts.markdown(lang, bool(files), CHARTS_DIR, bool(tui_files))
     return text[: span[0]] + "\n\n" + body + "\n\n" + text[span[1]:]
 
 
@@ -284,18 +304,20 @@ def _platform_section(title: str, directory: Path | None, lang: str = "en") -> s
     return "\n\n".join(parts)
 
 
-def render_body(
-    results: Path,
+def headless_body(
+    dirs: dict[str, Path],
     commit: str,
-    run_url: str | None = None,
-    now: _dt.datetime | None = None,
-    lang: str = "en",
+    run_url: str | None,
+    now: _dt.datetime,
+    lang: str,
 ) -> str:
-    if lang not in LANGS:
-        raise DocError(f"unknown language {lang!r}, expected one of {', '.join(LANGS)}")
+    """The whole block body this renderer produced before the TUI suite existed.
+
+    Nothing in here may change when the TUI is added: the six headless suites,
+    the run header and the per-OS sections keep their bytes so an unchanged
+    input still produces an unchanged document.
+    """
     text = TEXT[lang]
-    now = now or _dt.datetime.now(_dt.timezone.utc)
-    dirs = find_platform_dirs(results)
     lines = [
         text["intro"],
         "",
@@ -320,6 +342,47 @@ def render_body(
     parts = ["\n".join(lines)]
     parts += [_platform_section(title, dirs.get(key), lang) for key, title in PLATFORMS]
     return "\n\n".join(parts)
+
+
+def _tui_section(dirs: dict[str, Path], lang: str) -> str:
+    """The TUI version section: one table per OS, from that OS's `tui.md`."""
+    text = TEXT[lang]
+    parts = ["#" * HEADLESS_LEVEL + " " + text["tui"], text["tui_intro"]]
+    if bench_charts.load_tui(dirs):
+        parts += [f"![{text['tui']}]({CHARTS_DIR}/{name})"
+                  for name in bench_charts.tui_chart_names(lang)]
+    for key, title in PLATFORMS:
+        directory = dirs.get(key)
+        heading = "#" * PLATFORM_LEVEL + " " + title
+        if directory is None:
+            parts += [heading, text["tui_no_platform"].format(title=title)]
+            continue
+        content = _read(directory / TUI_FRAGMENT)
+        if content is None:
+            parts += [heading, text["tui_missing"].format(title=title)]
+            continue
+        parts += [heading, demote_headings(content)]
+    return "\n\n".join(parts)
+
+
+def render_body(
+    results: Path,
+    commit: str,
+    run_url: str | None = None,
+    now: _dt.datetime | None = None,
+    lang: str = "en",
+) -> str:
+    if lang not in LANGS:
+        raise DocError(f"unknown language {lang!r}, expected one of {', '.join(LANGS)}")
+    text = TEXT[lang]
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    dirs = find_platform_dirs(results)
+    headless = headless_body(dirs, commit, run_url, now, lang)
+    return "\n\n".join([
+        "#" * HEADLESS_LEVEL + " " + text["headless"],
+        headless,
+        _tui_section(dirs, lang),
+    ])
 
 
 def main(argv: list[str]) -> int:

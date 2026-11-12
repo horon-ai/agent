@@ -87,6 +87,7 @@ fn paired_tool_history(agent: &mut Agent, tool_id: &str, payload: String) {
             tool_use_id: tool_id.to_string(),
             content: payload,
             is_error: None,
+            verdict: None,
         }],
     );
 }

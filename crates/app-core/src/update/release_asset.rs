@@ -32,6 +32,87 @@ pub(super) fn binary_asset(release: &super::GitHubRelease) -> Result<&super::Git
     }
 }
 
+/// Name of the optional interactive-client archive for a platform, derived from
+/// the agent asset name. `None` means the platform publishes no such archive.
+fn tui_asset_name(agent_asset_name: &str) -> Option<String> {
+    let stem = agent_asset_name.strip_suffix(".tar.gz").unwrap_or(agent_asset_name);
+    let stem = stem.strip_suffix(".exe").unwrap_or(stem);
+    let suffix = stem.strip_prefix("horon-agent")?;
+    if suffix.contains("freebsd") || suffix.contains("unknown") {
+        return None;
+    }
+    Some(format!("horon-tui{suffix}.tar.gz"))
+}
+
+/// The interactive client is found beside the agent, so it keeps the bare stem.
+fn tui_binary_name() -> &'static str {
+    if crate::build::binary_name().ends_with(".exe") {
+        "horon-tui.exe"
+    } else {
+        "horon-tui"
+    }
+}
+
+/// Where the optional interactive-client archive came from, before it is checked.
+enum TuiSource {
+    /// Nothing to install: source builds, and asset directories without a TUI.
+    NotRequested,
+    /// The release publishes no interactive client for this platform.
+    Missing {
+        asset: String,
+    },
+    Archive {
+        asset: String,
+        bytes: Vec<u8>,
+    },
+    Failed {
+        asset: String,
+        reason: String,
+    },
+}
+
+/// What happened to the interactive client, for one warning line at the end.
+#[derive(Debug, PartialEq, Eq)]
+enum TuiOutcome {
+    NotRequested,
+    Installed,
+    AlreadyPresent,
+    Missing { asset: String },
+    Skipped { asset: String, reason: String },
+}
+
+/// The interactive client after verification: either already decided, or
+/// extracted beside the agent and waiting to be moved into the version.
+enum StagedTui {
+    Settled(TuiOutcome),
+    Ready {
+        asset: String,
+        files: Vec<PathBuf>,
+        stage: tempfile::TempDir,
+    },
+}
+
+/// The single warning a partly failed interactive-client install may print.
+fn tui_warning(outcome: &TuiOutcome) -> Option<String> {
+    match outcome {
+        TuiOutcome::Missing { asset } => Some(format!(
+            "release does not publish {asset}; installed horon-agent without the interactive client"
+        )),
+        TuiOutcome::Skipped { asset, reason } => {
+            Some(format!("could not install {asset} beside horon-agent: {reason}"))
+        }
+        TuiOutcome::NotRequested | TuiOutcome::Installed | TuiOutcome::AlreadyPresent => None,
+    }
+}
+
+/// Mirror the warning to the terminal and the log; the install itself succeeded.
+fn announce_tui(outcome: &TuiOutcome) {
+    if let Some(text) = tui_warning(outcome) {
+        eprintln!("warning: {text}");
+        crate::logging::warn(&text);
+    }
+}
+
 /// Prepare a complete immutable version. No channel or user configuration is changed here.
 pub(super) fn stage_release(
     client: &reqwest::blocking::Client,
@@ -41,14 +122,17 @@ pub(super) fn stage_release(
     version: &str,
     versions: &Path,
 ) -> Result<PathBuf> {
-    stage_package(
+    let tui = release_tui_source(client, release);
+    let (binary, _tui) = stage_package(
         &|name| download(client, asset(release, name)?),
         release,
         AgentInput::Published(binary_asset, binary_bytes),
+        tui,
         version,
         version,
         versions,
-    )
+    )?;
+    Ok(binary)
 }
 
 /// A locally compiled executable is trusted as source code, not falsely compared to published binary bytes.
@@ -61,19 +145,68 @@ pub(super) fn stage_source(
     versions: &Path,
 ) -> Result<PathBuf> {
     let bytes = std::fs::read(binary)?;
-    stage_package(
+    // A source build pairs with the client built from the same tree, so a
+    // released interactive client must never be staged beside it.
+    let (installed, _tui) = stage_package(
         &|name| download(client, asset(release, name)?),
         release,
         AgentInput::Local(&bytes),
+        TuiSource::NotRequested,
         agent_version,
         directory_version,
         versions,
-    )
+    )?;
+    Ok(installed)
 }
 
 enum AgentInput<'a> {
     Published(&'a super::GitHubAsset, &'a [u8]),
     Local(&'a [u8]),
+}
+
+/// Download the optional interactive client named by the release, if any.
+fn release_tui_source(client: &reqwest::blocking::Client, release: &super::GitHubRelease) -> TuiSource {
+    let Some(name) = tui_asset_name(super::get_asset_name()) else {
+        return TuiSource::NotRequested;
+    };
+    let Some(entry) = release.assets.iter().find(|entry| entry.name == name) else {
+        return TuiSource::Missing { asset: name };
+    };
+    match download(client, entry) {
+        Ok(bytes) => TuiSource::Archive { asset: name, bytes },
+        Err(error) => TuiSource::Failed {
+            asset: name,
+            reason: format!("{error:#}"),
+        },
+    }
+}
+
+/// Find the optional interactive client in an offline asset directory.
+///
+/// Absence is not a failure: an older release, or an older installer that never
+/// fetched the archive, installs the headless agent alone.
+fn directory_tui_source(directory: &Path) -> Result<TuiSource> {
+    let Some(name) = tui_asset_name(super::get_asset_name()) else {
+        return Ok(TuiSource::NotRequested);
+    };
+    let path = directory.join(&name);
+    if !path.try_exists()? {
+        return Ok(TuiSource::NotRequested);
+    }
+    let metadata = std::fs::symlink_metadata(&path)?;
+    if !metadata.file_type().is_file() {
+        return Ok(TuiSource::Failed {
+            asset: name,
+            reason: "archive is not a regular file".to_owned(),
+        });
+    }
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(TuiSource::Archive { asset: name, bytes }),
+        Err(error) => Ok(TuiSource::Failed {
+            asset: name,
+            reason: error.to_string(),
+        }),
+    }
 }
 
 /// Offline installer entry: use the same checks and staging as downloaded releases.
@@ -132,17 +265,24 @@ pub(super) fn stage_local(
     } else {
         AgentInput::Published(&binary_asset, &bytes)
     };
-    stage_package(&read_asset, &release, input, version, version, versions)
+    let tui = if source_binary.is_some() {
+        TuiSource::NotRequested
+    } else {
+        directory_tui_source(directory)?
+    };
+    let (binary, _tui) = stage_package(&read_asset, &release, input, tui, version, version, versions)?;
+    Ok(binary)
 }
 
 fn stage_package(
     read_asset: &dyn Fn(&str) -> Result<Vec<u8>>,
     release: &super::GitHubRelease,
     input: AgentInput<'_>,
+    tui: TuiSource,
     version: &str,
     directory_version: &str,
     versions: &Path,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, TuiOutcome)> {
     validate_version(version)?;
     validate_version(directory_version)?;
     if release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name) != version {
@@ -198,21 +338,170 @@ fn stage_package(
     horon_agent_platform::set_permissions_executable(&binary)?;
     super::patch_termux_interpreter_if_needed(&binary)?;
 
+    let tui = stage_tui(tui, &sums, versions);
     let destination = versions.join(directory_version);
-    match std::fs::symlink_metadata(&destination) {
+    let outcome = match std::fs::symlink_metadata(&destination) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
             let installed = destination.join(crate::build::binary_name());
             if super::digest::file_sha256(&binary)? != super::digest::file_sha256(&installed)? {
                 bail!("the installed agent version already contains different bytes");
             }
+            // An existing version is immutable, so the client is only added when absent.
+            settle_tui(tui, |asset, files| place_tui_files(&destination, asset, files))
         }
         Ok(_) => bail!("the installed version path is not a real directory"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let outcome = settle_tui(tui, |asset, files| {
+                move_tui_files(files, staging.path())
+                    .map(|()| TuiOutcome::Installed)
+                    .map_err(|error| (asset.to_owned(), error))
+            });
             std::fs::rename(staging.path(), &destination)?;
+            outcome
         }
         Err(error) => return Err(error.into()),
+    };
+    announce_tui(&outcome);
+    Ok((destination.join(crate::build::binary_name()), outcome))
+}
+
+/// Move the staged client into `destination` only when the target name is free.
+fn place_tui_files(
+    destination: &Path,
+    asset: &str,
+    files: Vec<PathBuf>,
+) -> Result<TuiOutcome, (String, anyhow::Error)> {
+    let mut moved = Vec::new();
+    for path in files {
+        let name = match path.file_name() {
+            Some(name) => name.to_owned(),
+            None => continue,
+        };
+        let target = destination.join(&name);
+        match target.try_exists() {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => return Err((asset.to_owned(), error.into())),
+        }
+        if let Err(error) = std::fs::rename(&path, &target) {
+            rollback_tui(&moved);
+            return Err((asset.to_owned(), error.into()));
+        }
+        moved.push(target);
     }
-    Ok(destination.join(crate::build::binary_name()))
+    if moved.is_empty() {
+        Ok(TuiOutcome::AlreadyPresent)
+    } else {
+        Ok(TuiOutcome::Installed)
+    }
+}
+
+/// Move every staged file under one directory, all or nothing.
+fn move_tui_files(files: Vec<PathBuf>, destination: &Path) -> Result<()> {
+    let mut moved = Vec::new();
+    for path in files {
+        let name = path
+            .file_name()
+            .context("staged interactive client has no name")?
+            .to_owned();
+        let target = destination.join(name);
+        if let Err(error) = std::fs::rename(&path, &target) {
+            rollback_tui(&moved);
+            return Err(error.into());
+        }
+        moved.push(target);
+    }
+    Ok(())
+}
+
+fn rollback_tui(moved: &[PathBuf]) {
+    for path in moved {
+        if let Err(error) = std::fs::remove_file(path) {
+            crate::logging::warn(&format!("could not remove {}: {error}", path.display()));
+        }
+    }
+}
+
+/// Turn the verified archive into files ready to place, or into the reason it was skipped.
+fn stage_tui(source: TuiSource, sums: &str, versions: &Path) -> StagedTui {
+    let (asset, bytes) = match source {
+        TuiSource::NotRequested => return StagedTui::Settled(TuiOutcome::NotRequested),
+        TuiSource::Missing { asset } => return StagedTui::Settled(TuiOutcome::Missing { asset }),
+        TuiSource::Failed { asset, reason } => return StagedTui::Settled(TuiOutcome::Skipped { asset, reason }),
+        TuiSource::Archive { asset, bytes } => (asset, bytes),
+    };
+    let skip = |reason: String| {
+        StagedTui::Settled(TuiOutcome::Skipped {
+            asset: asset.clone(),
+            reason,
+        })
+    };
+    if let Err(error) = super::verify_asset_checksum_text(sums, &asset, &bytes) {
+        return skip(format!("{error:#}"));
+    }
+    let stage = match tempfile::Builder::new().prefix(".tui-stage-").tempdir_in(versions) {
+        Ok(stage) => stage,
+        Err(error) => return skip(error.to_string()),
+    };
+    let files = match extract_archive(&bytes, stage.path()) {
+        Ok(files) => files,
+        Err(error) => return skip(format!("{error:#}")),
+    };
+    let base = asset.trim_end_matches(".tar.gz");
+    let payload = format!("{base}.bin");
+    let windows = format!("{base}.exe");
+    let mut candidate = None;
+    for path in &files {
+        let name = match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) if path.parent() == Some(stage.path()) => name.to_owned(),
+            _ => return skip("archive contains a nested path".to_owned()),
+        };
+        if name == base || name == windows {
+            if candidate.replace(path.clone()).is_some() {
+                return skip("archive must contain exactly one interactive client executable".to_owned());
+            }
+        } else if name != payload {
+            return skip(format!("archive contains an unexpected member: {name}"));
+        }
+    }
+    let Some(candidate) = candidate else {
+        return skip("archive must contain exactly one interactive client executable".to_owned());
+    };
+    let renamed = stage.path().join(tui_binary_name());
+    if let Err(error) = std::fs::rename(&candidate, &renamed) {
+        return skip(error.to_string());
+    }
+    let files: Vec<PathBuf> = files
+        .into_iter()
+        .map(|path| if path == candidate { renamed.clone() } else { path })
+        .collect();
+    for path in &files {
+        if let Err(error) = horon_agent_platform::set_permissions_executable(path) {
+            return skip(error.to_string());
+        }
+    }
+    StagedTui::Ready { asset, files, stage }
+}
+
+/// Resolve a staged client through `place`, turning a failure into one warning.
+fn settle_tui<F>(staged: StagedTui, place: F) -> TuiOutcome
+where
+    F: FnOnce(&str, Vec<PathBuf>) -> Result<TuiOutcome, (String, anyhow::Error)>,
+{
+    match staged {
+        StagedTui::Settled(outcome) => outcome,
+        StagedTui::Ready { asset, files, stage } => {
+            let outcome = match place(&asset, files) {
+                Ok(outcome) => outcome,
+                Err((asset, error)) => TuiOutcome::Skipped {
+                    asset,
+                    reason: format!("{error:#}"),
+                },
+            };
+            drop(stage);
+            outcome
+        }
+    }
 }
 
 pub(super) fn validate_version(version: &str) -> Result<()> {
@@ -310,6 +599,41 @@ mod tests {
         archive_name
     }
 
+    /// A tarred archive whose members each carry their own bytes.
+    fn archive_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, contents) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o755);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(contents.len() as u64);
+            header.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+            header.set_cksum();
+            builder.append(&header, *contents).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    /// Add an interactive-client archive to an existing asset directory.
+    fn add_tui_archive(directory: &Path, members: &[(&str, &[u8])]) -> String {
+        let name = tui_asset_name(super::super::get_asset_name()).unwrap();
+        let bytes = archive_with(members);
+        let mut sums = std::fs::read_to_string(directory.join("SHA256SUMS")).unwrap();
+        sums.push_str(&format!("{:x}  {name}\n", Sha256::digest(&bytes)));
+        std::fs::write(directory.join(&name), &bytes).unwrap();
+        std::fs::write(directory.join("SHA256SUMS"), sums).unwrap();
+        name
+    }
+
+    /// The interactive client's own member name for the running platform.
+    fn tui_tarball_member() -> String {
+        tui_asset_name(super::super::get_asset_name())
+            .unwrap()
+            .trim_end_matches(".tar.gz")
+            .to_owned()
+    }
+
     fn archive(entries: &[(&str, tar::EntryType)], contents: &[u8]) -> Vec<u8> {
         let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         let mut builder = tar::Builder::new(encoder);
@@ -377,6 +701,153 @@ mod tests {
 
         assert!(error.to_string().contains("different bytes"), "{error}");
         assert_eq!(std::fs::read(&installed).unwrap(), b"different-bytes");
+    }
+
+    #[test]
+    fn the_interactive_client_lands_beside_the_agent() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let member = tui_tarball_member();
+        add_tui_archive(assets.path(), &[(&member, b"tui-binary")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        let directory = installed.parent().unwrap();
+        assert_eq!(directory, versions.path().join("1.2.3"));
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert_eq!(std::fs::read(directory.join(tui_binary_name())).unwrap(), b"tui-binary");
+    }
+
+    #[test]
+    fn a_compat_payload_beside_the_wrapper_is_kept_and_executable() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let base = tui_tarball_member();
+        let payload = format!("{base}.bin");
+        add_tui_archive(assets.path(), &[(&base, b"wrapper"), (&payload, b"payload")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        let directory = installed.parent().unwrap();
+        let payload = directory.join(&payload);
+        assert_eq!(std::fs::read(&payload).unwrap(), b"payload");
+        assert!(horon_agent_platform::fs::is_executable(&payload));
+        assert!(horon_agent_platform::fs::is_executable(
+            &directory.join(tui_binary_name())
+        ));
+    }
+
+    #[test]
+    fn a_release_without_the_client_still_installs_the_agent() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!installed.parent().unwrap().join(tui_binary_name()).exists());
+        assert_eq!(tui_warning(&TuiOutcome::NotRequested), None);
+        assert_eq!(tui_warning(&TuiOutcome::Installed), None);
+        assert_eq!(tui_warning(&TuiOutcome::AlreadyPresent), None);
+    }
+
+    #[test]
+    fn a_client_with_a_bad_checksum_is_skipped_and_named() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let member = tui_tarball_member();
+        let name = add_tui_archive(assets.path(), &[(&member, b"tui-binary")]);
+        let sums = std::fs::read_to_string(assets.path().join("SHA256SUMS")).unwrap();
+        let zeroed = format!("{}  {name}", "0".repeat(64));
+        let corrupted: String = sums
+            .lines()
+            .map(|line| {
+                if line.ends_with(&name) {
+                    format!("{zeroed}\n")
+                } else {
+                    format!("{line}\n")
+                }
+            })
+            .collect();
+        assert!(corrupted.contains(&zeroed));
+        std::fs::write(assets.path().join("SHA256SUMS"), &corrupted).unwrap();
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!installed.parent().unwrap().join(tui_binary_name()).exists());
+        // The warning text is built from the real verification failure.
+        let reason = super::super::verify_asset_checksum_text(&corrupted, &name, b"tui-binary")
+            .unwrap_err()
+            .to_string();
+        let warning = tui_warning(&TuiOutcome::Skipped {
+            asset: name.clone(),
+            reason,
+        })
+        .unwrap();
+        assert!(warning.contains(&name), "{warning}");
+        assert!(warning.contains("could not install"), "{warning}");
+        assert!(warning.contains("Checksum mismatch"), "{warning}");
+    }
+
+    #[test]
+    fn a_client_archive_with_a_nested_member_is_skipped() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        add_tui_archive(assets.path(), &[("nested/horon-tui", b"tui-binary")]);
+
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(&installed).unwrap(), b"agent-binary");
+        assert!(!installed.parent().unwrap().join(tui_binary_name()).exists());
+    }
+
+    #[test]
+    fn a_client_is_added_to_an_already_installed_version() {
+        let assets = tempfile::tempdir().unwrap();
+        let versions = tempfile::tempdir().unwrap();
+        release_directory(assets.path(), b"agent-binary");
+        let installed = stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+        let directory = installed.parent().unwrap().to_path_buf();
+        let member = tui_tarball_member();
+        add_tui_archive(assets.path(), &[(&member, b"tui-binary")]);
+
+        stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap();
+
+        assert_eq!(std::fs::read(directory.join(tui_binary_name())).unwrap(), b"tui-binary");
+        assert_eq!(
+            std::fs::read(directory.join(crate::build::binary_name())).unwrap(),
+            b"agent-binary"
+        );
+    }
+
+    #[test]
+    fn the_client_asset_name_mirrors_the_agent_asset_name() {
+        assert_eq!(
+            tui_asset_name("horon-agent-linux-x86_64").as_deref(),
+            Some("horon-tui-linux-x86_64.tar.gz")
+        );
+        assert_eq!(
+            tui_asset_name("horon-agent-macos-aarch64").as_deref(),
+            Some("horon-tui-macos-aarch64.tar.gz")
+        );
+        assert_eq!(
+            tui_asset_name("horon-agent-windows-x86_64.exe").as_deref(),
+            Some("horon-tui-windows-x86_64.tar.gz")
+        );
+        assert_eq!(
+            tui_asset_name("horon-agent-windows-aarch64.exe").as_deref(),
+            Some("horon-tui-windows-aarch64.tar.gz")
+        );
+        assert_eq!(tui_asset_name("horon-agent-freebsd-x86_64"), None);
+        assert_eq!(tui_asset_name("horon-agent-unknown"), None);
+        assert_eq!(tui_asset_name("horon-other"), None);
+        assert_eq!(tui_binary_name().trim_end_matches(".exe"), "horon-tui");
     }
 
     #[test]

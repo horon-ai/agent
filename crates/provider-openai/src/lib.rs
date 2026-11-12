@@ -1,8 +1,12 @@
 pub mod chat;
 mod citations;
+pub mod images;
 pub mod request;
 pub mod stream;
 pub mod websocket_health;
+
+#[cfg(test)]
+mod verdict_bytes_tests;
 
 pub use chat::request::{
     CHAT_COMPLETIONS_PATH, build_chat_completions_request, build_chat_tools, chat_tool_definition,

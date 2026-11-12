@@ -212,17 +212,30 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 | `prior_compaction_id` | 앞서 적용한 압축. 증분 요약에 쓴다 |
 | `provider` / `model` / `route` / `settings_digest` / `generation` | 무엇이 어떤 설정으로 만들었는가 |
 | `input_tokens` / `output_tokens` | 사용량, 알 수 있을 때 |
-| `outcome` | `summary`, `native`, `lossy_emergency` |
+| `outcome` | `summary`, `native`, `lossy_emergency`, `handoff` |
 | `native_window` | 프로바이더 네이티브 윈도 항목, 순서대로, 통째로 보존 |
-| `restoration` | 한도가 있는 `{path, kind, note}` 참조와 바이트 예산. 파일 본문은 아니다 |
+| `restoration` | 한도가 있는 `{path, kind, note}` 참조와 바이트 예산. 파일 본문은 아니다. 구조화 요약과 `handoff` 경계가 같은 형태로 쓴다 |
+
+`handoff`는 요약이 아니라 생성한 핸드오프 문서로 쓴 경계를 뜻한다
+(`crates/app-core/src/agent/handoff_compaction.rs`). 문서는 `summary_text`로 저장하고, 덮은
+접두부가 읽은 파일은 구조화 요약과 같은 한도로 `restoration`에 저장한다. 문서는
+비어 있지 않고 `Goal` 제목이 항상 있다. 빈 문서나 그 제목이 없는 문서는 쓰기 전에 거부한다.
+다른 절은 확인하지 않으므로 절이 빠진 문서도 유효한 `handoff`다. 생성이 실패하거나 취소되거나
+거부되면 기록을 아예 쓰지 않으므로 대화록, 이전 경계, 메시지 수가 그대로 남는다.
 
 진행할 수 없는 압축은 요약이 성공한 척하지 않고 이유와 함께 `compaction_blocked`를 덧붙인다
 (`context_recovery_blocked`, `context_budget_too_small`,
 `provider_error`, `overflow_no_progress`, `stale_source`). 길이 알림이나 빈 구조 요약은 성공한
 `summary`로 기록하지 않는다. `summary_text`가 빈 유효한 네이티브 윈도는 기록한다.
 
-압축을 소유하는 전략은 `[compaction]` 아래 `strategy`다. `structured`(기본), `openai_auto`,
-`openai_explicit` 중 하나다. `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
+압축을 소유하는 전략은 `[compaction]` 아래 `strategy`다. `structured`(기본), `handoff`,
+`openai_auto`, `openai_explicit` 중 하나다. `handoff`는 평소 압축 잡을 그대로 돌려 생성한
+핸드오프 문서를 경계로 저장하고, `handoff` 표시를 붙여 다음 요청이 그 문서를 같은 에이전트가
+앞서 쓴 글로 소개하게 한다(`crates/base/src/compaction/handoff_provider.rs`). 핸드오프를 쓸 수
+없으면 같은 잡에서 구조화 요약으로 대체한다. `[compaction] method_order`로 그 사슬을 직접
+지정할 수 있고(`["handoff", "structured"]`), 없거나 거부되면 `strategy` 하나가 결정하며
+프로바이더 네이티브 전략은 이 값을 무시한다(`docs/runtime/TURNS.ko.md`,
+`crates/base/src/compaction/method_order.rs`). `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
 둔 경우 `strategy`가 설정되지 않았을 때만 존중한다. 없음, 빈 값, `off`는 모두 `structured`로
 해석한다. 같은 절의 예산 기본값은 `recent_tokens` 20,000, `reserve_tokens` 16,384를
 `min(window * 0.04, 49,152)`까지 올린 값, 그리고 16k에서 0.45부터 512k 초과에서 0.80까지 가는 윈도
@@ -248,7 +261,7 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 - 캐시 적중은 `checkpoint.json`과 꼬리만 읽는다. 크기 감소, inode/epoch 변경, 앵커 불일치, 같은
   길이 편집이면 전체 재생을 강제한다. 변하지 않은 접두부 안의 임의 변조를 찾는 일은 `doctor`의
   몫이고, 웜 연결은 접두부 전체를 해시한다고 주장하지 않는다.
-- `horon-agent run`의 마지막 커밋은 파생 캐시를 다음 판독기에 넘긴다. 그 커밋은 원본, 런타임
+- `horon run`의 마지막 커밋은 파생 캐시를 다음 판독기에 넘긴다. 그 커밋은 원본, 런타임
   바인딩, 선택된 헤드를 그대로 쓰지만, 곧 종료할 프로세스를 위해 파생 캐시를 다시 만드는 일은
   건너뛴다. 다음 판독기는 스탬프가 로그와 맞지 않는 checkpoint를 발견하고 writer 락 아래에서 다시
   만든다. 크래시 뒤와 같은 경로다. 이 연기는 한 번만 무장되고 그 커밋이 성패와 무관하게 소비하며,

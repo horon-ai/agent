@@ -147,6 +147,7 @@ async fn context_condensation_stays_bounded() {
                 tool_use_id: format!("call-{index}"),
                 content: format!("{index}\n{}", "row of output\n".repeat(700)),
                 is_error: None,
+                verdict: None,
             }],
         );
     }

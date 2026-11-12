@@ -1045,6 +1045,7 @@ async fn schema_spawn_installs_yield_on_the_child_only() {
             super::SpawnExtras {
                 output_schema: Some(schema),
                 allowed_tools: None,
+                source_session: None,
             },
             &sessions,
             &Arc::new(RwLock::new(String::new())),

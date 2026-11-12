@@ -1,8 +1,10 @@
 //! The single-line editor under the transcript.
 //!
 //! It edits by character rather than byte so a cursor never lands inside a
-//! multi-byte code point, and it keeps the terminal concerns (cursor column)
-//! out of the app.
+//! multi-byte code point, and it keeps the terminal concerns (cursor column,
+//! how much of the line fits) out of the app.
+
+use unicode_width::UnicodeWidthChar;
 
 /// An editable line with a cursor.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -32,12 +34,50 @@ impl Input {
         self.cursor
     }
 
-    /// The cursor column for a prompt that starts at column zero, in cells.
+    /// The cursor column, counted in cells from the start of the line.
     ///
-    /// TUI text is overwhelmingly single-width; a wide character means the
-    /// cursor lands one cell early on that line rather than not at all.
+    /// The renderer offsets it by the prompt marker, so a wide character moves
+    /// the cursor by its two cells instead of one.
     pub fn cursor_column(&self) -> u16 {
-        u16::try_from(self.cursor).unwrap_or(u16::MAX)
+        let cells: usize = self.characters[..self.cursor]
+            .iter()
+            .map(|character| char_width(*character))
+            .sum();
+        u16::try_from(cells).unwrap_or(u16::MAX)
+    }
+
+    /// The part of the line that fits `width` cells, and where the cursor sits
+    /// inside it.
+    ///
+    /// The window follows the cursor: text before it is dropped from the left
+    /// once the line is wider than the pane, so the caret never leaves the
+    /// screen. The cursor keeps the rightmost cell free for itself.
+    pub fn window(&self, width: u16) -> (String, u16) {
+        let room = usize::from(width);
+        if room == 0 {
+            return (String::new(), 0);
+        }
+        let cursor_cells = usize::from(self.cursor_column());
+        // Leaving one cell free keeps the cursor visible at the right edge.
+        let limit = room.saturating_sub(1);
+        let mut first = 0;
+        let mut dropped = 0;
+        while cursor_cells.saturating_sub(dropped) > limit && first < self.cursor {
+            dropped += char_width(self.characters[first]);
+            first += 1;
+        }
+        let mut text = String::new();
+        let mut used = 0;
+        for character in &self.characters[first..] {
+            let cells = char_width(*character);
+            if used + cells > room {
+                break;
+            }
+            text.push(*character);
+            used += cells;
+        }
+        let column = u16::try_from(cursor_cells.saturating_sub(dropped)).unwrap_or(u16::MAX);
+        (text, column.min(u16::try_from(limit).unwrap_or(u16::MAX)))
     }
 
     /// Insert a character at the cursor.
@@ -98,6 +138,11 @@ impl Input {
     }
 }
 
+/// The cells one character occupies, matching what the terminal draws.
+fn char_width(character: char) -> usize {
+    UnicodeWidthChar::width(character).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +184,61 @@ mod tests {
         input.left();
         input.right();
         assert!(input.is_empty());
+    }
+
+    fn typed(text: &str) -> Input {
+        let mut input = Input::new();
+        for character in text.chars() {
+            input.insert(character);
+        }
+        input
+    }
+
+    #[test]
+    fn short_line_is_not_windowed() {
+        let mut input = typed("hi");
+        assert_eq!(input.window(20), ("hi".to_string(), 2));
+        input.home();
+        assert_eq!(input.window(20), ("hi".to_string(), 0));
+    }
+
+    #[test]
+    fn long_line_scrolls_so_the_cursor_stays_inside() {
+        // Ten characters in a six-cell pane: the last five fit before the
+        // cursor, which sits in the last cell.
+        let input = typed("abcdefghij");
+        assert_eq!(input.window(6), ("fghij".to_string(), 5));
+        assert!(
+            usize::from(input.window(6).1) < 6,
+            "cursor escaped the input area: {:?}",
+            input.window(6)
+        );
+    }
+
+    #[test]
+    fn moving_left_scrolls_the_window_back() {
+        let mut input = typed("abcdefghij");
+        for _ in 0..5 {
+            input.left();
+        }
+        // Cursor on 'f' (column 5 in the full line) with a six-cell pane keeps
+        // the start visible and the caret at cell five.
+        assert_eq!(input.window(6), ("abcdef".to_string(), 5));
+        input.home();
+        assert_eq!(input.window(6), ("abcdef".to_string(), 0));
+    }
+
+    #[test]
+    fn wide_characters_move_the_cursor_by_their_cells() {
+        let input = typed("한글");
+        assert_eq!(input.cursor_column(), 4);
+        // Three cells hold one two-cell syllable plus the cursor.
+        assert_eq!(input.window(3), ("글".to_string(), 2));
+    }
+
+    #[test]
+    fn zero_width_window_shows_nothing() {
+        let input = typed("text");
+        assert_eq!(input.window(0), (String::new(), 0));
     }
 }

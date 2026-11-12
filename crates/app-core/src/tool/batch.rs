@@ -1,4 +1,4 @@
-use super::{Registry, Tool, ToolContext, ToolOutput, WeakRegistry};
+use super::{Registry, Tool, ToolContext, ToolOutput, ToolVerdict, WeakRegistry};
 use crate::bus::{BatchSubcallProgress, BatchSubcallState};
 use crate::message::ToolCall;
 use anyhow::Result;
@@ -330,12 +330,25 @@ impl Tool for BatchTool {
         let mut success_count = 0;
         let mut error_count = 0;
         let mut failed_tools = Vec::new();
+        let mut cut = false;
+        let mut partial = false;
 
         for (i, tool_name, result) in results {
             output.push_str(&format!("--- [{}] {} ---\n", i + 1, tool_name));
             match result {
                 Ok(out) => {
                     success_count += 1;
+                    cut |= matches!(out.verdict, Some(ToolVerdict::Truncated | ToolVerdict::Withheld));
+                    // A member that says anything else about itself was not
+                    // whole: it only finished in part, or it failed while still
+                    // returning text. Its text did arrive, so the aggregate
+                    // cannot call itself failed, but it cannot call itself whole
+                    // either. A cut is tracked apart from this because a batch
+                    // of whole-but-cut members is itself only a cut.
+                    partial |= !matches!(
+                        out.verdict,
+                        None | Some(ToolVerdict::Ok | ToolVerdict::Truncated | ToolVerdict::Withheld)
+                    );
                     // Preserve attachments in subcall order, just like the text.
                     // The agent emits them against the visible parent batch call
                     // and persists them with its aggregate tool result.
@@ -344,6 +357,7 @@ impl Tool for BatchTool {
                     if out.output.len() > max_per_tool {
                         output.push_str(crate::util::truncate_str(&out.output, max_per_tool));
                         output.push_str("...\n(truncated)");
+                        cut = true;
                     } else {
                         output.push_str(&out.output);
                     }
@@ -375,7 +389,24 @@ impl Tool for BatchTool {
 
         let mut result = ToolOutput::new(output);
         result.images = images;
+        result.verdict = batch_verdict(success_count, error_count, cut, partial);
         Ok(result)
+    }
+}
+
+/// The verdict of a batch as a whole.
+///
+/// A batch returns text even when a member failed, so the error flag cannot say
+/// that it ran only in part. A batch whose members all ran and came back whole
+/// makes no statement: it is an ordinary result.
+fn batch_verdict(succeeded: usize, failed: usize, cut: bool, partial: bool) -> Option<ToolVerdict> {
+    match (succeeded, failed) {
+        (0, 0) => None,
+        (0, _) => Some(ToolVerdict::Failed),
+        (_, 0) if partial => Some(ToolVerdict::Partial),
+        (_, 0) if cut => Some(ToolVerdict::Truncated),
+        (_, 0) => None,
+        _ => Some(ToolVerdict::Partial),
     }
 }
 

@@ -156,11 +156,15 @@ async fn permission_v2_has_title_and_subject() {
         .iter()
         .map(|option| option["optionId"].as_str().unwrap())
         .collect();
+    // This request names one path, so a v2 client also gets the two scoped
+    // answers; v1 stays at the four below (golden-v1-frames.jsonl).
     assert_eq!(
         option_ids,
         [
             OPTION_ALLOW_ONCE,
             OPTION_ALLOW_ALWAYS,
+            OPTION_ALLOW_PATH,
+            OPTION_ALLOW_FOLDER,
             OPTION_REJECT_ONCE,
             OPTION_REJECT_ALWAYS
         ]

@@ -72,6 +72,8 @@ A model role is a named workload-to-model mapping shared by every feature that n
 | `default` | Every turn of the session unless a more specific role applies. A bare `--model` or `/model` names this role for the run. | `default` |
 | `plan` | Planning turns: the model that writes a plan before execution hands off (#70). | `plan` |
 | `aux` | Cheap auxiliary work: compaction summaries, titles, classification, memory extraction. | `aux` |
+| `judge` | Typed judgments: one bounded call answering a `bool`, `choice`, or `score` question about text the turn already produced. Today the single caller is unexpected-stop recovery (`docs/runtime/TURNS.md`). | `judge` |
+| `image` | Image generation and editing: the one role whose model does not speak Chat Completions. Its single caller is the `generate_image` tool, which posts to `/images/generations` and `/images/edits` on the same profile. No inherited fallback, because a text model cannot answer an image request. | `image` |
 
 No other role exists. A new role is added only together with the workload that calls it. Reason: a role with no named caller is a second spelling of `default`, and a role that appears before its consumer cannot be reviewed for the model it should point at.
 
@@ -103,12 +105,14 @@ A workload that asks for a role resolves it in this order, and the first step th
 
 1. The override for this run or turn (`--model` names `default`; a handoff sets `plan` through the existing model switch).
 2. The role's own entry under `[providers.<name>.roles]`.
-3. The `default` role's entry.
+3. The entry of each role this role inherits from, in that role's declared order: `plan` and `aux` inherit `default`, and `judge` inherits `aux` then `default`.
 4. The profile's `default_model`.
 5. `[provider] default_model`.
 6. An error that names the workload and the keys that were empty.
 
-An empty string counts as unset at every step. `aux` walks the same chain, so a profile with only `default_model` uses today's model for auxiliary work. Reason: steps 1, 4, and 5 are the order the agent already resolves one model today; roles slot in above them, so every existing file resolves to the same model it resolves to now, and an unset role inherits instead of failing.
+An empty string counts as unset at every step. `aux` walks the same chain, so a profile with only `default_model` uses today's model for auxiliary work. `judge` inherits `aux` before `default` so a profile that already names one cheap model for side work judges with it instead of spending the session model. Reason: steps 1, 4, and 5 are the order the agent already resolves one model today; roles slot in above them, so every existing file resolves to the same model it resolves to now, and an unset role inherits instead of failing.
+
+`image` stops at step 3: it has no inherited roles and does not take a profile or provider text default. An image request sent to a chat model cannot succeed, so an unset `roles.image` means image generation is not configured, which the tool reports, rather than a call that always fails at the endpoint. This is the only role where a text default is not a valid substitute, and `ModelRole::accepts_text_default` states it once.
 
 ### Fallback and failover order
 
@@ -125,6 +129,58 @@ The switch lasts for the rest of the turn and the next turn starts again from th
 #73 writes the shared type: the `roles` table on `NamedProviderConfig` in `crates/config-types/src/lib.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
 
 An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
+
+### The `image` role and the one model path
+
+The build's rule is that one model path serves models: a turn posts `/chat/completions` to the profile named by `[provider] default_provider` or `--provider-profile`. The `generate_image` tool is the one documented exception, and it is a route rather than an architecture:
+
+- It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
+- There is still one provider runtime, no second router and no plugin host. `crates/provider-openai/src/images.rs` is a request builder beside `chat/`, not a runtime.
+- The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
+- A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
+- The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.
+- Output is limited to the OpenAI Images shape. A gateway that speaks it works unchanged, including the Horon AI Gateway. Gemini-native and Responses-hosted image tools are out of scope; the MCP recipe in `docs/provider/INTEGRATIONS.md` covers anything this route does not.
+
+### The `judge` role in practice
+
+`crates/provider-core/src/judge.rs` owns the pure half of a judgment: the prompt (`JudgeRequest::prompt`), the response schema (`response_schema`), the limits (64 questions, 48 KiB of state, 4 KiB of instructions per question, 64 choice labels, 64 score levels), and a strict parser that rejects an invented label, an out-of-range probability, a missing or duplicated id, and any extra field. `crates/base/src/judge.rs` owns the half that needs configuration: `resolve_judge_model` walks the chain above, and `judge_with` forks the caller's provider, selects the resolved model, waits inside the attempt budget, and returns the parsed answers with the provider's usage.
+
+A judgment is an ordinary `/chat/completions` call, so this role adds no endpoint and no credential; that keeps the build's one-model-path rule intact. A model that cannot be selected is an error, never a silent inheritance of the session model: the point of a judgment is a second model's opinion. The attempt budget is `[autojudge] attempt_timeout_ms`: it defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. The budget covers the whole attempt, model selection included, because a judgment holds up the turn it is judging.
+
+The role is named `judge` and the `/judge` command is a different workload: `/judge` spawns a reviewer worker inside a swarm and resolves its model through the session agent-model overrides (`/model judge`, `/agents judge <model>`). Both read `[autojudge] model` as their model override, so one setting names the model in both places, but a judgment never spawns a worker and a worker never answers a typed question.
+
+### What the fallback list looks like at runtime
+
+`ModelRoleConfig::fallback_models()` in `crates/config-types/src/model_roles.rs` trims each entry and drops blanks, so an empty string never becomes an attempt.
+
+Only the active named profile has a list this step may spend. `active_profile_fallback_models()` in `crates/app-core/src/agent/model_fallback.rs` resolves the profile from `HORON_AGENT_NAMED_PROVIDER_PROFILE`, then `HORON_AGENT_PROVIDER_PROFILE_NAME`, and returns the entries only when they are non-empty. A session that is not on a named profile behaves exactly as it did before this step existed.
+
+`Agent::try_model_fallback` records an entry in the turn state before applying it, so a switch the provider refuses still spends that entry; otherwise the same refusal could be retried without a bound. `restore_model_fallback` puts the session's own model back at the next turn start (through `begin_turn_state`), on an interrupt, and on a failed turn. The switch never reaches `session.model`, so a reload or a client that reads the session sees the selection the user made.
+
+Two read-only accessors expose the outcome. `Agent::fallback_models()` returns the configured entries, empty when no profile is active. `Agent::last_serving_model()` is set in `Agent::record_model_turn_usage` when a response is stored, so it still names the model that answered after the next turn has restored the session model. `get_runtime_info` reports them as `fallback_models` and `serving_model`, and the catalog push carries the same pair in its `identity` object, so a client that keeps the pushed catalog does not have to poll.
+
+### Prewalk handoff
+
+`[prewalk]` spends one model switch per session on the move from planning to execution: the session runs on the planning model while it plans, then continues on an execution model once the plan exists.
+
+```toml
+[prewalk]
+enabled = true
+into = "exec-model"
+from = "plan-model"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | Whether a session hands off at all. Off by default. |
+| `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
+
+The handoff point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it.
+
+The decision is one replay event, `prewalk` in the stored session, and that event is what makes the handoff one-shot across processes: a session that already carries one never decides again. A refused `into` is recorded the same way — an unknown model, a `role:` name outside `default`, `plan` and `aux`, or a role that resolves to nothing — so the session keeps its current model, one warning is logged, and later rounds do not repeat it. An `into` that resolves to the model the session already runs records the decision without switching.
+
+`role:<name>` resolves through the active profile's role chain described above, which is why a profile that only sets `default_model` can hand off to `into = "role:aux"` and get that same model. `crates/app-core/src/agent/prewalk.rs` holds the decision, and the acceptance cases live in `crates/app-core/src/agent/prewalk_tests.rs`.
 
 ## Prompt cache key
 
@@ -156,7 +212,7 @@ Key files get narrowed permissions when read. You can also write the key value d
 `provider add` writes the same table into `config.toml` and stores the key received on `--api-key-stdin` in the key file.
 
 ```bash
-printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
+printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --base-url https://llm.example.com/v1 \
   --model my-model \
   --api-key-env MY_GW_API_KEY \

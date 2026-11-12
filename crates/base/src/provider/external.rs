@@ -288,3 +288,99 @@ pub(crate) fn maybe_schedule_profile_catalog_refresh(
         None => false,
     }
 }
+
+/// The endpoint and credential the `image` role's caller posts to.
+///
+/// Image generation is the one documented exception to "one model path", and it
+/// stays an endpoint rather than a runtime: the tool posts to
+/// `/images/generations` on the active profile's existing base URL with the
+/// existing credential and `extra_body`. Composition rather than a second
+/// [`Provider`] keeps the failure modes identical to a chat turn (the same key,
+/// the same host, the same proxy) and keeps the runtime count at one.
+#[derive(Debug, Clone)]
+pub struct ImageEndpoint {
+    /// Profile name, for messages and logs.
+    pub profile: String,
+    /// Endpoint root, without a `/chat/completions` or `/images/…` suffix.
+    pub base_url: String,
+    /// How the profile presents its credential.
+    pub auth: ChatAuth,
+    /// The credential, when the profile has one.
+    pub api_key: Option<String>,
+    /// Profile-level body fields, merged into an image request the same way a
+    /// chat request merges them.
+    pub extra_body: Option<serde_json::Value>,
+}
+
+/// Resolve the endpoint the `image` role posts to.
+///
+/// `Ok(None)` means the profile exists but names no `image` model, which is the
+/// off state: the caller reports that image generation is not configured rather
+/// than making a request that cannot succeed. An `image` model with no usable
+/// profile is an error, because that is a configuration mistake the user wants
+/// to hear about.
+pub fn image_endpoint(profile_name: &str) -> anyhow::Result<Option<ImageEndpoint>> {
+    let config = crate::config::config();
+    let Some(profile) = config.providers.get(profile_name) else {
+        anyhow::bail!("Provider profile '{profile_name}' is not configured.");
+    };
+    if !matches!(
+        profile.provider_type,
+        crate::config::NamedProviderType::OpenAiCompatible
+    ) {
+        anyhow::bail!(
+            "Provider profile '{profile_name}' has type {:?}; image generation needs an \
+             \"openai-compatible\" profile.",
+            profile.provider_type
+        );
+    }
+    let model = profile
+        .model_roles
+        .roles
+        .image
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+    if model.is_none() {
+        return Ok(None);
+    }
+    let base_url = crate::provider_catalog::normalize_api_base(&profile.base_url).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Provider profile '{profile_name}' has invalid base_url '{}'. Use an absolute https:// URL (or http://localhost).",
+            profile.base_url,
+        )
+    })?;
+    let auth = match profile.auth {
+        crate::config::NamedProviderAuth::Bearer => ChatAuth::Bearer,
+        crate::config::NamedProviderAuth::Header => {
+            let header = profile
+                .auth_header
+                .as_deref()
+                .map(str::trim)
+                .filter(|header| !header.is_empty())
+                .unwrap_or("api-key");
+            ChatAuth::Header {
+                header: header.to_string(),
+            }
+        }
+        crate::config::NamedProviderAuth::None => ChatAuth::None,
+    };
+    Ok(Some(ImageEndpoint {
+        profile: profile_name.to_string(),
+        base_url,
+        auth,
+        api_key: named_profile_api_key(profile),
+        extra_body: profile.extra_body.clone(),
+    }))
+}
+
+/// The `image` model this profile names, when it names one.
+pub fn image_model(profile_name: &str) -> Option<String> {
+    crate::config::config()
+        .providers
+        .get(profile_name)
+        .and_then(|profile| profile.model_roles.roles.image.as_deref())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+}

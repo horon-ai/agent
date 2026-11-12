@@ -27,6 +27,13 @@ horon-agent-tool-types = { path = "../tool-types" }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 crossterm = "0.29"
 toml = "0.8"
+# The settings screen edits `tui.toml` in place: `toml_edit` keeps the comments
+# and layout of a hand-written file, which `toml` cannot when it re-serializes.
+# The version matches the one `toml` already pulls in, so no new package.
+toml_edit = "0.20"
+# Cell width of a character, for wrapping the transcript and scrolling the
+# input. `ratatui` already depends on the same version.
+unicode-width = "0.2"
 serde_json = "1"
 # The `time` segment shows local wall-clock time; chrono is already in the
 # workspace lock through the harness crates.

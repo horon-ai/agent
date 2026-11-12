@@ -123,6 +123,9 @@ mod soft_interrupt_tests;
 #[path = "client_behavior/ask_response_tests.rs"]
 mod ask_response_tests;
 
+#[path = "client_behavior/failure_callback_tests.rs"]
+mod failure_callback_tests;
+
 /// GA session-management, runtime, credential, and file methods must preserve
 /// the stable protocol shapes while returning ergonomic SDK-owned values.
 #[test]
@@ -169,6 +172,8 @@ fn ga_runtime_and_file_methods_map_requests_and_typed_replies() {
                 model: Some("claude".to_string()),
                 reasoning_effort: Some("high".to_string()),
                 auth_method: Some("oauth".to_string()),
+                fallback_models: vec!["claude-backup".to_string()],
+                serving_model: Some("claude-backup".to_string()),
                 routes: reply_routes.clone(),
             },
             ApiRequest::SetApiKey { provider, .. } => ApiEvent::CredentialUpdated {
@@ -225,6 +230,8 @@ fn ga_runtime_and_file_methods_map_requests_and_typed_replies() {
     assert_eq!(runtime.provider.as_deref(), Some("anthropic"));
     assert_eq!(runtime.model.as_deref(), Some("claude"));
     assert_eq!(runtime.providers, ["anthropic", "google"]);
+    assert_eq!(runtime.fallback_models, ["claude-backup"]);
+    assert_eq!(runtime.serving_model.as_deref(), Some("claude-backup"));
     assert_eq!(runtime.routes, routes);
 
     client.set_api_key("gemini-api", "secret").expect("set key");
@@ -777,6 +784,7 @@ fn run_collects_one_turn() {
                     name: "bash".to_string(),
                     output: "ok".to_string(),
                     error: None,
+                    verdict: None,
                 },
                 writer,
             );
@@ -961,6 +969,8 @@ fn model_switch_preserves_identity_and_catalog_events_around_the_reply() {
                 model: Some("new-model".into()),
                 reasoning_effort: None,
                 auth_method: None,
+                fallback_models: Vec::new(),
+                serving_model: None,
                 routes: vec![ModelRouteInfo {
                     usage: None,
                     model: "new-model".into(),
@@ -1422,74 +1432,6 @@ fn run_retains_abnormal_stop_and_filters_other_sessions() {
     let result = client.run("s1", "hello", Default::default()).unwrap();
     assert_eq!(result.stop_reason, Some(TurnStopReason::Interrupted));
     assert_eq!(result.stop_message.as_deref(), Some("Cancelled by the user"));
-}
-
-#[test]
-fn failure_callback_receives_structured_stop_before_error() {
-    use horon_agent_sdk::{RunOptions, TurnStopReason};
-    let client = fake_harness(|frame, writer| {
-        if let ApiRequest::SendMessage { session_id, .. } = &frame.request {
-            push(
-                ApiEvent::MessageAccepted {
-                    session_id: session_id.clone(),
-                },
-                writer,
-            );
-            push(
-                ApiEvent::TurnStopped {
-                    session_id: session_id.clone(),
-                    reason: TurnStopReason::Crash,
-                    message: "Caught runtime panic".into(),
-                    provider_stop_reason: None,
-                },
-                writer,
-            );
-            push(
-                ApiEvent::Error {
-                    code: horon_agent_harness_api::ErrorCode::Internal,
-                    message: "Caught runtime panic".into(),
-                    details: None,
-                },
-                writer,
-            );
-            push(
-                ApiEvent::TurnDone {
-                    session_id: session_id.clone(),
-                    pending_soft_interrupts: None,
-                },
-                writer,
-            );
-        }
-    });
-    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let received = events.clone();
-    let result = client.run(
-        "s1",
-        "hello",
-        RunOptions {
-            on_event: Some(Box::new(move |event| received.lock().unwrap().push(event.clone()))),
-            ..Default::default()
-        },
-    );
-    assert!(result.is_err());
-    let events = events.lock().unwrap();
-    let stop = events
-        .iter()
-        .position(|event| {
-            matches!(
-                event,
-                ApiEvent::TurnStopped {
-                    reason: TurnStopReason::Crash,
-                    ..
-                }
-            )
-        })
-        .unwrap();
-    let error = events
-        .iter()
-        .position(|event| matches!(event, ApiEvent::Error { .. }))
-        .unwrap();
-    assert!(stop < error);
 }
 
 #[test]

@@ -5,7 +5,7 @@
 설치 스크립트는 릴리스 자산을 내려받은 뒤 압축을 직접 풀지 않고 에이전트 실행 파일의 `install-release`에 넘긴다. 검증, 압축 해제, 변경 불가 버전 디렉터리 생성, 채널 활성화를 한 경로에서 처리하려는 것이다 (`src/cli/install_release.rs`, `crates/app-core/src/update.rs` `install_release_from_directory`).
 
 ```bash
-horon-agent install-release --assets <디렉터리> --agent-version <버전>
+horon install-release --assets <디렉터리> --agent-version <버전>
 ```
 
 | 플래그 | 뜻 |
@@ -32,6 +32,35 @@ horon-agent install-release --assets <디렉터리> --agent-version <버전>
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 릴리스 자산과 `SHA256SUMS`를 임시 디렉터리에 받은 뒤 이 명령을 호출한다. `scripts/install/install_from_source.sh`는 같은 명령에 `--source-binary`를 붙여 로컬 빌드를 설치한다. 그래서 셸과 PowerShell이 서로 다른 설치 레이아웃을 만들지 않고, 실패하면 스크립트도 이전 설치를 건드리지 않는다.
 
 Windows 설치 경로와 서명 절차는 [`WINDOWS.ko.md`](WINDOWS.ko.md)에 있다.
+
+## npm에서 설치
+
+npm의 `@horon-ai/horon`은 릴리스 자산을 내려받지 않고 같은 두 실행 파일을 설치한다. 작은 런처 하나와 같은 버전으로 고정된 플랫폼 패키지 하나다. npm이 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 받는다.
+
+```bash
+npm i -g @horon-ai/horon
+npx @horon-ai/horon --help
+```
+
+npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신한다. 패키지가 두 실행 파일의 한 릴리스를 함께 고정하므로 런처가 시작하는 실행 파일에 `HORON_AGENT_NO_AUTO_UPDATE=1`을 넣기 때문이다. 패키지 구성, 플랫폼 패키지가 없을 때 나오는 오류, 버전 규칙, 게시 절차는 [`NPM.ko.md`](NPM.ko.md)에 있다.
+
+## 선택 사항인 터미널 클라이언트
+
+릴리스는 대화형 클라이언트도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다.
+
+`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이므로, 한 버전 디렉터리가 두 실행 파일을 들고 활성화가 둘을 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
+
+클라이언트는 모든 단계에서 선택 사항이고, 검증하지 못한 사본은 에이전트 설치를 막지 않는다.
+
+| 상황 | 결과 |
+| --- | --- |
+| 릴리스가 그 플랫폼용 압축 파일을 배포하지 않음 | 한 줄을 남기고 `horon-agent`만 설치한다 |
+| `SHA256SUMS`에 그 압축 파일 항목이 없음 | 한 줄을 남기고 `horon-agent`만 설치한다 |
+| 다이제스트가 다름 | 한 줄을 남기고 `horon-agent`만 설치한다 |
+| `--source-binary`, 또는 FreeBSD | 배포된 클라이언트를 넣지 않는다. FreeBSD는 `horon-agent`만 배포한다 |
+| 버전 디렉터리가 이미 있음 | 파일이 없을 때만 클라이언트를 더한다. 그 밖에는 버전 디렉터리를 바꾸지 않는다 |
+
+`scripts/install/uninstall.sh`와 `scripts/install/uninstall.ps1`은 설치 디렉터리의 `horon-tui` 런처를 다른 대상과 함께 목록에 올리고 지운다. 예전 설치가 남긴 런처도 포함한다.
 
 ## Linux 서버에서 실행
 

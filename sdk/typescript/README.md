@@ -43,7 +43,7 @@ The bridge ships in the runtime package, so no Rust toolchain is needed. To use
 `connect()` with the user's global horon-agent, start its bridge:
 
 ```bash
-horon-agent api-bridge
+horon api-bridge
 ```
 
 It starts the horon-agent server if one is not already up, then exposes the API
@@ -84,7 +84,7 @@ when running untrusted application code (`inheritLogins: false`).
 **Automate the user's own horon-agent** (`connect`). Attaches to the horon-agent already
 running on the machine, sharing its live sessions. This is what an editor
 plugin or a status dashboard wants. Anything it does is visible in the user's
-terminal, and it needs a bridge already running (`horon-agent api-bridge`).
+terminal, and it needs a bridge already running (`horon api-bridge`).
 
 ## Quick start
 
@@ -114,6 +114,14 @@ console.log(
 console.log("tokens:", turn.usage);
 client.close();
 ```
+
+Each entry of `turn.toolCalls` has `callId`, `name`, `output`, an optional
+`error`, and an optional `verdict` (protocol 1.19): `ok`, `partial`,
+`truncated`, `withheld`, `rejected`, `failed` or `interrupted`. The daemon sends
+a verdict only when a layer made a statement about the call, so most successful
+calls and every call on an older daemon have none. A missing verdict is not
+`ok`: read `error` then. A name a newer daemon adds arrives as the string it
+sent.
 
 ### Full system prompt override
 
@@ -616,7 +624,7 @@ try {
 | `startup_failed`        | The private instance exited before opening its API socket. Its stderr is included in the message.                         | Display/log the message; fix the reported configuration, credential, or binary error before retrying.                |
 | `startup_timeout`       | The private instance did not open its API socket within `startupTimeoutMs`.                                               | Increase the timeout on a slow machine; otherwise inspect stderr and ensure the runtime directory is writable.       |
 | `invalid_instance_home` | `horonAgentHome`, its credential paths, or the source login home is unsafe (same directory, symlink, file, or traversal). | Choose a separate real directory. Do not point a private instance at the user's live horon-agent home.               |
-| `connect_failed`        | The bridge is absent, dead, or listening at another socket path.                                                          | Run `horon-agent api-bridge`; verify `socketPath` or `HORON_AGENT_API_SOCKET`. The message names the attempted path. |
+| `connect_failed`        | The bridge is absent, dead, or listening at another socket path.                                                          | Run `horon api-bridge`; verify `socketPath` or `HORON_AGENT_API_SOCKET`. The message names the attempted path. |
 | `handshake_failed`      | The peer replied with an invalid frame during protocol negotiation.                                                       | Confirm the socket is a horon-agent harness socket and upgrade horon-agent/SDK together.                             |
 | `unsupported_version`   | Client and bridge do not share a protocol major version.                                                                  | Upgrade the older side. Do not retry unchanged versions.                                                             |
 
@@ -696,8 +704,10 @@ case, typing every field as `unknown`.
 
 ## Releasing
 
-See [RELEASING.md](RELEASING.md). `bash scripts/sdk/publish_preflight.sh` runs
-every gate and reports what is left.
+See [RELEASING.md](RELEASING.md). Publishing runs in
+`.github/workflows/publish-typescript-sdk.yml` on a release tag;
+`bash scripts/sdk/publish_preflight.sh` checks the local half and reports what
+is left.
 
 ## Development
 

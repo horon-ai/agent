@@ -2,8 +2,6 @@
 
 use super::*;
 
-pub use super::event_types::{FileDiffWire, PlanEntryWire};
-
 /// Server event sent to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -106,6 +104,11 @@ pub enum ServerEvent {
         output: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// What became of the call, when the layer that stored the result
+        /// recorded one. Absent means no layer made a statement, and a reader
+        /// falls back to `is_error` as it did before verdicts existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verdict: Option<horon_agent_tool_types::ToolVerdict>,
     },
 
     /// A tool call's arguments were rewritten before the tool ran, because the
@@ -120,6 +123,18 @@ pub enum ServerEvent {
         original_input: serde_json::Value,
         /// One line per repair applied, in the order they were applied.
         changes: Vec<String>,
+    },
+
+    /// The request that produced this assistant message lost part of the tool
+    /// catalog or its guarantees to provider schema constraints: a schema
+    /// keyword or string format was dropped, a tool was sent without strict
+    /// mode, or a duplicate definition was not sent. One entry per distinct
+    /// loss in the session. Additive: a client that does not know this event
+    /// ignores it.
+    #[serde(rename = "degradation_receipts")]
+    DegradationReceipts {
+        id: String,
+        receipts: Vec<horon_agent_message_types::degradation::DegradationReceipt>,
     },
 
     /// Rendered images produced during the live turn, including image-bearing
@@ -748,8 +763,9 @@ pub enum ServerEvent {
         available_models: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         available_model_routes: Vec<horon_agent_provider_core::ModelRoute>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        identity: Option<RuntimeModelIdentity>,
     },
-
     /// Notification from another agent (file conflict, message, shared context)
     #[serde(rename = "notification")]
     Notification {
@@ -890,6 +906,10 @@ pub enum ServerEvent {
         message: String,
         /// Whether compaction was started successfully
         success: bool,
+        /// Present when the request asked for a handoff document. Absent for
+        /// the summary path, so older clients see the frame they always saw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff: Option<HandoffCompactionReport>,
     },
 
     /// Response to resume_all_sessions — summary of which sessions were continued.
@@ -1130,4 +1150,24 @@ pub enum ServerEvent {
     /// same message, so a client can add the row it did not see arrive.
     #[serde(rename = "soft_interrupt_stored")]
     SoftInterruptStored { message_id: String, content: String },
+}
+
+impl ServerEvent {
+    /// A `ToolDone` whose verdict no layer recorded. Producing the event this
+    /// way keeps the absent verdict explicit at the call site instead of
+    /// leaving a field for a later reader to misread as "not considered".
+    pub fn tool_done(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        output: impl Into<String>,
+        error: Option<String>,
+    ) -> Self {
+        Self::ToolDone {
+            id: id.into(),
+            name: name.into(),
+            output: output.into(),
+            error,
+            verdict: None,
+        }
+    }
 }

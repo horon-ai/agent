@@ -44,6 +44,7 @@ fn message(text: &str) -> StoredMessage {
     StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: format!("legacy-{text}"),
         role: Role::User,
@@ -572,6 +573,7 @@ fn result() -> ContentBlock {
         tool_use_id: "call-1".into(),
         content: "result".into(),
         is_error: None,
+        verdict: None,
     }
 }
 

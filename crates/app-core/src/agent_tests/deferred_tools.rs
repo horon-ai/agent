@@ -229,6 +229,7 @@ async fn late_mcp_announcement_skips_referenced_native_and_eager() {
                 tool_use_id: "call_1".into(),
                 content: "Connected".into(),
                 is_error: None,
+                verdict: None,
             },
             ContentBlock::ToolReference {
                 tool_use_id: "call_1".into(),
@@ -327,4 +328,62 @@ async fn late_mcp_announcement_uses_original_names_for_sanitized_aliases() {
         .expect("announcement");
     assert!(text.contains(&alias), "{text}");
     assert!(text.contains("server: yc  tool: hiring.create_job"), "{text}");
+}
+
+/// `swarm`, `todo` and `session_search` are part of the `core` surface, and the
+/// surface still sends only the seven essential schemas plus the dispatcher:
+/// the new tools are listed by name and reached through `toolbox`.
+#[tokio::test]
+async fn core_surface_lists_todo_and_session_search() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = super::tool_tiers::ProfileEnv::new(crate::config::CORE_TOOL_PROFILE, None);
+    let mut agent = super::tool_tiers::agent_with_mcp_management_tool().await;
+
+    let definitions = agent.tool_definitions().await;
+    for name in ["swarm", "todo", "session_search"] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == name)
+            .unwrap_or_else(|| panic!("{name} must be part of the core surface"));
+        assert!(definition.defer_loading, "{name} is listed, never eager");
+    }
+    let eager = eager_names(&definitions);
+    assert_eq!(
+        eager.len(),
+        crate::config::ESSENTIAL_TOOLS.len() + 1,
+        "only the essential tools and the dispatcher stay eager: {eager:?}"
+    );
+
+    let listed = agent.listed_tools_section().expect("a core session lists its tools");
+    for name in ["swarm", "todo", "session_search"] {
+        assert!(listed.contains(name), "the index names {name}: {listed}");
+    }
+    assert!(
+        agent.system_prompt_for_debug().contains(crate::prompt::TODO_HINT),
+        "todo is callable, so the prompt carries the hint"
+    );
+}
+
+/// `[tools.load_mode]` still wins over the new default: an explicit `off`
+/// removes the tool from the request, the index, and the prompt.
+#[tokio::test]
+async fn load_mode_off_removes_todo_and_session_search() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = super::tool_tiers::ProfileEnv::new(
+        crate::config::CORE_TOOL_PROFILE,
+        Some("[tools]\nprofile = \"core\"\n\n[tools.load_mode]\ntodo = \"off\"\nsession_search = \"off\"\n"),
+    );
+    let agent = super::tool_tiers::agent_with_mcp_management_tool().await;
+
+    let definitions = agent.tool_definitions_for_debug().await;
+    for name in ["swarm", "todo", "session_search"] {
+        assert!(
+            !definitions.iter().any(|definition| definition.name == name),
+            "{name} is off in this session"
+        );
+    }
+    assert!(
+        !agent.system_prompt_for_debug().contains(crate::prompt::TODO_HINT),
+        "no todo tool means no hint"
+    );
 }

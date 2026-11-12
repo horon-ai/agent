@@ -30,17 +30,19 @@
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, 런타임 명령, `--resume` |
 | | [`IRC.ko.md`](runtime/IRC.ko.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
+| | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 명령, 설정 화면, 선택 자산 설치, 한계 |
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
-| `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 모델 사용 메타데이터 |
+| `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | OpenAI 호환 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 한 번만 실행되는 `[prewalk]` 핸드오프, 모델 사용 메타데이터 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.ko.md`](performance/BENCHMARK.ko.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
 | | [`RESULTS.ko.md`](performance/RESULTS.ko.md) | 측정 결과와 한계 |
 | | [`MEMORY.ko.md`](performance/MEMORY.ko.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
-| `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, Linux 서버 실행, TLS 신뢰 집합 |
+| `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, npm 설치, Linux 서버 실행, TLS 신뢰 집합 |
+| | [`NPM.ko.md`](release/NPM.ko.md) | CLI의 npm 패키지 구성, 설치와 실행, 버전 규칙, 게시 워크플로, 한 번만 하는 trusted publisher 설정, provenance |
 | | [`WINDOWS.ko.md`](release/WINDOWS.ko.md) | Windows 빌드와 서명 |
 
 ## 갱신 규칙

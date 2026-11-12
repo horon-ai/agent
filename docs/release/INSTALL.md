@@ -5,7 +5,7 @@ Language: **English** | [한국어](INSTALL.ko.md)
 The installers download the release assets and then hand them to the agent binary's `install-release` instead of unpacking the archive themselves. Verification, extraction, the immutable version directory and channel activation all run through one path (`src/cli/install_release.rs`, `crates/app-core/src/update.rs` `install_release_from_directory`).
 
 ```bash
-horon-agent install-release --assets <directory> --agent-version <version>
+horon install-release --assets <directory> --agent-version <version>
 ```
 
 | Flag | Meaning |
@@ -33,6 +33,34 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 The Windows install locations and signing procedure are in [`WINDOWS.md`](WINDOWS.md).
 
+## Installing from npm
+
+`@horon-ai/horon` on npm installs the same two binaries without a release download: one small launcher and one platform package pinned to the same version. npm picks the platform package through `optionalDependencies`, so a global install fetches only the one that matches the machine.
+
+```bash
+npm i -g @horon-ai/horon
+npx @horon-ai/horon --help
+```
+
+The npm installation is updated with npm, not with the agent's own updater: the launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` for the binary it starts, because the package pins one release for both binaries. Package layout, the error a missing platform package prints, the version rule, and the publish procedure are in [`NPM.md`](NPM.md).
+
+## The optional terminal client
+
+The release also publishes the interactive client as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together.
+
+`scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, so one version directory holds both binaries and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
+
+The client is optional at every step, and a copy that cannot be verified never blocks the agent:
+
+| Situation | Result |
+| --- | --- |
+| The release publishes no archive for the platform | One line, then `horon-agent` alone |
+| `SHA256SUMS` has no entry for the archive | One line, then `horon-agent` alone |
+| The digest does not match | One line, then `horon-agent` alone |
+| `--source-binary`, or FreeBSD | No released client is staged; FreeBSD publishes `horon-agent` only |
+| The version directory already exists | The client is added only when the file is absent; the version is immutable otherwise |
+
+`scripts/install/uninstall.sh` and `scripts/install/uninstall.ps1` list the `horon-tui` launcher in the install directory with the other targets and remove it, including one left behind by an older install.
 
 ## Running on a Linux server
 

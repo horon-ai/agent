@@ -155,6 +155,26 @@ bing_market = "en-US"
 # Model used for structured compaction summaries; empty keeps the session model.
 # Env override: HORON_AGENT_COMPACTION_SUMMARY_MODEL.
 # summary_model = ""
+# Summarise the branch a rewind throws away and append the report to the kept
+# branch. Opt-in twice: this switch and `summarize: true` on the rewind request.
+# rewind_summary = false
+# Token allowance for that report. 1500 is horon's default, not a borrowed one;
+# 0 also means "use the default", and values are clamped to 1..=4096.
+# rewind_summary_tokens = 1500
+
+[messages]
+# How messages that arrive while a turn is running are delivered. Both queue
+# modes default to `all`, which is what horon has always done; omp defaults to
+# `one-at-a-time`. The first delivery point of a turn carries messages left over
+# from the previous turn (`follow_up_mode`), later points carry messages that
+# arrived during this turn (`steering_mode`). `one-at-a-time` leaves the rest
+# pending, in order, so each message gets its own injection.
+# follow_up_mode = "all"
+# steering_mode = "all"
+# Whether a queued message waits for the running tool call (`wait`, the timing
+# horon has always had; only an urgent message cuts the round) or stops the
+# remaining calls at the next safe point (`immediate`).
+# interrupt_mode = "wait"
 
 [tools]
 # Controls which built-in tools are sent to the model.
@@ -261,6 +281,11 @@ bash_pty = "auto"
 # until a plan is approved. Off by default, so nothing changes for an existing
 # config.
 plan_mode = false
+# Model-callable checkpoints: expose the `checkpoint` and `rewind` tools so the
+# model can mark a point of this session and later fold everything after it
+# into one written report. Files, background tasks and process state are not
+# restored. Off by default, so the tool surface and history are unchanged.
+checkpoint = false
 # IRC bus: expose the `irc` tool so agents of the same daemon can send, wait
 # for, and read each other's messages. Off by default because it opens a
 # message path between sessions. Env override: HORON_AGENT_IRC.
@@ -314,6 +339,20 @@ secrets_mode = "off"
 # refuses outright. Default: empty, which leaves every class to approval_mode.
 # Example: ["destructive-shell"]
 dual_confirm_classes = []
+# Paths that always require approval, in every mode including "off". Each entry
+# is a glob matched against the path a call names; `*` matches across directory
+# separators, so a broad pattern asks more often rather than fewer. A pattern
+# that cannot be parsed restricts every path, because a rule that cannot be read
+# must not silently stop asking. Only the file tools are matched; a shell
+# command reaches paths this check cannot see, which is what bash_patterns are
+# for. Default: empty, which restricts nothing.
+# Example: ["**/.env", "/etc/**"]
+restricted_paths = []
+# How long an answer of "allow this path" or "allow this folder" keeps working,
+# in days. Each such answer is stored in <agent home>/approvals.json (mode 0600)
+# and covers later calls that name a path inside it, for this workspace only.
+# `0` disables grants: none is written and none is consulted.
+approval_grant_ttl_days = 7
 # Per-tool load tiers for the unrestricted `full` profile. Out of the box, the
 # core tools stay eager and every other enabled tool is sent as a provider-native
 # deferred definition, so its schema stays out of the cached prompt prefix; a
@@ -425,6 +464,21 @@ cross_provider_failover = "countdown"
 # Env overrides: HORON_AGENT_MAX_RETRIES, HORON_AGENT_RETRY_BACKOFF_CAP_SECS.
 # max_retries = 8
 # retry_backoff_cap_secs = 30
+
+[prewalk]
+# One-shot handoff to an execution model once planning is done. The session
+# switches at the first successful `todo` write, or at plan approval when
+# [tools] plan_mode is on, and runs on that model for the rest of the session.
+# Off by default because the handoff trades plan-following quality for cost.
+# enabled = false
+# The execution model: a model id, or `role:<name>` resolved through the active
+# profile's roles (`default`, `plan`, `aux`). Required when enabled: an enabled
+# section without a usable value fails config validation and names this key.
+# into = "role:aux"
+# Applicability only: hand off just when the session currently runs this model.
+# It never names a model to return to, and leaving it out applies to every
+# session.
+# from = "my-planner"
 
 [server]
 # Who executes autonomous wake requests from background completion/stall,
@@ -712,6 +766,43 @@ mod tests {
         );
     }
 
+    /// The shipped template documents the `[messages]` table and its defaults.
+    #[test]
+    fn default_config_template_documents_message_modes() {
+        let template = Config::default_config_file_contents();
+        for key in [
+            "[messages]",
+            "follow_up_mode = \"all\"",
+            "steering_mode = \"all\"",
+            "interrupt_mode = \"wait\"",
+        ] {
+            assert!(template.contains(key), "the template should document `{key}`");
+        }
+
+        let parsed = toml::from_str::<Config>(&template).expect("the shipped template must parse");
+        assert_eq!(parsed.messages, Config::default().messages);
+    }
+
+    /// The shipped template documents the `[prewalk]` table, stays off, and
+    /// parses to the built-in default so a fresh install never hands off.
+    #[test]
+    fn default_config_template_documents_prewalk_off_by_default() {
+        let template = Config::default_config_file_contents();
+        for key in [
+            "[prewalk]",
+            "# enabled = false",
+            "# into = \"role:aux\"",
+            "# from = \"my-planner\"",
+        ] {
+            assert!(template.contains(key), "the template should document `{key}`");
+        }
+
+        let parsed = toml::from_str::<Config>(&template).expect("the shipped template must parse");
+        assert_eq!(parsed.prewalk, Config::default().prewalk);
+        assert!(!parsed.prewalk.is_active(), "a fresh install must not hand off");
+        parsed.prewalk.validate().expect("the shipped section is valid");
+    }
+
     /// The template is written once and then read by the daemon, saved back by
     /// `/config`, and read again. Serializing the parsed template must not lose
     /// or reject any switch it documents.
@@ -733,6 +824,11 @@ mod tests {
         assert_eq!(reread.tools.aux_completion, parsed.tools.aux_completion);
         assert_eq!(reread.tools.secrets_mode, parsed.tools.secrets_mode);
         assert_eq!(reread.tools.dual_confirm_classes, parsed.tools.dual_confirm_classes);
+        assert_eq!(reread.tools.restricted_paths, parsed.tools.restricted_paths);
+        assert_eq!(
+            reread.tools.approval_grant_ttl_days,
+            parsed.tools.approval_grant_ttl_days
+        );
         assert_eq!(reread.tools.bash_interceptor, parsed.tools.bash_interceptor);
         assert_eq!(reread.tools.bash_patterns, parsed.tools.bash_patterns);
         assert_eq!(reread.tools.git_guard, parsed.tools.git_guard);

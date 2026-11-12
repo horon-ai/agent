@@ -156,10 +156,11 @@ fn no_dialect_treats_an_operational_failure_as_a_schema_rejection() {
 /// recovery. That flaw was found by unwiring the native route and watching an
 /// earlier version of this test pass anyway.
 const RUNTIME_RECOVERY_EXPECTATIONS: &[(&str, bool)] = &[
-    // Neither retries nor learns: this is the only model path left, and it
-    // hands a schema rejection to the backend instead of holding recovery
-    // state of its own. Adding either call here has to update this claim.
-    ("../provider-openai/src/chat/mod.rs", false),
+    // The direct Chat Completions path classifies a rejection, learns the
+    // construct it names and rebuilds the body before resending. The call lives
+    // in the module the retry loop delegates to, which is why this points there
+    // rather than at the loop in `mod.rs`.
+    ("../provider-openai/src/chat/schema_recovery.rs", true),
 ];
 
 /// Every runtime's recovery wiring must match what this file claims.
@@ -206,4 +207,35 @@ fn each_runtime_recovery_wiring_matches_what_is_claimed() {
         "runtime recovery wiring disagrees with this file's claims:\n{}",
         mismatches.join("\n")
     );
+}
+
+/// A schema the dialect narrows must say so through the reporting entry point.
+///
+/// This file's claim is that OpenAI-family routes reject schemas by validation,
+/// which prevention already strips. A strip is a silent loss unless the caller
+/// can name it, so the same fixture that motivates the claim above must yield
+/// exactly one receipt: one dropped keyword, named, on the tool it belongs to.
+#[test]
+fn a_narrowed_schema_reports_exactly_one_loss() {
+    let spec = registry::by_id("openai").expect("registered dialect");
+    // `uniqueItems` is outside the OpenAI dialect, so it is dropped.
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {"tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}},
+        "required": ["tags"],
+    });
+
+    let mut dropped = Vec::new();
+    let narrowed = horon_agent_schema_dialect::normalize_reporting(
+        &schema,
+        spec,
+        &mut horon_agent_schema_dialect::DropLog::enabled(&mut dropped),
+    );
+
+    assert_eq!(dropped, vec!["uniqueItems".to_string()], "one loss, named");
+    assert_eq!(narrowed["properties"]["tags"].get("uniqueItems"), None);
+
+    // The ordinary entry point narrows identically and records nothing, so a
+    // caller that does not report still sends the same bytes.
+    assert_eq!(narrowed, horon_agent_schema_dialect::normalize(&schema, spec));
 }

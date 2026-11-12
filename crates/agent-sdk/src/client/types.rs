@@ -28,8 +28,57 @@ pub struct RuntimeInfo {
     pub reasoning_effort: Option<String>,
     /// Credential the session bills against (`oauth` or `api_key`).
     pub auth_method: Option<String>,
+    /// Configured fallback model ids the active provider profile tries, in
+    /// order. Empty when none is configured.
+    pub fallback_models: Vec<String>,
+    /// Model that produced the most recent response, which differs from
+    /// [`Self::model`] after a fallback answered a turn.
+    pub serving_model: Option<String>,
     pub providers: Vec<String>,
     pub routes: Vec<ModelRouteInfo>,
+}
+
+impl RuntimeInfo {
+    /// Build the public view from a daemon `runtime_info` reply.
+    pub(super) fn from_reply(event: &ApiEvent, server: String, capabilities: Vec<String>) -> Option<Self> {
+        let ApiEvent::RuntimeInfo {
+            session_id,
+            provider,
+            model,
+            reasoning_effort,
+            auth_method,
+            fallback_models,
+            serving_model,
+            routes,
+        } = event
+        else {
+            return None;
+        };
+        let mut providers = Vec::new();
+        if let Some(provider) = provider.as_ref() {
+            providers.push(provider.clone());
+        }
+        for route in routes {
+            if !providers.contains(&route.provider) {
+                providers.push(route.provider.clone());
+            }
+        }
+        Some(Self {
+            server,
+            protocol_version: API_VERSION_MAJOR,
+            capabilities,
+            healthy: true,
+            session_id: session_id.clone(),
+            provider: provider.clone(),
+            model: model.clone(),
+            reasoning_effort: reasoning_effort.clone(),
+            auth_method: auth_method.clone(),
+            fallback_models: fallback_models.clone(),
+            serving_model: serving_model.clone(),
+            providers,
+            routes: routes.clone(),
+        })
+    }
 }
 
 /// Content and truncation metadata returned by [`HoronAgentClient::read_file`].
@@ -87,12 +136,18 @@ pub struct AssistantTextMessage {
     pub text: String,
 }
 
+/// One finished tool call of a turn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
     pub call_id: String,
     pub name: String,
     pub output: String,
     pub error: Option<String>,
+    /// What became of the call, when the daemon stored a verdict for it
+    /// (protocol 1.19). `None` means no layer made a statement, which is the
+    /// usual case for a call that simply succeeded and every call on an older
+    /// daemon: read `error` then, and never take `None` for `Ok`.
+    pub verdict: Option<horon_agent_harness_api::ToolVerdict>,
 }
 
 /// Provider-reported counters. Cache counters may be separate from input

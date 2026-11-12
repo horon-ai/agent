@@ -141,6 +141,7 @@ fn tool_result(id: &str, body: &str) -> Message {
             tool_use_id: id.to_string(),
             content: body.to_string(),
             is_error: None,
+            verdict: None,
         }],
         timestamp: None,
         tool_duration_ms: None,

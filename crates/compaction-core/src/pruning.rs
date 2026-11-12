@@ -111,6 +111,7 @@ pub fn plan_prunes(
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } = block
             else {
                 continue;
@@ -166,6 +167,7 @@ fn read_observations<'a>(
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } = block
             else {
                 continue;
@@ -370,6 +372,7 @@ mod tests {
                 tool_use_id: id.into(),
                 content: content.into(),
                 is_error: None,
+                verdict: None,
             }],
             timestamp: None,
             tool_duration_ms: None,
@@ -498,6 +501,7 @@ mod tests {
             tool_use_id: "g1".into(),
             content: "query: needle\nmatches: 0 in 0 files".into(),
             is_error: Some(true),
+            verdict: None,
         }];
         assert!(plan_prunes(&errored, &BTreeMap::new(), Utc::now()).is_empty());
     }
@@ -542,6 +546,7 @@ mod tests {
                     tool_use_id: "r2".into(),
                     content: "not found".into(),
                     is_error: Some(true),
+                    verdict: None,
                 }],
                 timestamp: None,
                 tool_duration_ms: None,

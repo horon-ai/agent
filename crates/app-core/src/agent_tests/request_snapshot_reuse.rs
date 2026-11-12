@@ -311,7 +311,7 @@ fn prepare_with(case: &Case, mask: bool) -> Prepared {
             .expect("persist the selected memory for scoped revalidation");
         let prompt =
             crate::memory::format_relevant_prompt(std::slice::from_ref(&entry), 1).expect("canonical memory prompt");
-        crate::memory::set_pending_memory_for_project(
+        crate::memory::set_pending_memory(
             &agent.session.id,
             prompt.clone(),
             1,

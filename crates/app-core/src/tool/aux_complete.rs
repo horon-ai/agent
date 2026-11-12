@@ -25,6 +25,23 @@ impl AuxCompleteTool {
     }
 }
 
+/// Register the tool on `registry` when [`enabled`].
+///
+/// Opt-in because every call spends a model request on a side task. With the
+/// switch off it is neither registered nor in a definition list. Registration is
+/// idempotent, because the registry is keyed by name.
+pub(crate) async fn register(registry: &super::Registry) {
+    if !enabled() {
+        return;
+    }
+    registry
+        .register(
+            AUX_COMPLETE_TOOL.to_string(),
+            std::sync::Arc::new(AuxCompleteTool::new()) as std::sync::Arc<dyn Tool>,
+        )
+        .await;
+}
+
 pub(crate) fn enabled() -> bool {
     crate::config::config().tools.aux_completion
 }

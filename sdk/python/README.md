@@ -130,6 +130,14 @@ Low-level clients that handle `tool_call` events themselves call
 - `reasoning`, `tool_calls`, `usage`, `stop_reason`, and `stop_message` carry
   the rest of the turn.
 
+Each `ToolCall` in `tool_calls` has `call_id`, `name`, `output`, an optional
+`error`, and an optional `verdict` (protocol 1.19): `ok`, `partial`,
+`truncated`, `withheld`, `rejected`, `failed` or `interrupted`, typed as
+`ToolVerdict`. The daemon sends a verdict only when a layer made a statement
+about the call, so most successful calls and every call on an older daemon have
+`None`. A missing verdict is not `ok`: read `error` then. A name a newer daemon
+adds arrives as the string it sent.
+
 ## Structured output
 
 `run_structured()` wraps a turn in a JSON-only contract and validates the final
@@ -278,7 +286,7 @@ the platform can still surface separately.
 | `startup_failed` | The private instance exited before opening its API socket. Its stderr is in the message. | Fix the reported configuration, credential, or binary error before retrying. |
 | `startup_timeout` | No API socket within `startup_timeout_ms`. | Raise the timeout on a slow machine; check stderr and runtime-directory permissions. |
 | `invalid_instance_home` | The instance home or a credential path is unsafe (same directory, symlink, file, traversal). | Choose a separate real directory. |
-| `connect_failed` | The bridge is absent, dead, or listening elsewhere. | Run `horon-agent api-bridge`; check `socket_path` or `HORON_AGENT_API_SOCKET`. |
+| `connect_failed` | The bridge is absent, dead, or listening elsewhere. | Run `horon api-bridge`; check `socket_path` or `HORON_AGENT_API_SOCKET`. |
 | `handshake_failed` | The peer replied with an invalid frame during negotiation. | Confirm the socket is a harness socket and upgrade both sides. |
 | `unsupported_version` | Client and bridge share no protocol major version. | Upgrade the older side. |
 

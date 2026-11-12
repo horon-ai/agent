@@ -57,6 +57,7 @@ fn appended(parent: &SealedEvent, text: &str) -> SealedEvent {
         chrono::DateTime::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
         serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
+        degradations: None,
             turn_start: false,
             id: uuid::Uuid::new_v4().to_string(), role: Role::User,
             content: vec![ContentBlock::Text { text: text.into(), cache_control: None }],
@@ -1261,6 +1262,7 @@ fn r2_evicted_bodies_preserve_latest_intent_and_tool_pairs() {
             tool_use_id: "r2-call".into(),
             content: "y".repeat(32768),
             is_error: None,
+            verdict: None,
         }],
     );
     let answer = r2_blocks(
@@ -1325,6 +1327,7 @@ fn r2_duplicate_tool_identity_is_refused_after_body_eviction() {
             tool_use_id: "seen".into(),
             content: "done".into(),
             is_error: None,
+            verdict: None,
         }],
     );
     let duplicate = r2_blocks(
@@ -1513,6 +1516,7 @@ fn diverged_heads_stay_listable_while_execution_needs_a_selection() {
             chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(offset),
             EventKind::new(KnownEventKind::MessageAppended),
             serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
+            degradations: None,
                 turn_start: false,
                 id: uuid::Uuid::new_v4().to_string(), role: Role::User,
                 content: vec![ContentBlock::Text { text: text.into(), cache_control: None }],

@@ -3,17 +3,22 @@
 //! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
+pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, resolve_role_model};
+pub use horon_agent_config_types::parse_model_reference;
+pub use horon_agent_config_types::rewind_summary;
 pub use horon_agent_config_types::{
     AdvisorConfig, AgentsConfig, AmbientConfig, ApprovalMode, AuthConfig, AutoJudgeConfig, AutoReviewConfig,
     BashInterceptorMode, BashPatternApproval, BashPatternRule, CompactionConfig, CompactionMode, CompactionStrategy,
     CrossProviderFailoverMode, CustomWebSearchConfig, CustomWebSearchMethod, DisplayConfig, FeatureConfig,
-    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, NamedProviderAuth, NamedProviderConfig,
-    NamedProviderModelConfig, NamedProviderType, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode, StreamRuleConfig, StreamRuleDelivery,
-    StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel, WebSearchConfig, WebSearchEngine,
+    ForeignRulesMode, GatewayConfig, HookCommands, HooksConfig, IrcConfig, ModelReference, NamedProviderAuth,
+    NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, PowerConfig, PrewalkConfig, PrewalkConfigError,
+    ProviderConfig, ReasoningDisplayMode, SafetyConfig, SecretsMode, SponsorsConfig, StorageConfig, StorageSyncMode,
+    StreamRuleConfig, StreamRuleDelivery, StreamRuleRepeat, SwarmSpawnMode, TurnRecoveryMode, UpdateChannel,
+    WebSearchConfig, WebSearchEngine,
 };
 pub use horon_agent_tool_types::AskPolicy;
 pub use mcp::McpSourcesConfig;
+pub use messages::{InterruptMode, MessageDeliveryMode, MessagesConfig};
 use serde::{Deserialize, Serialize};
 pub use skills::SkillsConfig;
 use std::collections::{BTreeMap, HashSet};
@@ -43,6 +48,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HORON_AGENT_AUTO_POKE",
     "HORON_AGENT_AUTOJUDGE_ENABLED",
     "HORON_AGENT_AUTOJUDGE_MODEL",
+    "HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS",
     "HORON_AGENT_AUTOREVIEW_ENABLED",
     "HORON_AGENT_AUTOREVIEW_MODEL",
     "HORON_AGENT_AUTO_POKE",
@@ -383,6 +389,9 @@ pub struct Config {
     /// Limits for the in-process agent IRC mailbox bus.
     pub irc: IrcConfig,
 
+    /// How messages that arrive while the agent is busy are delivered.
+    pub messages: MessagesConfig,
+
     /// Advisor: a second, independent model that files narrow notes.
     pub advisor: AdvisorConfig,
 
@@ -418,6 +427,9 @@ pub struct Config {
 
     /// `[mcp]`: which MCP configs beside horon-agent's own are read.
     pub mcp: McpSourcesConfig,
+
+    /// `[prewalk]`: a one-shot handoff to an execution model after planning.
+    pub prewalk: PrewalkConfig,
 }
 
 /// Warned once per process, so a typo costs one line rather than one per write.
@@ -582,39 +594,57 @@ impl BashPtyMode {
 /// widened back to `full`.
 pub const CORE_TOOL_PROFILE: &str = "core";
 
+/// Default lifetime of a scoped `path`/`folder` approval grant, in days.
+///
+/// A grant is the user answering "stop asking about this file" once. Seven days
+/// keeps that answer useful for a work week without turning it into a permanent
+/// policy the user has forgotten they gave; see `[tools] approval_grant_ttl_days`
+/// for the knob and `0` to disable grants.
+pub const DEFAULT_APPROVAL_GRANT_TTL_DAYS: u64 = 7;
+
 /// Tool joined into a non-empty allow-list when
 /// `ambient.approval_for_clientless_runs` is on.
 ///
 /// It is deliberately not part of [`CORE_TOOLS`]: the default headless surface
-/// must stay at fifteen entries, and this tool only becomes reachable when the
+/// must stay at eighteen entries, and this tool only becomes reachable when the
 /// operator opts into clientless approvals.
 pub const CLIENTLESS_APPROVAL_TOOL: &str = "request_permission";
 
 /// Tool joined into a non-empty allow-list when `[tools] plan_mode` is on.
 ///
 /// Like [`CLIENTLESS_APPROVAL_TOOL`] it stays outside [`CORE_TOOLS`]: the
-/// fifteen-tool headless surface is unchanged, and this tool only becomes
+/// eighteen-tool headless surface is unchanged, and this tool only becomes
 /// reachable when the operator turns plan mode on.
 pub const PLAN_TOOL: &str = "submit_plan";
 
 /// Tool joined into a non-empty allow-list when `[tools] irc` is on.
 ///
-/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`]: the fifteen-tool
+/// Like [`PLAN_TOOL`] it stays outside [`CORE_TOOLS`]: the eighteen-tool
 /// headless surface is unchanged, and this tool only becomes reachable when the
 /// operator turns the IRC bus on.
 pub const IRC_TOOL: &str = "irc";
 
+/// Tools joined into a non-empty allow-list when `[tools] checkpoint` is on.
+///
+/// Like [`IRC_TOOL`] they stay outside [`CORE_TOOLS`]: the eighteen-tool
+/// headless surface is unchanged, and the pair only becomes reachable when the
+/// operator opts into model-driven checkpoints. Both tools share one switch
+/// because a checkpoint nothing can rewind to, or a rewind with no checkpoint,
+/// is useless on its own.
+pub const CHECKPOINT_TOOLS: &[&str] = &["checkpoint", "rewind"];
+
 /// Tools exposed by [`CORE_TOOL_PROFILE`].
 ///
 /// Every other registered built-in stays off because the profile is an
-/// allow-list: `swarm`, `batch`, `bg`, `memory`, `irc`, `schedule`, `todo`,
-/// `goal`, `horon_agent_docs`, `invalid`, `session_search`,
-/// `conversation_search`, the opt-in `codemode`/`redo`/`hashline_edit`/
-/// `ast_grep`/`ast_edit`/`lsp`/`context_notes`/`toolbox`/
-/// `integration_tools` surface, and the per-session `request_permission` and
-/// `submit_plan` tools. `skill_manage` is the registry key for the skill tool
-/// (`resolve_tool_name` maps `skill` to it); `mcp` is the wildcard covering
-/// every `mcp__server__tool` plus the fixed `mcp_search`/`mcp_call` surface.
+/// allow-list: `batch`, `bg`, `memory`, `irc`, `schedule`, `goal`,
+/// `horon_agent_docs`, `invalid`, `conversation_search`, the opt-in
+/// `codemod`/`redo`/`hashline_edit`/`ast_grep`/`ast_edit`/`lsp`/
+/// `context_notes`/`toolbox`/`integration_tools` surface, the opt-in
+/// `checkpoint`/`rewind` pair, and the per-session
+/// `request_permission` and `submit_plan` tools. `skill_manage` is the registry
+/// key for the skill tool (`resolve_tool_name` maps `skill` to it); `mcp` is the
+/// wildcard covering every `mcp__server__tool` plus the fixed
+/// `mcp_search`/`mcp_call` surface.
 ///
 /// The list is the reachability contract, not the eager surface: a `core`
 /// listing sends only [`ESSENTIAL_TOOLS`] eagerly and names the rest in its
@@ -635,6 +665,9 @@ pub const CORE_TOOLS: &[&str] = &[
     "monitor",
     "undo",
     "ask",
+    "todo",
+    "session_search",
+    "swarm",
 ];
 
 /// Tools a `core`-listed session keeps eager.
@@ -649,7 +682,7 @@ pub const ESSENTIAL_TOOLS: &[&str] = &["read", "write", "edit", "apply_patch", "
 /// eagerly.
 ///
 /// Deliberately outside [`CORE_TOOLS`]: the `core` allow-list joins it and the
-/// `acp` list never does, so [`CORE_TOOLS`] itself stays the fifteen-tool
+/// `acp` list never does, so [`CORE_TOOLS`] itself stays the eighteen-tool
 /// surface. It is registered under `full` and `core`, and [`ToolLoadTiers::tier`]
 /// pins its tier to [`LoadMode::Essential`] so the one tool that reaches the
 /// deferred surface is never itself deferred. It only loads a schema.
@@ -885,6 +918,11 @@ pub struct ToolConfig {
     /// refused until a plan is approved. Off by default so nothing changes for
     /// an existing config.
     pub plan_mode: bool,
+    /// Opt-in `checkpoint`/`rewind` pair: let the model mark a point of the
+    /// top-level conversation and later fold the exploration after it into one
+    /// written report. Off by default, so the tool surface is unchanged and
+    /// nothing rewrites history unless the operator asks for it.
+    pub checkpoint: bool,
     /// Opt-in `irc`: expose the tool that sends and receives messages between
     /// agents of the same daemon. Off by default; `HORON_AGENT_IRC` overrides.
     pub irc: bool,
@@ -925,6 +963,11 @@ pub struct ToolConfig {
     /// Opt-in auxiliary completions: a separate small completion path for
     /// side tasks that must not disturb the main conversation.
     pub aux_completion: bool,
+    /// Opt-in image generation: registers `generate_image`, which posts to the
+    /// profile's `/images/generations` route through the `image` model role.
+    /// Off by default, and inert without an `image` entry in the active
+    /// profile, so a session that never generates an image pays nothing.
+    pub generate_image: bool,
     /// How credentials in outbound text are handled. `off` (default) leaves
     /// text untouched; see [`SecretsMode`].
     pub secrets_mode: SecretsMode,
@@ -935,6 +978,18 @@ pub struct ToolConfig {
     /// default.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dual_confirm_classes: Vec<String>,
+    /// Paths that always require approval, in every mode including `off`.
+    /// Each entry is a glob matched against the path a call names, in its raw,
+    /// resolved and canonical forms; `*` matches across separators, so a
+    /// pattern that is too broad asks more often rather than fewer. Empty by
+    /// default. An unparseable pattern restricts everything, because a rule
+    /// that cannot be read must not silently stop asking.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub restricted_paths: Vec<String>,
+    /// How long a scoped path or folder grant stays usable, in days. `0`
+    /// disables grants: none is written and none is consulted. Applies only to
+    /// grants a client issued by scope; it has no effect on `approval_mode`.
+    pub approval_grant_ttl_days: u64,
 }
 
 impl Default for ToolConfig {
@@ -963,6 +1018,7 @@ impl Default for ToolConfig {
             ask_policy: AskPolicy::Recommended,
             load_mode: BTreeMap::new(),
             plan_mode: false,
+            checkpoint: false,
             irc: false,
             approval_mode: ApprovalMode::Off,
             bash_session_cwd: true,
@@ -972,8 +1028,11 @@ impl Default for ToolConfig {
             bash_patterns: Vec::new(),
             git_guard: false,
             aux_completion: false,
+            generate_image: false,
             secrets_mode: SecretsMode::Off,
             dual_confirm_classes: Vec::new(),
+            restricted_paths: Vec::new(),
+            approval_grant_ttl_days: DEFAULT_APPROVAL_GRANT_TTL_DAYS,
         }
     }
 }
@@ -1105,7 +1164,7 @@ impl ToolConfig {
         } else if profile == CORE_TOOL_PROFILE {
             // The dispatcher joins the closed `core` list so the tools this
             // session lists instead of sending stay reachable. It stays out of
-            // `CORE_TOOLS`: that constant is the fifteen-tool reachability
+            // `CORE_TOOLS`: that constant is the eighteen-tool reachability
             // contract, and every other profile keeps its own list.
             Some(
                 CORE_TOOLS
@@ -1150,6 +1209,7 @@ mod config_file;
 mod default_file;
 mod env_overrides;
 mod mcp;
+mod messages;
 mod server;
 mod skills;
 mod sponsors_default;
@@ -1161,6 +1221,10 @@ pub use self::server::{DEFAULT_IDLE_HIBERNATION_SECS, ServerConfig};
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "config/checkpoint_switch_tests.rs"]
+mod checkpoint_switch_tests;
 
 #[cfg(test)]
 #[path = "config/moved_tests.rs"]

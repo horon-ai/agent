@@ -101,6 +101,81 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이 요청들에 `unsupported`로 답한다. 클라이언트 입장에서는 "이 서버가 아직 제공하지 않는다"와
 같은 응답이므로 분기 처리가 달라지지 않는다.
 
+## 핸드오프 압축
+
+`compact`는 선택 필드 `method`를 받는다. 없으면 클라이언트가 늘 요청해 온 모델 요약이고,
+응답 `compacted`는 요청이 접수됐다는 뜻이다. 데몬은 다음 안전 지점에서 요약하기 때문이다.
+
+`method: "handoff"`는 그 대신 생성한 핸드오프 문서를 경계로 쓴다. 응답은 그 쓰기가 끝난
+뒤 도착하며, 접수 확인이 아니라 결과다.
+
+요청:
+
+```json
+{"id": 4, "req": "compact", "session_id": "s-1", "method": "handoff"}
+```
+
+응답은 같은 `compacted` 이벤트에 `handoff`가 붙은 모양이다.
+
+```json
+{"id": 4, "event": "compacted", "session_id": "s-1", "message": "Committed a handoff document covering the first 120 messages.",
+ "handoff": {"outcome": "committed", "covered": 120}}
+```
+
+| `handoff.outcome` | 뜻 |
+| --- | --- |
+| `committed` | 문서가 경계가 됐다. `covered`는 덮은 메시지 수이고 최근 토큰 꼬리는 원문으로 남는다 |
+| `nothing_to_cover` | 모든 메시지가 최근 토큰 예산 안에 들어가 문서를 쓰지 않았다 |
+| `provider_error` | 완성 요청이 실패했거나 문서가 거부됐다(빈 문서, `Goal` 제목 없음). `detail`에 프로바이더 메시지나 거부 이유가 온다. 대화록은 그대로다 |
+| `cancelled` | 응답 전에 생성이 취소됐다. 대화록은 그대로다 |
+
+이 필드를 게이트하는 기능은 없다. 이 필드가 없던 서버는 요청의 모르는 필드를 무시하고
+`handoff` 없이 응답하므로, `method`를 보내는 클라이언트는 `handoff`가 빠진 응답을
+`nothing_to_cover`가 아니라 "이 서버가 지원하지 않음"으로 다뤄야 한다. 서버가 모르는 값은
+`invalid_request`로 거절한다.
+
+요청 자체에는 취소 신호가 없다. 완성 요청 한 번이 결과를 정하므로, 기다리기를 그만둔
+클라이언트가 있어도 생성은 계속된다. 이미 커밋된 경계를 되돌리지는 않는다.
+
+## 되감기 브랜치 요약
+
+`rewind`는 선택적 `summarize`를 받는다. 값을 빼거나 `false`로 보내면 지금까지 보내던
+요청과 같고 데몬 동작도 같다.
+
+`summarize: true`는 되감기가 버리는 브랜치의 보고서를 작성해 남는 브랜치 끝에 숨은
+시스템 알림 한 개로 붙이라고 요청한다. 그러면 모델은 버려진 시도가 왜 실패했는지 알 수
+있고, 대화록에는 죽은 브랜치 전체가 남지 않는다. 보고서는 무엇을 시도했는지, 무엇이 왜
+실패했는지, 브랜치가 확정한 사실이 무엇인지를 담는다.
+
+데몬의 `[compaction] rewind_summary`가 켜져 있어야 동작한다. 보고서 길이는
+`[compaction] rewind_summary_tokens`로 정하며, 기본값 1500은 horon이 직접 고른 값이다.
+값은 `1..=4096`으로 잘리고 `0`은 "기본값을 쓴다"는 뜻이다.
+
+요청:
+
+```json
+{"id": 7, "req": "rewind", "session_id": "s-1", "message_index": 12, "summarize": true}
+```
+
+되감기를 먼저 하고 보고서를 나중에 쓰므로, 요약이 실패해도 대화가 되감기 전으로 돌아가지
+않는다.
+
+| 일어난 일 | 메시지 기록 |
+| --- | --- |
+| 설정이 꺼져 있음 | 되감기만 하고 보고서는 붙이지 않음 |
+| 보고서 작성됨 | 되감은 뒤 멈춘 지점 뒤에 숨은 `<system-reminder>` 메시지 하나를 붙임 |
+| 버릴 메시지 없음 | 되감기만 함 |
+| 완성 호출 실패 | 되감기만 하고 붙이지 않음. 이유는 `history` 응답의 `status_detail`과 데몬 로그에 남음 |
+| 완성 호출 취소 | 되감기만 함 |
+
+붙은 보고서는 화면에 보이는 대화록 메시지도, 되감기 대상도 아니므로 나중에 실행하는
+`/rewind N`의 번호가 달라지지 않는다. `rewind_undo`는 되감기 전에 기록한 헤드를 복원하므로
+보고서도 되감기가 버린 나머지와 함께 사라진다.
+
+이 필드를 게이트하는 기능은 없다. 이 필드를 모르는 서버는 모르는 필드를 무시하고 평범한
+되감기로 응답하므로, 구버전 데몬에 `summarize`를 보낸 클라이언트는 오류 대신 예전 동작을
+받는다.
+
 ## 도구 인자 복구(프로토콜 1.16)
 
 프로바이더의 JSON 작성기는 때때로 도구 인자의 타입을 틀리게 씁니다. 숫자가
@@ -132,6 +207,149 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 
 `HORON_AGENT_PERF_COUNTERS=1`일 때 `snapshot().tool_arg_repairs`가 도구별
 복구 호출 수를 셉니다.
+
+## 저하 영수증(프로토콜 1.17)
+
+프로바이더의 스키마 방언이 도구 목록의 일부를 표현하지 못하면 horon-agent는 요청을
+보내기 전에 그 부분을 줄입니다. 이제 줄인 내용을 하나하나 기록합니다. 여기서 추가된
+것은 모두 덧붙이는 변경입니다. 이전 클라이언트는 예전과 같은 요청을 보내고 예전과
+같은 이벤트를 읽습니다.
+
+### 이벤트: `degradation_receipts`
+
+스트리밍 턴의 어시스턴트 메시지가 저장된 뒤, 그 요청이 이 세션에서 아직 보고하지
+않은 손실을 냈을 때만 보냅니다. 이 이벤트를 모르는 클라이언트는 무시합니다.
+
+```json
+{"ev":"degradation_receipts","session_id":"s-1","message_id":"m-7",
+ "receipts":[{"kind":"schema_keyword_dropped","tool":"bash","target":"uniqueItems"}]}
+```
+
+`kind`는 셋 중 하나입니다. `schema_keyword_dropped`는 방언 밖의 키워드나
+`format:<값>`을 뺀 경우, `strict_disabled`는 도구를 `strict: false`로 보낸 경우,
+`duplicate_tool_dropped`는 같은 이름의 두 번째 정의를 보내지 않은 경우입니다.
+같은 (kind, tool, target)은 요청마다가 아니라 세션마다 한 번 보고하며, 데몬을
+다시 시작하면 한 번 더 보고될 수 있습니다.
+
+### 저장되는 기록
+
+그 요청으로 추가된 어시스턴트 메시지는 같은 영수증을 `degradations`로 같은 추가
+쓰기에서 함께 보관합니다. 손실이 없었던 요청의 메시지는 이 필드를 생략하므로 이
+변경 전과 정확히 같은 바이트를 유지합니다.
+
+### 거절 뒤 재시도
+
+예방 단계는 선언된 허용 목록으로 도구 목록을 줄이므로, 목록 밖의 구성 요소는
+프로바이더에 도달하지 않습니다. 그러나 허용 목록은 완전할 수 없고, 프로바이더가
+그래도 거절하면 그 도구를 실은 모든 턴이 실패합니다.
+
+직접 Chat Completions 경로는 이제 같은 턴 안에서 그 거절을 회복합니다. 본문이
+스키마 키워드나 `format`을 지목한 `4xx`는 학습되고, 도구 목록은 그것을 빼고 다시
+만들어지며, 요청은 한 번 더 전송됩니다. 손실은 재시도한 요청에 평범한
+`schema_keyword_dropped` 영수증으로 나타나므로, 클라이언트는 이미 처리하는 같은
+`degradation_receipts` 이벤트를 봅니다. 학습은 구성 요소마다 한 번으로 제한되므로,
+같은 것을 다시 지목한 두 번째 거절은 재시도 대신 보고됩니다.
+
+다이얼렉트를 배울 수 있는 것은 클라이언트 오류뿐입니다. `429`, `5xx`, `401/403`은
+일시적이거나 자격증명 문제이므로 회복 단계는 그것에서 배우지도, 재시도하지도
+않습니다. 따라서 공용 페일오버 분류는 이전과 같은 상태 코드를 봅니다. #713의
+"schema must have a 'type' key"처럼 뺄 것이 없는 오류는 첫 실패에서 재시도가 도움이
+되지 않는다는 힌트와 함께 보고됩니다.
+
+## 메시지 전달 모드(프로토콜 1.18)
+
+턴이 도는 중에 도착한 메시지는 세션의 대기열에 남았다가 다음 전달 지점에서 주입됩니다.
+`[messages]`는 그 지점마다 몇 개를 가져갈지와, 대기 중인 메시지가 실행 중인 도구를
+멈추는지를 정합니다. 여기서 추가된 것은 모두 덧붙이는 변경입니다. 이전 클라이언트는
+예전과 같은 요청을 보내고 예전과 같은 이벤트를 읽습니다.
+
+| 키 | 값 | 기본값 | 뜻 |
+| --- | --- | --- | --- |
+| `follow_up_mode` | `all`, `one-at-a-time` | `all` | 턴의 첫 전달 지점이 가져가는 메시지 수. 앞 턴에서 남은 메시지다 |
+| `steering_mode` | `all`, `one-at-a-time` | `all` | 같은 턴의 그 뒤 전달 지점이 가져가는 메시지 수 |
+| `interrupt_mode` | `wait`, `immediate` | `wait` | 대기 중인 메시지가 실행 중인 도구를 기다리는지, 남은 도구를 멈추는지 |
+
+두 큐 모드의 기본값 `all`은 지금까지의 horon 동작을 그대로 유지합니다. 이는 omp의
+기본값(`one-at-a-time`)과 일부러 다릅니다. 설정하지 않은 데몬이 예전에 함께 전달하던
+메시지를 나누어 보내기 시작하면 안 되기 때문입니다. `one-at-a-time`은 남은 메시지를
+순서대로 대기열에 두므로 메시지마다 따로 주입됩니다.
+
+### 요청: `get_message_modes`
+
+```json
+{"v":1,"id":7,"req":"get_message_modes","session_id":"s-1"}
+```
+
+| 필드 | 타입 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | 문자열 | 예 | 질문의 대상 세션 |
+
+### 응답: `message_modes`
+
+```json
+{"v":1,"reply_to":7,"ev":"message_modes","session_id":"s-1",
+ "modes":{"follow_up_mode":"all","steering_mode":"one-at-a-time","interrupt_mode":"wait"}}
+```
+
+문자열은 설정 파일에 쓰는 표기 그대로이므로 클라이언트가 열거형을 다시 문자로 바꾸지
+않습니다.
+
+### 동작
+
+세 값은 세션 상태가 아니라 데몬 설정입니다. 브리지가
+`crates/harness-api-server/src/message_modes.rs`에서 데몬에 묻지 않고 직접 답하며,
+지목한 세션이 있는지와 무관하게 답합니다. 클라이언트는 대화 상대인 데몬의 모드를
+세션 전이나 세션 없이 읽습니다.
+
+이 요청·응답 쌍을 게이트하는 기능은 없습니다. 추가형이므로 이 요청을 모르는 서버는
+`unknown_request`로 답하고, 그 오류를 받은 클라이언트는 기본값을 가정하지 않고 모드를
+알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
+`getMessageModes`(TypeScript)로 제공합니다.
+
+## 도구 판정(프로토콜 1.19)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼습니다. 아래 내용은 모두
+추가형입니다. 새 필드를 보지 않는 클라이언트는 이전과 같은 이벤트를 읽습니다.
+
+도구 호출은 텍스트와 오류 표시만 보고했으므로, 호출이 실행됐는지, 일부만 끝났는지,
+거부됐는지 알려면 문장을 읽어야 했습니다. 저장된 `tool_result`는 이미 타입이 붙은
+판정을 담고 있고, 이 버전은 같은 값을 호출을 끝내는 이벤트에도 싣습니다.
+
+| 필드 | 타입 | 필수 | 의미 |
+| --- | --- | --- | --- |
+| `verdict` | string | 아니오 | 데몬이 판정을 저장했을 때, 그 호출이 어떻게 됐는지 |
+
+값은 저장된 결과가 쓰는 일곱 가지 전송 표기입니다.
+
+| 값 | 의미 |
+| --- | --- |
+| `ok` | 도구가 실행됐고 결과 전체를 돌려줬습니다 |
+| `partial` | 도구가 실행됐지만 작업 일부만 끝났습니다 |
+| `truncated` | 도구가 끝까지 실행됐고 돌려준 텍스트는 전체의 일부입니다 |
+| `withheld` | 도구가 실행됐고 결과 대신 거부 문장을 돌려줬습니다 |
+| `rejected` | 도구가 실행되기 전에 호출이 거부됐습니다 |
+| `failed` | 도구가 실행됐고 오류를 돌려줬습니다 |
+| `interrupted` | 사용자, 재적재, 취소로 호출이 건너뛰어지거나 중단됐습니다 |
+
+어떤 계층도 호출에 판정을 남기지 않으면 필드는 없습니다. 대부분의 도구는 그냥 성공한
+호출에 아무것도 남기지 않으므로, 보통의 성공한 `tool_done`에는 판정이 없고 `ok`는
+도구가 직접 밝힌 경우에만 나옵니다. 백그라운드로 넘어간 호출에는 판정이 없고, 제공자가
+자기 쪽에서 실행하는 도구(예: 호스팅 검색)에도 그 도구가 오류를 보고하더라도 판정이
+없습니다. 모델이 낸 도구 호출에 제공자가 준 결과는 오류 표시가 붙어 있으면
+`failed`입니다. 필드가 없으면 프레임은 프로토콜 1.18과 바이트 단위로 같고, 읽는 쪽은
+이전처럼 `error`로 성공과 실패를 가릅니다.
+
+### 이벤트: `tool_done`
+
+```json
+{"v":1,"ev":"tool_done","session_id":"s-1","call_id":"call-1","name":"bash",
+ "output":"Error: command timed out","error":"Error: command timed out",
+ "verdict":"failed"}
+```
+
+이 필드를 게이트하는 기능은 없습니다. 모든 클라이언트가 이미 읽는 이벤트에 실리므로
+이전 클라이언트는 키를 무시하고, 판정을 원하는 클라이언트는 값을 읽고 없으면 `error`로
+대체합니다.
 
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
@@ -194,7 +412,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이 응답은 복제 프로토콜에 속하지 않으므로 `protocol_version`이 필요 없다.
 다른 저장 세션 읽기를 이미 막는 `session_replication_v1` 기능을 요구한다. 없는
 세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
-`horon-agent export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
+`horon export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
 같은 바이트를 쓴다.
 
 클라이언트가 어겨서는 안 되는 규칙 두 가지:
@@ -223,6 +441,22 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 메타데이터에 기록된 PID는 과거 보조 정보일 뿐 살아 있는 프로세스가 아니며, 어떤
 클라이언트도 이를 실행 중으로 표시하면 안 된다.
 
+### 런타임 식별 필드
+
+`get_runtime_info`는 세션의 식별 정보를 답한다. 그중 두 필드는 한 턴을 답한 모델이
+세션이 고른 모델과 항상 같지는 않다는 사실 때문에 있다.
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `fallback_models` | `array<string>` | 활성 이름 지정 공급자 프로필에 설정된 폴백 모델 ID이며, 한 턴이 시도하는 순서다. 목록이 비어 있으면 키 자체가 없다. |
+| `serving_model` | `string` | 가장 최근 어시스턴트 응답을 만든 모델이다. 폴백이 답한 뒤에는 세션 자체 선택으로 돌아간 `model`과 값이 다르다. 아직 지목할 응답이 없으면 없다. |
+
+두 필드 모두 선택적이다. 구버전 데몬은 이 필드를 생략하고, 이를 무시하는
+클라이언트는 계속 동작한다. 카탈로그와 식별 정보를 한 번 받은 뒤에는, 예비 모델 목록이
+없을 때 브리지가 `get_runtime_info`에 캐시로 답한다. 이때 응답한 모델은 세션의 모델뿐이기
+때문이다. 예비 모델 목록이 있거나 식별 정보를 아직 받지 못했으면 매 `get_runtime_info`마다
+데몬에 카탈로그를 묻는다. 카탈로그가 바뀌지 않아도 응답한 모델이 바뀔 수 있기 때문이다.
+
 전체 저장 형식, 한도, 레거시 마이그레이션 규칙은
 `docs/protocol/SESSION_STORE.ko.md`에 있다.
 
@@ -239,6 +473,7 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 모르는 필드는 무시하고, 모르는 이벤트 종류는 건너뜁니다.
 - 실패는 `{"ev":"error","code":...,"message":...}`로 옵니다. 이 표면들이 쓰는 `ErrorCode` 값은 `invalid_request`, `unknown_session`, `internal`입니다.
 - 세션을 지목하는 요청은 `session_id`를 받습니다. 없는 세션은 빈 결과가 아니라 `unknown_session`으로 답합니다. "이 세션은 아무것도 쓰지 않았다"와 "그런 세션이 없다"는 다른 사실이기 때문입니다.
+- `session_id`는 6자 이상인 앞부분 일부도 받습니다. 온전한 id가 항상 이기고, 연결이 이미 아는 id는 다시 해석하지 않습니다. 여러 세션이 공유하는 앞부분은 `details.accepted_ids`에 최대 10개의 후보를 담고 `details.store_code`를 `ambiguous_session`으로 둔 `unknown_session`으로 답합니다. 오류 코드 자체는 `unknown_session`으로 남아 이전 빌드의 클라이언트도 응답을 해석합니다. 아무 세션도 해당하지 않는 앞부분은 그대로 `unknown_session`으로 답합니다.
 
 ### usage_report
 
@@ -435,4 +670,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 19`
+- `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

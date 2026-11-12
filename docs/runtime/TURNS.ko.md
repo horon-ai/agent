@@ -52,6 +52,26 @@
 
 기본값은 `conservative`다. 증명 가능한 잘림과 닫히지 않은 구조만 이어 붙이고, 의미 추정은 운영자가 `aggressive`를 고를 때만 쓴다.
 
+### 의미 분류에 대한 두 번째 의견
+
+`SemanticPrematureStop`은 분류기가 추측만 하는 유일한 분류다. 마지막 문장을 읽고 다음에 하겠다는 패턴에 맞춰 본다. `[autojudge] enabled = true`이면 턴이 `judge` 역할에 그 분류 하나만 묻는 `bool` 질문을 보낸다. 사용자가 요청한 일을 끝내기 전에 멈췄는지이고, 추측 대신 그 답으로 판단한다.
+
+| 상황 | 동작 |
+| --- | --- |
+| `[autojudge] enabled = false`(기본값) | 요청하지 않는다. `RecoveryMode`가 이전과 똑같이 정한다. |
+| 판단이 `probability >= 0.5`로 답함 | `off`를 뺀 모든 모드에서 그 분류에 따라 행동한다. |
+| 판단이 `0.5` 미만으로 답함 | `aggressive`에서도 행동하지 않는다. |
+| `judge` 모델을 해석하지 못함, 응답이 규격을 벗어남, 백엔드 실패, `[autojudge] attempt_timeout_ms` 초과 | 페일 오픈. `RecoveryMode`가 정하고 실패는 1분에 최대 한 번 기록한다. |
+| `BudgetTruncated`, `UnclosedStructure` | 판단하지 않는다. 증명 가능한 분류라 판단은 결과를 바꾸지 못하고 요청만 쓴다. |
+
+판단은 `judge` 역할의 모델로 실행하고(`docs/provider/MODEL.ko.md`) 시도는 한 번이며 내부 재시도가 없다. 예상 밖 종료 하나에 판단은 최대 한 번이므로 한 실행의 판단은 `MAX_AUTO_CONTINUATIONS + 1`을 넘지 않는다. 예산은 모델 선택, 요청, 파싱을 모두 포함한 시도 전체에 적용되며 네트워크 대기에만 걸리지 않는다.
+
+`attempt_timeout_ms` 기본값은 3000이고 `0`은 기한을 없애는 대신 기본값을 뜻하며 30초를 넘는 값은 30초로 자른다. 기한 없는 값은 일부러 두지 않았다. 판단은 판정 대상 턴을 붙잡으므로 응답하지 않는 제공자에 턴이 멈추는 것이야말로 이 예산이 막으려는 실패다. 설정 키는 `[autojudge] attempt_timeout_ms`이고 `HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS`가 프로세스 하나에 한해 덮어쓴다.
+
+`conservative`에서 `autojudge`를 켜면 그 모드가 행동하는 범위가 넓어진다. 판단이 확신한 의미상 조기 종료는 이제 이어지고, 추측만으로는 이어지지 않았다. 이것이 이 스위치의 요점이다. 보정된 답은 패턴 일치가 할 수 없는 곳에서 행동할 수 있고, 그래서 기본값이 꺼짐이다.
+
+`/judge` 명령은 다른 작업이다. 스웜 안에서 검토 워커를 띄우고 세션 에이전트 모델 덮어쓰기로 모델을 고른다. 역할과 `[autojudge] model` 덮어쓰기를 함께 쓰지만 타입 있는 질문에는 답하지 않는다.
+
 ### 자동 계속은 턴당 두 번까지다
 
 합성 계속은 `MAX_AUTO_CONTINUATIONS = 2`로 제한된다(`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState`는 이 값을 넘기지 않고(`crates/agent-runtime/src/turn_state.rs:215-219` `record_auto_continuation`이 상한으로 자른다), 새 턴은 `TurnState::new()`가 0에서 시작하므로 예산이 초기화된다(`crates/agent-runtime/src/turn_state.rs:82-100`, 테스트 `crates/agent-runtime/src/turn_state_tests.rs:18-26`). 한도를 다 쓰면 복구를 멈추고 사용자에게 알린다(`crates/app-core/src/agent/turn_recovery_wiring.rs:136`).
@@ -107,9 +127,30 @@ cargo test -p horon-agent-base soft_interrupt_store
 
 지점 판정은 `crates/app-core/src/agent/interrupts.rs:695`(B)와 `:706`(D)에 있고, C는 긴급 인터럽트가 있을 때만 열린다. 스트리밍 경로는 같은 지점을 `crates/app-core/src/agent/turn_streaming_mpsc.rs:1504`(B), `:1636`(D), `:2231`(C)에서 쓴다.
 
+#### 전달 모드(`[messages]`)
+
+`all`과 `one-at-a-time`은 턴이 아니라 지점마다 정해진다
+(`crates/app-core/src/agent/interrupts.rs`). 턴의 첫 전달 지점은 앞 턴에서 남은
+메시지를 가져가므로 `[messages] follow_up_mode`가 적용되고, 그 뒤 지점은 이번
+턴에 도착한 메시지를 가져가므로 `[messages] steering_mode`가 적용된다. 모드를
+개수로 옮기는 곳은 `crates/base/src/config/messages.rs`의 `batch_limit()` 하나뿐이고,
+`transfer_prefix_to_in_flight`가 그 개수만큼 오래된 것부터 옮긴다.
+
+두 모드의 기본값은 `all`이다. 지금까지의 동작이며 기본값이 `one-at-a-time`인
+omp와 다르다. `one-at-a-time`으로 두면 남은 메시지는 순서대로 대기열에 남아
+각각 따로 주입되므로, 대화 기록에는 메시지 하나가 한 단계로 남는다.
+
+`[messages] interrupt_mode`는 대기 중인 메시지가 실행 중인 도구를 언제 멈추는지
+정한다. `wait`(기본값, 지금까지의 시점)는 메시지 자체의 `urgent` 플래그를 따르므로
+긴급한 메시지만 지점 C에서 회차를 끊는다. `immediate`는 대기 중인 모든 메시지를
+긴급으로 취급하므로, 무언가 대기하는 즉시 회차를 끊는다.
+
+세 값은 하네스 API의 `get_message_modes`로 확인한다. 세션 상태가 아니라 데몬
+설정이므로 세션이 없어도 답한다.
+
 #### 지점 C의 긴급 처리
 
-긴급 플래그가 선 메시지가 대기 중이면 도구 라운드를 끝까지 돌리지 않는다. 판정 함수는 `urgent_interrupt_pending` 하나뿐이다(`crates/app-core/src/agent/interrupts.rs:135-140`). 라운드를 자를 때는 아직 결과를 쓰지 않은 호출마다 `is_error: true`인 도구 결과를 먼저 넣는다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). 내용은 `[Skipped: user interrupted]`다(`:12`). 그 뒤 사용자 메시지를 넣고, 건너뛴 개수를 이벤트의 `tools_skipped`로 알린다.
+긴급 플래그가 선 메시지가 대기 중이면 도구 라운드를 끝까지 돌리지 않는다. 판정 함수는 `urgent_interrupt_pending` 하나뿐이다(`crates/app-core/src/agent/interrupts.rs:163-166`). 라운드를 자를 때는 아직 결과를 쓰지 않은 호출마다 `is_error: true`인 도구 결과를 먼저 넣는다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). 내용은 `[Skipped: user interrupted]`다(`:12`). 그 뒤 사용자 메시지를 넣고, 건너뛴 개수를 이벤트의 `tools_skipped`로 알린다.
 
 긴급하지 않은 인터럽트는 도구 사이에 넣지 않는다. 모두 지점 D로 미룬다(`crates/app-core/src/agent/turn_streaming_mpsc.rs:2104-2106`).
 
@@ -331,6 +372,135 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 테스트는 `crates/app-core/src/agent/context_rollover_tests.rs`가 재구성된 요청, 저장된
 대화록, 요청당 전환 하나를 다루고, `crates/app-core/src/tool/new_context_tests.rs`가
 플랜 모드 거부, 등록 조건, 턴당 대기 요청 하나를 다룬다.
+
+## 핸드오프 압축
+
+핸드오프 압축은 모델 요약 대신 생성한 핸드오프 문서를 경계로 쓴다. 이 문서는 세션이
+무엇을 하던 중이었는지, 무엇을 결정했는지, 무엇이 남았는지를 적어 두므로 다음 세션이
+그 문서에서 이어 갈 수 있다(`crates/app-core/src/agent/handoff_compaction.rs`).
+
+### 트리거
+
+세 곳에서 요청할 수 있다. 하네스 API는 기존 `compact` 요청에 `method: "handoff"`를
+붙여 받고, 응답은 접수 확인이 아니라 결과다. 야간 감독자는 핸드오프 준비 시점에 한 번
+실행하며, 그 시점은 목표 기상 시각의 30분 전이거나 실행 시간의 4분의 1 전이다. 그 뒤의
+조정자 턴은 밤새 쌓인 대화록 대신 이 문서를 읽는다. 이 빌드의 ACP에는 압축 명령이
+없으므로 ACP 클라이언트는 트리거할 수 없다.
+
+### 토큰 예산 꼬리
+
+최근 토큰 예산(`[compaction] recent_tokens`, 기본 20,000)에 드는 메시지는 원문 그대로
+남는다. 문서는 그 꼬리 앞의 모든 메시지를 덮고, 결과는 덮은 메시지 수를 보고한다.
+모든 메시지가 예산 안에 들어가면 덮을 것이 없으므로 빈 문서를 쓰지 않고 그 사실을
+보고한다.
+
+### 문서는 Goal 절만 확인한다
+
+생성은 완성 요청 한 번이다. 경계가 되기 전에 두 가지 응답을 거부한다. 텍스트가 없는 응답과
+`Goal` 제목이 없는 응답이다(`# Goal`, `### goal`, `## Goal:` 모두 인정한다). 둘 다 `detail`에
+이유를 담아 `provider_error`로 보고하며 아무것도 커밋하지 않는다. 그 밖의 제목이 빠지거나
+절이 생략돼도 실패가 아니다. 텍스트를 모델이 쓴 그대로 커밋하고, 경계는 그 문서와 원문
+꼬리를 함께 유지한다.
+
+### 전략으로 실행할 때
+
+`[compaction] strategy = "handoff"`를 지정하면 평소의 자동·수동 압축이 요약 대신
+핸드오프 문서를 쓴다. 다른 전략과 같은 잡을 쓰므로 경계 계산, 기한, 취소, 단일 슬롯
+규칙이 그대로다. 결과에는 핸드오프 표시가 붙고, 다음 요청은 그 문서를 남의 노트가 아니라
+같은 에이전트가 앞서 쓴 글로 소개한다(`## Handoff From Your Earlier Self`, "continue the
+work; do not summarize it back"). 이전 경계는 프롬프트로 넘어가므로 한 세션에서 문서를
+두 번 쓰면 첫 문서가 남긴 목표와 제약이 유지된다.
+
+프롬프트가 덮을 범위 전체를 담지 못하면 프롬프트를 자르는 대신 범위를 줄인다. 범위를
+조용히 줄여 쓴 문서는 읽지 않은 메시지 너머로 경계를 옮기기 때문이다. 가장 작은
+범위조차 들어가지 않으면 문서를 거부하고 같은 범위의 구조화 요약으로 대체한다. 어느
+쪽이든 그 턴은 압축된다.
+
+### 실패와 취소
+
+프로바이더 오류나 취소는 아무것도 커밋하지 않는다. 메시지 수, 대화록, 이전 경계가 모두
+그대로다. 두 경우 모두 호출자에게 결과로 보고하고, 야간 실행은 이를 기록한 뒤 남은 턴을
+계속한다.
+
+테스트: `crates/app-core/src/agent/handoff_compaction_tests.rs`가 커밋된 경계, 꼬리 밖
+범위, 프로바이더 오류, 취소를 다룬다.
+`crates/app-core/src/overnight_handoff_tests.rs`는 감독자 실행과 실패 경로를,
+`crates/harness-api-server/src/translate_handoff_tests.rs`는 요청 필드와 결과 보고를
+다룬다.
+
+### 핸드오프 뒤의 복원 정보
+
+문서는 산문이라 후임자는 덮인 작업이 어떤 파일에 기대었는지 알 수 없다. 그래서 모든
+핸드오프 경계는 문서 옆에 복원 매니페스트를 함께 담는다. 구조화 요약이 저장하는 것과
+같은 형태로, 최대 `MAX_RESTORATION_ENTRIES`(10)개 경로에 각 경로의 종류(`file` 또는
+`skill`)와 그 경로를 만진 도구를 기록한다. 허용량은 컨텍스트 윈도의 15%이고
+`MAX_RESTORATION_BYTES`(50,000)를 넘지 않는다.
+
+매니페스트는 모델의 응답이 아니라 덮인 메시지에서 수집한다. 문서가 빠뜨린 파일도
+매니페스트에는 남는다. `StoredSummaryMetadata.restoration`에 기록하므로 재시작을
+견디고, 압축된 이벤트 페이로드에도 구조화 요약과 같은 방식으로 실린다. 목록이 비면 빈
+매니페스트가 아니라 없는 것으로 저장한다.
+
+테스트: `crates/base/src/compaction/handoff_tests.rs`가 수집된 항목과 빈 경우를,
+`crates/app-core/src/agent/handoff_compaction_tests.rs`가 커밋된 경계와 이벤트
+그래프의 매니페스트를 다룬다.
+
+### 여러 방법을 순서대로: `method_order`
+
+`strategy`는 방법 하나를 고른다. `[compaction] method_order`는 사슬을 고르므로, 이번 턴의
+경계를 만들지 못한 방법이 턴을 압축되지 않은 채로 두지 않고 같은 잡을 다음 방법으로
+넘긴다.
+
+```toml
+[compaction]
+method_order = ["handoff", "structured"]
+```
+
+트리거, 경계 계산, 기한, 단일 슬롯, 취소 규칙은 잡의 것이고 바뀌지 않는다. 경계를 만드는
+주체만 목록을 따라 내려간다. 남는 경계에는 그것을 쓴 방법의 표시가 붙으므로, 구조화 요약
+대체물이 같은 에이전트가 앞서 쓴 글로 소개되는 일은 없다. 일시적 프로바이더 오류(속도
+제한, 5xx, 타임아웃, 끊긴 연결)는 같은 방법에서 `MAX_TRANSIENT_RETRIES`까지 다시 시도한다.
+넘침(overflow)은 일시적 오류가 아니며 덮을 범위를 줄여 처리한다.
+
+해석은 설정을 읽을 때가 아니라 잡을 시작할 때 하고, 잘못된 항목이 재로드를 실패시키지
+않도록 관대하다(`crates/base/src/compaction/method_order.rs`).
+
+- 목록이 없거나 비면 `strategy`를 그대로 재현한다. `handoff`는 구조화 요약 대체 하나를
+  그대로 유지하고, 네이티브 전략은 우리 방법을 하나도 실행하지 않는다.
+- `structured`로 끝나지 않는 목록은 통째로 무시한다. 마지막 방법만이 다음 대체가 없다.
+- 프로바이더 네이티브 이름(`openai_auto`, `openai_explicit`)이 섞이면 목록도 폐기한다.
+  네이티브 압축이 대화록을 단독으로 소유하기 때문이다.
+- 알 수 없는 이름은 그 항목만 버리고 나머지 목록은 유지한다.
+
+한 방법이 연속 두 번 실패하면 이후 잡에서 건너뛰며, 경계가 커밋되면 모든 횟수가 초기화된다.
+한 번이 아니라 두 번인 이유는 프로바이더의 일시적 흔들림 하나로 방법을 퇴역시키지 않기
+위해서다. 모든 방법이 퇴역하면 전체 사슬을 다시 쓰는데, 방법이 하나도 없는 잡은 압축을
+할 수 없고 압축 중단 여부는 이미 회로 차단기가 결정하기 때문이다.
+
+`tool_result_aging`은 일부러 사슬 밖에 둔다. 어떤 요약보다 먼저 실행되고, 턴 순서가 아니라
+캐시 온도와 임계 근접도로 발동하므로 "대화록이 이미 바뀌었다"는 효과를 다른 방법과의
+상대 위치로 표현할 수 없다.
+
+테스트: `crates/base/src/compaction/method_order_tests.rs`가 해석, 퇴역 예산, 사슬 실행을
+다룬다.
+
+### horon이 이미 구현한 세 가지 개념
+
+이 저장소 밖에서는 압축에 재작성 방지, 다중 신호 트리거, 최신 관측 규칙이 필요하다고
+설명하기도 합니다. 셋 다 새 코드 없이 여기에 있습니다.
+
+- **한 번 바꾼 바이트는 다시 바꾸지 않습니다.** 축약된 결과는 `AGED_MARKER_PREFIX`를
+  달고 다음 차례에 건너뜁니다(`crates/app-core/src/agent/tool_result_aging.rs`). 가지치기한
+  도구 호출은 원장에 남겨 두 번 계획하지 않습니다(`crates/compaction-core/src/pruning.rs`).
+- **축약에는 질량, 이득, 주기가 모두 필요합니다.** 압박 비율(`AGING_PRESSURE_RATIO`,
+  임계의 0.75)과 최소 묶음 크기(`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB)를 넘고, 같은
+  구간을 지날 때 한 번만 실행합니다.
+- **대상마다 최신 관측만 남습니다.** 가지치기는 `newest_by_key`와
+  `newest_complete_by_path`를 유지하므로, 같은 경로의 부분 읽기·실패 호출·나중 전체 읽기는
+  지금도 유효한 한 항목으로 정리됩니다.
+
+시험: `crates/app-core/src/agent/tool_result_aging/tests.rs`가 접두어 방지와 묶음 게이트를,
+`crates/compaction-core/src/pruning.rs`가 최신 선택을 다룹니다.
 
 ## `--resume` 동작
 

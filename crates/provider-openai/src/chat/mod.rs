@@ -7,6 +7,7 @@
 //! narrow transport adds the credential and error classification ([`transport`]).
 
 pub mod request;
+pub mod schema_recovery;
 pub mod stream;
 pub mod transport;
 
@@ -20,11 +21,20 @@ mod tests;
 #[path = "prompt_cache_tests.rs"]
 mod prompt_cache_tests;
 
+#[cfg(test)]
+#[path = "degradation_tests.rs"]
+mod degradation_tests;
+
+#[cfg(test)]
+#[path = "schema_recovery_tests.rs"]
+mod schema_recovery_tests;
+
 use crate::chat::prompt_cache_memo::PromptCacheKeyMemo;
-use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request};
+use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request_reporting};
 use crate::chat::stream::ChatCompletionsStream;
 use crate::chat::transport::{
-    ChatAuth, INITIAL_RESPONSE_TIMEOUT, apply_auth, http_response_error, redact_secret, transport_error_message,
+    ChatAuth, INITIAL_RESPONSE_TIMEOUT, apply_auth, http_response_error_with_hint, redact_secret,
+    transport_error_message,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -217,7 +227,24 @@ impl OpenAiCompatibleProvider {
             Some(effort) if !effort.is_empty() => Some(effort.to_string()),
             _ => configured,
         };
-        let mut body = build_chat_completions_request(&self.model(), messages, tools, system, reasoning.as_deref());
+        // A request that narrowed the tool catalog leaves a receipt per loss so
+        // the turn that carried it can record what the model never saw. The
+        // request itself is built the same way either way, and a session id is
+        // the only thing that can key the receipt, so a contextless call sends
+        // exactly the bytes it sent before receipts existed.
+        let session_id = context.and_then(|c| c.session_id.as_deref());
+        let mut receipts = Vec::new();
+        let mut body = build_chat_completions_request_reporting(
+            &self.model(),
+            messages,
+            tools,
+            system,
+            reasoning.as_deref(),
+            session_id.map(|_| &mut receipts),
+        );
+        if let Some(session_id) = session_id {
+            horon_agent_provider_core::degradation::record(session_id, &receipts);
+        }
         self.apply_prompt_cache(&mut body, context);
         if let Some(extra) = &self.extra_body
             && let (Some(target), Some(source)) = (body.as_object_mut(), extra.as_object())
@@ -319,10 +346,56 @@ impl OpenAiCompatibleProvider {
         }
 
         let endpoint = self.endpoint();
-        let body = self.build_body(messages, tools, system, context);
+        let mut attempts = 0u8;
+        loop {
+            // `Bytes` so the failed-request bytes stay available to the
+            // classifier without copying what was just serialized.
+            let body: bytes::Bytes = self.build_body(messages, tools, system, context).into();
+            let response = self.post_chat_completion(&endpoint, body.clone()).await?;
+
+            let retry_after = horon_agent_provider_core::retry_after::retry_after(response.headers());
+            let status = response.status();
+            if status.is_success() {
+                let redact: Option<Arc<str>> = self.api_key.as_deref().map(Arc::from);
+                return Ok(Box::pin(ChatCompletionsStream::new(response.bytes_stream(), redact)));
+            }
+
+            let error_body = horon_agent_provider_core::http_error_body(response, "chat completions").await;
+            let hint = match schema_recovery::classify(status.as_u16(), &error_body, &body) {
+                schema_recovery::SchemaRecovery::Retry { description }
+                    if attempts < schema_recovery::MAX_SCHEMA_RECOVERY_ATTEMPTS =>
+                {
+                    attempts += 1;
+                    horon_agent_logging::warn(&self.sanitize(format!(
+                        "OpenAI-compatible provider at {endpoint} rejected a tool schema: {description}"
+                    )));
+                    // Rebuilding the body re-runs normalization, which now drops
+                    // the construct just learned; any other prevention drop is
+                    // recorded on the request's session again, deduplicated.
+                    continue;
+                }
+                schema_recovery::SchemaRecovery::Retry { description } => Some(format!(
+                    "{description}; the schema recovery budget of {} requests is exhausted",
+                    schema_recovery::MAX_SCHEMA_RECOVERY_ATTEMPTS
+                )),
+                schema_recovery::SchemaRecovery::Stop { hint } => hint,
+            };
+            return Err(http_response_error_with_hint(
+                &endpoint,
+                status.as_u16(),
+                retry_after,
+                &error_body,
+                hint.as_deref(),
+                self.api_key.as_deref(),
+            ));
+        }
+    }
+
+    /// POST one Chat Completions request and wait for the initial response.
+    async fn post_chat_completion(&self, endpoint: &str, body: bytes::Bytes) -> Result<reqwest::Response> {
         let mut request = self
             .client
-            .post(&endpoint)
+            .post(endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .body(body);
@@ -330,26 +403,9 @@ impl OpenAiCompatibleProvider {
         for (name, value) in &self.headers {
             request = request.header(name, value);
         }
-
-        let response = send_with_initial_response_timeout(request, INITIAL_RESPONSE_TIMEOUT)
+        send_with_initial_response_timeout(request, INITIAL_RESPONSE_TIMEOUT)
             .await
-            .map_err(|error| anyhow::anyhow!(self.sanitize(transport_error_message(&endpoint, &error.to_string()))))?;
-
-        let retry_after = horon_agent_provider_core::retry_after::retry_after(response.headers());
-        let status = response.status();
-        if !status.is_success() {
-            let body = horon_agent_provider_core::http_error_body(response, "chat completions").await;
-            return Err(http_response_error(
-                &endpoint,
-                status.as_u16(),
-                retry_after,
-                &body,
-                self.api_key.as_deref(),
-            ));
-        }
-
-        let redact: Option<Arc<str>> = self.api_key.as_deref().map(Arc::from);
-        Ok(Box::pin(ChatCompletionsStream::new(response.bytes_stream(), redact)))
+            .map_err(|error| anyhow::anyhow!(self.sanitize(transport_error_message(endpoint, &error.to_string()))))
     }
 }
 

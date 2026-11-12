@@ -42,7 +42,7 @@ impl AcpMode {
     fn description(self) -> &'static str {
         match self {
             Self::Default => "Use the approval mode from HoronAgent config",
-            Self::AskCommands => "Ask before shell and network tools; file edits run",
+            Self::AskCommands => "Ask before shell, network and file-mutating tools",
             Self::Auto => "Run tools without asking",
         }
     }

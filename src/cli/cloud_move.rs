@@ -1309,12 +1309,11 @@ fn dangling_tool_use_ids(sess: &session::Session) -> Vec<String> {
 fn append_arrival(sess: &mut session::Session, dangling: &[String], host: &str, text: &str) {
     let mut blocks: Vec<crate::message::ContentBlock> = dangling
         .iter()
-        .map(|id| crate::message::ContentBlock::ToolResult {
-            tool_use_id: id.clone(),
-            content: format!(
+        .map(|id| {
+            let text = format!(
                 "horon-agent cloud move completed. This session now runs on cloud host `{host}`. This tool call was interrupted by the move; rerun it here if its result still matters."
-            ),
-            is_error: None,
+            );
+            crate::message::ContentBlock::tool_result(id, &text, None)
         })
         .collect();
     blocks.push(crate::message::ContentBlock::Text {

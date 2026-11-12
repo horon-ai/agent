@@ -65,6 +65,88 @@ Four events were added: `runtime_state`, `control_receipt`, `snapshot_marker` an
 
 The protocol shape and SDK methods of `apply_control`/`get_control_receipt` and `get_snapshot` are settled, but the storage and observation implementation behind them belongs to separate work. Until that work lands, the bridge answers these requests with `unsupported`. From the client's side that is the same "this server does not offer it yet" answer, so no branching changes.
 
+## Handoff compaction
+
+`compact` takes an optional `method`. Absent is the model summary a client has
+always requested: the reply is `compacted` and means the request was accepted,
+because the daemon summarizes at its next safe point.
+
+`method: "handoff"` writes a generated handoff document as the boundary instead,
+and the reply arrives after that write. It is the outcome, not an
+acknowledgement.
+
+Request:
+
+```json
+{"id": 4, "req": "compact", "session_id": "s-1", "method": "handoff"}
+```
+
+Response, the same `compacted` event with `handoff` attached:
+
+```json
+{"id": 4, "event": "compacted", "session_id": "s-1", "message": "Committed a handoff document covering the first 120 messages.",
+ "handoff": {"outcome": "committed", "covered": 120}}
+```
+
+| `handoff.outcome` | Meaning |
+| --- | --- |
+| `committed` | The document became the boundary. `covered` is how many messages it covers; the recent-token tail stays verbatim |
+| `nothing_to_cover` | Every message fits inside the recent-token budget, so no document was written |
+| `provider_error` | The completion failed, or its document was refused (empty, or without a `Goal` heading). `detail` carries the provider's message or the refusal reason. The transcript is unchanged |
+| `cancelled` | The generation was cancelled before it answered. The transcript is unchanged |
+
+No capability gates this field: a server that predates it ignores an unknown
+field on the request and answers without `handoff`, so a client that sends
+`method` to an older daemon must treat a missing `handoff` as "not supported by
+this server" rather than as `nothing_to_cover`. A value the server does not know
+is refused as `invalid_request`.
+
+The request itself has no cancel signal. One bounded completion decides it, so a
+client that stops waiting leaves the generation running; it does not roll back a
+boundary that is already committed.
+
+## Rewind branch summary
+
+`rewind` takes an optional `summarize`. Absent or `false` is the request a client
+has always sent and the daemon behaves identically.
+
+`summarize: true` asks the daemon to write a report on the branch the rewind
+discards and append it to the kept branch as one hidden system reminder, so the
+model sees why the abandoned attempt failed without the transcript carrying the
+whole dead branch. The report covers what was tried, what failed and why, and
+which facts the branch established.
+
+The feature is off unless the daemon's `[compaction] rewind_summary` is on. The
+allowance for the report comes from `[compaction] rewind_summary_tokens`; its
+default 1500 is horon's own choice, and values are clamped to `1..=4096`, with
+`0` meaning "use the default".
+
+Request:
+
+```json
+{"id": 7, "req": "rewind", "session_id": "s-1", "message_index": 12, "summarize": true}
+```
+
+The rewind happens first and the report second, so a summary failure never leaves
+the conversation where it was:
+
+| What happened | Message history |
+| --- | --- |
+| Setting off | Rewound, no report appended |
+| Report written | Rewound, one hidden `<system-reminder>` message appended after the stop point |
+| Nothing to discard | Rewound, nothing appended |
+| Completion failed | Rewound, nothing appended; the reason appears in `status_detail` on the `history` reply and in the daemon log |
+| Completion cancelled | Rewound, nothing appended |
+
+The appended report is not a visible transcript message and not a rewind target,
+so a later `/rewind N` counts the same entries it counted before. `rewind_undo`
+restores the head recorded before the rewind, which removes the report together
+with everything else the rewind discarded.
+
+No capability gates this field: a server that predates it ignores the unknown
+field and answers with a plain rewind, so a client that sends `summarize` to an
+older daemon gets the old behavior rather than an error.
+
 ## Tool argument repair (protocol 1.16)
 
 A provider's JSON writer sometimes types a tool argument wrong: `"5000"` where a
@@ -97,6 +179,160 @@ record keeps exactly the bytes it had before.
 `snapshot().tool_arg_repairs` counts repaired calls per tool, when
 `HORON_AGENT_PERF_COUNTERS=1`.
 
+## Degradation receipts (protocol 1.17)
+
+horon-agent narrows the tool catalog before a request leaves when the
+provider's schema dialect cannot express part of it. Each narrowing is now
+recorded. Everything here is additive: a client that predates it sends the same
+requests and reads the same events as before.
+
+### Event: `degradation_receipts`
+
+Sent after the assistant message of a streamed turn is stored, only when that
+request lost something not already reported in this session. A client that does
+not know the event ignores it.
+
+```json
+{"ev":"degradation_receipts","session_id":"s-1","message_id":"m-7",
+ "receipts":[{"kind":"schema_keyword_dropped","tool":"bash","target":"uniqueItems"}]}
+```
+
+`kind` is one of `schema_keyword_dropped` (a keyword, or `format:<value>`, outside
+the dialect), `strict_disabled` (the tool was sent with `strict: false`) and
+`duplicate_tool_dropped` (a second definition of the same name was not sent).
+Each distinct (kind, tool, target) is reported once per session, not once per
+request; a daemon restart may report it once more.
+
+### Stored record
+
+The assistant message appended for that request carries the same receipts as
+`degradations`, written in the same append. A message whose request lost nothing
+omits the field and keeps exactly the bytes it had before.
+
+### Rejected-then-retried requests
+
+Prevention narrows the catalog against a declared allow-list, so a construct
+outside it never reaches the provider. The allow-list cannot be complete,
+though, and a provider that still rejects one would otherwise fail every turn
+carrying that tool.
+
+The direct Chat Completions path now recovers from that rejection inside the
+same turn. A `4xx` whose body names a schema keyword or `format` is learned,
+the tool catalog is rebuilt without it, and the request is sent once more; the
+loss appears as an ordinary `schema_keyword_dropped` receipt on the retried
+request, so a client sees the same `degradation_receipts` event it already
+handles. Learning is bounded per construct, so a second rejection naming the
+same thing is reported instead of retried.
+
+Only a client error can teach the dialect anything. A `429`, `5xx` or `401/403`
+is a transient or credential failure: recovery neither learns from it nor
+retries it, so the shared failover classification sees the status it always did.
+An error that names nothing strippable, such as #713's "schema must have a
+`type` key", is reported on the first failure with a hint saying a retry cannot
+help.
+
+## Message delivery modes (protocol 1.18)
+
+A message that arrives while a turn is running is held in the session's pending
+queue and injected at the next delivery point. `[messages]` decides how many of
+those each point carries and whether one stops the running tools. Everything here
+is additive: a client that predates it sends the same requests and reads the same
+events as before.
+
+| Key | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `follow_up_mode` | `all`, `one-at-a-time` | `all` | Queued messages the first delivery point of a turn carries; those are left over from the previous turn |
+| `steering_mode` | `all`, `one-at-a-time` | `all` | Queued messages each later delivery point of the same turn carries |
+| `interrupt_mode` | `wait`, `immediate` | `wait` | Whether a queued message waits for the running tool call or stops the remaining ones |
+
+Both defaults of `all` keep the behavior horon has always had. That deliberately
+differs from omp, whose default is `one-at-a-time` for both queue modes: an
+unconfigured daemon must not start splitting messages it used to deliver together.
+`one-at-a-time` leaves the rest pending, in order, so each message gets its own
+injection.
+
+### Request: `get_message_modes`
+
+```json
+{"v":1,"id":7,"req":"get_message_modes","session_id":"s-1"}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the question is about |
+
+### Response: `message_modes`
+
+```json
+{"v":1,"reply_to":7,"ev":"message_modes","session_id":"s-1",
+ "modes":{"follow_up_mode":"all","steering_mode":"one-at-a-time","interrupt_mode":"wait"}}
+```
+
+The strings are the config spellings, so a client never maps an enum back to
+text.
+
+### Behaviour
+
+The values are daemon configuration rather than session state. The bridge answers
+the request itself in `crates/harness-api-server/src/message_modes.rs` without a
+daemon round trip, and the answer does not depend on the named session existing:
+a client reads the modes of the daemon it is talking to, before or without a
+session.
+
+No capability gates the pair. The request is additive, so a server that predates
+it answers `unknown_request`; a client that gets that error treats the modes as
+unknown rather than assuming the defaults. The SDKs expose the call as
+`get_message_modes` (Rust, Python) and `getMessageModes` (TypeScript).
+
+## Tool verdict (protocol 1.19)
+
+The harness API keeps major version 1 and moved from minor version 18 to 19.
+Everything here is additive: a client that never looks at the new field reads
+the same events it did before.
+
+A tool call used to report only text plus an error flag, so a client that wanted
+to know whether a call ran, ran in part, or was refused had to read the
+sentence. The stored `tool_result` already carries a typed verdict; this version
+puts the same value on the event that closes the call.
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `verdict` | string | No | What became of the call, when the daemon stored a verdict for it |
+
+The values are the seven wire spellings the stored result uses.
+
+| Value | Meaning |
+| --- | --- |
+| `ok` | The tool ran and its whole result was returned |
+| `partial` | The tool ran, but only part of the work finished |
+| `truncated` | The tool ran to the end; the returned text is a cut of the full text |
+| `withheld` | The tool ran, and a refusal sentence was returned in place of its result |
+| `rejected` | The call was refused before the tool ran |
+| `failed` | The tool ran and returned an error |
+| `interrupted` | The call was skipped or cut short by the user, a reload, or a cancellation |
+
+The field is absent when no layer made a statement about the call. Most tools
+say nothing about a call that simply succeeded, so the usual successful
+`tool_done` carries no verdict; `ok` appears only where a tool states it. A call
+that moved to the background carries none, and neither does a tool the provider
+runs on its own side (a hosted search, for example), even when that tool reports
+an error. A result the provider supplies for a tool call the model made is
+`failed` when it comes with an error flag. An absent field leaves the frame
+byte-identical to protocol 1.18, and a reader then tells success from failure by
+`error`, exactly as before.
+
+### Event: `tool_done`
+
+```json
+{"v":1,"ev":"tool_done","session_id":"s-1","call_id":"call-1","name":"bash",
+ "output":"Error: command timed out","error":"Error: command timed out",
+ "verdict":"failed"}
+```
+
+No capability gates the field. It rides on an event every client already reads,
+so a client that predates it ignores the key; a client that wants the verdict
+reads it and falls back to `error` when it is missing.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -128,7 +364,7 @@ A session can hold several heads after a rewind or a branched import. The select
 
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
-The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon-agent export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
 
 Two rules a client must not break:
 
@@ -145,6 +381,17 @@ The five stable `ErrorCode` values are unchanged, so older clients keep decoding
 
 `runtime_info` builds liveness from the current host runtime. A PID recorded in stale session metadata is historical side information, not a live process, and no client should display it as running.
 
+### Runtime identity fields
+
+`get_runtime_info` answers with the session's identity. Two of its fields exist because the model that answered a turn is not always the model the session selected.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `fallback_models` | `array<string>` | Fallback model ids the active named provider profile is configured with, in the order a turn tries them. The key is absent when the list is empty. |
+| `serving_model` | `string` | Model that produced the most recent assistant response. After a fallback answered it differs from `model`, which returns to the session's own selection once the turn ends. Absent when no response has been named yet. |
+
+Both fields are optional. An older daemon omits them, and a client that ignores them keeps working. Once the catalog and one identity report have arrived, the bridge answers `get_runtime_info` from its cache when no fallback list is configured, because the serving model can then only be the session's own. With a fallback list configured, or before the first identity report, it asks the daemon for the catalog on every `get_runtime_info`, because the serving model can change without the catalog changing.
+
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
@@ -160,6 +407,7 @@ All three requests are additive. A client that sends none of them keeps working,
 - Unknown fields are ignored, and unknown event kinds are skipped.
 - A failure arrives as `{"ev":"error","code":...,"message":...}`. The `ErrorCode` values these surfaces use are `invalid_request`, `unknown_session` and `internal`.
 - A request that names a session takes `session_id`. A missing session answers `unknown_session` rather than an empty result, because "this session wrote nothing" and "no such session exists" are different facts.
+- `session_id` also accepts a unique leading prefix of at least 6 characters. A full id always wins, and an id the connection already knows is never rewritten. A prefix several sessions share answers `unknown_session` with up to 10 candidates in `details.accepted_ids` and `details.store_code` set to `ambiguous_session`; the code itself stays `unknown_session`, so a client built against an older build still decodes the frame. A prefix that matches nothing keeps the plain `unknown_session` answer.
 
 ### usage_report
 
@@ -350,4 +598,5 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 15`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 19`
+- `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`

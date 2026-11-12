@@ -241,8 +241,17 @@ pub enum Request {
     Clear { id: u64 },
 
     /// Rewind conversation history to the given 1-based message index.
+    ///
+    /// `summarize` asks the daemon to append a report on the branch the rewind
+    /// discards. It is off unless both this flag and `[compaction]
+    /// rewind_summary` are set, and an absent flag is exactly the old request.
     #[serde(rename = "rewind")]
-    Rewind { id: u64, message_index: usize },
+    Rewind {
+        id: u64,
+        message_index: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        summarize: bool,
+    },
 
     /// Undo the most recent rewind, if one is available.
     #[serde(rename = "rewind_undo")]
@@ -434,7 +443,13 @@ pub enum Request {
 
     /// Trigger manual context compaction
     #[serde(rename = "compact")]
-    Compact { id: u64 },
+    Compact {
+        id: u64,
+        /// Which kind of compaction to run. Absent is the summary path older
+        /// clients have always asked for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        method: Option<CompactMethod>,
+    },
 
     /// Notify server that auth credentials changed (e.g., after login)
     #[serde(rename = "notify_auth_changed")]
@@ -755,6 +770,11 @@ pub enum Request {
         /// configured profile decides; `Some(list)` narrows it to `list`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         allowed_tools: Option<Vec<String>>,
+        /// Optional session to fork a consult child from. The child starts with
+        /// a copy of that transcript and can only read; the source session is
+        /// never written to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_session: Option<String>,
     },
 
     /// List models/routes available for spawning swarm agents
@@ -986,8 +1006,11 @@ pub enum Request {
 pub mod acp_v2_events;
 pub mod event_types;
 mod events;
+mod model_identity;
 pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
-pub use events::{FileDiffWire, PlanEntryWire, ServerEvent};
+pub use event_types::{FileDiffWire, PlanEntryWire};
+pub use events::ServerEvent;
+pub use model_identity::RuntimeModelIdentity;
 
 /// One question's chosen option labels, as answered by a client.
 ///
@@ -1001,10 +1024,49 @@ pub struct AskSelection {
 }
 
 /// A human decision on a pending approval request.
+///
+/// `AllowPath` and `AllowFolder` answer "yes, and stop asking for this place":
+/// the first covers the one file the request named, the second covers its
+/// folder and everything under it. Both are approved answers, so a client that
+/// only knows the older three keeps working; the daemon remembers the scope
+/// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     Allow,
     AllowAlways,
+    AllowPath,
+    AllowFolder,
     Deny,
+}
+
+/// What a `compact` request should write as the new boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactMethod {
+    /// A generated handoff document in place of the model's summary. The
+    /// request answers after the boundary is committed, so its reply carries
+    /// the outcome rather than "scheduled".
+    Handoff,
+}
+
+/// What the handoff compaction asked for by a `compact` request did.
+///
+/// The reply is the result, not an acknowledgement: a failed generation leaves
+/// the transcript unchanged and says so instead of reporting a summary that was
+/// never written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum HandoffCompactionReport {
+    /// The document became the boundary, covering the first `covered` messages
+    /// of the active context.
+    Committed { covered: usize },
+    /// The recent-token budget kept every message verbatim; nothing was written.
+    NothingToCover,
+    /// The completion failed, or its document was refused (empty, or without a
+    /// `Goal` heading). The transcript is unchanged.
+    ProviderError { detail: String },
+    /// The caller cancelled before the completion answered. The transcript is
+    /// unchanged.
+    Cancelled,
 }

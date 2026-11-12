@@ -1,11 +1,15 @@
 use super::*;
 use crate::aux_completion::CompletionRequest;
-use crate::message::Message;
+use crate::message::{ContentBlock, Message};
 use anyhow::Result;
 use horon_agent_compaction_core::message_token_count;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// A context window wide enough that the restoration allowance is the
+/// absolute ceiling, so a test asserts the entry list, not the budget math.
+const TEST_WINDOW: usize = 400_000;
 
 /// A transcript with ten user turns, each followed by a long assistant answer.
 ///
@@ -103,7 +107,7 @@ async fn handoff_generates_a_non_empty_document_from_a_fixture_transcript() {
     let completer = ScriptedCompleter::answering("## Goal\nship it\n\n## Done\nmost of it\n");
     let cancel = not_cancelled();
 
-    let document = generate_handoff(&messages, budget, &completer, &cancel)
+    let document = generate_handoff(&messages, budget, TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect("handoff generation");
 
@@ -130,20 +134,68 @@ async fn handoff_generates_a_non_empty_document_from_a_fixture_transcript() {
 }
 
 #[tokio::test]
-async fn handoff_returns_a_document_missing_a_heading_as_is() {
+async fn handoff_returns_a_document_with_only_a_goal_as_is() {
     let messages = fixture_transcript();
-    let partial = "## Goal\nfinish the migration\n\n## Next steps\nrun the gate\n";
-    let completer = ScriptedCompleter::answering(partial);
     let cancel = not_cancelled();
 
-    let document = generate_handoff(&messages, covering_budget(), &completer, &cancel)
-        .await
-        .expect("a missing heading is not an error");
+    for partial in [
+        "## Goal\nfinish the migration\n",
+        "# goal\nfinish the migration\n\n## Next steps\nrun the gate\n",
+        "Here is the handoff.\n\n  ### GOAL:\nfinish the migration\n",
+    ] {
+        let completer = ScriptedCompleter::answering(partial);
 
-    assert_eq!(
-        document.document, partial,
-        "the response is returned verbatim, without parsing or repair"
-    );
+        let document = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
+            .await
+            .expect("a document with a Goal heading is accepted");
+
+        assert_eq!(
+            document.document, partial,
+            "the response is returned verbatim, without parsing or repair"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handoff_rejects_an_empty_document() {
+    let messages = fixture_transcript();
+    let cancel = not_cancelled();
+
+    for empty in ["", " \n\t\n"] {
+        let completer = ScriptedCompleter::answering(empty);
+
+        let error = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
+            .await
+            .expect_err("an empty document cannot replace the covered messages");
+
+        assert!(
+            matches!(&error, HandoffError::InvalidDocument { reason } if reason.contains("empty")),
+            "got {error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handoff_rejects_a_document_without_a_goal_heading() {
+    let messages = fixture_transcript();
+    let cancel = not_cancelled();
+
+    for goalless in [
+        "## Done\nmost of it\n\n## Next steps\nrun the gate\n",
+        "The goal is to finish the migration.\n",
+        "## Goals and non-goals\nfinish the migration\n",
+    ] {
+        let completer = ScriptedCompleter::answering(goalless);
+
+        let error = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
+            .await
+            .expect_err("a document that never states the goal is refused");
+
+        assert!(
+            matches!(&error, HandoffError::InvalidDocument { reason } if reason.contains("Goal")),
+            "got {error}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -152,10 +204,10 @@ async fn handoff_small_budget_keeps_fewer_messages_than_a_large_one() {
     let completer = ScriptedCompleter::answering("## Goal\nx\n");
     let cancel = not_cancelled();
 
-    let small = generate_handoff(&messages, minimal_budget(), &completer, &cancel)
+    let small = generate_handoff(&messages, minimal_budget(), TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect("small-budget handoff");
-    let large = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+    let large = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect("large-budget handoff");
 
@@ -173,7 +225,7 @@ async fn handoff_with_a_budget_that_keeps_everything_reports_nothing_to_cover() 
     let completer = ScriptedCompleter::answering("unused");
     let cancel = not_cancelled();
 
-    let error = generate_handoff(&messages, usize::MAX / 2, &completer, &cancel)
+    let error = generate_handoff(&messages, usize::MAX / 2, TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect_err("everything is kept verbatim");
 
@@ -187,7 +239,7 @@ async fn handoff_provider_error_is_reported_with_its_detail() {
     let completer = ScriptedCompleter::failing("upstream returned 503");
     let cancel = not_cancelled();
 
-    let error = generate_handoff(&messages, covering_budget(), &completer, &cancel)
+    let error = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect_err("the provider failed");
 
@@ -216,7 +268,7 @@ async fn handoff_cancellation_reports_cancelled_not_success() {
 
     let error = tokio::time::timeout(
         Duration::from_secs(30),
-        generate_handoff(&messages, budget, &PendingCompleter, &cancel),
+        generate_handoff(&messages, budget, TEST_WINDOW, None, &PendingCompleter, &cancel),
     )
     .await
     .expect("cancellation must settle the call")
@@ -224,4 +276,73 @@ async fn handoff_cancellation_reports_cancelled_not_success() {
 
     trigger.await.expect("cancellation trigger");
     assert!(matches!(&error, HandoffError::Cancelled), "got {error}");
+}
+
+/// A transcript whose covered prefix reads one file through a tool call.
+fn transcript_with_a_read_file() -> Vec<Message> {
+    let mut messages = vec![
+        Message {
+            role: crate::message::Role::Assistant,
+            content: vec![ContentBlock::ToolUse {
+                id: "call-1".to_string(),
+                name: "read".to_string(),
+                input: serde_json::json!({"file_path": "crates/base/src/compaction/handoff.rs"}),
+                thought_signature: None,
+            }],
+            timestamp: None,
+            tool_duration_ms: None,
+        },
+        Message::tool_result("call-1", "the handoff generator", false),
+    ];
+    messages.extend(fixture_transcript());
+    messages
+}
+
+#[tokio::test]
+async fn handoff_carries_the_restoration_manifest_of_its_covered_prefix() {
+    let messages = transcript_with_a_read_file();
+    let completer = ScriptedCompleter::answering("## Goal\nread the generator\n");
+    let cancel = not_cancelled();
+
+    let document = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
+        .await
+        .expect("handoff generation");
+
+    assert!(document.cutoff > 1, "the tool call is inside the covered prefix");
+    assert_eq!(
+        document.restoration.entries.len(),
+        1,
+        "one file was read in the covered prefix"
+    );
+    assert_eq!(
+        document.restoration.entries[0].path,
+        "crates/base/src/compaction/handoff.rs"
+    );
+    assert_eq!(document.restoration.entries[0].kind, "file");
+    assert_eq!(
+        document.restoration.entries[0].note.as_deref(),
+        Some("read"),
+        "the tool that touched the path is recorded"
+    );
+    assert_eq!(
+        document.restoration.total_bytes,
+        crate::compaction::summary::MAX_RESTORATION_BYTES,
+        "a wide window allows the absolute ceiling"
+    );
+}
+
+#[tokio::test]
+async fn handoff_without_a_file_tool_carries_an_empty_manifest() {
+    let messages = fixture_transcript();
+    let completer = ScriptedCompleter::answering("## Goal\nno files\n");
+    let cancel = not_cancelled();
+
+    let document = generate_handoff(&messages, covering_budget(), TEST_WINDOW, None, &completer, &cancel)
+        .await
+        .expect("handoff generation");
+
+    assert!(
+        document.restoration.entries.is_empty(),
+        "a prose-only prefix names no path, and the manifest never invents one"
+    );
 }

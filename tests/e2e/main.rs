@@ -3,6 +3,12 @@
 //! These tests verify the full flow from user input to response
 //! without making actual API calls.
 
+// Same Apple linker message as `src/main.rs`: the unoptimized e2e test binary
+// links the whole agent, so its `__eh_frame` section can pass the 16 MB compact
+// unwind limit. The limit is the linker's format budget, not a source defect,
+// and optimized builds stay under it.
+#![cfg_attr(all(debug_assertions, target_os = "macos"), allow(linker_messages))]
+
 #[cfg(unix)]
 mod lifecycle_measurements;
 mod mock_provider;

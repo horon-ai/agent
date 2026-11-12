@@ -349,6 +349,7 @@ fn delta_rendering_marks_roles_calls_and_results() {
         StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             id: "m0".into(),
             role: Role::User,
             content: vec![ContentBlock::Text {
@@ -364,6 +365,7 @@ fn delta_rendering_marks_roles_calls_and_results() {
         StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             id: "m1".into(),
             role: Role::Assistant,
             content: vec![
@@ -387,12 +389,14 @@ fn delta_rendering_marks_roles_calls_and_results() {
         StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             id: "m2".into(),
             role: Role::User,
             content: vec![ContentBlock::ToolResult {
                 tool_use_id: "t1".into(),
                 content: "fn parse_x() {}".into(),
                 is_error: None,
+                verdict: None,
             }],
             display_role: None,
             timestamp: None,
@@ -415,6 +419,7 @@ fn delta_rendering_marks_roles_calls_and_results() {
     with_reminder.push(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         id: "m3".into(),
         role: Role::User,
         content: vec![ContentBlock::Text {

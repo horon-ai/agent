@@ -18,6 +18,16 @@ use super::*;
 /// result, so the wording says the work was stopped on purpose.
 pub(crate) const USER_CANCELLED: &str = "[Cancelled by user]";
 
+/// The verdict of a call whose tool run returned an error. A refusal never ran
+/// the tool, so it is `Rejected`; anything else did run and failed.
+pub(super) fn tool_failure_verdict(error: &anyhow::Error) -> crate::tool::ToolVerdict {
+    if error.downcast_ref::<crate::tool::ToolRejected>().is_some() {
+        crate::tool::ToolVerdict::Rejected
+    } else {
+        crate::tool::ToolVerdict::Failed
+    }
+}
+
 /// How long a reload hands a bash call to finish on its own before the tool
 /// task is aborted. Bash may have already produced output the user needs, so a
 /// reload that lands in its last moment should still keep the result.
@@ -112,6 +122,7 @@ impl Agent {
                 name: tc.name.clone(),
                 output: USER_CANCELLED.to_string(),
                 error: Some(USER_CANCELLED.to_string()),
+                verdict: Some(crate::tool::ToolVerdict::Interrupted),
             })
             .is_err()
         {
@@ -126,6 +137,7 @@ impl Agent {
                 tool_use_id: tc.id.clone(),
                 content: USER_CANCELLED.to_string(),
                 is_error: Some(true),
+                verdict: Some(crate::tool::ToolVerdict::Interrupted),
             }],
             Some(elapsed.as_millis() as u64),
         );

@@ -13,7 +13,7 @@ HoronAgent는 Windows를 정식 지원 플랫폼으로 다룬다. Windows 구현
 | PowerShell 설치 스크립트 | Windows CI에서 검증했다 |
 | 네이티브 IPC와 프로세스 수명 주기 | Windows 대상 테스트와 종단 테스트로 덮는다 |
 | `horon update` | SHA-256 검증과 함께 지원한다 |
-| `horon-agent install-release` | 설치 스크립트가 릴리스 자산 검증과 채널 활성화를 맡기는 경로다 |
+| `horon install-release` | 설치 스크립트가 릴리스 자산 검증과 채널 활성화를 맡기는 경로다 |
 | 배포 자산 | x64와 ARM64용 `.exe` 및 `.tar.gz` 자산 |
 | Authenticode 서명 | 배포 파이프라인은 준비됐고, 아래 Azure 설정을 한 번 해 두어야 한다 |
 
@@ -32,7 +32,7 @@ irm https://horon-agent.sh/install.ps1 | iex
 1. x64인지 ARM64인지 판별한다.
 2. 공식 GitHub 릴리스에서 맞는 자산을 내려받는다.
 3. 릴리스의 `SHA256SUMS` 파일과 대조해 검증한다.
-4. 내려받은 자산 디렉터리와 버전을 `horon-agent install-release --assets <디렉터리> --agent-version <버전>`에 넘긴다. 실행 파일이 자산을 다시 검증하고 `%LOCALAPPDATA%\horon-agent` 아래에 변경 불가 버전 디렉터리와 `stable`, `current`, 런처 링크를 만든다.
+4. 내려받은 자산 디렉터리와 버전을 `horon install-release --assets <디렉터리> --agent-version <버전>`에 넘긴다. 실행 파일이 자산을 다시 검증하고 `%LOCALAPPDATA%\horon-agent` 아래에 변경 불가 버전 디렉터리와 `stable`, `current`, 런처 링크를 만든다.
 5. `%LOCALAPPDATA%\horon-agent\bin`을 사용자 `PATH`에 추가한다.
 
 설치 스크립트는 릴리스 압축을 직접 풀지 않는다. 4단계의 `install-release`가 검증과 채널 활성화를 한 경로에서 처리하고, 실패하면 이전 설치를 그대로 둔다. 플래그와 검증 규칙은 [`INSTALL.ko.md`](INSTALL.ko.md)에 있다.
@@ -66,8 +66,8 @@ $script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
 
 ```powershell
 horon --version
-Get-Command horon-agent
-Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
+Get-Command horon
+Get-FileHash (Get-Command horon).Source -Algorithm SHA256
 ```
 
 해시를 해당 [GitHub 릴리스](https://github.com/horon-ai/agent/releases/latest)의 `SHA256SUMS`와 비교한다.
@@ -75,7 +75,7 @@ Get-FileHash (Get-Command horon-agent).Source -Algorithm SHA256
 Authenticode 서명을 켠 뒤에는 다음 명령이 `Valid`를 보고해야 한다.
 
 ```powershell
-Get-AuthenticodeSignature (Get-Command horon-agent).Source | Format-List Status,StatusMessage,SignerCertificate
+Get-AuthenticodeSignature (Get-Command horon).Source | Format-List Status,StatusMessage,SignerCertificate
 ```
 
 ## Microsoft Defender와 SmartScreen

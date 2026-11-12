@@ -299,6 +299,7 @@ fn session_tool_results(session_id: &str) -> Vec<(String, bool)> {
                         tool_use_id,
                         content,
                         is_error,
+                        ..
                     } => Some((format!("{tool_use_id}: {content}"), is_error.unwrap_or(false))),
                     _ => None,
                 })

@@ -72,6 +72,8 @@ input = ["text", "image"]
 | `default` | 더 구체적인 역할이 없을 때 세션의 모든 턴. 접두사 없는 `--model`이나 `/model`은 그 실행에서 이 역할을 가리킨다. | `default` |
 | `plan` | 계획 턴. 실행을 넘기기 전에 계획을 쓰는 모델이다(#70). | `plan` |
 | `aux` | 값싼 보조 작업. 압축 요약, 제목, 분류, 기억 추출이다. | `aux` |
+| `judge` | 타입이 있는 판단. 턴이 이미 낸 텍스트에 대해 `bool`, `choice`, `score` 질문 하나를 한 번의 제한된 호출로 답한다. 지금 유일한 호출자는 예상 밖 종료 복구다(`docs/runtime/TURNS.ko.md`). | `judge` |
+| `image` | 이미지 생성과 편집. Chat Completions를 말하지 않는 모델을 지정하는 유일한 역할이다. 유일한 호출자는 `generate_image` 도구이고, 같은 프로파일의 `/images/generations`와 `/images/edits`로 요청을 보낸다. 텍스트 모델은 이미지 요청에 답할 수 없으므로 상속 폴백이 없다. | `image` |
 
 다른 역할은 없다. 새 역할은 그 역할을 부르는 작업과 함께 추가한다. 이유: 부르는 곳이 없는 역할은 `default`의 두 번째 표기에 지나지 않고, 쓰는 곳보다 먼저 생긴 역할은 어느 모델을 가리켜야 하는지 검토할 수 없다.
 
@@ -103,12 +105,12 @@ aux = "my-small-model"
 
 1. 이번 실행이나 턴의 덮어쓰기(`--model`은 `default`를 가리키고, 핸드오프는 기존 모델 전환으로 `plan`을 정한다).
 2. `[providers.<name>.roles]`의 그 역할 항목.
-3. `default` 역할의 항목.
+3. 이 역할이 상속하는 역할들의 항목을 그 역할이 선언한 순서대로. `plan`과 `aux`는 `default`를, `judge`는 `aux` 다음 `default`를 상속한다.
 4. 프로파일의 `default_model`.
 5. `[provider] default_model`.
 6. 비어 있던 키와 작업 이름을 짚는 오류.
 
-빈 문자열은 어느 단계에서든 미설정으로 본다. `aux`도 같은 사슬을 걸으므로 `default_model`만 있는 프로파일은 보조 작업에 지금의 모델을 쓴다. 이유: 1, 4, 5단계는 에이전트가 지금 모델 하나를 고르는 순서다. 역할은 그 위에 끼어들므로 기존 파일은 모두 지금과 같은 모델로 풀리고, 미설정 역할은 실패하지 않고 상속한다.
+빈 문자열은 어느 단계에서든 미설정으로 본다. `aux`도 같은 사슬을 걸으므로 `default_model`만 있는 프로파일은 보조 작업에 지금의 모델을 쓴다. `judge`는 `default`보다 `aux`를 먼저 상속하므로, 보조 작업용으로 값싼 모델 하나를 이미 지정한 프로파일은 세션 모델을 쓰지 않고 그 모델로 판단한다. `image`는 3단계에서 멈춘다. 상속하는 역할이 없고 프로파일이나 프로바이더의 텍스트 기본값도 받지 않는다. 채팅 모델로 보낸 이미지 요청은 성공할 수 없으므로 `roles.image`가 없으면 이미지 생성이 설정되지 않은 것이고, 도구가 그렇게 보고한다. 끝점에서 항상 실패하는 호출을 보내지 않는다. 텍스트 기본값이 대체물이 될 수 없는 유일한 역할이며 `ModelRole::accepts_text_default`가 이를 한 곳에서 밝힌다. 1, 4, 5단계는 에이전트가 지금 모델 하나를 고르는 순서다. 역할은 그 위에 끼어들므로 기존 파일은 모두 지금과 같은 모델로 풀리고, 미설정 역할은 실패하지 않고 상속한다.
 
 ### 폴백과 페일오버 순서
 
@@ -125,6 +127,58 @@ aux = "my-small-model"
 #73이 공유 타입을 쓴다. `crates/config-types/src/lib.rs`의 `NamedProviderConfig`에 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
 
 역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
+
+### `image` 역할과 단일 모델 경로
+
+이 빌드의 규칙은 모델 경로가 하나라는 것이다. 턴은 `[provider] default_provider` 또는 `--provider-profile`이 가리키는 프로파일의 `/chat/completions`로 요청을 보낸다. `generate_image` 도구는 문서로 밝힌 유일한 예외이고, 그것도 구조가 아니라 경로다.
+
+- **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
+- 프로바이더 런타임은 여전히 하나이고 두 번째 라우터도 플러그인 호스트도 없다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에 놓인 요청 빌더이지 런타임이 아니다.
+- 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
+- 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
+- 모델은 이미지 바이트를 받지 않는다. 파일은 `~/.horon/generated-images/`에 놓이고 결과는 경로, 크기, MIME 타입을 알린다. 한 호출이 컨텍스트와 저장 이벤트 로그에 메가바이트를 넣지 않고 수백 토큰으로 끝나는 이유다.
+- 출력은 OpenAI Images 형태로 한정한다. 그 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다. Gemini 자체 형식과 Responses 내장 이미지 도구는 범위 밖이고, 이 경로가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
+
+### 실제로 쓰이는 `judge` 역할
+
+`crates/provider-core/src/judge.rs`가 판단의 순수한 절반을 맡는다. 프롬프트(`JudgeRequest::prompt`), 응답 스키마(`response_schema`), 한도(질문 64개, 상태 48 KiB, 질문당 지시 4 KiB, 선택지 64개, 점수 단계 64개), 그리고 없는 라벨, 범위를 벗어난 확률, 빠지거나 중복된 id, 여분 필드를 거부하는 엄격한 파서다. `crates/base/src/judge.rs`가 설정이 필요한 절반을 맡는다. `resolve_judge_model`이 위 사슬을 걷고, `judge_with`가 호출자의 프로바이더를 포크해 해석한 모델을 고르고, 시도 예산 안에서 기다린 뒤, 파싱한 답과 프로바이더 사용량을 돌려준다.
+
+판단은 평범한 `/chat/completions` 호출이므로 이 역할은 엔드포인트도 자격 증명도 더하지 않는다. 빌드의 단일 모델 경로 규칙은 그대로다. 모델을 고를 수 없으면 오류로 끝나고 세션 모델을 조용히 물려받지 않는다. 판단의 요점이 두 번째 모델의 의견이기 때문이다. 시도 예산은 `[autojudge] attempt_timeout_ms`이고 기본 3000이며 `0`은 기한 없음이 아니라 기본값을 뜻하고, 30초를 넘는 값은 30초로 자른다. 예산은 모델 선택까지 포함한 시도 전체에 적용된다. 판단이 판정 대상 턴을 붙잡기 때문이다.
+
+역할 이름은 `judge`이고 `/judge` 명령은 다른 작업이다. `/judge`는 스웜 안에서 검토 워커를 띄우고 세션 에이전트 모델 덮어쓰기(`/model judge`, `/agents judge <model>`)로 모델을 고른다. 둘 다 `[autojudge] model`을 모델 덮어쓰기로 읽으므로 한 설정이 두 곳의 모델을 정하지만, 판단은 워커를 띄우지 않고 워커는 타입 있는 질문에 답하지 않는다.
+
+### 런타임에서 폴백 목록이 보이는 모습
+
+`crates/config-types/src/model_roles.rs`의 `ModelRoleConfig::fallback_models()`는 항목마다 앞뒤 공백을 지우고 빈 문자열을 버린다. 빈 문자열이 시도로 바뀌지 않는다.
+
+이 단계가 쓸 수 있는 목록은 활성 이름 지정 프로파일에만 있다. `crates/app-core/src/agent/model_fallback.rs`의 `active_profile_fallback_models()`가 `HORON_AGENT_NAMED_PROVIDER_PROFILE`, 그다음 `HORON_AGENT_PROVIDER_PROFILE_NAME`으로 프로파일을 찾고, 항목이 비어 있지 않을 때만 돌려준다. 이름 지정 프로파일이 아닌 세션은 이 단계가 생기기 전과 똑같이 동작한다.
+
+`Agent::try_model_fallback`은 전환을 적용하기 전에 턴 상태에 그 항목을 기록한다. 그래야 프로바이더가 거부한 전환도 항목을 소모하고, 같은 거부를 한도 없이 재시도하지 않는다. `restore_model_fallback`은 다음 턴 시작(`begin_turn_state`), 인터럽트, 실패한 턴에서 세션 자체 모델을 되돌린다. 전환은 `session.model`에 닿지 않으므로, 다시 읽는 클라이언트나 재로드는 사용자가 고른 선택을 본다.
+
+결과를 읽는 접근자는 둘이다. `Agent::fallback_models()`는 설정된 항목을 돌려주고, 활성 프로파일이 없으면 빈 목록이다. `Agent::last_serving_model()`은 응답을 저장할 때 `Agent::record_model_turn_usage`가 설정하므로, 다음 턴이 세션 모델을 되돌린 뒤에도 답한 모델을 가리킨다. `get_runtime_info`는 이 둘을 `fallback_models`와 `serving_model`로 보고하고, 카탈로그 푸시도 같은 쌍을 `identity` 객체에 실어 보낸다. 푸시된 카탈로그를 유지하는 클라이언트는 폴링할 필요가 없다.
+
+### Prewalk 핸드오프
+
+`[prewalk]`는 세션마다 한 번, 계획에서 실행으로 넘어갈 때 모델 전환 하나를 쓴다. 세션은 계획하는 동안 계획 모델로 돌고, 계획이 만들어지면 실행 모델로 계속한다.
+
+```toml
+[prewalk]
+enabled = true
+into = "exec-model"
+from = "plan-model"
+```
+
+| 키 | 의미 |
+| --- | --- |
+| `enabled` | 세션이 핸드오프를 하는지 여부다. 기본값은 꺼짐이다. |
+| `into` | 실행 모델이다. 모델 id 또는 `role:<name>`을 적는다. `enabled = true`일 때 필수이며, 쓸 수 있는 값이 없는 절은 `prewalk.into`를 지목하는 오류와 함께 설정 검증에 실패한다. |
+| `from` | 적용 조건일 뿐이다. 값을 적으면 세션이 지금 이 모델로 돌 때만 핸드오프한다. 돌아갈 모델을 뜻하지 않으며, 비워 두면 모든 세션에 적용된다. |
+
+핸드오프 지점은 계획 모드에 달렸다. `[tools] plan_mode`가 꺼져 있으면 항목을 하나 이상 남긴 첫 `todo` 쓰기이고, 켜져 있으면 계획 승인이다. 그래서 계획 중에 쓴 할 일 목록이 계획 아래에서 모델을 바꾸지 않는다. 전환은 `/model`과 같은 경로를 쓰므로 `session.model`에 실행 모델이 저장되고, 재개나 복원 뒤의 요청까지 모두 그 모델로 실행된다.
+
+결정은 저장된 세션의 리플레이 이벤트 `prewalk` 하나이고, 이 이벤트가 프로세스를 넘어 핸드오프를 한 번으로 만든다. 이미 이벤트를 가진 세션은 다시 결정하지 않는다. 거부된 `into`도 같은 방식으로 기록한다. 알 수 없는 모델, `default`, `plan`, `aux` 밖의 `role:` 이름, 아무 모델로도 해석되지 않는 역할이 그렇다. 세션은 지금 모델을 유지하고 경고는 한 번만 남으며, 이후 라운드는 같은 거부를 되풀이하지 않는다. 세션이 이미 쓰는 모델로 해석되는 `into`는 전환 없이 결정만 기록한다.
+
+`role:<name>`은 위에서 설명한 활성 프로파일의 역할 체인으로 해석된다. 그래서 `default_model`만 정한 프로파일도 `into = "role:aux"`로 핸드오프하면 같은 모델을 얻는다. 결정은 `crates/app-core/src/agent/prewalk.rs`에 있고, 인수 조건은 `crates/app-core/src/agent/prewalk_tests.rs`에 있다.
 
 ## 프롬프트 캐시 키
 
@@ -156,7 +210,7 @@ aux = "my-small-model"
 `provider add`가 같은 표를 `config.toml`에 쓰고, `--api-key-stdin`으로 받은 키를 키 파일에 저장한다.
 
 ```bash
-printf '%s' "$MY_GW_KEY" | horon-agent provider add my-gw \
+printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --base-url https://llm.example.com/v1 \
   --model my-model \
   --api-key-env MY_GW_API_KEY \

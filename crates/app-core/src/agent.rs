@@ -6,6 +6,7 @@ mod advisor;
 mod advisor_tests;
 mod compaction;
 mod conversation_reset;
+mod degradation_event;
 #[cfg(test)]
 #[path = "agent/durable_input_tests.rs"]
 mod durable_input_tests;
@@ -21,6 +22,7 @@ mod goal_continuation;
 #[path = "agent/goal_continuation_tests.rs"]
 mod goal_continuation_tests;
 mod handoff_compaction;
+pub use handoff_compaction::HandoffOutcome;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;
@@ -37,6 +39,10 @@ mod model_usage_tests;
 #[cfg(test)]
 #[path = "agent/post_tool_feedback_replace_tests.rs"]
 mod post_tool_feedback_replace_tests;
+mod prewalk;
+#[cfg(test)]
+#[path = "agent/prewalk_tests.rs"]
+mod prewalk_tests;
 mod prompting;
 mod provider;
 mod provisional_init;
@@ -49,9 +55,14 @@ pub(crate) use request_messages::request_extra_clone_counters;
 pub(crate) use request_messages::{join_request_messages, record_request_extra_clone};
 mod response_recovery;
 mod resume_commit;
+mod rewind_summary;
+pub use rewind_summary::RewindSummaryOutcome;
 mod round_budget;
 mod run_journal;
 mod session_replication;
+mod stable_hash;
+pub(crate) use stable_hash::{stable_hash_json, stable_hash_str, stable_json_len};
+pub(crate) use turn_failover::active_profile_fallback_models;
 #[cfg(test)]
 #[path = "agent/soft_interrupt_commit_tests.rs"]
 mod soft_interrupt_commit_tests;
@@ -80,6 +91,9 @@ mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
 mod usage;
 mod utils;
+#[cfg(test)]
+#[path = "agent/verdict_store_tests.rs"]
+mod verdict_store_tests;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
@@ -108,7 +122,6 @@ use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use anyhow::Result;
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
@@ -136,23 +149,6 @@ static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> =
 static WORKING_GIT_STATE_CACHE: LazyLock<StdMutex<HashMap<PathBuf, Option<GitState>>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 const STREAM_KEEPALIVE_PONG_ID: u64 = 0;
-
-fn stable_hash_str(value: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn stable_hash_json<T: serde::Serialize + ?Sized>(value: &T) -> u64 {
-    let encoded = serde_json::to_string(value).unwrap_or_default();
-    stable_hash_str(&encoded)
-}
-
-fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
-    serde_json::to_string(value)
-        .map(|encoded| encoded.len())
-        .unwrap_or_default()
-}
 
 /// Hash the cache-relevant projection, not the raw `Message`.
 ///
@@ -420,6 +416,8 @@ pub struct Agent {
     last_connection_type: Option<String>,
     /// Last provider-supplied human-readable transport detail for this session
     last_status_detail: Option<String>,
+    /// Model id that produced the most recent stored assistant response.
+    last_serving_model: Option<String>,
     /// Pending swarm alerts to inject into the next turn
     pending_alerts: Vec<String>,
     /// Transient reminder injected into provider requests for the current turn only.
@@ -665,6 +663,7 @@ impl Agent {
             last_upstream_provider: None,
             last_connection_type: None,
             last_status_detail: None,
+            last_serving_model: None,
             pending_alerts: Vec::new(),
             current_turn_system_reminder: None,
             loop_guard: loop_guard::LoopGuard::new(),
@@ -1565,6 +1564,7 @@ impl Agent {
                     tool_use_id: id.clone(),
                     content: TOOL_OUTPUT_MISSING_TEXT.to_string(),
                     is_error: Some(true),
+                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                 };
                 let stored_message = StoredMessage {
                     turn_start: false,

@@ -1,16 +1,23 @@
-//! Process-lifetime cache of child-agent results, addressed as `agent://`.
+//! Child-agent results, addressed as `agent://`.
 //!
-//! The cache is a `LazyLock` in this process, so it never crosses a process
-//! boundary and another process's results are simply absent.
+//! The in-memory cache is a `LazyLock` in this process, so on its own it never
+//! crosses a process boundary. A completed child therefore also writes a durable
+//! copy under the owning session's store directory, and a read that misses the
+//! cache falls back to it: a daemon restart no longer loses a result the parent
+//! still needs. The child's own event log stays authoritative; the stored result
+//! is the projection rendered here at completion.
 //!
 //! Every URL component is data: it is percent-decoded and matched against the
-//! cached JSON, never joined onto a filesystem path. `agent://` therefore
+//! cached JSON, never joined onto a filesystem path. The durable copy is looked
+//! up by a re-validated component under a fixed directory, so `agent://` still
 //! cannot escape the working directory or address a real file.
 
 use crate::message::redact_secrets;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub(crate) const SCHEME: &str = "agent://";
@@ -20,6 +27,9 @@ pub(crate) const MAX_RESULTS: usize = 64;
 pub(crate) const MAX_RESULT_BYTES: usize = 1024 * 1024;
 
 pub(crate) const MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+
+/// Directory of durable results, under the owning session's store directory.
+const STORED_DIR: &str = "child-results";
 
 /// Evicted ids are remembered so a stale read reports eviction, not "unknown".
 const MAX_TOMBSTONES: usize = 256;
@@ -123,7 +133,7 @@ impl fmt::Display for AgentUrlError {
 
 impl std::error::Error for AgentUrlError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ResultState {
     Running { status: String },
     Completed { text: String, details: Option<Value> },
@@ -235,6 +245,138 @@ fn lock() -> MutexGuard<'static, Store> {
     store().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A component that can name a file under [`STORED_DIR`].
+///
+/// The id arrives from a URL, so it is checked again here: a decoded `/`, `..`
+/// or separator never reaches a path join.
+fn is_path_safe(component: &str) -> bool {
+    !component.is_empty()
+        && component != "."
+        && component != ".."
+        && component
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+/// The store directory of the session that owns the durable results.
+///
+/// A missing store or an unusable id is an I/O error, not an empty answer: the
+/// caller decides whether to report it or to treat the copy as absent.
+fn session_dir(parent_session_id: &str) -> std::io::Result<PathBuf> {
+    if !is_path_safe(parent_session_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the owning session id is not a safe path component",
+        ));
+    }
+    let paths = crate::session::store_paths().map_err(|error| std::io::Error::other(error.to_string()))?;
+    let parent = horon_agent_session_store::SessionId::parse(parent_session_id)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string()))?;
+    paths.session_dir(&parent).map_err(std::io::Error::other)
+}
+
+/// The `child-results/` directory of one session.
+fn results_dir(parent_session_id: &str) -> std::io::Result<PathBuf> {
+    Ok(session_dir(parent_session_id)?.join(STORED_DIR))
+}
+
+/// The text and optional details paths of one child's durable result.
+fn stored_paths(parent_session_id: &str, child_id: &str) -> std::io::Result<(PathBuf, PathBuf)> {
+    if !is_path_safe(child_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the child id is not a safe path component",
+        ));
+    }
+    let dir = results_dir(parent_session_id)?;
+    Ok((dir.join(format!("{child_id}.md")), dir.join(format!("{child_id}.json"))))
+}
+
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    {
+        let mut file = std::fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&temporary, path)
+}
+
+/// Write the durable copy of a completed child's result.
+///
+/// The bytes are redacted before they reach the disk, so a secret a child echoed
+/// is no more readable from the file than from the cache. The caller logs a
+/// failure: the in-memory result stays valid either way.
+pub(crate) fn persist_completed(
+    child_id: &str,
+    parent_session_id: &str,
+    text: &str,
+    details: Option<&Value>,
+) -> std::io::Result<()> {
+    let owner_dir = session_dir(parent_session_id)?;
+    if !owner_dir.exists() {
+        // The session itself is not stored, so it owns nowhere to keep a copy.
+        // This is what keeps an in-memory fixture from writing into a real store.
+        return Ok(());
+    }
+    let (text_path, details_path) = stored_paths(parent_session_id, child_id)?;
+    std::fs::create_dir_all(owner_dir.join(STORED_DIR))?;
+    write_atomically(&text_path, redact_secrets(text).as_bytes())?;
+    match details.map(|value| redact_secrets(&value.to_string())) {
+        Some(json) => write_atomically(&details_path, json.as_bytes()),
+        None => match std::fs::remove_file(&details_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+    }
+}
+
+/// The durable copy of one child's result, when this session has one.
+///
+/// A copy that cannot be read is absent rather than an error: the read path
+/// already has a cache miss to report, and a damaged file must not replace that
+/// report with an I/O failure.
+fn load_stored(parent_session_id: &str, child_id: &str) -> Option<ResultState> {
+    let Ok((text_path, details_path)) = stored_paths(parent_session_id, child_id) else {
+        return None;
+    };
+    let text = match std::fs::read_to_string(text_path) {
+        Ok(text) => text,
+        Err(_) => return None,
+    };
+    let details = match std::fs::read_to_string(details_path) {
+        Ok(json) => Result::ok(serde_json::from_str::<Value>(&json)),
+        Err(_) => None,
+    };
+    Some(ResultState::Completed { text, details })
+}
+
+/// Child ids this session wrote a durable result for.
+fn stored_children(parent_session_id: &str) -> Vec<String> {
+    let Ok(dir) = results_dir(parent_session_id) else {
+        return Vec::new();
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().is_some_and(|extension| extension == "md") {
+                path.file_stem().and_then(|stem| stem.to_str()).map(str::to_string)
+            } else {
+                None
+            }
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 pub(crate) fn is_agent_url(path: &str) -> bool {
     path.get(..SCHEME.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(SCHEME))
@@ -264,6 +406,47 @@ pub(crate) fn publish_running(child_id: &str, parent_session_id: &str, status: &
     );
 }
 
+/// Announce a child's terminal state on the bus.
+///
+/// Published from here rather than from the swarm layer because this cache is
+/// the one place that already holds both ids for every child, whatever turn or
+/// coordinator finished it. A parent running `bg action=wait` subscribes to this
+/// event instead of polling the cache. The lock is released first so a slow bus
+/// subscriber can never block a result write.
+fn publish_terminal(parent_session_id: &str, child_id: &str, status: &str) {
+    if parent_session_id.is_empty() {
+        return;
+    }
+    crate::bus::Bus::global().publish(crate::bus::BusEvent::ChildAgentTerminal {
+        parent_session_id: parent_session_id.to_string(),
+        session_id: child_id.to_string(),
+        status: status.to_string(),
+    });
+}
+
+/// One child of this session and the status the cache holds for it.
+pub(crate) struct ChildSnapshot {
+    pub(crate) session_id: String,
+    pub(crate) status: String,
+}
+
+/// Every child the in-memory cache still holds for one parent.
+///
+/// Used by `bg action=wait children=true` to decide, before it blocks, whether
+/// anything is still running. The durable copies are deliberately not consulted:
+/// a stored result is already terminal, so it can never be something to wait
+/// for.
+pub(crate) fn children_snapshot(parent_session_id: &str) -> Vec<ChildSnapshot> {
+    lock()
+        .children_of(parent_session_id)
+        .into_iter()
+        .map(|(session_id, status)| ChildSnapshot {
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+        })
+        .collect()
+}
+
 /// An oversized result still occupies a slot and reads back as a typed error
 /// instead of vanishing into "unknown".
 pub(crate) fn publish_completed(
@@ -277,10 +460,17 @@ pub(crate) fn publish_completed(
     let mut store = lock();
     if bytes > MAX_RESULT_BYTES {
         store.insert(child_id, parent_session_id, ResultState::TooLarge { bytes }, 0);
+        drop(store);
+        publish_terminal(parent_session_id, child_id, "too_large");
         return Err(AgentUrlError::ResultTooLarge {
             child_id: child_id.to_string(),
             bytes,
         });
+    }
+    if let Err(error) = persist_completed(child_id, parent_session_id, text, details.as_ref()) {
+        crate::logging::warn(&format!(
+            "[agent://] the durable copy of `{child_id}` was not written: {error}"
+        ));
     }
     store.insert(
         child_id,
@@ -291,6 +481,8 @@ pub(crate) fn publish_completed(
         },
         bytes,
     );
+    drop(store);
+    publish_terminal(parent_session_id, child_id, "completed");
     Ok(())
 }
 
@@ -302,6 +494,8 @@ pub(crate) fn publish_failed(child_id: &str, parent_session_id: &str, status: &s
     let mut store = lock();
     if bytes > MAX_RESULT_BYTES {
         store.insert(child_id, parent_session_id, ResultState::TooLarge { bytes }, 0);
+        drop(store);
+        publish_terminal(parent_session_id, child_id, "too_large");
         return;
     }
     store.insert(
@@ -313,6 +507,8 @@ pub(crate) fn publish_failed(child_id: &str, parent_session_id: &str, status: &s
         },
         bytes,
     );
+    drop(store);
+    publish_terminal(parent_session_id, child_id, status);
 }
 
 /// Test-only view of the retention ledger: what one child is charged and the running total.
@@ -334,9 +530,8 @@ pub(crate) fn read(rest: &str, parent_session_id: &str) -> anyhow::Result<String
 }
 
 fn render(rest: &str, parent_session_id: &str) -> Result<String, AgentUrlError> {
-    let store = lock();
     if rest.is_empty() {
-        return Ok(render_listing(&store, parent_session_id));
+        return Ok(render_listing(parent_session_id));
     }
 
     let mut raw_components = rest.split('/');
@@ -348,7 +543,21 @@ fn render(rest: &str, parent_session_id: &str) -> Result<String, AgentUrlError> 
     }
     let components = raw_components.map(decode_component).collect::<Result<Vec<_>, _>>()?;
 
-    match store.state_of(&child_id)? {
+    let cached = lock().state_of(&child_id).cloned();
+    let state = match cached {
+        Ok(state) => state,
+        // The durable copy outlives this process and the cache bound, so a miss
+        // or an eviction still answers with the result the child published.
+        Err(missed @ (AgentUrlError::UnknownChild { .. } | AgentUrlError::Evicted { .. })) => {
+            match load_stored(parent_session_id, &child_id) {
+                Some(state) => state,
+                None => return Err(missed),
+            }
+        }
+        Err(other) => return Err(other),
+    };
+
+    match state {
         ResultState::Running { status } => {
             if components.is_empty() {
                 Ok(format!(
@@ -357,38 +566,54 @@ fn render(rest: &str, parent_session_id: &str) -> Result<String, AgentUrlError> 
             } else {
                 Err(AgentUrlError::ChildNotCompleted {
                     child_id: child_id.clone(),
-                    status: status.clone(),
+                    status,
                 })
             }
         }
         ResultState::Completed { text, details } => {
             if components.is_empty() {
-                return Ok(text.clone());
+                return Ok(text);
             }
-            let details = details.as_ref().ok_or_else(|| AgentUrlError::NoStructuredDetails {
+            let details = details.ok_or_else(|| AgentUrlError::NoStructuredDetails {
                 child_id: child_id.clone(),
             })?;
-            project(details, &components)
+            project(&details, &components)
         }
         ResultState::Failed { status, message } => Err(AgentUrlError::ChildFailed {
             child_id: child_id.clone(),
-            status: status.clone(),
-            message: message.clone(),
+            status,
+            message,
         }),
         ResultState::TooLarge { bytes } => Err(AgentUrlError::ResultTooLarge {
             child_id: child_id.clone(),
-            bytes: *bytes,
+            bytes,
         }),
     }
 }
 
-fn render_listing(store: &Store, parent_session_id: &str) -> String {
-    let children = store.children_of(parent_session_id);
+/// The listing names every child the cache holds plus every child with a durable
+/// copy the cache already dropped, so a restarted daemon still points at results
+/// it can serve.
+fn render_listing(parent_session_id: &str) -> String {
+    let mut children: Vec<(String, String)> = {
+        let store = lock();
+        store
+            .children_of(parent_session_id)
+            .into_iter()
+            .map(|(child_id, status)| (child_id.to_string(), status.to_string()))
+            .collect()
+    };
+    for child_id in stored_children(parent_session_id) {
+        if !children.iter().any(|(known, _)| known == &child_id) {
+            children.push((child_id, "stored".to_string()));
+        }
+    }
     if children.is_empty() {
         return format!(
             "no child results are cached for this session; a completed child publishes one as `{SCHEME}<child-id>`"
         );
     }
+    children.sort();
     let mut output = format!("{} child result(s) for this session:\n", children.len());
     for (child_id, status) in children {
         output.push_str(&format!("  {SCHEME}{child_id}  {status}\n"));
@@ -490,3 +715,6 @@ fn hex_value(byte: u8) -> Option<u8> {
 pub(crate) fn reset_for_test() {
     *lock() = Store::default();
 }
+
+#[cfg(test)]
+mod tests;

@@ -11,7 +11,7 @@ mod tool_wait;
 /// Result text of a call the user cancelled, shared with the blocking turn
 /// loop so both paths record the same thing for the same event.
 pub(crate) use tool_wait::USER_CANCELLED as CANCELLED_TOOL_RESULT;
-use tool_wait::{reload_interrupted_tool_result, send_tool_diff, send_tool_exit};
+use tool_wait::{reload_interrupted_tool_result, send_tool_diff, send_tool_exit, tool_failure_verdict};
 
 /// Result text for a call skipped because the user interrupted the turn. Both
 /// the group-boundary check and a mid-group interrupt write this, so the
@@ -690,6 +690,7 @@ impl Agent {
                                     name,
                                     output,
                                     error: is_error.then(|| "Provider tool error".to_string()),
+                                    verdict: None,
                                 });
                             }
                             None => {}
@@ -884,6 +885,7 @@ impl Agent {
                             name: tool_name,
                             output: content.clone(),
                             error: if is_error { Some("Tool error".to_string()) } else { None },
+                            verdict: is_error.then_some(crate::tool::ToolVerdict::Failed),
                         });
                         sdk_tool_results.insert(tool_use_id, (content, is_error));
                     }
@@ -1396,6 +1398,7 @@ impl Agent {
                     cache_creation_input_tokens: self.last_usage.cache_creation_input_tokens,
                 });
                 let message_id = self.add_message_ext(Role::Assistant, content_blocks, None, token_usage);
+                crate::agent::degradation_event::announce(&self.session, &event_tx, &message_id);
                 self.push_embedding_snapshot_if_semantic(&text_content);
                 self.save_final_answer()?;
                 self.record_model_turn_usage(&usage_turn_id);
@@ -1588,6 +1591,7 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content: "[Skipped - server reloading]".to_string(),
                             is_error: Some(true),
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         }],
                     );
                 }
@@ -1717,6 +1721,7 @@ impl Agent {
                                     tool_use_id: remaining_tc.id.clone(),
                                     content: RELOAD_SKIP.to_string(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                         }
@@ -1742,6 +1747,7 @@ impl Agent {
                         name: tc.name.clone(),
                         output: error_msg.clone(),
                         error: Some(error_msg.clone()),
+                        verdict: Some(crate::tool::ToolVerdict::Interrupted),
                     });
                     self.add_message(
                         Role::User,
@@ -1749,6 +1755,7 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content: error_msg,
                             is_error: Some(true),
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         }],
                     );
                     tool_results_dirty = true;
@@ -1782,6 +1789,9 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: sdk_content,
                                 is_error: if sdk_is_error { Some(true) } else { None },
+                                // A plain answer stores no key; only a refused one says
+                                // what became of it.
+                                verdict: sdk_is_error.then_some(crate::tool::ToolVerdict::Failed),
                             }],
                         );
                         tool_results_dirty = true;
@@ -1825,6 +1835,7 @@ impl Agent {
                             name: tc.name.clone(),
                             output: message.clone(),
                             error: Some(message.clone()),
+                            verdict: Some(crate::tool::ToolVerdict::Rejected),
                         });
                         self.add_message(
                             Role::User,
@@ -1832,6 +1843,7 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: message,
                                 is_error: Some(true),
+                                verdict: Some(crate::tool::ToolVerdict::Rejected),
                             }],
                         );
                         tool_results_dirty = true;
@@ -1943,6 +1955,7 @@ impl Agent {
                                     name: tc.name.clone(),
                                     output: output.output.clone(),
                                     error: None,
+                                    verdict: output.verdict,
                                 });
 
                                 let side_pane_images =
@@ -1984,11 +1997,13 @@ impl Agent {
                                     break;
                                 }
                                 let error_msg = format!("Error: {}", e);
+                                let verdict = tool_failure_verdict(&e);
                                 let _ = event_tx.send(ServerEvent::ToolDone {
                                     id: tc.id.clone(),
                                     name: tc.name.clone(),
                                     output: error_msg.clone(),
                                     error: Some(error_msg.clone()),
+                                    verdict: Some(verdict),
                                 });
 
                                 crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
@@ -1998,6 +2013,7 @@ impl Agent {
                                         tool_use_id: tc.id.clone(),
                                         content: error_msg,
                                         is_error: Some(true),
+                                        verdict: Some(verdict),
                                     }],
                                     Some(tool_elapsed.as_millis() as u64),
                                 );
@@ -2044,6 +2060,7 @@ impl Agent {
                             } else {
                                 None
                             },
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         });
 
                         crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
@@ -2053,6 +2070,7 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: interrupted_msg,
                                 is_error: Some(is_error),
+                                verdict: Some(crate::tool::ToolVerdict::Interrupted),
                             }],
                             Some(tool_elapsed.as_millis() as u64),
                         );
@@ -2066,6 +2084,7 @@ impl Agent {
                                     tool_use_id: remaining_tc.id.clone(),
                                     content: "[Skipped - server reloading]".to_string(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                         }
@@ -2123,6 +2142,7 @@ impl Agent {
                             name: tc.name.clone(),
                             output: bg_msg.clone(),
                             error: None,
+                            verdict: None,
                         });
 
                         crate::tool::repair_event::send(&event_tx, &self.session.id, &tc.id, &tc.name);
@@ -2132,6 +2152,7 @@ impl Agent {
                                 tool_use_id: tc.id.clone(),
                                 content: bg_msg,
                                 is_error: None,
+                                verdict: None,
                             }],
                             Some(tool_elapsed.as_millis() as u64),
                         );
@@ -2157,6 +2178,10 @@ impl Agent {
             if tool_results_dirty {
                 self.save_session()?;
             }
+
+            // A `todo` write in this round is the planning handoff point, so the
+            // next request already runs on the execution model.
+            self.apply_prewalk();
 
             if !generated_image_contexts.is_empty() {
                 for blocks in generated_image_contexts.drain(..) {
@@ -2244,6 +2269,7 @@ impl Agent {
             name: tc.name.clone(),
             output: message.to_string(),
             error: Some(message.to_string()),
+            verdict: Some(crate::tool::ToolVerdict::Rejected),
         });
         self.add_message(
             Role::User,
@@ -2251,6 +2277,7 @@ impl Agent {
                 tool_use_id: tc.id.clone(),
                 content: message.to_string(),
                 is_error: Some(true),
+                verdict: Some(crate::tool::ToolVerdict::Rejected),
             }],
         );
     }
@@ -2280,6 +2307,7 @@ impl Agent {
                     tool_use_id: skipped_tc.id.clone(),
                     content: USER_INTERRUPT_SKIP.to_string(),
                     is_error: Some(true),
+                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                 }],
             );
         }
@@ -2561,6 +2589,7 @@ impl Agent {
                         name: tc.name.clone(),
                         output: error.clone(),
                         error: Some(error.clone()),
+                        verdict: Some(crate::tool::ToolVerdict::Interrupted),
                     });
                     self.add_message(
                         Role::User,
@@ -2568,6 +2597,7 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content: error.clone(),
                             is_error: Some(true),
+                            verdict: Some(crate::tool::ToolVerdict::Interrupted),
                         }],
                     );
                     *tool_results_dirty = true;
@@ -2589,6 +2619,9 @@ impl Agent {
                             tool_use_id: tc.id.clone(),
                             content,
                             is_error: if *is_error { Some(true) } else { None },
+                            // A plain answer stores no key; only a refused one says
+                            // what became of it.
+                            verdict: (*is_error).then_some(crate::tool::ToolVerdict::Failed),
                         }],
                     );
                     *tool_results_dirty = true;
@@ -2649,6 +2682,7 @@ impl Agent {
                                 name: tc.name.clone(),
                                 output: output.output.clone(),
                                 error: None,
+                                verdict: output.verdict,
                             });
 
                             let side_pane_images = tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
@@ -2672,11 +2706,13 @@ impl Agent {
                         }
                         Some(Err(e)) => {
                             let error_msg = format!("Error: {}", e);
+                            let verdict = tool_failure_verdict(&e);
                             let _ = event_tx.send(ServerEvent::ToolDone {
                                 id: tc.id.clone(),
                                 name: tc.name.clone(),
                                 output: error_msg.clone(),
                                 error: Some(error_msg.clone()),
+                                verdict: Some(verdict),
                             });
                             crate::tool::repair_event::send(event_tx, &self.session.id, &tc.id, &tc.name);
                             self.add_message_with_duration(
@@ -2685,6 +2721,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: error_msg,
                                     is_error: Some(true),
+                                    verdict: Some(verdict),
                                 }],
                                 Some(tool_elapsed.as_millis() as u64),
                             );
@@ -2708,6 +2745,7 @@ impl Agent {
                                 name: tc.name.clone(),
                                 output: skipped.clone(),
                                 error: Some(error),
+                                verdict: Some(crate::tool::ToolVerdict::Interrupted),
                             });
                             self.add_message(
                                 Role::User,
@@ -2715,6 +2753,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: skipped,
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                             *tool_results_dirty = true;

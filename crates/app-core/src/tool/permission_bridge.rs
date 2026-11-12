@@ -24,10 +24,9 @@
 //! As with [`super::client_bridge`], presence is not ownership: the bridge acts
 //! only while the running turn was started by the installing connection.
 
-use super::{Registry, ToolContext, acp_session};
+use super::{Registry, ToolContext, ToolEffects, acp_session};
 use crate::protocol::ServerEvent;
 use crate::safety::PermissionResult;
-use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -364,21 +363,14 @@ impl PermissionBridge {
     fn open_request(
         &self,
         request_id: &str,
-        resolved_name: &str,
-        reason: &str,
-        is_dual_confirm: bool,
-        input: &Value,
+        prompt: &super::ApprovalPromptRef<'_>,
+        effects: ToolEffects,
         ctx: &ToolContext,
     ) -> Result<(), String> {
-        let request = Registry::gate_permission_request(
-            request_id.to_string(),
-            resolved_name,
-            reason,
-            is_dual_confirm,
-            input,
-            ctx,
-            true,
-        );
+        let resolved_name = prompt.resolved_name;
+        let reason = prompt.reason;
+        let input = prompt.input;
+        let request = Registry::gate_permission_request(request_id.to_string(), prompt, effects, ctx, true);
         let description = request.description.clone();
         let queued = crate::tool::ambient::shared_safety_system().request_permission(request);
         if !matches!(&queued, PermissionResult::Queued { request_id: queued_id } if queued_id == request_id) {
@@ -522,12 +514,12 @@ fn denial_text(resolved_name: &str, request_id: &str, via: &str) -> String {
 /// `None` lets the call run; `Some` is the refusal the call returns.
 pub(super) async fn await_permission(
     bridge: &PermissionBridge,
-    resolved_name: &str,
-    reason: &str,
-    is_dual_confirm: bool,
-    input: &Value,
+    prompt: &super::ApprovalPromptRef<'_>,
+    effects: ToolEffects,
     ctx: &ToolContext,
 ) -> Option<String> {
+    let resolved_name = prompt.resolved_name;
+    let input = prompt.input;
     let key = Registry::approval_key(&ctx.session_id, resolved_name, input, ctx);
     let claim = bridge.claim(&key);
     let mut waiter = Waiter {
@@ -536,7 +528,7 @@ pub(super) async fn await_permission(
         finished: false,
     };
     if claim.opened
-        && let Err(refusal) = bridge.open_request(&claim.request_id, resolved_name, reason, is_dual_confirm, input, ctx)
+        && let Err(refusal) = bridge.open_request(&claim.request_id, prompt, effects, ctx)
     {
         waiter.finished = true;
         return Some(refusal);

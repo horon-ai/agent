@@ -30,17 +30,19 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, runtime commands, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
+| | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, commands, the settings screen, installing the optional asset, limits |
 | | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
 | | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
-| `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to OpenAI-compatible endpoints, provider profiles and API keys, model roles and their fallback order, model usage metadata |
+| `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to OpenAI-compatible endpoints, provider profiles and API keys, model roles and their fallback order, the one-shot `[prewalk]` handoff, model usage metadata |
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | Remote MCP, user-defined web search |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
 | | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
 | | [`RESULTS.md`](performance/RESULTS.md) | Measured results and their limits |
 | | [`MEMORY.md`](performance/MEMORY.md) | Memory regression budgets, idle session derived-cache release, incident response procedure |
-| `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, running on a Linux server, the TLS trust set |
+| `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, installing from npm, running on a Linux server, the TLS trust set |
+| | [`NPM.md`](release/NPM.md) | The npm packages of the CLI, installing and running them, versioning, the publish workflow, the one-time trusted publisher setup, provenance |
 | | [`WINDOWS.md`](release/WINDOWS.md) | Windows build and signing |
 
 ## Update rules

@@ -1,3 +1,4 @@
+pub mod degradation;
 pub mod provider_native;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -193,6 +194,11 @@ pub enum ContentBlock {
         content: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
+        /// What became of the call, as a value instead of a reading of the
+        /// text. Absent on results stored before verdicts existed; those keep
+        /// only `is_error` and read as no verdict at all.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verdict: Option<crate::ToolVerdict>,
     },
     Image {
         media_type: String,
@@ -244,6 +250,35 @@ pub enum ContentBlock {
         provider: String,
         item: serde_json::Value,
     },
+}
+
+pub use horon_agent_tool_types::ToolVerdict;
+
+impl ContentBlock {
+    /// A stored tool result, with the verdict left unstated.
+    ///
+    /// The text stays what the model reads; the verdict is filled in by the
+    /// turn loop that knows how the call ended. `is_error` keeps the meaning it
+    /// had before verdicts existed, so a result built here stores the same
+    /// bytes as the struct literal it replaces.
+    pub fn tool_result(tool_use_id: &str, content: &str, is_error: Option<bool>) -> Self {
+        Self::tool_result_with_verdict(tool_use_id, content, is_error, None)
+    }
+
+    /// A stored tool result that states what became of the call.
+    pub fn tool_result_with_verdict(
+        tool_use_id: &str,
+        content: &str,
+        is_error: Option<bool>,
+        verdict: Option<ToolVerdict>,
+    ) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.to_string(),
+            content: content.to_string(),
+            is_error,
+            verdict,
+        }
+    }
 }
 
 impl Message {
@@ -304,6 +339,7 @@ impl Message {
                 tool_use_id: tool_use_id.to_string(),
                 content: content.to_string(),
                 is_error: if is_error { Some(true) } else { None },
+                verdict: None,
             }],
             timestamp: Some(chrono::Utc::now()),
             tool_duration_ms,
@@ -868,6 +904,9 @@ pub fn replace_text_suffix(text: &mut String, old_text: &str, new_text: &str) ->
     text.push_str(new_text);
     Some(start)
 }
+
+#[cfg(test)]
+mod verdict_tests;
 
 #[cfg(test)]
 mod tests {

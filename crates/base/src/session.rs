@@ -13,6 +13,7 @@ use std::path::Path;
 
 mod agent_models;
 mod crash;
+mod degradation;
 pub use agent_models::AgentModelOverrides;
 mod event_actor;
 mod event_archive;
@@ -35,6 +36,7 @@ mod maintenance;
 mod memory_profile;
 mod model;
 mod persistence;
+mod prewalk;
 mod render;
 mod resume_marker;
 mod storage_paths;
@@ -1195,6 +1197,7 @@ request in this new forked session, using the inherited conversation only as con
                     }
                 }
                 StoredReplayEventKind::PlanMode { .. } => {}
+                StoredReplayEventKind::Prewalk { .. } => {}
             }
         }
         Ok(redacted)
@@ -1286,6 +1289,7 @@ request in this new forked session, using the inherited conversation only as con
         self.append_stored_message(StoredMessage {
             original_input,
             arg_repairs,
+            degradations: self.take_degradations(&role),
             turn_start,
             id: id.clone(),
             role,

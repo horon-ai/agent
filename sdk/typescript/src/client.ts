@@ -28,8 +28,10 @@ import {
   type ApiRequest,
   type AskSelection,
   type CanonicalRecordRef,
+  type CompactHandoffOutcome,
   type HistoryMessage,
   type ImageAttachment,
+  type MessageModes,
   type ModelRouteInfo,
   type PayloadRef,
   type PermissionDecision,
@@ -51,6 +53,7 @@ import {
   type TextMatch,
   type TodoEffects,
   type TodoSnapshot,
+  type ToolVerdictName,
   type TurnStopReason,
 } from "./protocol.js";
 
@@ -62,6 +65,10 @@ export interface RuntimeInfo {
   sessionId: string;
   provider?: string;
   model?: string;
+  /** Configured fallback model ids, in the order a turn tries them. */
+  fallbackModels?: string[];
+  /** Model that produced the most recent response, which differs from `model` after a fallback. */
+  servingModel?: string;
   providers: string[];
   routes: ModelRouteInfo[];
 }
@@ -794,6 +801,16 @@ export class HoronAgentClient extends EventEmitter {
     return (await this.expectReply({ req: "list_tools", session_id: sessionId }, "tools")).tools;
   }
 
+  /**
+   * Read the daemon's `[messages]` delivery modes.
+   *
+   * These are daemon configuration rather than session state, so the answer does
+   * not depend on the session existing.
+   */
+  async getMessageModes(sessionId: string): Promise<MessageModes> {
+    return (await this.expectReply({ req: "get_message_modes", session_id: sessionId }, "message_modes")).modes;
+  }
+
   /** Low-level response API for applications handling tool_call events themselves. */
   async submitToolResult(sessionId: string, callId: string, result: string | ToolResult): Promise<void> {
     const value = typeof result === "string" ? { output: result } : result;
@@ -1062,6 +1079,21 @@ export class HoronAgentClient extends EventEmitter {
     await this.requestOk({ req: "rewind", session_id: sessionId, message_index: messageIndex });
   }
 
+  /**
+   * Rewind, asking the daemon to report on the branch it discards.
+   *
+   * `summarize` only takes effect when the daemon's `[compaction]
+   * rewind_summary` is on; a summary failure never fails the rewind.
+   */
+  async rewindWithSummary(sessionId: string, messageIndex: number, summarize: boolean): Promise<void> {
+    await this.requestOk({
+      req: "rewind",
+      session_id: sessionId,
+      message_index: messageIndex,
+      summarize,
+    });
+  }
+
   async respondToPermission(sessionId: string, requestId: string, decision: PermissionDecision): Promise<void> {
     await this.requestOk({
       req: "permission_response",
@@ -1138,6 +1170,8 @@ export class HoronAgentClient extends EventEmitter {
       sessionId: frame.session_id,
       provider: frame.provider,
       model: frame.model,
+      fallbackModels: frame.fallback_models,
+      servingModel: frame.serving_model,
       providers: [
         ...new Set(
           [frame.provider, ...routes.map((route) => route.provider)].filter(
@@ -1260,6 +1294,26 @@ export class HoronAgentClient extends EventEmitter {
   async compact(sessionId: string): Promise<string> {
     const frame = await this.expectReply({ req: "compact", session_id: sessionId }, "compacted");
     return frame.message;
+  }
+
+  /**
+   * Write a handoff document as the compaction boundary.
+   *
+   * Synchronous, unlike `compact`: this resolves after the boundary is written,
+   * and the returned outcome names what happened. A failure or a cancellation
+   * leaves the transcript unchanged and is reported as that outcome rather than
+   * rejected.
+   */
+  async compactHandoff(sessionId: string): Promise<CompactHandoffOutcome> {
+    const frame = await this.expectReply(
+      { req: "compact", session_id: sessionId, method: "handoff" },
+      "compacted",
+    );
+    const outcome = frame.handoff;
+    if (!outcome) {
+      throw new HarnessError("unexpected_reply", "the daemon answered a handoff compaction without an outcome");
+    }
+    return outcome;
   }
 
   /** Set a session's title. Omit `title` to restore the generated one. */
@@ -2164,14 +2218,19 @@ export class HoronAgentClient extends EventEmitter {
         case "reasoning_delta":
           result.reasoning += event.text;
           break;
-        case "tool_done":
-          result.toolCalls.push({
+        case "tool_done": {
+          const call: ToolCallResult = {
             callId: event.call_id,
             name: event.name,
             output: event.output,
             error: event.error,
-          });
+          };
+          // The key is set only when the daemon sent one, so a call without a
+          // verdict has the same shape it had before protocol 1.19.
+          if (typeof event.verdict === "string") call.verdict = event.verdict;
+          result.toolCalls.push(call);
           break;
+        }
         case "token_usage":
           result.usage = {
             input: event.input,
@@ -2262,7 +2321,7 @@ export interface TurnResult {
   /** Completed text messages. Empty when the bridge does not support framing. */
   messages: AssistantTextMessage[];
   reasoning: string;
-  toolCalls: Array<{ callId: string; name: string; output: string; error?: string }>;
+  toolCalls: ToolCallResult[];
   usage?: { input: number; output: number; cacheReadInput?: number };
 }
 
@@ -2280,3 +2339,18 @@ export interface StructuredTurnResult<T> extends TurnResult {
 }
 
 export { HarnessError };
+
+/** One finished tool call of a turn. */
+export interface ToolCallResult {
+  callId: string;
+  name: string;
+  output: string;
+  error?: string;
+  /**
+   * What became of the call, when the daemon stored a verdict for it
+   * (protocol 1.19). Absent means no layer made a statement, which is the usual
+   * case for a call that simply succeeded and every call on an older daemon:
+   * read `error` then, and never take a missing verdict for `"ok"`.
+   */
+  verdict?: ToolVerdictName;
+}

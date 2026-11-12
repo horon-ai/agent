@@ -13,11 +13,18 @@
 //!
 //! Everything covered by the cut is rendered into one prompt through
 //! [`render_source_range`], which bounds each message and labels it with the
-//! event it came from. The prompt asks for the six sections a resuming agent
-//! needs (Goal, Done, In progress, Next steps, Open risks, Key files) and the
-//! answer is returned exactly as the model wrote it. Nothing here parses,
-//! repairs or validates the Markdown: a document that drops a heading is still
-//! a document, and the caller commits it as-is.
+//! event it came from. The prompt asks for the seven sections a resuming agent
+//! needs (Goal, Constraints, Done, In progress, Next steps, Open risks, Key
+//! files). Nothing here repairs the Markdown, but two answers are refused before
+//! they can become a boundary: one with no text, and one without a `Goal`
+//! heading. A document that drops any other heading is still a document, and the
+//! caller commits it exactly as the model wrote it.
+//!
+//! A prompt that cannot carry the whole covered range is never truncated: the
+//! covered range shrinks instead, because a document written over a silently
+//! shortened range would advance the boundary past messages it never read. When
+//! even the smallest range does not fit, generation fails with
+//! [`HandoffError::CoveredRangeTooLarge`] and the caller keeps the transcript.
 //!
 //! The completion goes through [`aux_completion`], the tool-free one-shot path.
 //! [`HandoffCompleter`] and [`generate_handoff`] exist so tests can supply an
@@ -26,24 +33,29 @@
 //!
 //! Failure modes are distinct on purpose. [`HandoffError::NothingToCover`] means
 //! the budget kept every message verbatim, so there is nothing to hand off.
-//! [`HandoffError::Provider`] carries the completion error. [`HandoffError::Cancelled`]
-//! is reported as cancellation, never as a successful empty document, so a
-//! caller can tell "the model failed" from "we stopped waiting".
+//! [`HandoffError::Provider`] carries the completion error.
+//! [`HandoffError::InvalidDocument`] means the completion answered but its text
+//! cannot stand in for the covered messages. [`HandoffError::Cancelled`] is
+//! reported as cancellation, never as a successful empty document, so a caller
+//! can tell "the model failed" from "we stopped waiting".
 
 use super::source_projection::{CoveredRange, SourceProjection, render_source_range};
+use super::summary::{RestorationManifest, collect_restoration_with_remaining};
 use crate::aux_completion::{self, CompletionRequest, MAX_PROMPT_BYTES};
 use crate::message::Message;
 use anyhow::Result;
 use async_trait::async_trait;
 use horon_agent_compaction_core::{
     MIN_TURNS_TO_KEEP, align_cutoff_to_turn_start, recent_cutoff_for_token_budget, safe_compaction_cutoff,
-    truncate_str_boundary,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// How often a pending generation checks whether it was cancelled.
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Shrink attempts a prompt gets before the covered range is declared too large.
+const MAX_SHRINK_ATTEMPTS: u32 = 3;
 
 /// System text for the handoff completion.
 const HANDOFF_SYSTEM: &str = "You write handoff documents. Answer with Markdown only and do not call tools.";
@@ -55,11 +67,17 @@ without re-reading it.
 
 Answer with Markdown and use exactly these sections:
 ## Goal
+## Constraints
 ## Done
 ## In progress
 ## Next steps
 ## Open risks
 ## Key files
+
+`## Constraints` is for limits the user imposed (scope, stack, things not to touch, \
+approvals they refused). Copy them from the conversation; do not invent any. Under \
+`## Next steps`, give every item its completion criterion: what must be true for it to \
+be done.
 
 Conversation:
 ";
@@ -72,10 +90,23 @@ End of conversation. Write the handoff document now.
 /// A generated handoff document and where the verbatim tail begins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffDocument {
-    /// Markdown exactly as the model produced it, unparsed and unvalidated.
+    /// Markdown exactly as the model produced it. It is never empty and always
+    /// has a `Goal` heading; nothing else about it is checked. It is also never
+    /// truncated: a prompt that cannot hold the whole covered range shrinks the
+    /// range instead.
     pub document: String,
     /// Index of the first message kept verbatim in the caller's message slice.
     pub cutoff: usize,
+    /// Files and skills the covered prefix touched, collected over exactly
+    /// `[0, cutoff)`.
+    ///
+    /// The document is prose, so a resuming agent cannot tell which files the
+    /// covered work relied on. This manifest travels with the boundary for the
+    /// same reason a structured summary carries one: it is a bounded list of
+    /// paths the successor may need to re-read. It is collected from the
+    /// covered messages, never from the model's answer, so a document that
+    /// forgets a file still reports it.
+    pub restoration: RestorationManifest,
 }
 
 /// Why a handoff document was not produced.
@@ -85,6 +116,12 @@ pub enum HandoffError {
     NothingToCover,
     /// The completion itself failed, or the request could not be built.
     Provider { detail: String },
+    /// The completion answered, but the document was refused: it was empty or
+    /// had no `Goal` heading.
+    InvalidDocument { reason: &'static str },
+    /// Even the smallest range worth covering fills the prompt budget, so the
+    /// document could not be written without dropping part of the range.
+    CoveredRangeTooLarge { budget: usize },
     /// The caller cancelled before the completion answered.
     Cancelled,
 }
@@ -97,6 +134,11 @@ impl std::fmt::Display for HandoffError {
                 "nothing to cover: the recent-token budget keeps every message verbatim"
             ),
             Self::Provider { detail } => write!(f, "handoff generation failed: {detail}"),
+            Self::InvalidDocument { reason } => write!(f, "handoff document rejected: {reason}"),
+            Self::CoveredRangeTooLarge { budget } => write!(
+                f,
+                "the covered range does not fit the {budget}-byte prompt even after shrinking"
+            ),
             Self::Cancelled => write!(f, "handoff generation was cancelled"),
         }
     }
@@ -128,12 +170,16 @@ impl HandoffCompleter for AuxCompletion {
 /// Generate a handoff document covering everything before the verbatim tail.
 ///
 /// `recent_tokens` is the budget for the messages that stay verbatim; the
-/// covered prefix is everything before that cut. `cancel` is polled while the
+/// covered prefix is everything before that cut. `prior` is the text of the
+/// boundary this one replaces, so a second handoff in one session keeps the goal
+/// and constraints the first one recorded. `cancel` is polled while the
 /// completion is pending, so a caller that stops waiting gets
 /// [`HandoffError::Cancelled`] instead of a stale document.
 pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
     messages: &[Message],
     recent_tokens: usize,
+    context_window: usize,
+    prior: Option<&str>,
     completer: &C,
     cancel: &AtomicBool,
 ) -> Result<HandoffDocument, HandoffError> {
@@ -141,14 +187,55 @@ pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
     if cutoff == 0 {
         return Err(HandoffError::NothingToCover);
     }
+    generate_handoff_at_cutoff(messages, cutoff, context_window, prior, completer, cancel).await
+}
+
+/// The same generation for a caller that already decided how far to cover.
+///
+/// The compaction job knows its own cutoff (the token budget and the semantic
+/// or reactive mode chose it), so it passes it in instead of recomputing one
+/// from a recent-token allowance. A cutoff of 0 covers nothing and is refused
+/// with [`HandoffError::NothingToCover`], and a cutoff past the end of the
+/// transcript is clamped.
+pub async fn generate_handoff_at_cutoff<C: HandoffCompleter + ?Sized>(
+    messages: &[Message],
+    cutoff: usize,
+    context_window: usize,
+    prior: Option<&str>,
+    completer: &C,
+    cancel: &AtomicBool,
+) -> Result<HandoffDocument, HandoffError> {
+    let mut cutoff = safe_compaction_cutoff(messages, cutoff.min(messages.len()));
+    if cutoff == 0 {
+        return Err(HandoffError::NothingToCover);
+    }
 
     let projection = SourceProjection::from_messages(messages);
-    let prompt = build_prompt(&projection, cutoff);
+    let mut attempts = 0u32;
+    let prompt = loop {
+        match build_prompt(&projection, cutoff, prior) {
+            Ok(prompt) => break prompt,
+            Err(scaled) => {
+                let next = safe_compaction_cutoff(messages, scaled);
+                if attempts >= MAX_SHRINK_ATTEMPTS || next == 0 {
+                    return Err(HandoffError::CoveredRangeTooLarge {
+                        budget: MAX_PROMPT_BYTES,
+                    });
+                }
+                attempts += 1;
+                cutoff = next;
+            }
+        }
+    };
+
     let request = CompletionRequest::new(prompt)
         .and_then(|request| request.with_system(HANDOFF_SYSTEM))
         .map_err(|error| HandoffError::Provider {
             detail: error.to_string(),
         })?;
+
+    let restoration =
+        collect_restoration_with_remaining(&projection, CoveredRange::new(0, cutoff), context_window, u64::MAX);
 
     if cancel.load(Ordering::Relaxed) {
         return Err(HandoffError::Cancelled);
@@ -158,7 +245,8 @@ pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
         biased;
         () = await_cancellation(cancel) => Err(HandoffError::Cancelled),
         result = completer.complete(request) => match result {
-            Ok(document) => Ok(HandoffDocument { document, cutoff }),
+            Ok(document) => validate_document(&document)
+                .map(|()| HandoffDocument { document, cutoff, restoration }),
             Err(error) => Err(HandoffError::Provider {
                 detail: format!("{error:#}"),
             }),
@@ -170,9 +258,54 @@ pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
 pub async fn generate_handoff_with_aux(
     messages: &[Message],
     recent_tokens: usize,
+    context_window: usize,
+    prior: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<HandoffDocument, HandoffError> {
-    generate_handoff(messages, recent_tokens, &AuxCompletion, cancel).await
+    generate_handoff(messages, recent_tokens, context_window, prior, &AuxCompletion, cancel).await
+}
+
+/// The same, for a cutoff the caller already decided.
+pub async fn generate_handoff_at_cutoff_with_aux(
+    messages: &[Message],
+    cutoff: usize,
+    context_window: usize,
+    prior: Option<&str>,
+    cancel: &AtomicBool,
+) -> Result<HandoffDocument, HandoffError> {
+    generate_handoff_at_cutoff(messages, cutoff, context_window, prior, &AuxCompletion, cancel).await
+}
+
+/// Refuse an answer that cannot stand in for the covered messages.
+///
+/// A boundary replaces the covered prefix in every later request, so an answer
+/// with no text, or one that never states the goal, would drop that prefix and
+/// leave the successor nothing to resume from. The heading is matched on its
+/// title alone: `# Goal`, `### goal` and `## Goal:` all count.
+fn validate_document(document: &str) -> Result<(), HandoffError> {
+    if document.trim().is_empty() {
+        return Err(HandoffError::InvalidDocument {
+            reason: "the document is empty",
+        });
+    }
+    if !document.lines().any(is_goal_heading) {
+        return Err(HandoffError::InvalidDocument {
+            reason: "the document has no Goal section",
+        });
+    }
+    Ok(())
+}
+
+/// Whether `line` is a Markdown heading whose title is `Goal`.
+fn is_goal_heading(line: &str) -> bool {
+    let line = line.trim();
+    let title = line.trim_start_matches('#');
+    title.len() < line.len()
+        && title
+            .trim()
+            .trim_end_matches(':')
+            .trim_end()
+            .eq_ignore_ascii_case("goal")
 }
 
 /// Index of the first message the handoff keeps verbatim.
@@ -188,24 +321,46 @@ fn handoff_cutoff(messages: &[Message], recent_tokens: usize) -> usize {
 
 /// Build the one prompt that covers `[0, cutoff)`.
 ///
-/// The prompt must fit [`MAX_PROMPT_BYTES`], so the message rendering gets
-/// whatever the fixed header and footer leave. Truncating the body instead of
-/// the finished string keeps the instruction in front of the model either way.
-fn build_prompt(projection: &SourceProjection, cutoff: usize) -> String {
-    let reserved = HANDOFF_PROMPT_HEADER.len() + HANDOFF_PROMPT_FOOTER.len();
+/// `Ok` is a prompt inside [`MAX_PROMPT_BYTES`]. `Err(scaled)` means the rendered
+/// body does not fit and carries the smaller cutoff to try instead, proportional
+/// to the overshoot; the caller re-aligns it so a shrunken range never leaves a
+/// tool result without its call. The body itself is never clipped: a clipped
+/// body would let the document claim messages the model never read.
+fn build_prompt(
+    projection: &SourceProjection,
+    cutoff: usize,
+    prior: Option<&str>,
+) -> std::result::Result<String, usize> {
+    // Not `unwrap_or_default`: an absent prior is a different state from an
+    // empty one, so the block is built only when a prior exists.
+    let prior_block = match prior {
+        Some(prior) => prior_section(prior),
+        None => String::new(),
+    };
+    let reserved = HANDOFF_PROMPT_HEADER.len() + prior_block.len() + HANDOFF_PROMPT_FOOTER.len();
     let budget = MAX_PROMPT_BYTES.saturating_sub(reserved);
 
-    let mut body = render_source_range(projection, CoveredRange::new(0, cutoff), budget);
+    let body = render_source_range(projection, CoveredRange::new(0, cutoff), budget);
     if body.len() > budget {
-        let end = truncate_str_boundary(&body, budget).len();
-        body.truncate(end);
+        let scaled = cutoff.saturating_mul(budget) / body.len().max(1);
+        return Err(scaled.min(cutoff.saturating_sub(1)));
     }
 
-    let mut prompt = String::with_capacity(HANDOFF_PROMPT_HEADER.len() + body.len() + HANDOFF_PROMPT_FOOTER.len());
+    let mut prompt = String::with_capacity(reserved + body.len());
     prompt.push_str(HANDOFF_PROMPT_HEADER);
+    prompt.push_str(&prior_block);
     prompt.push_str(&body);
     prompt.push_str(HANDOFF_PROMPT_FOOTER);
-    prompt
+    Ok(prompt)
+}
+
+/// The block that carries the boundary this document replaces.
+fn prior_section(prior: &str) -> String {
+    format!(
+        "Your earlier handoff document for this same work follows. Keep its Goal and \
+Constraints unless the conversation below revises them.\n\n{prior}\n\nConversation \
+continues below.\n\n"
+    )
 }
 
 /// Resolve once `cancel` is set.

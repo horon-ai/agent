@@ -261,6 +261,17 @@ jobs:
           cp "$BASELINE_DIR/target/release/horon-agent$exe" "target/release/baseline/horon-agent$exe"
           "./target/release/baseline/horon-agent$exe" --version | tee "$RESULTS/baseline-version.txt"
 
+      - name: Build the TUI binary and its render bench
+        # Separate from the headless build on purpose: `tui` is the second
+        # binary's suite, and its two invocations never join the `-p horon-agent`
+        # command above, so a failure here is a TUI failure and nothing else.
+        if: ${{ steps.sel.outputs.tui == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p horon-tui
+          cargo build --release --locked -p horon-tui --example render_bench
+
       - name: Build release binary and probes
         shell: bash
         run: |
@@ -277,6 +288,8 @@ jobs:
           [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
           files=("horon-agent$exe")
           [[ -f "target/release/examples/loading_probe$exe" ]] && files+=("examples/loading_probe$exe")
+          [[ -f "target/release/horon-tui$exe" ]] && files+=("horon-tui$exe")
+          [[ -f "target/release/examples/render_bench$exe" ]] && files+=("examples/render_bench$exe")
           [[ -f "target/release/baseline/horon-agent$exe" ]] && files+=("baseline/horon-agent$exe")
           # A tar keeps the executable bit, which upload-artifact drops. The
           # archive path stays relative: Git Bash's tar reads `D:\...` as a
@@ -360,6 +373,14 @@ jobs:
           fi
           echo "HORON_BIN=$root/bench-bin/horon-agent$exe" >> "$GITHUB_ENV"
           echo "PROBE_BIN=$root/bench-bin/examples/loading_probe$exe" >> "$GITHUB_ENV"
+          # Only the tui unit reads these, so an unselected run leaves the step's
+          # environment exactly as it was.
+          if [[ -f "bench-bin/horon-tui$exe" ]]; then
+            echo "HORON_TUI_BIN=$root/bench-bin/horon-tui$exe" >> "$GITHUB_ENV"
+          fi
+          if [[ -f "bench-bin/examples/render_bench$exe" ]]; then
+            echo "RENDER_BENCH_BIN=$root/bench-bin/examples/render_bench$exe" >> "$GITHUB_ENV"
+          fi
           if [[ -f "bench-bin/baseline/horon-agent$exe" ]]; then
             echo "BASELINE_BIN=$root/bench-bin/baseline/horon-agent$exe" >> "$GITHUB_ENV"
           fi
@@ -494,6 +515,20 @@ jobs:
         run: |
           python scripts/perf/bench_reload_storm.py --binary "$HORON_BIN" \
             --json-out "$RESULTS/reload.json" --markdown-out "$RESULTS/reload.md"
+
+      - name: "Suite: tui (interactive client)"
+        # The only step that starts `horon-tui`. A missing binary is a skip that
+        # the script records; Windows records the PTY skip and keeps the render
+        # and size numbers, so this step stays green on all three runners.
+        if: ${{ matrix.unit == 'tui' }}
+        shell: bash
+        run: |
+          python scripts/perf/bench_tui.py \
+            --binary "$HORON_BIN" \
+            --tui "${HORON_TUI_BIN:-}" \
+            --render-bench "${RENDER_BENCH_BIN:-}" \
+            --runs 5 \
+            --json-out "$RESULTS/tui.json" --markdown-out "$RESULTS/tui.md"
 
       - name: Record job outcome
         if: ${{ always() }}
@@ -636,7 +671,7 @@ jobs:
             fi
             echo "- suites: \`$SUITES\`, status: \`$(cat "$RESULTS/status.txt")\`"
             echo
-            for f in compare tools reload compile; do
+            for f in compare tools reload tui compile; do
               if [[ -f "$RESULTS/$f.md" ]]; then cat "$RESULTS/$f.md"; echo; fi
             done
             for f in startup loading-cold loading-warm; do

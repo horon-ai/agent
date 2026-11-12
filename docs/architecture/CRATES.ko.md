@@ -228,7 +228,7 @@ python3 scripts/ci/check_dependency_boundaries.py
 
 ## 증가 래칫
 
-검토된 결정으로만 올릴 수 있는 두 수치를 게이트 하나가 고정한다.
+검토된 결정으로만 올릴 수 있는 세 수치를 게이트 하나가 고정한다.
 
 ```sh
 python3 scripts/ci/check_growth_ratchets.py
@@ -239,8 +239,9 @@ python3 scripts/ci/check_growth_ratchets.py --list
 | --- | --- | --- |
 | `Cargo.lock` 패키지 | `Cargo.lock`의 `[[package]]` 항목. 같은 크레이트의 두 버전은 두 번 센다 | `scripts/ci/lockfile_packages.ratchet.json` |
 | 내부 레거시 표시자 | 제외 하위 트리 밖에서 `legacy`, `deprecated`, `compat_alias`, `back.?compat`에 맞는 Rust 줄 | `scripts/ci/internal_legacy_markers.ratchet.json` |
+| 문자열 결과 | 시그니처가 `Result<_, String>`을 돌려주는 Rust 줄. 문자열 오류에는 분기할 타입이 없어 호출자가 원인을 구분하지 못한다 | `scripts/ci/result_string.ratchet.json` |
 
-래칫 파일은 이름이 `.ratchet.json`으로 끝나거나, 최상위 객체가 `counter`와 `ceiling`을 선언한 `scripts/ci/*.json` 파일이다. 그래서 나중에 추가할 래칫(`Result<_, String>` 개수, 모델 이름 분기)은 파일 하나만 더하면 되고 워크플로나 `check_all.sh`를 고치지 않는다. `.ratchet.json`인데 두 키를 잃은 파일은 건너뛰지 않고 실패한다. `counter.kind`는 `cargo_lock_packages` 또는 `regex_lines`이고, 후자는 `pattern`, `roots`, `extensions`, `exclude`를 받는다. 옆에 있는 게이트별 예산 파일(`panic_budget.json`, `code_size_budget.json`)은 두 키를 선언하지 않으므로 각자 스크립트가 계속 소유한다.
+래칫 파일은 이름이 `.ratchet.json`으로 끝나거나, 최상위 객체가 `counter`와 `ceiling`을 선언한 `scripts/ci/*.json` 파일이다. 그래서 나중에 추가할 래칫(모델 이름 분기)은 파일 하나만 더하면 되고 워크플로나 `check_all.sh`를 고치지 않는다. `.ratchet.json`인데 두 키를 잃은 파일은 건너뛰지 않고 실패한다. `counter.kind`는 `cargo_lock_packages` 또는 `regex_lines`이고, 후자는 `pattern`, `roots`, `extensions`, `exclude`를 받는다. 옆에 있는 게이트별 예산 파일(`panic_budget.json`, `code_size_budget.json`)은 두 키를 선언하지 않으므로 각자 스크립트가 계속 소유한다.
 
 레거시 표시자 래칫은 외부 계약을 구현하는 하위 트리를 파일에 사유와 함께 제외한다. `crates/harness-api-server`(하네스 API v1 브리지와 변환 계층), `crates/harness-api`(공개된 v1 표면과 스키마 스냅숏), `crates/session-store`(v0.1.x가 쓴 세션을 읽는 저장소 이관·재생 리더)다. 존재하지 않는 경로를 제외하면 실패하므로 낡은 항목이 구멍을 넓히지 못한다. 나머지는 내부 잔여물이며 줄어들 수는 있어도 늘어날 수는 없다.
 
@@ -456,6 +457,16 @@ headless 전환 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gat
 - 1단계는 기존 `auxiliary_recorded` 종류의 `Legacy { schema_version, value }` 봉투 안에 넣는다. 이 변형은 옛 빌드도 정상적으로 디코드하고 투영에서는 무시된다.
 - 2단계는 지원하는 리더가 모두 새 종류를 읽을 수 있게 된 뒤에만 쓴다. 그때 `ALL` 배열 길이, `as_str`과 `parse`, `typed_payload_ok`, `Payload`, `Projection` 필드, 세션 이벤트 형식 표를 같은 커밋에서 함께 고친다. 새 변형을 먼저 쓰고 리더를 나중에 배포하면 옛 빌드가 그 세션을 열지 못한다.
 - 확장 상태를 `ProjectedMessage`에 밀어 넣지 않는다. 그러면 모델 대화 기록에 섞여 도구 검증과 압축 경계 계산이 그 항목을 대화로 센다. 별도 필드와 종류별 접근자로 둔다.
+
+### 경계의 복원 매니페스트는 저장 형태가 하나다
+
+압축 경계는 덮은 접두부가 만진 파일과 스킬을 기록할 수 있다
+(`docs/protocol/SESSION_STORE.md`). 그 목록을 쓰는 생산자는 둘이다. 구조화 요약은
+`generate_structured_summary` 안에서 수집하고, 핸드오프 문서는 자기가 덮는 바로 그 범위에서
+수집한다. 둘 다 `summary::RestorationManifest`를 만들고 하나뿐인 `to_stored` 메서드로
+변환하므로 저장되는 `StoredRestorationManifest`가 둘 사이에서 어긋날 수 없다. 새 생산자는
+매핑을 복사하지 말고 이 변환을 재사용해야 한다. 저장 형태는 세션 계약이고, 그 사본이 둘이
+되는 순간 이벤트 그래프와 세션 파일이 서로 다른 값을 갖기 시작한다.
 
 ### 와이어 버전 상수는 소유 크레이트와 함께 적는다
 

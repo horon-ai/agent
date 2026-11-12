@@ -9,6 +9,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
     let persisted_message = crate::session::StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "msg-live-busy".to_string(),
         role: crate::message::Role::User,

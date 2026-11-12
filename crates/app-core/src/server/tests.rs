@@ -802,6 +802,7 @@ async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -
             tool_use_id: "tool_reload".to_string(),
             content: "[Tool 'bash' interrupted by server reload after 0.2s]".to_string(),
             is_error: Some(true),
+            verdict: None,
         }],
     );
     initiator.save()?;
@@ -831,6 +832,7 @@ async fn startup_recovery_resumes_interrupted_headless_sessions_after_reload() -
             tool_use_id: "tool_bash".to_string(),
             content: "[Tool 'bash' interrupted by server reload after 0.2s]".to_string(),
             is_error: Some(true),
+            verdict: None,
         }],
     );
     peer.save()?;
@@ -945,6 +947,7 @@ async fn startup_recovery_preserves_headed_session_reload_context_for_later_reco
             tool_use_id: "tool_bash".to_string(),
             content: "[Tool 'bash' interrupted by server reload after 0.2s]".to_string(),
             is_error: Some(true),
+            verdict: None,
         }],
     );
     headless.save()?;

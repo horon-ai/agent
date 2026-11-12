@@ -93,6 +93,7 @@ mod tests {
         StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             turn_start: false,
             id: String::new(),
             role,
@@ -149,6 +150,7 @@ mod tests {
             tool_use_id: "tool".into(),
             content: "result".into(),
             is_error: None,
+            verdict: None,
         }];
         messages[2].tool_duration_ms = Some(1234);
         let mut rows = vec![row(3), row(5)];

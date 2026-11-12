@@ -12,9 +12,11 @@
 //! session keeps the configured mode, and so does every turn after the ACP
 //! connection drops.
 //!
-//! Only `off` and `write` are accepted. `all` auto-approves every call
-//! (crates/app-core/src/approval.rs), which would make an editor's "ask" mode
-//! silently stop asking, so it is refused rather than mapped.
+//! Only `off` and `write` are accepted. The editor's two modes are "never ask"
+//! and "ask before shell, network and file-mutating calls", and those map onto
+//! the daemon's `off` and `write`. `all` is a third, stricter mode that asks
+//! about calls with no file to approve; an editor has no UI for those questions,
+//! so mapping it would show the user a prompt they cannot answer.
 
 use super::acp_session;
 use crate::config::ApprovalMode;

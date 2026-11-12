@@ -6,7 +6,7 @@ This covers tool loading tiers, effects and approval tiers, edit safety, the anc
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the fifteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
 
 ### Three tiers
 
@@ -31,8 +31,8 @@ memory = "essential"
 ### Default layout
 
 - The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:803` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
-- `CORE_TOOLS` still holds fifteen entries and is the allow-list of the `core` profile (`config.rs:779` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session.
-- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eight core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`) become `discoverable` and are named in the index (`config.rs:889` `ToolLoadTiers::tier`).
+- `CORE_TOOLS` holds eighteen entries and is the allow-list of the `core` profile (`config.rs:779` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session. `swarm`, `todo` and `session_search` joined last; an SDK-driven session keeps `session_search` and `swarm` off unless its `enabled` list names them (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
+- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:889` `ToolLoadTiers::tier`).
 - Sessions that are not listing sessions send every core tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists and tiers are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
 - `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:861` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
 - `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:889` `ToolLoadTiers::tier`).
@@ -45,7 +45,7 @@ memory = "essential"
 
 - Writing `[tools.load_mode] ask = "essential"` ships that tool with its schema even in a listing session. An explicit entry outranks the default layout.
 - `monitor = "off"` removes that tool from both the request and the index.
-- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts all fifteen core tools back on the eager surface. The point is to avoid creating a tool with no way to reach it.
+- `toolbox = "off"`, or adding `toolbox` to `[tools] disabled`, turns listing mode off and puts all eighteen core tools back on the eager surface. The point is to avoid creating a tool with no way to reach it.
 
 ### The listing index
 
@@ -57,7 +57,7 @@ The static part of a listing `core` session's system prompt gains an `# Addition
 - Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
 - When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:175`). An overridden session still keeps the names of listed tools.
 - A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`.
-- The `todo` guidance sentence is appended only for sessions whose allow-list contains `todo` (`acp` and the like), and never for a listing `core` session, which has no `todo` (`prompting.rs:233` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
+- The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:233` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox
 
@@ -91,7 +91,7 @@ Model requests go straight to an OpenAI-compatible `/chat/completions` and carry
 
 ### Why core stays closed
 
-`core` is an allow-list. It pins the default headless surface to the fifteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eight are reached through the index and `toolbox`. The most recent addition, `monitor`, watches files and commands across restarts. The choice preserves three things.
+`core` is an allow-list. It pins the default headless surface to the eighteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eleven are reached through the index and `toolbox`. The most recent additions, `swarm`, `todo` and `session_search`, keep their schemas out of the prefix the same way. The choice preserves three things.
 
 - The default surface's size does not change, so the request prefix and the prompt cache stay stable.
 - The default permission envelope, writes and shell included, stays predictable.
@@ -142,8 +142,8 @@ When a tool's footprint depends on its arguments, it overrides `effects_for_inpu
 
 The registry asks for effects with the call's input, not with the name alone.
 
-- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1036`).
-- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1044`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
+- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1269`).
+- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1281`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
 - Both treat `None` as "cannot classify". Callers read that value as the write barrier. A read-only gate never opens because of a tool whose footprint it cannot see.
 
 ### Two gates
@@ -152,12 +152,12 @@ The plan-mode check exists in two places because the two paths call tools differ
 
 | Path | Location | What it does |
 | --- | --- | --- |
-| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1450`) | Resolves the name, checks session policy, passes the plan-mode gate (`:1513`), takes the tool, then passes the approval gate (`:1561`) and the `pre_tool` hook (`:1582`) in order. |
+| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1983`) | Resolves the name, checks session policy, passes the plan-mode gate (`:2027`), takes the tool, then passes the approval gate (`:2087`) and the `pre_tool` hook (`:2202`) in order. |
 | Agent | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | Checks one name before the round dispatches any call. The plan-mode gate is at `:1081`. |
 
 The agent path puts the plan-mode check at the top of the function because of the SDK branch below it. SDK-enabled tools and callback tools exit straight to `Ok` from the allow-list check. A gate after that branch would let through exactly the calls whose footprint cannot be seen. So the plan-mode check runs before the branch, and the registry path uses the same default for the same reason.
 
-Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:1517`, `:1573`).
+Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:2031`, `:2190`).
 
 ### The plan-mode state machine
 
@@ -185,27 +185,47 @@ Plan mode is off by default. The configuration field defaults to `false` (`crate
 
 ### Approval tiers
 
-`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:511`). The default is `off` (`crates/base/src/config.rs:922`), which is the same non-asking behaviour as before.
+`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:357`). The default is `off` (`crates/base/src/config.rs:1017`), which is the same non-asking behaviour as before.
 
-`evaluate` decides (`crates/app-core/src/approval.rs:70`). Order matters.
+`evaluate` decides (`crates/app-core/src/approval.rs:232`). Order matters.
 
 1. A danger class in `dual_confirm_classes` requires approval regardless of mode. That is exactly why a class goes into this list: so no mode can auto-approve it.
-2. If the mode is `off`, return auto-approval right here. This comes before the read-only branch. Reversing the order would make a mode that should change nothing start writing an audit line per call.
-3. A read-only call is never asked in any mode (`crates/app-core/src/approval.rs:43`).
-4. `write` mode auto-approves only file mutations. A process or network component requires approval.
-5. `all` mode auto-approves every call that is not read-only.
+2. A path matching `[tools] restricted_paths` requires approval regardless of mode. This comes before the `off` return and before a bash-pattern allow, because a listed path is a standing "ask me", and a scoped grant never covers one.
+3. A `[[tools.bash_patterns]]` verdict decides next: `allow` auto-approves, `prompt` and `deny` ask. A dual-confirm class and a restricted path above already outranked it.
+4. If the mode is `off`, return auto-approval right here. This comes before the read-only branch. Reversing the order would make a mode that should change nothing start writing an audit line per call.
+5. A read-only call is never asked in any mode (`crates/app-core/src/approval.rs:45`).
+6. `write` mode asks before a call that runs a process, reaches the network, or mutates a file it names. A tool with a write effect that names no path (the todo list, `ask`, `undo`, `monitor`, `checkpoint`, context notes) runs without asking, because there is no file for the user to approve.
+7. `all` mode asks before every call that is not read-only.
 
-Danger classes are not reclassified; the existing command risk classifier's verdict is used as is (`crates/app-core/src/approval.rs:52`). The only class with a name is `destructive-shell` (`crates/app-core/src/approval.rs:20`), because shell commands are the only thing whose footprint needs weighing.
+Danger classes are not reclassified; the existing command risk classifier's verdict is used as is (`crates/app-core/src/approval.rs:182`). The only class with a name is `destructive-shell` (`crates/app-core/src/approval.rs:22`), because shell commands are the only thing whose footprint needs weighing.
 
-`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:940`, `crates/base/src/config/default_file.rs:476`). Empty leaves every decision to the mode.
+`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:1026`, `crates/base/src/config/default_file.rs:341`). Empty leaves every decision to the mode.
 
-The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:1561`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
+The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2087`, hook at `:2202`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
 
-`irc` has the write bit and no process or network bit, so `write` mode auto-approves it like a file mutation, and `all` mode does not ask either. It is not a tool that raises an approval prompt.
+`irc` has the write bit, no process or network bit, and names no filesystem path, so `write` mode does not ask about it: there is no file to approve. `all` mode does ask, because an `irc` call is not read-only.
+
+### Scoped grants
+
+An answer can cover a place instead of one call. `allow_path` approves the one file the request named; `allow_folder` approves its folder and everything under it. The grant lives in `<agent home>/approvals.json`, written with mode 0600 under `approvals/.grants.lock`, and every grant carries an expiry (`[tools] approval_grant_ttl_days`, default 7; `0` turns grants off).
+
+A grant is consulted only after `evaluate` said "ask" for a reason a grant can answer: not a dual-confirm class, not a restricted path, not a bash-pattern verdict, and only for a call whose effect is a file mutation. A hit becomes an auto-approval with reason `grant`, so the audit line says why the user was not asked. Five things a grant is not:
+
+- **Not portable between workspaces.** The workspace root is the canonical session working directory; a grant records it, and a grant whose root differs covers nothing even for the same absolute path.
+- **Not wider than its effect.** A grant issued for an append covers appends; a write grant covers both. Replacing a file is a stronger answer than appending to it.
+- **Not path-loose.** Both the grant and the call are canonicalized, so `..` and a symlink name the place they actually resolve to. A path that cannot be canonicalized gets no grant and asks.
+- **Not multi-path.** Only a call that names exactly one path can be granted. An `apply_patch` touching three files is approved once and asks next time, because one answer must not decide three places the user was never shown.
+- **Not restricted-path bypass.** A `restricted_paths` match asks in every mode, `off` included, and refuses in a headless session with no approval surface.
+
+The request carries its capability in `context.grant_capability` (`append` or `write`) so the writer that stores the grant needs only the queued request, never the registry. The paths come from the request snapshot the daemon built, never from the client, so a client cannot widen what its answer covers.
+
+`[tools] restricted_paths` is a list of globs matched against the path the model wrote, the path resolved against the working directory, and the canonical path. A pattern with no separator also matches the file name, so `secrets.env` covers `/srv/app/secrets.env`. A pattern that cannot be parsed restricts every path, because an unreadable restriction must not become no restriction. `bash` names no paths here; `[[tools.bash_patterns]]` is its equivalent.
+
+In ACP, the two scoped options (`allow-path`, `allow-folder`) are offered only on a v2 session and only when the call names one path. A v1 session offers the four options it always has.
 
 ### Audit records
 
-Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:139`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:125`).
+Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:341`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:341`).
 
 `off` mode writes no audit line, because logs must match the era before approval tiers existed. Read-only calls are not audited either. That is why `off` returns before the read-only branch.
 
@@ -295,6 +315,42 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 
 The crate never reads the file system, so it cannot detect outside changes by itself. Detection happens when the caller compares current bytes with the recorded state through `BlobId::of`. History never leaves the process and is not shared with another process or a restarted session.
 
+## `generate_image`
+
+The one tool whose model does not speak Chat Completions. Registered only when
+`[tools] generate_image = true` **and** the active profile names
+`roles.image = "<model>"`; with either missing the name is neither registered nor
+in an index row, so a session that never generates an image pays nothing for the
+tool existing. `docs/provider/INTEGRATIONS.md` has the MCP recipe for anything this
+tool does not cover.
+
+| Input | Meaning |
+| --- | --- |
+| `prompt` (required) | What to draw, or what change to make when `input` is given. At most 32 KiB. |
+| `size` | `1024x1024` (default), `1536x1024`, or `1024x1536`. |
+| `count` | 1 to 4, default 1. A larger value is clamped rather than refused. |
+| `input` | Image paths to edit. With it the tool posts `/images/edits` as multipart; without it, `/images/generations`. Together at most 35 MiB, at most 16 files. |
+| `model` | Overrides `roles.image` for this call. |
+
+A call declares `WRITE | NETWORK`, so under `approval_mode = "write"` it asks
+first and an unattended run without approval does not spend. It is never
+parallel-safe, because the request and the file are one step.
+
+The result is text, not image bytes: the model receives one line per file with
+its path, byte size and MIME type, plus the provider's revised prompt when it
+sends one. Files land in `~/.horon/generated-images/` under a generated name
+(`image-<millis>.png`), never a provider-supplied id and never over an existing
+file. The model reads a path with `read` if it needs the contents.
+
+| Situation | Behaviour |
+| --- | --- |
+| No `roles.image` in the active profile | Refused before a request, naming the profile and the key to add. |
+| Provider returns `data: []` | Reported as "returned no images", verdict `partial`. Not an error: a filtered prompt succeeded and produced nothing, and a failure verdict would make the model retry it. |
+| Fewer images than `count` | Verdict `partial`; the files that did arrive are usable. |
+| `b64_json` that is not base64 | Error. Silently dropping it would turn a corrupt response into an empty success. |
+| A URL-only `data` entry | Error. The tool never fetches a second host. |
+| Call runs past 180 s | Error. An image is slow, so the bound is generous, but it exists. |
+
 ## Executable files that write creates
 
 When `write` creates a new file whose content starts with `#!`, it also grants the execute permission on Unix (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). The point is to stop a freshly written script from burning a turn on a permission error when it is next run as `bash ./script.sh`.
@@ -316,6 +372,28 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - Completion checks do not treat `blocked` as done. A list whose only remaining item is `blocked` is not complete, and the automatic nudge counts that item as remaining work (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). It also does not count as `in_progress` for the rule that allows only one in-progress item.
 - ACP plan entries have only three states, so `blocked` is exported as `pending` (`crates/app-core/src/tool/todo.rs` `plan_entries`). That means an open item nobody is working on right now, and the reason stays on the item's own `blocker`.
 - The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
+
+## Waiting on background work
+
+`bg action=wait` blocks on background tasks. Two optional flags widen it to other events, and a call that sets neither keeps the behaviour it always had (`crates/app-core/src/tool/bg_wait.rs`).
+
+- `children: true` wakes when one of this session's child agents finishes. A child is reported once per daemon process: a delivered-once ledger keyed by parent and child stops a second wait from repeating it, and the result points at `agent://<session_id>` for the body.
+- `messages: true` wakes when a peer (IRC) message is queued for this session. It needs `[tools] irc = true` and a live bus, the same preconditions `irc wait` has; without them the flag changes nothing.
+- `task_id` is optional once a new source is selected. Ids are still accepted, and are then watched together with the selected sources.
+
+`wait_mode` keeps its three values. `any` (the default) returns on the first event. `all` waits until every named task and child is terminal and lists the children that finished; a child is marked delivered only when that report is made, so an `all` wait that reaches its deadline first leaves a finished child for a later wait. `first_failure` returns as soon as a task fails. Children and messages have no mode of their own, and a queued message ends the wait in every mode: with `wait_mode: "all"` and `messages: true` the call returns at the first message even while tasks or children are still running.
+
+| Outcome | `wait_reason` |
+| --- | --- |
+| A child finished | `child_finished` |
+| A message is queued | `message`, or `message_queued` when the mailbox was drained between the event and the read |
+| New input interrupted the wait | `interrupted` |
+| No selected source holds anything | `nothing_to_wait_for` |
+| The deadline passed | `timeout`, with `max_wait_seconds` and `pending_child_session_ids` |
+
+A selection with nothing pending returns `nothing_to_wait_for` immediately instead of parking until the deadline, and the bus subscription is taken before that preflight read, so a terminal landing in between is still reported.
+
+Only a wait that selects a source reacts to new input: `SessionInputQueued` ends it with `interrupted`, while the default wait ignores it. With `[messages] interrupt_mode = "immediate"` an ordinary queued message already stops the remaining tool calls, so the wait sees the interrupt; the default `wait` mode stops only for a message marked urgent (`crates/base/src/config/messages.rs` `interrupts_running_tools`).
 
 ## Ancestor AGENTS.md attached to read results
 
@@ -635,6 +713,30 @@ An aged result starts with `[horon: condensed older tool output: ...]` and keeps
 
 `process.stage_counters` in `horon debug 'server:memory'` reports `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, and `tool_result_aged_bytes`. The `context` section of the structural gate (`scripts/perf/check_structural.py`) checks that a 1 MiB output lands inside 48 KiB, that a repeated read stays under 512 bytes, and that crossing the pressure band twice produces exactly one aging batch.
 
+## Tool result verdicts
+
+A tool result used to be text plus an error flag, so a caller that wanted to know whether the call ran had to read the sentence. The stored `tool_result` block now also carries `verdict`, an optional name for what became of the call (`crates/tool-types/src/verdict.rs`).
+
+| Verdict | Meaning |
+| --- | --- |
+| `ok` | The tool ran and its whole result was returned. |
+| `partial` | The tool ran, but only part of the work finished. |
+| `truncated` | The tool ran to the end; the returned text is a cut of the full text. |
+| `withheld` | The tool ran and a refusal sentence replaced its result. Side effects did happen. |
+| `rejected` | The call was refused before the tool ran. |
+| `failed` | The tool ran and returned an error. |
+| `interrupted` | The call was skipped or cut short by the user, a reload, or a cancellation. |
+
+The key is `verdict`, not `tool_verdict`: the same name every later surface uses. It is `Option<ToolVerdict>` with `#[serde(default, skip_serializing_if = "Option::is_none")]`, so a result that states no verdict serializes without the key.
+
+```json
+{ "type": "tool_result", "tool_use_id": "call_1", "content": "alpha", "verdict": "ok" }
+```
+
+A record written before this field existed has no `verdict` key and loads unchanged; readers that only know `is_error` keep deriving `ok` or `failed` from it. The key is never shown to the model: `crates/provider-openai` destructures the block without the field, so a stored conversation renders the same request bytes whether a result states a verdict or not, and a pre-change session replays identically.
+
+An unknown verdict name refuses the whole record rather than guessing, the same way an unknown block `type` already does: a result written by a later build with a new name does not load in an older build.
+
 ## Auxiliary completion and the secret round trip
 
 This explains the contract of one side call that does not touch the conversation, and the round trip in which a credential leaves for the provider and returns to the tool as its real value. The two devices address different problems but draw their boundary the same way: what the caller may and may not decide is split by types, and values crossing the boundary are refused with named errors.
@@ -740,3 +842,39 @@ The `lsp` tool asks the project's language server what the compiler knows, and c
 ### Write path
 
 An applied edit goes through the same path as `edit`: path policy and the generated-file guard on every file, per-path locks, and one undo unit for the whole call, so one `undo` restores every file. Content is compared against the bytes the plan was computed from before anything is written, and a file that changed since then fails the call with no file written. Only the applying calls (`rename` with `apply: true`, `code_actions` with `action_id`) declare a write effect.
+
+## Model checkpoints and rewind
+
+`checkpoint` and `rewind` let the model mark a point of its own session and later
+fold everything after it into a report it writes itself. They are registered only
+while `[tools] checkpoint` is on; the pair shares one switch because a checkpoint
+nothing can rewind to, or a rewind with no checkpoint, is useless alone. Both are
+absent from every default profile and are joined into a closed allow-list only by
+that switch (`crates/base/src/config/tool_selection.rs`).
+
+- `checkpoint` takes no arguments. One checkpoint is active per session; a second
+  call while one is active is refused, and so is a second call in the same turn.
+- `rewind` takes a non-empty `report`: what the abandoned branch established, why
+  it was abandoned, and what the next attempt should do differently.
+
+A call only records the intent (`crates/app-core/src/tool/checkpoint.rs`). A tool
+round cannot rebuild its own transcript: the assistant message that called the
+tool and the results still to come belong to the same turn. Both turn loops
+apply the pending request when a committed turn settles
+(`crates/app-core/src/agent/interrupts.rs`), through the same history path a
+client rewind uses, and a failed or cancelled turn drops the request.
+
+The checkpoint is stored as a hidden `<system-reminder>` record: the transcript
+view and the rewind target list skip it, while the provider still receives it as
+background. It survives a restart because it is part of the stored history. A
+rewind cuts the transcript back to the newest checkpoint and appends the report
+as one more hidden reminder, so the model keeps its conclusion and the whole
+transcript stays readable through `history://current`.
+
+Files, background tasks and process state are never restored; only conversation
+history moves. Both tools declare a write effect, so plan mode refuses them.
+
+Tests: `crates/app-core/src/tool/checkpoint_tests.rs` covers the registration
+gate, the refusals and the pending map;
+`crates/app-core/src/agent/rewind_summary_tests.rs` covers the settle path, the
+report that replaces the branch, and undo.

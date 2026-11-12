@@ -5,6 +5,7 @@ use horon_agent_token_estimate::{
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+pub mod handoff_frame;
 pub mod pruning;
 
 /// Default token budget (200k tokens - matches Claude's actual context limit)
@@ -1477,6 +1478,7 @@ mod tests {
                 tool_use_id: "call_1".to_string(),
                 content: "ok".to_string(),
                 is_error: None,
+                verdict: None,
             }],
             timestamp: None,
             tool_duration_ms: None,
@@ -1710,6 +1712,7 @@ mod tests {
                     tool_use_id: "call_1".to_string(),
                     content: "tool output".to_string(),
                     is_error: None,
+                    verdict: None,
                 },
             ],
             timestamp: None,
@@ -1850,6 +1853,7 @@ mod tests {
                     tool_use_id: "call".to_string(),
                     content: "Captured main display".to_string(),
                     is_error: None,
+                    verdict: None,
                 },
                 ContentBlock::Image {
                     media_type: "image/png".to_string(),
@@ -2145,6 +2149,7 @@ mod cutoff_alignment_tests {
                 tool_use_id: id.into(),
                 content: content.into(),
                 is_error: None,
+                verdict: None,
             }],
             timestamp: None,
             tool_duration_ms: None,

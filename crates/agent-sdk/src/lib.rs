@@ -137,7 +137,9 @@ pub mod collections;
 mod diagnostics;
 mod errors;
 mod export;
+mod handoff;
 mod launch;
+mod message_modes;
 mod ssh;
 mod structured;
 pub mod turn_retry;
@@ -155,10 +157,10 @@ pub use client::{
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
 pub use horon_agent_harness_api::{
-    RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary, RuntimeQueueSummary,
-    RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary, SessionEditStats,
-    SessionSnapshot, SnapshotMarkerInfo, enrich_sessions_from_edit_stats, enrich_sessions_from_local_edit_stats,
-    enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state,
+    HandoffCompaction, RuntimeControlOutcome, RuntimeControlReceipt, RuntimeJournalSummary, RuntimeMonitorSummary,
+    RuntimeQueueSummary, RuntimeReceiptSummary, RuntimeRunSummary, RuntimeStateSummary, RuntimeStopSummary,
+    SessionEditStats, SessionSnapshot, SnapshotMarkerInfo, ToolVerdict, enrich_sessions_from_edit_stats,
+    enrich_sessions_from_local_edit_stats, enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state,
 };
 /// Auto-poke and todo quality-gate policy, identical to the TUI's. Fetch a
 /// snapshot with [`HoronAgentClient::todo_state`], run
@@ -181,10 +183,10 @@ pub use turn_retry::{FailureKind, RetryDecision, RetryPolicy, TurnRetry, classif
 /// The protocol types, re-exported so a client needs one dependency, not two.
 pub use horon_agent_harness_api as api;
 pub use horon_agent_harness_api::{
-    ApiEvent, ApiRequest, AskSelection, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage, ModelRouteInfo,
-    PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor, RenderedImageSource, ResponseStats,
-    SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage, SessionImportResult,
-    SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, StoreErrorDetail, TextMatch, ToolConfiguration,
-    TurnStopReason, api_socket_path,
+    ApiEvent, ApiRequest, AskSelection, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage, MessageModes,
+    ModelRouteInfo, PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor, RenderedImageSource,
+    ResponseStats, SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads, SessionHistoryPage,
+    SessionImportResult, SessionInfo, SessionRecordBlobStatus, SessionToolDefinition, StoreErrorDetail, TextMatch,
+    ToolConfiguration, TurnStopReason, api_socket_path,
 };
 pub use horon_agent_harness_api::{ModelUsage, RuntimeCommand, RuntimeCommandOutput, compare_model_usage};

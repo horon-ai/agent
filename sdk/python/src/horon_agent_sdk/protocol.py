@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 16
+API_VERSION_MINOR = 19
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -307,6 +307,14 @@ class RenderedImage(TypedDict, total=False):
 
 #: Base64 image attachment: ``(media_type, base64_data)``.
 ImageAttachment: TypeAlias = tuple[str, str]
+
+
+class MessageModes(TypedDict):
+    """How the daemon delivers messages that arrive while it is busy."""
+
+    follow_up_mode: str
+    steering_mode: str
+    interrupt_mode: str
 
 
 class SessionToolDefinition(TypedDict):
@@ -597,6 +605,18 @@ TurnStopReason: TypeAlias = Literal[
 """Natural completion has no stop reason. Transport loss is not proof of a crash."""
 
 
+ToolVerdict: TypeAlias = Literal[
+    "ok",
+    "partial",
+    "truncated",
+    "withheld",
+    "rejected",
+    "failed",
+    "interrupted",
+]
+"""How a tool call ended, as the daemon judged it. A newer daemon may send a name outside this list."""
+
+
 #: Request payloads. Each ``req`` discriminator's shape is documented by the
 #: matching ``HoronAgentClient`` method, which builds it field for field.
 ApiRequest: TypeAlias = dict[str, Any]
@@ -630,11 +650,13 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "reasoning_done",
     "tool_start",
     "tools",
+    "message_modes",
     "tool_call",
     "tool_input_delta",
     "tool_exec",
     "tool_done",
     "tool_args_repaired",
+    "degradation_receipts",
     "token_usage",
     "kv_cache_miss",
     "turn_done",
@@ -699,6 +721,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "detach_session",
     "configure_tools",
     "list_tools",
+    "get_message_modes",
     "tool_result",
     "send_message",
     "cancel",

@@ -547,6 +547,7 @@ mod recovery_unit_tests {
                 tool_use_id: "call-1".to_string(),
                 content: "ok".to_string(),
                 is_error: None,
+                verdict: None,
             }],
             timestamp: None,
             tool_duration_ms: None,

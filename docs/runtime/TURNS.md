@@ -52,6 +52,26 @@ This document explains what the agent does when a turn ends unexpectedly and who
 
 The default is `conservative`. Only provable truncation and unclosed structure are continued; the semantic guess is used only when the operator chooses `aggressive`.
 
+### A second opinion on the semantic class
+
+`SemanticPrematureStop` is the one class the classifier only guesses: it reads the last sentence and matches an announcement pattern. When `[autojudge] enabled = true`, the turn asks the `judge` role one `bool` question about that class alone — did the assistant stop before finishing the work the user asked for — and acts on the answer instead of the guess.
+
+| Situation | What happens |
+| --- | --- |
+| `[autojudge] enabled = false` (default) | No request. `RecoveryMode` decides exactly as it did before. |
+| Judge answers with `probability >= 0.5` | The class is acted on in every mode except `off`. |
+| Judge answers below `0.5` | The class is not acted on, even in `aggressive`. |
+| No `judge` model resolves, the reply leaves the contract, the backend fails, or the attempt outlasts `[autojudge] attempt_timeout_ms` | Fail open: `RecoveryMode` decides, and the failure is logged at most once a minute. |
+| `BudgetTruncated` or `UnclosedStructure` | Never judged. These are provable, and a judgment could only cost a request without changing the outcome. |
+
+A judgment runs on the `judge` role's model (`docs/provider/MODEL.md`), one attempt, no internal retry, and at most one judgment per unexpected stop, so a run spends no more than `MAX_AUTO_CONTINUATIONS + 1` judgments. The budget covers the whole attempt — model selection, the request and parsing — not only the network wait.
+
+`attempt_timeout_ms` defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. There is deliberately no unbounded value: a judgment holds up the turn it is judging, so a provider that never answers would stall that turn, which is the failure the budget exists to bound. The machine-readable setting is `[autojudge] attempt_timeout_ms`; `HORON_AGENT_AUTOJUDGE_ATTEMPT_TIMEOUT_MS` overrides it for one process.
+
+Enabling `autojudge` under `conservative` widens what that mode acts on: a judged-confident semantic stop now continues, where the guess alone would not have. That is the point of the switch — a calibrated answer is allowed to act where a pattern match is not — and it is why the switch is off by default.
+
+The `/judge` command is a different workload. It spawns a reviewer worker inside a swarm and resolves its model through the session agent-model overrides. It shares the `[autojudge] model` override with the role but never answers a typed question.
+
 ### At most two auto continuations per turn
 
 Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:215-219`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:82-100`, test `crates/agent-runtime/src/turn_state_tests.rs:18-26`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:136`).
@@ -107,9 +127,33 @@ There are three injection points. The event carries the point's name as is (`cra
 
 The point decisions are in `crates/app-core/src/agent/interrupts.rs:695` (B) and `:706` (D); C opens only when an urgent interrupt is pending. The streaming path uses the same points at `crates/app-core/src/agent/turn_streaming_mpsc.rs:1504` (B), `:1636` (D), and `:2231` (C).
 
+#### Delivery modes (`[messages]`)
+
+`all` and `one-at-a-time` are decided per point, not per turn
+(`crates/app-core/src/agent/interrupts.rs`). The first delivery point of a turn
+takes messages left over from the previous turn, so `[messages] follow_up_mode`
+governs it; every later point carries messages that arrived during this turn, so
+`[messages] steering_mode` governs those. `batch_limit()` in
+`crates/base/src/config/messages.rs` is the only translation from a mode to a
+count, and `transfer_prefix_to_in_flight` moves at most that many, oldest first.
+
+Both modes default to `all`, which is what horon has always done and differs from
+omp, whose default is `one-at-a-time`. Setting `one-at-a-time` keeps the
+remaining messages pending in order, so each one gets its own injection and the
+transcript reads as one message per step.
+
+`[messages] interrupt_mode` decides when a queued message stops the running
+tools. `wait` (the default, today's timing) honors the message's own `urgent`
+flag: only an urgent message cuts the round at point C. `immediate` treats every
+queued message as urgent, so the round is cut as soon as anything is queued.
+
+`get_message_modes` reports the three effective strings over the harness API, and
+the reply does not depend on the session existing, because the values are daemon
+configuration rather than session state.
+
 #### Urgent handling at point C
 
-When a message with the urgent flag set is pending, the tool round is not run to completion. The only decision function is `urgent_interrupt_pending` (`crates/app-core/src/agent/interrupts.rs:135-140`). Cutting a round first inserts a tool result with `is_error: true` for every call that has no result yet (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). The content is `[Skipped: user interrupted]` (`:12`). The user message follows, and the event reports the skipped count as `tools_skipped`.
+When a message with the urgent flag set is pending, the tool round is not run to completion. The only decision function is `urgent_interrupt_pending` (`crates/app-core/src/agent/interrupts.rs:163-166`). Cutting a round first inserts a tool result with `is_error: true` for every call that has no result yet (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). The content is `[Skipped: user interrupted]` (`:12`). The user message follows, and the event reports the skipped count as `tools_skipped`.
 
 Non-urgent interrupts are never inserted between tools. All of them wait for point D (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2104-2106`).
 
@@ -330,6 +374,156 @@ Tests: `crates/app-core/src/agent/context_rollover_tests.rs` covers the rebuilt
 request, the stored transcript, and one rollover per request;
 `crates/app-core/src/tool/new_context_tests.rs` covers the plan-mode refusal, the
 registration gate, and one pending request per turn.
+
+## Handoff compaction
+
+A handoff compaction writes a generated handoff document as the boundary instead
+of a model summary. The document describes what the session was doing, what it
+decided and what is left, so a successor session can continue from it
+(`crates/app-core/src/agent/handoff_compaction.rs`).
+
+### Trigger
+
+Three callers can ask for it. The harness API takes the existing `compact`
+request with `method: "handoff"`; the reply is the outcome, not an
+acknowledgement. An overnight supervisor runs it once at its handoff-ready point,
+thirty minutes or a quarter of the run before the target wake time, so the
+coordinator turns after it read the document instead of the night's transcript.
+ACP has no compaction command in this build, so an ACP client cannot trigger one.
+
+### The token-budget tail
+
+The recent-token budget (`[compaction] recent_tokens`, 20,000 by default) stays
+verbatim. The document covers everything before that tail and the outcome reports
+how many messages it covered. When every message fits inside the budget there is
+nothing to cover, and the request reports that instead of writing an empty
+document.
+
+### The document is checked for a goal
+
+Generation is one completion. Two answers are refused before they can become a
+boundary: one with no text, and one without a `Goal` heading (`# Goal`,
+`### goal` and `## Goal:` all count). Either is reported as `provider_error`
+with the reason in `detail`, and nothing is committed. Any other missing heading
+or omitted section is not a failure: the text is committed as the model wrote
+it, and the boundary keeps the document plus the verbatim tail.
+
+### As a strategy
+
+Setting `[compaction] strategy = "handoff"` makes the ordinary automatic and
+manual compaction run write a handoff document instead of a summary. The job is
+the same one every other strategy uses, so it keeps the same cutoff, deadline,
+cancellation and single-slot rules, and the result is tagged as a handoff: the
+next request frames the document as the successor's own earlier writing
+(`## Handoff From Your Earlier Self`, "continue the work; do not summarize it
+back") rather than as third-party notes. A previous boundary travels into the
+prompt, so a second handoff in one session keeps the goal and constraints the
+first one recorded.
+
+A prompt that cannot carry the whole covered range shrinks the range instead of
+clipping the prompt, because a document written over a silently shortened range
+would move the boundary past messages it never read. When even the smallest range
+does not fit, the document is refused and the job falls back to a structured
+summary over the same range; the turn is compacted either way.
+
+### Failure and cancellation
+
+A provider error or a cancellation commits nothing: the message count, the
+transcript and the previous boundary are exactly what they were. Both are
+reported to the caller as outcomes, and an overnight run logs them and continues
+with its remaining turns.
+
+Tests: `crates/app-core/src/agent/handoff_compaction_tests.rs` covers the
+committed boundary, the uncovered tail, the provider error and the cancellation;
+`crates/app-core/src/overnight_handoff_tests.rs` covers the supervisor pass and
+its failure path; `crates/harness-api-server/src/translate_handoff_tests.rs`
+covers the request field and the reported outcomes.
+
+### Restoration after a handoff
+
+A document is prose, so a successor cannot tell which files the covered work
+relied on. Every handoff boundary therefore carries a restoration manifest
+beside the document, the same shape a structured summary stores: at most
+`MAX_RESTORATION_ENTRIES` (10) paths, each with its kind (`file` or `skill`) and
+the tool that touched it, inside an allowance of 15% of the context window and
+never above `MAX_RESTORATION_BYTES` (50,000).
+
+The manifest is collected from the covered messages, never from the model's
+answer, so a document that forgets a file still reports it. It is written to
+`StoredSummaryMetadata.restoration`, which means it survives a restart and
+travels in the compacted event payload exactly like a structured summary's. An
+empty list is stored as absent rather than as an empty manifest.
+
+Tests: `crates/base/src/compaction/handoff_tests.rs` covers the collected
+entries and the empty case; `crates/app-core/src/agent/handoff_compaction_tests.rs`
+covers the manifest on the committed boundary and in the event graph.
+
+### Running more than one method: `method_order`
+
+`strategy` names one method. `[compaction] method_order` names a chain, so a
+method that cannot produce a boundary for this turn hands the same job to the
+next one instead of leaving the turn uncompacted:
+
+```toml
+[compaction]
+method_order = ["handoff", "structured"]
+```
+
+The trigger, cutoff, deadline, single slot and cancellation rules are the job's
+own and do not change; only the producer of the boundary walks down the list.
+The boundary that lands carries the tag of the method that wrote it, so a
+structured fallback is never introduced as the successor's own earlier writing.
+Transient provider failures (rate limits, 5xx, timeouts, dropped connections)
+are retried on the same method up to `MAX_TRANSIENT_RETRIES`; an overflow is not
+transient and is answered by shrinking the covered range.
+
+Resolution happens when a job starts, never at config load, and it is lenient so
+a bad entry can never fail a reload (`crates/base/src/compaction/method_order.rs`):
+
+- An absent or empty order reproduces the strategy: `handoff` still has its one
+  structured fallback, and a native strategy still runs no method of ours.
+- A list that does not end in `structured` is ignored as a whole, because the
+  last method is the only one with no further fallback.
+- A provider-native name (`openai_auto`, `openai_explicit`) also discards the
+  list: native compaction owns the transcript exclusively.
+- An unknown name is dropped and the rest of the list is kept.
+
+One method that fails twice in a row is skipped by later jobs until a boundary is
+committed, which resets every count. Two, not one, because a single provider
+hiccup should not retire a method; when every method is retired the full chain is
+used again, since a job with no method could never compact and the circuit
+breaker already owns suspending compaction.
+
+`tool_result_aging` is deliberately outside the chain. It runs before any
+summarization and fires on cache temperature and threshold proximity rather than
+turn order, so its effect ("the history already changed") cannot be expressed as
+a position relative to another method.
+
+Tests: `crates/base/src/compaction/method_order_tests.rs` covers resolution, the
+retirement budget and the chain's execution.
+
+### Three ideas horon already implements
+
+Compaction outside this tree is sometimes described as needing a rewrite guard, a
+multi-signal trigger, and a newest-observation rule. All three exist here without
+new code:
+
+- **A rewritten byte is never rewritten again.** An aged result carries
+  `AGED_MARKER_PREFIX` and is skipped on the next pass
+  (`crates/app-core/src/agent/tool_result_aging.rs`), and a pruned tool use is
+  recorded in a persisted ledger so it is never planned twice
+  (`crates/compaction-core/src/pruning.rs`).
+- **Reduction needs mass, gain and cadence.** A batch fires only above a pressure
+  ratio (`AGING_PRESSURE_RATIO`, 0.75 of the threshold) and a minimum batch size
+  (`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB), and at most once per crossing.
+- **Only the newest observation of a target survives.** Pruning keeps
+  `newest_by_key` and `newest_complete_by_path`, so a partial read, a failed call
+  and a later full read of the same path resolve to the one entry that is still
+  current.
+
+Tests: `crates/app-core/src/agent/tool_result_aging/tests.rs` covers the marker
+guard and the batch gate; `crates/compaction-core/src/pruning.rs` covers the
+newest selection.
 
 ## `--resume` behaviour
 

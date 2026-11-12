@@ -131,6 +131,7 @@ fn imported_history_is_bounded_for_fast_initial_render() {
         session.append_stored_message(StoredMessage {
             original_input: None,
             arg_repairs: None,
+            degradations: None,
             turn_start: false,
             id: format!("message-{index}"),
             role: if index % 2 == 0 { Role::User } else { Role::Assistant },
@@ -452,6 +453,7 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
     legacy.append_stored_message(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "assistant-tool".to_string(),
         role: Role::Assistant,
@@ -469,6 +471,7 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
     legacy.append_stored_message(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "user-result".to_string(),
         role: Role::User,
@@ -476,6 +479,7 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
             tool_use_id: "legacy/call".to_string(),
             content: "done".to_string(),
             is_error: Some(false),
+            verdict: None,
         }],
         display_role: None,
         timestamp: None,
@@ -485,6 +489,7 @@ fn cached_imported_session_preserves_existing_history_verbatim() {
     legacy.append_stored_message(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "horon-agent-continuation".to_string(),
         role: Role::Assistant,
@@ -997,6 +1002,7 @@ fn test_reimporting_claude_session_preserves_horon_agent_continuation() {
     session.append_stored_message(StoredMessage {
         original_input: None,
         arg_repairs: None,
+        degradations: None,
         turn_start: false,
         id: "horon-agent-continuation".to_string(),
         role: Role::User,

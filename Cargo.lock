@@ -2031,6 +2031,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "horon-agent-token-estimate",
+ "horon-agent-tool-types",
  "serde",
  "serde_json",
 ]
@@ -2219,10 +2220,12 @@ dependencies = [
  "horon-agent-logging",
  "horon-agent-message-types",
  "horon-agent-provider-core",
+ "horon-agent-schema-dialect",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
 ]
 
@@ -2239,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "horon-agent-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "horon-agent-base",
@@ -2252,6 +2255,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2392,6 +2396,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+ "toml_edit 0.20.2",
+ "unicode-width",
 ]
 
 [[package]]
@@ -3001,9 +3007,9 @@ dependencies = [
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "litemap"
@@ -4354,9 +4360,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.3"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "146c9e247ccc180c1f61615433868c99f3de3ae256a30a43b49f67c2d9171f34"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.2",
  "errno",

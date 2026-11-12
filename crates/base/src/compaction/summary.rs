@@ -119,6 +119,27 @@ pub struct RestorationManifest {
     pub total_bytes: u64,
 }
 
+impl RestorationManifest {
+    /// The stored form written to the session and the event graph.
+    ///
+    /// Every boundary that carries a manifest uses this one conversion, so a
+    /// handoff document and a structured summary persist the same shape.
+    pub fn to_stored(&self) -> crate::session::StoredRestorationManifest {
+        crate::session::StoredRestorationManifest {
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| crate::session::StoredRestorationEntry {
+                    path: entry.path.clone(),
+                    kind: entry.kind.clone(),
+                    note: entry.note.clone(),
+                })
+                .collect(),
+            total_bytes: self.total_bytes,
+        }
+    }
+}
+
 /// The typed artifact a provider must return.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SummaryArtifact {

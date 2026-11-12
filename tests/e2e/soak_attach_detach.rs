@@ -294,6 +294,30 @@ fn gauge_offenders(series: &CounterSeries, budget: f64) -> Vec<String> {
     Vec::new()
 }
 
+/// `pending_requests` is published by the harness bridge
+/// (`harness-api-server/src/translate.rs`), which this test never runs, so its
+/// value belongs to whichever sibling test in the same e2e binary started a
+/// bridge (`text_framing`). A constant one from that sibling is not a leak here,
+/// and demanding an absolute zero made this test's verdict depend on test
+/// scheduling. Comparing the first and last sample keeps the leak signal: a
+/// request this soak leaves undrained still raises the number across the run.
+fn pending_offenders(series: &CounterSeries) -> Vec<String> {
+    let (Some(baseline), Some(final_value)) = (series.baseline(), series.final_value()) else {
+        return vec![format!(
+            "{}: no value reported, so return-to-baseline is unproven",
+            series.name
+        )];
+    };
+    let retained = final_value - baseline;
+    if retained > 0.0 {
+        return vec![format!(
+            "{} did not return to its baseline: started {baseline:.0}, ended {final_value:.0} (+{retained:.0})",
+            series.name
+        )];
+    }
+    Vec::new()
+}
+
 /// Growth check for a total that legitimately starts above zero, such as tasks
 /// spawned since process start. Asking such a counter to reach zero would fail a
 /// run in which it never moved, so only its growth is a leak.
@@ -883,9 +907,10 @@ async fn run_soak() -> Result<()> {
         let mut offenders = growth_offenders(&fds, FD_RETENTION_BUDGET);
         offenders.extend(growth_offenders(&threads, THREAD_RETENTION_BUDGET));
 
-        for series in [&pending, &live_sessions, &clients] {
+        for series in [&live_sessions, &clients] {
             offenders.extend(gauge_offenders(series, GAUGE_BUDGET));
         }
+        offenders.extend(pending_offenders(&pending));
 
         offenders.extend(cumulative_offenders(&tasks, CUMULATIVE_GROWTH_BUDGET));
         offenders.extend(quiescence_misses.iter().map(|miss| format!("quiescence missed: {miss}")));
