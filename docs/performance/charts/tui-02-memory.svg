@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="662" viewBox="0 0 960 662" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', 'Apple SD Gothic Neo', Helvetica, Arial, sans-serif" role="img">
+<title>TUI memory and size (MB, lower is better)</title>
+<rect x="0.5" y="0.5" width="959" height="661" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<text x="32.0" y="44.0" font-size="22" fill="#1f2328" text-anchor="start" font-weight="bold">TUI memory and size (MB, lower is better)</text>
+<text x="32.0" y="68.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">Median per run. `idle` is the process tree 5 s after the first frame, `post-turn` is after one mock turn, and `install</text>
+<text x="32.0" y="86.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">size` is the `horon-tui` binary.</text>
+<rect x="32" y="118.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="136.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Linux</text>
+<line x1="144.2" y1="158.0" x2="144.2" y2="248.0" stroke="#eaeef2"/>
+<text x="144.2" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="362.2" y1="158.0" x2="362.2" y2="248.0" stroke="#eaeef2"/>
+<text x="362.2" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="580.1" y1="158.0" x2="580.1" y2="248.0" stroke="#eaeef2"/>
+<text x="580.1" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="798.0" y1="158.0" x2="798.0" y2="248.0" stroke="#eaeef2"/>
+<text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<text x="134.2" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
+<rect x="144.2" y="164.0" width="583.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="735.8" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.36</text>
+<text x="134.2" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
+<rect x="144.2" y="194.0" width="600.1" height="18" rx="3" fill="#d3d9e1"/>
+<text x="752.4" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.51</text>
+<text x="134.2" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
+<rect x="144.2" y="224.0" width="610.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="762.9" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.60</text>
+<rect x="32" y="278.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="296.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
+<line x1="144.2" y1="318.0" x2="144.2" y2="408.0" stroke="#eaeef2"/>
+<text x="144.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="275.0" y1="318.0" x2="275.0" y2="408.0" stroke="#eaeef2"/>
+<text x="275.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="405.8" y1="318.0" x2="405.8" y2="408.0" stroke="#eaeef2"/>
+<text x="405.8" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="536.5" y1="318.0" x2="536.5" y2="408.0" stroke="#eaeef2"/>
+<text x="536.5" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
+<line x1="667.2" y1="318.0" x2="667.2" y2="408.0" stroke="#eaeef2"/>
+<text x="667.2" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">8</text>
+<line x1="798.0" y1="318.0" x2="798.0" y2="408.0" stroke="#eaeef2"/>
+<text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
+<text x="134.2" y="337.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
+<rect x="144.2" y="324.0" width="579.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="731.4" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.86</text>
+<text x="134.2" y="367.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
+<rect x="144.2" y="354.0" width="591.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="743.7" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.05</text>
+<text x="134.2" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
+<rect x="144.2" y="384.0" width="324.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="476.8" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">4.96</text>
+<rect x="32" y="438.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="456.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
+<line x1="144.2" y1="478.0" x2="144.2" y2="568.0" stroke="#eaeef2"/>
+<text x="144.2" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="275.0" y1="478.0" x2="275.0" y2="568.0" stroke="#eaeef2"/>
+<text x="275.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1</text>
+<line x1="405.8" y1="478.0" x2="405.8" y2="568.0" stroke="#eaeef2"/>
+<text x="405.8" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="536.5" y1="478.0" x2="536.5" y2="568.0" stroke="#eaeef2"/>
+<text x="536.5" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">3</text>
+<line x1="667.2" y1="478.0" x2="667.2" y2="568.0" stroke="#eaeef2"/>
+<text x="667.2" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
+<line x1="798.0" y1="478.0" x2="798.0" y2="568.0" stroke="#eaeef2"/>
+<text x="798.0" y="584.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">5</text>
+<text x="134.2" y="497.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
+<rect x="144.2" y="484.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
+<text x="192.2" y="497.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
+<text x="134.2" y="527.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
+<rect x="144.2" y="514.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
+<text x="192.2" y="527.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
+<text x="134.2" y="557.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
+<rect x="144.2" y="544.0" width="645.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="797.3" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">4.93</text>
+<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 805b408 · measured 2026-11-12 18:15 UTC · run 43273766126</text>
+<text x="32.0" y="622.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
+</svg>
