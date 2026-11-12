@@ -301,7 +301,7 @@ The one tool whose model does not speak Chat Completions. Registered only when
 `[tools] generate_image = true` **and** the active profile names
 `roles.image = "<model>"`; with either missing the name is neither registered nor
 in an index row, so a session that never generates an image pays nothing for the
-tool existing. `profile/INTEGRATIONS.md` has the MCP recipe for anything this
+tool existing. `docs/provider/INTEGRATIONS.md` has the MCP recipe for anything this
 tool does not cover.
 
 | Input | Meaning |

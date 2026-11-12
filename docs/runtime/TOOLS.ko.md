@@ -297,7 +297,7 @@ memory = "essential"
 
 ## `generate_image`
 
-Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[tools] generate_image = true`이면서 활성 프로파일에 `roles.image = "<model>"`이 있을 때만 등록된다. 둘 중 하나가 빠지면 이름이 등록되지도 색인 행에 들어가지도 않으므로, 이미지를 만들지 않는 세션은 도구가 존재하는 값으로 아무것도 치르지 않는다. 이 도구가 다루지 못하는 것은 `profile/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
+Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[tools] generate_image = true`이면서 활성 프로파일에 `roles.image = "<model>"`이 있을 때만 등록된다. 둘 중 하나가 빠지면 이름이 등록되지도 색인 행에 들어가지도 않으므로, 이미지를 만들지 않는 세션은 도구가 존재하는 값으로 아무것도 치르지 않는다. 이 도구가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
 
 | 입력 | 뜻 |
 | --- | --- |
