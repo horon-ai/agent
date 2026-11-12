@@ -62,7 +62,7 @@ the `export_session_markdown` harness API reply.
 | `horon usage [--json]` | Usage limits for connected providers. |
 | `horon mcp` | List configured MCP servers and manage remote-server OAuth credentials. |
 | `horon memory` | Memory management. |
-| `horon cloud move\|return\|where\|attach` | Move a live session to a cloud host and bring its work back. |
+| `horon cloud move\|return\|where\|attach\|receive\|activate\|export\|list` | Move a live session to a cloud host, bring its work back, and manage the transferred sessions. |
 | `horon pair [--list] [--revoke <name>]` | Pairing codes for the iOS and web clients. |
 | `horon permissions` / `horon ambient` | Review pending ambient permission requests. |
 | `horon debug <command> [arg]` | Talk to a running daemon over the debug socket. |

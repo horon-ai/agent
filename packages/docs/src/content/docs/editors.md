@@ -55,8 +55,10 @@ there is no way to erase credentials.
 A method that calls an unadvertised capability is refused with `-32601`; so is an
 unknown request starting with `_`. Unknown notifications are ignored, and
 notifications never get a response. Any request sent before `initialize` is
-`-32600`, and a `protocolVersion` that is missing or outside the integer range
-0–65535 is `-32602`.
+`-32600`. A `protocolVersion` that is missing or outside 0–65535 is `-32602`; `0`
+is in range but selects nothing, so it answers `-32022 Unsupported protocol
+version` with the supported list. Preparing for v2 takes an `info` object with a
+string `name` and `version`.
 
 ## Version 2
 
@@ -64,5 +66,11 @@ v2 is additive for clients that negotiate it: `session/prompt` acknowledges with
 `messageId` and progress arrives as `state_update` notifications, `session/load`
 becomes `session/resume` with `replayFrom`, `authenticate`/`logout` become
 `auth/login`/`auth/logout`, `session/set_mode` becomes
-`session/set_config_option`, and capability markers are objects instead of
-booleans. v1 behaves exactly as before.
+`session/set_config_option`, v2 has no `tool_call` update (the first
+`tool_call_update` creates the call), and capability markers are objects instead
+of booleans. v2 answers `protocolVersion: 2` and advertises no `loadSession`.
+v1 behaves exactly as before.
+
+A connection can fall back to v1 only with `[acp] protocol_v2 = false` or
+`HORON_AGENT_ACP_PROTOCOL_V2=0`; a running `horon acp` has to be restarted for
+the change to apply.
