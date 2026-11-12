@@ -73,6 +73,7 @@ input = ["text", "image"]
 | `plan` | 계획 턴. 실행을 넘기기 전에 계획을 쓰는 모델이다(#70). | `plan` |
 | `aux` | 값싼 보조 작업. 압축 요약, 제목, 분류, 기억 추출이다. | `aux` |
 | `judge` | 타입이 있는 판단. 턴이 이미 낸 텍스트에 대해 `bool`, `choice`, `score` 질문 하나를 한 번의 제한된 호출로 답한다. 지금 유일한 호출자는 예상 밖 종료 복구다(`docs/runtime/TURNS.ko.md`). | `judge` |
+| `image` | 이미지 생성과 편집. Chat Completions를 말하지 않는 모델을 지정하는 유일한 역할이다. 유일한 호출자는 `generate_image` 도구이고, 같은 프로파일의 `/images/generations`와 `/images/edits`로 요청을 보낸다. 텍스트 모델은 이미지 요청에 답할 수 없으므로 상속 폴백이 없다. | `image` |
 
 다른 역할은 없다. 새 역할은 그 역할을 부르는 작업과 함께 추가한다. 이유: 부르는 곳이 없는 역할은 `default`의 두 번째 표기에 지나지 않고, 쓰는 곳보다 먼저 생긴 역할은 어느 모델을 가리켜야 하는지 검토할 수 없다.
 
@@ -109,7 +110,7 @@ aux = "my-small-model"
 5. `[provider] default_model`.
 6. 비어 있던 키와 작업 이름을 짚는 오류.
 
-빈 문자열은 어느 단계에서든 미설정으로 본다. `aux`도 같은 사슬을 걸으므로 `default_model`만 있는 프로파일은 보조 작업에 지금의 모델을 쓴다. `judge`는 `default`보다 `aux`를 먼저 상속하므로, 보조 작업용으로 값싼 모델 하나를 이미 지정한 프로파일은 세션 모델을 쓰지 않고 그 모델로 판단한다. 이유: 1, 4, 5단계는 에이전트가 지금 모델 하나를 고르는 순서다. 역할은 그 위에 끼어들므로 기존 파일은 모두 지금과 같은 모델로 풀리고, 미설정 역할은 실패하지 않고 상속한다.
+빈 문자열은 어느 단계에서든 미설정으로 본다. `aux`도 같은 사슬을 걸으므로 `default_model`만 있는 프로파일은 보조 작업에 지금의 모델을 쓴다. `judge`는 `default`보다 `aux`를 먼저 상속하므로, 보조 작업용으로 값싼 모델 하나를 이미 지정한 프로파일은 세션 모델을 쓰지 않고 그 모델로 판단한다. `image`는 3단계에서 멈춘다. 상속하는 역할이 없고 프로파일이나 프로바이더의 텍스트 기본값도 받지 않는다. 채팅 모델로 보낸 이미지 요청은 성공할 수 없으므로 `roles.image`가 없으면 이미지 생성이 설정되지 않은 것이고, 도구가 그렇게 보고한다. 끝점에서 항상 실패하는 호출을 보내지 않는다. 텍스트 기본값이 대체물이 될 수 없는 유일한 역할이며 `ModelRole::accepts_text_default`가 이를 한 곳에서 밝힌다. 1, 4, 5단계는 에이전트가 지금 모델 하나를 고르는 순서다. 역할은 그 위에 끼어들므로 기존 파일은 모두 지금과 같은 모델로 풀리고, 미설정 역할은 실패하지 않고 상속한다.
 
 ### 폴백과 페일오버 순서
 
@@ -126,6 +127,17 @@ aux = "my-small-model"
 #73이 공유 타입을 쓴다. `crates/config-types/src/lib.rs`의 `NamedProviderConfig`에 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
 
 역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
+
+### `image` 역할과 단일 모델 경로
+
+이 빌드의 규칙은 모델 경로가 하나라는 것이다. 턴은 `[provider] default_provider` 또는 `--provider-profile`이 가리키는 프로파일의 `/chat/completions`로 요청을 보낸다. `generate_image` 도구는 문서로 밝힌 유일한 예외이고, 그것도 구조가 아니라 경로다.
+
+- **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
+- 프로바이더 런타임은 여전히 하나이고 두 번째 라우터도 플러그인 호스트도 없다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에 놓인 요청 빌더이지 런타임이 아니다.
+- 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
+- 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
+- 모델은 이미지 바이트를 받지 않는다. 파일은 `~/.horon/generated-images/`에 놓이고 결과는 경로, 크기, MIME 타입을 알린다. 한 호출이 컨텍스트와 저장 이벤트 로그에 메가바이트를 넣지 않고 수백 토큰으로 끝나는 이유다.
+- 출력은 OpenAI Images 형태로 한정한다. 그 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다. Gemini 자체 형식과 Responses 내장 이미지 도구는 범위 밖이고, 이 경로가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
 
 ### 실제로 쓰이는 `judge` 역할
 
