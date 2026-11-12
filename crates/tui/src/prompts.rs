@@ -81,7 +81,6 @@ impl Ask {
         true
     }
 
-    /// Move to the next unanswered question, or finish when none is left.
     /// Answers for every question, in the order they were asked.
     ///
     /// `chosen` is built with one slot per question and only ever written
@@ -97,6 +96,7 @@ impl Ask {
             .collect()
     }
 
+    /// Move to the next unanswered question, or finish when none is left.
     fn advance(&mut self) -> bool {
         while self.current < self.questions.len() {
             let answered = self.chosen.get(self.current).is_some_and(|held| !held.is_empty());
@@ -251,18 +251,12 @@ impl Prompt {
                         if key.ctrl {
                             return None;
                         }
-                        let Some(index) = character
-                            .to_digit(10)
-                            .and_then(|digit| usize::try_from(digit).ok())
-                            .and_then(|digit| digit.checked_sub(1))
-                        else {
-                            return None;
-                        };
+                        let index = character.to_digit(10)?.checked_sub(1)?;
                         // A digit past the last option selects nothing. Leaving
                         // the question untouched keeps the prompt on it, rather
                         // than stepping past an empty answer the daemon would
                         // fill in with a default the user never chose.
-                        if !ask.choose(index) {
+                        if !ask.choose(index as usize) {
                             return None;
                         }
                         if multi {
