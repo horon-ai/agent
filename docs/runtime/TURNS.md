@@ -502,6 +502,29 @@ a position relative to another method.
 Tests: `crates/base/src/compaction/method_order_tests.rs` covers resolution, the
 retirement budget and the chain's execution.
 
+### Three ideas horon already implements
+
+Compaction outside this tree is sometimes described as needing a rewrite guard, a
+multi-signal trigger, and a newest-observation rule. All three exist here without
+new code:
+
+- **A rewritten byte is never rewritten again.** An aged result carries
+  `AGED_MARKER_PREFIX` and is skipped on the next pass
+  (`crates/app-core/src/agent/tool_result_aging.rs`), and a pruned tool use is
+  recorded in a persisted ledger so it is never planned twice
+  (`crates/compaction-core/src/pruning.rs`).
+- **Reduction needs mass, gain and cadence.** A batch fires only above a pressure
+  ratio (`AGING_PRESSURE_RATIO`, 0.75 of the threshold) and a minimum batch size
+  (`AGING_MIN_PRESSURE_BATCH_BYTES`, 64 KiB), and at most once per crossing.
+- **Only the newest observation of a target survives.** Pruning keeps
+  `newest_by_key` and `newest_complete_by_path`, so a partial read, a failed call
+  and a later full read of the same path resolve to the one entry that is still
+  current.
+
+Tests: `crates/app-core/src/agent/tool_result_aging/tests.rs` covers the marker
+guard and the batch gate; `crates/compaction-core/src/pruning.rs` covers the
+newest selection.
+
 ## `--resume` behaviour
 
 This build has no interactive session picker. Session resume is a single global `--resume`
