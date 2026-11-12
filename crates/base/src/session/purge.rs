@@ -57,7 +57,7 @@ pub fn purge_session_state(session_id: &str) -> Result<PurgeReport> {
     let home = storage::horon_agent_dir()?;
     let mut report = PurgeReport::default();
 
-    // The transcript, plus the legacy JSON, journal and artifacts behind it.
+    // The transcript, plus the older JSON, journal and artifacts behind it.
     // The directory is recorded only when it existed, so a second purge of the
     // same id reports nothing removed.
     //
