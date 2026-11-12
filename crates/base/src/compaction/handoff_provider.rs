@@ -91,8 +91,11 @@ pub async fn handoff_document(
     summary_model: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<super::handoff::HandoffDocument, HandoffError> {
+    // The restoration manifest is bounded by the window the document has to
+    // live in, so the generator needs it before the completion is built.
+    let context_window = provider.context_window();
     let completer = ProviderHandoff::new(provider, summary_model);
-    generate_handoff_at_cutoff(messages, cutoff, prior, &completer, cancel).await
+    generate_handoff_at_cutoff(messages, cutoff, context_window, prior, &completer, cancel).await
 }
 
 /// The job result for a committed handoff document.
@@ -112,7 +115,7 @@ pub(super) fn handoff_result(document: super::handoff::HandoffDocument, duration
         covered_messages: document.cutoff,
         input_tokens: None,
         output_tokens: None,
-        restoration: None,
+        restoration: (!document.restoration.entries.is_empty()).then_some(document.restoration),
         handoff: true,
     }
 }

@@ -439,6 +439,25 @@ committed boundary, the uncovered tail, the provider error and the cancellation;
 its failure path; `crates/harness-api-server/src/translate_handoff_tests.rs`
 covers the request field and the reported outcomes.
 
+### Restoration after a handoff
+
+A document is prose, so a successor cannot tell which files the covered work
+relied on. Every handoff boundary therefore carries a restoration manifest
+beside the document, the same shape a structured summary stores: at most
+`MAX_RESTORATION_ENTRIES` (10) paths, each with its kind (`file` or `skill`) and
+the tool that touched it, inside an allowance of 15% of the context window and
+never above `MAX_RESTORATION_BYTES` (50,000).
+
+The manifest is collected from the covered messages, never from the model's
+answer, so a document that forgets a file still reports it. It is written to
+`StoredSummaryMetadata.restoration`, which means it survives a restart and
+travels in the compacted event payload exactly like a structured summary's. An
+empty list is stored as absent rather than as an empty manifest.
+
+Tests: `crates/base/src/compaction/handoff_tests.rs` covers the collected
+entries and the empty case; `crates/app-core/src/agent/handoff_compaction_tests.rs`
+covers the manifest on the committed boundary and in the event graph.
+
 ### Running more than one method: `method_order`
 
 `strategy` names one method. `[compaction] method_order` names a chain, so a

@@ -12,6 +12,10 @@ use anyhow::Result;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
+/// A context window wide enough that the restoration allowance is the
+/// absolute ceiling, so these tests pin prompt sizing alone.
+const TEST_WINDOW: usize = 400_000;
+
 /// A transcript long enough that one prompt over all of it overflows the cap.
 ///
 /// The messages are short on purpose: a short message renders whole, so the
@@ -78,7 +82,7 @@ async fn an_oversized_range_shrinks_instead_of_producing_a_clipped_prompt() {
     let completer = RecordingCompleter::new();
     let cancel = not_cancelled();
 
-    let document = generate_handoff_at_cutoff(&messages, messages.len(), None, &completer, &cancel)
+    let document = generate_handoff_at_cutoff(&messages, messages.len(), TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect("the range shrinks and the document is written");
 
@@ -106,9 +110,16 @@ async fn a_prior_document_too_large_for_the_cap_is_refused_not_truncated() {
     let cancel = not_cancelled();
     let prior = "p".repeat(MAX_PROMPT_BYTES + 1);
 
-    let error = generate_handoff_at_cutoff(&messages, messages.len(), Some(&prior), &completer, &cancel)
-        .await
-        .expect_err("no range fits beside an oversized prior document");
+    let error = generate_handoff_at_cutoff(
+        &messages,
+        messages.len(),
+        TEST_WINDOW,
+        Some(&prior),
+        &completer,
+        &cancel,
+    )
+    .await
+    .expect_err("no range fits beside an oversized prior document");
 
     assert!(
         matches!(error, HandoffError::CoveredRangeTooLarge { budget } if budget == MAX_PROMPT_BYTES),
@@ -127,7 +138,7 @@ async fn the_prior_document_is_carried_into_the_prompt() {
     let cancel = not_cancelled();
     let prior = "## Goal\nkeep the migration green\n\n## Constraints\nno schema changes\n";
 
-    generate_handoff_at_cutoff(&messages, messages.len(), Some(prior), &completer, &cancel)
+    generate_handoff_at_cutoff(&messages, messages.len(), TEST_WINDOW, Some(prior), &completer, &cancel)
         .await
         .expect("handoff generation");
 
@@ -146,7 +157,7 @@ async fn a_zero_cutoff_covers_nothing() {
     let completer = RecordingCompleter::new();
     let cancel = not_cancelled();
 
-    let error = generate_handoff_at_cutoff(&messages, 0, None, &completer, &cancel)
+    let error = generate_handoff_at_cutoff(&messages, 0, TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect_err("a zero cutoff covers nothing");
 
@@ -159,7 +170,7 @@ async fn a_cutoff_past_the_transcript_is_clamped() {
     let completer = RecordingCompleter::new();
     let cancel = not_cancelled();
 
-    let document = generate_handoff_at_cutoff(&messages, messages.len() + 99, None, &completer, &cancel)
+    let document = generate_handoff_at_cutoff(&messages, messages.len() + 99, TEST_WINDOW, None, &completer, &cancel)
         .await
         .expect("an oversized cutoff clamps to the transcript");
 
@@ -180,7 +191,7 @@ async fn cancellation_stops_the_generation_before_it_is_committed() {
     let messages = long_transcript(4);
     let cancel = AtomicBool::new(true);
 
-    let error = generate_handoff_at_cutoff(&messages, messages.len(), None, &Pending, &cancel)
+    let error = generate_handoff_at_cutoff(&messages, messages.len(), TEST_WINDOW, None, &Pending, &cancel)
         .await
         .expect_err("a cancelled generation reports cancellation");
 

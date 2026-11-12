@@ -40,6 +40,7 @@
 //! can tell "the model failed" from "we stopped waiting".
 
 use super::source_projection::{CoveredRange, SourceProjection, render_source_range};
+use super::summary::{RestorationManifest, collect_restoration_with_remaining};
 use crate::aux_completion::{self, CompletionRequest, MAX_PROMPT_BYTES};
 use crate::message::Message;
 use anyhow::Result;
@@ -96,6 +97,16 @@ pub struct HandoffDocument {
     pub document: String,
     /// Index of the first message kept verbatim in the caller's message slice.
     pub cutoff: usize,
+    /// Files and skills the covered prefix touched, collected over exactly
+    /// `[0, cutoff)`.
+    ///
+    /// The document is prose, so a resuming agent cannot tell which files the
+    /// covered work relied on. This manifest travels with the boundary for the
+    /// same reason a structured summary carries one: it is a bounded list of
+    /// paths the successor may need to re-read. It is collected from the
+    /// covered messages, never from the model's answer, so a document that
+    /// forgets a file still reports it.
+    pub restoration: RestorationManifest,
 }
 
 /// Why a handoff document was not produced.
@@ -167,6 +178,7 @@ impl HandoffCompleter for AuxCompletion {
 pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
     messages: &[Message],
     recent_tokens: usize,
+    context_window: usize,
     prior: Option<&str>,
     completer: &C,
     cancel: &AtomicBool,
@@ -175,7 +187,7 @@ pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
     if cutoff == 0 {
         return Err(HandoffError::NothingToCover);
     }
-    generate_handoff_at_cutoff(messages, cutoff, prior, completer, cancel).await
+    generate_handoff_at_cutoff(messages, cutoff, context_window, prior, completer, cancel).await
 }
 
 /// The same generation for a caller that already decided how far to cover.
@@ -188,6 +200,7 @@ pub async fn generate_handoff<C: HandoffCompleter + ?Sized>(
 pub async fn generate_handoff_at_cutoff<C: HandoffCompleter + ?Sized>(
     messages: &[Message],
     cutoff: usize,
+    context_window: usize,
     prior: Option<&str>,
     completer: &C,
     cancel: &AtomicBool,
@@ -221,6 +234,9 @@ pub async fn generate_handoff_at_cutoff<C: HandoffCompleter + ?Sized>(
             detail: error.to_string(),
         })?;
 
+    let restoration =
+        collect_restoration_with_remaining(&projection, CoveredRange::new(0, cutoff), context_window, u64::MAX);
+
     if cancel.load(Ordering::Relaxed) {
         return Err(HandoffError::Cancelled);
     }
@@ -229,7 +245,8 @@ pub async fn generate_handoff_at_cutoff<C: HandoffCompleter + ?Sized>(
         biased;
         () = await_cancellation(cancel) => Err(HandoffError::Cancelled),
         result = completer.complete(request) => match result {
-            Ok(document) => validate_document(&document).map(|()| HandoffDocument { document, cutoff }),
+            Ok(document) => validate_document(&document)
+                .map(|()| HandoffDocument { document, cutoff, restoration }),
             Err(error) => Err(HandoffError::Provider {
                 detail: format!("{error:#}"),
             }),
@@ -241,20 +258,22 @@ pub async fn generate_handoff_at_cutoff<C: HandoffCompleter + ?Sized>(
 pub async fn generate_handoff_with_aux(
     messages: &[Message],
     recent_tokens: usize,
+    context_window: usize,
     prior: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<HandoffDocument, HandoffError> {
-    generate_handoff(messages, recent_tokens, prior, &AuxCompletion, cancel).await
+    generate_handoff(messages, recent_tokens, context_window, prior, &AuxCompletion, cancel).await
 }
 
 /// The same, for a cutoff the caller already decided.
 pub async fn generate_handoff_at_cutoff_with_aux(
     messages: &[Message],
     cutoff: usize,
+    context_window: usize,
     prior: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<HandoffDocument, HandoffError> {
-    generate_handoff_at_cutoff(messages, cutoff, prior, &AuxCompletion, cancel).await
+    generate_handoff_at_cutoff(messages, cutoff, context_window, prior, &AuxCompletion, cancel).await
 }
 
 /// Refuse an answer that cannot stand in for the covered messages.
