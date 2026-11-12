@@ -592,6 +592,9 @@ pub(crate) struct ToolCallPatch {
     /// The client controls the call currently supports. `Some(Value::Null)`
     /// clears them, which every final status does.
     pub(crate) capabilities: Option<Value>,
+    /// Extension data sent as `_meta`; the final update of a call that has a
+    /// verdict carries it here.
+    pub(crate) meta: Option<Value>,
 }
 
 impl ToolCallPatch {
@@ -647,6 +650,9 @@ pub(crate) fn tool_call_update(tool_call_id: &str, patch: &ToolCallPatch) -> Val
     }
     if let Some(capabilities) = &patch.capabilities {
         update["capabilities"] = capabilities.clone();
+    }
+    if let Some(meta) = &patch.meta {
+        update["_meta"] = meta.clone();
     }
     update
 }

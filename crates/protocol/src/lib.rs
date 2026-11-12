@@ -38,7 +38,7 @@ pub enum CommDeliveryMode {
 }
 
 /// A message in conversation history (for sync)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HistoryMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_stats: Option<horon_agent_session_types::ResponseStats>,
@@ -58,6 +58,11 @@ pub struct HistoryMessage {
     pub tool_calls: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_data: Option<ToolCall>,
+    /// The verdict stored on the tool result this row shows. Absent on every
+    /// other row and on results stored without one, so those rows keep the
+    /// bytes they always had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<horon_agent_tool_types::ToolVerdict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

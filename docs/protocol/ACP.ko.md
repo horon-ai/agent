@@ -147,6 +147,8 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 | `available_commands_update` | 슬래시 명령 목록 |
 | `config_option_update`, `current_mode_update` | 설정이나 모드가 바뀜 |
 
+호출을 끝내는 `tool_call_update`는 그 호출의 verdict도 `"_meta": {"horon-agent": {"verdict": "<이름>"}}`으로 싣는다. 이름은 `ok`, `partial`, `truncated`, `withheld`, `rejected`, `failed`, `interrupted`이고 뜻은 [도구 결과 판정](../runtime/TOOLS.ko.md#도구-결과-판정)에 있다. 모든 프로필이 보낸다. 데몬이 그 호출의 verdict를 알리지 않았으면 `_meta` 키가 없고 프레임은 전과 바이트 단위로 같다. `status`는 verdict에서 유도하지 않는다. 호출이 오류를 돌려주면 여전히 `failed`이고 그 밖에는 `completed`다. `load`는 저장된 verdict를 재생되는 `tool_call_update`에 같은 방식으로 싣고, verdict 없이 저장된 결과는 `_meta` 없이 재생한다.
+
 `notice`와 `compaction_update`는 클라이언트가 `session.notices`, `session.compaction`을 `clientCapabilities`로 알린 경우에만 보낸다. 알리지 않으면 보내지 않는다. 압축이 끝나면 `compactionId`는 `<턴 id>-cmp-<순번>` 모양이다.
 
 슬래시 명령은 `/model`, `/models`, `/effort` 세 가지다. 문장 맨 앞에 공백을 하나 두면 명령으로 해석하지 않고 모델에 그대로 보낸다.
@@ -164,7 +166,7 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 | 모드 id | 동작 | 데몬 승인 설정으로 바뀌는 값 |
 |---|---|---|
 | `default` | 데몬 설정(`approval_mode`)을 그대로 따른다 | 세션 덮어쓰기를 해제 |
-| `ask-commands` | 셸과 네트워크 도구는 묻고, 파일 편집은 바로 실행 | `write` |
+| `ask-commands` | 셸·네트워크·파일 변이 도구 앞에서 묻음 | `write` |
 | `auto` | 묻지 않고 실행 | `off` |
 
 모드는 `modes`와 `configOptions`의 첫 항목(`mode`, category `mode`) 두 곳에 나온다. 모드는 prompt가 진행 중이어도 `session/set_mode`나 `session/set_config_option`으로 바꿀 수 있고, 바꾸면 `current_mode_update`와 `config_option_update`가 나간다. 모르는 모드 id는 `-32602`다.
@@ -175,8 +177,12 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 |---|---|
 | `allow-once` | 이번 한 번 허용 |
 | `allow-always` | 허용. 같은 도구 이름은 세션 동안 다시 묻지 않음 |
+| `allow-path` | v2 전용. 이 파일을 앞으로 허용. 범위 승인으로 기록됨 |
+| `allow-folder` | v2 전용. 이 파일의 폴더를 앞으로 허용. 범위 승인으로 기록됨 |
 | `reject-once` | 이번 한 번 거절 |
 | `reject-always` | 거절. 같은 도구 이름은 세션 동안 다시 묻지 않음 |
+
+v1 세션은 늘 그렇던 네 옵션을 같은 순서로 받으므로 기존 에디터는 영향받지 않는다. v2 세션은 호출이 파일시스템 경로를 정확히 하나만 댈 때만 `allow-path`와 `allow-folder`를 받는다. 한 번의 답이 사용자가 보지 못한 여러 자리를 결정해서는 안 되기 때문이다. 두 범위 옵션은 `allow-always`가 쓰는 도구별 기억을 건드리지 않는다. 승인은 도구가 아니라 자리에 대한 것이기 때문이다. 승인은 데몬이 직접 저장하고(`docs/runtime/TOOLS.md`의 "범위 승인") 단일 경로 검사를 다시 하므로, 클라이언트가 자기 답의 범위를 넓힐 수 없다.
 
 취소 결과, 모르는 optionId, 깨진 응답, 클라이언트 오류는 모두 거절로 처리한다. 다른 화면에서 먼저 결정하면 에디터의 질문은 `$/cancel_request`로 거둔다.
 
@@ -267,6 +273,8 @@ v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `ses
 **메시지 id.** 모든 `*_message_chunk`와 통째 메시지 업데이트에 `messageId`가 있다. 에디터가 보낸 prompt의 사용자 메시지는 `user_message` 하나로 한 번 보고하며, id는 prompt 응답의 `messageId`와 같다. 다른 화면이 시작한 턴의 사용자 메시지도 보고한다. 단, 표시 역할 없이 저장된 행만 대상이고 `[auto]` 시스템 알림은 사용자 메시지가 아니다. 턴 도중에 끼어든 소프트 인터럽트는 데몬이 행을 저장하는 즉시 그 행 id를 `messageId`로 한 `user_message`로 온다. 답변과 추론 id는 턴을 시작한 메시지의 저장 id에서 `<id>:a<n>`, `<id>:t<n>` 형태로 만든다. `n`은 도구 실행 라운드마다 늘어난다. 기록을 재생해도 같은 규칙으로 계산하므로 실시간 id와 재생 id가 같다.
 
 **도구 호출.** v2에는 `tool_call` 업데이트가 없다. 한 `toolCallId`의 첫 `tool_call_update`가 호출을 만들고, 그때 `title`, `name`, `kind`, `status: "pending"`을 담는다. 입력이 완성되면 `rawInput`, 절대 경로 `locations`, bash 명령이 이후 업데이트로 채워진다. 내용은 `tool_call_content_chunk`로 오고, 값을 생략한 필드는 바뀌지 않는다. 실행을 시작한 호출은 `capabilities: {cancel: {}}`를 광고하고, 최종 상태가 되면 `capabilities: null`로 거둔다. `tool_call/cancel {sessionId, toolCallId}`는 광고 중인 그 호출 하나만 멈추고, 데몬이 취소를 시작했다고 답하면 바로 `{}`로 답한다. 그 호출은 `status: "cancelled"`로 끝나고 턴은 계속된다. 모르는 호출, 이미 끝난 호출, 광고하지 않은 호출은 데몬에 보내지 않고 `-32602`다. 턴이 취소될 때 실행 중이던 도구는 `status: "cancelled"`로 끝난다. `session/close`가 제한 시간 안에 턴을 멈추지 못해도 열린 도구는 `cancelled`로 끝나고, 데몬 연결이 끊기면 `failed`로 끝난 뒤 idle `error`가 온다.
+
+**도구 verdict.** 호출을 최종 상태로 옮기는 `tool_call_update`가 verdict를 `"_meta": {"horon-agent": {"verdict": "<이름>"}}`으로 싣는다. 이름과 규칙은 v1과 같다. 모든 프로필이 보내고, verdict가 없는 호출에는 `_meta` 키가 없으며, `status`는 verdict에서 유도하지 않는다. `tool_call/cancel`로 멈춘 호출은 취소가 시작될 때 최종 `status: "cancelled"` 업데이트를 이미 받았고, 도구가 나중에 끝나도 어댑터가 두 번째 업데이트를 보내지 않으므로 그 호출의 verdict는 알리지 않는다. `replayFrom: {type: "start"}`인 `session/resume`은 저장된 verdict를 재생되는 완료 `tool_call_update`에 싣는다.
 
 **구조화된 diff.** 파일 편집은 `{type: "diff", changes: [{operation, path, oldPath, fileType: "text"}], patch: {format: "git_patch", text}}`로 간다. `operation`은 `add`, `modify`, `delete`, `move`이고 `oldPath`는 `move`에만 붙는다. `apply_patch`의 `Add File`처럼 호출 전에 없던 파일은 `add`이고, 패치에 `new file mode`와 `--- /dev/null`이 들어간다. 경로는 절대 경로이며 `a/`, `b/` 접두어가 없고, 없는 쪽은 `/dev/null`이다. v1과 달리 `oldText`/`newText`는 보내지 않는다.
 

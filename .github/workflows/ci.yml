@@ -741,7 +741,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
-            --timeout 600 --min-passed 289 \
+            --timeout 600 --min-passed 297 \
             -- acp --nocapture
 
       - name: Run deterministic retention-readiness cohort
@@ -1094,7 +1094,7 @@ jobs:
             -- verdict_bytes_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 2 \
+            --timeout 600 --min-passed 3 \
             -- agent::verdict_store_tests:: --nocapture
 
       - name: Run tool_done verdict cohort

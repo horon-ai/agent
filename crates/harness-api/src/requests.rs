@@ -577,11 +577,17 @@ pub enum ApiRequest {
     Unknown,
 }
 
+/// A human decision on a pending approval request.
+///
+/// `AllowPath` and `AllowFolder` also stop the question for one file or one
+/// folder; see the matching protocol type.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     Allow,
     AllowAlways,
+    AllowPath,
+    AllowFolder,
     Deny,
 }
 

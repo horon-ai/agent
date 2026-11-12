@@ -37,7 +37,14 @@ fn the_bridge_advertises_the_capabilities_a_client_gates_on() {
 
 #[test]
 fn a_permission_response_becomes_a_decision_the_daemon_can_record() {
-    for (decision, expected) in [("allow", "allow"), ("allow_always", "allow_always"), ("deny", "deny")] {
+    for (decision, expected) in [
+        ("allow", "allow"),
+        ("allow_always", "allow_always"),
+        // A scoped answer is still an approval; the daemon stores the grant.
+        ("allow_path", "allow_path"),
+        ("allow_folder", "allow_folder"),
+        ("deny", "deny"),
+    ] {
         let mut state = state_with_session();
         let outbound = state.api_request_to_legacy(&json!({
             "v": 1,

@@ -30,6 +30,10 @@ use std::sync::Mutex as StdMutex;
 
 pub(super) const OPTION_ALLOW_ONCE: &str = "allow-once";
 pub(super) const OPTION_ALLOW_ALWAYS: &str = "allow-always";
+/// v2 only: approve this one file and stop asking for it.
+pub(super) const OPTION_ALLOW_PATH: &str = "allow-path";
+/// v2 only: approve this file's folder and stop asking for anything under it.
+pub(super) const OPTION_ALLOW_FOLDER: &str = "allow-folder";
 pub(super) const OPTION_REJECT_ONCE: &str = "reject-once";
 pub(super) const OPTION_REJECT_ALWAYS: &str = "reject-always";
 
@@ -165,6 +169,17 @@ pub(super) fn answer_from_outcome(result: &std::result::Result<Value, RpcError>)
             decision: PermissionDecision::Allow,
             remember: Some(true),
         },
+        // A scoped answer is not "always for this tool": it is one file or one
+        // folder, stored by the daemon. It must not touch the per-tool memory,
+        // or a later call on a different path would skip the question.
+        Some(OPTION_ALLOW_PATH) => Answer {
+            decision: PermissionDecision::AllowPath,
+            remember: None,
+        },
+        Some(OPTION_ALLOW_FOLDER) => Answer {
+            decision: PermissionDecision::AllowFolder,
+            remember: None,
+        },
         Some(OPTION_REJECT_ALWAYS) => Answer {
             decision: PermissionDecision::Deny,
             remember: Some(false),
@@ -173,14 +188,26 @@ pub(super) fn answer_from_outcome(result: &std::result::Result<Value, RpcError>)
     }
 }
 
-/// The four options every permission request offers, v1 and v2 alike.
-fn permission_options(tool_name: &str) -> Vec<Value> {
-    vec![
+/// The options every permission request offers.
+///
+/// v1 keeps exactly the four it always had. v2 adds the two scoped answers when
+/// the call names one path: an editor on v2 can say "yes, and not again for this
+/// file" instead of answering the same file every time.
+fn permission_options(tool_name: &str, scoped: bool, v2: bool) -> Vec<Value> {
+    let mut options = vec![
         json!({ "optionId": OPTION_ALLOW_ONCE, "name": "Allow once", "kind": "allow_once" }),
         json!({ "optionId": OPTION_ALLOW_ALWAYS, "name": format!("Always allow {tool_name}"), "kind": "allow_always" }),
-        json!({ "optionId": OPTION_REJECT_ONCE, "name": "Reject", "kind": "reject_once" }),
-        json!({ "optionId": OPTION_REJECT_ALWAYS, "name": format!("Always reject {tool_name}"), "kind": "reject_always" }),
-    ]
+    ];
+    if v2 && scoped {
+        options
+            .push(json!({ "optionId": OPTION_ALLOW_PATH, "name": "Always allow this file", "kind": "allow_always" }));
+        options.push(
+            json!({ "optionId": OPTION_ALLOW_FOLDER, "name": "Always allow this folder", "kind": "allow_always" }),
+        );
+    }
+    options.push(json!({ "optionId": OPTION_REJECT_ONCE, "name": "Reject", "kind": "reject_once" }));
+    options.push(json!({ "optionId": OPTION_REJECT_ALWAYS, "name": format!("Always reject {tool_name}"), "kind": "reject_always" }));
+    options
 }
 
 pub(super) fn request_permission_params(
@@ -202,7 +229,7 @@ pub(super) fn request_permission_params(
     json!({
         "sessionId": session_id,
         "toolCall": tool_call,
-        "options": permission_options(tool_name),
+        "options": permission_options(tool_name, false, false),
     })
 }
 
@@ -241,7 +268,11 @@ pub(super) fn request_permission_params_v2(
         &title,
         Some(&description),
         Some(subject),
-        &permission_options(tool_name),
+        &permission_options(
+            tool_name,
+            crate::approval_grants::names_single_path(tool_name, input),
+            true,
+        ),
     )
 }
 

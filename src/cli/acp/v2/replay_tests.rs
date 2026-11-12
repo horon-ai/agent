@@ -840,6 +840,45 @@ fn a_turn_after_a_marked_turn_keys_its_own_ids() {
     );
 }
 
+/// A stored tool result that carries a verdict replays it under `_meta` on
+/// the call's completed upsert; a result without one replays as it always did.
+#[test]
+fn a_stored_verdict_replays_under_meta() {
+    let rows: Vec<crate::protocol::HistoryMessage> = serde_json::from_value(json!([
+        {"role":"user","content":"read both","message_id":"m1","turn_start":true},
+        {"role":"assistant","content":"reading","tool_calls":["read","read"],"message_id":"m1-a"},
+        {"role":"tool","content":"boom","message_id":"m1-r1","verdict":"failed",
+            "tool_data":{"id":"call_1","name":"read","input":{"file_path":"a.rs"}}},
+        {"role":"tool","content":"fn main() {}","message_id":"m1-r2",
+            "tool_data":{"id":"call_2","name":"read","input":{"file_path":"b.rs"}}}
+    ]))
+    .unwrap();
+    let updates = v2::replay::replay_updates(&rows, &[], std::path::Path::new(CWD));
+    let call = |id: &str| {
+        updates
+            .iter()
+            .find(|update| update["toolCallId"] == id)
+            .unwrap_or_else(|| panic!("no update for {id}: {updates:?}"))
+    };
+    for update in &updates {
+        assert_update_matches(update);
+    }
+    let failed = call("call_1");
+    assert_eq!(
+        failed["status"], "completed",
+        "history keeps no failed status: {failed}"
+    );
+    assert_eq!(
+        failed["_meta"],
+        json!({"horon-agent": {"verdict": "failed"}}),
+        "{failed}"
+    );
+    assert!(
+        call("call_2").get("_meta").is_none(),
+        "no verdict, no `_meta`: {updates:?}"
+    );
+}
+
 struct AnswerProvider;
 
 #[async_trait::async_trait]
