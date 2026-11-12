@@ -312,7 +312,12 @@ fn build_prompt(
     cutoff: usize,
     prior: Option<&str>,
 ) -> std::result::Result<String, usize> {
-    let prior_block = prior.map(prior_section).unwrap_or_default();
+    // Not `unwrap_or_default`: an absent prior is a different state from an
+    // empty one, so the block is built only when a prior exists.
+    let prior_block = match prior {
+        Some(prior) => prior_section(prior),
+        None => String::new(),
+    };
     let reserved = HANDOFF_PROMPT_HEADER.len() + prior_block.len() + HANDOFF_PROMPT_FOOTER.len();
     let budget = MAX_PROMPT_BYTES.saturating_sub(reserved);
 
