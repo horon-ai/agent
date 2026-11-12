@@ -1,0 +1,13 @@
+# Cloudflare Pages configuration for the horon-agent documentation site
+# (https://agent.horon.ai). The project is `horon-agent-docs`; production
+# deploys from `dev` after CI, previews from pull requests.
+#
+# Deploy:
+#   bun run build && bunx wrangler pages deploy dist --project-name horon-agent-docs
+#
+# CI can authenticate with CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID instead
+# of `wrangler login`. The custom domain agent.horon.ai is attached in the
+# Cloudflare dashboard (Pages project -> Custom domains).
+name = "horon-agent-docs"
+compatibility_date = "2026-11-13"
+pages_build_output_dir = "./dist"

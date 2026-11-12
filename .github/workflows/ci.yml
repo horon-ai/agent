@@ -1617,6 +1617,30 @@ jobs:
       - name: Build sdist and wheel
         run: uv build
 
+  docs-site:
+    name: Documentation Site
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # `packages/docs` builds the site served at agent.horon.ai. Nothing deploys
+    # from CI: a build failure here means the published site cannot be
+    # regenerated from the commit it claims to describe.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Install
+        run: bun install --frozen-lockfile
+        working-directory: packages/docs
+
+      - name: Typecheck and build
+        run: bun run check
+        working-directory: packages/docs
+
   setup-friction:
     name: Setup Friction Eval (Linux installer)
     needs: changes
@@ -1911,6 +1935,7 @@ jobs:
       - fmt
       - typescript-sdk
       - python-sdk
+      - docs-site
       - setup-friction
       - powershell-syntax
       - windows-arm64-check

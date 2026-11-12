@@ -1,0 +1,202 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+import { itemsFor, SECTIONS } from "@/data/nav";
+
+const description =
+  "horon agent: a headless coding agent in one Rust binary for any OpenAI-compatible endpoint.";
+---
+
+<BaseLayout title="horon agent" description={description}>
+  <main class="home">
+    <section class="hero">
+      <p class="eyebrow">agent.horon.ai</p>
+      <h1>One Rust binary.<br />Any OpenAI-compatible endpoint.</h1>
+      <p class="lede">
+        A headless coding agent that runs a turn, calls tools and exits — or stays
+        up as a daemon that SDKs and editors attach to over a Unix socket.
+      </p>
+      <div class="actions">
+        <a class="button" href="/getting-started/">Get started</a>
+        <a class="link" href="/cli/">CLI reference</a>
+      </div>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
+horon provider current --json
+horon run "summarize this repo"</code></pre>
+    </section>
+
+    <section class="groups">
+      {SECTIONS.map((section) => (
+        <div>
+          <h2>{section}</h2>
+          <ul>
+            {itemsFor(section).map((item) => (
+              <li>
+                <a href={`/${item.slug}/`}>{item.title}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </section>
+
+    <section class="facts">
+      <div>
+        <h2>Two binaries</h2>
+        <p>
+          <code>horon-agent</code> is headless: <code>serve</code>, <code>run</code>,
+          <code>repl</code>, <code>api-bridge</code>, <code>acp</code>. The
+          terminal client <code>horon-tui</code> is separate and built on the SDK.
+        </p>
+      </div>
+      <div>
+        <h2>Append-only sessions</h2>
+        <p>
+          History is an event log with content-addressed blobs. Archive, compaction
+          and rewind append records and never delete an original.
+        </p>
+      </div>
+      <div>
+        <h2>ACP v1 and v2</h2>
+        <p>
+          Editors negotiate either version; <code>initialize</code> answers with the
+          highest both sides support.
+        </p>
+      </div>
+    </section>
+  </main>
+</BaseLayout>
+
+<style>
+  .home {
+    max-width: var(--site-max);
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  .hero {
+    padding: 6rem 0 4rem;
+    max-width: 44rem;
+  }
+
+  .eyebrow {
+    margin: 0 0 1rem;
+    color: var(--color-text-placeholder);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.06em;
+  }
+
+  .hero h1 {
+    margin: 0;
+    font-size: 3rem;
+    line-height: 1.12;
+    letter-spacing: -0.035em;
+  }
+
+  .lede {
+    margin: 1.5rem 0 0;
+    color: var(--color-text-secondary);
+    font-size: 1.125rem;
+    line-height: 1.65;
+    max-width: 38rem;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin: 2rem 0 2.5rem;
+  }
+
+  .button {
+    display: inline-block;
+    padding: 0.6rem 1.15rem;
+    border-radius: var(--radius-sm);
+    background: var(--color-interactive-primary);
+    color: var(--color-text-on-ink);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .button:hover {
+    background: var(--color-interactive-primary-hover);
+  }
+
+  .link {
+    font-size: 0.9375rem;
+    text-decoration: none;
+    color: var(--color-text-secondary);
+  }
+
+  .link:hover {
+    color: var(--color-text-primary);
+  }
+
+  .hero pre {
+    margin: 0;
+    max-width: 44rem;
+  }
+
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 2rem;
+    padding: 2.5rem 0;
+    border-top: 1px solid var(--color-border-default);
+    border-bottom: 1px solid var(--color-border-default);
+  }
+
+  .groups h2,
+  .facts h2 {
+    margin: 0 0 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-placeholder);
+  }
+
+  .groups ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .groups li + li {
+    margin-top: 0.45rem;
+  }
+
+  .groups a {
+    color: var(--color-text-primary);
+    font-size: 0.9375rem;
+    text-decoration: none;
+  }
+
+  .groups a:hover {
+    color: var(--color-text-brand);
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 2.5rem;
+    padding-top: 3rem;
+  }
+
+  .facts p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 0.9375rem;
+  }
+
+  @media (max-width: 620px) {
+    .hero {
+      padding-top: 3.5rem;
+    }
+
+    .hero h1 {
+      font-size: 2.125rem;
+    }
+  }
+</style>
