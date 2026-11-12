@@ -22,7 +22,7 @@ if [ "$#" -ne 3 ]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-wrapper_src="$repo_root/npm/horon"
+wrapper_src="$repo_root/packages/npm/horon"
 
 fail() {
   echo "prepare_cli_packages: $*" >&2

@@ -1,0 +1,23 @@
+{
+  "name": "@horon-ai/agent-docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Documentation site for horon-agent (agent.horon.ai)",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check && astro build",
+    "deploy": "astro build && bunx wrangler pages deploy dist --project-name horon-agent-docs"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.7.4",
+    "astro": "^7.4.11"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "typescript": "^6",
+    "wrangler": "^4.161.0"
+  }
+}

@@ -6,7 +6,7 @@ This document says what horon agent is for, which principles the code already fo
 
 ## What horon is
 
-A headless agent engine: the agent loop (model calls, tools, sessions, MCP) behind three surfaces, a one-shot command (`run`), a harness API on a Unix socket for SDKs (`api-bridge`), and ACP on stdio for editors (`acp`). One engine, two binaries: `horon-agent` never opens a terminal UI, and `horon-tui` is a separate package that drives the daemon through `horon-agent-sdk`. Server code can use the same engine through the Rust, TypeScript, and Python SDKs (`crates/agent-sdk`, `sdk/typescript`, `sdk/python`).
+A headless agent engine: the agent loop (model calls, tools, sessions, MCP) behind three surfaces, a one-shot command (`run`), a harness API on a Unix socket for SDKs (`api-bridge`), and ACP on stdio for editors (`acp`). One engine, two binaries: `horon-agent` never opens a terminal UI, and `horon-tui` is a separate package that drives the daemon through `horon-agent-sdk`. Server code can use the same engine through the Rust, TypeScript, and Python SDKs (`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`).
 
 ## Principles the code already follows
 

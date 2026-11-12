@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generate the six platform npm packages that carry the horon-agent runtime for
 # `@horon-ai/agent-sdk`. They are not tracked in git: every manifest is derived
-# from sdk/typescript/package.json, so the SDK and its runtimes can never be
+# from packages/sdk/typescript/package.json, so the SDK and its runtimes can never be
 # released at different versions.
 #
 # usage: prepare_runtime_packages.sh <out-dir> [<release-assets-dir>]
@@ -30,7 +30,7 @@ prepare() {
   rm -rf "$package_dir"
   mkdir -p "$package_dir/bin"
 
-  SDK_MANIFEST="$repo_root/sdk/typescript/package.json" PACKAGE_DIR="$package_dir" \
+  SDK_MANIFEST="$repo_root/packages/sdk/typescript/package.json" PACKAGE_DIR="$package_dir" \
     PLATFORM="$platform" OS="$os" CPU="$cpu" \
     node -e '
       const fs = require("node:fs");

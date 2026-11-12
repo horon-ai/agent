@@ -121,8 +121,8 @@ JetBrains and other ACP clients take the same two values. See [docs/protocol/ACP
 
 | Language | Package name | Location |
 | --- | --- | --- |
-| TypeScript | `@horon-ai/agent-sdk` | [`sdk/typescript`](sdk/typescript) |
-| Python | `horon-agent-sdk` | [`sdk/python`](sdk/python) |
+| TypeScript | `@horon-ai/agent-sdk` | [`packages/sdk/typescript`](packages/sdk/typescript) |
+| Python | `horon-agent-sdk` | [`packages/sdk/python`](packages/sdk/python) |
 
 Both talk the harness API (protocol v1) over the `api-bridge` socket and can start their own daemon with `launch()`. As of this writing neither package is on npm or PyPI, so install from a source checkout; each SDK README has the steps.
 
@@ -185,6 +185,7 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 
 | Topic | Read |
 | --- | --- |
+| Documentation site source (`agent.horon.ai`) | [packages/docs](packages/docs) |
 | Index and fixed requirements | [docs/README.md](docs/README.md) |
 | Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
 | Editors and ACP | [docs/protocol/ACP.md](docs/protocol/ACP.md) |

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-sdk_dir="$repo_root/sdk/typescript"
+sdk_dir="$repo_root/packages/sdk/typescript"
 work="$(mktemp -d "${TMPDIR:-/tmp}/horon-agent-sdk-pack-XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 

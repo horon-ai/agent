@@ -21,8 +21,8 @@
 npm은 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 내려받는다. 다음 세 가지가 이 묶음을 안전하게 게시할 수 있게 한다.
 
 - 래퍼의 플랫폼 고정값은 범위가 아니라 정확한 버전이다. 게시하는 버전과 고정값이 다르면 `scripts/npm/release_npm_version.py check-packages`가 실행을 실패시키므로, 래퍼가 그 버전에 없는 플랫폼 패키지를 가리키는 일이 생기지 않는다.
-- 어느 패키지도 설치 스크립트를 선언하지 않는다. 생성된 매니페스트와 `npm/horon/package.json`에 `preinstall`, `install`, `postinstall`이 없고, 같은 검사가 의존성을 선언한 플랫폼 패키지도 거부한다.
-- Node 라이브러리가 아니다. `npm/horon/bin/horon.js`는 `process.platform`과 `process.arch`를 읽어 맞는 패키지의 디렉터리를 찾고, 넘겨받은 인자와 환경을 그대로 붙여 `bin/horon-agent`를 `spawnSync`와 `stdio: "inherit"`로 띄운다. 실행 중에는 자식이 터미널을 소유하고, 인터럽트가 CLI에 닿도록 런처는 그동안 `SIGINT`와 `SIGTERM`을 무시한다.
+- 어느 패키지도 설치 스크립트를 선언하지 않는다. 생성된 매니페스트와 `packages/npm/horon/package.json`에 `preinstall`, `install`, `postinstall`이 없고, 같은 검사가 의존성을 선언한 플랫폼 패키지도 거부한다.
+- Node 라이브러리가 아니다. `packages/npm/horon/bin/horon.js`는 `process.platform`과 `process.arch`를 읽어 맞는 패키지의 디렉터리를 찾고, 넘겨받은 인자와 환경을 그대로 붙여 `bin/horon-agent`를 `spawnSync`와 `stdio: "inherit"`로 띄운다. 실행 중에는 자식이 터미널을 소유하고, 인터럽트가 CLI에 닿도록 런처는 그동안 `SIGINT`와 `SIGTERM`을 무시한다.
 
 런처는 자식 환경에 `HORON_AGENT_NO_AUTO_UPDATE=1`을 넣는다. npm 패키지가 두 실행 파일의 한 릴리스를 함께 고정하는데 에이전트 자체 업데이터는 다른 빌드로 바꾸므로, npm 설치본은 npm으로 갱신한다.
 
@@ -47,7 +47,7 @@ npx @horon-ai/horon --help
 
 릴리스의 npm 버전은 릴리스 태그에서 `v`를 뺀 값이다. `scripts/npm/release_npm_version.py tag-version`은 `vMAJOR.MINOR.PATCH`만 받으므로, 프리릴리스나 빌드 접미사가 붙은 태그는 아무것도 내려받기 전에 거부된다. `dispatch` 명령은 수동 실행에 같은 규칙을 적용한다.
 
-`npm/horon/package.json`은 git에서 `0.0.0`을 유지하고 올리지 않는다. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>`가 매니페스트와 런처를 스테이징 디렉터리로 복사하고, 그 복사본에 릴리스 버전과 플랫폼 고정값 여섯을 쓴다. 그래서 추적되는 파일은 항상 자리 표시 상태를 설명하고, 게시되는 패키지는 담고 있는 자산의 릴리스 버전을 단다.
+`packages/npm/horon/package.json`은 git에서 `0.0.0`을 유지하고 올리지 않는다. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>`가 매니페스트와 런처를 스테이징 디렉터리로 복사하고, 그 복사본에 릴리스 버전과 플랫폼 고정값 여섯을 쓴다. 그래서 추적되는 파일은 항상 자리 표시 상태를 설명하고, 게시되는 패키지는 담고 있는 자산의 릴리스 버전을 단다.
 
 ## 게시 워크플로
 
@@ -103,7 +103,7 @@ npm view @horon-ai/horon --json | jq '.dist.attestations'
 
 ## TypeScript SDK
 
-TypeScript SDK는 `@horon-ai/agent-sdk`와 런타임 패키지 여섯 `@horon-ai/agent-<os>-<arch>`를 따로 게시한다. 버전은 같은 태그에서 오고, `Release Tag` 트리거와 `NPM_PUBLISH` 스위치도 같다. 파일은 `.github/workflows/publish-typescript-sdk.yml`로 나뉘어 있는데, npm이 최상위 워크플로 파일 이름을 신뢰하기 때문이다. SDK의 일곱 패키지는 `publish-typescript-sdk.yml`을 Trusted Publisher로 등록한다. 절차는 `sdk/typescript/RELEASING.md`에 있으므로 여기서 되풀이하지 않는다.
+TypeScript SDK는 `@horon-ai/agent-sdk`와 런타임 패키지 여섯 `@horon-ai/agent-<os>-<arch>`를 따로 게시한다. 버전은 같은 태그에서 오고, `Release Tag` 트리거와 `NPM_PUBLISH` 스위치도 같다. 파일은 `.github/workflows/publish-typescript-sdk.yml`로 나뉘어 있는데, npm이 최상위 워크플로 파일 이름을 신뢰하기 때문이다. SDK의 일곱 패키지는 `publish-typescript-sdk.yml`을 Trusted Publisher로 등록한다. 절차는 `packages/sdk/typescript/RELEASING.md`에 있으므로 여기서 되풀이하지 않는다.
 
 ## 알려진 한계
 

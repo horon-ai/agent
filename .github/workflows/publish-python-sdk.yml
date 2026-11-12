@@ -42,7 +42,7 @@ jobs:
       id-token: write
     defaults:
       run:
-        working-directory: sdk/python
+        working-directory: packages/sdk/python
     steps:
       # PyPI only accepts a trusted publish from a registered publisher, and the
       # rejection otherwise appears at the very last step after a full build.

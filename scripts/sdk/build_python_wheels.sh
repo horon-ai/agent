@@ -66,7 +66,7 @@ mkdir -p "$out"
 
 # The pure wheel and sdist contain no runtime: install them anywhere and
 # launch() falls back to `horon-agent` on PATH.
-(cd "$repo_root/sdk/python" && uv build --out-dir "$out")
+(cd "$repo_root/packages/sdk/python" && uv build --out-dir "$out")
 
 pure_wheel="$(find "$out" -maxdepth 1 -name 'horon_agent_sdk-*-py3-none-any.whl' -print -quit)"
 if [ -z "$pure_wheel" ]; then

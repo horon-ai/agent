@@ -58,7 +58,7 @@ on:
         default: true
   pull_request:
     paths:
-      - 'sdk/typescript/**'
+      - 'packages/sdk/typescript/**'
       - 'scripts/sdk/**'
       - 'scripts/npm/release_npm_version.py'
       - '.github/workflows/publish-typescript-sdk.yml'
@@ -242,12 +242,12 @@ jobs:
       # bun.lock, and the stamp changes the version and the six pins. Building
       # first also means a broken SDK fails before a registry version is chosen.
       - name: Install dependencies
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
         shell: bash
         run: bun install --frozen-lockfile
 
       - name: Validate the SDK
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
         shell: bash
         run: bun run check
 
@@ -331,7 +331,7 @@ jobs:
           mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
           for dir in "${dirs[@]}"; do
             if [ "$dir" = "sdk" ]; then
-              package_dir="sdk/typescript"
+              package_dir="packages/sdk/typescript"
             else
               package_dir="sdk-runtime-packages/$dir"
             fi
@@ -409,7 +409,7 @@ jobs:
           fi
 
       - name: Install dependencies
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
         shell: bash
         run: bun install --frozen-lockfile
 
@@ -458,7 +458,7 @@ jobs:
           mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
           for dir in "${dirs[@]}"; do
             if [ "$dir" = "sdk" ]; then
-              package_dir="sdk/typescript"
+              package_dir="packages/sdk/typescript"
             else
               package_dir="sdk-runtime-packages/$dir"
             fi
@@ -486,7 +486,7 @@ jobs:
           mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
           for dir in "${dirs[@]}"; do
             if [ "$dir" = "sdk" ]; then
-              package_dir="sdk/typescript"
+              package_dir="packages/sdk/typescript"
             else
               package_dir="sdk-runtime-packages/$dir"
             fi

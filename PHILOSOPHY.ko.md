@@ -6,7 +6,7 @@
 
 ## horon이 무엇인가
 
-헤드리스 에이전트 엔진입니다. 에이전트 루프(모델 호출, 도구, 세션, MCP)를 세 가지 표면으로 내보냅니다. 일회성 명령(`run`), SDK용 Unix 소켓 harness API(`api-bridge`), 에디터용 stdio ACP(`acp`)입니다. 엔진은 하나이고 바이너리는 둘입니다. `horon-agent`는 터미널 UI를 열지 않고, `horon-tui`는 `horon-agent-sdk`로 데몬을 구동하는 별도 패키지입니다. 서버 코드도 Rust, TypeScript, Python SDK(`crates/agent-sdk`, `sdk/typescript`, `sdk/python`)로 같은 엔진을 쓸 수 있습니다.
+헤드리스 에이전트 엔진입니다. 에이전트 루프(모델 호출, 도구, 세션, MCP)를 세 가지 표면으로 내보냅니다. 일회성 명령(`run`), SDK용 Unix 소켓 harness API(`api-bridge`), 에디터용 stdio ACP(`acp`)입니다. 엔진은 하나이고 바이너리는 둘입니다. `horon-agent`는 터미널 UI를 열지 않고, `horon-tui`는 `horon-agent-sdk`로 데몬을 구동하는 별도 패키지입니다. 서버 코드도 Rust, TypeScript, Python SDK(`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`)로 같은 엔진을 쓸 수 있습니다.
 
 ## 코드가 이미 따르는 원칙
 

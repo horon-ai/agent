@@ -55,7 +55,7 @@ from release_npm_version import (  # noqa: E402  (path-dependent import)
 )
 
 SDK_NAME = "@horon-ai/agent-sdk"
-SDK_DIR = "sdk/typescript"
+SDK_DIR = "packages/sdk/typescript"
 SDK_MANIFEST = REPO_ROOT / SDK_DIR / "package.json"
 CARGO_MANIFEST = REPO_ROOT / "Cargo.toml"
 

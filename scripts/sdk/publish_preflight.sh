@@ -12,7 +12,7 @@
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-sdk_dir="$repo_root/sdk/typescript"
+sdk_dir="$repo_root/packages/sdk/typescript"
 name="$(node -p "require('$sdk_dir/package.json').name")"
 version="$(node -p "require('$sdk_dir/package.json').version")"
 problems=0
@@ -70,7 +70,7 @@ while IFS= read -r package; do
   fi
 done < <(python3 "$repo_root/scripts/sdk/sdk_release.py" package-names)
 if [ "$missing_placeholders" -gt 0 ]; then
-  echo "        see the first-release section of sdk/typescript/RELEASING.md"
+  echo "        see the first-release section of packages/sdk/typescript/RELEASING.md"
 fi
 
 echo

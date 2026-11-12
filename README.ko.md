@@ -121,8 +121,8 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 
 | 언어 | 패키지 이름 | 위치 |
 | --- | --- | --- |
-| TypeScript | `@horon-ai/agent-sdk` | [`sdk/typescript`](sdk/typescript) |
-| Python | `horon-agent-sdk` | [`sdk/python`](sdk/python) |
+| TypeScript | `@horon-ai/agent-sdk` | [`packages/sdk/typescript`](packages/sdk/typescript) |
+| Python | `horon-agent-sdk` | [`packages/sdk/python`](packages/sdk/python) |
 
 둘 다 `api-bridge` 소켓으로 하네스 API(프로토콜 v1)를 쓰고, `launch()`로 자체 데몬을 띄울 수 있다. 이 글을 쓰는 시점에는 어느 패키지도 npm이나 PyPI에 올라 있지 않으므로 소스 체크아웃에서 설치한다. 단계는 각 SDK의 README에 있다.
 
@@ -185,6 +185,7 @@ macOS에서는 한 턴(104.7 ms 대 361.6 ms), 스킬(118.4 ms 대 270.0 ms), MC
 
 | 주제 | 문서 |
 | --- | --- |
+| 문서 사이트 원본(`agent.horon.ai`) | [packages/docs](packages/docs) |
 | 색인과 고정 요구사항 | [docs/README.ko.md](docs/README.ko.md) |
 | 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |
 | 에디터와 ACP | [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md) |

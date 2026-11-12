@@ -5,7 +5,7 @@
 //! events, and get told why the connection died in a sentence a user can act
 //! on.
 //!
-//! It is the Rust counterpart of `sdk/typescript`, and deliberately mirrors it
+//! It is the Rust counterpart of `packages/sdk/typescript`, and deliberately mirrors it
 //! capability for capability. Desktop2 is built on this crate rather than on
 //! the raw protocol, so the SDK's design is exercised by a real, shipping
 //! client every day rather than only by its own examples.

@@ -1,0 +1,176 @@
+/*
+ * Horon design tokens (copied from horon-ai/design packages/tokens/theme.css)
+ * for the parts this site uses: ink/sky palette, radii, type scale. The docs
+ * site is static and dependency-free, so the values live here instead of a
+ * workspace dependency.
+ */
+:root {
+  color-scheme: light dark;
+
+  --color-bg-default: #ffffff;
+  --color-bg-subtle: #f3f4f5;
+  --color-bg-inset: #fcfcfd;
+  --color-bg-brand: #f3f7fa;
+  --color-text-primary: #17181a;
+  --color-text-secondary: #5f6163;
+  --color-text-placeholder: #7e8082;
+  --color-text-brand: #3b617b;
+  --color-text-on-ink: #ffffff;
+  --color-border-default: #e5e6e7;
+  --color-border-strong: #d3d4d6;
+  --color-border-brand: #b7cedf;
+  --color-interactive-primary: #17181a;
+  --color-interactive-primary-hover: #2a2b2d;
+  --color-status-live: #7199b6;
+  --color-sky-100: #e7eff5;
+  --color-sky-500: #7199b6;
+  --color-sky-700: #3b617b;
+  --color-neutral-950: #0b0c0e;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --site-header-h: 3.75rem;
+  --site-max: 82rem;
+  --measure: 46rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-default: #0b0c0e;
+    --color-bg-subtle: #2a2b2d;
+    --color-bg-inset: #141518;
+    --color-bg-brand: #0f202c;
+    --color-text-primary: #f9fafb;
+    --color-text-secondary: #b0b1b3;
+    --color-text-placeholder: #7e8082;
+    --color-text-brand: #b7cedf;
+    --color-text-on-ink: #0b0c0e;
+    --color-border-default: #2a2b2d;
+    --color-border-strong: #434547;
+    --color-border-brand: #3b617b;
+    --color-interactive-primary: #f9fafb;
+    --color-interactive-primary-hover: #e5e6e7;
+    --color-status-live: #95b6ce;
+    --color-sky-100: #1b3343;
+    --color-sky-500: #95b6ce;
+    --color-sky-700: #b7cedf;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg-default);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-border-brand);
+  color: var(--color-text-primary);
+}
+
+a {
+  color: var(--color-text-brand);
+  text-decoration-color: var(--color-border-brand);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-sky-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+:target {
+  scroll-margin-top: calc(var(--site-header-h) + 1.5rem);
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+pre {
+  overflow-x: auto;
+  padding: 1rem 1.125rem;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-inset);
+  line-height: 1.6;
+}
+
+pre code {
+  font-size: 0.8125rem;
+}
+
+:not(pre) > code {
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-xs);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.9375rem;
+}
+
+th,
+td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+blockquote {
+  margin: 1.5rem 0;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 2px solid var(--color-border-brand);
+  color: var(--color-text-secondary);
+}
