@@ -1321,14 +1321,17 @@ impl BridgeState {
                     return Self::error_reply(
                         api_id,
                         ErrorCode::InvalidRequest,
-                        "decision must be one of allow, allow_always or deny",
+                        "decision must be one of allow, allow_always, allow_path, allow_folder or deny",
                     );
                 };
-                if !matches!(decision, "allow" | "allow_always" | "deny") {
+                if !matches!(
+                    decision,
+                    "allow" | "allow_always" | "allow_path" | "allow_folder" | "deny"
+                ) {
                     return Self::error_reply(
                         api_id,
                         ErrorCode::InvalidRequest,
-                        "decision must be one of allow, allow_always or deny",
+                        "decision must be one of allow, allow_always, allow_path, allow_folder or deny",
                     );
                 }
                 let id = self.legacy_id();

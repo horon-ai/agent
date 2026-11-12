@@ -339,6 +339,20 @@ secrets_mode = "off"
 # refuses outright. Default: empty, which leaves every class to approval_mode.
 # Example: ["destructive-shell"]
 dual_confirm_classes = []
+# Paths that always require approval, in every mode including "off". Each entry
+# is a glob matched against the path a call names; `*` matches across directory
+# separators, so a broad pattern asks more often rather than fewer. A pattern
+# that cannot be parsed restricts every path, because a rule that cannot be read
+# must not silently stop asking. Only the file tools are matched; a shell
+# command reaches paths this check cannot see, which is what bash_patterns are
+# for. Default: empty, which restricts nothing.
+# Example: ["**/.env", "/etc/**"]
+restricted_paths = []
+# How long an answer of "allow this path" or "allow this folder" keeps working,
+# in days. Each such answer is stored in <agent home>/approvals.json (mode 0600)
+# and covers later calls that name a path inside it, for this workspace only.
+# `0` disables grants: none is written and none is consulted.
+approval_grant_ttl_days = 7
 # Per-tool load tiers for the unrestricted `full` profile. Out of the box, the
 # core tools stay eager and every other enabled tool is sent as a provider-native
 # deferred definition, so its schema stays out of the cached prompt prefix; a
@@ -810,6 +824,11 @@ mod tests {
         assert_eq!(reread.tools.aux_completion, parsed.tools.aux_completion);
         assert_eq!(reread.tools.secrets_mode, parsed.tools.secrets_mode);
         assert_eq!(reread.tools.dual_confirm_classes, parsed.tools.dual_confirm_classes);
+        assert_eq!(reread.tools.restricted_paths, parsed.tools.restricted_paths);
+        assert_eq!(
+            reread.tools.approval_grant_ttl_days,
+            parsed.tools.approval_grant_ttl_days
+        );
         assert_eq!(reread.tools.bash_interceptor, parsed.tools.bash_interceptor);
         assert_eq!(reread.tools.bash_patterns, parsed.tools.bash_patterns);
         assert_eq!(reread.tools.git_guard, parsed.tools.git_guard);

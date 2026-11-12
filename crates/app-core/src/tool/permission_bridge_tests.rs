@@ -8,7 +8,7 @@ use crate::config::ApprovalMode;
 use crate::tool::{Tool, ToolEffects, ToolExecutionMode, ToolOutput, approval_override};
 use async_trait::async_trait;
 use horon_agent_agent_runtime::InterruptSignal;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
@@ -145,12 +145,26 @@ impl Fixture {
         }
     }
 
+    fn ctx_in(&self, call: &str, dir: &std::path::Path) -> ToolContext {
+        ToolContext {
+            working_dir: Some(dir.to_path_buf()),
+            ..self.ctx(call)
+        }
+    }
+
     fn bridge(&self) -> Arc<PermissionBridge> {
         bridge_for_connection(&self.session, CONN).expect("the bridge is installed")
     }
 
     fn spawn_shell(&self, call: &str, command: &str) -> tokio::task::JoinHandle<anyhow::Result<ToolOutput>> {
         self.spawn_with(call, command, self.ctx(call))
+    }
+
+    fn spawn_write(&self, call: &str, file: &str) -> tokio::task::JoinHandle<anyhow::Result<ToolOutput>> {
+        let registry = self.registry.clone();
+        let ctx = self.ctx(call);
+        let input = json!({"file_path": file, "content": "x"});
+        tokio::spawn(async move { registry.execute("write", input, ctx).await })
     }
 
     fn spawn_with(
@@ -188,6 +202,19 @@ impl Fixture {
         if let Ok(event) = self.rx.try_recv() {
             panic!("the editor must not be sent anything more, got {event:?}");
         }
+    }
+
+    /// Answer with a scoped approval, the way `handle_permission_decision`
+    /// does: store the grant from the queued request, then record the decision.
+    fn answer_scoped(&self, request_id: &str, scope: crate::approval_grants::GrantScope) {
+        let request = crate::safety::pending_request(request_id)
+            .expect("the queue is readable")
+            .expect("the request is still queued");
+        assert!(
+            crate::approval_grants::record_answer(&request, scope),
+            "a single-path write request must be grantable"
+        );
+        self.answer(request_id, true);
     }
 
     /// What `handle_permission_decision` does for the owning connection.
@@ -508,20 +535,88 @@ async fn override_write_mode_asks_for_bash() {
 }
 
 #[tokio::test]
-async fn override_write_mode_lets_write_run() {
+async fn override_write_mode_asks_for_a_file_mutation() {
     let _lock = crate::storage::lock_test_env();
     let _home = Home::new();
     let mut fixture = Fixture::new("pb-override-write", true, Some(ApprovalMode::Write), Some(CONN)).await;
 
-    let ctx = fixture.ctx("call-override-write");
-    let output = fixture
-        .registry
-        .execute("write", json!({"file_path": "a.txt", "content": "x"}), ctx)
-        .await
-        .expect("a plain file mutation runs in write mode");
+    let task = fixture.spawn_write("call-override-write", "a.txt");
+    let (request_id, _, tool_name, _) = fixture.next_request().await;
+    assert_eq!(tool_name, "write", "write mode asks before a file mutation");
+    fixture.answer(&request_id, true);
+    let output = finished(task).await.expect("approved");
     assert_eq!(output.output, "ran");
     assert_eq!(fixture.write_runs.load(Ordering::SeqCst), 1);
+}
+
+/// The acceptance case for scoped grants: the second write in an approved
+/// folder runs without a question, and the audit line says why.
+#[tokio::test]
+async fn a_folder_grant_answers_the_second_write_in_that_folder() {
+    let _lock = crate::storage::lock_test_env();
+    let _home = Home::new();
+    let mut fixture = Fixture::new("pb-grant", true, Some(ApprovalMode::Write), Some(CONN)).await;
+    let work = tempfile::tempdir().expect("work dir");
+
+    let first = fixture.ctx_in("call-grant-1", work.path());
+    let task = {
+        let registry = fixture.registry.clone();
+        tokio::spawn(async move {
+            registry
+                .execute("write", json!({"file_path": "notes/a.txt", "content": "x"}), first)
+                .await
+        })
+    };
+    let (request_id, ..) = fixture.next_request().await;
+    fixture.answer_scoped(&request_id, crate::approval_grants::GrantScope::Folder);
+    let output = finished(task).await.expect("the first write is approved");
+    assert_eq!(output.output, "ran");
+
+    let second = fixture.ctx_in("call-grant-2", work.path());
+    let output = fixture
+        .registry
+        .execute("write", json!({"file_path": "notes/b.txt", "content": "x"}), second)
+        .await
+        .expect("the second write in the granted folder runs");
+    assert_eq!(output.output, "ran");
+    assert_eq!(fixture.write_runs.load(Ordering::SeqCst), 2);
     fixture.assert_editor_quiet();
+}
+
+/// A grant is per folder: a sibling folder still asks.
+#[tokio::test]
+async fn a_folder_grant_does_not_cover_another_folder() {
+    let _lock = crate::storage::lock_test_env();
+    let _home = Home::new();
+    let mut fixture = Fixture::new("pb-grant-narrow", true, Some(ApprovalMode::Write), Some(CONN)).await;
+    let work = tempfile::tempdir().expect("work dir");
+
+    let first = fixture.ctx_in("call-narrow-1", work.path());
+    let task = {
+        let registry = fixture.registry.clone();
+        tokio::spawn(async move {
+            registry
+                .execute("write", json!({"file_path": "notes/a.txt", "content": "x"}), first)
+                .await
+        })
+    };
+    let (request_id, ..) = fixture.next_request().await;
+    fixture.answer_scoped(&request_id, crate::approval_grants::GrantScope::Folder);
+    finished(task).await.expect("approved");
+
+    let other = fixture.ctx_in("call-narrow-2", work.path());
+    let task = {
+        let registry = fixture.registry.clone();
+        tokio::spawn(async move {
+            registry
+                .execute("write", json!({"file_path": "other/b.txt", "content": "x"}), other)
+                .await
+        })
+    };
+    let (request_id, _, tool_name, _) = fixture.next_request().await;
+    assert_eq!(tool_name, "write", "a sibling folder is not covered");
+    fixture.answer(&request_id, false);
+    finished(task).await.expect_err("refused");
 }
 
 #[tokio::test]
