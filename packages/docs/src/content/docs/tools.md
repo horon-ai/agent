@@ -51,10 +51,10 @@ never moves a tool between tiers mid-session.
 ## The listing index
 
 A listing `core` session's system prompt gains an `# Additional tools` section:
-one guidance sentence on calling a listed tool through `toolbox run`, then one
-`- <name>: <description>` row per tool. A row carries only the first sentence of
-the tool description, capped at 60 characters; the model fetches parameters with
-`toolbox describe`.
+one instruction line — `Call one with toolbox: action "run", tool "<name>", args {}.`
+— then one `- <name>: <description>` row per tool. A row carries only the first
+sentence of the tool description's first non-empty line, capped at 60 characters
+including the trailing `...`; the model fetches parameters with `toolbox describe`.
 
 The index freezes when the first tool list is locked and does not change
 afterwards. `/clear` keeps it because it is the same session; only a session
