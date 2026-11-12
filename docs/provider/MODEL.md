@@ -73,6 +73,7 @@ A model role is a named workload-to-model mapping shared by every feature that n
 | `plan` | Planning turns: the model that writes a plan before execution hands off (#70). | `plan` |
 | `aux` | Cheap auxiliary work: compaction summaries, titles, classification, memory extraction. | `aux` |
 | `judge` | Typed judgments: one bounded call answering a `bool`, `choice`, or `score` question about text the turn already produced. Today the single caller is unexpected-stop recovery (`docs/runtime/TURNS.md`). | `judge` |
+| `image` | Image generation and editing: the one role whose model does not speak Chat Completions. Its single caller is the `generate_image` tool, which posts to `/images/generations` and `/images/edits` on the same profile. No inherited fallback, because a text model cannot answer an image request. | `image` |
 
 No other role exists. A new role is added only together with the workload that calls it. Reason: a role with no named caller is a second spelling of `default`, and a role that appears before its consumer cannot be reviewed for the model it should point at.
 
@@ -111,6 +112,8 @@ A workload that asks for a role resolves it in this order, and the first step th
 
 An empty string counts as unset at every step. `aux` walks the same chain, so a profile with only `default_model` uses today's model for auxiliary work. `judge` inherits `aux` before `default` so a profile that already names one cheap model for side work judges with it instead of spending the session model. Reason: steps 1, 4, and 5 are the order the agent already resolves one model today; roles slot in above them, so every existing file resolves to the same model it resolves to now, and an unset role inherits instead of failing.
 
+`image` stops at step 3: it has no inherited roles and does not take a profile or provider text default. An image request sent to a chat model cannot succeed, so an unset `roles.image` means image generation is not configured, which the tool reports, rather than a call that always fails at the endpoint. This is the only role where a text default is not a valid substitute, and `ModelRole::accepts_text_default` states it once.
+
 ### Fallback and failover order
 
 The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
@@ -126,6 +129,17 @@ The switch lasts for the rest of the turn and the next turn starts again from th
 #73 writes the shared type: the `roles` table on `NamedProviderConfig` in `crates/config-types/src/lib.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
 
 An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
+
+### The `image` role and the one model path
+
+The build's rule is that one model path serves models: a turn posts `/chat/completions` to the profile named by `[provider] default_provider` or `--provider-profile`. The `generate_image` tool is the one documented exception, and it is a route rather than an architecture:
+
+- It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
+- There is still one provider runtime, no second router and no plugin host. `crates/provider-openai/src/images.rs` is a request builder beside `chat/`, not a runtime.
+- The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
+- A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
+- The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.
+- Output is limited to the OpenAI Images shape. A gateway that speaks it works unchanged, including the Horon AI Gateway. Gemini-native and Responses-hosted image tools are out of scope; the MCP recipe in `docs/provider/INTEGRATIONS.md` covers anything this route does not.
 
 ### The `judge` role in practice
 

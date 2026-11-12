@@ -113,7 +113,14 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `type = "openai-compatible"`, `base_url`, `api_key_env` or `env_file`,
   `auth`, `default_model`, and optional `[[providers.<name>.models]]`. Nothing
   else serves models in this build: no second provider runtime, no router
-  process, no plugin host. External tools come in over MCP, which stays.
+  process, no plugin host. External tools come in over MCP, which stays. The
+  one documented exception is the optional `generate_image` tool: when the
+  active profile names `roles.image`, it POSTs `/images/generations` and
+  `/images/edits` on that same profile, with the same base URL, credential and
+  `extra_body`. It is a route beside the chat builder, not a runtime, and it is
+  off unless `[tools] generate_image = true`. The `image` role is therefore the
+  one role whose model does not speak Chat Completions, and the only role with
+  no text fallback.
 - Core tool profile, the headless default (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.

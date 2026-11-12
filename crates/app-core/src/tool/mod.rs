@@ -28,6 +28,7 @@ mod edit;
 mod edit_stats;
 mod file_diff;
 pub(crate) mod file_lock;
+pub(crate) mod generate_image;
 mod generated_guard;
 mod git_guard;
 mod goal;
@@ -1137,6 +1138,7 @@ impl Registry {
         // ambient session.
         registry.register_approval_tool_if_enabled().await;
         registry.register_aux_completion_tool_if_enabled().await;
+        registry.register_generate_image_tool_if_enabled().await;
         registry.register_plan_tool_if_enabled().await;
         registry
     }
@@ -3054,20 +3056,12 @@ impl Registry {
     }
 
     /// Register `aux_complete` when `[tools] aux_completion` is on.
-    ///
-    /// The tool is opt-in because every call spends a model request on a side
-    /// task. With the switch off it is never registered, so it neither appears
-    /// in a definition list nor resolves as a callable name. Registration is
-    /// idempotent (the registry is a map keyed by name).
     pub async fn register_aux_completion_tool_if_enabled(&self) {
-        if !aux_complete::enabled() {
-            return;
-        }
-        self.register(
-            aux_complete::AUX_COMPLETE_TOOL.to_string(),
-            Arc::new(aux_complete::AuxCompleteTool::new()) as Arc<dyn Tool>,
-        )
-        .await;
+        aux_complete::register(self).await;
+    }
+
+    pub async fn register_generate_image_tool_if_enabled(&self) {
+        generate_image::register(self).await;
     }
 
     /// Register `submit_plan` when `[tools] plan_mode` is on.

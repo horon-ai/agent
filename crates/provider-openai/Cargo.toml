@@ -15,7 +15,7 @@ horon-agent-logging = { path = "../logging" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-provider-core = { path = "../provider-core" }
 horon-agent-schema-dialect = { path = "../schema-dialect" }
-reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["multipart", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
