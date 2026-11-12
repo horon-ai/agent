@@ -719,6 +719,19 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- tui_handoff --nocapture
 
+      - name: Run ACP cohort
+        shell: bash
+        # AGENTS.md fixed requirement 2 names `cargo test -p horon-agent --lib acp`
+        # as its check, and until this step no workflow ran it: the ACP v1 and
+        # v2 adapter tests were compiled here and never executed (#226).
+        # `--min-passed` pins the count the filter selects, so a rename that
+        # moves tests out of the filter fails the step instead of shrinking it.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 289 \
+            -- acp --nocapture
+
       - name: Run deterministic retention-readiness cohort
         shell: bash
         # The helper runs the already compiled lib test executable, so this
