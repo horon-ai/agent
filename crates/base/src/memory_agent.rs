@@ -270,7 +270,7 @@ impl MemoryAgent {
         } = manager.get_relevant_parallel(session_id, messages, None).await?;
         if let Some(prompt) = prompt {
             let count = selected_entries.len();
-            memory::set_pending_memory_for_project_with_selection(
+            memory::set_pending_memory_with_selection(
                 session_id,
                 prompt,
                 count,

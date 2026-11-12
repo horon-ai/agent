@@ -1815,7 +1815,7 @@ async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop(
         .expect("persist the selected memory for scoped revalidation");
     let prompt =
         crate::memory::format_relevant_prompt(std::slice::from_ref(&entry), 1).expect("canonical memory prompt");
-    crate::memory::set_pending_memory_for_project(
+    crate::memory::set_pending_memory(
         &session_id,
         prompt.clone(),
         1,

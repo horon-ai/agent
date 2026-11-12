@@ -41,16 +41,14 @@ pub use activity::{
     pipeline_start, pipeline_update, record_injected_prompt, set_state,
 };
 use cache::{cache_graph, cached_graph};
-pub(crate) use pending::set_pending_memory_for_project_with_selection;
+#[cfg(test)]
+use pending::backdate_injected_memory_for_test;
+pub(crate) use pending::set_pending_memory_with_selection;
 pub use pending::{
     PendingMemory, clear_all_injected_memories, clear_all_pending_memory, clear_injected_memories,
-    clear_pending_memory, has_any_pending_memory, has_pending_memory, is_memory_injected, is_memory_injected_any,
-    mark_memories_injected, mark_memories_known, set_pending_memory, set_pending_memory_for_project,
-    set_pending_memory_with_ids, set_pending_memory_with_ids_and_display, sync_injected_memories, take_pending_memory,
-    take_pending_memory_for_project,
+    clear_pending_memory, has_pending_memory, is_memory_injected, mark_memories_injected, mark_memories_known,
+    set_pending_memory, sync_injected_memories, take_pending_memory,
 };
-#[cfg(test)]
-use pending::{backdate_injected_memory_for_test, insert_pending_memory_for_test};
 use pending::{begin_memory_check, finish_memory_check};
 pub(crate) use prompt_support::format_context_for_extraction;
 pub use prompt_support::{focus_query_text, format_context_for_relevance, format_focused_query_for_relevance};
@@ -977,7 +975,7 @@ impl MemoryManager {
 
     /// Spawn a background task to check memory relevance for a specific session.
     /// Results are stored in PENDING_MEMORY keyed by session_id and can be retrieved
-    /// with take_pending_memory(session_id).
+    /// with take_pending_memory(session_id, project_dir).
     /// This method returns immediately and never blocks the caller.
     /// Only ONE memory check runs at a time per session - additional calls are ignored.
     pub fn spawn_relevance_check(
@@ -1002,7 +1000,7 @@ impl MemoryManager {
                     selected_entries,
                 }) => {
                     let count = selected_entries.len();
-                    set_pending_memory_for_project_with_selection(
+                    set_pending_memory_with_selection(
                         &sid,
                         prompt,
                         count,

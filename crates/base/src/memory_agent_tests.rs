@@ -40,10 +40,38 @@ impl Drop for TestEnv {
 
 #[tokio::test]
 async fn missing_jev_access_clears_pending_without_fallback() {
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            memory::clear_all_pending_memory();
+            match self.0.take() {
+                Some(home) => crate::env::set_var("HORON_HOME", home),
+                None => crate::env::remove_var("HORON_HOME"),
+            }
+        }
+    }
+
     let _lock = crate::storage::lock_test_env();
     let _env = TestEnv::set(&[("HORON_AGENT_MEMORY_JEV_PROVIDER", "disabled-for-test")]);
+    let home = tempfile::tempdir().expect("isolated memory home");
+    let _restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
+
     let sid = "jev-agent-no-fallback";
-    memory::set_pending_memory(sid, "stale result".into(), 1);
+    let entry = memory::MemoryEntry::new(memory::MemoryCategory::Fact, "stale result");
+    memory::MemoryManager::new()
+        .remember_global(entry.clone())
+        .expect("persist the queued memory");
+    memory::set_pending_memory(
+        sid,
+        memory::format_relevant_prompt(std::slice::from_ref(&entry), 1).expect("canonical memory prompt"),
+        1,
+        vec![entry.id.clone()],
+        None,
+        None,
+    );
+    assert!(memory::has_pending_memory(sid));
+
     let (_, rx) = mpsc::channel(1);
     let mut agent = MemoryAgent::new(rx);
     agent
