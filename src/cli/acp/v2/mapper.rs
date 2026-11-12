@@ -10,7 +10,7 @@
 //! exit status. Nothing here writes a v1-only update.
 
 use super::super::mapper::{notice, tool_location, turn_stopped_severity};
-use super::super::util::{parse_json_object, tool_kind, tool_title};
+use super::super::util::{parse_json_object, tool_kind, tool_title, verdict_meta};
 use super::replay::Position;
 use super::shapes::{
     self, ChunkKind, MessageIds, MessageKind, ToolCallPatch, cancel_capabilities, diff_content, message_chunk,
@@ -199,10 +199,10 @@ impl V2Mapper {
                 name,
                 output,
                 error,
-                ..
+                verdict,
             } => {
                 self.round_pending = true;
-                self.tool_done(&id, &name, output, error.as_deref())
+                self.tool_done(&id, &name, output, error.as_deref(), verdict)
             }
             ServerEvent::GeneratedImage {
                 id,
@@ -413,7 +413,14 @@ impl V2Mapper {
         }
     }
 
-    fn tool_done(&mut self, id: &str, name: &str, output: String, error: Option<&str>) -> Vec<Value> {
+    fn tool_done(
+        &mut self,
+        id: &str,
+        name: &str,
+        output: String,
+        error: Option<&str>,
+        verdict: Option<crate::tool::ToolVerdict>,
+    ) -> Vec<Value> {
         let mut updates = self.ensure_created(id, name);
         if self.tool(id).done {
             return updates;
@@ -446,9 +453,13 @@ impl V2Mapper {
             ));
             return updates;
         }
+        // `status` keeps its two values; the verdict rides beside it in `_meta`.
         updates.push(tool_call_update(
             id,
-            &ToolCallPatch::final_status(if error.is_some() { "failed" } else { "completed" }),
+            &ToolCallPatch {
+                meta: verdict_meta(verdict),
+                ..ToolCallPatch::final_status(if error.is_some() { "failed" } else { "completed" })
+            },
         ));
         updates
     }

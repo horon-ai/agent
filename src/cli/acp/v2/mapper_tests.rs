@@ -605,3 +605,73 @@ fn tool_cancelled_after_a_final_status_is_ignored() {
     let frames = map(&mut mapper, json!({"type":"tool_cancelled","id":"c1"}));
     assert!(frames.is_empty(), "a finished call is not cancelled again: {frames:?}");
 }
+
+/// The final update of a call that ended with a verdict names it under
+/// `_meta`, and `status` still follows only whether the call errored.
+#[test]
+fn a_verdict_rides_the_final_update_under_meta() {
+    for (verdict, error, status) in [
+        ("rejected", None, "completed"),
+        ("truncated", None, "completed"),
+        ("failed", Some("boom"), "failed"),
+    ] {
+        let mut mapper = mapper();
+        map_all(
+            &mut mapper,
+            &[
+                start("c1", "read"),
+                input("c1", &json!({"path":"a"})),
+                exec("c1", "read"),
+            ],
+        );
+        let frames = map(
+            &mut mapper,
+            json!({"type":"tool_done","id":"c1","name":"read","output":"A","error":error,"verdict":verdict}),
+        );
+        let last = frames.last().expect("the final update");
+        assert_eq!(last["status"], status, "{frames:?}");
+        assert_eq!(last["_meta"], json!({"horon-agent": {"verdict": verdict}}), "{last}");
+        let carrying = frames.iter().filter(|frame| frame.get("_meta").is_some()).count();
+        assert_eq!(carrying, 1, "only the final update carries the verdict: {frames:?}");
+    }
+}
+
+/// A call the daemon reported without a verdict keeps the frames it had.
+#[test]
+fn a_call_without_a_verdict_sends_no_meta() {
+    let mut mapper = mapper();
+    let frames = map_all(&mut mapper, &round("c1", "read", &json!({"path":"a"}), "A"));
+    assert_eq!(frames.last().expect("the final update")["status"], "completed");
+    assert!(
+        frames.iter().all(|frame| frame.get("_meta").is_none()),
+        "no verdict, no `_meta`: {frames:?}"
+    );
+}
+
+/// A cancelled call is already final: the verdict on the `tool_done` that
+/// follows it reaches no update.
+#[test]
+fn a_verdict_after_tool_cancelled_adds_no_update() {
+    let mut mapper = mapper();
+    map_all(
+        &mut mapper,
+        &[
+            start("c1", "bash"),
+            input("c1", &json!({"command":"sleep 30"})),
+            exec("c1", "bash"),
+        ],
+    );
+    let cancelled = map(&mut mapper, json!({"type":"tool_cancelled","id":"c1"}));
+    assert_eq!(cancelled.last().expect("the cancelled update")["status"], "cancelled");
+    assert!(
+        cancelled.iter().all(|frame| frame.get("_meta").is_none()),
+        "{cancelled:?}"
+    );
+
+    let after = map(
+        &mut mapper,
+        json!({"type":"tool_done","id":"c1","name":"bash","output":"[Cancelled by user]",
+            "error":"[Cancelled by user]","verdict":"interrupted"}),
+    );
+    assert!(after.is_empty(), "the verdict adds no second final update: {after:?}");
+}

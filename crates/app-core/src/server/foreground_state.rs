@@ -671,11 +671,14 @@ impl StopObserver {
 /// One History row. The stored message id, and whether that message started a
 /// turn, ride along only for a connection that negotiated v2
 /// (`include_message_ids`); every other connection gets the row it always got.
+/// A tool row also reports the verdict stored on its result, to every
+/// connection, and only when one was stored.
 pub(crate) fn history_message(
     msg: crate::session::RenderedMessage,
     stored: &[crate::session::StoredMessage],
     include_message_ids: bool,
 ) -> crate::protocol::HistoryMessage {
+    let verdict = stored_verdict(&msg, stored);
     let stored_message = msg
         .stored_index
         .and_then(|index| stored.get(index))
@@ -692,7 +695,23 @@ pub(crate) fn history_message(
             Some(msg.tool_calls)
         },
         tool_data: msg.tool_data,
+        verdict,
     }
+}
+
+/// The verdict on the stored result block a tool row was rendered from.
+fn stored_verdict(
+    msg: &crate::session::RenderedMessage,
+    stored: &[crate::session::StoredMessage],
+) -> Option<crate::tool::ToolVerdict> {
+    let call = msg.tool_data.as_ref().filter(|_| msg.role == "tool")?;
+    let blocks = &stored.get(msg.stored_index?)?.content;
+    blocks.iter().find_map(|block| match block {
+        crate::message::ContentBlock::ToolResult {
+            tool_use_id, verdict, ..
+        } if *tool_use_id == call.id => *verdict,
+        _ => None,
+    })
 }
 
 pub(crate) fn is_v2_only(event: &ServerEvent) -> bool {

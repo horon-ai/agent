@@ -155,3 +155,60 @@ async fn the_streaming_round_stores_the_same_verdicts() {
 
     assert_every_outcome_is_stored(&agent);
 }
+
+/// A History row for a tool result reports the verdict stored on that result,
+/// to every connection, and a result stored without one keeps the row's bytes.
+#[test]
+fn a_history_tool_row_reports_the_stored_verdict() {
+    use crate::server::foreground_state::history_message;
+
+    let result = |call: &str, verdict: Option<ToolVerdict>| crate::session::StoredMessage {
+        id: format!("{call}-result"),
+        role: Role::User,
+        content: vec![ContentBlock::ToolResult {
+            tool_use_id: call.to_string(),
+            content: "text".to_string(),
+            is_error: None,
+            verdict,
+        }],
+        display_role: None,
+        turn_start: false,
+        timestamp: None,
+        tool_duration_ms: None,
+        token_usage: None,
+        original_input: None,
+        arg_repairs: None,
+        degradations: None,
+    };
+    let stored = [
+        result("call-failed", Some(ToolVerdict::Failed)),
+        result("call-plain", None),
+    ];
+    let row = |index: usize, call: &str, include_message_ids: bool| {
+        let rendered = crate::session::RenderedMessage {
+            response_stats: None,
+            role: "tool".to_string(),
+            content: "text".to_string(),
+            tool_calls: Vec::new(),
+            tool_data: Some(crate::message::ToolCall {
+                id: call.to_string(),
+                name: "read".to_string(),
+                ..Default::default()
+            }),
+            stored_index: Some(index),
+        };
+        history_message(rendered, &stored, include_message_ids)
+    };
+
+    for include_message_ids in [false, true] {
+        let failed = row(0, "call-failed", include_message_ids);
+        assert_eq!(failed.verdict, Some(ToolVerdict::Failed));
+        let wire = serde_json::to_value(&failed).unwrap();
+        assert_eq!(wire["verdict"], "failed", "{wire}");
+
+        let plain = serde_json::to_value(row(1, "call-plain", include_message_ids)).unwrap();
+        assert!(plain.get("verdict").is_none(), "no stored verdict, no key: {plain}");
+    }
+    // A row is matched to its own result, not to whatever the message holds.
+    assert_eq!(row(0, "call-other", false).verdict, None);
+}

@@ -7,9 +7,10 @@
 //! call showed. What history does not keep cannot be replayed: structured file
 //! diffs (a tool result persists only its text, which carries the unified
 //! diff), the failed status of a tool, and images a tool returned, which no live
-//! update ever showed. System rows are skipped; the compacted-prefix notice
-//! becomes a `compaction_update` only for a client that advertised
-//! `session.compaction`.
+//! update ever showed. A stored verdict is kept, so the final update carries it
+//! under `_meta` as the live one did while `status` stays `completed`. System
+//! rows are skipped; the compacted-prefix notice becomes a `compaction_update`
+//! only for a client that advertised `session.compaction`.
 
 use super::*;
 use crate::protocol::HistoryMessage;
@@ -47,7 +48,7 @@ pub(super) fn replay_updates(
                 }
             }
             "tool" => match &message.tool_data {
-                Some(call) => tool_updates(&mut updates, call, &message.content, options),
+                Some(call) => tool_updates(&mut updates, call, &message.content, message.verdict, options),
                 None => updates.push(agent_text(index, &message.content)),
             },
             "system" => {
@@ -66,8 +67,14 @@ pub(super) fn replay_updates(
 }
 
 /// A completed call: the call, the plan a todo write showed, then the final
-/// update with the stored result text.
-fn tool_updates(updates: &mut Vec<Value>, call: &crate::message::ToolCall, output: &str, options: &MapperOptions) {
+/// update with the stored result text and the stored verdict, when there is one.
+fn tool_updates(
+    updates: &mut Vec<Value>,
+    call: &crate::message::ToolCall,
+    output: &str,
+    verdict: Option<crate::tool::ToolVerdict>,
+    options: &MapperOptions,
+) {
     let mut started = json!({
         "sessionUpdate": "tool_call",
         "toolCallId": call.id,
@@ -90,7 +97,7 @@ fn tool_updates(updates: &mut Vec<Value>, call: &crate::message::ToolCall, outpu
     {
         updates.push(plan_update(&entries));
     }
-    updates.push(json!({
+    let mut done = json!({
         "sessionUpdate": "tool_call_update",
         "toolCallId": call.id,
         "title": tool_title(&call.name),
@@ -98,7 +105,11 @@ fn tool_updates(updates: &mut Vec<Value>, call: &crate::message::ToolCall, outpu
         "status": "completed",
         "content": [{ "type": "content", "content": text_block(output) }],
         "rawOutput": { "output": output },
-    }));
+    });
+    if let Some(meta) = verdict_meta(verdict) {
+        done["_meta"] = meta;
+    }
+    updates.push(done);
 }
 
 fn agent_text(index: usize, text: &str) -> Value {

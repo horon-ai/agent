@@ -34,6 +34,8 @@ mod session_list;
 mod tests;
 mod util;
 mod v2;
+#[cfg(test)]
+mod verdict_meta_tests;
 
 use auth::*;
 use client_router::*;

@@ -149,7 +149,7 @@ impl EventMapper {
                 name,
                 output,
                 error,
-                ..
+                verdict,
             } => {
                 self.round_pending = true;
                 let text = json!({
@@ -158,7 +158,7 @@ impl EventMapper {
                 });
                 self.tool_results.insert(id.clone(), text);
                 let content = self.content(&id);
-                vec![json!({
+                let mut update = json!({
                     "sessionUpdate": "tool_call_update",
                     "toolCallId": id,
                     "title": tool_title(&name),
@@ -169,7 +169,12 @@ impl EventMapper {
                         "output": output,
                         "error": error,
                     }
-                })]
+                });
+                // `status` keeps its two values; the verdict rides beside it.
+                if let Some(meta) = verdict_meta(verdict) {
+                    update["_meta"] = meta;
+                }
+                vec![update]
             }
             ServerEvent::ToolDiff { id, diffs } => {
                 let items: Vec<Value> = diffs.iter().map(|diff| self.diff_content(diff)).collect();
