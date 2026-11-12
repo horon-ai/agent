@@ -54,6 +54,7 @@ for entry in "${packages[@]}"; do
     "type": "git",
     "url": "git+https://github.com/horon-ai/agent.git"
   },
+  "homepage": "https://github.com/horon-ai/agent",
   "files": [
     "README.md"
   ],
