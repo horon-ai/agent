@@ -29,6 +29,13 @@ and `horon-agent` (the executable's own name).
 
 ## npm
 
+The npm distribution is built and tested, but no release has been published yet:
+the registry currently holds only the `0.0.0` placeholder packages that reserve
+the seven names, and those carry no binaries. Use the installer or a source
+checkout until `NPM_PUBLISH` is turned on.
+
+When it is on, the install is:
+
 ```sh
 npm i -g @horon-ai/horon
 horon --version
