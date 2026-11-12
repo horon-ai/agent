@@ -142,8 +142,8 @@ memory = "essential"
 
 레지스트리는 이름만으로 효과를 묻지 않고 그 호출의 입력까지 넘겨 묻습니다.
 
-- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1036`).
-- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1044`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
+- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1269`).
+- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1281`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
 - 두 함수 모두 `None`을 "분류할 수 없음"으로 씁니다. 호출자는 그 값을 쓰기 배리어로 읽습니다. 읽기 전용 게이트는 자기가 볼 수 없는 영향 범위를 가진 도구 때문에 열리지 않습니다.
 
 ### 두 게이트
@@ -152,12 +152,12 @@ memory = "essential"
 
 | 경로 | 위치 | 무엇을 하는가 |
 | --- | --- | --- |
-| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1450`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:1513`)를 지나 도구를 꺼내고 승인 게이트(`:1561`)와 `pre_tool` 훅(`:1582`)을 차례로 지납니다. |
+| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1983`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:2027`)를 지나 도구를 꺼내고 승인 게이트(`:2087`)와 `pre_tool` 훅(`:2202`)을 차례로 지납니다. |
 | 에이전트 | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | 라운드가 호출을 내보내기 전에 이름 하나를 검사합니다. 계획 모드 게이트가 `:1081`에 있습니다. |
 
 에이전트 경로가 계획 모드 검사를 함수 맨 앞에 두는 이유는 그 아래 SDK 분기 때문입니다. SDK가 켠 도구나 콜백 도구는 허용 목록 검사에서 곧바로 `Ok`로 빠져나갑니다. 그 분기 뒤에 게이트를 두면 정확히 영향 범위를 볼 수 없는 호출이 검사를 지나칩니다. 그래서 계획 모드 검사는 그 분기보다 먼저 돌고, 레지스트리 경로도 같은 이유로 같은 기본값을 씁니다.
 
-두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:1517`, `:1573`).
+두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:2031`, `:2190`).
 
 ### 계획 모드 상태 기계
 
@@ -187,7 +187,7 @@ memory = "essential"
 
 `ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:357`). 기본값은 `off`이고 (`crates/base/src/config.rs:1017`), 이는 지금까지처럼 묻지 않는 동작입니다.
 
-판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:223`). 순서가 중요합니다.
+판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:232`). 순서가 중요합니다.
 
 1. `dual_confirm_classes`에 든 위험 등급이면 모드와 무관하게 승인을 요구합니다. 이 목록에 등급을 넣는 이유가 바로 어떤 모드도 그것을 자동 승인하지 못하게 하는 것입니다.
 2. `[tools] restricted_paths`에 걸리는 경로는 모드와 무관하게 승인을 요구합니다. `off` 반환보다도, bash 패턴 `allow`보다도 앞입니다. 등록된 경로는 상시 "물어봐 달라"는 뜻이고, 범위 승인도 이것을 덮지 못합니다.
@@ -225,7 +225,7 @@ ACP에서는 두 범위 옵션(`allow-path`, `allow-folder`)을 v2 세션에서�
 
 ### 감사 기록
 
-자동 승인에는 감사 기록이 붙습니다. 새 파일이나 새 큐를 만들지 않고 기존 로그 이벤트 `TOOL_APPROVAL`을 씁니다 (`crates/app-core/src/approval.rs:331`). 필드는 도구 이름, 모드, 사유, 호출 ID 넷입니다 (`crates/app-core/src/approval.rs:331`).
+자동 승인에는 감사 기록이 붙습니다. 새 파일이나 새 큐를 만들지 않고 기존 로그 이벤트 `TOOL_APPROVAL`을 씁니다 (`crates/app-core/src/approval.rs:341`). 필드는 도구 이름, 모드, 사유, 호출 ID 넷입니다 (`crates/app-core/src/approval.rs:341`).
 
 `off` 모드는 감사 줄을 쓰지 않습니다. 승인 등급이 없던 시절과 로그가 같아야 하기 때문입니다. 읽기 전용 호출도 감사 대상이 아닙니다. 그래서 `off`가 읽기 전용 분기보다 먼저 반환합니다.
 

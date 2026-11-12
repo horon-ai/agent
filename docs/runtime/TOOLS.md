@@ -142,8 +142,8 @@ When a tool's footprint depends on its arguments, it overrides `effects_for_inpu
 
 The registry asks for effects with the call's input, not with the name alone.
 
-- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1036`).
-- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1044`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
+- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1269`).
+- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1281`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
 - Both treat `None` as "cannot classify". Callers read that value as the write barrier. A read-only gate never opens because of a tool whose footprint it cannot see.
 
 ### Two gates
@@ -152,12 +152,12 @@ The plan-mode check exists in two places because the two paths call tools differ
 
 | Path | Location | What it does |
 | --- | --- | --- |
-| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1450`) | Resolves the name, checks session policy, passes the plan-mode gate (`:1513`), takes the tool, then passes the approval gate (`:1561`) and the `pre_tool` hook (`:1582`) in order. |
+| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1983`) | Resolves the name, checks session policy, passes the plan-mode gate (`:2027`), takes the tool, then passes the approval gate (`:2087`) and the `pre_tool` hook (`:2202`) in order. |
 | Agent | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | Checks one name before the round dispatches any call. The plan-mode gate is at `:1081`. |
 
 The agent path puts the plan-mode check at the top of the function because of the SDK branch below it. SDK-enabled tools and callback tools exit straight to `Ok` from the allow-list check. A gate after that branch would let through exactly the calls whose footprint cannot be seen. So the plan-mode check runs before the branch, and the registry path uses the same default for the same reason.
 
-Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:1517`, `:1573`).
+Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:2031`, `:2190`).
 
 ### The plan-mode state machine
 
@@ -187,7 +187,7 @@ Plan mode is off by default. The configuration field defaults to `false` (`crate
 
 `ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:357`). The default is `off` (`crates/base/src/config.rs:1017`), which is the same non-asking behaviour as before.
 
-`evaluate` decides (`crates/app-core/src/approval.rs:223`). Order matters.
+`evaluate` decides (`crates/app-core/src/approval.rs:232`). Order matters.
 
 1. A danger class in `dual_confirm_classes` requires approval regardless of mode. That is exactly why a class goes into this list: so no mode can auto-approve it.
 2. A path matching `[tools] restricted_paths` requires approval regardless of mode. This comes before the `off` return and before a bash-pattern allow, because a listed path is a standing "ask me", and a scoped grant never covers one.
@@ -201,7 +201,7 @@ Danger classes are not reclassified; the existing command risk classifier's verd
 
 `dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:1026`, `crates/base/src/config/default_file.rs:341`). Empty leaves every decision to the mode.
 
-The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2072`, hook at `:2176`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
+The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2087`, hook at `:2202`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
 
 `irc` has the write bit, no process or network bit, and names no filesystem path, so `write` mode does not ask about it: there is no file to approve. `all` mode does ask, because an `irc` call is not read-only.
 
@@ -225,7 +225,7 @@ In ACP, the two scoped options (`allow-path`, `allow-folder`) are offered only o
 
 ### Audit records
 
-Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:331`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:331`).
+Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:341`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:341`).
 
 `off` mode writes no audit line, because logs must match the era before approval tiers existed. Read-only calls are not audited either. That is why `off` returns before the read-only branch.
 
