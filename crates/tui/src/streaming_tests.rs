@@ -79,8 +79,10 @@ fn streamed_text_keeps_its_place_as_the_newest_entry() {
         screen.contains("LIVE"),
         "the streaming message was not drawn:\n{screen}"
     );
+    let finished = screen.find("FINISHED").expect("the committed message is on screen");
+    let live = screen.find("LIVE").expect("the streaming message is on screen");
     assert!(
-        screen.find("LIVE").unwrap_or(0) > screen.find("FINISHED").unwrap_or(0),
+        live > finished,
         "the streaming message must be the newest row:\n{screen}"
     );
 }
