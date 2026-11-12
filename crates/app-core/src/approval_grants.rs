@@ -459,8 +459,9 @@ fn restricted_matched(
 ///
 /// A pattern with no path separator also matches a candidate's file name, so
 /// `secrets.env` covers `/srv/app/secrets.env` the way a reader of the config
-/// would expect. A pattern with a separator is matched against the whole path
-/// only, so `notes/*` cannot reach a nested `notes/a/b.txt` by accident.
+/// would expect. `*` matches across separators, because `MatchOptions::new()`
+/// leaves `require_literal_separator` off; that is the safe direction here,
+/// since a broader pattern asks more often rather than fewer.
 fn matches_any(pattern: &glob::Pattern, candidates: &[String]) -> bool {
     let names_only = !has_separator(pattern.as_str());
     candidates.iter().any(|candidate| {
