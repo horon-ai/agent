@@ -20,6 +20,7 @@ fn add_screenshot(session: &mut Session, index: usize) {
                 tool_use_id: format!("call_{index}"),
                 content: format!("Captured main display #{index}"),
                 is_error: None,
+                verdict: None,
             },
             ContentBlock::Image {
                 media_type: "image/png".to_string(),

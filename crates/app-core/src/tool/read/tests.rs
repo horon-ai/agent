@@ -1202,11 +1202,7 @@ async fn history_url_renders_the_stored_transcript_and_pages_it() {
     );
     session.add_message(
         crate::message::Role::User,
-        vec![crate::message::ContentBlock::ToolResult {
-            tool_use_id: "call-1".into(),
-            content: "file text".into(),
-            is_error: None,
-        }],
+        vec![crate::message::ContentBlock::tool_result("call-1", "file text", None)],
     );
     let session_id = session.id.clone();
     session.save().expect("the session is saved");

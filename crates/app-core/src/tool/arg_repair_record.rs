@@ -68,6 +68,7 @@ mod tests {
             tool_use_id: call_id.to_string(),
             content: "done".to_string(),
             is_error: None,
+            verdict: None,
         }
     }
 

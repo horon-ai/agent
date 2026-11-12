@@ -168,7 +168,6 @@ async fn recv_or_panic(rx: &mut mpsc::UnboundedReceiver<String>, what: &str) -> 
         .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
         .unwrap_or_else(|| panic!("gate channel closed while waiting for {what}"))
 }
-
 fn tool_use_events(id: &str, name: &str, input: &str) -> Vec<StreamEvent> {
     vec![
         StreamEvent::ToolUseStart {
@@ -226,6 +225,7 @@ fn tool_result_sequence(agent: &Agent) -> Vec<(String, String, Option<bool>)> {
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } => Some((tool_use_id.clone(), content.clone(), *is_error)),
             _ => None,
         })

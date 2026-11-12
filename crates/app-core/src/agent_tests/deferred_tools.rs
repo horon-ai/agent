@@ -229,6 +229,7 @@ async fn late_mcp_announcement_skips_referenced_native_and_eager() {
                 tool_use_id: "call_1".into(),
                 content: "Connected".into(),
                 is_error: None,
+                verdict: None,
             },
             ContentBlock::ToolReference {
                 tool_use_id: "call_1".into(),

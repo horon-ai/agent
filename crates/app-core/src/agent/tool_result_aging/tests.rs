@@ -106,6 +106,7 @@ fn add_tool_round(agent: &mut Agent, index: usize, body: String) {
             tool_use_id: format!("call-{index}"),
             content: body,
             is_error: None,
+            verdict: None,
         }],
     );
 }

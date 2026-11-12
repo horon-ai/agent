@@ -126,6 +126,7 @@ impl Agent {
                 tool_use_id: tc.id.clone(),
                 content: USER_CANCELLED.to_string(),
                 is_error: Some(true),
+                verdict: Some(crate::tool::ToolVerdict::Interrupted),
             }],
             Some(elapsed.as_millis() as u64),
         );

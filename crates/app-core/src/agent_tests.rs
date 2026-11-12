@@ -308,14 +308,12 @@ impl Provider for ExplicitPinProvider {
         Arc::new(self.clone())
     }
 }
-
 fn content_text(content: &[ContentBlock]) -> &str {
     match content.first() {
         Some(ContentBlock::Text { text, .. }) => text,
         _ => "",
     }
 }
-
 fn message_text(message: &Message) -> &str {
     content_text(&message.content)
 }
@@ -463,7 +461,6 @@ impl Provider for DelayedProvider {
         _resume_session_id: Option<&str>,
     ) -> Result<EventStream> {
         tokio::time::sleep(self.open_delay).await;
-
         let first_event_delay = self.first_event_delay;
         let (tx, rx) = tokio_mpsc::channel::<Result<StreamEvent>>(8);
         tokio::spawn(async move {
@@ -475,7 +472,6 @@ impl Provider for DelayedProvider {
                 }))
                 .await;
         });
-
         Ok(Box::pin(ReceiverStream::new(rx)))
     }
 
@@ -616,6 +612,7 @@ fn tool_output_to_content_blocks_preserves_labeled_images() {
             tool_use_id,
             content,
             is_error,
+            ..
         } => {
             assert_eq!(tool_use_id, "call_1");
             assert_eq!(content, "Image ready");
@@ -3527,6 +3524,7 @@ pub(super) fn shared_tool_results(agent: &Agent) -> Vec<(String, String, Option<
                 tool_use_id,
                 content,
                 is_error,
+                ..
             } => Some((tool_use_id.clone(), content.clone(), *is_error)),
             _ => None,
         })

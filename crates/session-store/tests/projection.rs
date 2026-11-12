@@ -573,6 +573,7 @@ fn result() -> ContentBlock {
         tool_use_id: "call-1".into(),
         content: "result".into(),
         is_error: None,
+        verdict: None,
     }
 }
 

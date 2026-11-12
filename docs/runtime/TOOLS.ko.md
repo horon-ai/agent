@@ -634,6 +634,30 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 `horon debug 'server:memory'`의 `process.stage_counters`에 `tool_output_spills`, `tool_output_spill_original_bytes`, `tool_output_spill_kept_bytes`, `read_unchanged_hits`, `read_delta_hits`, `read_bytes_avoided`, `tool_result_aging_batches`, `tool_result_aged_results`, `tool_result_aged_bytes`가 나옵니다. 구조 게이트(`scripts/perf/check_structural.py`)의 `context` 섹션은 1 MiB 출력이 48 KiB 안에 들어오는지, 반복 읽기가 512바이트 미만인지, 압박 구간을 두 번 지나도 축약 묶음이 정확히 한 번인지 확인합니다.
 
+## 도구 결과 판정
+
+도구 결과는 본문과 오류 플래그뿐이어서, 호출이 실제로 실행됐는지 알려면 문장을 읽어야 했습니다. 저장되는 `tool_result` 블록이 이제 `verdict`를 함께 가집니다. 호출이 어떻게 끝났는지를 이름으로 적은 선택 필드입니다 (`crates/tool-types/src/verdict.rs`).
+
+| 판정 | 뜻 |
+| --- | --- |
+| `ok` | 도구가 실행됐고 결과 전체를 돌려줬습니다. |
+| `partial` | 도구가 실행됐지만 작업 일부만 끝났습니다. |
+| `truncated` | 도구가 끝까지 실행됐고 돌려준 본문은 전체의 잘린 일부입니다. |
+| `withheld` | 도구가 실행됐고 결과 대신 거절 문장을 돌려줬습니다. 부수 효과는 있었습니다. |
+| `rejected` | 도구가 실행되기 전에 호출이 거절됐습니다. |
+| `failed` | 도구가 실행됐고 오류를 돌려줬습니다. |
+| `interrupted` | 사용자, 재시작, 취소로 호출이 건너뛰어지거나 중단됐습니다. |
+
+키 이름은 `tool_verdict`가 아니라 `verdict`입니다. 이후 표면이 모두 쓰는 같은 이름입니다. 타입은 `Option<ToolVerdict>`이고 `#[serde(default, skip_serializing_if = "Option::is_none")]`이라, 판정을 적지 않은 결과는 키 없이 직렬화됩니다.
+
+```json
+{ "type": "tool_result", "tool_use_id": "call_1", "content": "alpha", "verdict": "ok" }
+```
+
+이 필드가 생기기 전에 저장된 기록은 `verdict` 키가 없고 그대로 읽힙니다. `is_error`만 아는 읽기는 계속 그 값으로 `ok`나 `failed`를 유도합니다. 이 키는 모델에게 가지 않습니다. `crates/provider-openai`가 이 필드 없이 블록을 분해하므로, 판정을 적든 안 적든 같은 대화는 같은 요청 바이트로 렌더링되고 변경 전 세션도 똑같이 재생됩니다.
+
+모르는 판정 이름은 추측하지 않고 기록 전체를 거절합니다. 모르는 블록 `type`이 이미 그렇게 동작합니다. 이후 빌드가 새 이름으로 쓴 기록은 이전 빌드에서 읽히지 않습니다.
+
 ## 보조 완료와 비밀값 왕복
 
 대화를 건드리지 않는 곁가지 호출 하나의 계약과, 자격증명이 프로바이더로 나갔다가 도구에서 실제 값으로 돌아오는 왕복을 설명합니다. 두 장치는 서로 다른 문제를 다루지만 경계를 긋는 방식이 같습니다. 호출자가 정할 수 있는 것과 정할 수 없는 것을 타입으로 가르고, 경계를 넘는 값은 이름이 붙은 오류로 거절합니다.

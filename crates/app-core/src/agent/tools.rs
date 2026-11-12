@@ -107,6 +107,10 @@ pub(super) fn tool_output_to_content_blocks(tool_use_id: String, output: ToolOut
         tool_use_id: tool_use_id.clone(),
         content: output.output,
         is_error,
+        // The layer that produced this output already said what became of the
+        // call; storing it here is what makes the verdict travel with the
+        // result instead of being re-read from the text later.
+        verdict: output.verdict,
     }];
     for img in output.images {
         blocks.push(ContentBlock::Image {

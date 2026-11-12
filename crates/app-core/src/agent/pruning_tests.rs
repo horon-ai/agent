@@ -93,6 +93,7 @@ fn push_result(agent: &mut Agent, id: &str, content: &str) {
             tool_use_id: id.to_string(),
             content: content.to_string(),
             is_error: None,
+            verdict: None,
         }],
     );
 }

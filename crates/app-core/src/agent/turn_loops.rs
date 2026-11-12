@@ -1857,6 +1857,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: error.clone(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Interrupted),
                                 }],
                             );
                             tool_results_dirty = true;
@@ -1901,6 +1902,9 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content,
                                     is_error: if *is_error { Some(true) } else { None },
+                                    // A plain answer stores no key; only a
+                                    // refused one says what became of it.
+                                    verdict: (*is_error).then_some(crate::tool::ToolVerdict::Failed),
                                 }],
                             );
                             tool_results_dirty = true;
@@ -1928,6 +1932,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: message.clone(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Rejected),
                                 }],
                             );
                             tool_results_dirty = true;
@@ -1954,6 +1959,7 @@ impl Agent {
                                     tool_use_id: tc.id.clone(),
                                     content: message.clone(),
                                     is_error: Some(true),
+                                    verdict: Some(crate::tool::ToolVerdict::Rejected),
                                 }],
                             );
                             tool_results_dirty = true;
@@ -2056,6 +2062,11 @@ impl Agent {
                                             tool_use_id: tc.id.clone(),
                                             content: error_msg,
                                             is_error: Some(true),
+                                            verdict: Some(if e.downcast_ref::<crate::tool::ToolRejected>().is_some() {
+                                                crate::tool::ToolVerdict::Rejected
+                                            } else {
+                                                crate::tool::ToolVerdict::Failed
+                                            }),
                                         }],
                                         Some(tool_elapsed.as_millis() as u64),
                                     );
@@ -2097,6 +2108,7 @@ impl Agent {
                                 tool_use_id: skipped_tc.id.clone(),
                                 content: Self::LOOP_GUARD_SKIP.to_string(),
                                 is_error: Some(true),
+                                verdict: Some(crate::tool::ToolVerdict::Interrupted),
                             }],
                         );
                     }

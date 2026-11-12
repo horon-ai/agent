@@ -664,7 +664,7 @@ jobs:
           set -euo pipefail
           TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
           echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-tui)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-provider-openai -p horon-tui)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -1024,6 +1024,30 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- session_replication --nocapture
+
+      - name: Run tool verdict storage cohort
+        shell: bash
+        # The stored `verdict` key has three surfaces that this workflow only
+        # ever reaches through filters: the wire form in
+        # `horon-agent-message-types`, the model-facing bytes in
+        # `horon-agent-provider-openai`, and the store path in
+        # `horon-agent-app-core`. Without this step all three compile and never
+        # run. Each `--min-passed` is the number of tests the filter really
+        # matches, so a renamed module fails on the count instead of passing
+        # over an empty subset. libtest takes one filter per run.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-message-types \
+            --timeout 600 --min-passed 4 \
+            -- verdict_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
+            --timeout 600 --min-passed 2 \
+            -- verdict_bytes_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- agent::verdict_store_tests:: --nocapture
 
       - name: Run session id prefix cohort
         shell: bash
