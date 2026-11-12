@@ -48,3 +48,61 @@ fn create_and_resume_goal_persists_project_goal() {
         crate::env::remove_var("HORON_HOME");
     }
 }
+
+#[test]
+fn a_budget_limited_goal_is_not_resumed_automatically() {
+    let _guard = crate::storage::lock_test_env();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let project = temp.path().join("repo");
+    std::fs::create_dir_all(&project).expect("project dir");
+    let prev_home = std::env::var_os("HORON_HOME");
+    crate::env::set_var("HORON_HOME", temp.path());
+
+    let goal = create_goal(
+        GoalCreateInput {
+            title: "Spent out".to_string(),
+            scope: GoalScope::Project,
+            budget_tokens: Some(10),
+            ..GoalCreateInput::default()
+        },
+        Some(&project),
+    )
+    .expect("create goal");
+    attach_goal_to_session("ses_budget_limit", &goal, Some(&project)).expect("attach");
+
+    update_goal(
+        &goal.id,
+        Some(GoalScope::Project),
+        Some(&project),
+        GoalUpdateInput {
+            status: Some(GoalStatus::BudgetLimited),
+            ..GoalUpdateInput::default()
+        },
+    )
+    .expect("update")
+    .expect("goal exists");
+
+    assert!(
+        resume_goal("ses_budget_limit", Some(&project))
+            .expect("resume")
+            .is_none(),
+        "a goal that spent its budget must wait for an operator, not resume itself"
+    );
+    assert_eq!(
+        GoalStatus::parse("budget_limited"),
+        Some(GoalStatus::BudgetLimited),
+        "the stored string must parse back"
+    );
+    assert_eq!(GoalStatus::BudgetLimited.as_str(), "budget_limited");
+
+    let stored = load_goal(&goal.id, Some(GoalScope::Project), Some(&project))
+        .expect("load")
+        .expect("goal exists");
+    assert_eq!(stored.budget_tokens, Some(10), "the ceiling survives the transition");
+
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("HORON_HOME", prev_home);
+    } else {
+        crate::env::remove_var("HORON_HOME");
+    }
+}
