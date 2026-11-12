@@ -34,7 +34,7 @@ horon --version
 npx @horon-ai/horon --help
 ```
 
-`npm i -g` installs the wrapper and the matching platform package. `npx` runs the same launcher from a temporary install without a global one. After a global install, `horon` with no arguments opens the terminal client and every other subcommand goes to the headless agent; `hrn` is the same launcher under a shorter name.
+`npm i -g` installs the wrapper and the matching platform package. `npx` runs the same launcher from a temporary install without a global one. After a global install, `horon` with no arguments starts the agent and then hands the terminal over to `horon-tui` from the same platform package, and every other subcommand goes to the headless agent; `hrn` is the same launcher under a shorter name. The hand-off needs both stdin and stdout to be a terminal, so a pipe or a set `HORON_NO_TUI` keeps the headless path.
 
 A missing platform package is a reinstall, not a broken install. The launcher prints one `horon:` line and exits 1.
 
