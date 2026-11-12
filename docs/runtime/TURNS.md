@@ -399,11 +399,14 @@ how many messages it covered. When every message fits inside the budget there is
 nothing to cover, and the request reports that instead of writing an empty
 document.
 
-### The document is not validated
+### The document is checked for a goal
 
-Generation is one completion. Its text is committed as-is: a missing heading or
-an omitted section is not a failure, and the boundary still keeps the document
-plus the verbatim tail. Nothing re-reads the document to grade it.
+Generation is one completion. Two answers are refused before they can become a
+boundary: one with no text, and one without a `Goal` heading (`# Goal`,
+`### goal` and `## Goal:` all count). Either is reported as `provider_error`
+with the reason in `detail`, and nothing is committed. Any other missing heading
+or omitted section is not a failure: the text is committed as the model wrote
+it, and the boundary keeps the document plus the verbatim tail.
 
 ### Failure and cancellation
 
