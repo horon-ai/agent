@@ -162,6 +162,6 @@ fn an_unconfigured_profile_is_not_an_error() {
     // A profile that does not exist is an error the user should see; the `None`
     // branch needs a real config, so this asserts the shape of the contract that
     // the tool relies on rather than constructing one.
-    let result: Result<Option<ImageResult>> = Ok(None);
-    assert!(result.expect("no error").is_none());
+    let result: Option<ImageResult> = None;
+    assert!(result.is_none());
 }

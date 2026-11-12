@@ -241,10 +241,10 @@ async fn decode_reply(response: reqwest::Response, endpoint: &str, api_key: Opti
         let retry_after = horon_agent_provider_core::retry_after::retry_after(response.headers());
         // The body is context for the status; a body that cannot be read leaves
         // the status and the retry hint intact.
-        let body = match response.text().await {
-            Ok(body) => body,
-            Err(_) => String::new(),
-        };
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|error| format!("<body unreadable: {error}>"));
         return Err(transport::http_response_error(
             endpoint,
             status.as_u16(),

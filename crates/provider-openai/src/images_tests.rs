@@ -201,7 +201,10 @@ fn ok_reply(payloads: &[Vec<u8>], revised: Option<&str>) -> String {
 #[tokio::test]
 async fn a_generation_posts_the_json_shape_and_decodes_the_images() {
     let payload = png_bytes();
-    let server = Mock::answering(200, ok_reply(&[payload.clone()], Some("a lighthouse, dusk")));
+    let server = Mock::answering(
+        200,
+        ok_reply(std::slice::from_ref(&payload), Some("a lighthouse, dusk")),
+    );
     let reply = generate(
         &client(),
         &server.url,
