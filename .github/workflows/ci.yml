@@ -1088,7 +1088,8 @@ jobs:
         # developer machine and fail here. One directory serves the whole step:
         # the three calls run in sequence and share the session store they build.
         run: |
-          export HORON_HOME="$(mktemp -d)"
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
           chmod 700 "$HORON_HOME"
           trap 'rm -rf "$HORON_HOME"' EXIT
           python3 scripts/ci/run_lib_tests.py \
