@@ -32,6 +32,7 @@ export type {
   RuntimeInfo,
   SendMessageOptions,
   StructuredTurnResult,
+  ToolCallResult,
   Transport,
   TurnResult,
 } from "./client.js";

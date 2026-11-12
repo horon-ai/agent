@@ -605,6 +605,18 @@ TurnStopReason: TypeAlias = Literal[
 """Natural completion has no stop reason. Transport loss is not proof of a crash."""
 
 
+ToolVerdict: TypeAlias = Literal[
+    "ok",
+    "partial",
+    "truncated",
+    "withheld",
+    "rejected",
+    "failed",
+    "interrupted",
+]
+"""How a tool call ended, as the daemon judged it. A newer daemon may send a name outside this list."""
+
+
 #: Request payloads. Each ``req`` discriminator's shape is documented by the
 #: matching ``HoronAgentClient`` method, which builds it field for field.
 ApiRequest: TypeAlias = dict[str, Any]

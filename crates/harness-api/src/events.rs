@@ -142,8 +142,10 @@ pub enum ApiEvent {
         error: Option<String>,
         /// What became of the call, when the layer that stored the result
         /// recorded one. Absent means no layer made a statement, and a reader
-        /// falls back to `error` as it did before verdicts existed.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// falls back to `error` as it did before verdicts existed. A name this
+        /// build does not know reads as absent too, so a newer daemon's frame
+        /// stays readable.
+        #[serde(default, deserialize_with = "known_verdict", skip_serializing_if = "Option::is_none")]
         verdict: Option<horon_agent_tool_types::ToolVerdict>,
     },
 
@@ -1145,4 +1147,21 @@ pub struct RenderedImage {
     /// for multiple images at the same boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_message_index: Option<usize>,
+}
+
+/// Reads the `verdict` of a `tool_done`.
+///
+/// The verdict type itself refuses a name it does not know, which is right for
+/// stored results. On this frame the same refusal would fail the whole frame
+/// and end the reader of a client older than the daemon, so an unfamiliar name
+/// reads as absent here; a value that is not a string is still an error.
+fn known_verdict<'de, D>(deserializer: D) -> Result<Option<horon_agent_tool_types::ToolVerdict>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(name) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let name = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&name);
+    Ok(horon_agent_tool_types::ToolVerdict::deserialize(name).ok())
 }

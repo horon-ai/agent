@@ -136,12 +136,18 @@ pub struct AssistantTextMessage {
     pub text: String,
 }
 
+/// One finished tool call of a turn.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
     pub call_id: String,
     pub name: String,
     pub output: String,
     pub error: Option<String>,
+    /// What became of the call, when the daemon stored a verdict for it
+    /// (protocol 1.19). `None` means no layer made a statement, which is the
+    /// usual case for a call that simply succeeded and every call on an older
+    /// daemon: read `error` then, and never take `None` for `Ok`.
+    pub verdict: Option<horon_agent_harness_api::ToolVerdict>,
 }
 
 /// Provider-reported counters. Cache counters may be separate from input

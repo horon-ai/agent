@@ -745,6 +745,8 @@ export type ApiEvent =
       name: string;
       output: string;
       error?: string;
+      /** Protocol 1.19. Absent when no layer made a statement about the call. */
+      verdict?: ToolVerdictName;
     }
   | { ev: "side_pane_images"; session_id: string; images: RenderedImage[] }
   | {
@@ -1189,3 +1191,12 @@ export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {
 
 /** Natural completion has no stop reason. Transport loss is not proof of a crash. */
 export type TurnStopReason = "interrupted" | "failure" | "crash" | "provider_guardrail" | "limit_reached" | "unknown";
+
+/** The verdict names protocol 1.19 defines for a finished tool call. */
+export type ToolVerdict = "ok" | "partial" | "truncated" | "withheld" | "rejected" | "failed" | "interrupted";
+
+/**
+ * A verdict as it arrives on `tool_done`: one of {@link ToolVerdict}, or a name
+ * a newer daemon added, which is passed through unchanged instead of dropped.
+ */
+export type ToolVerdictName = ToolVerdict | (string & {});

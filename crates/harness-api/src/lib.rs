@@ -37,6 +37,7 @@ mod swarm_metadata;
 pub use client::{FrameError, HarnessClient, MAX_FRAME_BYTES, read_frame, write_frame};
 pub use events::*;
 pub use horon_agent_session_types::TurnStopReason;
+pub use horon_agent_tool_types::ToolVerdict;
 pub use horon_agent_usage_types::{ModelUsage, compare_model_usage};
 pub use message_modes::MessageModes;
 pub use replication::*;
