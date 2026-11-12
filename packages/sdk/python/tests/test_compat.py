@@ -18,7 +18,7 @@ from mock_harness import start_mock_harness
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src/horon_agent_sdk"
 README = pathlib.Path(__file__).resolve().parents[1] / "README.md"
-RUST_EVENTS = pathlib.Path(__file__).resolve().parents[3] / "crates/harness-api/src/events.rs"
+RUST_EVENTS = pathlib.Path(__file__).resolve().parents[4] / "crates/harness-api/src/events.rs"
 
 
 def test_route_usage_ranks_tracked_turns_and_prior_selections_separately() -> None:

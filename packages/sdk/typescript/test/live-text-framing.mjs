@@ -2,7 +2,7 @@
  * Opt-in acceptance check using the real SDK, private daemon, bridge, provider,
  * and bash tool. Requires a working provider login. No mocks or shared daemon.
  *
- * Usage: node sdk/typescript/test/live-text-framing.mjs ./target/selfdev/horon-agent
+ * Usage: node packages/sdk/typescript/test/live-text-framing.mjs ./target/selfdev/horon-agent
  * Optional: HORON_AGENT_SDK_TEST_MODEL (defaults to the daemon's chosen route).
  */
 import assert from "node:assert/strict";

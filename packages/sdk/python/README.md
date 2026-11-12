@@ -333,7 +333,7 @@ This package is generally available and follows semver against protocol v1.
 - Drift is checked mechanically. `cargo test -p horon-agent-sdk parity` requires
   every shared capability to exist in the Rust, TypeScript, and Python clients,
   and a Python test compares this package's tag sets with
-  `sdk/typescript/src/protocol.ts`.
+  `packages/sdk/typescript/src/protocol.ts`.
 
 Compatibility: CPython 3.10+, asyncio only (no threads required). Linux, macOS,
 and Windows are wired up; Linux and macOS are exercised end to end.
@@ -352,7 +352,7 @@ See [RELEASING.md](RELEASING.md).
 ## Development
 
 ```bash
-cd sdk/python
+cd packages/sdk/python
 uv sync
 uv run ruff check .
 uv run ruff format --check .

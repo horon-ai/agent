@@ -99,7 +99,7 @@ default_model = "my-model"
 | Stay resident as a daemon | `horon serve` |
 | Open the SDK socket | `horon api-bridge` |
 
-The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. There is no need to run `serve` first (`sdk/typescript/README.md`).
+The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. There is no need to run `serve` first (`packages/sdk/typescript/README.md`).
 
 ### Release assets
 

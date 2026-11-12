@@ -19,7 +19,7 @@ npm install @horon-ai/agent-sdk
 From a source checkout:
 
 ```bash
-cd sdk/typescript
+cd packages/sdk/typescript
 npm install
 npm run build
 ```
@@ -92,7 +92,7 @@ Swap `launch` for `connect` to drive the user's own horon-agent instead of a pri
 instance; everything after that line is identical.
 
 A complete runnable application is available in
-[`examples/demo-app`](https://github.com/horon-ai/agent/tree/dev/sdk/typescript/examples/demo-app).
+[`examples/demo-app`](https://github.com/horon-ai/agent/tree/dev/packages/sdk/typescript/examples/demo-app).
 
 ```ts
 import { HoronAgentClient } from "@horon-ai/agent-sdk";
@@ -249,7 +249,7 @@ To verify message framing and concurrent history reads against a real provider
 in a private instance, run the opt-in acceptance check from the repository root:
 
 ```sh
-HORON_AGENT_SDK_TEST_MODEL="your-model-id" node sdk/typescript/test/live-text-framing.mjs ./target/selfdev/horon-agent
+HORON_AGENT_SDK_TEST_MODEL="your-model-id" node packages/sdk/typescript/test/live-text-framing.mjs ./target/selfdev/horon-agent
 ```
 
 This uses your existing provider login and quota, runs one harmless bash tool,

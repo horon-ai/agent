@@ -452,8 +452,8 @@ fn the_sdk_inherits_every_external_credential_location() {
 fn launch_sources() -> Vec<(&'static str, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     [
-        "sdk/typescript/src/launch.ts",
-        "sdk/python/src/horon_agent_sdk/launch.py",
+        "packages/sdk/typescript/src/launch.ts",
+        "packages/sdk/python/src/horon_agent_sdk/launch.py",
     ]
     .into_iter()
     .filter_map(|file| {

@@ -3,7 +3,7 @@
 Mirrors ``crates/harness-api`` exactly: request tags live under ``req``, event
 tags under ``ev``, and every frame carries ``v``. Keep this module in sync with
 the Rust enums; the parity test in ``tests/test_protocol_parity.py`` fails when
-the tag sets drift apart from ``sdk/typescript/src/protocol.ts``, and the Rust
+the tag sets drift apart from ``packages/sdk/typescript/src/protocol.ts``, and the Rust
 suite checks the TypeScript mirror against the enums.
 
 Frames are plain dictionaries on the wire. The ``TypedDict`` classes below

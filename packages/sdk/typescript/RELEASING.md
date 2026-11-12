@@ -22,7 +22,7 @@ The six runtime packages follow the same pattern and are named after the
 ```
 
 If the package name changes in the future, update `name` in
-`sdk/typescript/package.json`, the install examples in this README and the SDK
+`packages/sdk/typescript/package.json`, the install examples in this README and the SDK
 README, the repository references, and the website's `/sdk` page together.
 
 ## The one workflow
@@ -34,7 +34,7 @@ entry points and only one of them can write to npm.
 |---|---|---|
 | `workflow_run` on **Release Tag** | A release was tagged on `main` | Publishes the seven packages at the tag's version |
 | `workflow_dispatch` | An operator names a published release tag | Dry run by default; `dry_run: false` publishes when the switch is on |
-| `pull_request` | A change to `sdk/typescript`, `scripts/sdk`, or the workflow | Generates fixture runtimes and dry-runs the whole flow |
+| `pull_request` | A change to `packages/sdk/typescript`, `scripts/sdk`, or the workflow | Generates fixture runtimes and dry-runs the whole flow |
 
 A dispatch only works for a tag created after this workflow reached `main`. The
 run checks out the tag, and a tree older than `scripts/sdk/sdk_release.py`
@@ -52,14 +52,14 @@ Each run does the same six things:
    which refuses anything that is not `vMAJOR.MINOR.PATCH`. The `plan` job also
    decides the mode through the same helper, so the rule the unit tests prove is
    the rule a release runs.
-2. Install the SDK in `sdk/typescript` (`bun install --frozen-lockfile`) against
+2. Install the SDK in `packages/sdk/typescript` (`bun install --frozen-lockfile`) against
    the committed manifest. A dry run then also validates it with `bun run
    check`; a publish run does not build anything here, because it is already
    running on a commit whose CI on `main` passed and `prepack` rebuilds `dist/`
    from a clean slate when the tarball is packed.
 3. Download the release's six `horon-agent-*.tar.gz` assets. The pull-request
    path generates stand-ins with the same archive names and members instead.
-4. Stamp the version into `sdk/typescript/package.json` and its six
+4. Stamp the version into `packages/sdk/typescript/package.json` and its six
    `optionalDependencies` pins, then generate the runtime packages with
    `scripts/sdk/prepare_runtime_packages.sh`.
 5. Check that all seven prepared packages carry that exact version
@@ -143,7 +143,7 @@ The SDK version is the release version; a tag decides it and nothing else does.
 Which number the tag carries is decided by `scripts/release/next_version.py`
 from the changes in the release, not by the SDK's own protocol surface.
 
-The committed `sdk/typescript/package.json` must still agree with the root
+The committed `packages/sdk/typescript/package.json` must still agree with the root
 `Cargo.toml`, and `scripts/sdk/sdk_release.py check-committed` runs in CI next
 to the npm CLI package gate. The workflow stamps the tag version over it in the
 runner checkout only; the stamp preserves field order, so stamping an unchanged
@@ -151,7 +151,7 @@ version rewrites the tracked file byte for byte.
 
 Two mechanical guards make a protocol change hard to land halfway, and both run
 in CI: a Rust test fails if a variant or field is missing from
-`sdk/typescript/src/protocol.ts`, and a Node test fails if the tag sets diverge.
+`packages/sdk/typescript/src/protocol.ts`, and a Node test fails if the tag sets diverge.
 A protocol major bump is a breaking release, so it is also a major one.
 
 ## Platform support

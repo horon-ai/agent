@@ -55,7 +55,7 @@ Use this when trusted publishing is unavailable (a first release before the
 publisher exists, or an emergency from a laptop). It needs PyPI credentials.
 
 ```bash
-cd sdk/python
+cd packages/sdk/python
 uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
@@ -122,8 +122,8 @@ Semver against protocol v1 (see the README's stability section):
 - **Major** only for a protocol major bump, which the handshake rejects rather
   than half-supporting.
 
-`version` lives in `sdk/python/pyproject.toml`. It must match
-`sdk/typescript/package.json`: `cargo test -p horon-agent-sdk parity` compares
+`version` lives in `packages/sdk/python/pyproject.toml`. It must match
+`packages/sdk/typescript/package.json`: `cargo test -p horon-agent-sdk parity` compares
 the public client surfaces, and the release notes treat the two SDKs as one
 version line.
 
@@ -132,7 +132,7 @@ version line.
 - `cargo test -p horon-agent-sdk parity` — every shared capability exists in
   Rust, TypeScript, and Python; neither SDK has an untriaged public method.
 - `uv run pytest` — includes `tests/test_protocol_parity.py`, which reads
-  `sdk/typescript/src/protocol.ts` and fails if the request/event tag sets or
+  `packages/sdk/typescript/src/protocol.ts` and fails if the request/event tag sets or
   protocol versions diverge.
 - `cargo test -p harness-api` — fails if a Rust event or request variant, a
   payload field, or an external credential location is missing from the SDK.

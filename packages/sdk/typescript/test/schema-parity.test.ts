@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { API_VERSION_MAJOR, API_VERSION_MINOR, KNOWN_EVENT_KINDS, KNOWN_REQUEST_KINDS } from "../dist/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const rustCrate = path.resolve(here, "../../../crates/harness-api/src");
+const rustCrate = path.resolve(here, "../../../../crates/harness-api/src");
 
 function snakeCase(variant: string): string {
   return variant.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();

@@ -99,7 +99,7 @@ default_model = "my-model"
 | 데몬으로 상주 | `horon serve` |
 | SDK 소켓 열기 | `horon api-bridge` |
 
-TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직접 띄운다. 미리 `serve`를 실행해 둘 필요가 없다 (`sdk/typescript/README.md`).
+TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직접 띄운다. 미리 `serve`를 실행해 둘 필요가 없다 (`packages/sdk/typescript/README.md`).
 
 ### 릴리스 자산
 

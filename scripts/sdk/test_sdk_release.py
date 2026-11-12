@@ -95,7 +95,7 @@ class CheckCommittedTests(unittest.TestCase):
         self.write(sdk_manifest(version="1.2.0", pins={name: "0.1.0" for name in helper.RUNTIME_NAMES.values()}))
         self.assertEqual(
             helper.check_committed(self.sdk, self.cargo),
-            ["sdk/typescript: version is '1.2.0', expected the Cargo version '0.1.0'"],
+            ["packages/sdk/typescript: version is '1.2.0', expected the Cargo version '0.1.0'"],
         )
 
     def test_a_drifting_pin_is_named(self) -> None:
@@ -105,7 +105,7 @@ class CheckCommittedTests(unittest.TestCase):
         self.assertEqual(
             helper.check_committed(self.sdk, self.cargo),
             [
-                "sdk/typescript: @horon-ai/agent-win32-x64 is pinned to '1.2.0', "
+                "packages/sdk/typescript: @horon-ai/agent-win32-x64 is pinned to '1.2.0', "
                 "expected the Cargo version '0.1.0'"
             ],
         )
@@ -116,7 +116,7 @@ class CheckCommittedTests(unittest.TestCase):
         self.write(sdk_manifest(pins=pins))
         self.assertEqual(
             helper.check_committed(self.sdk, self.cargo),
-            ["sdk/typescript: optionalDependencies is missing @horon-ai/agent-darwin-arm64@0.1.0"],
+            ["packages/sdk/typescript: optionalDependencies is missing @horon-ai/agent-darwin-arm64@0.1.0"],
         )
 
     def test_an_unexpected_pin_is_named(self) -> None:
@@ -125,7 +125,7 @@ class CheckCommittedTests(unittest.TestCase):
         self.write(sdk_manifest(pins=pins))
         self.assertEqual(
             helper.check_committed(self.sdk, self.cargo),
-            ["sdk/typescript: optionalDependencies has unexpected @horon-ai/agent-freebsd-x64"],
+            ["packages/sdk/typescript: optionalDependencies has unexpected @horon-ai/agent-freebsd-x64"],
         )
 
     def test_a_wrong_name_is_named(self) -> None:
@@ -133,7 +133,7 @@ class CheckCommittedTests(unittest.TestCase):
         manifest["name"] = "@horon-ai/horon-agent-sdk"
         self.write(manifest)
         self.assertIn(
-            "sdk/typescript: name is '@horon-ai/horon-agent-sdk', expected '@horon-ai/agent-sdk'",
+            "packages/sdk/typescript: name is '@horon-ai/horon-agent-sdk', expected '@horon-ai/agent-sdk'",
             helper.check_committed(self.sdk, self.cargo),
         )
 
@@ -302,7 +302,7 @@ class CheckPackagesTests(unittest.TestCase):
         self.sdk.write_text(json.dumps(sdk_manifest(self.VERSION, pins=pins)), encoding="utf-8")
         self.assertEqual(
             helper.check_packages(self.directory, self.VERSION, self.sdk),
-            ["sdk/typescript: @horon-ai/agent-linux-arm64 is pinned to '0.1.5', expected '0.1.6'"],
+            ["packages/sdk/typescript: @horon-ai/agent-linux-arm64 is pinned to '0.1.5', expected '0.1.6'"],
         )
 
     def test_an_sdk_version_is_named(self) -> None:
@@ -310,7 +310,7 @@ class CheckPackagesTests(unittest.TestCase):
         # SDK is what a consumer installs.
         self.sdk.write_text(json.dumps(sdk_manifest("1.2.0")), encoding="utf-8")
         problems = helper.check_packages(self.directory, self.VERSION, self.sdk)
-        self.assertIn("sdk/typescript: version is '1.2.0', expected '0.1.6'", problems)
+        self.assertIn("packages/sdk/typescript: version is '1.2.0', expected '0.1.6'", problems)
         self.assertEqual(len(problems), 7)  # the six pins follow the manifest version
 
     def test_a_missing_package_is_named(self) -> None:

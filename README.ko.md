@@ -121,8 +121,8 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 
 | 언어 | 패키지 이름 | 위치 |
 | --- | --- | --- |
-| TypeScript | `@horon-ai/agent-sdk` | [`sdk/typescript`](sdk/typescript) |
-| Python | `horon-agent-sdk` | [`sdk/python`](sdk/python) |
+| TypeScript | `@horon-ai/agent-sdk` | [`packages/sdk/typescript`](packages/sdk/typescript) |
+| Python | `horon-agent-sdk` | [`packages/sdk/python`](packages/sdk/python) |
 
 둘 다 `api-bridge` 소켓으로 하네스 API(프로토콜 v1)를 쓰고, `launch()`로 자체 데몬을 띄울 수 있다. 이 글을 쓰는 시점에는 어느 패키지도 npm이나 PyPI에 올라 있지 않으므로 소스 체크아웃에서 설치한다. 단계는 각 SDK의 README에 있다.
 

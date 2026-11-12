@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sdkRoot = path.resolve(here, "..");
-const rustEvents = path.resolve(here, "../../../crates/harness-api/src/events.rs");
+const rustEvents = path.resolve(here, "../../../../crates/harness-api/src/events.rs");
 
 function snakeCase(variant: string): string {
   return variant.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();

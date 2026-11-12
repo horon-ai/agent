@@ -262,7 +262,7 @@ jobs:
         shell: bash
         run: |
           bash scripts/npm/test_prepare_cli_packages.sh
-          node --test npm/horon/test/launcher.test.mjs
+          node --test packages/npm/horon/test/launcher.test.mjs
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
           python3 scripts/sdk/sdk_release.py check-committed
@@ -1563,11 +1563,11 @@ jobs:
       # typo in the TypeScript itself (or a broken client) reaches consumers.
       - name: Install
         run: bun install --frozen-lockfile
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
 
       - name: Typecheck, build, and test
         run: bun run check
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
 
       # `npm run check` proves the source compiles; it says nothing about what
       # a consumer actually receives. The published tarball is a separate
@@ -1590,7 +1590,7 @@ jobs:
         python: ["3.10", "3.13"]
     defaults:
       run:
-        working-directory: sdk/python
+        working-directory: packages/sdk/python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

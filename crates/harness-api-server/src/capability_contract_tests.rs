@@ -30,7 +30,7 @@ fn every_sdk_capability_gate_is_advertised() {
     let mut checked = 0;
     for (path, marker) in [
         (root.join("crates/agent-sdk/src/client.rs"), "require_capability(\""),
-        (root.join("sdk/typescript/src/client.ts"), "requireCapability(\""),
+        (root.join("packages/sdk/typescript/src/client.ts"), "requireCapability(\""),
     ] {
         let source = std::fs::read_to_string(&path).unwrap_or_else(|error| {
             panic!(

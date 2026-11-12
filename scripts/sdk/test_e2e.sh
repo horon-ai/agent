@@ -12,7 +12,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-sdk_dir="$repo_root/sdk/typescript"
+sdk_dir="$repo_root/packages/sdk/typescript"
 socket="${TMPDIR:-/tmp}/horon-agent-sdk-e2e-$$.sock"
 log="${TMPDIR:-/tmp}/horon-agent-sdk-e2e-$$.log"
 

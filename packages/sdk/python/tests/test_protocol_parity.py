@@ -22,8 +22,8 @@ from horon_agent_sdk import (
     KNOWN_REQUEST_KINDS,
 )
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-TS_PROTOCOL = REPO_ROOT / "sdk/typescript/src/protocol.ts"
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
+TS_PROTOCOL = REPO_ROOT / "packages/sdk/typescript/src/protocol.ts"
 RUST_API_SRC = REPO_ROOT / "crates/harness-api/src"
 
 requires_typescript = pytest.mark.skipif(not TS_PROTOCOL.exists(), reason="vendored build without the sdk/ tree")
@@ -79,8 +79,8 @@ def test_capability_surfaces_match_the_rust_crate() -> None:
 
 @requires_typescript
 def test_socket_environment_keys_match_the_typescript_resolver() -> None:
-    source = (REPO_ROOT / "sdk/typescript/src/sockets.ts").read_text(encoding="utf-8")
-    python_source = (REPO_ROOT / "sdk/python/src/horon_agent_sdk/sockets.py").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "packages/sdk/typescript/src/sockets.ts").read_text(encoding="utf-8")
+    python_source = (REPO_ROOT / "packages/sdk/python/src/horon_agent_sdk/sockets.py").read_text(encoding="utf-8")
     for key in (
         "HORON_AGENT_RUNTIME_DIR",
         "XDG_RUNTIME_DIR",

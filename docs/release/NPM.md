@@ -21,8 +21,8 @@ The seven names are one wrapper and six platform packages. The wrapper holds no 
 npm picks a platform package through `optionalDependencies`, so a global install downloads only the one that matches the machine. Three properties make the set safe to publish:
 
 - Every platform pin in the wrapper is an exact version, never a range. `scripts/npm/release_npm_version.py check-packages` fails the run when a pin differs from the version being published, so a wrapper can never offer an install whose platform package does not exist at that version.
-- No package declares an install script. `preinstall`, `install` and `postinstall` are absent from the generated manifests and from `npm/horon/package.json`, and the same check rejects a platform package that declares dependencies.
-- Nothing is a Node library. `npm/horon/bin/horon.js` reads `process.platform` and `process.arch`, resolves the matching package's directory, and starts `bin/horon-agent` with the forwarded arguments and environment, through `spawnSync` with `stdio: "inherit"`. The child owns the terminal; the launcher ignores `SIGINT` and `SIGTERM` while it runs so an interrupt reaches the CLI.
+- No package declares an install script. `preinstall`, `install` and `postinstall` are absent from the generated manifests and from `packages/npm/horon/package.json`, and the same check rejects a platform package that declares dependencies.
+- Nothing is a Node library. `packages/npm/horon/bin/horon.js` reads `process.platform` and `process.arch`, resolves the matching package's directory, and starts `bin/horon-agent` with the forwarded arguments and environment, through `spawnSync` with `stdio: "inherit"`. The child owns the terminal; the launcher ignores `SIGINT` and `SIGTERM` while it runs so an interrupt reaches the CLI.
 
 The launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` in the child's environment. The npm package pins one release for both binaries, and the agent's own updater would replace them with a different build, so an npm installation is updated with npm.
 
@@ -47,7 +47,7 @@ A missing platform package is a reinstall, not a broken install. The launcher pr
 
 The npm version of a release is the release tag without its `v`. `scripts/npm/release_npm_version.py tag-version` accepts only `vMAJOR.MINOR.PATCH`, so a tag with a prerelease or build suffix is refused before anything is downloaded; the `dispatch` command applies the same rule to a manual run.
 
-`npm/horon/package.json` keeps `0.0.0` in git and is never bumped. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>` copies the manifest and the launcher into a staging directory and writes the release version into that copy, together with the six pins. The tracked file therefore always describes the placeholder state, while every published package carries the version of the archives it holds.
+`packages/npm/horon/package.json` keeps `0.0.0` in git and is never bumped. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>` copies the manifest and the launcher into a staging directory and writes the release version into that copy, together with the six pins. The tracked file therefore always describes the placeholder state, while every published package carries the version of the archives it holds.
 
 ## The publish workflow
 
@@ -103,7 +103,7 @@ The same field on each platform package names its own attestation.
 
 ## The TypeScript SDK
 
-The TypeScript SDK publishes its own seven packages, `@horon-ai/agent-sdk` plus the six `@horon-ai/agent-<os>-<arch>` runtime packages, at the same tag version and behind the same `Release Tag` trigger and `NPM_PUBLISH` gate. It lives in `.github/workflows/publish-typescript-sdk.yml`, a separate file because npm trusts a top-level workflow file name: the SDK's seven packages are registered against `publish-typescript-sdk.yml` as their Trusted Publisher. Its procedure is in `sdk/typescript/RELEASING.md`; do not duplicate it here.
+The TypeScript SDK publishes its own seven packages, `@horon-ai/agent-sdk` plus the six `@horon-ai/agent-<os>-<arch>` runtime packages, at the same tag version and behind the same `Release Tag` trigger and `NPM_PUBLISH` gate. It lives in `.github/workflows/publish-typescript-sdk.yml`, a separate file because npm trusts a top-level workflow file name: the SDK's seven packages are registered against `publish-typescript-sdk.yml` as their Trusted Publisher. Its procedure is in `packages/sdk/typescript/RELEASING.md`; do not duplicate it here.
 
 ## Known limits
 
