@@ -99,6 +99,44 @@ fn a_folder_grant_covers_a_second_file_in_that_folder() {
     );
 }
 
+/// The lookups the gate actually makes: answer one write with a scoped allow,
+/// then ask again about the same file through `covered`, which reads the store
+/// from disk. A grant only helps if the second call sees it.
+#[test]
+fn a_stored_grant_answers_the_next_call_through_the_production_lookup() {
+    let sandbox = Sandbox::new();
+    let workspace = sandbox.workspace();
+    let file = sandbox.write("notes/first.md");
+    let input = serde_json::json!({ "file_path": file });
+
+    assert!(
+        !covered("write", &input, Some(&workspace), ToolEffects::write()),
+        "nothing has been answered yet, so the first call must ask"
+    );
+
+    let grant = grant_from_request_at(
+        &request("write", input.clone(), &workspace, "write"),
+        GrantScope::Path,
+        Utc::now(),
+        7,
+    )
+    .expect("grant");
+    store(grant).expect("store");
+
+    assert!(
+        covered("write", &input, Some(&workspace), ToolEffects::write()),
+        "the second write to the answered file must not ask again"
+    );
+    assert!(
+        covered("write", &input, Some(&workspace), ToolEffects::append()),
+        "a write grant also answers an append"
+    );
+    assert!(
+        !covered("write", &input, Some(&workspace), ToolEffects::process()),
+        "a process call names no capability a grant could cover"
+    );
+}
+
 #[test]
 fn a_path_grant_does_not_cover_a_sibling() {
     let sandbox = Sandbox::new();
