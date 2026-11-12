@@ -22,6 +22,10 @@ pub mod theme;
 pub mod transcript;
 mod wrap;
 
+#[cfg(test)]
+#[path = "streaming_tests.rs"]
+mod streaming_tests;
+
 use std::time::Duration;
 
 use ratatui::Terminal;
@@ -587,18 +591,23 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
 /// Items are walked from the newest one so the work is bounded by the pane: an
 /// idle frame rebuilds at least twenty times a second, and wrapping the whole
 /// conversation each time would cost more as the session grows.
+///
+/// A message that is still streaming is drawn first as the newest entry, so
+/// text appears while it arrives instead of all at once when the turn ends.
+/// It is not also in `items`, and `finish_stream` moves it there exactly once.
 fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
     let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
     let mut rows: Vec<Line<'static>> = Vec::new();
-    for item in app.transcript.items().iter().rev() {
-        let mut item_rows: Vec<Line<'static>> = Vec::new();
-        for line in render_item(item, &app.theme, app.symbols) {
-            item_rows.extend(wrap::wrap_line(&line, usize::from(width)));
-        }
-        item_rows.extend(rows);
-        rows = item_rows;
-        if rows.len() >= capacity {
-            break;
+    if let Some(text) = app.transcript.open_text() {
+        rows.extend(wrapped_rows(assistant_lines(text, &app.theme), width));
+    }
+    if rows.len() < capacity {
+        for item in app.transcript.items().iter().rev() {
+            let item_rows = wrapped_rows(render_item(item, &app.theme, app.symbols), width);
+            rows.splice(0..0, item_rows);
+            if rows.len() >= capacity {
+                break;
+            }
         }
     }
     if rows.is_empty() {
@@ -618,6 +627,27 @@ fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(rows)
 }
 
+/// Wrap a rendered item's lines to the pane width, keeping their styles.
+fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for line in lines {
+        rows.extend(wrap::wrap_line(&line, usize::from(width)));
+    }
+    rows
+}
+
+/// The rows of one assistant message, committed or still streaming.
+fn assistant_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
+    text.lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.transcript.assistant_text),
+            ))
+        })
+        .collect()
+}
+
 fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static>> {
     match item {
         Item::User(text) => prefixed(
@@ -625,15 +655,7 @@ fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static
             text,
             Style::default().fg(theme.transcript.user_text),
         ),
-        Item::Assistant(text) => text
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.transcript.assistant_text),
-                ))
-            })
-            .collect(),
+        Item::Assistant(text) => assistant_lines(text, theme),
         Item::Tool { name, state } => {
             let (glyph, color) = match state {
                 ToolState::Running => (symbols.tool_running, theme.transcript.tool_running),

@@ -236,6 +236,36 @@ mod tests {
     }
 
     #[test]
+    fn open_text_reports_the_message_until_it_is_committed() {
+        let mut transcript = Transcript::new();
+        assert_eq!(transcript.open_text(), None, "nothing is open yet");
+
+        transcript.text_delta(Some("m1"), "partial");
+        assert_eq!(transcript.open_text(), Some("partial"));
+
+        transcript.text_delta(Some("m1"), " more");
+        assert_eq!(transcript.open_text(), Some("partial more"));
+
+        // The committed item is the same text, so the renderer must stop
+        // drawing the open one or the reply would appear twice.
+        transcript.finish_stream();
+        assert_eq!(transcript.open_text(), None);
+        assert_eq!(transcript.items(), &[Item::Assistant("partial more".to_string())]);
+    }
+
+    #[test]
+    fn open_text_hides_blank_and_retracted_messages() {
+        let mut transcript = Transcript::new();
+        transcript.text_delta(Some("m1"), "  \n\t");
+        assert_eq!(transcript.open_text(), None, "whitespace is never published");
+
+        transcript.text_delta(Some("m1"), "draft");
+        assert_eq!(transcript.open_text(), Some("draft"));
+        transcript.text_replace(Some("m1"), "");
+        assert_eq!(transcript.open_text(), None, "a retraction must not be drawn");
+    }
+
+    #[test]
     fn tool_done_without_a_start_still_renders() {
         let mut transcript = Transcript::new();
         transcript.tool_done("read", Some("no such file"));
