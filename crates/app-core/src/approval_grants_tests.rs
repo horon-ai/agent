@@ -299,16 +299,11 @@ fn storing_a_grant_then_reading_it_back_finds_it() {
     store(grant).expect("store again");
     assert_eq!(load_grants().len(), 1);
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(sandbox.grant_file())
-            .expect("metadata")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600, "the grant file holds user answers and stays private");
-    }
+    let metadata = std::fs::metadata(sandbox.grant_file()).expect("metadata");
+    assert!(
+        horon_agent_platform::fs::is_private_file(&metadata),
+        "the grant file holds user answers and stays private"
+    );
 }
 
 #[test]
@@ -365,14 +360,18 @@ fn a_relative_path_is_never_granted() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_symlink_target_is_compared_after_resolution() {
     let sandbox = Sandbox::new();
     let workspace = sandbox.workspace();
     let real = sandbox.write("real/inside.txt");
     let link = sandbox.root.path().join("link.txt");
-    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    // Windows copies instead of linking, so the assertion below only holds
+    // where a symlink names the same file. The copy path is not what this test
+    // is about.
+    if horon_agent_platform::symlink_or_copy(&real, &link).is_err() {
+        return;
+    }
 
     assert_eq!(
         canonical_target(&link).expect("canonical"),
