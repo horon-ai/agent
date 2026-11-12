@@ -26,6 +26,13 @@ const COMMAND_POLL: Duration = Duration::from_millis(20);
 /// busy loop; short enough that a command is picked up promptly.
 const EVENT_POLL: Duration = Duration::from_millis(30);
 
+/// How many ready events one pass forwards before it hands control back.
+///
+/// A stream faster than the UI must not be throttled to one event per pass,
+/// but the pass still has to end somewhere: the bound is what keeps a burst
+/// from starving the command queue and the exit conditions.
+const EVENT_BATCH: usize = 256;
+
 /// Something the UI wants the harness to do.
 ///
 /// Not `Eq`: an answer carries [`AskSelection`], which only guarantees
@@ -165,37 +172,115 @@ fn run_worker(
     events: Sender<Incoming>,
 ) {
     loop {
-        match stream.next_result_timeout(EVENT_POLL) {
+        match pump(&events, |timeout| stream.next_result_timeout(timeout)) {
+            Step::UiGone | Step::Closed => return,
+            flowing => match take_command(&commands, flowing == Step::Flowing) {
+                CommandPoll::Command(command) => match apply(&client, &session_id, command) {
+                    Ok(None) => {}
+                    Ok(Some(message)) => {
+                        if events.send(Incoming::Info(message)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(message) => {
+                        if events.send(Incoming::Notice(message)).is_err() {
+                            return;
+                        }
+                    }
+                },
+                CommandPoll::Idle => {}
+                CommandPoll::Disconnected => return,
+            },
+        }
+    }
+}
+
+/// What one pump pass decided for the worker loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Nothing was ready; the caller may block waiting for a command.
+    Idle,
+    /// At least one event was forwarded, so more may be ready right now.
+    Flowing,
+    /// The stream failed; [`Incoming::Closed`] has already been sent.
+    Closed,
+    /// The UI dropped its receiver, so nobody is left to tell.
+    UiGone,
+}
+
+/// Forward the events that are already ready, up to [`EVENT_BATCH`].
+///
+/// One event per pass was the old cost: every pass then waited
+/// [`COMMAND_POLL`] on the command queue, so a stream faster than about fifty
+/// events a second fell further behind for as long as it lasted, and the SDK's
+/// bounded subscription eventually closed with `event_buffer_overflow`. Here
+/// the first read may block, which is what keeps an idle client off the CPU,
+/// and every read after a hit is a non-blocking poll, so a burst drains at the
+/// speed the queue can be written.
+///
+/// The batch bound is what keeps the pass finite: without it a stream that
+/// never pauses would starve the command queue, including the `Cancel` that a
+/// user presses during exactly that burst. A stream error is still terminal and
+/// still reported as [`Incoming::Closed`].
+///
+/// `next` is the stream read, generic so the batch can be exercised without a
+/// daemon: `Ok(Some(event))` is a frame, `Ok(None)` is a timeout.
+fn pump<F, E>(events: &Sender<Incoming>, mut next: F) -> Step
+where
+    F: FnMut(Duration) -> Result<Option<ApiEvent>, E>,
+    E: std::fmt::Display,
+{
+    let mut timeout = EVENT_POLL;
+    let mut forwarded = false;
+    for _ in 0..EVENT_BATCH {
+        match next(timeout) {
             Ok(Some(event)) => {
                 if events.send(Incoming::Event(Box::new(event))).is_err() {
-                    return;
+                    return Step::UiGone;
                 }
+                forwarded = true;
+                timeout = Duration::ZERO;
             }
-            Ok(None) => {}
+            Ok(None) => break,
             Err(error) => {
                 // A dropped receiver means the UI already exited, which is the
                 // one case where nobody needs to be told why the stream ended.
                 drop(events.send(Incoming::Closed(format!("the event stream ended: {error}"))));
-                return;
+                return Step::Closed;
             }
         }
-        match commands.recv_timeout(COMMAND_POLL) {
-            Ok(command) => match apply(&client, &session_id, command) {
-                Ok(None) => {}
-                Ok(Some(message)) => {
-                    if events.send(Incoming::Info(message)).is_err() {
-                        return;
-                    }
-                }
-                Err(message) => {
-                    if events.send(Incoming::Notice(message)).is_err() {
-                        return;
-                    }
-                }
-            },
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return,
-        }
+    }
+    if forwarded { Step::Flowing } else { Step::Idle }
+}
+
+/// What waiting on the command queue produced.
+#[derive(Debug)]
+enum CommandPoll {
+    Command(Command),
+    /// Nothing queued, or the timeout passed with nothing queued.
+    Idle,
+    /// The UI dropped the sender, so the worker has nothing left to serve.
+    Disconnected,
+}
+
+/// Take one command, blocking only when the stream is not flowing.
+///
+/// While events are arriving the check must not sleep, or a burst would still
+/// delay a keystroke by the timer; [`pump`]'s batch bound then guarantees the
+/// check runs often. When the stream is idle this is where the thread parks,
+/// which is why an idle client costs nothing.
+fn take_command(commands: &Receiver<Command>, flowing: bool) -> CommandPoll {
+    if flowing {
+        return match commands.try_recv() {
+            Ok(command) => CommandPoll::Command(command),
+            Err(mpsc::TryRecvError::Empty) => CommandPoll::Idle,
+            Err(mpsc::TryRecvError::Disconnected) => CommandPoll::Disconnected,
+        };
+    }
+    match commands.recv_timeout(COMMAND_POLL) {
+        Ok(command) => CommandPoll::Command(command),
+        Err(mpsc::RecvTimeoutError::Timeout) => CommandPoll::Idle,
+        Err(mpsc::RecvTimeoutError::Disconnected) => CommandPoll::Disconnected,
     }
 }
 
@@ -288,5 +373,144 @@ mod tests {
     #[test]
     fn default_socket_is_named() {
         assert!(!default_socket().as_os_str().is_empty());
+    }
+
+    fn delta(index: usize) -> ApiEvent {
+        ApiEvent::TextDelta {
+            session_id: "s1".into(),
+            text: index.to_string(),
+            message_id: Some("m1".into()),
+        }
+    }
+
+    fn burst(count: usize) -> std::collections::VecDeque<ApiEvent> {
+        (0..count).map(delta).collect()
+    }
+
+    /// The text of every forwarded event, in the order the UI receives them.
+    fn forwarded_text(received: &Receiver<Incoming>) -> Vec<String> {
+        received
+            .try_iter()
+            .map(|incoming| match incoming {
+                Incoming::Event(event) => match *event {
+                    ApiEvent::TextDelta { text, .. } => text,
+                    other => panic!("unexpected event: {other:?}"),
+                },
+                other => panic!("unexpected incoming: {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_pass_forwards_a_burst_in_order_up_to_the_batch_bound() {
+        let (events, received) = mpsc::channel();
+        let mut queue = burst(EVENT_BATCH * 2);
+
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()));
+
+        assert_eq!(step, Step::Flowing);
+        let text = forwarded_text(&received);
+        assert_eq!(text.len(), EVENT_BATCH, "one pass must stop at the bound");
+        let expected: Vec<String> = (0..EVENT_BATCH).map(|index| index.to_string()).collect();
+        assert_eq!(text, expected, "the pass reordered or dropped events");
+
+        // The rest arrives on the next pass, in the same order.
+        assert_eq!(pump(&events, |_| Ok::<_, Error>(queue.pop_front())), Step::Flowing);
+        let text = forwarded_text(&received);
+        assert_eq!(text.len(), EVENT_BATCH);
+        let expected: Vec<String> = (EVENT_BATCH..EVENT_BATCH * 2).map(|index| index.to_string()).collect();
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn a_burst_never_blocks_a_keystroke_for_a_command_poll() {
+        // A command queued before the burst must still be taken as soon as the
+        // pass ends, rather than after one COMMAND_POLL per forwarded event.
+        let (events, received) = mpsc::channel();
+        let (commands, incoming) = mpsc::channel();
+        commands.send(Command::Cancel).expect("queue the command");
+        let mut queue = burst(EVENT_BATCH * 3);
+
+        assert_eq!(pump(&events, |_| Ok::<_, Error>(queue.pop_front())), Step::Flowing);
+        assert_eq!(forwarded_text(&received).len(), EVENT_BATCH);
+
+        match take_command(&incoming, true) {
+            CommandPoll::Command(Command::Cancel) => {}
+            other => panic!("a queued command was not taken: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_idle_pass_waits_on_the_stream_and_forwards_nothing() {
+        // With nothing ready the pass must wait for the stream rather than poll
+        // it forever; this one timeout is what keeps an idle client off the CPU.
+        let (events, received) = mpsc::channel();
+        let mut timeouts = Vec::new();
+        let step = pump(&events, |timeout| {
+            timeouts.push(timeout);
+            Ok::<_, Error>(None)
+        });
+
+        assert_eq!(step, Step::Idle);
+        assert_eq!(timeouts, vec![EVENT_POLL]);
+        assert!(forwarded_text(&received).is_empty());
+    }
+
+    #[test]
+    fn a_burst_polls_instead_of_blocking_after_the_first_event() {
+        // Blocking again between events would cap throughput at one event per
+        // EVENT_POLL, which is the defect the batch exists to remove.
+        let (events, _received) = mpsc::channel();
+        let mut queue = burst(3);
+        let mut timeouts = Vec::new();
+
+        let step = pump(&events, |timeout| {
+            timeouts.push(timeout);
+            Ok::<_, Error>(queue.pop_front())
+        });
+
+        assert_eq!(step, Step::Flowing);
+        assert_eq!(
+            timeouts,
+            vec![EVENT_POLL, Duration::ZERO, Duration::ZERO, Duration::ZERO],
+            "reads after the first event must not block"
+        );
+    }
+
+    #[test]
+    fn a_stream_error_still_ends_the_bridge() {
+        let (events, received) = mpsc::channel();
+
+        let step = pump(&events, |_| {
+            Err::<Option<ApiEvent>, _>(Error::new(ErrorKind::EventBufferOverflow, "behind"))
+        });
+
+        assert_eq!(step, Step::Closed);
+        let messages: Vec<Incoming> = received.try_iter().collect();
+        assert_eq!(messages.len(), 1);
+        match &messages[0] {
+            Incoming::Closed(reason) => assert!(reason.contains("behind"), "reason was {reason}"),
+            other => panic!("expected a closed bridge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_ui_dropping_its_receiver_stops_the_worker_quietly() {
+        let (events, received) = mpsc::channel();
+        drop(received);
+        let mut queue = burst(2);
+
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()));
+
+        assert_eq!(step, Step::UiGone, "no receiver is not a failure to report");
+    }
+
+    #[test]
+    fn a_closed_command_channel_stops_the_worker() {
+        let (commands, incoming) = mpsc::channel::<Command>();
+        drop(commands);
+
+        assert!(matches!(take_command(&incoming, true), CommandPoll::Disconnected));
+        assert!(matches!(take_command(&incoming, false), CommandPoll::Disconnected));
     }
 }
