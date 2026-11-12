@@ -554,6 +554,24 @@ impl DaemonSession {
         self.link.send(request).await
     }
 
+    /// Release this connection's daemon attachment and wait for the daemon to
+    /// confirm it.
+    ///
+    /// Dropping the socket is not enough when the next request comes from
+    /// another connection: the daemon notices a half-close only when its reader
+    /// observes EOF, so a delete sent straight after a close could still find
+    /// this attachment registered and refuse the session as open. The daemon's
+    /// `prepare_disconnect` releases the attachment before it answers `Done`,
+    /// which makes this the ordering barrier.
+    pub(super) async fn detach(&self) {
+        let id = self.next_id();
+        let request = Request::PrepareDisconnect { id };
+        let Ok(mut reply) = self.request(id, &request).await else {
+            return;
+        };
+        let _ = wait_for_done(&mut reply, id).await;
+    }
+
     /// Send a request whose replies come back by id: the waiter is registered
     /// first, so a fast reply cannot be dropped.
     pub(super) async fn request(&self, id: u64, request: &Request) -> Result<EventStream> {

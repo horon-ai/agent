@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 19;
+export const API_VERSION_MINOR = 20;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -545,6 +545,7 @@ export type ApiRequest =
   | { req: "list_sessions"; include_archived?: boolean; limit?: number }
   | { req: "archive_session"; session_id: string }
   | { req: "restore_session"; session_id: string }
+  | { req: "delete_session"; session_id: string; confirm?: boolean }
   | { req: "set_retention_policy"; archive_after_days?: number }
   | { req: "create_session"; working_dir?: string; system_prompt?: string }
   | { req: "attach_session"; session_id: string }
@@ -1122,6 +1123,7 @@ export const KNOWN_REQUEST_KINDS = [
   "list_sessions",
   "archive_session",
   "restore_session",
+  "delete_session",
   "set_retention_policy",
   "create_session",
   "attach_session",

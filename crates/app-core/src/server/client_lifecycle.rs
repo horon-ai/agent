@@ -1687,6 +1687,20 @@ pub(super) async fn handle_client(
             }
 
             Request::PrepareDisconnect { id } => {
+                // Release the attachment before answering, so `Done` is a real
+                // barrier: a client that detaches and immediately asks another
+                // connection to act on the session (a delete, which refuses an
+                // attached session) does not race the daemon noticing this
+                // socket's half-close. Until it was released here, `Done` only
+                // dropped SDK callback ownership and the attachment survived
+                // until the reader loop observed EOF.
+                detach_client_attachment(
+                    &client_session_id,
+                    &client_connection_id,
+                    &client_connections,
+                    &swarm_members,
+                )
+                .await;
                 drop(crate::tool::sdk::ConnectionGuard(client_connection_id.clone()));
                 let json = encode_event(&ServerEvent::Done { id });
                 let mut w = writer.lock().await;
@@ -2260,6 +2274,22 @@ pub(super) async fn handle_client(
                     reason,
                     &agent,
                     &client_session_id,
+                    &client_event_tx,
+                )
+                .await;
+            }
+
+            Request::DeleteSession {
+                id,
+                session_id,
+                confirm,
+            } => {
+                super::client_session_delete::handle_delete_session(
+                    id,
+                    session_id,
+                    confirm,
+                    &sessions,
+                    &client_connections,
                     &client_event_tx,
                 )
                 .await;
@@ -4639,6 +4669,10 @@ mod ack_transport_failure_tests {
 #[cfg(test)]
 #[path = "client_lifecycle_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "client_session_delete_tests.rs"]
+mod delete_tests;
 
 #[cfg(test)]
 #[path = "client_target_attach_tests.rs"]

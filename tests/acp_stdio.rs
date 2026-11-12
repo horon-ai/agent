@@ -1108,6 +1108,15 @@ fn is4_lifecycle() {
     for _ in 0..2 {
         assert_eq!(second.ok("session/delete", json!({"sessionId": first})), json!({}));
     }
+    // Delete is permanent: unlike archive, the transcript is gone and no load
+    // can bring it back.
+    for method in ["session/load", "session/resume"] {
+        let error = second.err(
+            method,
+            json!({"sessionId": first, "cwd": cwd_str(&work), "mcpServers": []}),
+        );
+        assert_not_found(&error, &first);
+    }
     assert_eq!(
         second.ok(
             "session/delete",

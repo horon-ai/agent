@@ -1016,6 +1016,21 @@ pub(super) async fn handle_lightweight_control_request(
             )
             .await;
         }
+        Request::DeleteSession {
+            id,
+            session_id,
+            confirm,
+        } => {
+            super::client_session_delete::handle_delete_session(
+                id,
+                session_id,
+                confirm,
+                sessions,
+                client_connections,
+                &client_event_tx,
+            )
+            .await;
+        }
         other => {
             let _ = client_event_tx.send(ServerEvent::Error {
                 id: other.id(),

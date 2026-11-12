@@ -737,6 +737,15 @@ export class HoronAgentClient extends EventEmitter {
     await this.requestOk({ req: "restore_session", session_id: sessionId });
   }
 
+  /**
+   * Permanently delete a session and every file keyed by its id. Unlike
+   * `archiveSession` nothing can be restored afterwards; a server that predates
+   * this request answers `unknown_request`.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.requestOk({ req: "delete_session", session_id: sessionId });
+  }
+
   /** Auto-archive inactive sessions after this many days; omit to disable. */
   async setRetentionPolicy(archiveAfterDays?: number): Promise<void> {
     await this.requestOk({ req: "set_retention_policy", archive_after_days: archiveAfterDays });

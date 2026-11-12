@@ -1185,58 +1185,6 @@ fn context_limit_falls_back_to_default_for_unknown_models() {
     assert_eq!(state.context_limit(), crate::provider::DEFAULT_CONTEXT_LIMIT as u64);
 }
 
-#[test]
-fn delete_lookup_treats_a_busy_writer_as_present() {
-    use crate::session::event_store_api as store;
-    let busy = store::StoreError::busy("session writer is already owned");
-    assert_eq!(
-        lookup_from_row(Err(busy)).unwrap(),
-        CatalogLookup::Present { cwd: None }
-    );
-    let other = store::StoreError::busy("x");
-    let other = store::StoreError {
-        code: store::StoreErrorCode::UnknownSession,
-        ..other
-    };
-    assert!(lookup_from_row(Err(other)).is_err());
-
-    let _env = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_HOME");
-    crate::env::set_var("HORON_HOME", home.path());
-    let observed = (|| -> anyhow::Result<Vec<CatalogLookup>> {
-        use crate::message::{ContentBlock, Role};
-        let mut session = crate::session::Session::create_with_id("session_acp_delete_busy".to_string(), None, None);
-        session.working_dir = Some("/work/delete".to_string());
-        session.add_message(
-            Role::User,
-            vec![ContentBlock::Text {
-                text: "persisted".to_string(),
-                cache_control: None,
-            }],
-        );
-        session.save()?;
-        let mut seen = vec![catalog_lookup("session_acp_delete_busy")?];
-        session.record_archive(true, "test")?;
-        seen.push(catalog_lookup("session_acp_delete_busy")?);
-        seen.push(catalog_lookup("session_acp_delete_never_1")?);
-        Ok(seen)
-    })();
-    match previous {
-        Some(previous) => crate::env::set_var("HORON_HOME", previous),
-        None => crate::env::remove_var("HORON_HOME"),
-    }
-    let seen = observed.unwrap();
-    assert_eq!(
-        seen[0],
-        CatalogLookup::Present {
-            cwd: Some("/work/delete".to_string())
-        }
-    );
-    assert_eq!(seen[1], CatalogLookup::Archived);
-    assert_eq!(seen[2], CatalogLookup::Missing);
-}
-
 pub(super) mod connection_core {
     use super::*;
     use crate::transport::Stream;

@@ -338,6 +338,10 @@ enum SimpleKind {
     Ping,
     History,
     Ok,
+    /// Awaiting `done`: the daemon acks a delete before it touches the store,
+    /// and acknowledging a delete that later failed would report a transcript
+    /// as gone while it is still there. Only `done` answers this one.
+    Delete,
     /// Awaiting `model_changed`, which carries its own error field.
     Model,
     /// Awaiting `reasoning_effort_changed`.
@@ -599,6 +603,39 @@ impl BridgeState {
                     Ok(()) => vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok))],
                     Err(message) => Self::error_reply(api_id, ErrorCode::Internal, &message),
                 }
+            }
+            "delete_session" => {
+                let Some(session_id) = Self::request_session(request, api_id) else {
+                    return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");
+                };
+                let Some(path) = Self::session_original_path(&session_id) else {
+                    return Self::error_reply(api_id, ErrorCode::UnknownSession, "session does not exist");
+                };
+                if !path.is_file() {
+                    return Self::error_reply(api_id, ErrorCode::UnknownSession, "session does not exist");
+                }
+                // A session this connection is attached to cannot be deleted:
+                // the daemon owns that writer and refuses, but the bridge can
+                // say so before the round trip and leave its own attachment
+                // untouched.
+                if self.session_id.as_deref() == Some(session_id.as_str()) {
+                    return Self::error_reply(
+                        api_id,
+                        ErrorCode::InvalidRequest,
+                        "session is attached to this connection; detach before deleting it",
+                    );
+                }
+                let id = self.legacy_id();
+                // `confirm` is always true here: an API client sends the
+                // request only after its own confirmation, and the field exists
+                // to stop an archive-shaped call from erasing a transcript.
+                self.pending_simple.push((id, api_id, SimpleKind::Delete));
+                vec![Outbound::Legacy(json!({
+                    "type": "delete_session",
+                    "id": id,
+                    "session_id": session_id,
+                    "confirm": true,
+                }))]
             }
             "set_retention_policy" => {
                 let days = match request.get("archive_after_days") {
@@ -1998,6 +2035,12 @@ impl BridgeState {
             })],
             "done" => {
                 let id = event["id"].as_u64().unwrap_or(0);
+                if let Some(api_id) = self.take_simple(id, SimpleKind::Delete) {
+                    // A delete is not a turn: answering with `ok` ends the
+                    // request, and the transcript is already gone.
+                    self.pending_control_done_ids.remove(&id);
+                    return vec![ServerFrame::reply(api_id, ApiEvent::Ok)];
+                }
                 if let Some(api_id) = self.take_simple(id, SimpleKind::Detach) {
                     self.pending_control_done_ids.remove(&id);
                     self.session_id = None;
@@ -3697,6 +3740,10 @@ mod runtime_identity_tests;
 #[cfg(test)]
 #[path = "translate/usage_report_tests.rs"]
 mod usage_report_tests;
+
+#[cfg(test)]
+#[path = "translate/session_delete_tests.rs"]
+mod session_delete_tests;
 
 #[cfg(test)]
 #[path = "translate_tests/credential_profile_tests.rs"]

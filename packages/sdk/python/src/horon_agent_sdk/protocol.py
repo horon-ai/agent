@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 19
+API_VERSION_MINOR = 20
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -713,6 +713,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "list_sessions",
     "archive_session",
     "restore_session",
+    "delete_session",
     "set_retention_policy",
     "create_session",
     "attach_session",
