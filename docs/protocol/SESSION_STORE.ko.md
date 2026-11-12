@@ -231,7 +231,10 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 `openai_auto`, `openai_explicit` 중 하나다. `handoff`는 평소 압축 잡을 그대로 돌려 생성한
 핸드오프 문서를 경계로 저장하고, `handoff` 표시를 붙여 다음 요청이 그 문서를 같은 에이전트가
 앞서 쓴 글로 소개하게 한다(`crates/base/src/compaction/handoff_provider.rs`). 핸드오프를 쓸 수
-없으면 같은 잡에서 구조화 요약으로 대체한다. `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
+없으면 같은 잡에서 구조화 요약으로 대체한다. `[compaction] method_order`로 그 사슬을 직접
+지정할 수 있고(`["handoff", "structured"]`), 없거나 거부되면 `strategy` 하나가 결정하며
+프로바이더 네이티브 전략은 이 값을 무시한다(`docs/runtime/TURNS.ko.md`,
+`crates/base/src/compaction/method_order.rs`). `[provider] openai_native_compaction_mode`를 `auto`/`explicit`로 명시해
 둔 경우 `strategy`가 설정되지 않았을 때만 존중한다. 없음, 빈 값, `off`는 모두 `structured`로
 해석한다. 같은 절의 예산 기본값은 `recent_tokens` 20,000, `reserve_tokens` 16,384를
 `min(window * 0.04, 49,152)`까지 올린 값, 그리고 16k에서 0.45부터 512k 초과에서 0.80까지 가는 윈도

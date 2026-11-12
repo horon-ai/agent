@@ -117,21 +117,21 @@ pub(super) fn handoff_result(document: super::handoff::HandoffDocument, duration
     }
 }
 
-/// Try the handoff strategy for one job, or `None` to fall back.
+/// Run the handoff method for one job attempt.
 ///
-/// The fallback is one step, to the structured summarizer: a configured
-/// `handoff` whose document cannot be produced this time still needs that turn
-/// compacted, and a structured summary over the same range is the behaviour the
-/// session had before the strategy was chosen. The failure is logged with its
-/// reason so a persistent cause (a range too large for the prompt, a provider
-/// that refuses the summary model) is visible instead of silently overridden.
-pub(super) async fn try_handoff(
+/// The chain decides whether another method may try, so this reports the reason
+/// instead of falling back itself. `NothingToCover` and a document that was
+/// refused or would not fit are failures of this method over this range, not of
+/// the turn: another method writes a different boundary over the same range.
+/// A provider failure is the same kind of report; the caller retries transient
+/// ones on this method first.
+pub(super) async fn attempt_handoff(
     provider: Arc<dyn Provider>,
     messages: &[Message],
     requested_end: usize,
     existing_summary: Option<&crate::compaction::Summary>,
     started: Instant,
-) -> Option<super::CompactionResult> {
+) -> Result<super::CompactionResult, super::method_order::MethodFailure> {
     let cutoff = requested_end.min(messages.len());
     let prior = existing_summary.map(|summary| summary.text.as_str());
     let summary_model = crate::config::config().compaction.summary_model.clone();
@@ -145,12 +145,13 @@ pub(super) async fn try_handoff(
     )
     .await
     {
-        Ok(document) => Some(handoff_result(document, started.elapsed().as_millis() as u64)),
+        Ok(document) => Ok(handoff_result(document, started.elapsed().as_millis() as u64)),
         Err(error) => {
+            let detail = format!("handoff generation failed: {error}");
             crate::logging::warn(&format!(
-                "[compaction] handoff generation failed ({error}); falling back to a structured summary for this job"
+                "[compaction] {detail}; the next method in the order takes this job"
             ));
-            None
+            Err(super::method_order::MethodFailure::advance(detail))
         }
     }
 }
