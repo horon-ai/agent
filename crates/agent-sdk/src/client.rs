@@ -1105,6 +1105,20 @@ impl HoronAgentClient {
         .map(drop)
     }
 
+    /// Permanently delete a session and every file keyed by its id.
+    ///
+    /// Unlike [`archive_session`](Self::archive_session) nothing can be
+    /// restored afterwards. The daemon refuses a session that is loaded,
+    /// streaming, or attached to a client, so a caller that keeps one attached
+    /// must detach first.
+    pub fn delete_session(&self, session_id: &str) -> Result<()> {
+        self.request_ok(ApiRequest::DeleteSession {
+            session_id: session_id.to_string(),
+            confirm: true,
+        })
+        .map(drop)
+    }
+
     /// Automatically archive inactive sessions after `archive_after_days`.
     /// `None` disables automatic archival.
     pub fn set_retention_policy(&self, archive_after_days: Option<u32>) -> Result<()> {

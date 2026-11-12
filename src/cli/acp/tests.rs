@@ -1185,58 +1185,6 @@ fn context_limit_falls_back_to_default_for_unknown_models() {
     assert_eq!(state.context_limit(), crate::provider::DEFAULT_CONTEXT_LIMIT as u64);
 }
 
-#[test]
-fn delete_lookup_treats_a_busy_writer_as_present() {
-    use crate::session::event_store_api as store;
-    let busy = store::StoreError::busy("session writer is already owned");
-    assert_eq!(
-        lookup_from_row(Err(busy)).unwrap(),
-        CatalogLookup::Present { cwd: None }
-    );
-    let other = store::StoreError::busy("x");
-    let other = store::StoreError {
-        code: store::StoreErrorCode::UnknownSession,
-        ..other
-    };
-    assert!(lookup_from_row(Err(other)).is_err());
-
-    let _env = crate::storage::lock_test_env();
-    let home = tempfile::tempdir().unwrap();
-    let previous = std::env::var_os("HORON_HOME");
-    crate::env::set_var("HORON_HOME", home.path());
-    let observed = (|| -> anyhow::Result<Vec<CatalogLookup>> {
-        use crate::message::{ContentBlock, Role};
-        let mut session = crate::session::Session::create_with_id("session_acp_delete_busy".to_string(), None, None);
-        session.working_dir = Some("/work/delete".to_string());
-        session.add_message(
-            Role::User,
-            vec![ContentBlock::Text {
-                text: "persisted".to_string(),
-                cache_control: None,
-            }],
-        );
-        session.save()?;
-        let mut seen = vec![catalog_lookup("session_acp_delete_busy")?];
-        session.record_archive(true, "test")?;
-        seen.push(catalog_lookup("session_acp_delete_busy")?);
-        seen.push(catalog_lookup("session_acp_delete_never_1")?);
-        Ok(seen)
-    })();
-    match previous {
-        Some(previous) => crate::env::set_var("HORON_HOME", previous),
-        None => crate::env::remove_var("HORON_HOME"),
-    }
-    let seen = observed.unwrap();
-    assert_eq!(
-        seen[0],
-        CatalogLookup::Present {
-            cwd: Some("/work/delete".to_string())
-        }
-    );
-    assert_eq!(seen[1], CatalogLookup::Archived);
-    assert_eq!(seen[2], CatalogLookup::Missing);
-}
-
 pub(super) mod connection_core {
     use super::*;
     use crate::transport::Stream;
@@ -1397,16 +1345,52 @@ pub(super) mod connection_core {
     }
 
     pub(in crate::cli::acp) struct FakeDaemon {
-        lines: Lines<BufReader<crate::transport::ReadHalf>>,
-        writer: crate::transport::WriteHalf,
+        frames: mpsc::UnboundedReceiver<String>,
+        writer: Arc<tokio::sync::Mutex<crate::transport::WriteHalf>>,
+        reader: JoinHandle<()>,
     }
 
     impl FakeDaemon {
+        /// Read the daemon socket, answering `prepare_disconnect` on the way.
+        ///
+        /// Closing a session releases its attachment before the adapter
+        /// answers, so the adapter waits for that reply. The real daemon sends
+        /// it immediately; answering it here keeps a scripted test from having
+        /// to know about a handshake it is not about, and reading in a task
+        /// means the answer lands even while the test waits on ACP output.
+        fn spawn(daemon_reader: crate::transport::ReadHalf, daemon_writer: crate::transport::WriteHalf) -> Self {
+            let (sender, frames) = mpsc::unbounded_channel();
+            let writer = Arc::new(tokio::sync::Mutex::new(daemon_writer));
+            let reply_writer = Arc::clone(&writer);
+            let reader = tokio::spawn(async move {
+                let mut lines = BufReader::new(daemon_reader).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if let Ok(request) = serde_json::from_str::<Value>(&line)
+                        && request["type"] == "prepare_disconnect"
+                    {
+                        let done = json!({"type": "done", "id": request["id"]});
+                        let mut line = done.to_string();
+                        line.push('\n');
+                        let mut writer = reply_writer.lock().await;
+                        if writer.write_all(line.as_bytes()).await.is_err() || writer.flush().await.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                    if sender.send(line).is_err() {
+                        return;
+                    }
+                }
+            });
+            Self { frames, writer, reader }
+        }
+
+        pub(in crate::cli::acp) async fn next_line(&mut self) -> Option<String> {
+            within("a daemon request", self.frames.recv()).await
+        }
+
         pub(in crate::cli::acp) async fn recv(&mut self) -> Value {
-            let line = within("a daemon request", self.lines.next_line())
-                .await
-                .unwrap()
-                .expect("adapter closed the daemon socket");
+            let line = self.next_line().await.expect("adapter closed the daemon socket");
             serde_json::from_str(&line).unwrap()
         }
 
@@ -1422,8 +1406,15 @@ pub(super) mod connection_core {
         pub(in crate::cli::acp) async fn emit(&mut self, event: Value) {
             let mut line = event.to_string();
             line.push('\n');
-            self.writer.write_all(line.as_bytes()).await.unwrap();
-            self.writer.flush().await.unwrap();
+            let mut writer = self.writer.lock().await;
+            writer.write_all(line.as_bytes()).await.unwrap();
+            writer.flush().await.unwrap();
+        }
+    }
+
+    impl Drop for FakeDaemon {
+        fn drop(&mut self) {
+            self.reader.abort();
         }
     }
 
@@ -1437,10 +1428,7 @@ pub(super) mod connection_core {
                 let (adapter_side, daemon_side) = Stream::pair()?;
                 let (reader, writer) = adapter_side.into_split();
                 let (daemon_reader, daemon_writer) = daemon_side.into_split();
-                let _ = sender.send(FakeDaemon {
-                    lines: BufReader::new(daemon_reader).lines(),
-                    writer: daemon_writer,
-                });
+                let _ = sender.send(FakeDaemon::spawn(daemon_reader, daemon_writer));
                 Ok((reader, writer))
             })
         });
@@ -1453,10 +1441,7 @@ pub(super) mod connection_core {
         let (daemon_reader, daemon_writer) = daemon_side.into_split();
         (
             DaemonSession::new(session_id.to_string(), reader, writer, 10),
-            FakeDaemon {
-                lines: BufReader::new(daemon_reader).lines(),
-                writer: daemon_writer,
-            },
+            FakeDaemon::spawn(daemon_reader, daemon_writer),
         )
     }
 
@@ -4420,10 +4405,7 @@ pub(super) mod connection_core {
             "no update after the prompt response: {between:?}"
         );
         loop {
-            match within("the daemon connection to close", daemon.lines.next_line())
-                .await
-                .unwrap()
-            {
+            match daemon.next_line().await {
                 None => break,
                 Some(line) => assert!(!line.contains("\"message\""), "{line}"),
             }

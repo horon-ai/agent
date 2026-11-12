@@ -367,6 +367,7 @@ impl AcpRuntime {
         } else {
             self.withdraw_session_calls(session_id).await;
         }
+        session.detach().await;
         self.sessions.lock().await.remove(session_id);
         true
     }

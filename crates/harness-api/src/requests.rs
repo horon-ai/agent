@@ -71,6 +71,13 @@ pub enum ApiRequest {
     /// Put an archived session back in the default list.
     RestoreSession { session_id: String },
 
+    /// Permanently delete a session and every file keyed by its id.
+    ///
+    /// Unlike `archive_session` nothing can be restored afterwards. `confirm`
+    /// must be `true`: a client that omitted it is refused instead of losing a
+    /// transcript to a default.
+    DeleteSession { session_id: String, confirm: bool },
+
     /// Configure automatic archival of inactive sessions. `None` disables it.
     SetRetentionPolicy {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -601,6 +608,7 @@ impl ApiRequest {
         match self {
             Self::ArchiveSession { session_id, .. } => Some(session_id.as_str()),
             Self::RestoreSession { session_id, .. } => Some(session_id.as_str()),
+            Self::DeleteSession { session_id, .. } => Some(session_id.as_str()),
             Self::AttachSession { session_id, .. } => Some(session_id.as_str()),
             Self::ForkSession { session_id, .. } => Some(session_id.as_str()),
             Self::TransferSession { session_id, .. } => Some(session_id.as_str()),

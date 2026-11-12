@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use super::args::{
     AmbientCommand, ApprovalVerdictArg, ApprovalsCommand, Args, Command, MemoryCommand, ModelCommand, ProviderCommand,
-    ServerCommand,
+    ServerCommand, SessionCommand,
 };
 use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 
@@ -341,7 +341,15 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Memory(subcmd)) => {
             commands::run_memory_command(map_memory_subcommand(subcmd)).await?;
         }
-        Some(Command::Session(subcmd)) => commands::run_session_command(subcmd)?,
+        Some(Command::Session(subcmd)) => match subcmd {
+            // `delete` talks to the daemon, so it cannot go through the
+            // synchronous session dispatcher that handles every other
+            // subcommand.
+            SessionCommand::Delete { session, yes, json } => {
+                commands::run_session_delete_command(&session, yes, json).await?;
+            }
+            other => commands::run_session_command(other)?,
+        },
         Some(Command::Export { session, out, json }) => {
             super::sessions::export_markdown(&session, out.as_deref(), json)?;
         }

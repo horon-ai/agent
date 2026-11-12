@@ -709,6 +709,23 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Permanently delete a session and everything stored for it
+    ///
+    /// Unlike `archive`, nothing can be restored afterwards. The transcript,
+    /// todos, the goal attachment, artifacts and the runtime journal all go.
+    /// A session that is open in a running daemon is refused.
+    Delete {
+        /// Session ID
+        session: String,
+
+        /// Delete without asking for confirmation
+        #[arg(long)]
+        yes: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

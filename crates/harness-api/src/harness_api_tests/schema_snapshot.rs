@@ -3,9 +3,9 @@
 use crate::*;
 
 #[test]
-fn api_version_minor_is_nineteen() {
+fn api_version_minor_is_twenty() {
     assert_eq!(API_VERSION_MAJOR, 1);
-    assert_eq!(API_VERSION_MINOR, 19);
+    assert_eq!(API_VERSION_MINOR, 20);
 }
 
 #[test]

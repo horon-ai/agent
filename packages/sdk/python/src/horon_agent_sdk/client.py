@@ -1412,6 +1412,15 @@ class HoronAgentClient:
     async def restore_session(self, session_id: str) -> None:
         await self._request_ok({"req": "restore_session", "session_id": session_id})
 
+    async def delete_session(self, session_id: str) -> None:
+        """Permanently remove a session and every file keyed by its id.
+
+        Unlike :meth:`archive_session`, nothing is restorable afterwards. The
+        daemon refuses a session that is loaded, streaming, or attached to a
+        client, so detach before deleting.
+        """
+        await self._request_ok({"req": "delete_session", "session_id": session_id})
+
     async def set_retention_policy(self, archive_after_days: int | None = None) -> None:
         """Auto-archive inactive sessions after this many days; omit to disable."""
         request: dict[str, Any] = {"req": "set_retention_policy"}

@@ -20,6 +20,7 @@ mod client_lifecycle_logging;
 mod client_lifecycle_tool_move;
 mod client_lightweight_control;
 mod client_session;
+mod client_session_delete;
 mod client_state;
 mod client_writer;
 mod comm_await;

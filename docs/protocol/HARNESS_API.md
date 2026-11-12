@@ -333,6 +333,55 @@ No capability gates the field. It rides on an event every client already reads,
 so a client that predates it ignores the key; a client that wants the verdict
 reads it and falls back to `error` when it is missing.
 
+## Permanent session delete (protocol 1.20)
+
+The harness API keeps major version 1 and moved from minor version 19 to 20.
+The addition is one request, so a client that never sends it reads the same
+frames it did before.
+
+`archive_session` hides a session and keeps it loadable. This is the other
+operation: the transcript and everything keyed by the session id are removed
+from disk, and nothing restores them.
+
+### Request: `delete_session`
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `req` | string | Yes | `"delete_session"` |
+| `session_id` | string | Yes | The session to remove, as a full id or a unique prefix |
+| `confirm` | boolean | No | The wire field behind the refusal; the bridge always sends `true` |
+
+```json
+{"v":1,"id":12,"req":"delete_session","session_id":"s-1"}
+```
+
+The reply is `{"v":1,"reply_to":12,"ev":"ok"}`.
+
+### Behaviour
+
+- A session a turn is running for, one another process is streaming, or one
+  still attached to a client is refused with an error, because deleting under a
+  live writer would race that writer. Close or detach it first. An idle session
+  the daemon holds between turns, including one kept for its reconnect grace
+  after its client left, is not open: it is closed and deleted.
+- `detach_session` releases this connection's attachment before it answers
+  `ok`, so a delete sent right after a detach cannot find the connection still
+  attached.
+- A session this bridge connection is attached to is refused the same way, and
+  the bridge says so before the round trip.
+- An id that does not exist is `unknown_session`, the same answer as an
+  unknown `attach_session`.
+- A second delete of the same id succeeds, so repeating the call is safe.
+- An archived session is deleted like any other. Archive and delete stay
+  separate operations, and delete does not imply archive or the reverse.
+- Process-wide state is not a session's and is never removed: managed skills,
+  models, configuration, approvals, the usage database.
+
+No capability gates the request. It is additive, so a server that predates it
+answers `unknown_request`, which a client treats as "this build cannot delete"
+rather than as a missing session. The SDKs expose it as `delete_session` (Rust, Python)
+and `deleteSession` (TypeScript).
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -598,5 +647,5 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 19`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 20`
 - `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`

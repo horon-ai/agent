@@ -146,47 +146,6 @@ pub(super) fn catalog_info(session_id: &str) -> Result<Option<CatalogInfo>> {
     }
 }
 
-/// What the catalog knows about one session, for `session/delete`.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum CatalogLookup {
-    /// No canonical log: never created, or not in this store.
-    Missing,
-    Archived,
-    Present {
-        cwd: Option<String>,
-    },
-}
-
-pub(super) fn catalog_lookup(session_id: &str) -> Result<CatalogLookup> {
-    let Ok(id) = store::SessionId::parse(session_id) else {
-        return Ok(CatalogLookup::Missing);
-    };
-    let paths = store_paths()?;
-    if !paths.root().try_exists()? {
-        return Ok(CatalogLookup::Missing);
-    }
-    if store::reader::layout(&paths, &id)? != Some(store::reader::SourceLayout::Canonical) {
-        return Ok(CatalogLookup::Missing);
-    }
-    lookup_from_row(store::catalog::row(&paths, &id, store::ReadProbe::default()))
-}
-
-/// A Busy row exists but its writer is owned, normally by the daemon that
-/// still holds the session; the daemon then archives it, and archiving an
-/// archived session is a no-op, so delete stays idempotent.
-pub(super) fn lookup_from_row(
-    row: std::result::Result<store::catalog::Summary, store::StoreError>,
-) -> Result<CatalogLookup> {
-    match row {
-        Ok(summary) if summary.archived => Ok(CatalogLookup::Archived),
-        Ok(summary) => Ok(CatalogLookup::Present {
-            cwd: summary.working_dir,
-        }),
-        Err(error) if error.code == store::StoreErrorCode::Busy => Ok(CatalogLookup::Present { cwd: None }),
-        Err(error) => Err(error.into()),
-    }
-}
-
 /// One `session/list` page: unarchived rows with an absolute cwd, filtered
 /// by exact cwd, newest activity first.
 /// The rows take the shape of the protocol `version` the connection speaks.

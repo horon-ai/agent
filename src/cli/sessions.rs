@@ -4,6 +4,8 @@
 //! Every command here is read-only unless it says otherwise: `migrate` is a dry
 //! run until `--apply`, `doctor` never repairs, `recover-to` writes only to a
 //! new root, and archive/restore append a record instead of deleting anything.
+//! `delete` is the one exception and is dispatched from `dispatch.rs` because it
+//! needs the daemon; see `commands/session_delete.rs`.
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -57,6 +59,9 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
         SessionCommand::RecoverTo { session, output, json } => recover_to(&home()?, &session, &output, json),
         SessionCommand::Archive { session, json } => archive(&home()?, &session, true, json),
         SessionCommand::Restore { session, json } => archive(&home()?, &session, false, json),
+        // `delete` is async and talks to the daemon, so dispatch.rs intercepts it
+        // before this match. Reaching here would mean the interception regressed.
+        SessionCommand::Delete { .. } => unreachable!("session delete is dispatched before run_session_command"),
     }
 }
 

@@ -616,7 +616,7 @@ mod acp {
     /// connection raced the daemon's session writer once in four attempts and
     /// left the adapter waiting 30.5 s before it answered -32603 "daemon
     /// disconnected". Every round must answer promptly: with the load result
-    /// (delete archives, so the session is still loadable) or with a clear
+    /// (a deleted session is gone, so the load must fail) or with a clear
     /// error, never after a stall.
     #[test]
     fn is4_delete_then_load_answers_promptly() {
@@ -646,14 +646,11 @@ mod acp {
                 "round {round}: delete -> load took {elapsed:?}: {result:?}\n{}",
                 daemon.logs()
             );
-            match result {
-                Ok(value) => assert!(
-                    value.is_object(),
-                    "round {round}: load answered {value}; replayed {} updates",
-                    history_updates(&before).len()
-                ),
-                Err(error) => panic!("round {round}: delete -> load failed: {error}\n{}", daemon.logs()),
-            }
+            assert!(
+                result.is_err(),
+                "round {round}: a deleted session must not load again, replayed {} updates",
+                history_updates(&before).len()
+            );
         }
         adapter.finish();
     }

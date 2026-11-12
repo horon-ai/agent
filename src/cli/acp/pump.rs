@@ -45,6 +45,9 @@ const IDLE_PROBES: usize = 6;
 const IDLE_PROBE_GAP: Duration = Duration::from_millis(50);
 pub(super) const IDLE_GATE_BOUND: Duration = Duration::from_millis(2000);
 
+/// How long a close waits for the daemon to confirm it released the attachment.
+const DETACH_REPLY_BOUND: Duration = Duration::from_secs(20);
+
 /// How long a released turn keeps its successor's stream clean.
 ///
 /// A turn that answered before its own terminal reply is still streaming on
@@ -552,6 +555,32 @@ impl DaemonSession {
         #[cfg(test)]
         self.record_send(request);
         self.link.send(request).await
+    }
+
+    /// Release this connection's daemon attachment and wait for the daemon to
+    /// confirm it.
+    ///
+    /// Dropping the socket is not enough when the next request comes from
+    /// another connection: the daemon notices a half-close only when its reader
+    /// observes EOF, so a delete sent straight after a close could still find
+    /// this attachment registered and refuse the session as open. The daemon's
+    /// `prepare_disconnect` releases the attachment before it answers `Done`,
+    /// which makes this the ordering barrier.
+    pub(super) async fn detach(&self) {
+        let id = self.next_id();
+        let request = Request::PrepareDisconnect { id };
+        let Ok(mut reply) = self.request(id, &request).await else {
+            return;
+        };
+        // The reply is best effort: a daemon that does not answer must not hold
+        // a close open forever. Twenty seconds is far beyond a local round trip
+        // and short enough that an operator sees the close finish.
+        if tokio::time::timeout(DETACH_REPLY_BOUND, wait_for_done(&mut reply, id))
+            .await
+            .is_err()
+        {
+            crate::logging::warn("ACP: prepare_disconnect got no reply; closing without it");
+        }
     }
 
     /// Send a request whose replies come back by id: the waiter is registered
