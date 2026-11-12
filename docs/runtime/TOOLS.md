@@ -185,27 +185,47 @@ Plan mode is off by default. The configuration field defaults to `false` (`crate
 
 ### Approval tiers
 
-`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:511`). The default is `off` (`crates/base/src/config.rs:922`), which is the same non-asking behaviour as before.
+`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:357`). The default is `off` (`crates/base/src/config.rs:1017`), which is the same non-asking behaviour as before.
 
-`evaluate` decides (`crates/app-core/src/approval.rs:70`). Order matters.
+`evaluate` decides (`crates/app-core/src/approval.rs:223`). Order matters.
 
 1. A danger class in `dual_confirm_classes` requires approval regardless of mode. That is exactly why a class goes into this list: so no mode can auto-approve it.
-2. If the mode is `off`, return auto-approval right here. This comes before the read-only branch. Reversing the order would make a mode that should change nothing start writing an audit line per call.
-3. A read-only call is never asked in any mode (`crates/app-core/src/approval.rs:43`).
-4. `write` mode auto-approves only file mutations. A process or network component requires approval.
-5. `all` mode auto-approves every call that is not read-only.
+2. A path matching `[tools] restricted_paths` requires approval regardless of mode. This comes before the `off` return and before a bash-pattern allow, because a listed path is a standing "ask me", and a scoped grant never covers one.
+3. A `[[tools.bash_patterns]]` verdict decides next: `allow` auto-approves, `prompt` and `deny` ask. A dual-confirm class and a restricted path above already outranked it.
+4. If the mode is `off`, return auto-approval right here. This comes before the read-only branch. Reversing the order would make a mode that should change nothing start writing an audit line per call.
+5. A read-only call is never asked in any mode (`crates/app-core/src/approval.rs:45`).
+6. `write` mode asks before a call that runs a process, reaches the network, or mutates a file it names. A tool with a write effect that names no path (the todo list, `ask`, `undo`, `monitor`, `checkpoint`, context notes) runs without asking, because there is no file for the user to approve.
+7. `all` mode asks before every call that is not read-only.
 
-Danger classes are not reclassified; the existing command risk classifier's verdict is used as is (`crates/app-core/src/approval.rs:52`). The only class with a name is `destructive-shell` (`crates/app-core/src/approval.rs:20`), because shell commands are the only thing whose footprint needs weighing.
+Danger classes are not reclassified; the existing command risk classifier's verdict is used as is (`crates/app-core/src/approval.rs:182`). The only class with a name is `destructive-shell` (`crates/app-core/src/approval.rs:22`), because shell commands are the only thing whose footprint needs weighing.
 
-`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:940`, `crates/base/src/config/default_file.rs:476`). Empty leaves every decision to the mode.
+`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:1026`, `crates/base/src/config/default_file.rs:341`). Empty leaves every decision to the mode.
 
-The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:1561`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
+The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2072`, hook at `:2176`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
 
-`irc` has the write bit and no process or network bit, so `write` mode auto-approves it like a file mutation, and `all` mode does not ask either. It is not a tool that raises an approval prompt.
+`irc` has the write bit, no process or network bit, and names no filesystem path, so `write` mode does not ask about it: there is no file to approve. `all` mode does ask, because an `irc` call is not read-only.
+
+### Scoped grants
+
+An answer can cover a place instead of one call. `allow_path` approves the one file the request named; `allow_folder` approves its folder and everything under it. The grant lives in `<agent home>/approvals.json`, written with mode 0600 under `approvals/.grants.lock`, and every grant carries an expiry (`[tools] approval_grant_ttl_days`, default 7; `0` turns grants off).
+
+A grant is consulted only after `evaluate` said "ask" for a reason a grant can answer: not a dual-confirm class, not a restricted path, not a bash-pattern verdict, and only for a call whose effect is a file mutation. A hit becomes an auto-approval with reason `grant`, so the audit line says why the user was not asked. Five things a grant is not:
+
+- **Not portable between workspaces.** The workspace root is the canonical session working directory; a grant records it, and a grant whose root differs covers nothing even for the same absolute path.
+- **Not wider than its effect.** A grant issued for an append covers appends; a write grant covers both. Replacing a file is a stronger answer than appending to it.
+- **Not path-loose.** Both the grant and the call are canonicalized, so `..` and a symlink name the place they actually resolve to. A path that cannot be canonicalized gets no grant and asks.
+- **Not multi-path.** Only a call that names exactly one path can be granted. An `apply_patch` touching three files is approved once and asks next time, because one answer must not decide three places the user was never shown.
+- **Not restricted-path bypass.** A `restricted_paths` match asks in every mode, `off` included, and refuses in a headless session with no approval surface.
+
+The request carries its capability in `context.grant_capability` (`append` or `write`) so the writer that stores the grant needs only the queued request, never the registry. The paths come from the request snapshot the daemon built, never from the client, so a client cannot widen what its answer covers.
+
+`[tools] restricted_paths` is a list of globs matched against the path the model wrote, the path resolved against the working directory, and the canonical path. A pattern with no separator also matches the file name, so `secrets.env` covers `/srv/app/secrets.env`. A pattern that cannot be parsed restricts every path, because an unreadable restriction must not become no restriction. `bash` names no paths here; `[[tools.bash_patterns]]` is its equivalent.
+
+In ACP, the two scoped options (`allow-path`, `allow-folder`) are offered only on a v2 session and only when the call names one path. A v1 session offers the four options it always has.
 
 ### Audit records
 
-Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:139`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:125`).
+Auto-approval writes an audit record. It creates no new file or queue and uses the existing log event `TOOL_APPROVAL` (`crates/app-core/src/approval.rs:331`). The fields are tool name, mode, reason, and call id (`crates/app-core/src/approval.rs:331`).
 
 `off` mode writes no audit line, because logs must match the era before approval tiers existed. Read-only calls are not audited either. That is why `off` returns before the read-only branch.
 

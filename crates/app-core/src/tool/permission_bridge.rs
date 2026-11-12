@@ -24,7 +24,7 @@
 //! As with [`super::client_bridge`], presence is not ownership: the bridge acts
 //! only while the running turn was started by the installing connection.
 
-use super::{Registry, ToolContext, acp_session};
+use super::{Registry, ToolContext, ToolEffects, acp_session};
 use crate::protocol::ServerEvent;
 use crate::safety::PermissionResult;
 use serde_json::Value;
@@ -368,6 +368,7 @@ impl PermissionBridge {
         reason: &str,
         is_dual_confirm: bool,
         input: &Value,
+        effects: ToolEffects,
         ctx: &ToolContext,
     ) -> Result<(), String> {
         let request = Registry::gate_permission_request(
@@ -376,6 +377,7 @@ impl PermissionBridge {
             reason,
             is_dual_confirm,
             input,
+            effects,
             ctx,
             true,
         );
@@ -526,6 +528,7 @@ pub(super) async fn await_permission(
     reason: &str,
     is_dual_confirm: bool,
     input: &Value,
+    effects: ToolEffects,
     ctx: &ToolContext,
 ) -> Option<String> {
     let key = Registry::approval_key(&ctx.session_id, resolved_name, input, ctx);
@@ -536,7 +539,15 @@ pub(super) async fn await_permission(
         finished: false,
     };
     if claim.opened
-        && let Err(refusal) = bridge.open_request(&claim.request_id, resolved_name, reason, is_dual_confirm, input, ctx)
+        && let Err(refusal) = bridge.open_request(
+            &claim.request_id,
+            resolved_name,
+            reason,
+            is_dual_confirm,
+            input,
+            effects,
+            ctx,
+        )
     {
         waiter.finished = true;
         return Some(refusal);

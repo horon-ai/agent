@@ -924,6 +924,21 @@ pub fn record_permission_via_file(request_id: &str, approved: bool, via: &str, m
     Ok(())
 }
 
+/// Read one queued request by id, without taking the decision lock.
+///
+/// The queue file is replaced atomically, so a lock-free read sees either the
+/// whole previous file or the whole next one, never a torn one. A caller that
+/// needs to decide must still take the lock; this is for reading the request
+/// before the decision is recorded.
+pub fn pending_request(request_id: &str) -> Result<Option<PermissionRequest>> {
+    let path = queue_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let queue: Vec<PermissionRequest> = storage::read_json(&path)?;
+    Ok(queue.into_iter().find(|request| request.id == request_id))
+}
+
 /// Expire stale permission requests directly via queue/history files.
 /// Used by processes that don't hold the live SafetySystem instance.
 pub fn expire_stale_permissions_via_file(via: &str) -> Result<Vec<String>> {

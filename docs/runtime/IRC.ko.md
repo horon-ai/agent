@@ -178,7 +178,9 @@ broadcast_concurrency = 16
 
 계획 모드는 쓰기 배리어 호출을 거부한다. 그래서 계획 모드가 켜진 세션에서는 `irc` 호출도 `plan_mode` 사유로 막힌다. 계획을 승인한 뒤에 다시 호출할 수 있다.
 
-승인 등급은 도구의 효과 비트로 판정한다(`crates/app-core/src/approval.rs`). `off`는 묻지 않고, `write`는 파일 변이에 해당하는 효과를 자동 승인하며, `all`은 읽기 전용이 아닌 호출을 자동 승인한다. `irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없어서 세 모드 모두 자동 승인으로 분류된다. 즉 `approval_mode = "write"`에서 `irc`는 일반 파일 변이와 같은 취급을 받고 승인 창을 띄우지 않는다. `dual_confirm_classes`에 걸리는 위험 등급도 없다(`crates/app-core/src/approval.rs`의 `danger_class`는 셸 명령만 분류한다).
+승인 등급은 도구의 효과 비트와 호출이 대는 경로로 판정한다(`crates/app-core/src/approval.rs`). `off`는 묻지 않는다. `write`는 프로세스를 실행하거나 네트워크에 닿거나 이름을 댄 파일을 바꾸는 호출 앞에서 묻는다. `all`은 읽기 전용이 아닌 모든 호출 앞에서 묻는다.
+
+`irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없으며 파일시스템 경로를 대지 않으므로 `write`는 묻지 않는다. 승인할 파일이 없기 때문이다. `all`은 묻는다. `irc` 호출은 읽기 전용이 아니기 때문이다. `dual_confirm_classes`에 걸리는 위험 등급도 없다(`crates/app-core/src/approval.rs`의 `danger_class`는 셸 명령만 분류한다).
 
 ### 성능 상한과 게이트
 

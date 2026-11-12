@@ -1024,11 +1024,19 @@ pub struct AskSelection {
 }
 
 /// A human decision on a pending approval request.
+///
+/// `AllowPath` and `AllowFolder` answer "yes, and stop asking for this place":
+/// the first covers the one file the request named, the second covers its
+/// folder and everything under it. Both are approved answers, so a client that
+/// only knows the older three keeps working; the daemon remembers the scope
+/// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {
     Allow,
     AllowAlways,
+    AllowPath,
+    AllowFolder,
     Deny,
 }
 

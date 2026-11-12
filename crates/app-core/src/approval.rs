@@ -12,6 +12,8 @@
 //!    supposed to change nothing would start writing a log line per call.
 //! 2. A dual-confirm class outranks the mode. The whole point of listing a
 //!    class there is that no mode may auto-approve it.
+//! 3. A restricted path outranks `Off` for the same reason, and a scoped grant
+//!    never covers one: `[tools] restricted_paths` is a standing "ask me".
 
 use crate::config::{ApprovalMode, BashPatternApproval, BashPatternRule};
 use crate::tool::ToolEffects;
@@ -210,7 +212,14 @@ pub fn danger_class(
 /// `danger` names the command-risk class the call fell into, when the caller
 /// classified one. `dual_confirm` lists the classes that must always ask.
 /// `bash_pattern` is the configured rule that matched the command, if any: a
-/// dual-confirm class still outranks it.
+/// dual-confirm class still outranks it. `paths` are the filesystem paths the
+/// call names, and `restricted` is the `[tools] restricted_paths` pattern that
+/// matched one of them, if any: a restricted path asks in every mode, including
+/// `Off`.
+///
+/// The last four `Option`/slice parameters are all path- or command-shaped, so
+/// the order is documented here and at the call site: `danger`,
+/// `bash_pattern`, `paths`, `restricted`.
 pub fn evaluate(
     tool: &str,
     effects: ToolEffects,
@@ -218,6 +227,8 @@ pub fn evaluate(
     dual_confirm: &[String],
     danger: Option<&str>,
     bash_pattern: Option<&BashPatternVerdict>,
+    paths: &[std::path::PathBuf],
+    restricted: Option<&str>,
 ) -> ApprovalEvaluation {
     if let Some(danger) = danger
         && dual_confirm.iter().any(|class| class.as_str() == danger)
@@ -225,6 +236,16 @@ pub fn evaluate(
         return ApprovalEvaluation::RequiresApproval {
             reason: format!("{danger} is a dual-confirm class"),
             is_dual_confirm: true,
+        };
+    }
+
+    // A restricted path asks in every mode, above both the `Off` return and a
+    // `[[tools.bash_patterns]]` allow. The point of listing a path is that no
+    // mode lets a call touch it, and a grant never covers it either.
+    if let Some(pattern) = restricted {
+        return ApprovalEvaluation::RequiresApproval {
+            reason: format!("path matches restricted_paths '{pattern}'"),
+            is_dual_confirm: false,
         };
     }
 
@@ -264,21 +285,60 @@ pub fn evaluate(
             reason: "approval disabled".to_string(),
         },
         ApprovalMode::Write => {
-            if (effects.writes() || effects.appends()) && !effects.processes() && !effects.networks() {
-                ApprovalEvaluation::AutoApproved {
-                    reason: "file mutation in write mode".to_string(),
+            // `write` asks before a call that can mutate files, and before a
+            // call that runs a process or reaches the network. A tool that
+            // declares a write effect but names no path (todo, ask, undo,
+            // monitor, checkpoint) keeps running, because there is no file to
+            // approve and asking would be noise the user cannot act on.
+            let mutates_a_named_file = !paths.is_empty() && (effects.writes() || effects.appends());
+            if effects.processes() || effects.networks() {
+                ApprovalEvaluation::RequiresApproval {
+                    reason: format!("{tool} runs a process or reaches the network in write mode"),
+                    is_dual_confirm: false,
+                }
+            } else if mutates_a_named_file {
+                ApprovalEvaluation::RequiresApproval {
+                    reason: format!("{tool} mutates a file in write mode"),
+                    is_dual_confirm: false,
                 }
             } else {
-                ApprovalEvaluation::RequiresApproval {
-                    reason: format!("{tool} is not a plain file mutation in write mode"),
-                    is_dual_confirm: false,
+                ApprovalEvaluation::AutoApproved {
+                    reason: "no file mutation to approve in write mode".to_string(),
                 }
             }
         }
-        ApprovalMode::All => ApprovalEvaluation::AutoApproved {
-            reason: "approval mode allows every call".to_string(),
+        // `all` asks for every call that is not read-only. For a path-naming
+        // mutation that is the same set `write` asks about; the difference is
+        // the path-less write-effect tools above, which `all` asks about too.
+        ApprovalMode::All => ApprovalEvaluation::RequiresApproval {
+            reason: format!("{tool} is not read-only in all mode"),
+            is_dual_confirm: false,
         },
     }
+}
+
+/// Record an auto-approval the caller decided outside [`evaluate`].
+///
+/// A scoped grant answers a call `evaluate` correctly marked as asking; the
+/// audit line must still be written, with reason `grant`, so the log explains
+/// why the user was not asked.
+pub fn audit_granted_call(tool: &str, mode: ApprovalMode, tool_call_id: &str) {
+    if mode != ApprovalMode::Off {
+        audit(tool, mode, "grant", tool_call_id);
+    }
+}
+
+fn audit(tool: &str, mode: ApprovalMode, reason: &str, tool_call_id: &str) {
+    observe_audit(tool, mode, reason, tool_call_id);
+    crate::logging::event_info(
+        "TOOL_APPROVAL",
+        [
+            ("tool", tool.to_string()),
+            ("mode", mode.as_str().to_string()),
+            ("reason", reason.to_string()),
+            ("tool_call_id", tool_call_id.to_string()),
+        ],
+    );
 }
 
 /// [`evaluate`] plus the audit record its decision earns.
@@ -293,22 +353,24 @@ pub fn evaluate_and_audit(
     dual_confirm: &[String],
     danger: Option<&str>,
     bash_pattern: Option<&BashPatternVerdict>,
+    paths: &[std::path::PathBuf],
+    restricted: Option<&str>,
     tool_call_id: &str,
 ) -> ApprovalEvaluation {
-    let evaluation = evaluate(tool, effects, mode, dual_confirm, danger, bash_pattern);
+    let evaluation = evaluate(
+        tool,
+        effects,
+        mode,
+        dual_confirm,
+        danger,
+        bash_pattern,
+        paths,
+        restricted,
+    );
     if let ApprovalEvaluation::AutoApproved { reason } = &evaluation
         && mode != ApprovalMode::Off
     {
-        observe_audit(tool, mode, reason, tool_call_id);
-        crate::logging::event_info(
-            "TOOL_APPROVAL",
-            [
-                ("tool", tool.to_string()),
-                ("mode", mode.as_str().to_string()),
-                ("reason", reason.clone()),
-                ("tool_call_id", tool_call_id.to_string()),
-            ],
-        );
+        audit(tool, mode, reason, tool_call_id);
     }
     evaluation
 }

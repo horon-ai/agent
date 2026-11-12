@@ -2224,7 +2224,7 @@ fn touched_paths_include_patch_headers_and_path_keys() {
         "file_path": "notes.md",
         "patch_text": "*** Begin Patch\n*** Update File: notes/a.md\n@@\n-x\n+y\n*** Add File: /abs/b.txt\n+hi\n*** Update File: notes.md\n*** End Patch",
     });
-    let paths: Vec<String> = Registry::touched_paths(&input, &ctx)
+    let paths: Vec<String> = path_policy::touched_paths(&input, &ctx)
         .into_iter()
         .map(|(key, path)| format!("{key}:{}", path.display()))
         .collect();
@@ -2234,7 +2234,7 @@ fn touched_paths_include_patch_headers_and_path_keys() {
     );
 
     let diff = "--- a/src/x.rs\n+++ b/src/x.rs\n@@ -1 +1 @@\n-a\n+b\n--- /dev/null\n+++ b/new.md\n";
-    assert_eq!(Registry::patch_paths(diff), vec!["src/x.rs", "new.md"]);
+    assert_eq!(path_policy::patch_paths(diff), vec!["src/x.rs", "new.md"]);
 }
 
 #[cfg(unix)]
