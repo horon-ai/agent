@@ -292,3 +292,9 @@ pub(crate) fn tool_kind(name: &str) -> &'static str {
         _ => "other",
     }
 }
+
+/// The `_meta` value that carries a tool call's verdict. `None` when the
+/// daemon reported no verdict, so that frame keeps the bytes it had before.
+pub(crate) fn verdict_meta(verdict: Option<crate::tool::ToolVerdict>) -> Option<Value> {
+    verdict.map(|verdict| json!({ "horon-agent": { "verdict": verdict } }))
+}

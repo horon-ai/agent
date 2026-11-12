@@ -23,7 +23,7 @@
 use super::super::mapper::tool_location;
 use super::super::replay::{Part, split_reasoning};
 use super::super::rpc::{JSONRPC_INVALID_PARAMS, RpcError};
-use super::super::util::{tool_kind, tool_title};
+use super::super::util::{tool_kind, tool_title, verdict_meta};
 use super::shapes::{
     MessageIds, MessageKind, ToolCallPatch, message_ids, tool_call_update, user_message, whole_message,
 };
@@ -187,7 +187,7 @@ fn walk_history(messages: &[HistoryMessage], images: &[RenderedImage], cwd: &Pat
             "tool" => {
                 walk.tool_round();
                 if let Some(call) = &message.tool_data {
-                    updates.push(tool_update(call, &message.content, cwd));
+                    updates.push(tool_update(call, &message.content, message.verdict, cwd));
                 }
             }
             // A system row is never a message. One that started a turn (an
@@ -206,8 +206,14 @@ fn walk_history(messages: &[HistoryMessage], images: &[RenderedImage], cwd: &Pat
 }
 
 /// One stored tool call as a completed upsert that creates it on a client that
-/// never saw it: name, title, kind, input, location and the stored result text.
-fn tool_update(call: &crate::message::ToolCall, output: &str, cwd: &Path) -> Value {
+/// never saw it: name, title, kind, input, location, the stored result text and
+/// the stored verdict, when the result carries one.
+fn tool_update(
+    call: &crate::message::ToolCall,
+    output: &str,
+    verdict: Option<crate::tool::ToolVerdict>,
+    cwd: &Path,
+) -> Value {
     let raw_input = call.input.is_object().then(|| call.input.clone());
     let locations = raw_input
         .as_ref()
@@ -227,6 +233,7 @@ fn tool_update(call: &crate::message::ToolCall, output: &str, cwd: &Path) -> Val
         raw_output: None,
         // A stored call is already over: it advertises no client controls.
         capabilities: None,
+        meta: verdict_meta(verdict),
     };
     tool_call_update(&call.id, &patch)
 }

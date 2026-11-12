@@ -873,7 +873,7 @@ fn latest_assistant_report_uses_last_non_empty_assistant_message() {
             role: "assistant".to_string(),
             content: " earlier ".to_string(),
             tool_calls: None,
-            tool_data: None,
+            ..Default::default()
         },
         HistoryMessage {
             turn_start: false,
@@ -882,7 +882,7 @@ fn latest_assistant_report_uses_last_non_empty_assistant_message() {
             role: "user".to_string(),
             content: "ignored".to_string(),
             tool_calls: None,
-            tool_data: None,
+            ..Default::default()
         },
         HistoryMessage {
             turn_start: false,
@@ -891,7 +891,7 @@ fn latest_assistant_report_uses_last_non_empty_assistant_message() {
             role: "assistant".to_string(),
             content: " final report ".to_string(),
             tool_calls: None,
-            tool_data: None,
+            ..Default::default()
         },
     ];
 

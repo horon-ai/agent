@@ -570,6 +570,7 @@ fn test_history_event_roundtrip_preserves_messages() -> Result<()> {
             content: "hello".to_string(),
             tool_calls: None,
             tool_data: None,
+            verdict: None,
         }],
         images: Vec::new(),
         provider_name: Some("openai".to_string()),

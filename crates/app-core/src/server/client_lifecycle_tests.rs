@@ -2163,7 +2163,7 @@ async fn loading_deferred_setup_session_teardown_releases_the_caches() {
         role: "user".to_string(),
         content: "a message that keeps the record alive".to_string(),
         tool_calls: None,
-        tool_data: None,
+        ..Default::default()
     });
 
     crate::server::forget_removed_session(&session, None);
