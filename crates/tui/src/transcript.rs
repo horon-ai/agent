@@ -69,6 +69,20 @@ impl Transcript {
         &self.items
     }
 
+    /// The assistant text still streaming, if any.
+    ///
+    /// `None` once the message is committed by [`finish_stream`](Self::finish_stream),
+    /// retracted by [`text_replace`](Self::text_replace), or when the open
+    /// message holds only whitespace, which `finish_stream` would drop rather
+    /// than publish. The renderer draws this as its newest entry, so a message
+    /// appears while it streams instead of all at once when it ends.
+    pub fn open_text(&self) -> Option<&str> {
+        if !self.streaming.open || self.streaming.text.trim().is_empty() {
+            return None;
+        }
+        Some(&self.streaming.text)
+    }
+
     /// Record a user message, closing any partly streamed reply first.
     pub fn push_user(&mut self, text: impl Into<String>) {
         self.finish_stream();
