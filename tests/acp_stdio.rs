@@ -943,13 +943,9 @@ fn is3_cancel_request() {
     conn.notify("$/cancel_request", json!({"requestId": prompt_id}));
     let response = conn.wait("session/prompt", &prompt_id).expect("the prompt answers");
     assert_eq!(response["stopReason"], "cancelled", "{response}");
-    let notifications = conn.client.drain_notifications();
-    assert!(
-        notifications
-            .iter()
-            .any(|note| note["method"] == "$/cancel_request" && note["params"]["requestId"] == permission_id),
-        "the agent cancels its open permission request: {notifications:?}"
-    );
+    conn.client
+        .await_cancel_request(&permission_id, WAIT)
+        .unwrap_or_else(|error| panic!("the agent cancels its open permission request: {error}"));
     conn.barrier();
     assert!(
         conn.stdout().iter().all(|line| !line.contains("is3-21-ran")),
