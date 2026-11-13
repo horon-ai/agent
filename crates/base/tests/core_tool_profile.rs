@@ -6,8 +6,9 @@
 
 use horon_agent_base::config::{CORE_TOOL_PROFILE, TOOLBOX_TOOL, ToolConfig};
 
-/// `skill_manage` is the registry key for the skill tool; `mcp` is the wildcard
-/// covering `mcp__server__tool` and the fixed `mcp_search`/`mcp_call` surface.
+/// The eighteen-tool headless default, exactly as `AGENTS.md` and `CORE_TOOLS`
+/// state it. `toolbox` sits beside this set as the dispatcher for the deferred
+/// entries, not inside it.
 const KEEP: &[&str] = &[
     "bash",
     "read",
@@ -15,8 +16,6 @@ const KEEP: &[&str] = &[
     "edit",
     "replace",
     "apply_patch",
-    "undo",
-    "ask",
     "agentgrep",
     "ls",
     "webfetch",
@@ -24,10 +23,17 @@ const KEEP: &[&str] = &[
     "skill_manage",
     "mcp",
     "monitor",
+    "undo",
+    "ask",
+    "todo",
+    "session_search",
+    "swarm",
 ];
 
+/// Tools the core profile still refuses. `memory` and `irc` are off in the
+/// shipped default; the rest are operator and self-development surfaces that
+/// only the `full` profile carries.
 const DROP: &[&str] = &[
-    "swarm",
     "batch",
     "bg",
     "memory",
@@ -35,9 +41,8 @@ const DROP: &[&str] = &[
     "desktop_selfdev",
     "compile_remote",
     "schedule",
-    "session_search",
     "conversation_search",
-    "todo",
+    "irc",
 ];
 
 #[test]

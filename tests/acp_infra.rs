@@ -1302,7 +1302,11 @@ fn acp_permission_modes_real_daemon() {
     );
     assert_eq!(options["configOptions"][0]["currentValue"], "auto", "{options}");
     let (_, updates) = run.prompt("T11_BASH_AUTO run it");
-    assert_eq!(run.permission_requests(), 3, "auto never asks");
+    assert_eq!(
+        run.permission_requests(),
+        4,
+        "auto never asks: the count is the four before the switch, unchanged"
+    );
     assert!(mentions(&updates, T11_BASH_RAN), "{updates:?}");
 
     let unknown = run

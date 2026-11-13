@@ -256,6 +256,44 @@ The legacy-marker ratchet excludes the subtrees that implement an external contr
 
 Growth fails; a drop only prints `Consider running ... --update`. A cleanup in an unrelated change must not have to edit this file, and the gate still cannot loosen itself: the old ceiling fails again the moment anything grows back. A new dependency legitimately raises the package ceiling, and that re-pin belongs in the reviewed commit that adds the dependency. `--update` rewrites only `ceiling`, never a description or a reason.
 
+## Test coverage gates
+
+A test that compiles and never runs proves only that it compiles. Two gates close
+that gap, and both are data files rather than code so the decision they encode is
+reviewable.
+
+```sh
+python3 scripts/ci/check_test_targets.py
+python3 scripts/ci/check_lib_test_coverage.py --artifacts "$TEST_ARTIFACTS"
+python3 -m unittest -v scripts/ci/test_check_test_targets.py scripts/ci/test_check_lib_test_coverage.py
+```
+
+| Gate | Input | Fails when |
+| --- | --- | --- |
+| Integration targets | `.github/workflows/ci.yml`, `scripts/ci/integration_targets.json`, `scripts/ci/test_target_allowlist.json`, `cargo metadata` | a target exists, no `--test <name>` or manifest row runs it, and no allowlist entry explains why; a manifest row or allowlist entry names a target that no longer exists; a row has no positive `min_passed`; a row names a package the compile step does not build; the workflow lists rows but never runs `run_integration_targets.py`; an allowlist reason is empty or still `TODO` |
+| Lib test cohort coverage | the compile step's `--message-format=json` artifacts, `ci.yml`, `scripts/ci/lib_test_coverage.baseline.json` | a test module that libtest can list is selected by no cohort filter; a package is compiled with `--lib` and named by no cohort at all |
+
+`scripts/ci/integration_targets.json` is the single list of integration targets
+CI starts; `scripts/ci/run_integration_targets.py` reads it and runs one
+`run_lib_tests.py` call per target against the executable the compile step
+already built, so a failure names the target and nothing recompiles. `min_passed`
+is the count measured on the first green run: libtest exits 0 after selecting
+nothing, so a filter that silently stops matching would otherwise look healthy.
+
+The coverage ratchet freezes uncovered **module paths**, not test names. Test
+names change often and there are thousands of them; a module path survives a
+rename of one test and still fails when a whole module of tests stops running.
+The baseline only shrinks by itself: a module that becomes covered prints
+`covered now` and needs no edit, while a new uncovered module fails. Rebaseline
+with `--update` after covering or intentionally adding a module.
+
+The integration allowlist holds the targets that exist but cannot run in the
+correctness matrix: `#[ignore]`d probes that measure the host, the wall-clock
+`performance` target (owner policy keeps measurements in the benchmark
+workflows), and targets that are red on their own for a known reason. Each row
+carries that reason in the file, so the exclusion is a reviewed decision rather
+than an absence.
+
 ## Test policy
 
 Prefer narrow filters for verification. Broad filters often pick up unrelated stateful tests, timing-sensitive tests, and benchmark tests.

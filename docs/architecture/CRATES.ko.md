@@ -247,6 +247,27 @@ python3 scripts/ci/check_growth_ratchets.py --list
 
 증가하면 실패하고, 감소하면 `--update` 실행을 권하는 줄만 출력한다. 관계없는 변경에서 정리한 사람이 이 파일을 고칠 필요가 없고, 게이트가 스스로 느슨해지지도 않는다. 뭔가 다시 늘어나면 옛 상한에서 곧바로 실패한다. 새 의존성은 패키지 상한을 정당하게 올리며, 그 재고정은 의존성을 추가하는 검토 커밋에 들어간다. `--update`는 `ceiling`만 다시 쓰고 설명이나 사유는 건드리지 않는다.
 
+## 시험 커버리지 게이트
+
+컴파일만 되고 실행되지 않는 시험은 컴파일된다는 사실만 증명한다. 두 게이트가 그 구멍을 막고, 둘 다 코드가 아니라 데이터 파일이라 담긴 판단을 검토할 수 있다.
+
+```sh
+python3 scripts/ci/check_test_targets.py
+python3 scripts/ci/check_lib_test_coverage.py --artifacts "$TEST_ARTIFACTS"
+python3 -m unittest -v scripts/ci/test_check_test_targets.py scripts/ci/test_check_lib_test_coverage.py
+```
+
+| 게이트 | 입력 | 실패 조건 |
+| --- | --- | --- |
+| 통합 타깃 | `.github/workflows/ci.yml`, `scripts/ci/integration_targets.json`, `scripts/ci/test_target_allowlist.json`, `cargo metadata` | 타깃이 있는데 `--test <이름>`도 매니페스트 행도 실행하지 않고 허용 목록 사유도 없음. 매니페스트 행이나 허용 목록 항목이 더 이상 없는 타깃을 가리킴. 행의 `min_passed`가 양수가 아님. 행이 컴파일 단계가 빌드하지 않는 패키지를 가리킴. 워크플로가 행을 나열하면서 `run_integration_targets.py`를 실행하지 않음. 허용 목록 사유가 비었거나 아직 `TODO`임 |
+| 라이브러리 시험 코호트 커버리지 | 컴파일 단계의 `--message-format=json` 산출물, `ci.yml`, `scripts/ci/lib_test_coverage.baseline.json` | libtest가 나열할 수 있는 시험 모듈을 어떤 코호트 필터도 고르지 않음. 패키지가 `--lib`으로 컴파일되는데 어떤 코호트도 이름으로 부르지 않음 |
+
+`scripts/ci/integration_targets.json`은 CI가 시작하는 통합 타깃의 유일한 목록이다. `scripts/ci/run_integration_targets.py`가 이 파일을 읽어 타깃마다 `run_lib_tests.py`를 한 번씩 호출하고, 컴파일 단계가 이미 빌드한 실행 파일을 쓰므로 실패하면 어느 타깃인지 드러나고 다시 컴파일하지 않는다. `min_passed`는 첫 초록 실행에서 측정한 개수다. libtest는 아무것도 고르지 않고도 종료 코드 0을 내므로, 필터가 조용히 아무것도 맞히지 않게 되면 그대로 건강해 보인다.
+
+커버리지 래칫은 시험 이름이 아니라 **모듈 경로**를 동결한다. 시험 이름은 자주 바뀌고 개수도 수천이라 파일이 금세 낡는다. 모듈 경로는 시험 하나의 이름이 바뀌어도 유지되고, 한 모듈의 시험이 통째로 실행되지 않게 되면 실패한다. 기준선은 스스로 줄기만 한다. 커버되는 모듈은 `covered now`를 출력하고 수정이 필요 없으며, 새로 커버되지 않는 모듈은 실패한다. 모듈을 커버했거나 의도적으로 추가한 뒤에는 `--update`로 다시 고정한다.
+
+통합 허용 목록에는 존재하지만 정확성 검사 행렬에서 돌 수 없는 타깃이 들어간다. 호스트를 측정하는 `#[ignore]` 프로브, 벽시계 시간을 재는 `performance` 타깃(측정은 벤치마크 워크플로에서만 한다는 운영 방침), 알려진 이유로 그 자체가 빨간 타깃이다. 각 행이 사유를 파일에 담으므로 제외는 빠뜨림이 아니라 검토한 판단이 된다.
+
 ## 테스트 정책
 
 검증에는 좁은 필터를 우선한다. 넓은 필터는 관계없는 상태 기반 테스트, 타이밍에 민감한 테스트, 벤치마크 테스트를 함께 고르는 경우가 많다.

@@ -348,6 +348,26 @@ jobs:
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_run_lib_tests.py
 
+      - name: Test coverage gate contract tests
+        # Both guards are data-driven (a manifest and a ratchet baseline), so the
+        # decision they encode is only as good as the code that reads it. These
+        # tests prove each rejection path: a target or module that no step runs,
+        # a stale entry, an empty reason, and a row that runs but has no count.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python3 -m unittest -v \
+            scripts/ci/test_check_test_targets.py \
+            scripts/ci/test_check_lib_test_coverage.py
+
+      - name: Enforce every integration target runs
+        # #226: the compile step builds every integration target and, before this
+        # guard, nothing started most of them. Static check (workflow plus
+        # `cargo metadata`), so it costs seconds and needs no build.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 scripts/ci/check_test_targets.py
+
       - name: Enforce Rust and TypeScript SDK surface parity
         if: ${{ !cancelled() }}
         shell: bash
@@ -699,15 +719,36 @@ jobs:
           set -euo pipefail
           TEST_ARTIFACTS="$RUNNER_TEMP/test-artifacts.jsonl"
           echo "TEST_ARTIFACTS=$TEST_ARTIFACTS" >> "$GITHUB_ENV"
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-provider-openai -p horon-tui)
+          # Every package that owns a target in
+          # `scripts/ci/integration_targets.json` must be built here, or
+          # `run_integration_targets.py` finds no executable for it.
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
+          # `tests` compiles every integration target of those packages, not
+          # just `e2e`: sixteen session-store contracts, nine SDK contracts and
+          # the app-core and base targets. Each was built and started by no
+          # workflow before #226, so a break in one merged green; the
+          # `Run integration contracts` step below is what runs them, and
+          # `scripts/ci/check_test_targets.py` refuses a target neither runs nor
+          # allowlists.
           python3 .github/scripts/run_with_timeout.py 1800 \
             "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            "${packages[@]}" --lib --bins --test e2e --no-run \
+            "${packages[@]}" --lib --bins --tests --test e2e --no-run \
             --message-format=json-render-diagnostics \
             > "$TEST_ARTIFACTS"
+
+      - name: Enforce every compiled lib test module runs
+        shell: bash
+        # Reads the compile step's artifacts, so it must follow it. It runs each
+        # lib executable's `--list <filter>` and compares the modules libtest
+        # actually selects against `scripts/ci/lib_test_coverage.ratchet.json`:
+        # a module that holds tests but no cohort filter reaches them fails, and
+        # a baseline module that is now covered is reported as a drop (#226).
+        run: |
+          python3 scripts/ci/check_lib_test_coverage.py \
+            --artifacts "$TEST_ARTIFACTS"
 
       - name: Run horon-tui tests
         shell: bash
@@ -718,6 +759,32 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-tui \
             --min-passed 1 --timeout 600
+
+      - name: Run whole-crate lib tests without a cohort
+        shell: bash
+        # The packages below are compiled with `--lib` for their integration
+        # targets but no filtered cohort names them, so their lib tests were
+        # compiled and never started (#226). No filter: the whole crate is the
+        # surface. `--min-passed` is the measured count, so a crate whose tests
+        # stop being compiled or selected fails here instead of shrinking to a
+        # green `0 passed`.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-import-core --min-passed 24 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-logging --min-passed 13 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-platform --min-passed 11 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-schema-dialect --min-passed 38 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-sdk --min-passed 51 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-session-store --min-passed 5 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-session-types --min-passed 12 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-token-estimate --min-passed 16 --timeout 600
 
       - name: Run CLI handoff cohort
         shell: bash
@@ -1205,22 +1272,20 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- overnight_handoff --nocapture
 
-      - name: Run e2e tests
+      - name: Run integration contracts
         shell: bash
-        # Same `-p` set and target as the compile step so cargo reuses the
-        # already built e2e binary instead of rebuilding the selection set.
+        # Compiles `--tests` above, so these are built; before #226 nothing
+        # started them, and a target that only builds can break in a merged
+        # pull request without turning a check red. The target list, package
+        # and measured pass count live in `scripts/ci/integration_targets.json`
+        # so the guard that checks this coverage reads the same file.
         run: |
-          # e2e is fast (~1-2 min of execution); the generous budget only guards
-          # against an occasional slow hosted runner. Compilation is already done
-          # in the dedicated compile step above.
-          set -euo pipefail
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-irc-core -p horon-agent-todo-policy)
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            packages+=(-p horon-agent-embedding)
-          fi
-          python3 .github/scripts/run_with_timeout.py 600 \
-            "$(rustup which cargo)" test --locked --target ${{ matrix.target }} \
-            "${packages[@]}" --test e2e
+          python3 scripts/ci/run_integration_targets.py \
+            --artifacts "$TEST_ARTIFACTS" --timeout 900
+
+      # e2e runs inside `Run integration contracts` above, through the same
+      # artifacts file: its binary is built by the compile step, and a second
+      # `cargo test --test e2e` here would rebuild the selection set (#19).
 
       # macOS only: the quality job already runs the same gate on Linux, and a
       # second whole-workspace `cargo check` on the ubuntu matrix entry is a

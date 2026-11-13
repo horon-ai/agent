@@ -1510,15 +1510,31 @@ fn is7_permission() {
     );
     assert!(mentions(&updates, "is7-36-again"), "{updates:?}");
 
+    // `ask-commands` maps to the daemon's `write` mode (`src/cli/acp/modes.rs`),
+    // and `write` asks before a file mutation that names a path
+    // (`docs/runtime/TOOLS.md`, approval tiers). The gate therefore prompts for
+    // this write, and the default scripted handler cancels it.
     let session = conn.new_session(&work);
     conn.set_mode(&session, "ask-commands");
-    let (stop, _) = conn.prompt_ok(&session, "IS7_WRITE write it");
+    conn.client.handlers().permission.script([PermissionOutcome::Cancelled]);
+    let (stop, updates) = conn.prompt_ok(&session, "IS7_WRITE write it");
     assert_eq!(stop, "end_turn");
-    assert_eq!(permissions(&conn).len(), 4, "a plain file write runs without a prompt");
     assert_eq!(
-        std::fs::read_to_string(work.join("is7-write.txt")).expect("the write ran"),
-        "is7 written\n"
+        permissions(&conn).len(),
+        5,
+        "write mode asks before a file mutation that names a path"
     );
+    assert!(
+        updates
+            .iter()
+            .any(|update| update["sessionUpdate"] == "tool_call_update"
+                && update["status"] == "failed"
+                && update["rawOutput"]["error"]
+                    .as_str()
+                    .is_some_and(|error| error.contains("denied"))),
+        "the refused write reports the denial: {updates:?}"
+    );
+    assert!(!work.join("is7-write.txt").exists(), "a refused write must not land");
     conn.assert_schema_clean();
 }
 
