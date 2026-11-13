@@ -308,7 +308,7 @@ async fn prompt_streams_one_turn_and_reports_once() {
         1,
         "{kinds:?}"
     );
-    assert!(kinds.iter().any(|kind| kind == "text_start"), "{kinds:?}");
+    assert!(kinds.iter().any(|kind| *kind == "text_start"), "{kinds:?}");
     let deltas: Vec<&str> = frames
         .iter()
         .filter(|frame| frame["type"] == "message_update")
