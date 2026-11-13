@@ -159,6 +159,9 @@ echo ""
 
 DIST="$(mktemp -d)"
 trap 'rm -rf "$DIST"' EXIT
+# Every local build path archives the binaries from $DIST, so the licence is
+# staged once here and shipped as a member beside them.
+cp LICENSE "$DIST/LICENSE"
 OVERALL_START=$(date +%s)
 TAG_PUSHED=false
 
@@ -397,7 +400,7 @@ WRAPPER
         echo "Error: fast binary reports the wrong version: $version_output" >&2
         exit 1
     }
-    (cd "$DIST" && tar -cf - horon-agent-linux-x86_64 horon-agent-linux-x86_64.bin | gzip -1 > horon-agent-linux-x86_64.tar.gz)
+    (cd "$DIST" && tar -cf - horon-agent-linux-x86_64 horon-agent-linux-x86_64.bin LICENSE | gzip -1 > horon-agent-linux-x86_64.tar.gz)
     (cd "$DIST" && sha256sum horon-agent-linux-x86_64.tar.gz > SHA256SUMS)
     echo "  ✅ Linux artifact ready ($(( $(date +%s) - build_start ))s validation/package, $(du -h "$DIST/horon-agent-linux-x86_64.tar.gz" | cut -f1))"
 
@@ -442,7 +445,7 @@ if [[ "$MODE" == "fast-macos-local" ]]; then
     chmod +x "$DIST/horon-agent-macos-aarch64"
     file "$DIST/horon-agent-macos-aarch64" | grep -q 'Mach-O 64-bit' || { echo "Error: bad macOS binary" >&2; exit 1; }
     sign_macos_binary "$DIST/horon-agent-macos-aarch64"
-    (cd "$DIST" && tar czf horon-agent-macos-aarch64.tar.gz horon-agent-macos-aarch64)
+    (cd "$DIST" && tar czf horon-agent-macos-aarch64.tar.gz horon-agent-macos-aarch64 LICENSE)
     (cd "$DIST" && sha256sum horon-agent-macos-aarch64.tar.gz > SHA256SUMS)
 
     if $DRY_RUN; then
@@ -475,7 +478,7 @@ LINUX_PID=$!
     cp target/aarch64-apple-darwin/release/horon-agent "$DIST/horon-agent-macos-aarch64"
     chmod +x "$DIST/horon-agent-macos-aarch64"
     sign_macos_binary "$DIST/horon-agent-macos-aarch64"
-    (cd "$DIST" && tar czf horon-agent-macos-aarch64.tar.gz horon-agent-macos-aarch64)
+    (cd "$DIST" && tar czf horon-agent-macos-aarch64.tar.gz horon-agent-macos-aarch64 LICENSE)
     echo "  ✅ macOS done ($(elapsed)s)"
 ) &
 MACOS_PID=$!

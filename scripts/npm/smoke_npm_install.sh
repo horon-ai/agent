@@ -154,7 +154,8 @@ for platform in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-ar
 exec "\$(dirname "\$0")/$artifact.bin" "\$@"
 WRAPPER
         chmod +x "$dir/$artifact"
-        tar -czf "$assets/$artifact.tar.gz" -C "$dir" "$artifact" "$artifact.bin"
+        printf 'MIT License\n' >"$dir/LICENSE"
+        tar -czf "$assets/$artifact.tar.gz" -C "$dir" "$artifact" "$artifact.bin" LICENSE
         ;;
       win32-*)
         if [ "$platform" = "$host" ]; then
@@ -162,7 +163,8 @@ WRAPPER
         else
           printf 'stub %s %s\r\n' "$stem" "$version" >"$dir/$artifact.exe"
         fi
-        tar -czf "$assets/$artifact.tar.gz" -C "$dir" "$artifact.exe"
+        printf 'MIT License\n' >"$dir/LICENSE"
+        tar -czf "$assets/$artifact.tar.gz" -C "$dir" "$artifact.exe" LICENSE
         ;;
       *)
         if [ "$platform" = "$host" ]; then
@@ -171,7 +173,8 @@ WRAPPER
           printf '#!/bin/sh\necho "horon-agent %s (stub)"\n' "$version" >"$dir/$artifact"
         fi
         chmod +x "$dir/$artifact"
-        tar -czf "$assets/$artifact.tar.gz" -C "$dir" "$artifact"
+        printf 'MIT License\n' >"$dir/LICENSE"
+        tar -czf "$assets/$artifact.tar.gz" -C "$dir" "$artifact" LICENSE
         ;;
     esac
   done
@@ -242,6 +245,10 @@ esac
   fail "platform package has no bin/$entry: $(ls -A "$root/@horon-ai/horon-$host/bin")"
 [ -f "$root/@horon-ai/horon-$host/bin/$companion" ] ||
   fail "platform package has no bin/$companion beside bin/$entry: $(ls -A "$root/@horon-ai/horon-$host/bin")"
+[ -f "$root/@horon-ai/horon-$host/LICENSE" ] ||
+  fail "platform package has no LICENSE: $(ls -A "$root/@horon-ai/horon-$host")"
+[ -f "$root/@horon-ai/horon/LICENSE" ] ||
+  fail "wrapper package has no LICENSE: $(ls -A "$root/@horon-ai/horon")"
 note "installed tree: $(cd "$root/@horon-ai" && find . -mindepth 1 -maxdepth 1 | sed 's#^\./##' | LC_ALL=C sort | tr '\n' ' ')"
 
 launcher="$bin_dir/horon"

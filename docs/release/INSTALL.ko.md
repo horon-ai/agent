@@ -22,7 +22,7 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 - `--source-binary`를 주지 않으면 플랫폼 자산의 SHA-256을 `SHA256SUMS`와 대조한다. 값이 다르거나 해시 형식이 틀리면 아무것도 설치하지 않는다.
 - `--source-binary`를 주면 로컬에서 컴파일한 실행 파일을 소스로 신뢰하고 게시된 바이트와 비교하지 않는다. `SHA256SUMS`는 이때도 필수다.
 - 버전 문자열은 영숫자와 `.`, `-`, `+`만 허용한다. 경로 구분자나 `..`가 들어간 이름은 거부한다.
-- 압축 자산은 일반 파일과 디렉터리만 푼다. 심볼릭 링크, 하드 링크, 절대 경로, `..` 탈출, 중복 경로를 거부하고 파일 하나당 512 MiB, 전체 2 GiB 예산을 넘기면 실패한다. 압축 안에는 최상위 플랫폼 실행 파일이 정확히 하나 있어야 한다.
+- 압축 자산은 일반 파일과 디렉터리만 푼다. 심볼릭 링크, 하드 링크, 절대 경로, `..` 탈출, 중복 경로를 거부하고 파일 하나당 512 MiB, 전체 2 GiB 예산을 넘기면 실패한다. 압축 안에는 최상위 플랫폼 실행 파일이 정확히 하나 있어야 하고, 배포하는 모든 압축에는 최상위 `LICENSE`도 들어 있으며 이 파일은 실행 파일 옆에 문서로 설치된다. 그 밖의 멤버는 거부한다.
 - 이미 같은 버전 디렉터리가 있으면 설치된 실행 파일의 SHA-256을 먼저 비교한다. 바이트가 같으면 그 버전을 재사용하고, 다르면 `the installed agent version already contains different bytes`로 거부하며 기존 파일을 덮어쓰지 않는다.
 
 검증이 끝나면 `stable`, `current`, 런처 링크와 업데이트 메타데이터를 함께 바꾼다. 중간 단계가 실패하면 롤백하므로 이전 설치가 그대로 남는다 (`crates/app-core/src/update/activation.rs`). 명령은 네트워크에서 아무것도 내려받지 않는다. 자산을 준비하는 일은 호출자 몫이다.
@@ -48,7 +48,7 @@ npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신�
 
 릴리스는 대화형 클라이언트도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다.
 
-`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이므로, 한 버전 디렉터리가 두 실행 파일을 들고 활성화가 둘을 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
+`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이고 각 압축이 담은 `LICENSE`도 같은 곳에 설치되므로, 한 버전 디렉터리가 두 실행 파일과 그 실행 파일을 규율하는 라이선스를 들고 활성화가 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
 
 클라이언트는 모든 단계에서 선택 사항이고, 검증하지 못한 사본은 에이전트 설치를 막지 않는다.
 
@@ -108,7 +108,7 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 | `horon-agent-linux-x86_64` | CentOS 7 / manylinux2014 컨테이너에서 glibc 2.17 기준으로 빌드한다 (`scripts/release/build_linux_compat.sh`). |
 | `horon-agent-linux-aarch64` | `ubuntu-24.04-arm`에서 빌드한다 (`.github/workflows/release.yml`). |
 
-아카이브에는 래퍼와 `<artifact>.bin`만 들어 있고 OpenSSL 라이브러리는 더 이상 들어가지 않는다. `scripts/install/install.sh`는 예전 아카이브도 설치하도록 `libssl.so*` 멤버를 계속 받는다.
+아카이브에는 래퍼, `<artifact>.bin`, `LICENSE`가 들어 있고 OpenSSL 라이브러리는 더 이상 들어가지 않는다. `scripts/install/install.sh`는 예전 아카이브도 설치하도록 `libssl.so*` 멤버를 계속 받는다.
 
 ### CI 가드
 

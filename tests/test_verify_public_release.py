@@ -3,8 +3,10 @@ import copy
 import hashlib
 import importlib.util
 import json
+import io
 import os
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -14,6 +16,21 @@ verifier = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verifier)
 TAG = "v0.98.1"
 SHA = "a" * 40
+
+
+def tarball(license_member=True, payload=b"binary", license_bytes=b"MIT License\n"):
+    """A release-shaped archive: one payload member plus, by default, LICENSE."""
+    members = [("repo-platform-binary", payload)]
+    if license_member:
+        members.append(("LICENSE", license_bytes))
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, contents in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(contents)
+            info.mode = 0o755
+            archive.addfile(info, io.BytesIO(contents))
+    return buffer.getvalue()
 
 
 def metadata():
@@ -29,7 +46,10 @@ class PublicReleaseTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.names = verifier.verify_metadata(metadata(), TAG)
         for name in self.names - {"SHA256SUMS"}:
-            (self.directory / name).write_bytes(b"fixture")
+            if name.endswith(".tar.gz"):
+                (self.directory / name).write_bytes(tarball())
+            else:
+                (self.directory / name).write_bytes(b"fixture")
         (self.directory / "release-provenance.json").write_text(json.dumps({
             "tag": TAG, "tag_commit": SHA,
             "eligibility_policy": "exact-sha-main-ci"}))
@@ -48,6 +68,31 @@ class PublicReleaseTests(unittest.TestCase):
         data["assets"] = [asset for asset in data["assets"] if asset["name"] != "horon-agent-freebsd-x86_64.tar.gz"]
         with self.assertRaises(ValueError):
             verifier.verify_metadata(data, TAG)
+
+    def test_archive_without_a_top_level_license_is_refused(self):
+        path = self.directory / "horon-agent-linux-x86_64.tar.gz"
+        path.write_bytes(tarball(license_member=False))
+        self.write_checksums()
+        with self.assertRaisesRegex(ValueError, "no top-level LICENSE"):
+            self.verify()
+
+    def test_archive_with_a_nested_or_empty_license_is_refused(self):
+        path = self.directory / "horon-tui-macos-aarch64.tar.gz"
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for name, contents in (("binary", b"binary"), ("docs/LICENSE", b"MIT\n")):
+                info = tarfile.TarInfo(name)
+                info.size = len(contents)
+                archive.addfile(info, io.BytesIO(contents))
+        path.write_bytes(buffer.getvalue())
+        self.write_checksums()
+        with self.assertRaisesRegex(ValueError, "no top-level LICENSE"):
+            self.verify()
+
+        path.write_bytes(tarball(license_bytes=b""))
+        self.write_checksums()
+        with self.assertRaisesRegex(ValueError, "no top-level LICENSE"):
+            self.verify()
 
     def test_complete_release_passes(self):
         self.verify()
@@ -102,6 +147,25 @@ class PublicReleaseTests(unittest.TestCase):
         self.assertIn('HORON_AGENT_VERSION="$RELEASE_TAG"', smoke_step)
         self.assertIn("HORON_AGENT_SKIP_SERVER_RELOAD=1", smoke_step)
         self.assertIn('"$install_home/.local/bin/horon-agent" --version', smoke_step)
+
+    def test_every_packaging_path_adds_the_license_and_the_workflow_checks_it(self):
+        # Four places build an archive, plus the reusable local scripts. Each
+        # has to add LICENSE, or the gate would only catch it after upload.
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        for fragment in (
+            "cp ../LICENSE LICENSE && tar czf",                       # build matrix
+            'Copy-Item -LiteralPath LICENSE -Destination dist/LICENSE',  # Windows
+            'tar -czf "dist/$($asset.Name).tar.gz" -C dist "$($asset.Name).exe" "LICENSE"',
+            "cp LICENSE dist/LICENSE",                                # FreeBSD
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, workflow)
+        # The finalize job refuses an archive without a top-level LICENSE.
+        gate = workflow.index("name: Require the licence in every release archive")
+        attach = workflow.index("name: Attach all completed platform assets")
+        self.assertLess(gate, attach)
+        self.assertIn('grep -qx LICENSE', workflow[gate:attach])
+        self.assertNotIn("continue-on-error", workflow[gate:attach])
 
     def test_incomplete_metadata_rejected(self):
         for field, value in (("draft", True), ("prerelease", True), ("tag_name", "v0.98.0")):

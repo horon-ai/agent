@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 import tempfile
 import os
 
@@ -68,6 +69,29 @@ def verify_metadata(metadata, tag, allow_draft=False):
     return set(names)
 
 
+def is_top_level_license(member):
+    """A `LICENSE` file at the archive root, with any leading `./` ignored."""
+    name = member.name
+    while name.startswith("./"):
+        name = name[2:]
+    return name == "LICENSE"
+
+
+def verify_archive_licenses(directory, names):
+    """Every tarball must carry the top-level LICENSE the licence terms require."""
+    for name in sorted(names):
+        if not name.endswith(".tar.gz"):
+            continue
+        try:
+            with tarfile.open(directory / name, "r:gz") as archive:
+                members = archive.getmembers()
+        except (tarfile.TarError, OSError) as error:
+            raise ValueError(f"Unreadable release archive {name}: {error}") from error
+        licenses = [member for member in members if is_top_level_license(member)]
+        if len(licenses) != 1 or not licenses[0].isfile() or licenses[0].size == 0:
+            raise ValueError(f"Release archive has no top-level LICENSE: {name}")
+
+
 def verify_downloads(directory, names, tag, expected_sha):
     directory = Path(directory)
     checksums = {}
@@ -87,6 +111,7 @@ def verify_downloads(directory, names, tag, expected_sha):
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             if digest != checksums[name]:
                 raise ValueError(f"Checksum mismatch: {name}")
+    verify_archive_licenses(directory, names)
     provenance = json.loads((directory / "release-provenance.json").read_text())
     if (provenance.get("tag") != tag or provenance.get("tag_commit") != expected_sha
             or provenance.get("eligibility_policy") != "exact-sha-main-ci"):

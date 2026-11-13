@@ -9,6 +9,7 @@
   },
   "files": [
     "bin",
+    "LICENSE",
     "README.md"
   ],
   "engines": {

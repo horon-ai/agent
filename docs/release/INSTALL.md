@@ -22,7 +22,7 @@ horon install-release --assets <directory> --agent-version <version>
 - Without `--source-binary` the platform asset's SHA-256 is compared against `SHA256SUMS`. A mismatched value or a malformed hash installs nothing.
 - With `--source-binary` the locally compiled executable is trusted as the source and is not compared against the published bytes. `SHA256SUMS` is still required.
 - Version strings allow only alphanumerics and `.`, `-`, `+`. Names containing a path separator or `..` are rejected.
-- An archive yields only regular files and directories. Symbolic links, hard links, absolute paths, `..` escapes and duplicate paths are rejected, and going over the 512 MiB per-file or 2 GiB total budget fails. The archive must hold exactly one top-level platform executable.
+- An archive yields only regular files and directories. Symbolic links, hard links, absolute paths, `..` escapes and duplicate paths are rejected, and going over the 512 MiB per-file or 2 GiB total budget fails. The archive must hold exactly one top-level platform executable, and every published archive also carries a top-level `LICENSE`, which is installed beside the executable as documentation. Any other member is refused.
 - When a directory for the same version already exists, the installed executable's SHA-256 is compared first. Identical bytes reuse that version; different bytes are refused with `the installed agent version already contains different bytes` and the existing files are left untouched.
 
 Once verification passes, `stable`, `current`, the launcher links and the update metadata are swapped together. A failure midway rolls back, so the previous installation stays in place (`crates/app-core/src/update/activation.rs`). The command downloads nothing from the network. Preparing the assets is the caller's job.
@@ -48,7 +48,7 @@ The npm installation is updated with npm, not with the agent's own updater: the 
 
 The release also publishes the interactive client as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together.
 
-`scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, so one version directory holds both binaries and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
+`scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, and the `LICENSE` each archive carries is installed there too, so one version directory holds both binaries with the licence that covers them and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
 
 The client is optional at every step, and a copy that cannot be verified never blocks the agent:
 
@@ -108,7 +108,7 @@ The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. The
 | `horon-agent-linux-x86_64` | Built against a glibc 2.17 baseline in a CentOS 7 / manylinux2014 container (`scripts/release/build_linux_compat.sh`). |
 | `horon-agent-linux-aarch64` | Built on `ubuntu-24.04-arm` (`.github/workflows/release.yml`). |
 
-The archive holds only the wrapper and `<artifact>.bin`; the OpenSSL libraries are no longer included. `scripts/install/install.sh` still accepts `libssl.so*` members so it can install older archives.
+The archive holds the wrapper, `<artifact>.bin` and the `LICENSE`; the OpenSSL libraries are no longer included. `scripts/install/install.sh` still accepts `libssl.so*` members so it can install older archives.
 
 ### CI guard
 

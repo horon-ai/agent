@@ -187,9 +187,13 @@ exec "\$self_dir/$name.bin" "\$@"
 WRAPPER
 	      chmod +x "/out/$name"
 
-	      (cd /out && tar czf "$name.tar.gz" "$name" "$name.bin")
+	      # MIT requires the notice to travel with the binaries, and /work is
+	      # the repository checkout, so the licence is copied beside them
+	      # before the archive is built.
+	      install -m 0644 /work/LICENSE "/out/LICENSE"
+	      (cd /out && tar czf "$name.tar.gz" "$name" "$name.bin" LICENSE)
 
-	      chown "$HOST_UID:$HOST_GID" "/out/$name" "/out/$name.bin" "/out/$name.tar.gz" 2>/dev/null || true
+	      chown "$HOST_UID:$HOST_GID" "/out/$name" "/out/$name.bin" "/out/LICENSE" "/out/$name.tar.gz" 2>/dev/null || true
 	    }
 
 	    package_binary "$HORON_AGENT_COMPAT_ARTIFACT"

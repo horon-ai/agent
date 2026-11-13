@@ -10,15 +10,15 @@
 
 | 패키지 | 내용 |
 | --- | --- |
-| `@horon-ai/horon` | 런처 `bin/horon.js`와 README. `bin`이 `horon`과 `hrn`을 모두 이 파일에 연결한다. |
-| `@horon-ai/horon-linux-x64` | Linux x86_64용 `bin/horon-agent`와 `bin/horon-tui`. |
-| `@horon-ai/horon-linux-arm64` | Linux aarch64용 같은 두 파일. |
-| `@horon-ai/horon-darwin-x64` | macOS Intel용 같은 두 파일. |
-| `@horon-ai/horon-darwin-arm64` | macOS Apple Silicon용 같은 두 파일. |
-| `@horon-ai/horon-win32-x64` | Windows x86_64용 `bin/horon-agent.exe`와 `bin/horon-tui.exe`. |
-| `@horon-ai/horon-win32-arm64` | Windows ARM64용 같은 두 파일. |
+| `@horon-ai/horon` | 런처 `bin/horon.js`, `LICENSE`, README. `bin`이 `horon`과 `hrn`을 모두 이 파일에 연결한다. |
+| `@horon-ai/horon-linux-x64` | Linux x86_64용 `bin/horon-agent`, `bin/horon-tui`, `LICENSE`. |
+| `@horon-ai/horon-linux-arm64` | Linux aarch64용 같은 두 실행 파일과 `LICENSE`. |
+| `@horon-ai/horon-darwin-x64` | macOS Intel용 같은 두 실행 파일과 `LICENSE`. |
+| `@horon-ai/horon-darwin-arm64` | macOS Apple Silicon용 같은 두 실행 파일과 `LICENSE`. |
+| `@horon-ai/horon-win32-x64` | Windows x86_64용 `bin/horon-agent.exe`, `bin/horon-tui.exe`, `LICENSE`. |
+| `@horon-ai/horon-win32-arm64` | Windows ARM64용 같은 두 실행 파일과 `LICENSE`. |
 
-npm은 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 내려받는다. 다음 세 가지가 이 묶음을 안전하게 게시할 수 있게 한다.
+모든 패키지는 만든 릴리스 압축에서 가져온 `LICENSE`를 루트에 담아, 실행 파일과 함께 라이선스 조항이 이동한다. npm은 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 내려받는다. 다음 세 가지가 이 묶음을 안전하게 게시할 수 있게 한다.
 
 - 래퍼의 플랫폼 고정값은 범위가 아니라 정확한 버전이다. 게시하는 버전과 고정값이 다르면 `scripts/npm/release_npm_version.py check-packages`가 실행을 실패시키므로, 래퍼가 그 버전에 없는 플랫폼 패키지를 가리키는 일이 생기지 않는다.
 - 어느 패키지도 설치 스크립트를 선언하지 않는다. 생성된 매니페스트와 `packages/npm/horon/package.json`에 `preinstall`, `install`, `postinstall`이 없고, 같은 검사가 의존성을 선언한 플랫폼 패키지도 거부한다.

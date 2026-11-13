@@ -174,6 +174,10 @@ def check_packages(directory: Path, version: str) -> list[str]:
         companion = "horon-tui.exe" if os_name == "win32" else "horon-tui"
         if not (package_dir / "bin" / companion).is_file():
             problems.append(f"{platform}: bin/{companion} is missing")
+        # The licence has to ship with the binaries it covers, so a package
+        # without it is refused rather than published.
+        if not (package_dir / "LICENSE").is_file():
+            problems.append(f"{platform}: LICENSE is missing")
 
     wrapper_dir = directory / WRAPPER_DIR
     manifest_path = wrapper_dir / "package.json"
@@ -202,6 +206,8 @@ def check_packages(directory: Path, version: str) -> list[str]:
                 problems.append(f"{WRAPPER_DIR}: optionalDependencies has unexpected {name}")
     if not (wrapper_dir / "bin" / "horon.js").is_file():
         problems.append(f"{WRAPPER_DIR}: bin/horon.js is missing")
+    if not (wrapper_dir / "LICENSE").is_file():
+        problems.append(f"{WRAPPER_DIR}: LICENSE is missing")
     return problems
 
 

@@ -141,7 +141,8 @@ STUB
   sed "s|__VERSION__|$version|" "$stage/stub-template" > "$stage/$artifact"
   rm -f "$stage/stub-template"
   chmod +x "$stage/$artifact"
-  tar -czf "$work/assets/$archive_name.tar.gz" -C "$stage" "$artifact"
+  printf 'MIT License\n' > "$stage/LICENSE"
+  tar -czf "$work/assets/$archive_name.tar.gz" -C "$stage" "$artifact" LICENSE
   (
     cd "$work/assets" || exit 1
     printf '%s  %s\n' "$(sha256_of "$archive_name.tar.gz")" "$archive_name.tar.gz"
