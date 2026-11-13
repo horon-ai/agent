@@ -54,7 +54,7 @@ English file is canonical; `.ko.md` files are not bundled into the binary.
 | Format | `cargo fmt --all -- --check` |
 | Lints | `cargo clippy --locked --all-targets --all-features -- -D warnings` |
 | Tests | `cargo test --workspace` |
-| Headless graph | `python3 scripts/ci/check_headless_graph.py` |
+| Agent graph (no terminal crates) | `python3 scripts/ci/check_headless_graph.py` |
 | ACP adapter | `cargo test -p horon-agent --lib acp` |
 | Docs pairs | `python3 scripts/ci/check_docs_pairs.py` |
 

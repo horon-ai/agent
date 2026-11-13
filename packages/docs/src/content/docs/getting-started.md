@@ -1,22 +1,21 @@
 ---
 title: Getting started
-description: horon agent is a headless coding agent in one Rust binary that talks to any OpenAI-compatible endpoint.
+description: horon agent is a coding agent in one Rust binary that talks to any OpenAI-compatible endpoint, from the terminal, an SDK, an editor or a host program.
 section: Start
 order: 1
 ---
 
-horon agent is a headless coding agent. One Rust binary, one OpenAI-compatible
-endpoint, no terminal UI in the headless package. It runs a turn, calls tools,
-and exits — or stays up as a daemon that SDKs and editors attach to over a Unix
-socket.
+horon agent is a coding agent. One Rust binary, one OpenAI-compatible endpoint.
+It runs a turn, calls tools, and exits — or stays up as a daemon that the
+terminal client, SDKs, editors and host programs attach to over a Unix socket.
 
 ## What it is
 
 - **One model path.** Requests go straight to `/chat/completions` on the
   endpoint you configure. There is no router process and no plugin host.
-- **Two binaries, one engine.** `horon-agent` is headless (`serve`, `run`,
-  `repl`, `api-bridge`, `acp`). `horon-tui` is the separate interactive terminal
-  client, built on the SDK.
+- **Two binaries, one engine.** `horon-agent` runs the agent (`serve`, `run`,
+  `repl`, `api-bridge`, `acp`, `rpc`). `horon-tui` is the separate interactive
+  terminal client, built on the SDK.
 - **Append-only sessions.** History is an event log on disk; archive, compaction
   and rewind append records and never delete an original.
 - **ACP v1 and v2.** `horon acp` serves both protocol versions and answers
@@ -56,7 +55,8 @@ server if needed, then replaces itself with `horon-tui`, the client that sits
 beside the agent binary and owns the screen from then on. The handoff checks
 three things first: standard input and standard output are both terminals,
 `HORON_NO_TUI` is unset, and `horon-tui` exists next to the running executable.
-A pipe or a redirect keeps the headless path, which is what scripts and CI want.
+A pipe or a redirect prints that sentence instead, which is what scripts and CI
+want.
 When a check fails the command names it, prints the one-line hint about
 installing `horon-tui` next to the binary, and exits non-zero; a server it had
 already started stays up.
@@ -64,12 +64,12 @@ already started stays up.
 ```sh
 horon                      # starts the server, then opens horon-tui
 horon --resume <session>   # the same, attached to an existing session
-HORON_NO_TUI=1 horon       # stay headless
+HORON_NO_TUI=1 horon       # skip the client and print the reason
 ```
 
 The client ships with the installer as an optional archive. A release that does
 not publish it, or a digest that does not match, prints one line and installs the
-headless agent alone; a source build and FreeBSD never stage a released client.
+agent alone; a source build and FreeBSD never stage a released client.
 Keys, themes, the status line and command files are documented in
 `docs/runtime/TUI.md`.
 

@@ -9,8 +9,9 @@ horon            # starts the terminal client on a TTY
 ```
 
 The `horon` and `hrn` commands are the same launcher. `horon` with no arguments
-opens the terminal client; every other subcommand is the headless agent
-(`horon --help` lists them). `HORON_NO_TUI=1` keeps the headless path on a TTY.
+opens the terminal client; every other subcommand runs the agent without one
+(`horon --help` lists them). `HORON_NO_TUI=1` skips the client on a TTY and
+prints the reason instead.
 
 ## How the install works
 

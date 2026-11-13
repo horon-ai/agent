@@ -3,7 +3,7 @@ import BaseLayout from "@/layouts/BaseLayout.astro";
 import { itemsFor, SECTIONS } from "@/data/nav";
 
 const description =
-  "horon agent: a headless coding agent in one Rust binary for any OpenAI-compatible endpoint.";
+  "horon agent: a coding agent in one Rust binary for any OpenAI-compatible endpoint, with a terminal client, SDKs, ACP and RPC.";
 ---
 
 <BaseLayout title="horon agent" description={description}>
@@ -12,8 +12,9 @@ const description =
       <p class="eyebrow">agent.horon.ai</p>
       <h1>One Rust binary.<br />Any OpenAI-compatible endpoint.</h1>
       <p class="lede">
-        A headless coding agent that runs a turn, calls tools and exits — or stays
-        up as a daemon that SDKs and editors attach to over a Unix socket.
+        A coding agent with a terminal client of its own. It runs a turn, calls
+        tools and exits — or stays up as a daemon that the client, SDKs, editors and
+        host programs attach to over a Unix socket.
       </p>
       <div class="actions">
         <a class="button" href="/getting-started/">Get started</a>
@@ -43,9 +44,9 @@ horon run "summarize this repo"</code></pre>
       <div>
         <h2>Two binaries</h2>
         <p>
-          <code>horon-agent</code> is headless: <code>serve</code>, <code>run</code>,
-          <code>repl</code>, <code>api-bridge</code>, <code>acp</code>. The
-          terminal client <code>horon-tui</code> is separate and built on the SDK.
+          <code>horon-agent</code> runs the agent: <code>serve</code>, <code>run</code>,
+          <code>repl</code>, <code>api-bridge</code>, <code>acp</code>, <code>rpc</code>.
+          The terminal client <code>horon-tui</code> is separate and built on the SDK.
         </p>
       </div>
       <div>

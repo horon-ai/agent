@@ -1,23 +1,24 @@
 ---
 title: CLI
-description: "Every horon subcommand: serve, run, repl, api-bridge, acp, sessions, providers, cloud move."
+description: "Every horon subcommand: serve, run, repl, api-bridge, acp, rpc, sessions, providers, cloud move."
 section: Using
 order: 1
 ---
 
 Bare `horon` on a terminal starts the server and then replaces itself with the
-`horon-tui` client beside it. A pipe, `HORON_NO_TUI=1`, or a missing sibling keeps
-the headless path.
+`horon-tui` client beside it. A pipe, `HORON_NO_TUI=1`, or a missing sibling
+prints the condition and the install hint instead, then exits non-zero.
 
 ## Core commands
 
 | Command | What it does |
 | --- | --- |
 | `horon run "<message>"` | Send one message, run tools until the turn ends, exit. `--json` prints a machine-readable result, `--ndjson` streams events. |
-| `horon repl` | Simple line-based REPL, no TUI. |
+| `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
 | `horon acp` | ACP v1/v2 adapter on stdio for editors. |
+| `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out. `--mode rpc` selects the same adapter. |
 | `horon server start\|reload\|stop\|promote` | Manage the daemon. Prefer `reload` after an upgrade: it hands live sessions to a freshly exec'd server instead of dropping them. `stop` requires `--force`. |
 
 `api-bridge` listens on `$XDG_RUNTIME_DIR/horon-agent-api.sock` by default;
