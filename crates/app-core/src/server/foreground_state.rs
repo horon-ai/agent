@@ -144,6 +144,17 @@ impl TurnSlot {
             // Registered before the send, so the forward cannot be missed.
             let (waiter, forwarded) = watch::channel(false);
             forward_waiters().insert(run_id.clone(), waiter);
+            // The turn ended but its lock is held until the fanout forwarded
+            // this idle state: publish that window so a wake waits for it
+            // instead of reading the held lock as a busy session (#263).
+            let (handover, _) = watch::channel(false);
+            lock_handovers().insert(
+                self.session_id.clone().unwrap_or_default(),
+                Handover {
+                    run_id: run_id.clone(),
+                    sender: handover,
+                },
+            );
             self.forwarded = Some(forwarded);
         }
         let hint = match (self.cancelled, self.end) {
@@ -184,6 +195,19 @@ async fn await_forward(run_id: &str, mut forwarded: watch::Receiver<bool>) {
     };
     if tokio::time::timeout(IDLE_FORWARD_BOUND, wait).await.is_err() {
         forward_waiters().remove(run_id);
+        // The handover window is over either way: a wake must not wait on a
+        // forward that already gave up.
+        let timed_out = {
+            let mut handovers = lock_handovers();
+            let session_id = handovers
+                .iter()
+                .find(|(_, handover)| handover.run_id == run_id)
+                .map(|(session_id, _)| session_id.clone());
+            session_id.and_then(|session_id| handovers.remove(&session_id))
+        };
+        if let Some(handover) = timed_out {
+            let _ = handover.sender.send(true);
+        }
         crate::logging::warn(&format!(
             "foreground: the idle state of run {run_id} was not forwarded within {IDLE_FORWARD_BOUND:?}"
         ));
@@ -235,11 +259,75 @@ pub(crate) fn idle_run_id(event: &ServerEvent) -> Option<String> {
 }
 
 /// Called by a session fanout task after it forwarded the idle state of
-/// `run_id`: releases the turn owner waiting in [`ForegroundGuard::close`].
+/// `run_id`: releases the turn owner waiting in [`ForegroundGuard::close`], and
+/// ends the session's handover window when that run owned it.
 pub(crate) fn note_forwarded(run_id: &str) {
     if let Some(waiter) = forward_waiters().remove(run_id) {
         let _ = waiter.send(true);
     }
+    let finished = {
+        let mut handovers = lock_handovers();
+        let session_id = handovers
+            .iter()
+            .find(|(_, handover)| handover.run_id == run_id)
+            .map(|(session_id, _)| session_id.clone());
+        session_id.and_then(|session_id| handovers.remove(&session_id))
+    };
+    if let Some(handover) = finished {
+        let _ = handover.sender.send(true);
+    }
+}
+
+struct Handover {
+    run_id: String,
+    sender: watch::Sender<bool>,
+}
+
+/// Session id -> its finished turn's idle state still being forwarded.
+///
+/// A finished turn holds its agent lock until every attachment has its idle
+/// state, so for that window `try_lock` fails although no turn runs. A wake
+/// that finds the lock taken needs to tell that window from a busy session:
+/// only a session listed here has ended its turn, and [`await_handover`] waits
+/// on its sender. A lock held by anything else (a connection processing a
+/// request, a test holding the guard) is not a handover and never delays a
+/// wake. Keyed by session because the turn's registration is gone by the time
+/// its lock is released, so the run id alone no longer leads back here.
+static HANDOVERS: LazyLock<Mutex<HashMap<String, Handover>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn lock_handovers() -> MutexGuard<'static, HashMap<String, Handover>> {
+    HANDOVERS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Test seam: publish a handover window for `session_id` exactly as a finished
+/// turn does, so [`await_handover`] can be exercised without driving a whole
+/// turn through the fanout task.
+#[cfg(test)]
+pub(crate) fn register_handover_for_test(session_id: &str, run_id: &str) {
+    let (sender, _) = watch::channel(false);
+    lock_handovers().insert(
+        session_id.to_string(),
+        Handover {
+            run_id: run_id.to_string(),
+            sender,
+        },
+    );
+}
+
+/// Wait (bounded) for the finished turn of `session_id` to hand over, so a
+/// wake can take the lock instead of reading it as a busy session. False when
+/// no handover is in progress or it outlived `bound`.
+pub(crate) async fn await_handover(session_id: &str, bound: Duration) -> bool {
+    let Some(mut forwarded) = lock_handovers()
+        .get(session_id)
+        .map(|handover| handover.sender.subscribe())
+    else {
+        return false;
+    };
+    let wait = async move {
+        let _ = forwarded.wait_for(|done| *done).await;
+    };
+    tokio::time::timeout(bound, wait).await.is_ok()
 }
 
 /// What the agent fills in for one turn. Handed to

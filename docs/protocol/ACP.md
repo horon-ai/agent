@@ -212,6 +212,8 @@ A request goes to the client only when the client advertised that capability in 
 
 Timeouts for requests to the client are 60 seconds for files, 30 seconds for terminal control and 300 seconds for forms. Terminal `wait_for_exit` has no separate limit. On timeout `$/cancel_request` is sent. File and terminal requests are reported to the daemon as `-32800`, and forms become an empty answer. Cancelling a prompt or closing a session withdraws open client requests the same way. `terminal/kill` and `terminal/release` are not withdrawn.
 
+Withdrawal is a barrier, not a one-shot pass. Cancelling a prompt marks the session's turn cancelled under the same lock that records its open calls, so a request of that turn which reaches the adapter after the pass is never sent to the editor: a permission gate is answered `deny` and a client request is answered `-32800`, both without a question. Without the barrier the pass had already taken its snapshot, the late question reached the editor, and nothing left to cancel it, so the editor kept a prompt nobody would resolve. The next `session/prompt` on that session lifts the barrier.
+
 ## Per-session MCP servers
 
 The `mcpServers` of `session/new`, `session/load` and `session/resume` are used only for that session and that ACP connection. `stdio`, `http` and `sse` are supported. When the session closes or the connection drops, stdio child processes end too, and nothing is shared with other sessions. An empty `type` means `stdio`. An unknown `type` or an entry missing a required field is `-32602`.

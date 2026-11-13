@@ -93,45 +93,88 @@ struct OpenClientCall {
 /// daemon id they serve (a `client_request` id or an `ask_requested` id).
 #[derive(Default)]
 pub(super) struct ClientCalls {
-    open: StdMutex<HashMap<String, OpenClientCall>>,
+    inner: StdMutex<CallsInner>,
+}
+
+#[derive(Default)]
+struct CallsInner {
+    open: HashMap<String, OpenClientCall>,
+    /// A cancelled turn is withdrawing this session's calls. A call that opens
+    /// while this is set is never sent, so the withdrawal does not depend on
+    /// whether `cancel_open` or the call itself ran first (#263).
+    cancelled_turn: bool,
+}
+
+/// What [`ClientCalls::open`] decided for one call.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum CallOpen {
+    /// The call is tracked and may be sent.
+    Asked,
+    /// The turn was cancelled; the call must not be sent at all.
+    CancelledTurn,
 }
 
 impl ClientCalls {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, OpenClientCall>> {
-        self.open.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn lock(&self) -> std::sync::MutexGuard<'_, CallsInner> {
+        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn open(&self, key: &str, client_call_id: Value, method: &str) {
-        self.lock().insert(
+    /// Track `key` and say whether the call may be sent.
+    ///
+    /// The cancelled-turn flag is read under the same lock `cancel_open` sets
+    /// it with, so a call that opens while the turn is being withdrawn is never
+    /// sent and needs no later cancellation (#263). Terminal cleanup stays
+    /// exempt from the withdrawal, exactly as in `cancel_open`.
+    fn open(&self, key: &str, client_call_id: Value, method: &str) -> CallOpen {
+        let mut inner = self.lock();
+        if inner.cancelled_turn && !is_cleanup(method) {
+            return CallOpen::CancelledTurn;
+        }
+        inner.open.insert(
             key.to_string(),
             OpenClientCall {
                 client_call_id,
                 method: method.to_string(),
             },
         );
+        CallOpen::Asked
     }
 
     fn close(&self, key: &str) {
-        self.lock().remove(key);
+        self.lock().open.remove(key);
     }
 
     #[cfg(test)]
     pub(super) fn open_len(&self) -> usize {
-        self.lock().len()
+        self.lock().open.len()
     }
 
     /// The turn was cancelled: withdraw every open call except terminal
     /// cleanup. Each waiting handler then answers the daemon -32800.
+    ///
+    /// The flag is set under the same lock the ids are read with, so a call
+    /// that opens during this pass is refused by [`Self::open`] instead of
+    /// slipping through. It holds until [`Self::end_cancelled_turn`].
     pub(super) async fn cancel_open(&self, peer: &RpcPeer) {
-        let ids: Vec<Value> = self
-            .lock()
-            .values()
-            .filter(|call| !is_cleanup(&call.method))
-            .map(|call| call.client_call_id.clone())
-            .collect();
+        let ids: Vec<Value> = {
+            let mut inner = self.lock();
+            inner.cancelled_turn = true;
+            inner
+                .open
+                .values()
+                .filter(|call| !is_cleanup(&call.method))
+                .map(|call| call.client_call_id.clone())
+                .collect()
+        };
         for id in ids {
             peer.cancel_outbound(&id).await;
         }
+    }
+
+    /// The cancelled turn's successor is starting: from here on a call may be
+    /// sent again.
+    pub(super) fn end_cancelled_turn(&self) {
+        self.lock().cancelled_turn = false;
     }
 }
 
@@ -177,7 +220,12 @@ impl AcpSideChannel {
         params: Value,
     ) -> std::result::Result<Value, RpcError> {
         let call = self.peer.begin_call();
-        self.client_calls.open(key, call.id.clone(), method);
+        if self.client_calls.open(key, call.id.clone(), method) == CallOpen::CancelledTurn {
+            // The turn this call belongs to was cancelled: the daemon gets
+            // -32800 for it, and the client is never asked.
+            self.peer.abandon_call(call);
+            return Err(RpcError::cancelled());
+        }
         let result = self
             .peer
             .finish_call_within(call, method, params, self.bounds.for_method(method))

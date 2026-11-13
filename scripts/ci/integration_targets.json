@@ -15,22 +15,16 @@
     {
       "package": "horon-agent",
       "target": "acp_stdio_v2",
-      "min_passed": 31,
-      "skipped": [
-        "is5_foreground_state"
-      ],
-      "skip_reason": "The test wakes an idle session with `notify_session` and requires it to reach `idle` within 120s. The wake is lost when it lands in the window where the previous turn has finished its work but still holds the agent lock while `ForegroundGuard::close` forwards that turn's idle state: `run_live_system_turn_if_idle` reserves the agent with `try_lock_owned` (crates/app-core/src/server/live_turn.rs), the reservation fails, and the handler falls back to `queue_soft_interrupt_for_session`, which pushes onto the soft interrupt queue. Nothing drains that queue outside a running turn, so the session stays idle forever. The daemon log of run 43379954770 shows exactly this: `SOFT_INTERRUPT_QUEUE_PUSH pending_before=0 pending_after=1` for the IS5_WAKE message after the previous turn's `run.stopped ... cause=completed`, then no turn starts. Left out until the wake path retries instead of demoting to the queue; the other 31 tests in the target still run. Tracked in #263."
+      "min_passed": 32
     },
     {
       "package": "horon-agent",
       "target": "acp_infra",
-      "min_passed": 28,
+      "min_passed": 30,
       "skipped": [
-        "v5_real_daemon_cancel_note_then_prompt",
-        "acp_permission_cancel_while_pending_real_daemon",
-        "acp_client_terminal_cancel_while_pending_real_daemon"
+        "v5_real_daemon_cancel_note_then_prompt"
       ],
-      "skip_reason": "Three tests left out, all because the outcome follows which of two surfaces happens to run first, not the change under test. (1) `v5_real_daemon_cancel_note_then_prompt` runs 15 rounds of cancel-then-immediate-prompt and asserts none is refused. The client gate that waits for a cancelled turn to settle is bounded (TURN_TAIL_WAIT 3s plus IDLE_GATE_BOUND 2s, src/cli/acp/pump.rs), and when it gives up it writes the prompt anyway; the daemon then correctly answers -32603 \"Already processing a message\", which the test treats as a failure. It passed 31/31 on run 43361335293 and failed round 4 of the double-cancel loop on ubuntu in run 43370126817. (2) `acp_permission_cancel_while_pending_real_daemon` and (3) `acp_client_terminal_cancel_while_pending_real_daemon` hold a permission request or a `terminal/wait_for_exit` open, cancel the prompt, and require the client to receive `$/cancel_request` for that request. The client emits it only from `PermissionState::cancel_open` and `ClientCalls::cancel_open` (src/cli/acp/permission.rs, src/cli/acp/client_router.rs), which read the map of open calls; the same entries are removed when the daemon resolves the request or the call finishes first. `cancel_open` also has no counterpart to `withdraw`'s `resolved_early` list, so a call that opens after the withdrawal pass is never cancelled. When the daemon's cancellation lands first the entry is already gone and no notification is sent, while the prompt still answers `cancelled`. (2) failed on ubuntu in two reruns of run 43379954770 and (3) in run 43420148486; both passed on macos in the same runs. Left out until the withdrawal does not depend on which surface wins the race; the other 28 tests in the target still run. Tracked in #263."
+      "skip_reason": "`v5_real_daemon_cancel_note_then_prompt` runs 15 rounds of cancel-then-immediate-prompt and asserts none is refused. The ACP client gate that waits for a cancelled turn to settle is bounded (`TURN_TAIL_WAIT` plus `IDLE_GATE_BOUND` in `src/cli/acp/pump.rs`); when it gives up it writes the prompt anyway, and the daemon then correctly answers -32603 \"Already processing a message\", which the test treats as a failure. That bound is a deliberate liveness trade (a stuck turn must not block the editor forever), so the assertion, not the gate, has to change before this test can run on a loaded runner. The other 30 tests in the target run, including the two cancel-while-pending tests restored with the #263 cancelled-turn barrier."
     },
     {
       "package": "horon-agent",
