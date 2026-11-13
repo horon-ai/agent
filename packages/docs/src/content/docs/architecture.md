@@ -23,7 +23,7 @@ server re-execs.
 └──────────────────────────────────────────────┘
         │              │              │
         ▼              ▼              ▼
-   TypeScript SDK   Python SDK    ACP / CLI
+   TypeScript SDK   Python SDK    ACP / horon-tui
 ```
 
 ## The model path
@@ -64,7 +64,9 @@ One engine, two binaries. The split is enforced in CI by
 | `app-core` | The daemon, sessions, tool runtime, update path |
 | `session-store` | Event log, blobs, catalogs, derived caches |
 | `harness-api` | The versioned request and event surface |
+| `harness-api-server` | The bridge and translation between the daemon and that surface |
 | `agent-sdk` | The Rust client, launch and lifecycle |
+| `tui` | The `horon-tui` terminal client; it depends on `agent-sdk`, never on the engine |
 
 ## Durability
 

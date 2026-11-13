@@ -3,6 +3,21 @@
 언어: [English](CRATES.md) | **한국어**
 
 > 이 문서는 "TUI"를 언급한다. `horon-agent` 패키지에는 터미널 UI가 없고 의존성 그래프에도 TUI 크레이트가 없다. 대화형 터미널 클라이언트는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이자 실행 파일이다. 경계 판단 기준을 설명하려고 이름을 남겼다.
+
+## 엔진 하나, 실행 파일 둘
+
+워크스페이스는 엔진 하나에서 실행 파일 둘을 만든다. 이 분리는 빌드 옵션이 아니라 규칙이다. 헤드리스 실행 파일은 터미널 라이브러리를 절대 링크하지 않고, 클라이언트는 자기 엔진을 갖지 않는다.
+
+| 크레이트 | 패키지 | 실행 파일 | 맡는 것 |
+| --- | --- | --- | --- |
+| 루트(`src/`) | `horon-agent` | `horon-agent` | 에이전트 루프, 데몬, 하네스 API 브리지, ACP 어댑터. 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`가 없다. |
+| `crates/agent-sdk` | `horon-agent-sdk` | — | 클라이언트 계약. 요청·이벤트 타입, 소켓 전송, 재연결. 그리는 일은 없다. |
+| `crates/harness-api` | `horon-agent-harness-api` | — | 스키마 스냅숏을 포함한 하네스 API v1 요청·이벤트 표면. |
+| `crates/harness-api-server` | `horon-agent-harness-api-server` | — | 데몬과 하네스 API 사이의 브리지와 변환 계층. |
+| `crates/tui` | `horon-tui` | `horon-tui` | 터미널 클라이언트. 대화 기록, 입력, 승인 프롬프트, 설정 화면, 테마, 키 바인딩. 엔진이 아니라 `horon-agent-sdk`에 의존한다. |
+
+`scripts/ci/check_headless_graph.py`는 `horon-agent`에서 닿는 모든 패키지를 따라가며 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 접두사가 나오면 실패한다. 경계를 리뷰가 아니라 게이트로 지킨다는 뜻이다. 클라이언트는 별도 카고 호출로 빌드해서 기능 집합이 헤드리스 패키지로 합쳐지지 않게 하고, `horon-agent`는 터미널에서 자기 프로세스를 바꿔 클라이언트를 띄운다(`src/cli/tui_handoff.rs`). 그 인계와 클라이언트의 사용자 파일은 [runtime/TUI.ko.md](../runtime/TUI.ko.md)에 있다.
+
 이 문서는 공유 크레이트를 아무거나 쌓아 두는 곳으로 만들지 않으면서 `horon-agent`의 모듈성을 유지하기 위한 목표 구조를 정의한다. 실용적인 판단 기준을 담았다. 타입, 헬퍼, 동작을 루트 크레이트 밖으로 옮길지 정할 때 이 문서를 쓴다.
 
 ## 목표

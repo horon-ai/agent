@@ -22,7 +22,7 @@
 - **계약으로 보장하는 헤드리스.** `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 대화형 터미널 클라이언트는 에이전트 SDK를 쓰는 별도 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 헤드리스 경로를 유지하며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
 - **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
 - **모델 직접 호출.** 에이전트가 엔드포인트로 바로 POST한다. 사이에 라우터 프로세스나 플러그인 호스트가 없다.
-- **가볍고 빠른 시작.** GitHub 호스티드 러너에서 한 턴 실행이 Linux 69.8 ms, macOS 104.7 ms 걸렸다([수치와 한계](#벤치마크)).
+- **가볍고 빠른 시작.** GitHub 호스티드 러너에서 한 턴 실행이 Linux 55.9 ms, macOS 103.3 ms 걸렸다([수치와 한계](#벤치마크)).
 
 ## 설치
 
@@ -99,6 +99,14 @@ horon run "summarize this repo"
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 소켓(`HORON_AGENT_API_SOCKET`, Unix 전용). |
 | `horon acp` | 에디터용 표준 입출력 ACP v1/v2 어댑터. |
 
+### 터미널 클라이언트
+
+`horon-tui`는 대화형 클라이언트다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이며 `horon-agent-sdk`로 만들어 터미널 라이브러리가 헤드리스 실행 파일에 들어가지 않는다.
+
+터미널에서 인자 없이 `horon`, `hrn`, `horon-agent`를 실행하면 시작한다. 서버가 없으면 띄운 뒤, 자기 프로세스를 에이전트 옆의 `horon-tui` 파일로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬으면 세션 번호도 넘긴다. 조건은 셋이다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션은 헤드리스 경로를 유지하므로 스크립트와 CI는 그 출력을 읽는다. 조건이 맞지 않으면 어떤 조건인지 알리고 ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``를 출력한 뒤 0이 아닌 종료 코드로 끝난다. 검사 전에 띄운 서버는 계속 돈다.
+
+설치 프로그램은 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`를 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 헤드리스 에이전트만 설치하거나 유지한다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
+
 ### 에디터 (ACP)
 
 `horon`(또는 `horon-agent`)을 인자 `acp`와 함께 외부 에이전트로 등록한다. Zed(`settings.json`) 예시다.
@@ -129,7 +137,7 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 ## 구조
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="구조: SDK, ACP로 연결한 에디터, 터미널이 api-bridge, acp, run을 거쳐 에이전트 데몬에 닿고, 데몬은 세션을 이벤트 로그에 저장하며 OpenAI 호환 엔드포인트를 직접 호출한다" width="860">
+  <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 OpenAI 호환 엔드포인트를 직접 호출한다" width="860">
 </p>
 
 크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다.
@@ -137,8 +145,9 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 ## 기능
 
 - **핵심 도구 18개.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 해서 첫 요청을 작게 유지한다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
-- **추가만 하는 세션.** 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session inspect|doctor|export|import|migrate|recover-to`로 저장소를 다룬다([docs/protocol/SESSION_STORE.ko.md](docs/protocol/SESSION_STORE.ko.md)).
+- **추가만 하는 세션.** 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session inspect|doctor|export|import|migrate|recover-to|archive|restore`로 저장소를 다루고, `horon session delete <id> --yes`만 파괴적 명령이다. 대화 기록, todo, 목표 연결, 아티팩트, 저널을 지우며 실행 중인 데몬이 열고 있는 세션은 거부한다([docs/protocol/SESSION_STORE.ko.md](docs/protocol/SESSION_STORE.ko.md)).
 - **편집 안전 장치.** 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 켜야 쓴다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
+- **목표 예산.** 이어 가는 목표에 `budget_tokens`를 둘 수 있다. 세션 지출이 그 값에 닿으면 목표가 `budget_limited`가 되고, 모델에게 지금까지의 결과를 기록하라고 알리는 마무리 턴을 한 번 준 뒤 멈춘다. 예산을 올리고 목표를 `active`로 되돌리는 것은 운영자의 결정이다([docs/runtime/TURNS.ko.md](docs/runtime/TURNS.ko.md)).
 - **MCP와 스킬.** `horon mcp`는 설정된 MCP 서버를 나열하고 원격 서버의 OAuth 자격 증명을 관리한다. 스킬은 `skill://`로 읽고 `skill_manage`로 관리한다.
 - **무인 실행.** 턴 복구, `horon runtime-state`(영속 대기 입력을 조회·정리), `horon approvals`(사람을 기다리다 멈춘 실행에 사람의 판정을 기록)로 사람이 자리에 없는 실행을 받친다([docs/safety/SAFETY.ko.md](docs/safety/SAFETY.ko.md)).
 - **에이전트 간 메시지.** 켜야 쓰는 `irc` 메일박스 버스(`[tools] irc = true`)로 한 데몬 안의 에이전트가 `send`, `wait`, `inbox`, `list`를 쓴다([docs/runtime/IRC.ko.md](docs/runtime/IRC.ko.md)).
@@ -147,22 +156,22 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 
 ## 벤치마크
 
-`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `2a4027c`로 jcode v0.99.1과 비교해 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 달라서 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
+`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `805b408`로 jcode v0.99.1과 비교해 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 달라서 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
 
 <p align="center">
-  <img src="docs/assets/benchmark-oneshot.svg" alt="한 번 실행 시간 중앙값 막대 그래프. Linux: horon 69.8 ms, jcode 149.4 ms. macOS: horon 104.7 ms, jcode 361.6 ms. Windows: horon 189.0 ms, jcode 112.9 ms" width="780">
+  <img src="docs/performance/charts/03-oneshot-time.svg" alt="OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 55.9 ms, jcode 140.8 ms. macOS: horon 103.3 ms, jcode 413.7 ms. Windows: horon 208.5 ms, jcode 153.3 ms" width="780">
 </p>
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| 한 턴 실행, 중앙값 | 69.8 ms | 149.4 ms |
-| 스킬 호출, 중앙값 | 57.8 ms | 59.2 ms |
-| MCP 도구 호출, 중앙값 | 86.2 ms | 182.1 ms |
-| 한 턴 최대 프로세스 트리 RSS | 36.4 MB | 38.3 MB |
-| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 201.5 KB | 127.9 KB |
-| 설치 크기 | 110.5 MB | 163.4 MB |
+| 한 턴 실행, 중앙값 | 55.9 ms | 140.8 ms |
+| 스킬 호출, 중앙값 | 53.3 ms | 121.5 ms |
+| MCP 도구 호출, 중앙값 | 66.4 ms | 313.5 ms |
+| 한 턴 최대 프로세스 트리 RSS | 47.5 MB | 42.2 MB |
+| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 137.8 KB | 129.8 KB |
+| 설치 크기 | 114.5 MB | 163.4 MB |
 
-macOS에서는 한 턴(104.7 ms 대 361.6 ms), 스킬(118.4 ms 대 270.0 ms), MCP(111.8 ms 대 659.2 ms) 모두 horon이 빨랐다. **Windows에서는 한 턴 실행에서 jcode가 더 빨랐고**(112.9 ms 대 189.0 ms) 스킬은 비슷했다. MCP 호출은 horon이 빨랐다(215.8 ms 대 306.2 ms). Linux에서는 세션 하나를 더할 때 jcode가 메모리를 덜 쓴다. 이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표와 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
+macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP(95.5 ms 대 453.0 ms) 모두 horon이 빨랐다. **Windows에서는 한 턴(153.3 ms 대 208.5 ms)과 스킬 실행(200.9 ms 대 220.5 ms)에서 jcode가 더 빨랐고**, MCP 호출은 horon이 빨랐다(269.4 ms 대 318.5 ms). Linux에서는 세션 하나를 더할 때 jcode가 메모리를 조금 덜 쓴다. 이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 그래프는 같은 워크플로가 다시 그린다. 도구 여덟 개의 전체 표와 TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
 
 ## 설정 기본값
 
@@ -181,12 +190,14 @@ macOS에서는 한 턴(104.7 ms 대 361.6 ms), 스킬(118.4 ms 대 270.0 ms), MC
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다.
+문서는 영어(기본)와 한국어(`.ko.md`) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. 같은 문서를 [agent.horon.ai](https://agent.horon.ai)에도 게시하며 [packages/docs](packages/docs)에서 빌드한다.
 
 | 주제 | 문서 |
 | --- | --- |
-| 문서 사이트 원본(`agent.horon.ai`) | [packages/docs](packages/docs) |
+| 문서 사이트(`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
+| 문서 사이트 원본 | [packages/docs](packages/docs) |
 | 색인과 고정 요구사항 | [docs/README.ko.md](docs/README.ko.md) |
+| 터미널 클라이언트와 사용자 파일 | [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md) |
 | 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |
 | 에디터와 ACP | [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md) |
 | SDK용 하네스 API | [docs/protocol/HARNESS_API.ko.md](docs/protocol/HARNESS_API.ko.md) |

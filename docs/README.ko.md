@@ -4,7 +4,7 @@
 
 이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
-문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다.
+문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. 같은 문서를 [agent.horon.ai](https://agent.horon.ai)에도 게시하며 `packages/docs`에서 빌드한다. 영어 파일을 고치면 바이너리와 사이트에 함께 반영된다.
 
 ## 고정 요구사항
 
@@ -28,7 +28,7 @@
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
-| | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
+| | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
 | | [`IRC.ko.md`](runtime/IRC.ko.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
 | | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 명령, 설정 화면, 선택 자산 설치, 한계 |
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |

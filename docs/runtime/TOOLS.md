@@ -10,7 +10,7 @@ The `full` profile exposes every built-in tool but keeps the schema of non-core 
 
 ### Three tiers
 
-`LoadMode` is defined in `crates/base/src/config.rs:825`.
+`LoadMode` is defined in `crates/base/src/config.rs:699`.
 
 | Value | Meaning |
 | --- | --- |
@@ -30,13 +30,13 @@ memory = "essential"
 
 ### Default layout
 
-- The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:803` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
-- `CORE_TOOLS` holds eighteen entries and is the allow-list of the `core` profile (`config.rs:779` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session. `swarm`, `todo` and `session_search` joined last; an SDK-driven session keeps `session_search` and `swarm` off unless its `enabled` list names them (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
-- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:889` `ToolLoadTiers::tier`).
+- The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:679` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
+- `CORE_TOOLS` holds eighteen entries and is the allow-list of the `core` profile (`config.rs:652` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session. `swarm`, `todo` and `session_search` joined last; an SDK-driven session keeps `session_search` and `swarm` off unless its `enabled` list names them (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
+- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:657`, `config.rs:1093` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:763` `ToolLoadTiers::tier`).
 - Sessions that are not listing sessions send every core tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists and tiers are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
-- `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:861` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
-- `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:889` `ToolLoadTiers::tier`).
-- Deferred defaults turn on only when the explicit `full` profile has no allow-list. `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, and an unset profile send the tools that pass eagerly (`config.rs:1210` `ToolConfig::load_tiers`).
+- `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:735` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
+- `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:763` `ToolLoadTiers::tier`).
+- Deferred defaults turn on only when the explicit `full` profile has no allow-list. `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, and an unset profile send the tools that pass eagerly (`config.rs:1066` `ToolConfig::load_tiers`).
 - A session fixes its tiers once at start. Reloading configuration never moves a tool between the eager and deferred sets mid-session.
 
 `irc` is a tool outside the core set. With `[tools] irc = true` it joins a non-empty allow-list such as `core`, `acp`, `minimal`, or an explicit `enabled` list, and a `full` session without an allow-list sees it as it always did. With the switch off the registration stays but execution is refused, so it is unusable even in a `full` session. An empty allow-list (`none`) stays empty even with the switch on. Mailbox behaviour and configuration are in [`IRC.md`](IRC.md).
@@ -181,11 +181,11 @@ State lives in a process-global map keyed by session id. It is not a field on th
 
 `block_message` writes the refusal text (`crates/app-core/src/plan_mode.rs:173`). One paragraph says what was refused, that nothing changed, and the two ways out. It also notes that resending the same call gives the same result.
 
-Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:919`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:455`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
+Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:455`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
 ### Approval tiers
 
-`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:357`). The default is `off` (`crates/base/src/config.rs:1017`), which is the same non-asking behaviour as before.
+`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:368`). The default is `off` (`crates/base/src/config.rs:1023`), which is the same non-asking behaviour as before.
 
 `evaluate` decides (`crates/app-core/src/approval.rs:232`). Order matters.
 
@@ -199,7 +199,7 @@ Plan mode is off by default. The configuration field defaults to `false` (`crate
 
 Danger classes are not reclassified; the existing command risk classifier's verdict is used as is (`crates/app-core/src/approval.rs:182`). The only class with a name is `destructive-shell` (`crates/app-core/src/approval.rs:22`), because shell commands are the only thing whose footprint needs weighing.
 
-`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:1026`, `crates/base/src/config/default_file.rs:341`). Empty leaves every decision to the mode.
+`dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:1033`, `crates/base/src/config/default_file.rs:341`). Empty leaves every decision to the mode.
 
 The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2087`, hook at `:2202`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
 
@@ -451,7 +451,7 @@ If any of the following holds, the result is the plain body.
 
 ### Configuration
 
-The switch is in the `[tools]` table of `config.toml`. It defaults to on (`crates/base/src/config.rs:902-905`, `crates/base/src/config.rs:934`).
+The switch is in the `[tools]` table of `config.toml`. It defaults to on (`crates/base/src/config.rs:867` for the field, `:1006` for the default).
 
 ```toml
 [tools]
@@ -782,7 +782,7 @@ Every other keyword is ignored. `additionalProperties`, `minLength`, `pattern`, 
 
 The `aux_complete` tool is registered only when `[tools] aux_completion` is on (`crates/app-core/src/tool/mod.rs:2425`). The registration function reads the setting and returns immediately when it is off. Off means the tool does not appear in the tool list and cannot be found by name.
 
-It is not in `CORE_TOOLS` (`crates/base/src/config.rs:756`). The core profile's closed list does not grow. Every call spends one more side model request, which is why the switch defaults to off (`crates/base/src/config.rs:930`).
+It is not in `CORE_TOOLS` (`crates/base/src/config.rs:652`). The core profile's closed list does not grow. Every call spends one more side model request, which is why the switch defaults to off (`crates/base/src/config.rs:1030`).
 
 The tool is a thin adapter (`crates/app-core/src/tool/aux_complete.rs:99`). It converts model arguments into the contract type and returns text; it performs neither limit checks nor schema validation. Checks in two places would let rules diverge per surface.
 
@@ -792,7 +792,7 @@ When a credential leaves for the provider, a placeholder goes instead of the rea
 
 The same real value always receives the same placeholder. A value appearing several times in a conversation keeps its placeholder, so the cached prompt prefix does not shift. Because the key stays on disk, a session reopened after a restart restores the earlier placeholders too. Building a session vault pre-registers environment variables whose names contain `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASS`, `AUTH`, `CREDENTIAL`, or `PRIVATE` and whose value is at least 8 characters, so credentials from the environment also resolve after a restart.
 
-There are three modes (`crates/config-types/src/lib.rs:556`).
+There are three modes (`crates/config-types/src/lib.rs:488`).
 
 | Mode | Behaviour |
 | --- | --- |
@@ -800,7 +800,7 @@ There are three modes (`crates/config-types/src/lib.rs:556`).
 | `obfuscate` | Replaces detected credentials with stable placeholders and gives tools that need the real value that value back. |
 | `block` | Refuses calls that would send a credential outward. |
 
-Mode names are read in kebab case, and an unknown value falls back to the default (`crates/config-types/src/lib.rs:589`). That keeps one bad entry from making the rest of the configuration unreadable. The setting is `secrets_mode` (`crates/base/src/config.rs:933`), and the default configuration file also writes `secrets_mode = "off"` (`crates/base/src/config/default_file.rs:470`).
+Mode names are read in kebab case, and an unknown value falls back to the default (`crates/config-types/src/lib.rs:509`). That keeps one bad entry from making the rest of the configuration unreadable. The setting is `secrets_mode` (`crates/base/src/config.rs:1032`), and the default configuration file also writes `secrets_mode = "off"` (`crates/base/src/config/default_file.rs:470`).
 
 Detection rules are not new: the same table as the existing masking is used. The pattern list behind `redact_secrets` on the disk path is the wire path's list (`crates/base/src/message.rs:51`). With one table, a pattern added for disk applies to the wire automatically. Already-masked text is never masked again, because wrapping a placeholder in another pattern means restoring the outer layer returns only the inner placeholder.
 

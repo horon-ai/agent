@@ -43,13 +43,22 @@ never overwritten.
 horon session inspect <id>     # layout, heads, archive state, damage (read-only)
 horon session doctor [<id>]    # validate originals without repairing
 horon session migrate          # migrate legacy originals (dry run unless --apply)
-horon session export <id>      # Markdown transcript; secrets redacted
+horon export <id> --out file.md   # Markdown transcript; secrets redacted
+horon session export <id> --output <dir>  # events and blobs as a bundle
 horon session restore <id>     # restore an archived session
+horon session delete <id> --yes   # permanent; refuses a session a daemon has open
 ```
 
-`horon export <session> --out file.md` writes the same transcript to a file. Tool
-results over 4 KiB are truncated in the export, matching the
-`export_session_markdown` harness API reply.
+`horon export` is the Markdown transcript, and tool results over 4 KiB are
+truncated in it, matching the `export_session_markdown` harness API reply.
+`horon session export` is the other direction: it writes the original
+`events.jsonl` and `blobs/` into a new directory as a movable bundle, which
+`horon session import` reads into another store.
+
+`horon session archive` hides a session and `horon session restore` brings it
+back; both append a record and neither deletes anything. `horon session delete
+<id> --yes` removes the transcript, todos, the goal attachment, artifacts and the
+runtime journal for good, and asks for confirmation unless `--yes` is given.
 
 ## Runtime state
 

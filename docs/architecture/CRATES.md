@@ -3,6 +3,21 @@
 Language: **English** | [한국어](CRATES.ko.md)
 
 > This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. The interactive terminal client is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
+
+## One engine, two binaries
+
+The workspace builds two executables from one engine. The split is the rule, not a build option: the headless binary must never link terminal libraries, and the client must never grow its own engine.
+
+| Crate | Package | Binary | Owns |
+| --- | --- | --- | --- |
+| root (`src/`) | `horon-agent` | `horon-agent` | The agent loop, the daemon, the harness API bridge and the ACP adapter. No `ratatui`, `crossterm` or `horon-tui` in its graph. |
+| `crates/agent-sdk` | `horon-agent-sdk` | — | The client contract: request and event types, the socket transport, reconnection. Nothing renders. |
+| `crates/harness-api` | `horon-agent-harness-api` | — | Harness API v1 request and event surface with its schema snapshots. |
+| `crates/harness-api-server` | `horon-agent-harness-api-server` | — | The bridge and translate layer between the daemon and the harness API. |
+| `crates/tui` | `horon-tui` | `horon-tui` | The terminal client: transcript, input, approval prompt, settings screen, themes and key bindings. It depends on `horon-agent-sdk` and nothing of the engine. |
+
+`scripts/ci/check_headless_graph.py` walks every package reachable from `horon-agent` and fails on `ratatui`, `crossterm`, `horon-tui` and the `horon-agent-tui*` prefix, so the boundary is enforced rather than reviewed. The client is built with its own cargo invocation so its feature set never unifies into the headless package, and `horon-agent` launches it by replacing its own process on a terminal (`src/cli/tui_handoff.rs`); [runtime/TUI.md](../runtime/TUI.md) documents that handoff and the client's user files.
+
 This document defines the target structure that keeps `horon-agent` modular without turning shared crates into a dumping ground. It carries the practical decision rules. Use it when deciding whether to move a type, helper, or behavior out of the root crate.
 
 ## Goals
