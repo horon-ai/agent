@@ -283,22 +283,21 @@ async fn prompt_streams_one_turn_and_reports_once() {
     daemon.send(json!({"type": "message_end"})).await;
     daemon.send(json!({"type": "done", "id": message_id})).await;
 
-    let (frames, response) = host.response(json!("p1")).await;
+    let (mut frames, response) = host.response(json!("p1")).await;
     assert_eq!(response["success"], true, "{response}");
     assert_eq!(response["command"], "prompt");
     assert!(response.get("data").is_none(), "prompt acks without data: {response}");
 
-    let mut kinds: Vec<String> = frames
-        .iter()
-        .map(|frame| frame["type"].as_str().unwrap_or_default().to_string())
-        .collect();
     // The response itself is already consumed, so append the trailing frames.
-    while kinds.last().map(String::as_str) != Some("session_settled") {
-        let frame = host.recv().await;
-        kinds.push(frame["type"].as_str().unwrap_or_default().to_string());
+    while frames.last().map(|frame| frame["type"].as_str()) != Some(Some("session_settled")) {
+        frames.push(host.recv().await);
     }
+    let kinds: Vec<&str> = frames
+        .iter()
+        .map(|frame| frame["type"].as_str().unwrap_or_default())
+        .collect();
 
-    assert_eq!(kinds.first().map(String::as_str), Some("agent_start"), "{kinds:?}");
+    assert_eq!(kinds.first().copied(), Some("agent_start"), "{kinds:?}");
     assert_eq!(
         kinds.iter().filter(|kind| *kind == "prompt_result").count(),
         1,
@@ -309,8 +308,15 @@ async fn prompt_streams_one_turn_and_reports_once() {
         1,
         "{kinds:?}"
     );
-    assert!(kinds.iter().any(|kind| kind == "text_delta"), "{kinds:?}");
-    assert_eq!(kinds.last().map(String::as_str), Some("session_settled"));
+    assert!(kinds.iter().any(|kind| kind == "text_start"), "{kinds:?}");
+    let deltas: Vec<&str> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "message_update")
+        .map(|frame| frame["assistantMessageEvent"]["delta"].as_str().unwrap_or_default())
+        .filter(|delta| !delta.is_empty())
+        .collect();
+    assert_eq!(deltas.concat(), "hi there", "{deltas:?}");
+    assert_eq!(kinds.last().copied(), Some("session_settled"));
     host.close().await;
 }
 
