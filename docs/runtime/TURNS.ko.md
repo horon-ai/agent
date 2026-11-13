@@ -117,7 +117,7 @@ cargo test -p horon-agent-base soft_interrupt_store
 
 ### 주입 지점
 
-주입 지점은 세 곳이다. 이벤트에는 지점 이름이 그대로 실린다(`crates/protocol/src/wire/events.rs:266-284`).
+주입 지점은 세 곳이다. 이벤트에는 지점 이름이 그대로 실린다(`crates/protocol/src/wire/events.rs:287-305`).
 
 | 지점 | 위치 | 시점 | 용도 |
 |-------|----------|--------|----------|
@@ -125,7 +125,7 @@ cargo test -p horon-agent-base soft_interrupt_store
 | **C** | 도구 라운드 중간 | 긴급 중단 | 건너뛴 호출에 결과를 먼저 채운 뒤 주입한다 |
 | **D** | 모든 도구 실행 후 | 다음 제공자 호출 전 | 기본값: 대기 중인 인터럽트를 여기서 모두 비운다 |
 
-지점 판정은 `crates/app-core/src/agent/interrupts.rs:695`(B)와 `:706`(D)에 있고, C는 긴급 인터럽트가 있을 때만 열린다. 스트리밍 경로는 같은 지점을 `crates/app-core/src/agent/turn_streaming_mpsc.rs:1504`(B), `:1636`(D), `:2231`(C)에서 쓴다.
+지점 판정은 `crates/app-core/src/agent/interrupts.rs:883`(B)와 `:894`(D)에 있고, C는 긴급 인터럽트가 있을 때만 열린다. 스트리밍 경로는 같은 지점을 `crates/app-core/src/agent/turn_streaming_mpsc.rs:1474`(B), `:1612`(D), `:2316`(C)에서 쓴다.
 
 #### 전달 모드(`[messages]`)
 
@@ -184,9 +184,9 @@ CancelSoftInterrupts {
 
 서버는 세 가지 이벤트를 낸다.
 
-- `soft_interrupt_injected`: 주입한 내용, 표시 역할, 지점, 건너뛴 도구 수, 합쳐진 호출자 id(`crates/protocol/src/wire/events.rs:266-284`).
-- `soft_interrupts_cancelled`: 취소된 id와 대기열에 없던 id를 나눠 보고한다(`:288-294`).
-- `soft_interrupt_queue`: 턴이 끝났는데 대기열에 남은 메시지 수. 턴의 종료 이벤트 바로 앞에 온다(`:309-312`).
+- `soft_interrupt_injected`: 주입한 내용, 표시 역할, 지점, 건너뛴 도구 수, 합쳐진 호출자 id(`crates/protocol/src/wire/events.rs:287-305`).
+- `soft_interrupts_cancelled`: 취소된 id와 대기열에 없던 id를 나눠 보고한다(`:308-316`).
+- `soft_interrupt_queue`: 턴이 끝났는데 대기열에 남은 메시지 수. 턴의 종료 이벤트 바로 앞에 온다(`:332-334`).
 
 ### 영속성과 복원
 
@@ -208,13 +208,13 @@ CancelSoftInterrupts {
 
 ### 사용자 경험
 
-이 빌드에는 TUI가 없다. 클라이언트가 쓸 수 있는 피드백은 프로토콜 이벤트 세 가지다.
+데몬은 스스로 화면을 열지 않는다. 클라이언트가 쓸 수 있는 피드백은 프로토콜 이벤트 세 가지다.
 
 기본 모드(`urgent = false`)에서 클라이언트가 `soft_interrupt`를 보내면 데몬은 메시지를
 대기열에 넣는다. 주입되면 `soft_interrupt_injected`가 지점 이름과 함께 온다
-(`crates/protocol/src/wire/events.rs:266-284`). 턴이 끝났는데 대기열에 메시지가
+(`crates/protocol/src/wire/events.rs:287-305`). 턴이 끝났는데 대기열에 메시지가
 남아 있으면 `soft_interrupt_queue`가 남은 수를 알리고, 그 이벤트는 종료 이벤트 바로 앞에 온다
-(`crates/app-core/src/server/client_lifecycle.rs:3554-3561`). 남은 수가 0이면
+(`crates/app-core/src/server/live_turn.rs:199-201`). 남은 수가 0이면
 이벤트를 보내지 않는다.
 
 메시지는 출처별로 묶여 `\n\n`로 이어 붙는다. 같은 출처의 연속 메시지는 한 번의 주입으로
@@ -373,6 +373,73 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 대화록, 요청당 전환 하나를 다루고, `crates/app-core/src/tool/new_context_tests.rs`가
 플랜 모드 거부, 등록 조건, 턴당 대기 요청 하나를 다룬다.
 
+## prewalk 인계
+
+`[prewalk]`는 세션마다 한 번, 계획에서 실행으로 넘어갈 때 모델을 바꾼다. 계획하는 동안은 계획 모델로 돌고, 계획이 생기면 실행 모델로 이어 간다. 계획 준수 품질을 비용과 맞바꾸므로 이 절은 기본으로 꺼져 있다.
+
+```toml
+[prewalk]
+enabled = true
+into = "exec-model"
+from = "plan-model"
+```
+
+| 키 | 뜻 |
+| --- | --- |
+| `enabled` | 세션이 인계를 하는지. 기본값은 `false`다. |
+| `into` | 실행 모델. 모델 식별자 또는 `role:<이름>`. `enabled = true`이면 필수이고, 쓸 수 있는 값이 없는 절은 `prewalk.into`를 지목하는 오류로 설정 검증에 실패한다. |
+| `from` | 적용 조건일 뿐이다. 설정하면 세션이 지금 이 모델로 돌 때만 인계한다. 돌아갈 모델을 뜻하지 않으며, 생략하면 모든 세션에 적용한다. |
+
+바꾸는 지점은 플랜 모드에 달렸다. `[tools] plan_mode`가 꺼져 있으면 항목을 하나 이상 남긴 첫 `todo` 쓰기이고, 켜져 있으면 계획 승인이다. 계획 중에 쓴 todo 목록이 계획 밑에서 모델을 바꾸지 않게 하려는 것이다. 검사는 턴 시작에 돌아서 턴 사이에 들어온 승인도 잡는다.
+
+모델 교체는 `/model`과 같은 경로를 써서 `session.model`에 실행 모델이 저장되고, 재개나 복원 뒤의 요청도 모두 그 모델로 간다. 판정은 저장된 세션의 재생 이벤트 `prewalk` 하나이고, 이 이벤트가 인계를 프로세스를 넘어 한 번만 일어나게 한다. 이미 이벤트가 있는 세션은 다시 판정하지 않는다. 거부된 `into`도 같은 방식으로 기록한다. 알 수 없는 모델, `default`·`plan`·`aux` 밖의 `role:` 이름, 아무것도 가리키지 않는 역할이 그렇다. 세션은 지금 모델을 유지하고 경고를 한 번 남기며, 다음 라운드에서 되풀이하지 않는다. 세션이 이미 쓰는 모델로 풀리는 `into`는 바꾸지 않고 판정만 기록한다.
+
+표와 검증은 `crates/config-types/src/prewalk.rs`, 판정은 `crates/app-core/src/agent/prewalk.rs`, 수용 사례는 `crates/app-core/src/agent/prewalk_tests.rs`에 있다. `role:<이름>`이 활성 프로파일에서 풀리는 방식은 [provider/MODEL.ko.md](../provider/MODEL.ko.md)에 있다.
+
+## 목표의 토큰 예산
+
+목표는 실행을 이어 간다. 턴이 끝나면 계속 훅이 붙은 목표를 읽고, 상태가 `active`인
+동안 합성 메시지를 하나 저장하고 다음 턴을 요청한다. 이 반복은
+`GOAL_CONTINUATION_CAP`까지다. 목표는 그 반복을 멈출 `budget_tokens`, 즉 세션 전체가
+쓸 수 있는 토큰 상한을 선택적으로 가질 수 있다.
+
+판정은 `horon_agent_agent_runtime::goal_continuation`에 있고 순수 함수다. 목표 상태,
+대기 중인 입력, 이미 쓴 계속 횟수, 지금까지 쓴 토큰, 예산을 읽는다. 먼저 맞는 조건이
+이기고, 예산은 상한보다 먼저 검사한다. 돈이 떨어져 멈춘 목표는 `reason=cap`이 아니라
+`reason=budget`으로 남아야 하기 때문이다.
+
+쓴 토큰은 데몬이 이미 보고하는 값과 같은 집계다. 대화 전체의 `TokenUsageTotals`에
+캐시 읽기와 캐시 쓰기를 더한다. 공급자는 캐시 입력을 싸게 청구하지만, 그 값을 빼고
+계산하면 캐시를 많이 쓰는 목표가 상한을 훨씬 넘겨 달린다.
+
+합계는 목표를 붙인 시점이 아니라 대화 전체를 덮는다. 그래서 이미 예산보다 많이 쓴
+세션에 목표를 붙이면 다음 턴 끝에서 바로 랩업한다. 세션에 건 상한을 그대로 읽은
+결과다. 붙인 시점에서 다시 세면 같은 세션이 상한을 두 번, 즉 목표가 생기기 전과
+후에 한 번씩 쓰게 된다.
+
+예산에 닿았다고 실행이 즉시 끊기지는 않는다. 다른 메시지
+(`GOAL_BUDGET_WRAP_UP_MESSAGE`)로 턴 하나를 더 주고, 그 메시지는 새 일을 시작하지 말고
+해 온 일을 기록하라고 지시한다. 같은 시점에 목표는 `budget_limited`로 옮겨 간다. 순서가
+중요하다. 상태를 먼저 쓰고 턴을 요청하므로, 둘 사이에서 죽으면 남는 것은 멈추는
+목표이지 계속 쓰는 목표가 아니다. 그다음 턴 끝은 `active`가 아닌 상태를 보고 추가
+턴 없이 멈춘다.
+
+`budget_limited`를 `paused`와 따로 두는 이유는 자동으로 재개되지 않기 때문이다. 재개는
+운영자의 결정이고 `goal` 도구로 한다. 예산도 거기서 정한다. `create`와 `update`가
+`budget_tokens`를 받고 0은 무제한으로 읽지 않고 거부한다. 무제한은 이미 `None`이 뜻하는
+값이고, 0이 판정에 닿으면 첫 턴 끝에서 목표를 랩업해 버려서 정책이 아니라 결함처럼
+보이기 때문이다.
+
+목표를 되살리는 것은 운영자의 결정이고 두 동작이 필요하다. `budget_tokens`를 올리고
+상태를 `active`로 되돌린다. `resume`만으로는 집히지 않는다. 예산을 다 쓴 목표가 스스로
+재개하면 다시 쓰게 되기 때문이다.
+
+시험: `crates/agent-runtime/src/goal_continuation.rs`가 판정 표를 덮는다. 예산이 상한을
+이기고 사용자 입력이 둘 다를 이기는 경우가 포함된다.
+`crates/app-core/src/agent/goal_continuation_tests.rs`는 저장되는 랩업 메시지, 상태 전이,
+다음 턴의 정지, 예산 없는 목표가 랩업되지 않음, 0 예산 거부, 왕복 저장과 옛 파일 적재를
+덮는다.
+
 ## 핸드오프 압축
 
 핸드오프 압축은 모델 요약 대신 생성한 핸드오프 문서를 경계로 쓴다. 이 문서는 세션이
@@ -521,14 +588,15 @@ explicit session id to --resume"다(`src/cli/dispatch.rs:97-101`).
 ### 재개한 세션의 표시
 
 이 빌드는 데몬이나 `run` 프로세스 안에서 세션을 재개하고 터미널 창을 열지 않는다.
-어떤 창이나 페인으로 보여 줄지는 클라이언트 몫이다. 예전 TUI가 쓰던 세션 선택기와
-새 터미널·멀티플렉서 페인에서 여는 실행기는 이 트리에 없다. 그래서 옛 config 파일에
+어떤 창이나 페인으로 보여 줄지는 클라이언트 몫이다. 함께 배포되는 터미널 클라이언트는
+`--session <id>`로 붙고, 인자 없는 `horon` 인계는 `--resume`을 그 플래그로 넘긴다.
+예전 TUI가 쓰던 세션 선택기와 새 터미널·멀티플렉서 페인에서 여는 실행기는 이 트리에 없다. 그래서 옛 config 파일에
 `session_picker_enter`나 `[terminal]` 키가 남아 있어도 읽지 않고, 예전 `--fresh-spawn`처럼
 창을 고르는 플래그도 없다. `crates/terminal-launch`에는 클라이언트 터미널 환경 스냅숏과
 훅 명령 파싱만 남아 있다.
 
 ### 저장한 세션
 
-`/save`, `/unsave`는 클라이언트 슬래시 명령이며 이 빌드에는 그 클라이언트가 없다. 세션에 붙는
+`/save`, `/unsave`는 클라이언트의 슬래시 명령이며, 함께 배포되는 클라이언트에는 이 명령이 없다. 세션에 붙는
 저장 레이블은 하네스 API 응답의 `save_label` 필드로 남아 있다
 (`crates/harness-api-server/src/translate.rs:255`, `:883` 참고).

@@ -37,6 +37,10 @@ mod memory_profile;
 mod model;
 mod persistence;
 mod prewalk;
+mod purge;
+#[cfg(test)]
+#[path = "session/purge_tests.rs"]
+mod purge_tests;
 mod render;
 mod resume_marker;
 mod storage_paths;
@@ -59,6 +63,7 @@ use memory_profile::{
 };
 use model::SESSION_CONTEXT_PREFIX;
 pub use model::{StoredReplayEvent, StoredReplayEventKind};
+pub use purge::{PurgeReport, is_store_session_id, purge_session_state};
 pub use render::{
     RenderedCompactedHistoryInfo, RenderedImage, RenderedImageAnchor, RenderedImageSource, RenderedMessage,
     has_rendered_images, is_attached_image_label_text, is_compacted_history_notice, reasoning_line_content,

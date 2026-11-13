@@ -10,19 +10,19 @@
 
 | 패키지 | 내용 |
 | --- | --- |
-| `@horon-ai/horon` | 런처 `bin/horon.js`와 README. `bin`이 `horon`과 `hrn`을 모두 이 파일에 연결한다. |
-| `@horon-ai/horon-linux-x64` | Linux x86_64용 `bin/horon-agent`와 `bin/horon-tui`. |
-| `@horon-ai/horon-linux-arm64` | Linux aarch64용 같은 두 파일. |
-| `@horon-ai/horon-darwin-x64` | macOS Intel용 같은 두 파일. |
-| `@horon-ai/horon-darwin-arm64` | macOS Apple Silicon용 같은 두 파일. |
-| `@horon-ai/horon-win32-x64` | Windows x86_64용 `bin/horon-agent.exe`와 `bin/horon-tui.exe`. |
-| `@horon-ai/horon-win32-arm64` | Windows ARM64용 같은 두 파일. |
+| `@horon-ai/horon` | 런처 `bin/horon.js`, `LICENSE`, README. `bin`이 `horon`과 `hrn`을 모두 이 파일에 연결한다. |
+| `@horon-ai/horon-linux-x64` | Linux x86_64용 `bin/horon-agent`, `bin/horon-tui`, `LICENSE`. |
+| `@horon-ai/horon-linux-arm64` | Linux aarch64용 같은 두 실행 파일과 `LICENSE`. |
+| `@horon-ai/horon-darwin-x64` | macOS Intel용 같은 두 실행 파일과 `LICENSE`. |
+| `@horon-ai/horon-darwin-arm64` | macOS Apple Silicon용 같은 두 실행 파일과 `LICENSE`. |
+| `@horon-ai/horon-win32-x64` | Windows x86_64용 `bin/horon-agent.exe`, `bin/horon-tui.exe`, `LICENSE`. |
+| `@horon-ai/horon-win32-arm64` | Windows ARM64용 같은 두 실행 파일과 `LICENSE`. |
 
-npm은 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 내려받는다. 다음 세 가지가 이 묶음을 안전하게 게시할 수 있게 한다.
+모든 패키지는 만든 릴리스 압축에서 가져온 `LICENSE`를 루트에 담아, 실행 파일과 함께 라이선스 조항이 이동한다. npm은 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 내려받는다. 다음 세 가지가 이 묶음을 안전하게 게시할 수 있게 한다.
 
 - 래퍼의 플랫폼 고정값은 범위가 아니라 정확한 버전이다. 게시하는 버전과 고정값이 다르면 `scripts/npm/release_npm_version.py check-packages`가 실행을 실패시키므로, 래퍼가 그 버전에 없는 플랫폼 패키지를 가리키는 일이 생기지 않는다.
-- 어느 패키지도 설치 스크립트를 선언하지 않는다. 생성된 매니페스트와 `npm/horon/package.json`에 `preinstall`, `install`, `postinstall`이 없고, 같은 검사가 의존성을 선언한 플랫폼 패키지도 거부한다.
-- Node 라이브러리가 아니다. `npm/horon/bin/horon.js`는 `process.platform`과 `process.arch`를 읽어 맞는 패키지의 디렉터리를 찾고, 넘겨받은 인자와 환경을 그대로 붙여 `bin/horon-agent`를 `spawnSync`와 `stdio: "inherit"`로 띄운다. 실행 중에는 자식이 터미널을 소유하고, 인터럽트가 CLI에 닿도록 런처는 그동안 `SIGINT`와 `SIGTERM`을 무시한다.
+- 어느 패키지도 설치 스크립트를 선언하지 않는다. 생성된 매니페스트와 `packages/npm/horon/package.json`에 `preinstall`, `install`, `postinstall`이 없고, 같은 검사가 의존성을 선언한 플랫폼 패키지도 거부한다.
+- Node 라이브러리가 아니다. `packages/npm/horon/bin/horon.js`는 `process.platform`과 `process.arch`를 읽어 맞는 패키지의 디렉터리를 찾고, 넘겨받은 인자와 환경을 그대로 붙여 `bin/horon-agent`를 `spawnSync`와 `stdio: "inherit"`로 띄운다. 실행 중에는 자식이 터미널을 소유하고, 인터럽트가 CLI에 닿도록 런처는 그동안 `SIGINT`와 `SIGTERM`을 무시한다.
 
 런처는 자식 환경에 `HORON_AGENT_NO_AUTO_UPDATE=1`을 넣는다. npm 패키지가 두 실행 파일의 한 릴리스를 함께 고정하는데 에이전트 자체 업데이터는 다른 빌드로 바꾸므로, npm 설치본은 npm으로 갱신한다.
 
@@ -47,7 +47,7 @@ npx @horon-ai/horon --help
 
 릴리스의 npm 버전은 릴리스 태그에서 `v`를 뺀 값이다. `scripts/npm/release_npm_version.py tag-version`은 `vMAJOR.MINOR.PATCH`만 받으므로, 프리릴리스나 빌드 접미사가 붙은 태그는 아무것도 내려받기 전에 거부된다. `dispatch` 명령은 수동 실행에 같은 규칙을 적용한다.
 
-`npm/horon/package.json`은 git에서 `0.0.0`을 유지하고 올리지 않는다. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>`가 매니페스트와 런처를 스테이징 디렉터리로 복사하고, 그 복사본에 릴리스 버전과 플랫폼 고정값 여섯을 쓴다. 그래서 추적되는 파일은 항상 자리 표시 상태를 설명하고, 게시되는 패키지는 담고 있는 자산의 릴리스 버전을 단다.
+`packages/npm/horon/package.json`은 git에서 `0.0.0`을 유지하고 올리지 않는다. `scripts/npm/prepare_cli_packages.sh <out-dir> <assets-dir> <version>`가 매니페스트와 런처를 스테이징 디렉터리로 복사하고, 그 복사본에 릴리스 버전과 플랫폼 고정값 여섯을 쓴다. 그래서 추적되는 파일은 항상 자리 표시 상태를 설명하고, 게시되는 패키지는 담고 있는 자산의 릴리스 버전을 단다.
 
 ## 게시 워크플로
 
@@ -57,7 +57,7 @@ npx @horon-ai/horon --help
 | --- | --- | --- |
 | `workflow_run` | `main`의 "Release Tag" 실행이 끝났을 때 | 릴리스한 커밋을 가리키는 태그를 찾고, 공개 릴리스인지 확인한 뒤 태그 버전으로 게시한다 |
 | `workflow_dispatch` | 운영자가 릴리스 태그를, 또는 `package_only` Release 실행과 버전을 지정했을 때 | 기본은 드라이런이고, 스위치가 켜져 있으면 `dry_run=false`가 게시한다 |
-| `pull_request` | `npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
+| `pull_request` | `packages/npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
 
 워크플로는 npm 11.5.1 이상을 요구한다. provenance 서명과 trusted publishing에 이 버전이 필요하다. 계획 잡은 `contents: read`와 `actions: read`를 들고, 뒤의 권한으로 끝난 실행의 잡을 읽는다. `id-token: write`는 게시 잡만 받는다. 이 권한이 주는 단명 자격 증명을 npm이 한 번짜리 게시 허가로 바꾼다. `cancel-in-progress: false`인 동시성 그룹은 두 번째 실행을 취소하지 않고 줄 세우므로, 뒤 실행이 레지스트리를 다시 읽고 이미 올라간 것은 건너뛴다.
 
@@ -103,7 +103,7 @@ npm view @horon-ai/horon --json | jq '.dist.attestations'
 
 ## TypeScript SDK
 
-TypeScript SDK는 `@horon-ai/agent-sdk`와 런타임 패키지 여섯 `@horon-ai/agent-<os>-<arch>`를 따로 게시한다. 버전은 같은 태그에서 오고, `Release Tag` 트리거와 `NPM_PUBLISH` 스위치도 같다. 파일은 `.github/workflows/publish-typescript-sdk.yml`로 나뉘어 있는데, npm이 최상위 워크플로 파일 이름을 신뢰하기 때문이다. SDK의 일곱 패키지는 `publish-typescript-sdk.yml`을 Trusted Publisher로 등록한다. 절차는 `sdk/typescript/RELEASING.md`에 있으므로 여기서 되풀이하지 않는다.
+TypeScript SDK는 `@horon-ai/agent-sdk`와 런타임 패키지 여섯 `@horon-ai/agent-<os>-<arch>`를 따로 게시한다. 버전은 같은 태그에서 오고, `Release Tag` 트리거와 `NPM_PUBLISH` 스위치도 같다. 파일은 `.github/workflows/publish-typescript-sdk.yml`로 나뉘어 있는데, npm이 최상위 워크플로 파일 이름을 신뢰하기 때문이다. SDK의 일곱 패키지는 `publish-typescript-sdk.yml`을 Trusted Publisher로 등록한다. 절차는 `packages/sdk/typescript/RELEASING.md`에 있으므로 여기서 되풀이하지 않는다.
 
 ## 알려진 한계
 

@@ -208,6 +208,11 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
   (`rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
   (`scripts/ci/check_security.sh`의 `audit_ignores`). 새
   취약점은 기본적으로 여전히 CI를 실패시킨다.
+- 2026-11-13: 같은 날 공개된 권고 세 건이 의존성을 바꾸지 않은 push에서도 preflight를 실패시켰다.
+  `RUSTSEC-2026-0524`, `RUSTSEC-2026-0523`(`quinn-proto` 0.11.18)과 `RUSTSEC-2026-0538`
+  (`quinn-udp` 0.5.14)이고 모두 `reqwest`의 QUIC 스택을 통해 들어온다. 무시하지 않고
+  `Cargo.lock`에서 고쳤다(`quinn-proto` 0.11.19, `quinn-udp` 0.5.16). 그래서 `audit_ignores`
+  항목은 추가하지 않았다. `main`도 같은 버전을 들고 있었으므로 이 실패는 `dev`에 한정된 것이 아니다.
 - 의존성 버전을 바꾸기 전에 다음을 실행한다.
   - `cargo check`
   - `cargo test -j 1`

@@ -1280,7 +1280,7 @@ pub(super) async fn handle_client(
         let sdk_session_before_request = client_session_id.clone();
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
-            Request::ClientResponse { .. } => unreachable!("client responses dispatched before acknowledgment"),
+            Request::ClientResponse { .. } | Request::DeleteSession { .. } => unreachable!("dispatched earlier"),
             Request::Message {
                 id,
                 content,
@@ -1679,18 +1679,18 @@ pub(super) async fn handle_client(
 
             Request::Ping { id } => {
                 let event = super::session_connections::connection_presence_pong(id, &client_connections, &swarm_members).await;
-                let json = encode_event(&event);
-                let mut w = writer.lock().await;
-                if w.write_all(json.as_bytes()).await.is_err() {
+                if super::client_writer::write_direct_event(&writer, &event).await.is_err() {
                     break;
                 }
             }
 
             Request::PrepareDisconnect { id } => {
-                drop(crate::tool::sdk::ConnectionGuard(client_connection_id.clone()));
-                let json = encode_event(&ServerEvent::Done { id });
-                let mut w = writer.lock().await;
-                if w.write_all(json.as_bytes()).await.is_err() {
+                if super::client_disconnect_cleanup::release_before_disconnect(
+                    &client_session_id, &client_connection_id, &client_connections, &swarm_members, id, &writer,
+                )
+                .await
+                .is_err()
+                {
                     break;
                 }
             }

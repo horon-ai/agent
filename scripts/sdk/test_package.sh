@@ -12,7 +12,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-sdk_dir="$repo_root/sdk/typescript"
+sdk_dir="$repo_root/packages/sdk/typescript"
 work="$(mktemp -d "${TMPDIR:-/tmp}/horon-agent-sdk-pack-XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
@@ -40,6 +40,8 @@ if command -v horon-agent >/dev/null 2>&1 && [ "$(uname -s)" = Linux ]; then
     runtime_stage="$work/runtime-packages/$runtime_package"
     cp "$(command -v horon-agent)" "$runtime_stage/bin/horon-agent"
     chmod +x "$runtime_stage/bin/horon-agent"
+    # The real runtime package gets this from the release archive.
+    cp "$repo_root/LICENSE" "$runtime_stage/LICENSE"
     runtime_tarball="$(cd "$runtime_stage" && npm pack --silent)"
     runtime_tarball="$runtime_stage/$runtime_tarball"
   fi

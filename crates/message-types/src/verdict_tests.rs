@@ -62,3 +62,53 @@ fn an_unknown_verdict_name_is_refused() {
         "a verdict nobody defined is an error, not a guess"
     );
 }
+
+#[test]
+fn a_stated_verdict_beats_the_error_flag_it_was_stored_with() {
+    let message: Message = serde_json::from_str(
+        r#"{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_6","content":"partial","is_error":true,"verdict":"partial"}]}"#,
+    )
+    .expect("a stored verdict reads");
+    let block = &message.content[0];
+    assert_eq!(block.tool_verdict(), Some(ToolVerdict::Partial));
+    assert!(
+        !block.tool_result_failed(),
+        "a partial result kept some of the answer, so the flag stored beside it does not make it a failure"
+    );
+}
+
+#[test]
+fn a_record_from_before_verdicts_is_read_from_its_error_flag() {
+    let message: Message = serde_json::from_str(
+        r#"{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_7","content":"boom","is_error":true}]}"#,
+    )
+    .expect("a record stored before verdicts still reads");
+    let block = &message.content[0];
+    assert_eq!(
+        block.tool_verdict(),
+        Some(ToolVerdict::Failed),
+        "the one place a flag becomes a verdict is the read of an old record"
+    );
+    assert!(block.tool_result_failed());
+}
+
+#[test]
+fn a_record_with_neither_says_the_call_succeeded() {
+    let message: Message = serde_json::from_str(
+        r#"{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_8","content":"handled"}]}"#,
+    )
+    .expect("a plain result reads");
+    let block = &message.content[0];
+    assert_eq!(block.tool_verdict(), Some(ToolVerdict::Ok));
+    assert!(!block.tool_result_failed(), "an unmarked result is the normal case");
+}
+
+#[test]
+fn a_block_that_is_not_a_tool_result_reports_no_verdict() {
+    let text = ContentBlock::Text {
+        text: "hi".to_string(),
+        cache_control: None,
+    };
+    assert_eq!(text.tool_verdict(), None);
+    assert!(!text.tool_result_failed(), "only a tool result can be a failed call");
+}

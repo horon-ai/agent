@@ -19,6 +19,8 @@ pub struct GoalCreateInput {
     pub blockers: Vec<String>,
     pub current_milestone_id: Option<String>,
     pub progress_percent: Option<u8>,
+    /// Token ceiling, or `None` for unbounded.
+    pub budget_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -33,6 +35,8 @@ pub struct GoalUpdateInput {
     pub blockers: Option<Vec<String>>,
     pub current_milestone_id: Option<Option<String>>,
     pub progress_percent: Option<Option<u8>>,
+    /// Outer `Some` sets or clears the ceiling; inner `Some(0)` is refused.
+    pub budget_tokens: Option<Option<u64>>,
     pub checkpoint_summary: Option<String>,
 }
 
@@ -44,6 +48,19 @@ struct GoalAttachment {
     project_hash: Option<String>,
     title: String,
     attached_at: DateTime<Utc>,
+}
+
+/// Refuse a ceiling that cannot mean anything.
+///
+/// A zero budget is not "unlimited": `None` already means that, and a zero
+/// that reached the continuation decision would wrap the goal up on its first
+/// turn end, which looks like a bug rather than a policy. Refusing it at the
+/// write path keeps the decision free of that case.
+fn validate_budget(budget: Option<u64>) -> Result<Option<u64>> {
+    if budget == Some(0) {
+        anyhow::bail!("goal budget_tokens must be greater than zero");
+    }
+    Ok(budget)
 }
 
 pub fn create_goal(input: GoalCreateInput, working_dir: Option<&Path>) -> Result<Goal> {
@@ -63,6 +80,7 @@ pub fn create_goal(input: GoalCreateInput, working_dir: Option<&Path>) -> Result
     goal.blockers = trim_vec(input.blockers);
     goal.current_milestone_id = input.current_milestone_id;
     goal.progress_percent = input.progress_percent.map(|p| p.min(100));
+    goal.budget_tokens = validate_budget(input.budget_tokens)?;
     goal.updated_at = Utc::now();
     save_goal(&goal, working_dir)?;
     sync_goal_memory(&goal, working_dir)?;
@@ -108,6 +126,9 @@ pub fn update_goal(
     }
     if let Some(progress_percent) = update.progress_percent {
         goal.progress_percent = progress_percent.map(|p| p.min(100));
+    }
+    if let Some(budget) = update.budget_tokens {
+        goal.budget_tokens = validate_budget(budget)?;
     }
     if let Some(summary) = update
         .checkpoint_summary
@@ -249,6 +270,9 @@ pub fn render_goal_detail(goal: &Goal) -> String {
     );
     if let Some(progress) = goal.progress_percent {
         out.push_str(&format!("**Progress:** {}%  \n", progress));
+    }
+    if let Some(budget) = goal.budget_tokens {
+        out.push_str(&format!("**Token budget:** {}  \n", budget));
     }
     out.push('\n');
 

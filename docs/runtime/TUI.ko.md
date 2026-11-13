@@ -65,7 +65,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 
-`statusline.path_max`는 `path` 세그먼트가 왼쪽부터 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 감춘다. `editor.submit_on_enter`와 `transcript.show_reasoning`은 다른 키처럼 값을 정하고 편집할 수 있지만, 아직 키 처리와 트랜스크립트 그리기가 이 값을 읽지 않는다.
+`statusline.path_max`는 `path` 세그먼트가 왼쪽부터 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 감춘다. `editor.submit_on_enter = false`이면 전송 키의 연결이 끊겨 눌러도 초안이 그대로 남고 전송되지 않는다. 편집기는 한 줄이므로 키가 줄바꿈을 넣지도 않는다. `transcript.show_reasoning = true`이면 모델의 추론을 보관해 답 앞에 흐리게 그린다. 추론은 스트림 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)에서 생각 하나당 항목 하나로 확정된다. 설정이 꺼져 있으면 추론 조각은 도착할 때 버려지고, 나중에 켤 수도 있는 설정을 위해 쌓아 두지 않는다.
 
 프로젝트 파일은 `<cwd>/.horon/tui.toml`이다. 작업 디렉터리를 읽을 수 없으면 건너뛴다. 파일의 크기나 수정 시각이 바뀐 뒤 1초가 지나면 다시 읽으므로, 손으로 고친 값이 재시작 없이 적용된다.
 
@@ -265,4 +265,4 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 - Windows에는 PTY 스모크 테스트가 없다. `tui` 벤치마크는 그곳에서 렌더와 크기 지표를 기록하고 PTY 지표에는 `pty unavailable on Windows`를 적으며 실행을 실패시키지 않는다.
 - FreeBSD는 `horon-agent`만 배포하므로 그곳에는 클라이언트가 설치되지 않고, 인자 없는 `horon`이 형제 파일이 없다고 알린다.
 - Linux와 macOS에서 핸드오프는 한 프로세스가 다른 프로세스를 대체하는 방식이므로, 클라이언트가 끝나면 터미널 명령도 함께 끝나고 종료 코드는 클라이언트의 것이다. Windows에서는 런처가 클라이언트를 띄운 뒤 곧바로 코드 0으로 끝나므로, 런처의 종료 코드는 클라이언트에 대해 아무것도 알려 주지 않는다.
-- `editor.submit_on_enter`와 `transcript.show_reasoning`은 선언되고 편집할 수 있지만, 아직 클라이언트가 이 값을 읽지 않는다.
+- `editor.submit_on_enter`는 전송 키 처리가, `transcript.show_reasoning`은 트랜스크립트가 읽는다. 둘 다 설정 화면에서 바꾸면 다음 키 입력과 다음 추론 조각부터 적용된다.

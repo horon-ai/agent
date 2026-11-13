@@ -209,6 +209,12 @@ This section is not a re-measurement of the table above; it only counts whether 
   above (`rustls-webpki`) so CI stays actionable
   (`audit_ignores` in `scripts/ci/check_security.sh`). New
   vulnerabilities still fail CI by default.
+- 2026-11-13: three advisories published the same day failed the preflight on a push that changed no
+  dependency — `RUSTSEC-2026-0524` and `RUSTSEC-2026-0523` (`quinn-proto` 0.11.18) and
+  `RUSTSEC-2026-0538` (`quinn-udp` 0.5.14), all reached through `reqwest`'s QUIC stack. They were
+  fixed in `Cargo.lock` rather than ignored (`quinn-proto` 0.11.19, `quinn-udp` 0.5.16), so no
+  `audit_ignores` entry was added. `main` carried the same versions, so the failure was not
+  specific to `dev`.
 - Before changing dependency versions, run:
   - `cargo check`
   - `cargo test -j 1`

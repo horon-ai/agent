@@ -6,7 +6,7 @@
 //! production layout under each HOME, so an import that only "works" in memory
 //! fails here.
 //!
-//! Set `HORON_AGENT_TS_QA=1` with `sdk/typescript/dist` built to run the
+//! Set `HORON_AGENT_TS_QA=1` with `packages/sdk/typescript/dist` built to run the
 //! TypeScript leg against the same sockets.
 
 #![cfg(unix)]
@@ -186,7 +186,14 @@ fn scratch_root(label: &str) -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let short: String = label.chars().filter(|ch| ch.is_ascii_alphanumeric()).take(4).collect();
-    let root = PathBuf::from(format!("/private/tmp/hs{}-{short}{n}", std::process::id()));
+    // The OS spelling, not `/private/tmp`: that path exists only on macOS and
+    // made every replication test fail on Linux with `PermissionDenied` (#226).
+    // The canonical form matters on macOS, where `/var` is a symlink and the
+    // store rejects a path that walks through one.
+    let base = std::env::temp_dir()
+        .canonicalize()
+        .expect("the OS temporary directory must resolve");
+    let root = base.join(format!("hs{}-{short}{n}", std::process::id()));
     std::fs::create_dir_all(&root).expect("scratch root");
     root
 }
@@ -985,9 +992,12 @@ fn typescript_sdk_drives_the_same_sockets() {
         eprintln!("HORON_AGENT_TS_QA is not set; skipping the TypeScript leg");
         return;
     };
-    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk/typescript");
+    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/sdk/typescript");
     let entry = sdk.join("dist/index.js");
-    assert!(entry.is_file(), "build sdk/typescript before running the TS leg");
+    assert!(
+        entry.is_file(),
+        "build packages/sdk/typescript before running the TS leg"
+    );
     let _serial = instance_lock();
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/replication_ts_client.mjs");
     let root = scratch_root("ts");

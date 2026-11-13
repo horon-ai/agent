@@ -58,7 +58,7 @@ fn recovery_band_never_starves_the_tail_floor() {
 #[test]
 fn truncation_without_signals_stays_in_the_byte_budget() {
     let content = "a".repeat(1024 * 1024);
-    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, None);
+    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, false);
     println!(
         "1 MiB no-signal truncation: bytes={} budget={} error_prefix={} signal_header={}",
         truncated.len(),
@@ -75,7 +75,7 @@ fn truncation_without_signals_stays_in_the_byte_budget() {
 #[test]
 fn truncation_keeps_middle_error_lines_and_the_error_marker() {
     let content = middle_with_error_line(400);
-    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, Some(true));
+    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, true);
     println!(
         "error truncation: prefix={} middle_error={} bytes={}",
         truncated.starts_with("[tool error] "),
@@ -98,7 +98,7 @@ fn truncation_bounds_the_signal_block() {
         content.push_str(&"filler\n".repeat(200));
         content.push_str(&format!("warning: retry {index} failed\n"));
     }
-    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, None);
+    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, false);
     let header = "[error/warning lines from the omitted part:]\n";
     let start = truncated.find(header).expect("signal header");
     let rest = &truncated[start + header.len()..];
@@ -128,7 +128,7 @@ fn truncation_matches_only_whole_signal_words() {
 #[test]
 fn truncation_keeps_hangul_char_boundaries() {
     let content = format!("{}오류: 실패한 도구{}", "가".repeat(2_000), "나".repeat(2_000));
-    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, Some(true));
+    let truncated = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, true);
     assert!(truncated.is_char_boundary(truncated.len()));
     assert!(truncated.len() <= TRUNCATION_BUDGET, "got {} bytes", truncated.len());
     assert!(truncated.contains("chars truncated for context recovery"));
@@ -137,7 +137,7 @@ fn truncation_keeps_hangul_char_boundaries() {
 #[test]
 fn truncation_is_deterministic_across_repeated_calls() {
     let content = middle_with_error_line(300);
-    let first = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, Some(true));
-    let second = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, Some(true));
+    let first = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, true);
+    let second = emergency_truncated_tool_result(&content, TRUNCATION_BUDGET, true);
     assert_eq!(first, second);
 }

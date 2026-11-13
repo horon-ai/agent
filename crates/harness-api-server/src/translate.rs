@@ -5,6 +5,7 @@ mod compact_handoff;
 mod credentials;
 mod runtime_identity;
 mod search_artifacts;
+mod session_delete;
 mod usage_report;
 
 use crate::background_progress::parse_background_notification;
@@ -330,7 +331,7 @@ impl From<&RecentSessionIndexEntry> for PersistedSessionMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum SimpleKind {
+pub(super) enum SimpleKind {
     RuntimeCommand,
     Detach,
     Tools,
@@ -338,6 +339,10 @@ enum SimpleKind {
     Ping,
     History,
     Ok,
+    /// Awaiting `done`: the daemon acks a delete before it touches the store,
+    /// and acknowledging a delete that later failed would report a transcript
+    /// as gone while it is still there. Only `done` answers this one.
+    Delete,
     /// Awaiting `model_changed`, which carries its own error field.
     Model,
     /// Awaiting `reasoning_effort_changed`.
@@ -373,7 +378,7 @@ pub fn legacy_event_may_block(event: &Value) -> bool {
 }
 
 impl BridgeState {
-    fn legacy_id(&mut self) -> u64 {
+    pub(super) fn legacy_id(&mut self) -> u64 {
         NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -600,6 +605,7 @@ impl BridgeState {
                     Err(message) => Self::error_reply(api_id, ErrorCode::Internal, &message),
                 }
             }
+            "delete_session" => session_delete::handle(self, api_id, request),
             "set_retention_policy" => {
                 let days = match request.get("archive_after_days") {
                     None | Some(Value::Null) => None,
@@ -1998,6 +2004,12 @@ impl BridgeState {
             })],
             "done" => {
                 let id = event["id"].as_u64().unwrap_or(0);
+                if let Some(api_id) = self.take_simple(id, SimpleKind::Delete) {
+                    // A delete is not a turn: answering with `ok` ends the
+                    // request, and the transcript is already gone.
+                    self.pending_control_done_ids.remove(&id);
+                    return vec![ServerFrame::reply(api_id, ApiEvent::Ok)];
+                }
                 if let Some(api_id) = self.take_simple(id, SimpleKind::Detach) {
                     self.pending_control_done_ids.remove(&id);
                     self.session_id = None;
@@ -3697,6 +3709,10 @@ mod runtime_identity_tests;
 #[cfg(test)]
 #[path = "translate/usage_report_tests.rs"]
 mod usage_report_tests;
+
+#[cfg(test)]
+#[path = "translate/session_delete_tests.rs"]
+mod session_delete_tests;
 
 #[cfg(test)]
 #[path = "translate_tests/credential_profile_tests.rs"]

@@ -218,6 +218,45 @@ impl Client {
         Ok(id)
     }
 
+    /// Permanently delete one session through the daemon.
+    ///
+    /// `DeleteSession` is a lightweight control request: the daemon acks, then
+    /// answers `Done` or `Error` on a one-shot connection, so no Subscribe is
+    /// needed and the reply is the whole contract. The daemon refuses a session
+    /// that is loaded, streaming or attached, and its message is passed through
+    /// unchanged because it names which of the three stopped the delete.
+    pub async fn delete_session(&mut self, session_id: &str) -> Result<()> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let request = Request::DeleteSession {
+            id,
+            session_id: session_id.to_string(),
+            confirm: true,
+        };
+        let json = serde_json::to_string(&request)? + "\n";
+        self.writer.write_all(json.as_bytes()).await?;
+
+        loop {
+            let mut line = String::new();
+            let n = self.reader.read_line(&mut line).await?;
+            if n == 0 {
+                anyhow::bail!("Server disconnected before answering delete_session");
+            }
+            let event: ServerEvent = serde_json::from_str(&line)?;
+            match event {
+                ServerEvent::Ack { id: ack_id } if ack_id == id => continue,
+                ServerEvent::Done { id: done_id } if done_id == id => return Ok(()),
+                ServerEvent::Error {
+                    id: error_id, message, ..
+                } if error_id == id => anyhow::bail!("{message}"),
+                // An unrelated frame on a one-shot connection is not a reply to
+                // this request; keep reading rather than misreport it as one.
+                _ => continue,
+            }
+        }
+    }
+
     /// Request a graceful, conditional reload: when `force` is false the server
     /// only reloads if it has a strictly-newer reload candidate binary. Used by
     /// `horon-agent server reload` so an upgrade is picked up without risking a

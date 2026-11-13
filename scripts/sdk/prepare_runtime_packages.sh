@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generate the six platform npm packages that carry the horon-agent runtime for
 # `@horon-ai/agent-sdk`. They are not tracked in git: every manifest is derived
-# from sdk/typescript/package.json, so the SDK and its runtimes can never be
+# from packages/sdk/typescript/package.json, so the SDK and its runtimes can never be
 # released at different versions.
 #
 # usage: prepare_runtime_packages.sh <out-dir> [<release-assets-dir>]
@@ -30,7 +30,7 @@ prepare() {
   rm -rf "$package_dir"
   mkdir -p "$package_dir/bin"
 
-  SDK_MANIFEST="$repo_root/sdk/typescript/package.json" PACKAGE_DIR="$package_dir" \
+  SDK_MANIFEST="$repo_root/packages/sdk/typescript/package.json" PACKAGE_DIR="$package_dir" \
     PLATFORM="$platform" OS="$os" CPU="$cpu" \
     node -e '
       const fs = require("node:fs");
@@ -47,7 +47,7 @@ prepare() {
         license: sdk.license,
         os: [process.env.OS],
         cpu: [process.env.CPU],
-        files: ["bin", "README.md"],
+        files: ["bin", "LICENSE", "README.md"],
         exports: { "./package.json": "./package.json" },
         repository: sdk.repository,
         publishConfig: { access: "public" },
@@ -64,6 +64,9 @@ prepare() {
     tar -xzf "$assets/$archive" -C "$package_dir/bin"
     mv "$package_dir/bin/$archived_binary" "$package_dir/bin/$installed_binary"
     chmod +x "$package_dir/bin/$installed_binary"
+    # The archive carries the licence beside the binary; in the package it
+    # belongs at the root, where `files` lists it for `npm pack`.
+    mv "$package_dir/bin/LICENSE" "$package_dir/LICENSE"
   fi
 }
 

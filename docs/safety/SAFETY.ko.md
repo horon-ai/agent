@@ -98,7 +98,7 @@ Transcript Logger -> Session Reporter
 
 #### 사용자 지정 규칙
 
-이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1543-1550`), 승인 대기 정책은 `[ambient]`에 있다(`:1473-1510`).
+이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1451-1458`), 승인 대기 정책은 `[ambient]`에 있다(`:1381-1418`).
 
 ```toml
 [safety]
@@ -112,7 +112,7 @@ desktop_notifications = true
 # approval_for_clientless_runs = false
 ```
 
-`approval_timeout_secs`의 기본값은 1800초다(`crates/config-types/src/lib.rs:1584`, `:1598-1600`). 시간이 지나면 `approval_default_on_timeout`이 적용되고 기본값은 `"deny"`다(`:1589`, `:1602-1604`). 승인 대기 중인 요청이 만료되면 기록이 남고, 감사할 수 없는 이력은 승인을 거부 쪽으로 닫는다(`crates/base/src/safety.rs:340-360`).
+`approval_timeout_secs`의 기본값은 1800초다(`crates/config-types/src/lib.rs:1405-1406`, `:1420-1422`). 시간이 지나면 `approval_default_on_timeout`이 적용되고 기본값은 `"deny"`다(`:1410-1411`, `:1424-1426`). 승인 대기 중인 요청이 만료되면 기록이 남고, 감사할 수 없는 이력은 승인을 거부 쪽으로 닫는다(`crates/base/src/safety.rs:340-360`).
 
 ---
 
@@ -136,7 +136,7 @@ desktop_notifications = true
 
 #### `request_permission` 도구
 
-이 도구는 코어 18도구에 들어 있지 않다. ambient 실행기가 등록하고, 세션의 도구 허용 목록이 통과시켜야 호출된다. 클라이언트가 붙지 않은 무인 실행을 위해 `[ambient] approval_for_clientless_runs`를 켜면 그때만 허용 목록에 합쳐진다(`crates/base/src/config.rs:752-757`, `:1153-1170`). 기본값은 꺼짐이고, 코어 집합은 18개 그대로다(`crates/base/src/config.rs:779-799`, 테스트는 `crates/base/src/config_tool_tiers_tests.rs:26-40`).
+이 도구는 코어 18도구에 들어 있지 않다. ambient 실행기가 등록하고, 세션의 도구 허용 목록이 통과시켜야 호출된다. 클라이언트가 붙지 않은 무인 실행을 위해 `[ambient] approval_for_clientless_runs`를 켜면 그때만 허용 목록에 합쳐진다(`crates/base/src/config.rs:608-611`, `crates/base/src/config/tool_selection.rs:29-34`). 기본값은 꺼짐이고, 코어 집합은 18개 그대로다(`crates/base/src/config.rs:652-671`, 테스트는 `crates/base/src/config_tool_tiers_tests.rs:26-41`).
 
 ambient 세션이 아닌 곳에서 부르면 "request_permission is only available to ambient sessions" 오류로 거절한다(`crates/app-core/src/tool/ambient.rs:105`).
 
@@ -216,7 +216,7 @@ desktop_notifications = true
 # ntfy_server = "https://ntfy.sh"
 ```
 
-이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:1674-1682`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
+이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:1451-1458`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
 
 묶음 간격, 조용한 시간, 최소 긴급도 같은 선호 항목도 이 빌드에 없다.
 
@@ -375,7 +375,7 @@ pub enum AskPolicy {
 - `recommended`(기본값): 질문마다 모델이 낸 추천으로 답한다. 모델이 추천을 내지 않았으면 첫 선택지를 쓴다. 자동으로 골랐다는 사실을 도구 텍스트에 적어 모델이 그 사실을 알게 한다(`crates/app-core/src/tool/ask.rs:203-214`).
 - `error`: 답할 수 있는 클라이언트가 없거나 답이 오지 않았으면 호출을 설명과 함께 거부한다. 모델은 스스로 판단해 계속한다(`crates/app-core/src/tool/ask.rs:362-367`, `:374-376`).
 
-설정 필드의 주석도 같은 구분을 적고 있다. `recommended`는 모델의 추천을 고르고 그 사실을 알린다. `error`는 호출을 거부한다. 주석은 클라이언트가 붙은 경우도 함께 적는다. `supports_ask_requests`를 광고한 클라이언트에게 먼저 묻고 최대 300초를 기다린 뒤 정책으로 넘어간다(`crates/base/src/config.rs:1034-1036`). 필드는 `pub ask_policy: AskPolicy`이고(`:1037`), 기본값은 `AskPolicy::Recommended`다(`:1119`). 타입은 `crates/tool-types`에서 정의하고 `crates/base/src/config.rs:17`에서 다시 내보낸다.
+설정 필드의 주석도 같은 구분을 적고 있다. `recommended`는 모델의 추천을 고르고 그 사실을 알린다. `error`는 호출을 거부한다. 주석은 클라이언트가 붙은 경우도 함께 적는다. `supports_ask_requests`를 광고한 클라이언트에게 먼저 묻고 최대 300초를 기다린 뒤 정책으로 넘어간다(`crates/base/src/config.rs:908-910`). 필드는 `pub ask_policy: AskPolicy`이고(`:911`), 기본값은 `AskPolicy::Recommended`다(`:1018`). 타입은 `crates/tool-types`에서 정의하고 `crates/base/src/config.rs:19`에서 다시 내보낸다.
 
 #### 요청의 한도
 
@@ -383,7 +383,7 @@ pub enum AskPolicy {
 
 #### 언제 쓸 수 있는가
 
-`ask`는 코어 18도구 가운데 하나다(`crates/base/src/config.rs:779-796`). 그래서 기본 headless `serve`와 `run`에서도 늘 닿는다. 기본 `core` 세션은 `ask`의 스키마를 요청에 싣지 않고 시스템 프롬프트 색인에 이름만 올리며, 모델은 `toolbox`로 부른다. 권한이 필요한 동작을 물을 때 쓰는 `request_permission`과는 다르다. `request_permission`은 ambient 세션 전용이고 클라이언트가 없는 무인 실행에서만 허용 목록에 합쳐지지만, `ask`는 도구 표면에 상시 닿는다. 그래서 무인 실행에서 `ask`가 하는 일은 승인을 받아내는 것이 아니라, 답이 없는 상태에서도 턴을 멈추지 않고 다음 판단으로 넘어가는 것이다.
+`ask`는 코어 18도구 가운데 하나다(`crates/base/src/config.rs:652-671`). 그래서 기본 headless `serve`와 `run`에서도 늘 닿는다. 기본 `core` 세션은 `ask`의 스키마를 요청에 싣지 않고 시스템 프롬프트 색인에 이름만 올리며, 모델은 `toolbox`로 부른다. 권한이 필요한 동작을 물을 때 쓰는 `request_permission`과는 다르다. `request_permission`은 ambient 세션 전용이고 클라이언트가 없는 무인 실행에서만 허용 목록에 합쳐지지만, `ask`는 도구 표면에 상시 닿는다. 그래서 무인 실행에서 `ask`가 하는 일은 승인을 받아내는 것이 아니라, 답이 없는 상태에서도 턴을 멈추지 않고 다음 판단으로 넘어가는 것이다.
 
 ---
 
@@ -467,7 +467,7 @@ pub enum Urgency {
 
 #### 4단계: 설정
 - [x] `[safety]` 설정 구역(`crates/base/src/config/default_file.rs:817`)
-- [x] `[ambient]` 승인 정책(`crates/config-types/src/lib.rs:1580-1595`)
+- [x] `[ambient]` 승인 정책(`crates/config-types/src/lib.rs:1381-1418`)
 - [ ] 사용자 지정 분류 규칙(동작 승격·강등)
 - [ ] 프로젝트별 재정의
 
@@ -575,10 +575,9 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
 - **클라이언트가 붙은 세션은 서버가 스스로 바꾸지 않습니다.** 서버는 `cross_provider_failover` 값을
   전환을 허용할지 정하는 모드 게이트로만 읽고(`crates/app-core/src/server/provider_control.rs`),
   클라이언트가 붙어 있으면 원래 프로바이더 오류를 그대로 턴에 돌려줍니다. 3초 카운트다운을 띄우고
-  취소를 받는 일은 클라이언트 몫인데, 이 headless 빌드에는 그 화면을 그리는 클라이언트가 없습니다
-  (TUI는 headless 전환 때 빠졌습니다). 붙은 클라이언트가 다른 모델을 쓰려면 `set_model`로
-  모델을 고르고, 별도의 라우트 전환 요청은 이 빌드에 없습니다. 서버가 스스로
-  전환하는 것은 무인 실행에서만입니다.
+  취소를 받는 일은 클라이언트 몫인데, 배포되는 `horon-tui`는 아직 그 화면을 그리지 않습니다. 붙은
+  클라이언트가 다른 모델을 쓰려면 `set_model`로 모델을 고르고, 별도의 라우트 전환 요청은 이 빌드에
+  없습니다. 서버가 스스로 전환하는 것은 무인 실행에서만입니다.
 - **`FailoverSwitched`는 ack 전까지 남습니다.** `failover-events.json`에 최대 100개를 두고, 재시작이나
   재연결 때 다시 방출합니다. 재방출은 같은 키로 중복될 수 있으니 소비자는 `(session_id, chain_id, from, to, attempt)`로
   무시해야 합니다. 100개를 넘으면 가장 오래된 항목부터 버리므로 그 알림은 다시 나가지 않습니다.

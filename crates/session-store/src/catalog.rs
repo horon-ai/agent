@@ -201,7 +201,8 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
     let mut snapshot = snapshot.unwrap_or_default();
     let cache = SessionCache::new(paths.clone(), probe.clone());
     let ids = sessions(paths)?;
-    snapshot.retain(|id, _| ids.contains(id));
+    let live: std::collections::HashSet<SessionId> = ids.iter().cloned().collect();
+    snapshot.retain(|id, _| live.contains(id));
     for id in ids {
         let source = Stamp::read(&paths.events_log(&id)?)?;
         let valid = snapshot.get(&id).is_some_and(|s| s.source == source);
@@ -222,7 +223,12 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
         .read(&paths.root().join(".catalog.index.jsonl"))
         .and_then(|b| rows(&b))
     {
-        snapshot.extend(current);
+        // Only rows whose original still exists may rejoin the snapshot. The
+        // index is derived and may still carry a row for a session that was
+        // removed since it was written; merging those back would list a
+        // deleted session in every later listing, because nothing rewrites the
+        // index until some other session changes.
+        snapshot.extend(current.into_iter().filter(|(id, _)| live.contains(id)));
     }
     if crate::cache_io::dirty_present(paths, None)? {
         return Err(StoreError::busy("catalog changed during listing; retry"));

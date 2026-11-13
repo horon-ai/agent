@@ -37,8 +37,9 @@ Main sources in the code:
 - `crates/base/src/runtime_memory_log.rs`
 - `crates/app-core/src/server/debug_server_state.rs`
 
-Terminal UI surfaces such as `:debug memory` and `:debug markdown:memory` do not exist in this build. The TUI and its caches went away in
-the headless transition, and the caps that hung off those caches were lowered in this document for the same reason.
+Terminal UI surfaces such as `:debug memory` and `:debug markdown:memory` do not exist in this build. The terminal client
+`horon-tui` draws plain styled text and keeps no markdown or diagram cache, so the caps that hung off those caches have no
+counterpart here and were lowered in this document for the same reason.
 
 ### Budget model
 
@@ -77,9 +78,9 @@ Review steps required on a violation:
 
 #### Markdown cache budget
 
-Before the headless transition, the TUI's markdown and diagram renderer put explicit caps on its highlight, render, source, and image state
-caches. Those files and caches are not in the current tree, so there is no cap to keep. When a corresponding cache comes back, restore the cap
-and its reasoning in this section.
+An earlier TUI rendered markdown and diagrams and put explicit caps on its highlight, render, source, and image state caches. The shipped
+`horon-tui` draws plain styled text and holds none of those caches, so there is no cap to keep here. When a corresponding cache comes back,
+restore the cap and its reasoning in this section.
 
 ### Ratchet expectations
 

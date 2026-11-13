@@ -42,9 +42,12 @@ pub fn emergency_truncate_tool_results(messages: &mut [Message], max_bytes: usiz
 
     for msg in messages.iter_mut() {
         for block in msg.content.iter_mut() {
+            // Read the verdict before the mutable borrow: one rule for "did this
+            // call fail", so the marker prefix and every other reader agree.
+            let failed = block.tool_result_failed();
             match block {
-                ContentBlock::ToolResult { content, is_error, .. } if content.len() > max_bytes => {
-                    *content = emergency_truncated_tool_result(content, max_bytes, *is_error);
+                ContentBlock::ToolResult { content, .. } if content.len() > max_bytes => {
+                    *content = emergency_truncated_tool_result(content, max_bytes, failed);
                     truncated += 1;
                 }
                 _ => {}
@@ -64,9 +67,10 @@ pub fn emergency_truncate_large_payloads(
 
     for msg in messages.iter_mut() {
         for block in msg.content.iter_mut() {
+            let failed = block.tool_result_failed();
             match block {
-                ContentBlock::ToolResult { content, is_error, .. } if content.len() > max_tool_result_bytes => {
-                    *content = emergency_truncated_tool_result(content, max_tool_result_bytes, *is_error);
+                ContentBlock::ToolResult { content, .. } if content.len() > max_tool_result_bytes => {
+                    *content = emergency_truncated_tool_result(content, max_tool_result_bytes, failed);
                     truncated += 1;
                 }
                 ContentBlock::Image { media_type, data } if data.len() > max_image_chars => {
@@ -107,16 +111,12 @@ pub fn emergency_truncate_large_payloads(
 /// losing the phrase would hide the truncation. `is_error` prefixes the
 /// `"[tool error] "` marker so a failed tool cannot read as a success after its
 /// payload was cut.
-pub fn emergency_truncated_tool_result(content: &str, max_bytes: usize, is_error: Option<bool>) -> String {
+pub fn emergency_truncated_tool_result(content: &str, max_bytes: usize, failed: bool) -> String {
     if content.len() <= max_bytes {
         return content.to_string();
     }
 
-    let prefix = if is_error == Some(true) {
-        EMERGENCY_TOOL_ERROR_PREFIX
-    } else {
-        ""
-    };
+    let prefix = if failed { EMERGENCY_TOOL_ERROR_PREFIX } else { "" };
     let fixed_overhead = prefix.len()
         + EMERGENCY_TRUNCATION_MARKER_HEAD.len()
         + EMERGENCY_TRUNCATION_MARKER_TAIL.len()

@@ -3,9 +3,9 @@
 use crate::*;
 
 #[test]
-fn api_version_minor_is_nineteen() {
+fn api_version_minor_is_twenty() {
     assert_eq!(API_VERSION_MAJOR, 1);
-    assert_eq!(API_VERSION_MINOR, 19);
+    assert_eq!(API_VERSION_MINOR, 20);
 }
 
 #[test]
@@ -1011,7 +1011,7 @@ fn read_frame_cap_is_exact_and_reported_to_the_structural_gate() {
 }
 
 /// The TypeScript SDK mirrors these enums by hand, so a variant added here
-/// without a matching entry in `sdk/typescript/src/protocol.ts` silently
+/// without a matching entry in `packages/sdk/typescript/src/protocol.ts` silently
 /// leaves every JS client unable to name the new frame. Checking from the
 /// Rust side means the guard runs in the normal `cargo test` suite, where
 /// the change is actually being made, rather than only in the SDK's own
@@ -1026,7 +1026,7 @@ fn typescript_sdk_lists_every_variant() {
         for variant in enum_variants(file, enum_name) {
             assert!(
                 sdk.contains(&format!("\"{variant}\"")),
-                "{enum_name}::{variant} is missing from sdk/typescript/src/protocol.ts; \
+                "{enum_name}::{variant} is missing from packages/sdk/typescript/src/protocol.ts; \
                  add it to the union and to KNOWN_*_KINDS"
             );
         }
@@ -1034,7 +1034,7 @@ fn typescript_sdk_lists_every_variant() {
 }
 
 fn sdk_protocol_source() -> Option<String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/typescript/src/protocol.ts");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/sdk/typescript/src/protocol.ts");
     std::fs::read_to_string(path).ok()
 }
 
@@ -1053,14 +1053,14 @@ fn typescript_sdk_lists_every_field() {
             let Some(block) = sdk_variant_block(&sdk, tag, &variant) else {
                 panic!(
                     "{enum_name}::{variant} has no `{tag}: \"{variant}\"` member in \
-                     sdk/typescript/src/protocol.ts"
+                     packages/sdk/typescript/src/protocol.ts"
                 );
             };
             for field in fields {
                 assert!(
                     block.contains(&format!("{field}:")) || block.contains(&format!("{field}?:")),
                     "{enum_name}::{variant}.{field} is missing from its TypeScript member \
-                     in sdk/typescript/src/protocol.ts:\n{block}"
+                     in packages/sdk/typescript/src/protocol.ts:\n{block}"
                 );
             }
         }

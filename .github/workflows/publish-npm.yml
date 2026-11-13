@@ -54,7 +54,7 @@ on:
         default: true
   pull_request:
     paths:
-      - 'npm/**'
+      - 'packages/npm/**'
       - 'scripts/npm/**'
       - '.github/workflows/publish-npm.yml'
 
@@ -263,6 +263,8 @@ jobs:
             for stem in horon-agent horon-tui; do
               dir="$(mktemp -d)"
               artifact="$stem-$suffix"
+              # Every published archive carries the licence beside its binaries.
+              cp LICENSE "$dir/LICENSE"
               case "$suffix" in
                 linux-x86_64)
                   printf '#!/bin/sh\necho "%s %s (fixture)"\n' "$stem" "$VERSION" >"$dir/$artifact.bin"
@@ -271,16 +273,16 @@ jobs:
                   printf '%s\n' '#!/bin/sh' \
                     "exec \"\$(dirname \"\$0\")/$artifact.bin\" \"\$@\"" >"$dir/$artifact"
                   chmod +x "$dir/$artifact" "$dir/$artifact.bin"
-                  tar -czf "assets/$artifact.tar.gz" -C "$dir" "$artifact" "$artifact.bin"
+                  tar -czf "assets/$artifact.tar.gz" -C "$dir" "$artifact" "$artifact.bin" LICENSE
                   ;;
                 windows-*)
                   printf 'fixture %s %s\r\n' "$stem" "$VERSION" >"$dir/$artifact.exe"
-                  tar -czf "assets/$artifact.tar.gz" -C "$dir" "$artifact.exe"
+                  tar -czf "assets/$artifact.tar.gz" -C "$dir" "$artifact.exe" LICENSE
                   ;;
                 *)
                   printf '#!/bin/sh\necho "%s %s (fixture)"\n' "$stem" "$VERSION" >"$dir/$artifact"
                   chmod +x "$dir/$artifact"
-                  tar -czf "assets/$artifact.tar.gz" -C "$dir" "$artifact"
+                  tar -czf "assets/$artifact.tar.gz" -C "$dir" "$artifact" LICENSE
                   ;;
               esac
               rm -rf "$dir"

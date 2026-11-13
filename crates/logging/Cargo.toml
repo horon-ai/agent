@@ -15,3 +15,10 @@ tokio = { version = "1", features = ["rt"] }
 horon-agent-core = { path = "../core" }
 horon-agent-platform-api = { path = "../platform-api" }
 horon-agent-storage = { path = "../storage" }
+
+[dev-dependencies]
+# The lib tests spawn tasks on a multi-thread runtime, so `#[tokio::test]` and
+# `tokio::spawn` need the macros and the runtime builder. Without these the lib
+# test target did not compile at all; nothing built it until #226 put every
+# compiled lib target under a cohort.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

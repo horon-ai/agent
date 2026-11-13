@@ -3,6 +3,21 @@
 언어: [English](CRATES.md) | **한국어**
 
 > 이 문서는 "TUI"를 언급한다. `horon-agent` 패키지에는 터미널 UI가 없고 의존성 그래프에도 TUI 크레이트가 없다. 대화형 터미널 클라이언트는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이자 실행 파일이다. 경계 판단 기준을 설명하려고 이름을 남겼다.
+
+## 엔진 하나, 실행 파일 둘
+
+워크스페이스는 엔진 하나에서 실행 파일 둘을 만든다. 이 분리는 빌드 옵션이 아니라 규칙이다. 헤드리스 실행 파일은 터미널 라이브러리를 절대 링크하지 않고, 클라이언트는 자기 엔진을 갖지 않는다.
+
+| 크레이트 | 패키지 | 실행 파일 | 맡는 것 |
+| --- | --- | --- | --- |
+| 루트(`src/`) | `horon-agent` | `horon-agent` | 에이전트 루프, 데몬, 하네스 API 브리지, ACP 어댑터. 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`가 없다. |
+| `crates/agent-sdk` | `horon-agent-sdk` | — | 클라이언트 계약. 요청·이벤트 타입, 소켓 전송, 재연결. 그리는 일은 없다. |
+| `crates/harness-api` | `horon-agent-harness-api` | — | 스키마 스냅숏을 포함한 하네스 API v1 요청·이벤트 표면. |
+| `crates/harness-api-server` | `horon-agent-harness-api-server` | — | 데몬과 하네스 API 사이의 브리지와 변환 계층. |
+| `crates/tui` | `horon-tui` | `horon-tui` | 터미널 클라이언트. 대화 기록, 입력, 승인 프롬프트, 설정 화면, 테마, 키 바인딩. 엔진이 아니라 `horon-agent-sdk`에 의존한다. |
+
+`scripts/ci/check_headless_graph.py`는 `horon-agent`에서 닿는 모든 패키지를 따라가며 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 접두사가 나오면 실패한다. 경계를 리뷰가 아니라 게이트로 지킨다는 뜻이다. 클라이언트는 별도 카고 호출로 빌드해서 기능 집합이 헤드리스 패키지로 합쳐지지 않게 하고, `horon-agent`는 터미널에서 자기 프로세스를 바꿔 클라이언트를 띄운다(`src/cli/tui_handoff.rs`). 그 인계와 클라이언트의 사용자 파일은 [runtime/TUI.ko.md](../runtime/TUI.ko.md)에 있다.
+
 이 문서는 공유 크레이트를 아무거나 쌓아 두는 곳으로 만들지 않으면서 `horon-agent`의 모듈성을 유지하기 위한 목표 구조를 정의한다. 실용적인 판단 기준을 담았다. 타입, 헬퍼, 동작을 루트 크레이트 밖으로 옮길지 정할 때 이 문서를 쓴다.
 
 ## 목표
@@ -246,6 +261,31 @@ python3 scripts/ci/check_growth_ratchets.py --list
 레거시 표시자 래칫은 외부 계약을 구현하는 하위 트리를 파일에 사유와 함께 제외한다. `crates/harness-api-server`(하네스 API v1 브리지와 변환 계층), `crates/harness-api`(공개된 v1 표면과 스키마 스냅숏), `crates/session-store`(v0.1.x가 쓴 세션을 읽는 저장소 이관·재생 리더)다. 존재하지 않는 경로를 제외하면 실패하므로 낡은 항목이 구멍을 넓히지 못한다. 나머지는 내부 잔여물이며 줄어들 수는 있어도 늘어날 수는 없다.
 
 증가하면 실패하고, 감소하면 `--update` 실행을 권하는 줄만 출력한다. 관계없는 변경에서 정리한 사람이 이 파일을 고칠 필요가 없고, 게이트가 스스로 느슨해지지도 않는다. 뭔가 다시 늘어나면 옛 상한에서 곧바로 실패한다. 새 의존성은 패키지 상한을 정당하게 올리며, 그 재고정은 의존성을 추가하는 검토 커밋에 들어간다. `--update`는 `ceiling`만 다시 쓰고 설명이나 사유는 건드리지 않는다.
+
+## 시험 커버리지 게이트
+
+컴파일만 되고 실행되지 않는 시험은 컴파일된다는 사실만 증명한다. 두 게이트가 그 구멍을 막고, 둘 다 코드가 아니라 데이터 파일이라 담긴 판단을 검토할 수 있다.
+
+```sh
+python3 scripts/ci/check_test_targets.py
+python3 scripts/ci/check_lib_test_coverage.py --artifacts "$TEST_ARTIFACTS"
+python3 -m unittest -v scripts/ci/test_check_test_targets.py scripts/ci/test_check_lib_test_coverage.py
+```
+
+| 게이트 | 입력 | 실패 조건 |
+| --- | --- | --- |
+| 통합 타깃 | `.github/workflows/ci.yml`, `scripts/ci/integration_targets.json`, `scripts/ci/test_target_allowlist.json`, `cargo metadata` | 타깃이 있는데 `--test <이름>`도 매니페스트 행도 실행하지 않고 허용 목록 사유도 없음. 매니페스트 행이나 허용 목록 항목이 더 이상 없는 타깃을 가리킴. 행의 `min_passed`가 양수가 아님. 행이 컴파일 단계가 빌드하지 않는 패키지를 가리킴. 워크플로가 행을 나열하면서 `run_integration_targets.py`를 실행하지 않음. 허용 목록 사유가 비었거나 아직 `TODO`임 |
+| 라이브러리 시험 코호트 커버리지 | 컴파일 단계의 `--message-format=json` 산출물, `ci.yml`, `scripts/ci/lib_test_coverage.baseline.json` | libtest가 나열할 수 있는 시험 모듈을 어떤 코호트 필터도 고르지 않음. 패키지가 `--lib`으로 컴파일되는데 어떤 코호트도 이름으로 부르지 않음 |
+
+`scripts/ci/integration_targets.json`은 CI가 시작하는 통합 타깃의 유일한 목록이다. `scripts/ci/run_integration_targets.py`가 이 파일을 읽어 타깃마다 `run_lib_tests.py`를 한 번씩 호출하고, 컴파일 단계가 이미 빌드한 실행 파일을 쓰므로 실패하면 어느 타깃인지 드러나고 다시 컴파일하지 않는다. `min_passed`는 첫 초록 실행에서 측정한 개수다. libtest는 아무것도 고르지 않고도 종료 코드 0을 내므로, 필터가 조용히 아무것도 맞히지 않게 되면 그대로 건강해 보인다.
+
+행은 `skipped`로 뺄 시험 이름을 적을 수 있고, `run_integration_targets.py`가 각 이름을 `--skip`으로 실행 파일에 넘기며 `min_passed`는 남은 개수가 된다. 결과가 변경 내용이 아니라 러너 부하를 따르는 시험을 위한 것이고, 그런 행에는 실패 문구·러너·로컬 결과를 적은 `skip_reason`이 있어야 한다. 근거 없이 제외가 들어올 수 없게 하려는 것이다. 사유 없이 시험을 빼는 행도, 시험 이름이 아닌 값이 든 `skipped` 목록도 게이트에서 실패한다.
+
+`#[cfg(target_os = ...)]` 뒤의 모듈은 한 잡의 빌드에만 존재하므로 그 코호트 스텝도 같은 조건을 단다. Linux 프로세스 소유권 코호트가 그 예이며, 플랫폼 조건만 있고 그에 맞는 코호트가 없는 모듈은 선택되지 않은 모듈과 똑같이 그 플랫폼에서 실패한다.
+
+커버리지 래칫은 시험 이름이 아니라 **모듈 경로**를 동결한다. 시험 이름은 자주 바뀌고 개수도 수천이라 파일이 금세 낡는다. 모듈 경로는 시험 하나의 이름이 바뀌어도 유지되고, 한 모듈의 시험이 통째로 실행되지 않게 되면 실패한다. 기준선은 스스로 줄기만 한다. 커버되는 모듈은 `covered now`를 출력하고 수정이 필요 없으며, 새로 커버되지 않는 모듈은 실패한다. 모듈을 커버했거나 의도적으로 추가한 뒤에는 `--update`로 다시 고정한다.
+
+통합 허용 목록에는 존재하지만 정확성 검사 행렬에서 돌 수 없는 타깃이 들어간다. 호스트를 측정하는 `#[ignore]` 프로브, 벽시계 시간을 재는 `performance` 타깃(측정은 벤치마크 워크플로에서만 한다는 운영 방침), 알려진 이유로 그 자체가 빨간 타깃이다. 각 행이 사유를 파일에 담으므로 제외는 빠뜨림이 아니라 검토한 판단이 된다.
 
 ## 테스트 정책
 

@@ -117,7 +117,7 @@ Each turn creates one `InFlightGuard` (`crates/app-core/src/agent/interrupts.rs:
 
 ### Injection points
 
-There are three injection points. The event carries the point's name as is (`crates/protocol/src/wire/events.rs:266-284`).
+There are three injection points. The event carries the point's name as is (`crates/protocol/src/wire/events.rs:287-305`).
 
 | Point | Location | Timing | Purpose |
 |-------|----------|--------|----------|
@@ -125,7 +125,7 @@ There are three injection points. The event carries the point's name as is (`cra
 | **C** | Mid tool round | Urgent stop | Results are filled for skipped calls first, then injection happens |
 | **D** | After all tools execute | Before the next provider call | Default: every pending interrupt is flushed here |
 
-The point decisions are in `crates/app-core/src/agent/interrupts.rs:695` (B) and `:706` (D); C opens only when an urgent interrupt is pending. The streaming path uses the same points at `crates/app-core/src/agent/turn_streaming_mpsc.rs:1504` (B), `:1636` (D), and `:2231` (C).
+The point decisions are in `crates/app-core/src/agent/interrupts.rs:883` (B) and `:894` (D); C opens only when an urgent interrupt is pending. The streaming path uses the same points at `crates/app-core/src/agent/turn_streaming_mpsc.rs:1474` (B), `:1612` (D), and `:2316` (C).
 
 #### Delivery modes (`[messages]`)
 
@@ -187,9 +187,9 @@ CancelSoftInterrupts {
 
 The server emits three events.
 
-- `soft_interrupt_injected`: the injected content, display role, point, skipped tool count, and merged caller ids (`crates/protocol/src/wire/events.rs:266-284`).
-- `soft_interrupts_cancelled`: reports cancelled ids and ids that were not in the queue separately (`:288-294`).
-- `soft_interrupt_queue`: how many messages remain in the queue when the turn ends. It arrives immediately before the turn's termination event (`:309-312`).
+- `soft_interrupt_injected`: the injected content, display role, point, skipped tool count, and merged caller ids (`crates/protocol/src/wire/events.rs:287-305`).
+- `soft_interrupts_cancelled`: reports cancelled ids and ids that were not in the queue separately (`:308-316`).
+- `soft_interrupt_queue`: how many messages remain in the queue when the turn ends. It arrives immediately before the turn's termination event (`:332-334`).
 
 ### Persistence and restore
 
@@ -211,9 +211,9 @@ With `[features] stream_rules` on, a rule violation detected mid-stream injects 
 
 ### User experience
 
-This build has no TUI. The feedback a client can use is three protocol events.
+The daemon opens no screen of its own; the feedback a client can use is three protocol events.
 
-In the default mode (`urgent = false`), a client that sends `soft_interrupt` makes the daemon queue the message. On injection, `soft_interrupt_injected` arrives with the point name (`crates/protocol/src/wire/events.rs:266-284`). When the turn ends with messages still queued, `soft_interrupt_queue` reports how many remain, and that event comes immediately before the termination event (`crates/app-core/src/server/client_lifecycle.rs:3554-3561`). With zero remaining, no event is sent.
+In the default mode (`urgent = false`), a client that sends `soft_interrupt` makes the daemon queue the message. On injection, `soft_interrupt_injected` arrives with the point name (`crates/protocol/src/wire/events.rs:287-305`). When the turn ends with messages still queued, `soft_interrupt_queue` reports how many remain, and that event comes immediately before the termination event (`crates/app-core/src/server/live_turn.rs:199-201`). With zero remaining, no event is sent.
 
 Messages are grouped by origin and joined with `\n\n`. Consecutive messages from the same origin enter in one injection, and a change of origin breaks the group at that point (`crates/app-core/src/agent/interrupts.rs:596-640`).
 
@@ -374,6 +374,80 @@ Tests: `crates/app-core/src/agent/context_rollover_tests.rs` covers the rebuilt
 request, the stored transcript, and one rollover per request;
 `crates/app-core/src/tool/new_context_tests.rs` covers the plan-mode refusal, the
 registration gate, and one pending request per turn.
+
+## Prewalk handoff
+
+`[prewalk]` spends one model switch per session on the move from planning to execution. The session runs on the planning model while it plans, then continues on an execution model once the plan exists. The section is off by default because the handoff trades plan-following quality for cost.
+
+```toml
+[prewalk]
+enabled = true
+into = "exec-model"
+from = "plan-model"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | Whether a session hands off at all. `false` by default. |
+| `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
+
+The switch point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The check runs at turn start, so an approval that arrived between turns is also caught.
+
+The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it. The decision is one replay event, `prewalk`, in the stored session, and that event is what makes the handoff one-shot across processes: a session that already carries one never decides again. A refused `into` is recorded the same way — an unknown model, a `role:` name outside `default`, `plan` and `aux`, or a role that resolves to nothing — so the session keeps its current model, one warning is logged, and later rounds do not repeat it. An `into` that resolves to the model the session already runs records the decision without switching.
+
+`crates/config-types/src/prewalk.rs` holds the table and its validation, `crates/app-core/src/agent/prewalk.rs` holds the decision, and the acceptance cases live in `crates/app-core/src/agent/prewalk_tests.rs`. [provider/MODEL.md](../provider/MODEL.md) covers how `role:<name>` resolves through the active profile.
+
+## A goal's token budget
+
+A goal keeps the run going: at the end of a turn the continuation hook reads the
+attached goal, and while its status is `active` it stores one synthetic message
+and asks for another turn, up to `GOAL_CONTINUATION_CAP`. A goal can also carry
+`budget_tokens`, an optional ceiling on what the whole session may spend before
+that stops.
+
+The decision lives in `horon_agent_agent_runtime::goal_continuation` and is pure:
+it reads the goal status, the pending input, the continuations already spent, the
+tokens spent so far, and the budget. First match wins, and the budget is checked
+before the cap, because a goal that ran out of money should stop with
+`reason=budget` rather than `reason=cap`.
+
+Spent tokens are the same aggregate the daemon already reports:
+`TokenUsageTotals` summed over the transcript, with cache reads and cache writes
+added rather than discounted. A provider bills cached input at a lower rate, but
+a budget that ignored it would let a cache-heavy goal run far past its ceiling.
+
+The sum covers the whole transcript, not the part since the goal was attached.
+A goal attached to a session that already spent more than its budget therefore
+wraps up at the next turn end. That is the honest reading of a ceiling on the
+session: a budget that restarted at attach would let the same session spend the
+ceiling twice, once before and once after the goal existed.
+
+Reaching the budget does not stop the run dead. It buys one more turn with a
+different message (`GOAL_BUDGET_WRAP_UP_MESSAGE`), which tells the model to stop
+starting work and record what it has, and at the same moment the goal moves to
+`budget_limited`. The order matters: the status is written before the turn is
+requested, so a crash between the two leaves a goal that stops, never one that
+keeps spending. The next turn end then sees a status that is not `active` and
+stops without a further turn.
+
+`budget_limited` is its own status rather than `paused` because nothing resumes
+it automatically. Resuming is an operator decision, taken through the `goal`
+tool, which is also where a budget is set: `create` and `update` accept
+`budget_tokens`, and a zero is refused rather than read as unlimited. `None` is
+already the way to say unbounded, and a zero that reached the decision would wrap
+the goal up at its first turn end, which looks like a defect instead of a policy.
+
+Getting the goal back is an operator decision with two moves: raise
+`budget_tokens` and set the status to `active`. `resume` alone will not pick it up,
+because a spent goal that resumed itself would spend again.
+
+Tests: `crates/agent-runtime/src/goal_continuation.rs` covers the decision table,
+including that the budget beats the cap and that user input beats both;
+`crates/app-core/src/agent/goal_continuation_tests.rs` covers the stored wrap-up
+message, the status transition, the stop on the following turn, a goal with no
+budget never wrapping up, the refusal of a zero budget, and the round trip and
+the older-file load.
 
 ## Handoff compaction
 
@@ -544,15 +618,17 @@ this headless build; pass an explicit session id to --resume" (`src/cli/dispatch
 ### Displaying a resumed session
 
 This build resumes a session inside the daemon or the `run` process and opens no terminal
-window. Which window or pane shows it is the client's business. The old TUI's session
-picker and the launcher that opened runs in a new terminal or multiplexer pane are not in
-this tree. So `session_picker_enter` or `[terminal]` keys left in an old config file are
-not read, and there is no window-selecting flag such as the old `--fresh-spawn`.
+window. Which window or pane shows it is the client's business. The shipped terminal client
+attaches with `--session <id>`, and the bare `horon` handoff passes `--resume` through as that
+flag. The old TUI's session picker and the launcher that opened runs in a new terminal or
+multiplexer pane are not in this tree. So `session_picker_enter` or `[terminal]` keys left in
+an old config file are not read, and there is no window-selecting flag such as the old
+`--fresh-spawn`.
 `crates/terminal-launch` keeps only the client terminal environment snapshot and hook
 command parsing.
 
 ### Saved sessions
 
-`/save` and `/unsave` are client slash commands, and this build has no such client. The
+`/save` and `/unsave` are slash commands of a client, and the shipped client does not have them. The
 save label attached to a session survives as the `save_label` field in harness API
 responses (`crates/harness-api-server/src/translate.rs:255`, `:883`).

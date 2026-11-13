@@ -65,7 +65,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 
-`statusline.path_max` is the longest directory the `path` segment shows before it is shortened from the left; `0` keeps it whole. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment. `editor.submit_on_enter` and `transcript.show_reasoning` resolve and are editable like any other key, but the key handling and the transcript drawing do not read them yet.
+`statusline.path_max` is the longest directory the `path` segment shows before it is shortened from the left; `0` keeps it whole. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment. `editor.submit_on_enter = false` disconnects the send key, so pressing it leaves the draft in place instead of sending; the editor is single-line, so the key inserts nothing rather than a newline. `transcript.show_reasoning = true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being buffered for a setting that may never be turned on.
 
 The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working directory cannot be read. The file is read again a second after it changes in size or modification time, so a hand edit applies without a restart.
 
@@ -265,4 +265,4 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - Windows has no PTY smoke test. The `tui` benchmark records the render and size metrics there and marks the PTY metrics with `pty unavailable on Windows` instead of failing the run.
 - FreeBSD ships `horon-agent` only, so the client is not installed there and bare `horon` reports the missing sibling.
 - On Linux and macOS the handoff is one process replacing another, so a client that exits takes the terminal command with it and the exit code is the client's. On Windows the launcher starts the client and exits with code 0 at once, so its exit code says nothing about the client.
-- `editor.submit_on_enter` and `transcript.show_reasoning` are declared and editable, and the client does not read them yet.
+- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript. Both apply from the next keystroke and the next reasoning delta once changed in the settings screen.

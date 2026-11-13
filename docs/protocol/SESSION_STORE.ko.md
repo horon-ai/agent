@@ -415,6 +415,22 @@ HOME의 레거시 배치로 다시 쓴다. `recover-to`는 검증된 접두부�
 않는다. `archive` / `restore`는 `ArchiveChanged` 레코드를 덧붙인다. 보존 정책은 세션을 숨기고
 삭제하지 않는다. 하위 명령 묶음은 `session`이고 `sessions`가 별칭이다.
 
+`session delete`는 파괴적인 동작이고 아카이브와 다르다. 대화 기록 디렉터리, 레거시 JSON과 저널,
+아티팩트, 그리고 세션 아이디로 이름 붙은 모든 파일을 지운다. 할 일 파일 5종, `goals/sessions/`
+아래 목표 첨부, `pending-soft-interrupts/`, `session_leases/`, PID 표시 3종, `context-notes/`,
+`durable-runtime/`, `failover-budget/`, 편집 통계 파일 2종, 카탈로그 dirty 표시가 그 대상이다.
+실행 중인 데몬은 자기 리로드 컨텍스트와 리로드 복구 레코드도 함께 지운다. 프로세스 전역 상태는
+세션의 것이 아니므로 남는다. `managed-skills`, `models`, `bin`, `logs`, `cache`, `memory`,
+승인 상태, `generated-images`, `safety`, `devices.json`, `servers.json`, `config.toml`, 사용량
+데이터베이스가 여기 해당한다.
+
+삭제는 멱등이라 같은 아이디를 두 번째 지워도 아무것도 지우지 않고 성공한다. 저장소가 경로 성분으로
+받지 않는 아이디는 거절한다. 데몬을 거칠 때는 그 세션을 위해 턴이 돌고 있거나, 다른 프로세스가
+스트리밍 중이거나, 클라이언트가 아직 붙어 있는 세션도 거절한다. 살아 있는 라이터 밑에서 지우면 그
+라이터와 경쟁하기 때문이다. 데몬이 턴 사이에 들고 있는 유휴 세션은 열린 세션이 아니며, 클라이언트가
+떠난 뒤 재연결 유예로 남은 세션도 마찬가지다. 둘 다 먼저 닫은 뒤 지운다.
+`session delete --yes`는 데몬이 떠 있으면 데몬을 거치고, 아니면 저장소를 직접 고친다.
+
 ### 한계
 
 | 한계 | 값 | 소유 |

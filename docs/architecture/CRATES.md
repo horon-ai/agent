@@ -3,6 +3,21 @@
 Language: **English** | [한국어](CRATES.ko.md)
 
 > This document mentions "TUI". The `horon-agent` package has no terminal UI and no TUI crate in its dependency graph. The interactive terminal client is the separate `horon-tui` package and binary on `horon-agent-sdk`. The name is here to explain the boundary criteria.
+
+## One engine, two binaries
+
+The workspace builds two executables from one engine. The split is the rule, not a build option: the headless binary must never link terminal libraries, and the client must never grow its own engine.
+
+| Crate | Package | Binary | Owns |
+| --- | --- | --- | --- |
+| root (`src/`) | `horon-agent` | `horon-agent` | The agent loop, the daemon, the harness API bridge and the ACP adapter. No `ratatui`, `crossterm` or `horon-tui` in its graph. |
+| `crates/agent-sdk` | `horon-agent-sdk` | — | The client contract: request and event types, the socket transport, reconnection. Nothing renders. |
+| `crates/harness-api` | `horon-agent-harness-api` | — | Harness API v1 request and event surface with its schema snapshots. |
+| `crates/harness-api-server` | `horon-agent-harness-api-server` | — | The bridge and translate layer between the daemon and the harness API. |
+| `crates/tui` | `horon-tui` | `horon-tui` | The terminal client: transcript, input, approval prompt, settings screen, themes and key bindings. It depends on `horon-agent-sdk` and nothing of the engine. |
+
+`scripts/ci/check_headless_graph.py` walks every package reachable from `horon-agent` and fails on `ratatui`, `crossterm`, `horon-tui` and the `horon-agent-tui*` prefix, so the boundary is enforced rather than reviewed. The client is built with its own cargo invocation so its feature set never unifies into the headless package, and `horon-agent` launches it by replacing its own process on a terminal (`src/cli/tui_handoff.rs`); [runtime/TUI.md](../runtime/TUI.md) documents that handoff and the client's user files.
+
 This document defines the target structure that keeps `horon-agent` modular without turning shared crates into a dumping ground. It carries the practical decision rules. Use it when deciding whether to move a type, helper, or behavior out of the root crate.
 
 ## Goals
@@ -255,6 +270,57 @@ A ratchet file is any `scripts/ci/*.json` file that ends in `.ratchet.json` or h
 The legacy-marker ratchet excludes the subtrees that implement an external contract, each with a reason in the file: `crates/harness-api-server` (harness API v1 bridge and translate layer), `crates/harness-api` (the published v1 surface and its schema snapshots) and `crates/session-store` (the stored-session migration and replay readers for sessions written by v0.1.x). An exclude whose path does not exist fails, so a stale entry cannot widen the hole. Everything else is internal leftover: it may shrink, and it may not grow.
 
 Growth fails; a drop only prints `Consider running ... --update`. A cleanup in an unrelated change must not have to edit this file, and the gate still cannot loosen itself: the old ceiling fails again the moment anything grows back. A new dependency legitimately raises the package ceiling, and that re-pin belongs in the reviewed commit that adds the dependency. `--update` rewrites only `ceiling`, never a description or a reason.
+
+## Test coverage gates
+
+A test that compiles and never runs proves only that it compiles. Two gates close
+that gap, and both are data files rather than code so the decision they encode is
+reviewable.
+
+```sh
+python3 scripts/ci/check_test_targets.py
+python3 scripts/ci/check_lib_test_coverage.py --artifacts "$TEST_ARTIFACTS"
+python3 -m unittest -v scripts/ci/test_check_test_targets.py scripts/ci/test_check_lib_test_coverage.py
+```
+
+| Gate | Input | Fails when |
+| --- | --- | --- |
+| Integration targets | `.github/workflows/ci.yml`, `scripts/ci/integration_targets.json`, `scripts/ci/test_target_allowlist.json`, `cargo metadata` | a target exists, no `--test <name>` or manifest row runs it, and no allowlist entry explains why; a manifest row or allowlist entry names a target that no longer exists; a row has no positive `min_passed`; a row names a package the compile step does not build; the workflow lists rows but never runs `run_integration_targets.py`; an allowlist reason is empty or still `TODO` |
+| Lib test cohort coverage | the compile step's `--message-format=json` artifacts, `ci.yml`, `scripts/ci/lib_test_coverage.baseline.json` | a test module that libtest can list is selected by no cohort filter; a package is compiled with `--lib` and named by no cohort at all |
+
+`scripts/ci/integration_targets.json` is the single list of integration targets
+CI starts; `scripts/ci/run_integration_targets.py` reads it and runs one
+`run_lib_tests.py` call per target against the executable the compile step
+already built, so a failure names the target and nothing recompiles. `min_passed`
+is the count measured on the first green run: libtest exits 0 after selecting
+nothing, so a filter that silently stops matching would otherwise look healthy.
+
+A row may name tests to leave out with `skipped`, and `run_integration_targets.py`
+passes each to the binary as `--skip`; `min_passed` is then the count that is
+left. This is for a test whose outcome follows runner load rather than the
+change under test, and the row must carry a `skip_reason` naming the failure,
+the runner and the local result, so an exclusion cannot arrive without its
+evidence. A row that skips something without a reason fails the guard, and so
+does a `skipped` list that is not made of test names.
+
+A module behind `#[cfg(target_os = ...)]` exists in one job's build only, so its
+cohort step carries the same condition; the Linux process-ownership cohort is the
+example, and a platform-gated module with no gated cohort fails on that platform
+exactly as an unselected module does.
+
+The coverage ratchet freezes uncovered **module paths**, not test names. Test
+names change often and there are thousands of them; a module path survives a
+rename of one test and still fails when a whole module of tests stops running.
+The baseline only shrinks by itself: a module that becomes covered prints
+`covered now` and needs no edit, while a new uncovered module fails. Rebaseline
+with `--update` after covering or intentionally adding a module.
+
+The integration allowlist holds the targets that exist but cannot run in the
+correctness matrix: `#[ignore]`d probes that measure the host, the wall-clock
+`performance` target (owner policy keeps measurements in the benchmark
+workflows), and targets that are red on their own for a known reason. Each row
+carries that reason in the file, so the exclusion is a reviewed decision rather
+than an absence.
 
 ## Test policy
 

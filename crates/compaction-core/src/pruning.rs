@@ -108,16 +108,12 @@ pub fn plan_prunes(
     for (index, message) in messages.iter().enumerate() {
         for block in &message.content {
             let ContentBlock::ToolResult {
-                tool_use_id,
-                content,
-                is_error,
-                ..
+                tool_use_id, content, ..
             } = block
             else {
                 continue;
             };
-            if matches!(is_error, Some(true)) || already.contains_key(tool_use_id) || !seen.insert(tool_use_id.clone())
-            {
+            if block.tool_result_failed() || already.contains_key(tool_use_id) || !seen.insert(tool_use_id.clone()) {
                 continue;
             }
             let Some((name, _)) = uses.get(tool_use_id.as_str()) else {
@@ -164,15 +160,12 @@ fn read_observations<'a>(
     for (index, message) in messages.iter().enumerate() {
         for block in &message.content {
             let ContentBlock::ToolResult {
-                tool_use_id,
-                content,
-                is_error,
-                ..
+                tool_use_id, content, ..
             } = block
             else {
                 continue;
             };
-            if matches!(is_error, Some(true)) {
+            if block.tool_result_failed() {
                 continue;
             }
             let Some((name, input)) = uses.get(tool_use_id.as_str()) else {

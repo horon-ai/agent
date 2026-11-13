@@ -52,19 +52,20 @@ make_assets() {
     for stem in horon-agent horon-tui; do
       rm -rf "$stage/$stem-$suffix"
       mkdir -p "$stage/$stem-$suffix"
+      printf 'MIT License\n' >"$stage/$stem-$suffix/LICENSE"
       case "$suffix" in
         linux-x86_64)
           fake_binary "$stage/$stem-$suffix/$stem-$suffix.bin" "$reported"
           fake_wrapper "$stage/$stem-$suffix/$stem-$suffix" "$stem-$suffix.bin"
-          tar -czf "$dir/$stem-$suffix.tar.gz" -C "$stage/$stem-$suffix" "$stem-$suffix" "$stem-$suffix.bin"
+          tar -czf "$dir/$stem-$suffix.tar.gz" -C "$stage/$stem-$suffix" "$stem-$suffix" "$stem-$suffix.bin" LICENSE
           ;;
         windows-*)
           fake_binary "$stage/$stem-$suffix/$stem-$suffix.exe" "$reported"
-          tar -czf "$dir/$stem-$suffix.tar.gz" -C "$stage/$stem-$suffix" "$stem-$suffix.exe"
+          tar -czf "$dir/$stem-$suffix.tar.gz" -C "$stage/$stem-$suffix" "$stem-$suffix.exe" LICENSE
           ;;
         *)
           fake_binary "$stage/$stem-$suffix/$stem-$suffix" "$reported"
-          tar -czf "$dir/$stem-$suffix.tar.gz" -C "$stage/$stem-$suffix" "$stem-$suffix"
+          tar -czf "$dir/$stem-$suffix.tar.gz" -C "$stage/$stem-$suffix" "$stem-$suffix" LICENSE
           ;;
       esac
     done
@@ -100,6 +101,7 @@ bash "$prepare" "$out" "$assets" "$version" >"$work/happy.log" 2>&1 ||
 for platform in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
   [ -f "$out/$platform/package.json" ] || fail "missing package.json for $platform"
   [ -f "$out/$platform/README.md" ] || fail "missing README.md for $platform"
+  [ -f "$out/$platform/LICENSE" ] || fail "missing LICENSE for $platform"
   [ -x "$out/$platform/bin/horon-agent" ] || [ -x "$out/$platform/bin/horon-agent.exe" ] ||
     fail "missing entry binary for $platform"
   [ -f "$out/$platform/bin/horon-tui" ] || [ -f "$out/$platform/bin/horon-tui.exe" ] ||
@@ -142,7 +144,7 @@ json_report "$out" '
     if (manifest.version !== version) throw new Error(`bad version in ${platform}: ${manifest.version}`);
     if (JSON.stringify(manifest.os) !== JSON.stringify([os])) throw new Error(`bad os in ${platform}: ${manifest.os}`);
     if (JSON.stringify(manifest.cpu) !== JSON.stringify([cpu])) throw new Error(`bad cpu in ${platform}: ${manifest.cpu}`);
-    if (JSON.stringify(manifest.files) !== JSON.stringify(["bin", "README.md"])) throw new Error(`bad files in ${platform}`);
+    if (JSON.stringify(manifest.files) !== JSON.stringify(["bin", "LICENSE", "README.md"])) throw new Error(`bad files in ${platform}`);
     for (const script of ["preinstall", "install", "postinstall"]) {
       if (manifest.scripts && manifest.scripts[script]) throw new Error(`${platform} declares ${script}`);
     }
@@ -173,18 +175,24 @@ json_report "$out/horon" '
 packed="$(cd "$out/linux-x64" && npm pack --dry-run --json 2>/dev/null)" ||
   fail "npm pack failed for linux-x64"
 node -e '
-  const packed = JSON.parse(process.argv[1]);
-  const files = packed[0].files.map((file) => file.path).sort();
-  const expected = ["README.md", "bin/horon-agent", "bin/horon-agent-linux-x86_64.bin", "bin/horon-tui", "bin/horon-tui-linux-x86_64.bin", "package.json"];
+  const parsed = JSON.parse(process.argv[1]);
+  // npm 10 prints an array of package reports; npm 11 and later print an
+  // object keyed by package name. Accept both so the assertion holds on either.
+  const packed = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
+  const files = packed.files.map((file) => file.path).sort();
+  const expected = ["LICENSE", "README.md", "bin/horon-agent", "bin/horon-agent-linux-x86_64.bin", "bin/horon-tui", "bin/horon-tui-linux-x86_64.bin", "package.json"];
   if (JSON.stringify(files) !== JSON.stringify(expected)) throw new Error(`linux-x64 pack is ${JSON.stringify(files)}`);
 ' "$packed" || fail "linux-x64 pack contents are wrong"
 
 packed="$(cd "$out/horon" && npm pack --dry-run --json 2>/dev/null)" ||
   fail "npm pack failed for the wrapper"
 node -e '
-  const packed = JSON.parse(process.argv[1]);
-  const files = packed[0].files.map((file) => file.path).sort();
-  const expected = ["README.md", "bin/horon.js", "package.json"];
+  const parsed = JSON.parse(process.argv[1]);
+  // npm 10 prints an array of package reports; npm 11 and later print an
+  // object keyed by package name. Accept both so the assertion holds on either.
+  const packed = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
+  const files = packed.files.map((file) => file.path).sort();
+  const expected = ["LICENSE", "README.md", "bin/horon.js", "package.json"];
   if (JSON.stringify(files) !== JSON.stringify(expected)) throw new Error(`wrapper pack is ${JSON.stringify(files)}`);
 ' "$packed" || fail "wrapper pack contents are wrong"
 

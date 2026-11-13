@@ -112,6 +112,9 @@ chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
 hex = "0.4"
 
+# Tool output arrives base64-encoded over the daemon socket
+base64 = "0.22"
+
 # Streaming
 tokio-stream = "0.1"
 

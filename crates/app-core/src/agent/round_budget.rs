@@ -93,31 +93,39 @@ impl RoundTokenBudget {
     /// flag on the call it made. Without it the round would withhold a payload
     /// and tell the caller to retry with a flag the same call already carried.
     ///
-    /// `is_error` bypasses the round's decision, as the executed path's error
-    /// arm does - a failure sentence is a verdict the model must read to act,
-    /// not content it chose to spend, so replacing it with a context refusal
-    /// would hide the failure. Unlike that arm it is still counted, so the
-    /// round's running total cannot drift below what it has actually applied.
-    /// The protocol ceiling still applies first, so an error result is bounded
-    /// even when it is long.
+    /// A failing verdict bypasses the round's decision, as the executed path's
+    /// error arm does - a failure sentence is a verdict the model must read to
+    /// act, not content it chose to spend, so replacing it with a context
+    /// refusal would hide the failure. Unlike that arm it is still counted, so
+    /// the round's running total cannot drift below what it has actually
+    /// applied. The protocol ceiling still applies first, so an error result is
+    /// bounded even when it is long.
+    ///
+    /// The verdict comes back with the text because the round can change it:
+    /// withholding or truncating a result the provider answered is exactly the
+    /// `withheld`/`truncated` verdict, and returning only the text left the
+    /// caller to state the provider's original verdict over the round's own
+    /// decision.
     pub(super) fn admit_sdk_result(
         &mut self,
         session_id: &str,
         tool_name: &str,
         call_input: &Value,
         content: String,
-        is_error: bool,
-    ) -> String {
-        let content = super::cap_sdk_tool_content_for_history(tool_name, session_id, content);
-        if is_error {
+        verdict: ToolVerdict,
+    ) -> (String, ToolVerdict) {
+        let (content, verdict) = super::cap_sdk_tool_content_for_history(tool_name, session_id, content, verdict);
+        if verdict.is_failure() {
             self.applied_tokens += crate::util::estimate_tokens(&content);
-            return content;
+            return (content, verdict);
         }
-        let mut output = ToolOutput::new(content);
+        let mut output = ToolOutput::new(content).with_verdict(verdict);
         if sdk_caller_opted_in(call_input) {
             output.metadata = Some(serde_json::json!({ crate::tool::ACCEPT_LARGE_OUTPUT_METADATA_KEY: true }));
         }
-        self.admit(tool_name, output).output
+        let admitted = self.admit(tool_name, output);
+        let verdict = admitted.verdict.unwrap_or(verdict);
+        (admitted.output, verdict)
     }
 
     /// The seed plus every output applied since; the number the next

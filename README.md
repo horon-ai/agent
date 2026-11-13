@@ -22,7 +22,7 @@
 - **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the separate `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary; `HORON_NO_TUI=1` keeps the headless path, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
-- **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 69.8 ms on Linux and 104.7 ms on macOS ([numbers and caveats](#benchmarks)).
+- **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 55.9 ms on Linux and 103.3 ms on macOS ([numbers and caveats](#benchmarks)).
 
 ## Install
 
@@ -99,6 +99,14 @@ With no profile configured, a model call stops before the network and names the 
 | `horon api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
 | `horon acp` | ACP v1/v2 adapter on stdio for editors. |
 
+### Terminal client
+
+`horon-tui` is the interactive client: a transcript pane, a one-line input, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) built on `horon-agent-sdk`, so the headless binary stays free of terminal libraries.
+
+It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect keeps the headless path, so scripts and CI read its output. When a condition fails, the command names it, prints ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``, and exits non-zero; a server started before the check keeps running.
+
+The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. The archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the headless agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
+
 ### Editors (ACP)
 
 Register `horon` (or `horon-agent`) with the argument `acp` as an external agent. In Zed (`settings.json`):
@@ -121,15 +129,15 @@ JetBrains and other ACP clients take the same two values. See [docs/protocol/ACP
 
 | Language | Package name | Location |
 | --- | --- | --- |
-| TypeScript | `@horon-ai/agent-sdk` | [`sdk/typescript`](sdk/typescript) |
-| Python | `horon-agent-sdk` | [`sdk/python`](sdk/python) |
+| TypeScript | `@horon-ai/agent-sdk` | [`packages/sdk/typescript`](packages/sdk/typescript) |
+| Python | `horon-agent-sdk` | [`packages/sdk/python`](packages/sdk/python) |
 
 Both talk the harness API (protocol v1) over the `api-bridge` socket and can start their own daemon with `launch()`. As of this writing neither package is on npm or PyPI, so install from a source checkout; each SDK README has the steps.
 
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs, editors over ACP and the terminal reach the agent daemon through api-bridge, acp and run; the daemon stores sessions in an event log and calls an OpenAI-compatible endpoint directly" width="860">
+  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs and editors over ACP reach the agent daemon through the harness API and the ACP adapter, and the terminal client horon-tui attaches the same way while a bare run hosts the agent in-process; the daemon stores sessions in an event log and calls an OpenAI-compatible endpoint directly" width="860">
 </p>
 
 Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](docs/architecture/CRATES.md); the daemon, sessions and sockets are in [docs/architecture/SERVER.md](docs/architecture/SERVER.md).
@@ -137,8 +145,9 @@ Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](
 ## Features
 
 - **A core tool set of 18.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search` and `swarm`. A core session sends seven of them up front plus `toolbox`, names the other eleven in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
-- **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon session inspect|doctor|export|import|migrate|recover-to` work on the store ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
+- **Append-only sessions.** History is an event log at `<home>/sessions/<id>/events.jsonl` with large payloads in content-addressed blobs. Archive, compaction and rewind append records and never delete an original. `horon session inspect|doctor|export|import|migrate|recover-to|archive|restore` work on the store, and `horon session delete <id> --yes` is the one destructive command: it removes the transcript, todos, goal attachment, artifacts and journal, and refuses a session a running daemon has open ([docs/protocol/SESSION_STORE.md](docs/protocol/SESSION_STORE.md)).
 - **Edit safety.** A journal backs `undo` for file edits, and `redo` and hashline anchors are opt-in ([docs/runtime/TOOLS.md](docs/runtime/TOOLS.md)).
+- **Goal budgets.** A continuation goal can carry `budget_tokens`. When the session's spend reaches it, the goal moves to `budget_limited`, gets one wrap-up turn that tells the model to record what it has, and stops; raising the budget and setting the goal back to `active` is an operator decision ([docs/runtime/TURNS.md](docs/runtime/TURNS.md)).
 - **MCP and skills.** `horon mcp` lists configured MCP servers and manages remote-server OAuth credentials; skills are read through `skill://` and managed with `skill_manage`.
 - **Unattended runs.** Turn recovery, `horon runtime-state` (inspect and settle durable pending inputs) and `horon approvals` (record a human verdict for a run that stopped waiting on a person) support runs with no one at the keyboard ([docs/safety/SAFETY.md](docs/safety/SAFETY.md)).
 - **Agent-to-agent messaging.** An opt-in `irc` mailbox bus (`[tools] irc = true`) lets agents in one daemon `send`, `wait`, `inbox` and `list` ([docs/runtime/IRC.md](docs/runtime/IRC.md)).
@@ -147,22 +156,22 @@ Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](
 
 ## Benchmarks
 
-Measured by `.github/workflows/benchmark-docs.yml` on GitHub-hosted runners, commit `2a4027c`, against jcode v0.99.1, using a deterministic mock model and one `ls` tool call per turn. Each OS runs on a different machine, so compare within a row, never across rows.
+Measured by `.github/workflows/benchmark-docs.yml` on GitHub-hosted runners, commit `805b408`, against jcode v0.99.1, using a deterministic mock model and one `ls` tool call per turn. Each OS runs on a different machine, so compare within a row, never across rows.
 
 <p align="center">
-  <img src="docs/assets/benchmark-oneshot.svg" alt="Bar chart of median one-shot time. Linux: horon 69.8 ms, jcode 149.4 ms. macOS: horon 104.7 ms, jcode 361.6 ms. Windows: horon 189.0 ms, jcode 112.9 ms" width="780">
+  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS. Linux: horon 55.9 ms, jcode 140.8 ms. macOS: horon 103.3 ms, jcode 413.7 ms. Windows: horon 208.5 ms, jcode 153.3 ms" width="780">
 </p>
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| One-shot turn, median | 69.8 ms | 149.4 ms |
-| Skill invocation, median | 57.8 ms | 59.2 ms |
-| MCP tool call, median | 86.2 ms | 182.1 ms |
-| Peak tree RSS, one-shot | 36.4 MB | 38.3 MB |
-| Memory per additional session, idle after 3 turns | 201.5 KB | 127.9 KB |
-| Install size | 110.5 MB | 163.4 MB |
+| One-shot turn, median | 55.9 ms | 140.8 ms |
+| Skill invocation, median | 53.3 ms | 121.5 ms |
+| MCP tool call, median | 66.4 ms | 313.5 ms |
+| Peak tree RSS, one-shot | 47.5 MB | 42.2 MB |
+| Memory per additional session, idle after 3 turns | 137.8 KB | 129.8 KB |
+| Install size | 114.5 MB | 163.4 MB |
 
-On macOS horon was faster on the one-shot (104.7 ms against 361.6 ms), skill (118.4 ms against 270.0 ms) and MCP (111.8 ms against 659.2 ms) runs. **On Windows jcode was faster on the one-shot turn** (112.9 ms against 189.0 ms) and tied on skills; horon was faster on the MCP call (215.8 ms against 306.2 ms). On Linux jcode adds less memory per extra session. These runs are single-commit CI samples, not a guarantee. The full tables for eight tools, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
+On macOS horon was faster on the one-shot (103.3 ms against 413.7 ms), skill (84.5 ms against 354.9 ms) and MCP (95.5 ms against 453.0 ms) runs. **On Windows jcode was faster on the one-shot (153.3 ms against 208.5 ms) and the skill run** (200.9 ms against 220.5 ms); horon was faster on the MCP call (269.4 ms against 318.5 ms). On Linux jcode adds slightly less memory per extra session. These runs are single-commit CI samples, not a guarantee. The chart is redrawn by the same workflow. The full tables for eight tools, the TUI suite, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
 
 ## Configuration defaults
 
@@ -181,11 +190,14 @@ On macOS horon was faster on the one-shot (104.7 ms against 361.6 ms), skill (11
 
 ## Documentation
 
-The docs are written in English (default) and Korean (`.ko.md` next to each file; for example `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them.
+The docs are written in English (default) and Korean (`.ko.md` next to each file; for example `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. The same pages are published at [agent.horon.ai](https://agent.horon.ai), rendered from [packages/docs](packages/docs).
 
 | Topic | Read |
 | --- | --- |
+| Documentation site (`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
+| Documentation site source | [packages/docs](packages/docs) |
 | Index and fixed requirements | [docs/README.md](docs/README.md) |
+| Terminal client and its user files | [docs/runtime/TUI.md](docs/runtime/TUI.md) |
 | Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
 | Editors and ACP | [docs/protocol/ACP.md](docs/protocol/ACP.md) |
 | Harness API for SDKs | [docs/protocol/HARNESS_API.md](docs/protocol/HARNESS_API.md) |

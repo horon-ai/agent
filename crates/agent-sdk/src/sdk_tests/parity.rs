@@ -31,6 +31,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("list_sessions", "listSessions"),
     cap("list_sessions_limited", "listSessionsLimited"),
     cap("archive_session", "archiveSession"),
+    cap("delete_session", "deleteSession"),
     cap("restore_session", "restoreSession"),
     cap("set_retention_policy", "setRetentionPolicy"),
     cap("create_session", "createSession"),
@@ -168,7 +169,7 @@ fn the_python_sdk_implements_every_shared_capability() {
     assert!(
         missing.is_empty(),
         "the shared SDK surface names capabilities the Python SDK does not \
-         have: {missing:?}. Implement them in sdk/python/src/horon_agent_sdk/client.py, \
+         have: {missing:?}. Implement them in packages/sdk/python/src/horon_agent_sdk/client.py, \
          or remove them from CAPABILITIES if the capability is being dropped from every SDK."
     );
 }
@@ -330,12 +331,13 @@ fn rust_client_source() -> String {
 }
 
 fn ts_client_source() -> Option<String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/typescript/src/client.ts");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/sdk/typescript/src/client.ts");
     std::fs::read_to_string(path).ok()
 }
 
 fn python_client_source() -> Option<String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/python/src/horon_agent_sdk/client.py");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/sdk/python/src/horon_agent_sdk/client.py");
     std::fs::read_to_string(path).ok()
 }
 

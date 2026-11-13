@@ -104,7 +104,10 @@ build_assets() {
   mkdir -p "$dest/stage"
   printf '%s\n' "$cli_body" > "$dest/stage/$agent_artifact"
   chmod +x "$dest/stage/$agent_artifact"
-  tar -czf "$dest/$archive_name.tar.gz" -C "$dest/stage" "$agent_artifact"
+  # Every published archive carries the licence beside the binary, and the
+  # installer must accept that member without treating it as unexpected.
+  printf 'MIT License\n' > "$dest/stage/LICENSE"
+  tar -czf "$dest/$archive_name.tar.gz" -C "$dest/stage" "$agent_artifact" LICENSE
   (
     cd "$dest"
     printf '%s  %s\n' "$(sha256 "$archive_name.tar.gz")" "$archive_name.tar.gz"
@@ -123,11 +126,12 @@ build_tui_asset() {
   mkdir -p "$dest/tui-stage"
   printf '%s\n' 'tui executable' > "$dest/tui-stage/$tui_artifact"
   chmod +x "$dest/tui-stage/$tui_artifact"
+  printf 'MIT License\n' > "$dest/tui-stage/LICENSE"
   if [ "$layout" = compat ]; then
     printf '%s\n' 'tui payload' > "$dest/tui-stage/$tui_artifact.bin"
-    tar -czf "$dest/$archive.tar.gz" -C "$dest/tui-stage" "$tui_artifact" "$tui_artifact.bin"
+    tar -czf "$dest/$archive.tar.gz" -C "$dest/tui-stage" "$tui_artifact" "$tui_artifact.bin" LICENSE
   else
-    tar -czf "$dest/$archive.tar.gz" -C "$dest/tui-stage" "$tui_artifact"
+    tar -czf "$dest/$archive.tar.gz" -C "$dest/tui-stage" "$tui_artifact" LICENSE
   fi
   (
     cd "$dest"

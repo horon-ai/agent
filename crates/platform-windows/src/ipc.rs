@@ -571,7 +571,7 @@ mod tests {
     /// The TypeScript SDK derives this name independently, so the two must
     /// agree exactly or a Windows client dials a pipe nobody is listening on.
     /// Pinning literal values here gives that duplicate a fixed contract to
-    /// match, and `sdk/typescript/test/pipe-name.test.ts` asserts the same strings.
+    /// match, and `packages/sdk/typescript/test/pipe-name.test.ts` asserts the same strings.
     #[test]
     fn pipe_name_matches_the_typescript_sdk() {
         for (path, expected) in [

@@ -64,6 +64,9 @@ const LEDGER: &[(&str, Disposition)] = &[
         Gap("cancel only the run the client saw start, never a turn that replaced it"),
     ),
     ("Clear", Covered),
+    // A permanent delete. Ungated like `ArchiveSession`: the minor bump is the
+    // signal, and a server without it answers `unknown_request`.
+    ("DeleteSession", Covered),
     // The ACP adapter's own reply channel for questions it renders itself.
     ("ClientResponse", ClientInternal),
     ("Compact", Covered),
@@ -452,8 +455,8 @@ fn the_sdk_inherits_every_external_credential_location() {
 fn launch_sources() -> Vec<(&'static str, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     [
-        "sdk/typescript/src/launch.ts",
-        "sdk/python/src/horon_agent_sdk/launch.py",
+        "packages/sdk/typescript/src/launch.ts",
+        "packages/sdk/python/src/horon_agent_sdk/launch.py",
     ]
     .into_iter()
     .filter_map(|file| {

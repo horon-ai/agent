@@ -639,6 +639,7 @@ impl Request {
             Request::SetReasoningEffort { id, .. } => *id,
             Request::RenameSession { id, .. } => *id,
             Request::ArchiveSession { id, .. } => *id,
+            Request::DeleteSession { id, .. } => *id,
             Request::SetSessionSaved { id, .. } => *id,
             Request::Split { id } => *id,
             Request::Transfer { id } => *id,
@@ -695,6 +696,8 @@ impl Request {
                 // Usage invalidation only touches process-wide caches, so a
                 // one-shot client can send it without subscribing to a session.
                 | Request::InvalidateOpenAiUsage { .. }
+                // Deleting purges the store, which needs no attached session.
+                | Request::DeleteSession { .. }
                 | Request::NotifySession { .. }
                 | Request::CommShare { .. }
                 | Request::CommRead { .. }

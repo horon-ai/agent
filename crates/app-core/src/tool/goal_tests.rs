@@ -402,3 +402,68 @@ async fn goal_completion_is_allowed_with_only_cancelled_todos() {
 
     restore_home(prev_home);
 }
+
+#[tokio::test]
+async fn initiative_tool_carries_a_token_budget_from_create_through_show() {
+    let _guard = crate::storage::lock_test_env();
+    let home = TestHome::new();
+    let tool = InitiativeTool::new();
+    let ctx = goal_ctx("ses_goal_budget", &home.project);
+
+    tool.execute(
+        json!({
+            "action": "create",
+            "title": "Bound the spend",
+            "scope": "project",
+            "budget_tokens": 250000
+        }),
+        ctx.clone(),
+    )
+    .await
+    .expect("create goal");
+
+    let stored = crate::goal::load_goal("bound-the-spend", None, Some(&home.project))
+        .expect("load goal")
+        .expect("goal exists");
+    assert_eq!(
+        stored.budget_tokens,
+        Some(250_000),
+        "the tool argument must reach the store"
+    );
+
+    let show = tool
+        .execute(json!({"action": "show", "id": "bound-the-spend"}), ctx)
+        .await
+        .expect("show goal");
+    assert!(
+        show.output.contains("**Token budget:** 250000"),
+        "an operator reading the goal must see the ceiling, got: {}",
+        show.output
+    );
+}
+
+#[tokio::test]
+async fn initiative_tool_refuses_a_zero_budget() {
+    let _guard = crate::storage::lock_test_env();
+    let home = TestHome::new();
+    let tool = InitiativeTool::new();
+    let ctx = goal_ctx("ses_goal_zero_budget", &home.project);
+
+    let error = tool
+        .execute(
+            json!({
+                "action": "create",
+                "title": "Impossible ceiling",
+                "scope": "project",
+                "budget_tokens": 0
+            }),
+            ctx,
+        )
+        .await
+        .expect_err("zero is not a ceiling");
+
+    assert!(
+        error.to_string().contains("greater than zero"),
+        "the refusal must name the rule, got: {error}"
+    );
+}

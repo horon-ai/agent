@@ -58,7 +58,7 @@ on:
         default: true
   pull_request:
     paths:
-      - 'sdk/typescript/**'
+      - 'packages/sdk/typescript/**'
       - 'scripts/sdk/**'
       - 'scripts/npm/release_npm_version.py'
       - '.github/workflows/publish-typescript-sdk.yml'
@@ -242,12 +242,12 @@ jobs:
       # bun.lock, and the stamp changes the version and the six pins. Building
       # first also means a broken SDK fails before a registry version is chosen.
       - name: Install dependencies
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
         shell: bash
         run: bun install --frozen-lockfile
 
       - name: Validate the SDK
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
         shell: bash
         run: bun run check
 
@@ -263,15 +263,17 @@ jobs:
           for suffix in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64 windows-aarch64; do
             dir="$(mktemp -d)"
             artifact="horon-agent-$suffix"
+            # Every published archive carries the licence beside its binary.
+            cp LICENSE "$dir/LICENSE"
             case "$suffix" in
               windows-*)
                 printf 'fixture horon-agent %s\r\n' "$VERSION" >"$dir/$artifact.exe"
-                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact.exe"
+                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact.exe" LICENSE
                 ;;
               *)
                 printf '#!/bin/sh\necho "horon-agent %s (fixture)"\n' "$VERSION" >"$dir/$artifact"
                 chmod +x "$dir/$artifact"
-                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact"
+                tar -czf "sdk-runtime-assets/$artifact.tar.gz" -C "$dir" "$artifact" LICENSE
                 ;;
             esac
             rm -rf "$dir"
@@ -331,7 +333,7 @@ jobs:
           mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
           for dir in "${dirs[@]}"; do
             if [ "$dir" = "sdk" ]; then
-              package_dir="sdk/typescript"
+              package_dir="packages/sdk/typescript"
             else
               package_dir="sdk-runtime-packages/$dir"
             fi
@@ -409,7 +411,7 @@ jobs:
           fi
 
       - name: Install dependencies
-        working-directory: sdk/typescript
+        working-directory: packages/sdk/typescript
         shell: bash
         run: bun install --frozen-lockfile
 
@@ -458,7 +460,7 @@ jobs:
           mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
           for dir in "${dirs[@]}"; do
             if [ "$dir" = "sdk" ]; then
-              package_dir="sdk/typescript"
+              package_dir="packages/sdk/typescript"
             else
               package_dir="sdk-runtime-packages/$dir"
             fi
@@ -486,7 +488,7 @@ jobs:
           mapfile -t dirs < <(python3 scripts/sdk/sdk_release.py publish-order)
           for dir in "${dirs[@]}"; do
             if [ "$dir" = "sdk" ]; then
-              package_dir="sdk/typescript"
+              package_dir="packages/sdk/typescript"
             else
               package_dir="sdk-runtime-packages/$dir"
             fi

@@ -8,7 +8,7 @@ The agent sends model requests directly to an OpenAI-compatible API's `/chat/com
 
 Model requests leave through a single path.
 
-1. `[provider] default_provider` selects the startup profile name. Given `--provider-profile <name>`, that run selects the `[providers.<name>]` table instead. Built-in profile ids are selected with `[provider] default_provider` or `--provider <id>`.
+1. `[provider] default_provider` selects the startup profile name. Given `--provider-profile <name>`, that run selects the `[providers.<name>]` table instead. `-p`/`--provider` takes `auto` (the default, which follows `[provider] default_provider` or `--provider-profile`), `openai-compatible`, or one profile id: either a built-in id such as `openrouter`, or the name of a `[providers.<name>]` table you wrote.
 2. The model is chosen from `--model <id>`, the profile's `default_model`, and `[provider] default_model`, whichever is set. If none is set the call ends in an error.
 3. The request URL is `base_url` with `/chat/completions` appended. Write the API prefix such as `/v1` as part of `base_url`.
 4. Tool definitions travel as `tools` in the same request body. No separate model server relays the tools.
@@ -48,7 +48,7 @@ input = ["text", "image"]
 | Key | Meaning |
 | --- | --- |
 | `type` | `"openai-compatible"`. The value the model path in this build uses. |
-| `base_url` | Required. The address including the API prefix. `http://localhost` and `http://127.0.0.1` are accepted too. |
+| `base_url` | Required. The address including the API prefix. `http` is accepted only for a local or private host: `localhost`, a `*.local` name, a loopback, private, link-local or CGNAT address, or an IPv6 loopback, unique-local or link-local address. Every other host must use `https`. |
 | `api_key_env` | Name of the environment variable holding the key. It checks the process environment first and reads `env_file` when no value is there. |
 | `env_file` | Name of the key file kept in the config directory. Write one per line, such as `MY_GW_API_KEY=...`. |
 | `auth` | One of `bearer` (default), `header`, `none`. `header` takes the header name from `auth_header` and uses `api-key` when empty. |
@@ -184,7 +184,7 @@ The decision is one replay event, `prewalk` in the stored session, and that even
 
 ## Prompt cache key
 
-A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 24 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.
+A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 28 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.
 
 Calls without a session id send no key. `prompt_cache_key = true` sends it regardless of host, but use `false` for an endpoint that rejects unknown fields.
 
@@ -226,7 +226,6 @@ Check the new profile right away like this.
 
 ```bash
 horon --provider-profile my-gw --model my-model run "hello"
-horon --provider-profile my-gw auth-test --prompt "Reply exactly OK"
 ```
 
 ## Checking readiness
@@ -242,7 +241,7 @@ The output fields are `requested_provider`, `requested_model`, `resolved_provide
 | Symptom | Cause and fix |
 | --- | --- |
 | `Unknown provider profile '<name>'. Add [providers.<name>] to config.toml.` | The name `default_provider` or `--provider-profile` points at is not in the configuration. Match the table name and value. |
-| `Provider profile '<name>' has invalid base_url ...` | `base_url` is empty or is not in the `https://` or `http://localhost` form. Include the prefix. |
+| `Provider profile '<name>' has invalid base_url ...` | `base_url` is empty, is not an absolute URL, or is a plain `http` URL for a host that is not local or private. The message says `https://... or http://localhost`; the full `http` allowance is the local and private host list in the `base_url` row above. Include the API prefix. |
 | A missing-key error | The error names the environment variable to fill in. The key value never appears in the error. Export the variable or write it to `env_file`. |
 | 401 or 403 | The key is wrong or the `auth` style does not match the endpoint. It is usually `bearer`, and `x-api-key` style endpoints use `auth = "header"` with `auth_header`. |
 | 404 | `base_url` may be missing a prefix such as `/v1`. The agent appends only `/chat/completions` to `base_url`. |
@@ -289,9 +288,9 @@ TypeScript SDK exposes the same optional field, `usage`.
 - `tracking_started_unix_secs` marks the coverage of this local ledger. There is no value before tracking starts.
   The count is not a retroactive estimate over the whole history. A count of 0 means no turns were recorded in this
   scope, not that the model was never used.
-- `selection_count` and `last_selected_unix_secs` come from `model_picker_usage.json`, which the TUI left behind
-  before the headless transition. These values count picker selections, not model requests. Effort variants are
-  summed within one route. This counter is maintained separately.
+- `selection_count` and `last_selected_unix_secs` come from `model_picker_usage.json`, a legacy file an earlier TUI
+  wrote and the current client no longer writes. These values count picker selections, not model requests. Effort
+  variants are summed within one route. This counter is maintained separately.
 - No `usage` means the metadata is unknown, and older servers fall into that case too. It must not be displayed as
   "never used".
 
@@ -312,8 +311,7 @@ scan the conversation.
 `horon_agent_sdk::compare_model_usage` and the TypeScript `compareModelUsage` compare usage from best to worst by
 tracked turn count, last-used time, past selection count, and last-selected time, in that order. Search relevance and
 explicit current/favorite policy come before this comparator, and a stable model/route tiebreaker follows it.
-The TUI from before the headless transition used the same comparator and left the existing current/favorite policy
-in place.
+The earlier TUI used the same comparator and left the existing current/favorite policy in place.
 
 Legacy protocol clients opt in to `model_usage_updated` delta events with
 `get_model_catalog.subscribe_usage_updates: true`. This flag defaults to false, so an older client that cannot decode

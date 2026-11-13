@@ -351,6 +351,48 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 이전 클라이언트는 키를 무시하고, 판정을 원하는 클라이언트는 값을 읽고 없으면 `error`로
 대체합니다.
 
+## 세션 영구 삭제(프로토콜 1.20)
+
+하네스 API는 major 버전 1을 유지하고 minor 버전이 19에서 20으로 올라갔다.
+추가는 요청 하나라서, 이 요청을 보내지 않는 클라이언트는 이전과 같은 프레임을 읽는다.
+
+`archive_session`은 세션을 숨기고 다시 열 수 있게 남긴다. 이 요청은 반대 동작이다.
+대화 기록과 세션 아이디로 이름 붙은 모든 것이 디스크에서 사라지고, 되살릴 방법이 없다.
+
+### 요청: `delete_session`
+
+| 필드 | 타입 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `req` | string | 예 | `"delete_session"` |
+| `session_id` | string | 예 | 지울 세션. 전체 아이디 또는 고유 접두부 |
+| `confirm` | boolean | 아니오 | 거절을 가르는 와이어 필드. 브리지는 항상 `true`를 보낸다 |
+
+```json
+{"v":1,"id":12,"req":"delete_session","session_id":"s-1"}
+```
+
+응답은 `{"v":1,"reply_to":12,"ev":"ok"}`다.
+
+### 동작
+
+- 그 세션을 위해 턴이 돌고 있거나, 다른 프로세스가 스트리밍 중이거나, 클라이언트가 아직 붙어
+  있는 세션은 오류로 거절한다. 살아 있는 라이터 밑에서 지우면 그 라이터와 경쟁하기 때문이다.
+  먼저 닫거나 분리해야 한다. 데몬이 턴 사이에 들고 있는 유휴 세션은 열린 세션이 아니며,
+  클라이언트가 떠난 뒤 재연결 유예로 남은 세션도 마찬가지다. 둘 다 닫은 뒤 지운다.
+- `detach_session`은 `ok`를 보내기 전에 이 연결의 등록을 해제하므로, 분리 직후 보낸 삭제가
+  그 연결을 붙어 있는 것으로 보지 않는다.
+- 이 브리지 연결이 붙어 있는 세션도 같은 이유로 거절하며, 브리지가 왕복 전에 알려 준다.
+- 없는 아이디는 `unknown_session`이고, 알 수 없는 `attach_session`과 같은 응답이다.
+- 같은 아이디를 두 번째 지워도 성공하므로 반복 호출이 안전하다.
+- 보관된 세션도 다른 세션과 똑같이 지운다. 아카이브와 삭제는 별개 동작이고, 어느 쪽도
+  다른 쪽을 함의하지 않는다.
+- 프로세스 전역 상태는 세션의 것이 아니므로 지우지 않는다. 관리 스킬, 모델, 설정, 승인 상태,
+  사용량 데이터베이스가 여기 해당한다.
+
+이 요청을 거는 캐퍼빌리티는 없다. 추가 요청이라, 이 요청을 모르는 서버는 `unknown_request`로
+답하고 클라이언트는 그것을 "세션이 없다"가 아니라 "이 빌드는 삭제할 수 없다"로 읽는다. SDK는 Rust와 Python에서
+`delete_session`, TypeScript에서 `deleteSession`으로 노출한다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -670,5 +712,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 19`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 20`
 - `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

@@ -938,9 +938,10 @@ impl AcpRuntime {
         if self.spoken_version() == Some(AcpVersion::V2) {
             return self.close_active_session_v2(session_id).await;
         }
-        if !self.sessions.lock().await.contains_key(session_id) {
+        let session = self.sessions.lock().await.get(session_id).cloned();
+        let Some(session) = session else {
             return false;
-        }
+        };
         let prompts = self.unanswered_prompts(session_id);
         self.cancel_session_turn(session_id).await;
         // `session/cancel` withdraws the turn's calls only when a turn is in
@@ -958,6 +959,11 @@ impl AcpRuntime {
                 ));
             }
         }
+        // The daemon must drop this attachment before the socket does: a delete
+        // sent by another connection refuses a session that still looks
+        // attached, and a half-close is only visible to the daemon once its
+        // reader reaches EOF.
+        session.detach().await;
         self.sessions.lock().await.remove(session_id);
         true
     }
@@ -969,59 +975,47 @@ impl AcpRuntime {
             Err(err) => return self.write_error_value(id, JSONRPC_INVALID_PARAMS, err).await,
         };
         self.close_active_session(&session_id).await;
-        let lookup_id = session_id.clone();
-        let lookup = tokio::task::spawn_blocking(move || catalog_lookup(&lookup_id))
-            .await
-            .map_err(anyhow::Error::from)
-            .and_then(|lookup| lookup);
-        let cwd = match lookup {
-            Ok(CatalogLookup::Present { cwd }) => cwd,
-            // Never created, or already deleted: succeed silently.
-            Ok(CatalogLookup::Missing | CatalogLookup::Archived) => return self.write_result(id, json!({})).await,
-            Err(err) => {
-                return self
-                    .write_rpc_error(id, internal("Failed to read the session catalog", &err))
-                    .await;
-            }
-        };
-        match self.archive_session(&session_id, cwd.as_deref()).await {
+        match self.delete_session(&session_id).await {
             Ok(()) => self.write_result(id, json!({})).await,
             Err(error) => self.write_rpc_error(id, error).await,
         }
     }
 
-    /// Hide a session from listings through the daemon, which owns the
-    /// session's writer. Nothing is deleted from disk.
-    async fn archive_session(&self, session_id: &str, cwd: Option<&str>) -> std::result::Result<(), RpcError> {
+    /// Permanently remove a session through the daemon, which owns the store.
+    ///
+    /// `session/delete` means the session is gone, not hidden: unlike
+    /// `session/close` it removes the transcript and its per-session files, and
+    /// nothing on disk restores it. The daemon refuses a session a turn is
+    /// running for, one another process is streaming, or one still attached to
+    /// a client, and that refusal is what keeps a delete from racing a writer
+    /// this connection cannot see. An idle session is closed rather than
+    /// refused, so one just closed can still be erased.
+    ///
+    /// The catalog does not decide whether a session exists: its row is written
+    /// lazily, so a session this connection just created has files and no row,
+    /// and skipping the delete on a missing row left those files behind without
+    /// even the daemon knowing a delete was asked for. Deleting an id the store
+    /// does not have removes nothing and still succeeds, which is the same
+    /// answer a second delete gets.
+    async fn delete_session(&self, session_id: &str) -> std::result::Result<(), RpcError> {
         let (reader, writer) = self
             .connect_daemon()
             .await
             .map_err(|err| internal("Failed to reach the HoronAgent daemon", &err))?;
-        let session = DaemonSession::new(session_id.to_string(), reader, writer, 2);
-        let attach_id = 1;
-        let subscribe = subscribe_request(attach_id, cwd.map(Path::new), Some(session_id.to_string()), None, false);
-        let mut attached = session
-            .request(attach_id, &subscribe)
-            .await
-            .map_err(|err| internal("Failed to attach the session to delete", &err))?;
-        wait_for_done(&mut attached, attach_id)
-            .await
-            .map_err(|err| open_elsewhere(&err))?;
-        drop(attached);
-
-        let archive_id = session.next_id();
-        let archive = Request::ArchiveSession {
-            id: archive_id,
-            archived: true,
-            reason: Some("acp session/delete".to_string()),
+        let session = DaemonSession::new(session_id.to_string(), reader, writer, 1);
+        let delete_id = session.next_id();
+        // The daemon accepts this without an attach: it is a control request,
+        // and attaching first would make the session open and refuse itself.
+        let request = Request::DeleteSession {
+            id: delete_id,
+            session_id: session_id.to_string(),
+            confirm: true,
         };
-        let mut archived = session
-            .request(archive_id, &archive)
+        let mut reply = session
+            .request(delete_id, &request)
             .await
             .map_err(|err| internal("Failed to delete the session", &err))?;
-        // The daemon answers ArchiveSession with Done, or Error when the
-        // session is busy in, or owned by, another client.
-        wait_for_done(&mut archived, archive_id)
+        wait_for_done(&mut reply, delete_id)
             .await
             .map_err(|err| open_elsewhere(&err))
     }

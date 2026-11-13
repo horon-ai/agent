@@ -9,7 +9,8 @@
 
 use super::*;
 use horon_agent_agent_runtime::goal_continuation::{
-    GOAL_CONTINUATION_CAP, GOAL_CONTINUATION_MESSAGE, GoalContinuation, GoalContinuationInput, decide_goal_continuation,
+    GOAL_BUDGET_WRAP_UP_MESSAGE, GOAL_CONTINUATION_CAP, GOAL_CONTINUATION_MESSAGE, GoalContinuation,
+    GoalContinuationInput, decide_goal_continuation,
 };
 
 pub(super) fn goal_continue_log_line(consecutive_continuations: u8, session_id: &str) -> String {
@@ -25,6 +26,21 @@ pub(super) fn goal_stop_log_line(reason: &str, session_id: &str) -> String {
     format!("[goal] stop reason={reason} session={session_id}")
 }
 
+/// Tokens a session has spent, counting every class the provider reports.
+///
+/// Cache reads and writes are added rather than subtracted: a provider that
+/// bills them at a lower rate still reports them, and a budget that ignored
+/// them would let a cache-heavy goal run far past its ceiling. The sum is
+/// saturating because a transcript is unbounded and this decision must never
+/// be the thing that panics.
+fn spent_tokens(totals: &crate::protocol::TokenUsageTotals) -> u64 {
+    totals
+        .input_tokens
+        .saturating_add(totals.output_tokens)
+        .saturating_add(totals.cache_read_input_tokens)
+        .saturating_add(totals.cache_creation_input_tokens)
+}
+
 impl Agent {
     /// Continue an active goal with one synthetic message, or stop the run.
     ///
@@ -36,12 +52,15 @@ impl Agent {
             self.session.working_dir.as_deref().map(std::path::Path::new),
         )?;
         let goal_status = goal.as_ref().map(|goal| goal.status.as_str());
+        let budget_tokens = goal.as_ref().and_then(|goal| goal.budget_tokens);
         let consecutive_continuations = self.consecutive_goal_continuations();
         let input = GoalContinuationInput {
             goal_status,
             is_graceful_shutdown: self.is_graceful_shutdown(),
             pending_user_interrupt: self.has_soft_interrupts() || self.is_graceful_shutdown(),
             consecutive_continuations,
+            tokens_spent: spent_tokens(&self.token_usage_totals()),
+            budget_tokens,
         };
         match decide_goal_continuation(&input) {
             GoalContinuation::Continue => {
@@ -55,6 +74,40 @@ impl Agent {
                 );
                 self.save_session()?;
                 logging::info(&goal_continue_log_line(consecutive_continuations, self.session_id()));
+                Ok(true)
+            }
+            GoalContinuation::WrapUp => {
+                // One bounded turn, then the goal leaves `active` so the next
+                // turn end stops instead of wrapping up forever.
+                //
+                // The status is written before the message on purpose. The goal
+                // file and the transcript are two writes, and a crash between
+                // them must leave a goal that stops rather than one that keeps
+                // spending. In this order the loss is the wrap-up message: the
+                // status is already stored, so the next turn end sees
+                // `budget_limited` and ends the run with a shorter summary.
+                if let Some(goal) = goal.as_ref() {
+                    crate::goal::update_goal(
+                        &goal.id,
+                        Some(goal.scope),
+                        self.session.working_dir.as_deref().map(std::path::Path::new),
+                        crate::goal::GoalUpdateInput {
+                            status: Some(crate::goal::GoalStatus::BudgetLimited),
+                            checkpoint_summary: Some("Stopped: the goal reached its token budget.".to_string()),
+                            ..Default::default()
+                        },
+                    )?;
+                }
+                self.add_message_with_display_role(
+                    Role::User,
+                    vec![ContentBlock::Text {
+                        text: GOAL_BUDGET_WRAP_UP_MESSAGE.to_string(),
+                        cache_control: None,
+                    }],
+                    Some(crate::session::StoredDisplayRole::System),
+                );
+                self.save_session()?;
+                logging::info(&goal_stop_log_line("budget", self.session_id()));
                 Ok(true)
             }
             GoalContinuation::Stop(reason) => {

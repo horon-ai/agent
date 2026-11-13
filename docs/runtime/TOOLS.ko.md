@@ -10,7 +10,7 @@
 
 ### 세 단계
 
-`LoadMode`는 `crates/base/src/config.rs:825`에 정의되어 있습니다.
+`LoadMode`는 `crates/base/src/config.rs:699`에 정의되어 있습니다.
 
 | 값 | 의미 |
 | --- | --- |
@@ -30,13 +30,13 @@ memory = "essential"
 
 ### 기본 배치
 
-- `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:803` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
-- `CORE_TOOLS`는 열여덟 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:779` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다. `swarm`, `todo`, `session_search`가 마지막으로 합류했고, SDK 구동 세션은 `enabled` 목록이 이름을 대지 않는 한 `session_search`와 `swarm`을 끈 채로 둡니다 (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
-- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1237` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:889` `ToolLoadTiers::tier`).
+- `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:679` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
+- `CORE_TOOLS`는 열여덟 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:652` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다. `swarm`, `todo`, `session_search`가 마지막으로 합류했고, SDK 구동 세션은 `enabled` 목록이 이름을 대지 않는 한 `session_search`와 `swarm`을 끈 채로 둡니다 (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
+- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1093` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:763` `ToolLoadTiers::tier`).
 - 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
-- `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:861` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
-- `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:889` `ToolLoadTiers::tier`).
-- 지연 기본값은 명시적 `full` 프로필에 허용 목록이 없을 때만 켜집니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, 프로필 미설정은 통과한 도구를 즉시 보냅니다 (`config.rs:1210` `ToolConfig::load_tiers`).
+- `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:735` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
+- `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:763` `ToolLoadTiers::tier`).
+- 지연 기본값은 명시적 `full` 프로필에 허용 목록이 없을 때만 켜집니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, 프로필 미설정은 통과한 도구를 즉시 보냅니다 (`config.rs:1066` `ToolConfig::load_tiers`).
 - 세션은 시작할 때 단계를 한 번 확정합니다. 설정을 다시 읽어도 세션 중간에 도구가 즉시 집합과 지연 집합 사이를 옮기지 않습니다.
 
 `irc`는 코어 밖 도구입니다. `[tools] irc = true`일 때 `core`, `acp`, `minimal`, 명시 `enabled` 목록처럼 비어 있지 않은 허용 목록에 들어가고, 허용 목록이 없는 `full` 세션에는 원래부터 보입니다. 스위치가 꺼져 있으면 등록은 유지되지만 실행이 거부되므로 `full` 세션에서도 실제로 쓸 수 없습니다. 빈 허용 목록(`none`)은 켜져 있어도 그대로 비어 있습니다. 메일박스 동작과 설정은 [`IRC.ko.md`](IRC.ko.md)에 있습니다.
@@ -181,11 +181,11 @@ memory = "essential"
 
 거절 문구는 `block_message`가 만듭니다 (`crates/app-core/src/plan_mode.rs:173`). 무엇이 거절됐는지, 아무것도 바뀌지 않았는지, 빠져나갈 두 길이 무엇인지를 한 문단에 담습니다. 같은 호출을 다시 보내도 결과가 같다는 점도 적습니다.
 
-계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:919`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:455`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
+계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:920`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:455`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
 
 ### 승인 등급
 
-`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:357`). 기본값은 `off`이고 (`crates/base/src/config.rs:1017`), 이는 지금까지처럼 묻지 않는 동작입니다.
+`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:368`). 기본값은 `off`이고 (`crates/base/src/config.rs:1023`), 이는 지금까지처럼 묻지 않는 동작입니다.
 
 판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:232`). 순서가 중요합니다.
 
@@ -199,7 +199,7 @@ memory = "essential"
 
 위험 등급은 새로 분류하지 않고 기존 명령 위험 분류기의 판정을 그대로 씁니다 (`crates/app-core/src/approval.rs:182`). 이름이 붙는 등급은 `destructive-shell` 하나입니다 (`crates/app-core/src/approval.rs:22`). 셸 명령만이 영향 범위를 따질 대상이기 때문입니다.
 
-`dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:1026`, `crates/base/src/config/default_file.rs:341`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
+`dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:1033`, `crates/base/src/config/default_file.rs:341`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
 
 게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:2072`, 훅은 `:2176`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
 
@@ -440,7 +440,7 @@ Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[too
 
 ### 설정 방법
 
-`config.toml`의 `[tools]` 표에 스위치가 있습니다. 기본값은 켜짐입니다(`crates/base/src/config.rs:902-905`, `crates/base/src/config.rs:934`).
+`config.toml`의 `[tools]` 표에 스위치가 있습니다. 기본값은 켜짐입니다(`crates/base/src/config.rs:867`이 필드, `:1006`이 기본값).
 
 ```toml
 [tools]
@@ -699,7 +699,11 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 { "type": "tool_result", "tool_use_id": "call_1", "content": "alpha", "verdict": "ok" }
 ```
 
-이 필드가 생기기 전에 저장된 기록은 `verdict` 키가 없고 그대로 읽힙니다. `is_error`만 아는 읽기는 계속 그 값으로 `ok`나 `failed`를 유도합니다. 이 키는 모델에게 가지 않습니다. `crates/provider-openai`가 이 필드 없이 블록을 분해하므로, 판정을 적든 안 적든 같은 대화는 같은 요청 바이트로 렌더링되고 변경 전 세션도 똑같이 재생됩니다.
+이 필드가 생기기 전에 저장된 기록은 `verdict` 키가 없고 그대로 읽힙니다. 이 키는 모델에게 가지 않습니다. `crates/provider-openai`가 이 필드 없이 블록을 분해하므로, 판정을 적든 안 적든 같은 대화는 같은 요청 바이트로 렌더링되고 변경 전 세션도 똑같이 재생됩니다.
+
+새로 쓰는 기록에서 `is_error`로 판정을 유도하는 일은 은퇴했습니다. 모든 기록이 판정을 직접 적고, 유도는 정확히 두 곳에만 남습니다. SDK나 훅의 오류 플래그를 한 번 판정으로 바꾸는 경계 `ToolVerdict::from_error_flag`와, 이 필드가 생기기 전에 저장된 기록을 읽는 `ContentBlock::tool_verdict`입니다. 나머지 읽기는 모두 `ContentBlock::tool_result_failed`를 묻습니다. 이 함수는 적힌 판정을 먼저 보고 옛 기록일 때만 플래그로 되돌아갑니다. 나무 전체가 한 규칙을 쓰기 때문에, 낡은 플래그가 `true`를 말해도 `partial` 결과는 성공으로 남고, 새로 쓰는 코드가 자기가 만든 기록과 조용히 어긋나는 일도 없습니다.
+
+`post_tool_feedback` 훅이 결과를 오류로 판단하면 도구가 적은 판정보다 우선합니다. 훅은 본문을 읽었고 도구는 읽지 않았기 때문입니다. 이때 저장되는 블록은 한 기록에 두 가지 답을 주는 대신 `failed`와 `is_error: true`를 함께 적습니다.
 
 모르는 판정 이름은 추측하지 않고 기록 전체를 거절합니다. 모르는 블록 `type`이 이미 그렇게 동작합니다. 이후 빌드가 새 이름으로 쓴 기록은 이전 빌드에서 읽히지 않습니다.
 
@@ -748,7 +752,7 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 `aux_complete` 도구는 `[tools] aux_completion`이 켜져 있을 때만 등록됩니다 (`crates/app-core/src/tool/mod.rs:2425`). 등록 함수가 설정을 읽고 꺼져 있으면 곧바로 반환합니다. 꺼진 상태에서는 도구 목록에 나타나지 않고 이름으로도 찾히지 않습니다.
 
-`CORE_TOOLS`에는 없습니다 (`crates/base/src/config.rs:756`). 코어 프로필의 닫힌 목록은 넓어지지 않습니다. 호출마다 곁가지 모델 요청을 하나 더 쓴다는 점이 이 스위치를 기본 꺼짐으로 두는 이유입니다 (`crates/base/src/config.rs:930`).
+`CORE_TOOLS`에는 없습니다 (`crates/base/src/config.rs:652`). 코어 프로필의 닫힌 목록은 넓어지지 않습니다. 호출마다 곁가지 모델 요청을 하나 더 쓴다는 점이 이 스위치를 기본 꺼짐으로 두는 이유입니다 (`crates/base/src/config.rs:1030`).
 
 도구 자체는 얇은 어댑터입니다 (`crates/app-core/src/tool/aux_complete.rs:99`). 모델 인자를 계약 타입으로 바꿔 넘기고 텍스트를 돌려줄 뿐, 상한도 스키마 검사도 직접 하지 않습니다. 검사가 두 곳에 있으면 표면마다 규칙이 갈라지기 때문입니다.
 
@@ -758,7 +762,7 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 같은 실제 값은 언제나 같은 자리표시자를 받습니다. 한 값이 대화에 여러 번 나와도 자리표시자가 바뀌지 않으므로, 캐시되는 프롬프트 접두사가 흔들리지 않습니다. 키가 파일에 남으므로 재시작 뒤 이어서 여는 세션도 예전 자리표시자를 그대로 복원합니다. 세션 보관함을 만들 때 이름이 `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASS`, `AUTH`, `CREDENTIAL`, `PRIVATE`에 해당하고 값이 8자 이상인 환경 변수를 미리 등록하므로, 환경 변수에서 온 자격증명의 자리표시자도 재시작 뒤에 풀립니다.
 
-세 모드가 있습니다 (`crates/config-types/src/lib.rs:556`).
+세 모드가 있습니다 (`crates/config-types/src/lib.rs:488`).
 
 | 모드 | 동작 |
 | --- | --- |
@@ -766,7 +770,7 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 | `obfuscate` | 검출된 자격증명을 안정된 자리표시자로 바꾸고, 실제 값이 필요한 도구에는 원래 값을 돌려줍니다. |
 | `block` | 자격증명이 바깥으로 나갈 호출을 거절합니다. |
 
-모드 이름은 케밥 표기로 읽고, 모르는 값은 기본값으로 떨어집니다 (`crates/config-types/src/lib.rs:589`). 설정 파일의 다른 항목까지 못 읽게 되지 않도록 한 처리입니다. 설정 항목 이름은 `secrets_mode`이고 (`crates/base/src/config.rs:933`), 기본 설정 파일에도 `secrets_mode = "off"`로 적혀 있습니다 (`crates/base/src/config/default_file.rs:470`).
+모드 이름은 케밥 표기로 읽고, 모르는 값은 기본값으로 떨어집니다 (`crates/config-types/src/lib.rs:509`). 설정 파일의 다른 항목까지 못 읽게 되지 않도록 한 처리입니다. 설정 항목 이름은 `secrets_mode`이고 (`crates/base/src/config.rs:1032`), 기본 설정 파일에도 `secrets_mode = "off"`로 적혀 있습니다 (`crates/base/src/config/default_file.rs:470`).
 
 검출 규칙은 새로 만들지 않고 기존 마스킹과 같은 표를 씁니다. 디스크 경로의 `redact_secrets`가 쓰는 패턴 목록이 그대로 와이어 경로의 목록입니다 (`crates/base/src/message.rs:51`). 표가 하나이므로 디스크를 위해 추가한 패턴이 와이어에도 자동으로 적용됩니다. 이미 마스킹된 텍스트를 다시 마스킹하지 않는 것도 규칙입니다. 자리표시자를 다른 패턴이 한 번 더 감싸면, 바깥것을 복원해도 안쪽 자리표시자만 돌아옵니다.
 

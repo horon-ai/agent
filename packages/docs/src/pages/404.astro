@@ -1,0 +1,51 @@
+---
+import BaseLayout from "@/layouts/BaseLayout.astro";
+---
+
+<BaseLayout
+  title="Page not found"
+  description="This page does not exist in the horon agent documentation."
+>
+  <main class="not-found">
+    <p class="code">404</p>
+    <h1>Page not found</h1>
+    <p>This page does not exist. The documentation index lists every page.</p>
+    <p><a class="back" href="/">Go to the documentation index</a></p>
+  </main>
+</BaseLayout>
+
+<style>
+  .not-found {
+    max-width: 34rem;
+    margin: 0 auto;
+    padding: 6rem 1.5rem;
+  }
+
+  .code {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    letter-spacing: 0.08em;
+  }
+
+  h1 {
+    margin: 0.5rem 0 1rem;
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+  }
+
+  p {
+    color: var(--color-text-secondary);
+    line-height: 1.6;
+  }
+
+  .back {
+    color: var(--color-text-brand);
+    text-decoration: none;
+  }
+
+  .back:hover {
+    text-decoration: underline;
+  }
+</style>

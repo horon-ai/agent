@@ -1,0 +1,34 @@
+{
+  "name": "@horon-ai/horon",
+  "version": "0.0.0",
+  "description": "Horon CLI: the autonomous agent runtime and its terminal client",
+  "license": "MIT",
+  "bin": {
+    "horon": "bin/horon.js",
+    "hrn": "bin/horon.js"
+  },
+  "files": [
+    "bin",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/horon-ai/agent.git",
+    "directory": "packages/npm/horon"
+  },
+  "optionalDependencies": {
+    "@horon-ai/horon-linux-x64": "0.0.0",
+    "@horon-ai/horon-linux-arm64": "0.0.0",
+    "@horon-ai/horon-darwin-x64": "0.0.0",
+    "@horon-ai/horon-darwin-arm64": "0.0.0",
+    "@horon-ai/horon-win32-x64": "0.0.0",
+    "@horon-ai/horon-win32-arm64": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

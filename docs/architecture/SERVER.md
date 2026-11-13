@@ -4,9 +4,7 @@ Language: **English** | [한국어](SERVER.ko.md)
 
 ## Overview
 
-horon agent uses a **one server, many clients** structure. A single server process manages every session and all state. The clients are the
-TypeScript and Rust SDKs. They attach to the server over a Unix socket and reconnect transparently when the connection drops or the server
-re-execs. This repository contains no client implementation.
+horon agent uses a **one server, many clients** structure. A single server process manages every session and all state. Clients attach to it over a Unix socket and reconnect transparently when the connection drops or the server re-execs. The clients are the TypeScript and Rust SDKs, editors over ACP, and the terminal client `horon-tui`, which ships in this repository as `crates/tui` on `horon-agent-sdk`. The terminal client is a separate binary: the headless `horon-agent` package never links it.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐

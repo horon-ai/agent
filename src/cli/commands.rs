@@ -9,8 +9,10 @@ use crate::{gateway, memory, storage};
 
 mod provider_setup;
 mod report_info;
+mod session_delete;
 mod session_rename;
 
+pub(crate) use session_delete::run_session_delete_command;
 pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;

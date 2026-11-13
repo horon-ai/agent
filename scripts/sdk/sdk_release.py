@@ -55,7 +55,7 @@ from release_npm_version import (  # noqa: E402  (path-dependent import)
 )
 
 SDK_NAME = "@horon-ai/agent-sdk"
-SDK_DIR = "sdk/typescript"
+SDK_DIR = "packages/sdk/typescript"
 SDK_MANIFEST = REPO_ROOT / SDK_DIR / "package.json"
 CARGO_MANIFEST = REPO_ROOT / "Cargo.toml"
 
@@ -202,6 +202,9 @@ def check_packages(directory: Path, version: str, sdk_manifest: Path) -> list[st
         binary = "horon-agent.exe" if os_name == "win32" else "horon-agent"
         if not (package_dir / "bin" / binary).is_file():
             problems.append(f"{platform}: bin/{binary} is missing")
+        # The licence travels with the binary it covers.
+        if not (package_dir / "LICENSE").is_file():
+            problems.append(f"{platform}: LICENSE is missing")
 
     for extra in sorted(path.name for path in directory.iterdir() if path.is_dir()):
         if extra not in MANIFEST_PLATFORM:

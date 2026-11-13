@@ -37,6 +37,11 @@ pub enum GoalStatus {
     Completed,
     Archived,
     Abandoned,
+    /// The goal spent its token budget and stopped on purpose.
+    ///
+    /// Separate from `Paused` because nothing resumes it automatically: the
+    /// next turn end sees a status that is not active and stops.
+    BudgetLimited,
 }
 
 impl GoalStatus {
@@ -49,6 +54,7 @@ impl GoalStatus {
             "completed" => Some(Self::Completed),
             "archived" => Some(Self::Archived),
             "abandoned" => Some(Self::Abandoned),
+            "budget_limited" => Some(Self::BudgetLimited),
             _ => None,
         }
     }
@@ -62,6 +68,7 @@ impl GoalStatus {
             Self::Completed => "completed",
             Self::Archived => "archived",
             Self::Abandoned => "abandoned",
+            Self::BudgetLimited => "budget_limited",
         }
     }
 
@@ -71,9 +78,10 @@ impl GoalStatus {
             Self::Blocked => 1,
             Self::Draft => 2,
             Self::Paused => 3,
-            Self::Completed => 4,
-            Self::Archived => 5,
-            Self::Abandoned => 6,
+            Self::BudgetLimited => 4,
+            Self::Completed => 5,
+            Self::Archived => 6,
+            Self::Abandoned => 7,
         }
     }
 
@@ -130,6 +138,12 @@ pub struct Goal {
     pub current_milestone_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress_percent: Option<u8>,
+    /// Token ceiling for this goal, counting the whole live transcript.
+    ///
+    /// `None` means unbounded, which is what every goal written before this
+    /// field existed means, so an old file loads unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -153,6 +167,7 @@ impl Goal {
             blockers: Vec::new(),
             current_milestone_id: None,
             progress_percent: None,
+            budget_tokens: None,
             created_at: now,
             updated_at: now,
             updates: Vec::new(),

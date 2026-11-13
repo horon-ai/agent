@@ -97,11 +97,11 @@ Error codes follow these rules.
 | `session/resume` | Opens the session without replaying history |
 | `session/close` | Cancels the running prompt and releases the session connection. That prompt ends as `cancelled` |
 | `session/list` | Lists unarchived sessions by most recent activity |
-| `session/delete` | Hides the session from the list |
+| `session/delete` | Permanently deletes the session and its per-session files |
 
 `session/list` filters by `cwd` and returns 50 sessions at a time. The next page comes from `nextCursor`. A bad cursor is `-32602`, and no results is an empty array.
 
-`session/delete` does not delete the session file from disk. The daemon archives the session so it drops out of the list. Sending it again for an already archived session still succeeds, so repeating the call gives the same result. When another client is using that session it is refused with `-32603` (open in another horon agent client).
+`session/delete` removes the session from disk: the transcript, its journal and artifacts, and every file keyed by the session id (todos, goal attachment, soft interrupts, writer lease, presence markers, notes, runtime journal, edit statistics). Nothing restores it afterwards, so it is not the same operation as `session/close`, and an archived session is deleted like any other. Sending it again for a session that no longer exists still succeeds, so repeating the call gives the same result. It is refused with `-32603` (open in another horon agent client) only while a turn is running for it, another process is streaming it, or a client is still attached, because deleting under a live writer would race that writer. A session this connection has loaded is closed first, and so is one the daemon still holds idle for its reconnect grace; neither can append to the transcript. `session/close` releases its daemon attachment before it answers, so a delete sent by another connection right after a close does not find the closed connection still attached.
 
 When `session/load` or `session/resume` attaches a session whose store the daemon has not yet released to another connection, the daemon sends the store's refusal (`store error [internal:busy] retryable session writer is already owned`) as an error frame. The adapter retries only that refusal once on a fresh connection (waiting up to 2 seconds when the daemon reports `retry_after_secs`), and when the retry is refused too it answers immediately with `-32603` carrying the daemon's reason. It does not retry once history replay has started. Other errors, a refusal saying another client owns the session, and a dropped connection are answered immediately without retrying. A session whose history is large enough to make restore slow waits as long as the daemon takes to send the history; only a daemon that has stopped entirely is answered as an unresponsive request at the 300-second safety limit of each attempt.
 
@@ -348,7 +348,7 @@ protocol_v2 = true     # false answers every client with v1 only
 - URL-style elicitation is not used.
 - Terminal delegation applies only to foreground, non-PTY, non-background `bash` calls.
 - When the model endpoint does not support streaming, no partial deltas arrive before the answer finishes. The answer therefore may look as if it arrived all at once.
-- `session/delete` only archives, so the file stays on disk.
+- `session/delete` refuses a session a turn is running for, one another process is streaming, or one still attached to a client; close it first.
 - When stdin closes, a request still in flight loses its response.
 
 ## Conformance testing

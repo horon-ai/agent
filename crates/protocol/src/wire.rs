@@ -433,6 +433,18 @@ pub enum Request {
         reason: Option<String>,
     },
 
+    /// Permanently remove one stored session and every per-session file keyed
+    /// by its id.
+    ///
+    /// Unlike `ArchiveSession` this destroys the transcript, so it requires an
+    /// explicit `confirm` from the caller and is refused while a turn is
+    /// running for the session, another process is streaming it, or a client is
+    /// attached to it. An idle session held between turns is closed first, not
+    /// refused. It is a lightweight control request: the purge needs no
+    /// attached session, only the store.
+    #[serde(rename = "delete_session")]
+    DeleteSession { id: u64, session_id: String, confirm: bool },
+
     /// Split the current session — clone conversation into a new session
     #[serde(rename = "split")]
     Split { id: u64 },

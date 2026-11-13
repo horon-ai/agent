@@ -13,11 +13,24 @@ pub(super) fn cap_tool_output_for_history(tool_name: &str, session_id: &str, mut
     output
 }
 
-pub(super) fn cap_sdk_tool_content_for_history(tool_name: &str, session_id: &str, content: String) -> String {
+/// Apply the protocol ceiling to an SDK result and say what the cut did to it.
+///
+/// The verdict travels out with the text because a cut is a verdict: returning
+/// only the text left the caller to state the provider's `ok` over a result the
+/// protocol had just truncated, so the record said the whole output was there.
+pub(super) fn cap_sdk_tool_content_for_history(
+    tool_name: &str,
+    session_id: &str,
+    content: String,
+    verdict: crate::tool::ToolVerdict,
+) -> (String, crate::tool::ToolVerdict) {
     if content.len() <= MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY {
-        return content;
+        return (content, verdict);
     }
-    history_cap_text(tool_name, session_id, &content)
+    (
+        history_cap_text(tool_name, session_id, &content),
+        crate::tool::ToolVerdict::after_cut(Some(verdict)),
+    )
 }
 
 fn history_cap_text(tool_name: &str, session_id: &str, content: &str) -> String {
@@ -101,16 +114,25 @@ pub(super) fn tool_output_to_content_blocks(tool_use_id: String, output: ToolOut
     let references = tool_output_references(&output);
     // A `post_tool_feedback` hook may have rewritten the text and asked for an
     // error flag or a reminder; the round reads all three from the output.
-    let is_error = crate::tool::post_tool_feedback::is_error(&output).then_some(true);
+    let hook_says_error = crate::tool::post_tool_feedback::is_error(&output);
+    let is_error = hook_says_error.then_some(true);
     let note = crate::tool::post_tool_feedback::note(&output);
+    // The layer that produced this output already said what became of the
+    // call; storing it here is what makes the verdict travel with the result
+    // instead of being re-read from the text later. A hook that judged the
+    // result an error after the fact outranks that statement, because the hook
+    // read the text and the tool did not: leaving `ok` beside `is_error: true`
+    // would give one record two answers.
+    let verdict = if hook_says_error {
+        Some(crate::tool::ToolVerdict::Failed)
+    } else {
+        output.verdict
+    };
     let mut blocks = vec![ContentBlock::ToolResult {
         tool_use_id: tool_use_id.clone(),
         content: output.output,
         is_error,
-        // The layer that produced this output already said what became of the
-        // call; storing it here is what makes the verdict travel with the
-        // result instead of being re-read from the text later.
-        verdict: output.verdict,
+        verdict,
     }];
     for img in output.images {
         blocks.push(ContentBlock::Image {
@@ -339,7 +361,13 @@ mod tests {
 
     #[test]
     fn cap_sdk_tool_content_adds_same_notice() {
-        let capped = cap_sdk_tool_content_for_history("custom", "", "y".repeat(MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 10));
+        let (capped, verdict) = cap_sdk_tool_content_for_history(
+            "custom",
+            "",
+            "y".repeat(MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 10),
+            crate::tool::ToolVerdict::Ok,
+        );
+        assert_eq!(verdict, crate::tool::ToolVerdict::Truncated, "a cut is stated");
         assert!(capped.contains("Tool output truncated by horon-agent"));
         assert!(capped.contains("tool `custom` produced"));
     }

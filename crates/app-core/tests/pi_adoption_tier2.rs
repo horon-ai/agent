@@ -366,8 +366,11 @@ async fn plan_mode_blocks_write_and_submit_plan_unblocks_it() {
     plan_mode::clear_state(session);
 }
 
+/// `write` mode asks about a file mutation that names a path and about a call
+/// that runs a process or reaches the network; both are what its own
+/// documentation promises (`docs/runtime/TOOLS.md`, approval tiers).
 #[tokio::test]
-async fn write_approval_mode_auto_approves_files_and_asks_for_shell() {
+async fn write_approval_mode_asks_for_files_and_shell() {
     let _env = TEST_ENV.lock().await;
     let env = IsolatedEnv::new("approval-write", "approval_mode = \"write\"\n");
     let session = "tier2-approval-write";
@@ -375,21 +378,24 @@ async fn write_approval_mode_auto_approves_files_and_asks_for_shell() {
     let registry = registry().await;
 
     let target = env.home().join("approval-target.txt");
-    registry
+    let refusal = registry
         .execute(
             "write",
             json!({
                 "file_path": target.display().to_string(),
-                "content": "auto approved\n",
+                "content": "must be approved first\n",
             }),
             context(session, env.home()),
         )
         .await
-        .expect("write mode auto-approves a plain file mutation");
-    assert_eq!(
-        std::fs::read_to_string(&target).expect("the auto-approved write landed"),
-        "auto approved\n"
+        .expect_err("write mode must ask before a file mutation that names a path");
+    let message = refusal.to_string();
+    assert!(
+        message.contains("needs approval"),
+        "the refusal must name the approval gate: {message}"
     );
+    assert!(message.contains("write"), "the refusal must name the tool: {message}");
+    assert!(!target.exists(), "a refused write must not create the file");
 
     let refusal = registry
         .execute("bash", json!({"command": "echo hi"}), context(session, env.home()))
@@ -492,6 +498,11 @@ async fn write_mode_enqueues_a_request_instead_of_only_refusing() {
 /// operator would find on disk. This test initialises the real logger against an
 /// isolated home, drives a write-mode auto-approval through `Registry::execute`,
 /// and reads the `TOOL_APPROVAL` line back out of the log file.
+///
+/// The call is `todo`, not `write`. `write` mode asks before a file mutation
+/// that names a path (`docs/runtime/TOOLS.md`, approval tiers), so the only
+/// auto-approvals it records are the path-less write-effect tools: there is no
+/// file to approve, and the audit line is what explains that decision.
 #[tokio::test]
 async fn auto_approval_writes_a_tool_approval_line_to_the_log() {
     let _env = TEST_ENV.lock().await;
@@ -499,18 +510,22 @@ async fn auto_approval_writes_a_tool_approval_line_to_the_log() {
     horon_agent_app_core::logging::init();
 
     let registry = registry().await;
-    let target = env.home().join("audit-target.txt");
     registry
         .execute(
-            "write",
+            "todo",
             json!({
-                "file_path": target.display().to_string(),
-                "content": "audited\n",
+                "todos": [{
+                    "content": "audited",
+                    "status": "pending",
+                    "priority": "high",
+                    "id": "audited-1",
+                    "confidence": 90
+                }],
             }),
             context("approval-audit-log", env.home()),
         )
         .await
-        .expect("write mode auto-approves a plain file mutation");
+        .expect("write mode auto-approves a write-effect tool that names no path");
 
     let log_path = horon_agent_app_core::logging::log_path().expect("the logger resolved a log file");
     let contents =

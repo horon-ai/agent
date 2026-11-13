@@ -302,6 +302,26 @@ pub(super) async fn detach_client_attachment(
     unregister_session_event_sender(swarm_members, session_id, connection_id).await;
 }
 
+/// Release this connection's attachment, then answer `prepare_disconnect`.
+///
+/// `Done` has to be a barrier, not an acknowledgement: a client that detaches
+/// and immediately asks another connection to act on the session — a delete,
+/// which refuses an attached session — must not race the daemon noticing this
+/// socket's half-close. Before this, `Done` only dropped SDK callback ownership
+/// and the attachment survived until the reader loop reached EOF, so the delete
+/// was refused in roughly one round in seven.
+pub(super) async fn release_before_disconnect(
+    session_id: &str,
+    connection_id: &str,
+    client_connections: &Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+    request_id: u64,
+    writer: &Arc<Mutex<crate::transport::WriteHalf>>,
+) -> Result<()> {
+    detach_client_attachment(session_id, connection_id, client_connections, swarm_members).await;
+    super::client_writer::write_direct_event(writer, &crate::protocol::ServerEvent::Done { id: request_id }).await
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "disconnect cleanup updates sessions, swarms, files, channels, debug state, and shutdown signals together"

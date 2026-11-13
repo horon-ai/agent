@@ -98,7 +98,7 @@ Actions that leave a trace outside the local sandbox, affect shared state, or ar
 
 #### Custom rules
 
-This build has no rule table that promotes or demotes actions. There are no subtables such as `[safety.rules]` or `[safety.notifications]` either. Every field of `SafetyConfig` sits flat under `[safety]` (`crates/config-types/src/lib.rs:1543-1550`), and the approval-wait policy lives under `[ambient]` (`:1473-1510`).
+This build has no rule table that promotes or demotes actions. There are no subtables such as `[safety.rules]` or `[safety.notifications]` either. Every field of `SafetyConfig` sits flat under `[safety]` (`crates/config-types/src/lib.rs:1451-1458`), and the approval-wait policy lives under `[ambient]` (`:1381-1418`).
 
 ```toml
 [safety]
@@ -112,7 +112,7 @@ desktop_notifications = true
 # approval_for_clientless_runs = false
 ```
 
-`approval_timeout_secs` defaults to 1800 seconds (`crates/config-types/src/lib.rs:1584`, `:1598-1600`). When it elapses, `approval_default_on_timeout` applies, and its default is `"deny"` (`:1589`, `:1602-1604`). A pending request that expires leaves a record, and a history that cannot be audited closes approvals toward denial (`crates/base/src/safety.rs:340-360`).
+`approval_timeout_secs` defaults to 1800 seconds (`crates/config-types/src/lib.rs:1405-1406`, `:1420-1422`). When it elapses, `approval_default_on_timeout` applies, and its default is `"deny"` (`:1410-1411`, `:1424-1426`). A pending request that expires leaves a record, and a history that cannot be audited closes approvals toward denial (`crates/base/src/safety.rs:340-360`).
 
 ---
 
@@ -136,7 +136,7 @@ desktop_notifications = true
 
 #### The `request_permission` tool
 
-This tool is not part of the core 18 tools. The ambient runner registers it, and the session's tool allowlist has to admit it for the call to happen. For unattended runs with no client attached, it joins the allowlist only when `[ambient] approval_for_clientless_runs` is on (`crates/base/src/config.rs:752-757`, `:1153-1170`). The default is off, and the core set stays at 18 (`crates/base/src/config.rs:779-799`, tests in `crates/base/src/config_tool_tiers_tests.rs:26-40`).
+This tool is not part of the core 18 tools. The ambient runner registers it, and the session's tool allowlist has to admit it for the call to happen. For unattended runs with no client attached, it joins the allowlist only when `[ambient] approval_for_clientless_runs` is on (`crates/base/src/config.rs:608-611`, `crates/base/src/config/tool_selection.rs:29-34`). The default is off, and the core set stays at 18 (`crates/base/src/config.rs:652-671`, tests in `crates/base/src/config_tool_tiers_tests.rs:26-41`).
 
 Calling it outside an ambient session is refused with the error "request_permission is only available to ambient sessions" (`crates/app-core/src/tool/ambient.rs:105`).
 
@@ -216,7 +216,7 @@ desktop_notifications = true
 # ntfy_server = "https://ntfy.sh"
 ```
 
-This build has two notification channels: ntfy.sh and desktop notifications. Email, messenger bot, and cloud relay channels were removed, and `SafetyConfig` has no keys for them (`crates/config-types/src/lib.rs:1674-1682`). If an old config file still contains those keys, it loads and ignores them as unknown fields.
+This build has two notification channels: ntfy.sh and desktop notifications. Email, messenger bot, and cloud relay channels were removed, and `SafetyConfig` has no keys for them (`crates/config-types/src/lib.rs:1451-1458`). If an old config file still contains those keys, it loads and ignores them as unknown fields.
 
 Preferences such as bundling intervals, quiet hours, and minimum urgency do not exist in this build either.
 
@@ -375,7 +375,7 @@ pub enum AskPolicy {
 - `recommended` (the default): answers each question with the recommendation the model produced. If the model produced none, it uses the first option. The tool text states that the choice was automatic so the model knows (`crates/app-core/src/tool/ask.rs:203-214`).
 - `error`: when no client can answer, or no answer arrived, it refuses the call with an explanation. The model then decides for itself and continues (`crates/app-core/src/tool/ask.rs:362-367`, `:374-376`).
 
-The config field's comment documents the same distinction. `recommended` picks the model's recommendation and says so. `error` refuses the call. The comment also covers the attached-client case. It asks a client that advertised `supports_ask_requests` first, waits up to 300 seconds, and then falls back to the policy (`crates/base/src/config.rs:1034-1036`). The field is `pub ask_policy: AskPolicy` (`:1037`), and the default is `AskPolicy::Recommended` (`:1119`). The type is defined in `crates/tool-types` and re-exported from `crates/base/src/config.rs:17`.
+The config field's comment documents the same distinction. `recommended` picks the model's recommendation and says so. `error` refuses the call. The comment also covers the attached-client case. It asks a client that advertised `supports_ask_requests` first, waits up to 300 seconds, and then falls back to the policy (`crates/base/src/config.rs:908-910`). The field is `pub ask_policy: AskPolicy` (`:911`), and the default is `AskPolicy::Recommended` (`:1018`). The type is defined in `crates/tool-types` and re-exported from `crates/base/src/config.rs:19`.
 
 #### Request limits
 
@@ -383,7 +383,7 @@ One call takes up to four questions, and each question has two to five options (
 
 #### When it is available
 
-`ask` is one of the core 18 tools (`crates/base/src/config.rs:779-796`). So it is always reachable in the default headless `serve` and `run`. A default `core` session does not put the `ask` schema in the request and only lists its name in the system prompt index; the model calls it through `toolbox`. It differs from `request_permission`, which asks about actions that need permission. `request_permission` is ambient-only and joins the allowlist only for clientless unattended runs, while `ask` is always reachable on the tool surface. So what `ask` does in an unattended run is not obtain an approval but keep the turn moving to the next judgment even when no answer is available.
+`ask` is one of the core 18 tools (`crates/base/src/config.rs:652-671`). So it is always reachable in the default headless `serve` and `run`. A default `core` session does not put the `ask` schema in the request and only lists its name in the system prompt index; the model calls it through `toolbox`. It differs from `request_permission`, which asks about actions that need permission. `request_permission` is ambient-only and joins the allowlist only for clientless unattended runs, while `ask` is always reachable on the tool surface. So what `ask` does in an unattended run is not obtain an approval but keep the turn moving to the next judgment even when no answer is available.
 
 ---
 
@@ -467,7 +467,7 @@ This section is the plan from design time. It splits what is in the tree now fro
 
 #### Stage 4: configuration
 - [x] `[safety]` config section (`crates/base/src/config/default_file.rs:817`)
-- [x] `[ambient]` approval policy (`crates/config-types/src/lib.rs:1580-1595`)
+- [x] `[ambient]` approval policy (`crates/config-types/src/lib.rs:1381-1418`)
 - [ ] Custom classification rules (promote or demote actions)
 - [ ] Per-project overrides
 
@@ -581,10 +581,10 @@ failover keys in `ProviderConfig` (`crates/config-types/src/lib.rs`).
 - **The server does not switch on its own for sessions with a client attached.** The server reads
   `cross_provider_failover` only as the mode gate that decides whether switching is allowed
   (`crates/app-core/src/server/provider_control.rs`), and with a client attached it returns the original provider
-  error to the turn unchanged. Showing a 3-second countdown and accepting a cancel is the client's job, and this
-  headless build has no client that draws that screen (the TUI left in the headless transition). An attached client
-  that wants a different model picks it with `set_model`, and there is no separate route-switch request in this
-  build. The server switching by itself happens only in unattended runs.
+  error to the turn unchanged. Showing a 3-second countdown and accepting a cancel is the client's job, and the
+  shipped client `horon-tui` does not draw that screen yet. An attached client that wants a different model picks it
+  with `set_model`, and there is no separate route-switch request in this build. The server switching by itself
+  happens only in unattended runs.
 - **`FailoverSwitched` stays until it is acked.** `failover-events.json` holds up to 100 entries and re-emits them on
   restart or reconnect. Re-emission can duplicate an entry under the same key, so consumers must ignore duplicates
   by `(session_id, chain_id, from, to, attempt)`. Past 100 entries the oldest are dropped, and that notification never

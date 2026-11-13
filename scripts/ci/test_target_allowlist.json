@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "comment": "Integration targets that exist in the tree but do not run in ci.yml. Each row is a decision: a target either runs under scripts/ci/integration_targets.json or states here why it cannot run in CI. scripts/ci/check_test_targets.py fails on a missing row, a stale row, an empty reason, or a target that is both run and allowlisted.",
+  "entries": [
+    {
+      "package": "horon-agent",
+      "target": "acp_tck",
+      "path": "tests/acp_tck.rs",
+      "reason": "Both tests are #[ignore]d: they assert on the JSON report of the external acp-tck suite, which scripts/test/acp_tck.sh clones and runs (a first run downloads it and takes minutes). The two tests would report `0 passed, 2 ignored` under the normal cohort, so running them here would only be noise."
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "header_cost_probe",
+      "path": "crates/base/tests/header_cost_probe.rs",
+      "reason": "Measurement harness, not a pass/fail assertion: the single test is #[ignore]d and prints header cost samples on the developer's hardware so the TTL-vs-signature tradeoff stays grounded in measured numbers."
+    },
+    {
+      "package": "horon-agent-logging",
+      "target": "watchdog_idle_probe",
+      "path": "crates/logging/tests/watchdog_idle_probe.rs",
+      "reason": "Timing probe that must own its process: it sets HOME and watchdog intervals, then waits ~15s for the real monitor thread. The test is #[ignore]d and the watchdog is process-global, so running it inside the cohort would both slow every run and contend with the stall probe."
+    },
+    {
+      "package": "horon-agent-logging",
+      "target": "watchdog_stall_probe",
+      "path": "crates/logging/tests/watchdog_stall_probe.rs",
+      "reason": "Same as the idle probe: #[ignore]d, ~20s of real monitor-thread timing, and process-global logger state that must not be shared with another watchdog test."
+    },
+    {
+      "package": "horon-agent-embedding",
+      "target": "embed_latency_probe",
+      "path": "crates/embedding/tests/embed_latency_probe.rs",
+      "reason": "Requires the MiniLM model to be installed under ~/.horon/models/all-MiniLM-L6-v2 and is #[ignore]d; it measures inference latency, so on a hosted runner the number would describe the runner, not the build."
+    },
+    {
+      "package": "horon-agent-session-store",
+      "target": "performance",
+      "path": "crates/session-store/tests/performance.rs",
+      "reason": "Timing and peak-RSS measurements (10k events, 10k sessions, 50 MiB history, 21 samples) are wall-clock numbers, and owner policy runs every measurement only in GitHub Actions benchmark jobs, never in the per-PR correctness matrix. The same bounds are covered structurally by the Structural performance workflow."
+    },
+    {
+      "package": "horon-agent-harness-api-server",
+      "target": "v1_client_round_trip",
+      "path": "crates/harness-api-server/tests/v1_client_round_trip.rs",
+      "reason": "Hangs in this environment: the test blocks reading the bridge socket and never answers within 60s, both alone and in the cohort, on the merged dev tree. Left out until #226 follow-up triage; running it here would make the whole integration step time out instead of reporting one hang."
+    },
+    {
+      "package": "horon-agent",
+      "target": "session_event_lifecycle",
+      "path": "tests/session_event_lifecycle.rs",
+      "reason": "Two tests fail on the merged dev tree without any change from this work: `original_survives_api_restart_and_replica_roundtrip` finds one retained head after a rewind where it asserts two, and `stale_compaction_job_is_discarded_and_originals_kept` then misses the rewound prefix. Filed as follow-up work; the target joins the cohort once it is green, because a red step here would block every unrelated pull request."
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "bash_policy",
+      "path": "crates/app-core/tests/bash_policy.rs",
+      "reason": "`a_named_service_can_wait_for_a_tcp_port` failed on the macOS runner of run 43361335293 (`web: running pid=...` without `ready`): the test asks the OS for a free port, drops the probe socket, then starts `python3 -m http.server` on it, so another process on the runner can win the bind and the server exits before readiness. It passes locally and on ubuntu. Excluded until it starts the server on a port it holds, because a red step here blocks every unrelated pull request."
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "cache_identity_contract",
+      "path": "crates/base/tests/cache_identity_contract.rs",
+      "reason": "`lineage_root_survives_save_and_reload` failed once in five local runs and on the macOS runner of 43361335293 with `store root is not usable: No such file or directory`: every test in the target sets the process-global `HORON_HOME` and removes its own temp directory, so parallel tests overwrite each other's home and delete it mid-save. The target needs one mutex around the home, as `TEST_ENV` gives the app-core fixtures. Excluded until then so one pull request cannot block on another's race."
+    },
+    {
+      "package": "horon-agent-session-store",
+      "target": "dirty_batches",
+      "path": "crates/session-store/tests/dirty_batches.rs",
+      "reason": "Failed on the macOS runner of 43361335293 with `catalog index is already owned` in `a_marker_lost_to_power_loss_never_serves_a_stale_listing_or_context`, while passing 9/9 locally and serially. The target's fixture roots are unique per test, so the contention is unproven; triage is follow-up work. Excluded rather than left red, for the same reason as the two rows above."
+    }
+  ]
+}

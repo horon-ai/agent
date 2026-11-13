@@ -24,3 +24,4 @@ __pycache__/
 # A root-level `agent` symlink to a temporary checkout was committed by
 # accident once; keep local links like it out of the repository.
 /agent
+.hyper-*-brief.md
