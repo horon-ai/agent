@@ -45,6 +45,6 @@
 <rect x="32" y="474.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="492.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <text x="32.0" y="522.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">Windows 에서는 이 항목의 값이 있는 도구가 없습니다. (이 러너에는 strace 가 없습니다.)</text>
-<text x="32.0" y="548.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 805b408 · 측정 2026-11-12 18:16 UTC · 실행 43273766126</text>
+<text x="32.0" y="548.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent 775c491 · 측정 2026-11-13 20:31 UTC · 실행 43499875915</text>
 <text x="32.0" y="566.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">OS마다 다른 GitHub 호스티드 러너와 모의 모델로 쟀습니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</text>
 </svg>
