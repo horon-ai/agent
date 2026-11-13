@@ -24,8 +24,8 @@
     "crates/plan/src/dag/tests.rs": 1217,
     "crates/session-store/tests/cache.rs": 1563,
     "src/cli/acp/tests.rs": 5748,
-    "tests/acp_infra.rs": 2564,
-    "tests/acp_stdio.rs": 2198,
+    "tests/acp_infra.rs": 2568,
+    "tests/acp_stdio.rs": 2214,
     "tests/acp_stdio_v2.rs": 2356,
     "tests/e2e/autonomous_approval_failover.rs": 1281,
     "tests/support/acp_client.rs": 1337

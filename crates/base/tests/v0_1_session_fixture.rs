@@ -17,6 +17,13 @@ use horon_agent_base::session::Session;
 
 const SESSION_ID: &str = "session_v0_1_fixture";
 
+/// A throwaway home for one test.
+///
+/// The session store refuses a directory that is not private to its owner
+/// (`crates/session-store/src/blobs.rs`, `ensure_dir`), and `std::fs::create_dir_all`
+/// under a shared temp root leaves the default 0755 mode. The fixture therefore
+/// creates the directory through the platform helper that sets the owner-only
+/// mode the store expects.
 fn temp_home() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "v0-1-session-fixture-{}-{}",
@@ -26,7 +33,7 @@ fn temp_home() -> std::path::PathBuf {
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    horon_agent_platform::create_private_dir(&dir, true).unwrap();
     dir
 }
 
@@ -76,7 +83,7 @@ fn session_written_by_v0_1_x_loads_with_its_transcript() {
     unsafe { std::env::set_var("HORON_HOME", &home) };
 
     let sessions = home.join("sessions");
-    std::fs::create_dir_all(&sessions).unwrap();
+    horon_agent_platform::create_private_dir(&sessions, true).unwrap();
     std::fs::write(sessions.join(format!("{SESSION_ID}.json")), v0_1_record(SESSION_ID)).unwrap();
 
     let loaded = Session::load(SESSION_ID).unwrap();

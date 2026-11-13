@@ -186,7 +186,14 @@ fn scratch_root(label: &str) -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let short: String = label.chars().filter(|ch| ch.is_ascii_alphanumeric()).take(4).collect();
-    let root = PathBuf::from(format!("/private/tmp/hs{}-{short}{n}", std::process::id()));
+    // The OS spelling, not `/private/tmp`: that path exists only on macOS and
+    // made every replication test fail on Linux with `PermissionDenied` (#226).
+    // The canonical form matters on macOS, where `/var` is a symlink and the
+    // store rejects a path that walks through one.
+    let base = std::env::temp_dir()
+        .canonicalize()
+        .expect("the OS temporary directory must resolve");
+    let root = base.join(format!("hs{}-{short}{n}", std::process::id()));
     std::fs::create_dir_all(&root).expect("scratch root");
     root
 }
