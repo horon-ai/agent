@@ -293,11 +293,12 @@ impl Adapter {
     /// row's group and the host's `blocked` status keeps the reason it waits on.
     pub(super) fn set_todos(&mut self, phases: &Value) -> Result<Value> {
         let todos = phases_to_todos(phases);
-        // A session with no todo file yet starts from an empty list.
-        let previous = match crate::todo::load_todos(&self.state.session_id) {
-            Ok(previous) => previous,
-            Err(_) => Vec::new(),
-        };
+        // A session with no todo file yet starts from an empty list, and the
+        // review cycle compares against it rather than against nothing.
+        let previous = crate::todo::load_todos(&self.state.session_id).unwrap_or_else(|error| {
+            crate::logging::warn(&format!("rpc: previous todos unavailable: {error}"));
+            Vec::new()
+        });
         crate::todo::save_todos(&self.state.session_id, &todos)?;
         crate::todo::update_todo_review_cycle(&self.state.session_id, &previous, &todos)?;
         let todo_phases = todos_to_phases(&todos);
@@ -391,10 +392,12 @@ impl Adapter {
                         "timestamp": timestamp,
                     }),
                     "tool" => {
-                        let call = match message.tool_data.clone() {
-                            Some(call) => call,
-                            None => Default::default(),
-                        };
+                        // A tool row whose call data is gone still renders the
+                        // output it produced, just without an id or a name.
+                        let call = message.tool_data.clone().unwrap_or_else(|| {
+                            crate::logging::warn("rpc: a tool message has no call data");
+                            Default::default()
+                        });
                         json!({
                             "role": "toolResult",
                             "toolCallId": call.id,

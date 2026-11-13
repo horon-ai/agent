@@ -54,9 +54,10 @@ pub(super) struct Adapter {
     commands: mpsc::UnboundedReceiver<Inbound>,
 }
 
-/// What the turn loop is waiting on.
+/// What the turn loop is waiting on. The event is boxed because a
+/// `ServerEvent` is several hundred bytes and the inbound is a small buffer.
 enum Next {
-    Event(Option<ServerEvent>),
+    Event(Box<Option<ServerEvent>>),
     Inbound(Option<Inbound>),
 }
 
@@ -386,19 +387,21 @@ impl Adapter {
             // The select borrows two fields for as long as its futures live, so
             // it yields a value and every use of `self` happens afterwards.
             let next = tokio::select! {
-                event = self.foreground.recv() => Next::Event(event),
+                event = self.foreground.recv() => Next::Event(Box::new(event)),
                 inbound = self.commands.recv() => Next::Inbound(inbound),
             };
             match next {
-                Next::Event(Some(event)) => {
-                    let terminal = self.classify(&event, request_id);
-                    self.out.send_all(turn.event(event)).await?;
-                    if let Some(terminal) = terminal {
-                        return Ok(terminal);
-                    }
-                }
                 // The daemon connection ended mid-turn, so no terminal arrives.
-                Next::Event(None) => return Ok(Terminal::Failed),
+                Next::Event(boxed) => match *boxed {
+                    Some(event) => {
+                        let terminal = self.classify(&event, request_id);
+                        self.out.send_all(turn.event(event)).await?;
+                        if let Some(terminal) = terminal {
+                            return Ok(terminal);
+                        }
+                    }
+                    None => return Ok(Terminal::Failed),
+                },
                 Next::Inbound(Some(Inbound::Line(buffer))) => {
                     let text = String::from_utf8_lossy(&buffer);
                     let Some(command) = command::parse(&text) else {

@@ -173,11 +173,7 @@ impl Host {
     }
 
     async fn close(self) {
-        let Host {
-            input,
-            mut output,
-            serve,
-        } = self;
+        let Host { input, output, serve } = self;
         drop(input);
         let _ = within("the adapter to stop on EOF", serve).await;
         // The adapter closes stdout when it returns.
