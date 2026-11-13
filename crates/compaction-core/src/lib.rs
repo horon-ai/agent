@@ -1752,11 +1752,11 @@ mod tests {
     #[test]
     fn emergency_truncation_is_utf8_safe() {
         let original = format!("{}middle{}", "é".repeat(20), "尾".repeat(20));
-        let truncated = emergency_truncated_tool_result(&original, 25, None);
+        let truncated = emergency_truncated_tool_result(&original, 25, false);
         assert!(truncated.contains("chars truncated for context recovery"));
         assert!(!truncated.starts_with("[tool error] "));
         assert!(truncated.is_char_boundary(truncated.len()));
-        let error = emergency_truncated_tool_result(&original, 25, Some(true));
+        let error = emergency_truncated_tool_result(&original, 25, true);
         assert!(error.starts_with("[tool error] "));
     }
 

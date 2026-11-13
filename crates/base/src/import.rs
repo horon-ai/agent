@@ -436,13 +436,10 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
                 format!("[Imported tool call: {name}]\n{arguments}")
             }
             ContentBlock::ToolResult {
-                tool_use_id,
-                content,
-                is_error,
-                ..
+                tool_use_id, content, ..
             } => {
                 changed = true;
-                let outcome = if *is_error == Some(true) { "error" } else { "result" };
+                let outcome = if block.tool_result_failed() { "error" } else { "result" };
                 format!("[Imported tool {outcome}: {tool_use_id}]\n{content}")
             }
             ContentBlock::Image { media_type, .. } => {

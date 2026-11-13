@@ -43,8 +43,8 @@ pub(super) fn session_was_interrupted_by_reload(agent: &Agent) -> bool {
 
     last.content.iter().any(|block| match block {
         ContentBlock::Text { text, .. } => text.ends_with("[generation interrupted - server reloading]"),
-        ContentBlock::ToolResult { content, is_error, .. } => {
-            is_error.unwrap_or(false)
+        ContentBlock::ToolResult { content, .. } => {
+            block.tool_result_failed()
                 && (content.contains("interrupted by server reload") || content.contains("Skipped - server reloading"))
         }
         _ => false,

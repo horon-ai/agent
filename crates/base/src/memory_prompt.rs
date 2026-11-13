@@ -22,8 +22,8 @@ fn format_content_block_for_relevance(block: &crate::message::ContentBlock) -> O
             }
         }
         crate::message::ContentBlock::ToolUse { name, .. } => Some(format!("[Tool: {}]", name)),
-        crate::message::ContentBlock::ToolResult { content, is_error, .. } => {
-            if is_error.unwrap_or(false) {
+        crate::message::ContentBlock::ToolResult { content, .. } => {
+            if block.tool_result_failed() {
                 // Keep the serialized block on one physical line. The focused-query
                 // filter drops tool blocks by their leading marker, so preserving
                 // payload newlines would let every line after the first escape as
@@ -62,8 +62,8 @@ fn format_content_block_for_extraction(block: &crate::message::ContentBlock) -> 
             let input_str = truncate_chars(&input_str, MEMORY_CONTEXT_MAX_BLOCK_CHARS / 2);
             Some(format!("[Tool: {} input: {}]", name, input_str))
         }
-        crate::message::ContentBlock::ToolResult { content, is_error, .. } => {
-            let label = if is_error.unwrap_or(false) {
+        crate::message::ContentBlock::ToolResult { content, .. } => {
+            let label = if block.tool_result_failed() {
                 "Tool error"
             } else {
                 "Tool result"

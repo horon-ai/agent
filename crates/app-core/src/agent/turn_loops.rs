@@ -828,7 +828,7 @@ impl Agent {
             // verbatim at their position in the response for exact replay.
             let mut provider_native_items = horon_agent_message_types::provider_native::ProviderNativeItems::default();
             // Track tool results from provider (already executed by Claude Code CLI)
-            let mut sdk_tool_results: std::collections::HashMap<String, (String, bool)> =
+            let mut sdk_tool_results: std::collections::HashMap<String, (String, crate::tool::ToolVerdict)> =
                 std::collections::HashMap::new();
             let mut openai_native_compaction: Option<(Vec<serde_json::Value>, usize)> = None;
 
@@ -1033,16 +1033,19 @@ impl Agent {
                         content,
                         is_error,
                     } => {
-                        // SDK already executed this tool, store the result
+                        // SDK already executed this tool, store the result. The
+                        // provider's event carries only the flag, so the verdict
+                        // is derived here, once, and read from the map after.
+                        let verdict = crate::tool::ToolVerdict::from_error_flag(is_error);
                         if trace {
                             eprintln!(
-                                "[trace] sdk_tool_result id={} is_error={} content_len={}",
+                                "[trace] sdk_tool_result id={} verdict={} content_len={}",
                                 tool_use_id,
-                                is_error,
+                                verdict,
                                 content.len()
                             );
                         }
-                        sdk_tool_results.insert(tool_use_id, (content, is_error));
+                        sdk_tool_results.insert(tool_use_id, (content, verdict));
                     }
                     StreamEvent::GeneratedImage {
                         id,
@@ -1671,19 +1674,19 @@ impl Agent {
                     }
 
                     // Check if SDK already executed this tool
-                    if let Some((sdk_content, sdk_is_error)) = sdk_tool_results.remove(&tc.id) {
+                    if let Some((sdk_content, sdk_verdict)) = sdk_tool_results.remove(&tc.id) {
                         let is_native_tool = HORON_AGENT_NATIVE_TOOLS.contains(&tc.name.as_str());
                         // For native tools, ignore SDK errors and execute locally
-                        if !(is_native_tool && sdk_is_error) {
+                        if !(is_native_tool && sdk_verdict.is_failure()) {
                             if trace {
                                 eprintln!(
-                                    "[trace] using_sdk_result name={} id={} is_error={}",
-                                    tc.name, tc.id, sdk_is_error
+                                    "[trace] using_sdk_result name={} id={} verdict={}",
+                                    tc.name, tc.id, sdk_verdict
                                 );
                             }
                             members.push(RoundMember::Sdk {
                                 content: sdk_content,
-                                is_error: sdk_is_error,
+                                verdict: sdk_verdict,
                             });
                             continue;
                         }
@@ -1862,17 +1865,17 @@ impl Agent {
                             );
                             tool_results_dirty = true;
                         }
-                        RoundMember::Sdk { content, is_error } => {
+                        RoundMember::Sdk { content, verdict } => {
                             // The provider answered this call, so no tool layer
                             // capped or admitted it. It is still an output this
                             // round applies, so it takes the round's own
                             // decision at its own place in request order.
-                            let content = round_budget.admit_sdk_result(
+                            let (content, verdict) = round_budget.admit_sdk_result(
                                 &self.session.id,
                                 &tc.name,
                                 &tc.input,
                                 content.clone(),
-                                *is_error,
+                                *verdict,
                             );
                             if print_output {
                                 print!("\n  → ");
@@ -1888,7 +1891,7 @@ impl Agent {
                                 message_id: message_id.clone(),
                                 tool_call_id: tc.id.clone(),
                                 tool_name: tc.name.clone(),
-                                status: if *is_error {
+                                status: if verdict.is_failure() {
                                     ToolStatus::Error
                                 } else {
                                     ToolStatus::Completed
@@ -1901,10 +1904,8 @@ impl Agent {
                                 vec![ContentBlock::ToolResult {
                                     tool_use_id: tc.id.clone(),
                                     content,
-                                    is_error: if *is_error { Some(true) } else { None },
-                                    // A plain answer stores no key; only a
-                                    // refused one says what became of it.
-                                    verdict: (*is_error).then_some(crate::tool::ToolVerdict::Failed),
+                                    is_error: verdict.is_failure().then_some(true),
+                                    verdict: Some(verdict),
                                 }],
                             );
                             tool_results_dirty = true;
@@ -2182,7 +2183,7 @@ enum RoundMember {
     Execute,
     Sdk {
         content: String,
-        is_error: bool,
+        verdict: crate::tool::ToolVerdict,
     },
     Malformed {
         error: String,

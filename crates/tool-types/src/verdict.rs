@@ -77,6 +77,26 @@ impl ToolVerdict {
             Some(other) => other,
         }
     }
+
+    /// Whether this verdict says the call did not do what it was asked.
+    ///
+    /// `Truncated` is not a failure: the call ran and the returned text is a
+    /// cut of the full text, which the model can still act on. `Partial` is
+    /// likewise a result, not a failure.
+    pub const fn is_failure(self) -> bool {
+        matches!(self, Self::Withheld | Self::Rejected | Self::Failed | Self::Interrupted)
+    }
+
+    /// The verdict a bare error flag stands for.
+    ///
+    /// This is the one place a verdict is derived instead of stated, and it
+    /// exists for the boundaries that hold only the flag: a provider's wire
+    /// result, a post-tool hook's metadata, and a stored record written before
+    /// verdicts existed. Every new record states its verdict, so no other code
+    /// should call this.
+    pub const fn from_error_flag(is_error: bool) -> Self {
+        if is_error { Self::Failed } else { Self::Ok }
+    }
 }
 
 impl fmt::Display for ToolVerdict {
