@@ -598,6 +598,11 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
 fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
     let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
     let mut rows: Vec<Line<'static>> = Vec::new();
+    // Reasoning being assembled is drawn above the answer it precedes, the same
+    // order the model produced it in.
+    if let Some(text) = app.transcript.open_reasoning() {
+        rows.extend(wrapped_rows(reasoning_lines(text, &app.theme), width));
+    }
     if let Some(text) = app.transcript.open_text() {
         rows.extend(wrapped_rows(assistant_lines(text, &app.theme), width));
     }
@@ -677,7 +682,24 @@ fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static
             Style::default().fg(theme.transcript.notice),
         ),
         Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(theme.core.error)),
+        // Reasoning is drawn dimmed and indented, and the theme gains no token:
+        // a new required token would reject every theme file already written,
+        // and the notice color is already the dimmest text the client has.
+        Item::Reasoning(text) => reasoning_lines(text, theme),
     }
+}
+
+fn reasoning_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
+    text.lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                format!("  {line}"),
+                Style::default()
+                    .fg(theme.transcript.notice)
+                    .add_modifier(Modifier::ITALIC),
+            ))
+        })
+        .collect()
 }
 
 fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Line<'static>> {
@@ -1019,6 +1041,107 @@ mod tests {
             app.on_key(key(crossterm::event::KeyCode::Char(character)));
         }
         assert_eq!(app.on_key(key(crossterm::event::KeyCode::Enter)), Some(Action::Quit));
+    }
+
+    /// Resolve settings with `env` as the only layer above the defaults.
+    ///
+    /// The real resolver is used rather than a setter the product does not have,
+    /// so a key that stops resolving fails here instead of passing against a
+    /// value the test injected.
+    fn settings_with(env: &[(&str, &str)]) -> crate::settings::Settings {
+        let sources = crate::settings::Sources {
+            global: std::path::PathBuf::from("/nonexistent/global.toml"),
+            project: None,
+            configs: Vec::new(),
+        };
+        let set = crate::settings::layers::LayerSet::new(&sources);
+        let (settings, warnings) = set.resolve(|name| {
+            env.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_string())
+        });
+        assert!(warnings.is_empty(), "no layer warns: {warnings:?}");
+        settings
+    }
+
+    #[test]
+    fn enter_inserts_nothing_when_the_editor_does_not_submit_on_it() {
+        let mut app = app_with(None);
+        app.refresh_settings(&settings_with(&[("HORON_TUI_EDITOR_SUBMIT_ON_ENTER", "false")]));
+
+        for character in "hi".chars() {
+            app.on_key(key(crossterm::event::KeyCode::Char(character)));
+        }
+        assert_eq!(
+            app.on_key(key(crossterm::event::KeyCode::Enter)),
+            None,
+            "the key the user disconnected must not send"
+        );
+        assert_eq!(
+            app.input.text(),
+            "hi",
+            "and the draft is kept, not cleared: {:?}",
+            app.input.text()
+        );
+        assert!(!app.pending_turn, "no turn started");
+    }
+
+    #[test]
+    fn enter_still_sends_when_the_setting_is_on() {
+        let mut app = app_with(None);
+        app.refresh_settings(&settings_with(&[("HORON_TUI_EDITOR_SUBMIT_ON_ENTER", "true")]));
+        for character in "hi".chars() {
+            app.on_key(key(crossterm::event::KeyCode::Char(character)));
+        }
+        assert_eq!(
+            app.on_key(key(crossterm::event::KeyCode::Enter)),
+            Some(Action::Send("hi".into()))
+        );
+    }
+
+    #[test]
+    fn the_reasoning_setting_reaches_the_transcript() {
+        let mut app = app_with(None);
+        app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+        assert!(app.transcript.show_reasoning());
+
+        app.apply_event(&ApiEvent::ReasoningDelta {
+            session_id: "s1".into(),
+            text: "a thought".into(),
+        });
+        app.apply_event(&ApiEvent::ReasoningDone {
+            session_id: "s1".into(),
+            duration_secs: None,
+        });
+        assert!(
+            app.transcript
+                .items()
+                .iter()
+                .any(|item| matches!(item, Item::Reasoning(text) if text == "a thought")),
+            "the event reaches the transcript once the setting is on: {:?}",
+            app.transcript.items()
+        );
+    }
+
+    #[test]
+    fn reasoning_events_are_inert_while_the_setting_is_off() {
+        let mut app = app_with(None);
+        app.apply_event(&ApiEvent::ReasoningDelta {
+            session_id: "s1".into(),
+            text: "a thought".into(),
+        });
+        app.apply_event(&ApiEvent::ReasoningDone {
+            session_id: "s1".into(),
+            duration_secs: None,
+        });
+        assert!(
+            !app.transcript
+                .items()
+                .iter()
+                .any(|item| matches!(item, Item::Reasoning(_))),
+            "the default keeps nothing: {:?}",
+            app.transcript.items()
+        );
     }
 
     #[test]

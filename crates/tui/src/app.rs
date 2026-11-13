@@ -254,6 +254,11 @@ impl App {
             ApiEvent::TextDelta { text, message_id, .. } => {
                 self.transcript.text_delta(message_id.as_deref(), text);
             }
+            // Reasoning is kept only when `transcript.show_reasoning` is on; the
+            // setting is applied to the transcript when it loads, so the event
+            // itself needs no branch here.
+            ApiEvent::ReasoningDelta { text, .. } => self.transcript.reasoning_delta(text),
+            ApiEvent::ReasoningDone { .. } => self.transcript.reasoning_done(),
             ApiEvent::TextDone { .. } => self.transcript.text_done(),
             ApiEvent::TextReplace { text, message_id, .. } => {
                 self.transcript.text_replace(message_id.as_deref(), text);
@@ -388,6 +393,15 @@ impl App {
         let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
         match bound {
             Some(keys::ids::APP_SUBMIT) => {
+                // `editor.submit_on_enter = false` makes the send key insert a
+                // newline instead. The editor is single-line, so the key does
+                // nothing rather than sending: a newline cannot be typed into a
+                // buffer that has no lines, and sending anyway is exactly what
+                // the user turned off.
+                let submits = self.settings.boolean("editor.submit_on_enter").unwrap_or(true);
+                if !submits {
+                    return None;
+                }
                 let text = self.input.take();
                 if text.trim().is_empty() {
                     return None;
@@ -491,8 +505,14 @@ impl App {
     }
 
     /// Replace the settings snapshot the screen draws, keeping the selection.
+    ///
+    /// The two settings that change behavior are applied to the parts that read
+    /// them here rather than in each drawing call: the transcript keeps or drops
+    /// reasoning as it streams, and the editor asks before it sends.
     pub fn refresh_settings(&mut self, settings: &Settings) {
         self.settings = settings.clone();
+        let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
+        self.transcript.set_show_reasoning(show_reasoning);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }
