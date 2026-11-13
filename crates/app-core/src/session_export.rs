@@ -59,8 +59,8 @@ pub fn render_markdown(messages: &[StoredMessage]) -> String {
                     let input_str = serde_json::to_string_pretty(&redacted).unwrap_or_else(|_| redacted.to_string());
                     md.push_str(&format!("**Tool: `{name}`**\n```json\n{input_str}\n```\n\n"));
                 }
-                ContentBlock::ToolResult { content, is_error, .. } => {
-                    let label = if is_error == &Some(true) { "Error" } else { "Result" };
+                ContentBlock::ToolResult { content, .. } => {
+                    let label = if block.tool_result_failed() { "Error" } else { "Result" };
                     let content = crate::message::redact_secrets(content);
                     let display = if content.len() > MAX_TOOL_RESULT_BYTES {
                         format!(

@@ -435,24 +435,34 @@ fn an_sdk_result_is_capped_and_admitted_like_a_tool_result() {
     let mut round = budget_with_seed(200);
 
     // Under the round's ceiling: admitted whole and counted.
-    let small = round.admit_sdk_result(
+    let (small, small_verdict) = round.admit_sdk_result(
         "test-session",
         "remote_job",
         &serde_json::json!({}),
         "s".repeat(chars_in(100)),
-        false,
+        ToolVerdict::Ok,
     );
     assert_eq!(small, "s".repeat(chars_in(100)));
+    assert_eq!(
+        small_verdict,
+        ToolVerdict::Ok,
+        "a result the round admits whole keeps the verdict it came with"
+    );
     assert_eq!(round.current_tokens(), 300, "the applied SDK result is counted");
 
     // Over the round's ceiling: withheld with the tool layer's sentence, and
     // the withheld payload is not spent.
-    let withheld = round.admit_sdk_result(
+    let (withheld, withheld_verdict) = round.admit_sdk_result(
         "test-session",
         "remote_job",
         &serde_json::json!({}),
         "x".repeat(chars_in(100)),
-        false,
+        ToolVerdict::Ok,
+    );
+    assert_eq!(
+        withheld_verdict,
+        ToolVerdict::Withheld,
+        "the round's refusal is the recorded verdict, not the provider's ok"
     );
     std::println!("QA sdk result through a round near its ceiling:\n{withheld}");
     assert!(
@@ -480,7 +490,18 @@ fn an_sdk_caller_that_passed_accept_large_output_gets_what_fits() {
     let mut round = budget_with_seed(300);
     let opted_in = serde_json::json!({ "accept_large_output": true });
 
-    let truncated = round.admit_sdk_result("test-session", "remote_job", &opted_in, "x".repeat(400), false);
+    let (truncated, truncated_verdict) = round.admit_sdk_result(
+        "test-session",
+        "remote_job",
+        &opted_in,
+        "x".repeat(400),
+        ToolVerdict::Ok,
+    );
+    assert_eq!(
+        truncated_verdict,
+        ToolVerdict::Truncated,
+        "a cut the round performed is recorded as truncated"
+    );
     std::println!("QA opted-in sdk result:\n{truncated}");
     assert!(
         truncated.starts_with('x'),
@@ -497,12 +518,12 @@ fn an_sdk_caller_that_passed_accept_large_output_gets_what_fits() {
 
     // The withheld path is the contrast: same round, same payload, no flag.
     let mut without_flag = budget_with_seed(300);
-    let withheld = without_flag.admit_sdk_result(
+    let (withheld, _) = without_flag.admit_sdk_result(
         "test-session",
         "remote_job",
         &serde_json::json!({}),
         "x".repeat(400),
-        false,
+        ToolVerdict::Ok,
     );
     assert!(
         withheld.contains("CONTEXT LIMIT REACHED") && !withheld.starts_with('x'),
@@ -512,12 +533,12 @@ fn an_sdk_caller_that_passed_accept_large_output_gets_what_fits() {
     // The string spelling the tool layer also honors, so the two paths cannot
     // disagree about what the flag accepts.
     let mut string_flag = budget_with_seed(300);
-    let accepted = string_flag.admit_sdk_result(
+    let (accepted, _) = string_flag.admit_sdk_result(
         "test-session",
         "remote_job",
         &serde_json::json!({ "accept_large_output": "true" }),
         "x".repeat(400),
-        false,
+        ToolVerdict::Ok,
     );
     assert_eq!(accepted, truncated, "both spellings mean the same thing");
 }
@@ -530,7 +551,13 @@ fn an_sdk_result_past_the_protocol_ceiling_is_capped_first() {
     let mut round = RoundTokenBudget::with_seed(0, 0);
     let huge = "y".repeat(crate::agent::tools::MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 10);
 
-    let capped = round.admit_sdk_result("", "remote_job", &serde_json::json!({}), huge, false);
+    let (capped, capped_verdict) =
+        round.admit_sdk_result("", "remote_job", &serde_json::json!({}), huge, ToolVerdict::Ok);
+    assert_eq!(
+        capped_verdict,
+        ToolVerdict::Truncated,
+        "the protocol ceiling's cut is a truncated verdict"
+    );
     std::println!("QA protocol ceiling: kept {} chars", capped.chars().count());
     assert!(
         capped.chars().count() < crate::agent::tools::MAX_TOOL_OUTPUT_BYTES_FOR_HISTORY + 1_000,
@@ -550,12 +577,17 @@ fn an_sdk_error_result_is_admitted_intact_and_still_counted() {
     let mut round = budget_with_seed(TINY_THRESHOLD);
     let error = "Error: the remote job was cancelled by its owner";
 
-    let admitted = round.admit_sdk_result(
+    let (admitted, admitted_verdict) = round.admit_sdk_result(
         "test-session",
         "remote_job",
         &serde_json::json!({}),
         error.to_string(),
-        true,
+        ToolVerdict::Failed,
+    );
+    assert_eq!(
+        admitted_verdict,
+        ToolVerdict::Failed,
+        "a failure is never overwritten by the round's context rule"
     );
     std::println!("QA sdk error through a spent round:\n{admitted}");
     assert_eq!(admitted, error, "the failure sentence reaches the model whole");
@@ -629,12 +661,12 @@ async fn a_single_output_past_the_ceiling_is_bounded_on_every_admit_path() {
 
     // (c) the same content as an SDK-answered result.
     let mut sdk_round = RoundTokenBudget::with_seed(PARITY_BUDGET, 0);
-    let via_sdk = sdk_round.admit_sdk_result(
+    let (via_sdk, via_sdk_verdict) = sdk_round.admit_sdk_result(
         "test-session",
         "fixed_payload",
         &serde_json::json!({}),
         "x".repeat(OVERSIZED_CHARS),
-        false,
+        ToolVerdict::Ok,
     );
 
     std::println!(
@@ -697,6 +729,11 @@ async fn a_single_output_past_the_ceiling_is_bounded_on_every_admit_path() {
         Some(ToolVerdict::Withheld),
         "the round says the same"
     );
+    assert_eq!(
+        via_sdk_verdict,
+        ToolVerdict::Withheld,
+        "and so does an SDK result the round withheld"
+    );
 
     // With the opt-in all three return the prefix that fits, and the two admit
     // paths return exactly what the tool layer returns: same arithmetic, same
@@ -714,12 +751,12 @@ async fn a_single_output_past_the_ceiling_is_bounded_on_every_admit_path() {
     let mut opted_round = RoundTokenBudget::with_seed(PARITY_BUDGET, 0);
     let round_opted_in = opted_round.admit("fixed_payload", marked);
     let mut sdk_opted_round = RoundTokenBudget::with_seed(PARITY_BUDGET, 0);
-    let sdk_opted_in = sdk_opted_round.admit_sdk_result(
+    let (sdk_opted_in, sdk_opted_verdict) = sdk_opted_round.admit_sdk_result(
         "test-session",
         "fixed_payload",
         &opted_in,
         "x".repeat(OVERSIZED_CHARS),
-        false,
+        ToolVerdict::Ok,
     );
 
     std::println!("QA tool layer, opted in: {}", qa_excerpt(&tool_opted_in.output));
@@ -745,6 +782,11 @@ async fn a_single_output_past_the_ceiling_is_bounded_on_every_admit_path() {
         "an opted-in cut is reported as a cut"
     );
     assert_eq!(round_opted_in.verdict, Some(ToolVerdict::Truncated), "by both layers");
+    assert_eq!(
+        sdk_opted_verdict,
+        ToolVerdict::Truncated,
+        "an SDK result the round cut says so too"
+    );
 }
 
 /// The single-output rule must not touch an ordinary result: every path admits
@@ -778,14 +820,19 @@ async fn a_normal_sized_output_is_admitted_untouched_on_every_path() {
     );
 
     let mut sdk_round = RoundTokenBudget::with_seed(PARITY_BUDGET, 0);
-    let via_sdk = sdk_round.admit_sdk_result(
+    let (via_sdk, via_sdk_verdict) = sdk_round.admit_sdk_result(
         "test-session",
         "fixed_payload",
         &serde_json::json!({}),
         expected.clone(),
-        false,
+        ToolVerdict::Ok,
     );
     assert_eq!(via_sdk, expected, "an SDK result of normal size is admitted whole");
+    assert_eq!(
+        via_sdk_verdict,
+        ToolVerdict::Ok,
+        "and keeps the verdict the provider's answer carried"
+    );
     assert_eq!(
         sdk_round.current_tokens(),
         crate::util::estimate_tokens(&expected),

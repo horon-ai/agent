@@ -430,7 +430,7 @@ impl Agent {
             let mut usage_cache_creation: Option<u64> = None;
             let mut saw_message_end = false;
             let mut stop_reason: Option<String> = None;
-            let mut sdk_tool_results: std::collections::HashMap<String, (String, bool)> =
+            let mut sdk_tool_results: std::collections::HashMap<String, (String, crate::tool::ToolVerdict)> =
                 std::collections::HashMap::new();
             let provider_name = self.provider.name().to_string();
             let store_reasoning_content = crate::provider::stores_reasoning_content_for_context(&provider_name);
@@ -880,14 +880,18 @@ impl Agent {
                         is_error,
                     } => {
                         let tool_name = tool_id_to_name.get(&tool_use_id).cloned().unwrap_or_default();
+                        // The provider's wire event carries only the flag, so this
+                        // is where a verdict is derived for it, once. Everything
+                        // downstream reads the value stored here.
+                        let verdict = crate::tool::ToolVerdict::from_error_flag(is_error);
                         let _ = event_tx.send(ServerEvent::ToolDone {
                             id: tool_use_id.clone(),
                             name: tool_name,
                             output: content.clone(),
                             error: if is_error { Some("Tool error".to_string()) } else { None },
-                            verdict: is_error.then_some(crate::tool::ToolVerdict::Failed),
+                            verdict: Some(verdict),
                         });
-                        sdk_tool_results.insert(tool_use_id, (content, is_error));
+                        sdk_tool_results.insert(tool_use_id, (content, verdict));
                     }
                     StreamEvent::GeneratedImage {
                         id,
@@ -1770,28 +1774,28 @@ impl Agent {
 
                 let is_native_tool = HORON_AGENT_NATIVE_TOOLS.contains(&tc.name.as_str());
 
-                if let Some((sdk_content, sdk_is_error)) = sdk_tool_results.remove(&tc.id) {
+                if let Some((sdk_content, sdk_verdict)) = sdk_tool_results.remove(&tc.id) {
                     // For native tools, ignore SDK errors and execute locally
-                    if !(is_native_tool && sdk_is_error) {
+                    if !(is_native_tool && sdk_verdict.is_failure()) {
                         // The provider answered this call, so no tool layer capped
                         // or admitted it. It is still an output this round
                         // applies, so it takes the round's own decision.
-                        let sdk_content = round_budget.admit_sdk_result(
+                        let (sdk_content, sdk_verdict) = round_budget.admit_sdk_result(
                             &self.session.id,
                             &tc.name,
                             &tc.input,
                             sdk_content,
-                            sdk_is_error,
+                            sdk_verdict,
                         );
                         self.add_message(
                             Role::User,
                             vec![ContentBlock::ToolResult {
                                 tool_use_id: tc.id.clone(),
                                 content: sdk_content,
-                                is_error: if sdk_is_error { Some(true) } else { None },
-                                // A plain answer stores no key; only a refused one says
-                                // what became of it.
-                                verdict: sdk_is_error.then_some(crate::tool::ToolVerdict::Failed),
+                                // The flag stays the model-facing projection of the
+                                // verdict; the verdict itself is the record.
+                                is_error: sdk_verdict.is_failure().then_some(true),
+                                verdict: Some(sdk_verdict),
                             }],
                         );
                         tool_results_dirty = true;
@@ -2227,7 +2231,7 @@ enum StreamedGroupMember {
     Execute,
     Sdk {
         content: String,
-        is_error: bool,
+        verdict: crate::tool::ToolVerdict,
     },
     Malformed {
         error: String,
@@ -2390,7 +2394,7 @@ impl Agent {
         group: super::tool_round::ToolGroup,
         assistant_message_id: Option<&str>,
         event_tx: &mpsc::UnboundedSender<ServerEvent>,
-        sdk_tool_results: &mut HashMap<String, (String, bool)>,
+        sdk_tool_results: &mut HashMap<String, (String, crate::tool::ToolVerdict)>,
         malformed_calls: &mut Vec<MalformedToolCallInfo>,
         executed_valid_call: &mut bool,
         tool_results_dirty: &mut bool,
@@ -2427,8 +2431,8 @@ impl Agent {
             }
 
             let is_native_tool = HORON_AGENT_NATIVE_TOOLS.contains(&tc.name.as_str());
-            if let Some((sdk_content, sdk_is_error)) = sdk_tool_results.remove(&tc.id)
-                && !(is_native_tool && sdk_is_error)
+            if let Some((sdk_content, sdk_verdict)) = sdk_tool_results.remove(&tc.id)
+                && !(is_native_tool && sdk_verdict.is_failure())
             {
                 members.push(StreamedGroupMember::Sdk {
                     // Left uncapped here on purpose: the round admits it in
@@ -2436,7 +2440,7 @@ impl Agent {
                     // protocol ceiling and the round's ceiling two separate
                     // decisions instead of one.
                     content: sdk_content,
-                    is_error: sdk_is_error,
+                    verdict: sdk_verdict,
                 });
                 continue;
             }
@@ -2602,26 +2606,19 @@ impl Agent {
                     );
                     *tool_results_dirty = true;
                 }
-                StreamedGroupMember::Sdk { content, is_error } => {
+                StreamedGroupMember::Sdk { content, verdict } => {
                     // Applied in request order like every other member, so the
                     // round's running total advances in the order the model
                     // asked rather than the order the provider answered.
-                    let content = round_budget.admit_sdk_result(
-                        &self.session.id,
-                        &tc.name,
-                        &tc.input,
-                        content.clone(),
-                        *is_error,
-                    );
+                    let (content, verdict) =
+                        round_budget.admit_sdk_result(&self.session.id, &tc.name, &tc.input, content.clone(), *verdict);
                     self.add_message(
                         Role::User,
                         vec![ContentBlock::ToolResult {
                             tool_use_id: tc.id.clone(),
                             content,
-                            is_error: if *is_error { Some(true) } else { None },
-                            // A plain answer stores no key; only a refused one says
-                            // what became of it.
-                            verdict: (*is_error).then_some(crate::tool::ToolVerdict::Failed),
+                            is_error: verdict.is_failure().then_some(true),
+                            verdict: Some(verdict),
                         }],
                     );
                     *tool_results_dirty = true;

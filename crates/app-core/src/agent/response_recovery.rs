@@ -965,15 +965,7 @@ mod malformed_tool_call_recovery_tests {
             .active_context()
             .iter()
             .flat_map(|message| &message.content)
-            .filter(|block| {
-                matches!(
-                    block,
-                    ContentBlock::ToolResult {
-                        is_error: Some(true),
-                        ..
-                    }
-                )
-            })
+            .filter(|block| block.tool_result_failed())
             .count()
     }
 

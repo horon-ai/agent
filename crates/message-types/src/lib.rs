@@ -255,6 +255,31 @@ pub enum ContentBlock {
 pub use horon_agent_tool_types::ToolVerdict;
 
 impl ContentBlock {
+    /// What became of the call this block records, or `None` when the block is
+    /// not a tool result.
+    ///
+    /// A stated verdict wins. A record stored before verdicts existed carries
+    /// only `is_error`, so that flag answers `Failed` or `Ok` for it; this is
+    /// the one place that derivation is allowed now that every new record states
+    /// its verdict, and reading it here keeps every caller on one rule instead
+    /// of each re-deriving from the flag.
+    pub fn tool_verdict(&self) -> Option<ToolVerdict> {
+        match self {
+            Self::ToolResult { verdict, is_error, .. } => {
+                Some(verdict.unwrap_or_else(|| ToolVerdict::from_error_flag(*is_error == Some(true))))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this result says its call did not succeed.
+    ///
+    /// Uses the same rule as [`Self::tool_verdict`]: a stated verdict decides,
+    /// and only a record without one falls back to `is_error`.
+    pub fn tool_result_failed(&self) -> bool {
+        self.tool_verdict().is_some_and(ToolVerdict::is_failure)
+    }
+
     /// A stored tool result, with the verdict left unstated.
     ///
     /// The text stays what the model reads; the verdict is filled in by the

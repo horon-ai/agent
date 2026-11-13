@@ -1090,7 +1090,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-message-types \
-            --timeout 600 --min-passed 4 \
+            --timeout 600 --min-passed 8 \
             -- verdict_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \

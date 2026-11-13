@@ -402,9 +402,9 @@ fn persisted_session_has_reload_interruption_marker(session: &Session) -> bool {
 
     last.content.iter().any(|block| match block {
         ContentBlock::Text { text, .. } => text.ends_with("[generation interrupted - server reloading]"),
-        ContentBlock::ToolResult { content, is_error, .. } => {
+        ContentBlock::ToolResult { content, .. } => {
             content == "Reload initiated. Process restarting..."
-                || (is_error.unwrap_or(false)
+                || (block.tool_result_failed()
                     && (content.contains("interrupted by server reload")
                         || content.contains("Skipped - server reloading")))
         }

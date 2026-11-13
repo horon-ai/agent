@@ -733,7 +733,11 @@ The key is `verdict`, not `tool_verdict`: the same name every later surface uses
 { "type": "tool_result", "tool_use_id": "call_1", "content": "alpha", "verdict": "ok" }
 ```
 
-A record written before this field existed has no `verdict` key and loads unchanged; readers that only know `is_error` keep deriving `ok` or `failed` from it. The key is never shown to the model: `crates/provider-openai` destructures the block without the field, so a stored conversation renders the same request bytes whether a result states a verdict or not, and a pre-change session replays identically.
+A record written before this field existed has no `verdict` key and loads unchanged. The key is never shown to the model: `crates/provider-openai` destructures the block without the field, so a stored conversation renders the same request bytes whether a result states a verdict or not, and a pre-change session replays identically.
+
+Deriving a verdict from `is_error` is retired for anything newly written. Every writer states the verdict, and the derivation survives in exactly two places: `ToolVerdict::from_error_flag`, the boundary that turns an SDK or hook error flag into a verdict once, and `ContentBlock::tool_verdict`, the read of a record stored before the field existed. Every other reader asks `ContentBlock::tool_result_failed`, which prefers the stated verdict and falls back to the flag only for an old record. One rule for the whole tree is what makes a `partial` result count as success even if a stale flag says `true`, and what stops a new writer from quietly disagreeing with the record it produced.
+
+A `post_tool_feedback` hook that judged a result an error outranks the tool's own verdict, because the hook read the text and the tool did not; the stored block then says `failed` and `is_error: true` together rather than giving one record two answers.
 
 An unknown verdict name refuses the whole record rather than guessing, the same way an unknown block `type` already does: a result written by a later build with a new name does not load in an older build.
 

@@ -385,8 +385,8 @@ pub(crate) fn render_delta(messages: &[StoredMessage], start: usize, end: usize)
                     let compact = serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string());
                     rendered.push_str(&format!("→ {name} {compact}\n"));
                 }
-                ContentBlock::ToolResult { content, is_error, .. } => {
-                    let marker = if *is_error == Some(true) { "(error) " } else { "" };
+                ContentBlock::ToolResult { content, .. } => {
+                    let marker = if block.tool_result_failed() { "(error) " } else { "" };
                     rendered.push_str(&format!(
                         "← {marker}{}\n",
                         crate::util::truncate_str(content, TOOL_RESULT_CHARS)
