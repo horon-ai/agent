@@ -47,25 +47,25 @@ horon-agent rpc --resume <session>   # 기존 세션에 붙기
 
 | Command | Horon | omp | 판정 |
 | --- | --- | --- | --- |
-| `negotiate_protocol` | `src/cli/rpc/adapter.rs:224` answers `{protocolVersion:1}` for any request | Transport versions, "negotiate_protocol" | 부분 — v1만 지원하고 v2 청킹 없음 |
-| `prompt` | `src/cli/rpc/adapter.rs:210`, turn driven at `src/cli/rpc/adapter.rs:338` | Commands table, `prompt` | 있음 |
-| `steer` | `src/cli/rpc/adapter.rs:408` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | 있음 |
+| `negotiate_protocol` | `src/cli/rpc/adapter.rs:232` answers `{protocolVersion:1}` for any request | Transport versions, "negotiate_protocol" | 부분 — v1만 지원하고 v2 청킹 없음 |
+| `prompt` | `src/cli/rpc/adapter.rs:218`, turn driven at `src/cli/rpc/adapter.rs:349` | Commands table, `prompt` | 있음 |
+| `steer` | `src/cli/rpc/adapter.rs:426` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | 있음 |
 | `follow_up` | Same arm, `urgent: true` | Same section | 부분 — 스티어링·팔로업 모드가 `all`로 고정이고 `set_steering_mode`, `set_follow_up_mode`가 없음 |
-| `abort` | `src/cli/rpc/adapter.rs:229` while idle, `src/cli/rpc/adapter.rs:410` mid-turn | "Cancel safely" | 있음 — 턴은 이 응답이 아니라 데몬의 인터럽트로 끝남 |
-| `abort_and_prompt` | `src/cli/rpc/adapter.rs:419` | "Cancel safely" | 부분 — 대체 프롬프트를 예약하지 않고 새 텍스트를 스티어로 보냄 |
+| `abort` | `src/cli/rpc/adapter.rs:237` while idle, `src/cli/rpc/adapter.rs:437` mid-turn | "Cancel safely" | 있음 — 턴은 이 응답이 아니라 데몬의 인터럽트로 끝남 |
+| `abort_and_prompt` | `src/cli/rpc/adapter.rs:446` | "Cancel safely" | 부분 — 대체 프롬프트를 예약하지 않고 새 텍스트를 스티어로 보냄 |
 | `get_state` | `src/cli/rpc/state.rs:108` | Commands table, `get_state` | 있음 |
-| `set_model` | `src/cli/rpc/state.rs:234` | Commands table, `set_model` | 있음 — 응답은 선택된 모델이며 `provider`와 `modelId`를 `modelId` 한 필드에서 읽음 |
+| `set_model` | `src/cli/rpc/state.rs:237` | Commands table, `set_model` | 있음 — 응답은 선택된 모델이며 `provider`와 `modelId`를 `modelId` 한 필드에서 읽음 |
 | `get_available_models` | `src/cli/rpc/state.rs:135` | Commands table, `get_available_models` | 있음 — 쓸 수 없는 라우트를 빼서 호스트가 실패할 라우트를 고르지 못함 |
-| `set_thinking_level` | `src/cli/rpc/state.rs:255` | Commands table, `set_thinking_level` | 있음 |
-| `get_available_commands` | `src/cli/rpc/adapter.rs:242` | Commands table, `get_available_commands` | 부분 — `compact`와 `model` 두 항목만 |
-| `set_todos` | `src/cli/rpc/state.rs:291` | Commands table, `set_todos` | 있음 — `blocked`와 `blocker`가 이 빌드에 실재하므로 왕복해도 그대로 남음 |
-| `compact` | `src/cli/rpc/state.rs:302` | Commands table, `compact` | 부분 — `CompactionResult`에 `summary`만 실리고 `customInstructions`는 무시 |
-| `get_session_stats` | `src/cli/rpc/state.rs:321` | Commands table, `get_session_stats` | 있음 |
-| `get_messages` | `src/cli/rpc/state.rs:352` | Commands table, `get_messages` | 있음 |
-| `set_session_name` | `src/cli/rpc/state.rs:275` | Commands table, `set_session_name` | 있음 |
-| `bash` | `src/cli/rpc/state.rs:411` runs the command locally with `sh -c` | Commands table, `bash` | 부분 — 응답 전에 끝까지 돌므로 다른 명령처럼 직렬화됨 |
-| `abort_bash` | `src/cli/rpc/adapter.rs:312` | Commands table, `abort_bash` | 부분 — 이 빌드에서 `bash`가 동시 실행되지 않으므로 미지원으로 응답 |
-| `new_session` | `src/cli/rpc/adapter.rs:233` | Commands table, `new_session` | 없음 — 프로세스당 세션 하나이므로 프로세스를 하나 더 띄움 |
+| `set_thinking_level` | `src/cli/rpc/state.rs:258` | Commands table, `set_thinking_level` | 있음 |
+| `get_available_commands` | `src/cli/rpc/adapter.rs:253` | Commands table, `get_available_commands` | 부분 — `compact`와 `model` 두 항목만 |
+| `set_todos` | `src/cli/rpc/state.rs:294` | Commands table, `set_todos` | 있음 — `blocked`와 `blocker`가 이 빌드에 실재하므로 왕복해도 그대로 남음 |
+| `compact` | `src/cli/rpc/state.rs:309` | Commands table, `compact` | 부분 — `CompactionResult`에 `summary`만 실리고 `customInstructions`는 무시 |
+| `get_session_stats` | `src/cli/rpc/state.rs:328` | Commands table, `get_session_stats` | 있음 |
+| `get_messages` | `src/cli/rpc/state.rs:359` | Commands table, `get_messages` | 있음 |
+| `set_session_name` | `src/cli/rpc/state.rs:278` | Commands table, `set_session_name` | 있음 |
+| `bash` | `src/cli/rpc/state.rs:423` runs the command locally with `sh -c` | Commands table, `bash` | 부분 — 응답 전에 끝까지 돌므로 다른 명령처럼 직렬화됨 |
+| `abort_bash` | `src/cli/rpc/adapter.rs:323` | Commands table, `abort_bash` | 부분 — 이 빌드에서 `bash`가 동시 실행되지 않으므로 미지원으로 응답 |
+| `new_session` | `src/cli/rpc/adapter.rs:241` | Commands table, `new_session` | 없음 — 프로세스당 세션 하나이므로 프로세스를 하나 더 띄움 |
 | `switch_session`, `branch`, `get_branch_messages`, `handoff` | Not in `src/cli/rpc/command.rs:93` | Commands table, session rows | 없음 |
 | `get_last_assistant_text` | Absent | Commands table | 없음 — `get_messages`가 전체 기록을 반환 |
 | `get_messages_page` | Absent | Commands table, `get_messages_page` | 없음 — 커서 페이징이 없고 `get_messages`가 전부 반환 |
@@ -86,24 +86,24 @@ JSON 객체가 아니거나 `type`이 없는 줄은 무시한다. 호스트가 �
 
 | Frame | Horon | omp | 판정 |
 | --- | --- | --- | --- |
-| `ready` | `src/cli/rpc/frame.rs:30` | Other stdout frames, `ready` | 부분 — `supportedProtocolVersions`가 `[1,2]`가 아니라 `[1]` |
-| `response` | `src/cli/rpc/frame.rs:42`, `src/cli/rpc/frame.rs:51` | Response envelope | 있음 |
-| `prompt_result` | `src/cli/rpc/frame.rs:80` | Other stdout frames | 있음 — `status`를 더해 항상 보냄 |
-| `session_settled` | `src/cli/rpc/frame.rs:91` | Not documented as a separate frame | 있음 |
-| `agent_start`, `agent_end` | `src/cli/rpc/mapper.rs:82`, `src/cli/rpc/mapper.rs:166` | Agent lifecycle events | 있음 |
-| `turn_start`, `turn_end` | `src/cli/rpc/mapper.rs:90`, `src/cli/rpc/mapper.rs:552` | Agent lifecycle events | 있음 |
-| `message_start`, `message_end` | `src/cli/rpc/frame.rs:99`, `src/cli/rpc/frame.rs:103` | Agent lifecycle events | 있음 — `message` 옆에 `messageId`를 더함 |
-| `message_update` | `src/cli/rpc/frame.rs:107` | Agent lifecycle events | 있음 — `text_*`, `thinking_*`, `toolcall_*`만 내보내고 `image_end`, `done`, `error` 이벤트는 없음 |
-| `tool_execution_start`, `tool_execution_update`, `tool_execution_end` | `src/cli/rpc/mapper.rs:520`, `src/cli/rpc/mapper.rs:527`, `src/cli/rpc/mapper.rs:536` | Agent lifecycle events | 있음 — 어시스턴트 `message_end` 뒤에 내보냄 |
-| `available_commands_update` | `src/cli/rpc/adapter.rs:165` | Other stdout frames | 부분 — 시작할 때 한 번 쓰고 갱신하지 않음 |
+| `ready` | `src/cli/rpc/frame.rs:32` | Other stdout frames, `ready` | 부분 — `supportedProtocolVersions`가 `[1,2]`가 아니라 `[1]` |
+| `response` | `src/cli/rpc/frame.rs:43`, `src/cli/rpc/frame.rs:53` | Response envelope | 있음 |
+| `prompt_result` | `src/cli/rpc/frame.rs:82` | Other stdout frames | 있음 — `status`를 더해 항상 보냄 |
+| `session_settled` | `src/cli/rpc/frame.rs:92` | Not documented as a separate frame | 있음 |
+| `agent_start`, `agent_end` | `src/cli/rpc/mapper.rs:82`, `src/cli/rpc/mapper.rs:169` | Agent lifecycle events | 있음 |
+| `turn_start`, `turn_end` | `src/cli/rpc/mapper.rs:90`, `src/cli/rpc/mapper.rs:555` | Agent lifecycle events | 있음 |
+| `message_start`, `message_end` | `src/cli/rpc/frame.rs:100`, `src/cli/rpc/frame.rs:104` | Agent lifecycle events | 있음 — `message` 옆에 `messageId`를 더함 |
+| `message_update` | `src/cli/rpc/frame.rs:109` | Agent lifecycle events | 있음 — `text_*`, `thinking_*`, `toolcall_*`만 내보내고 `image_end`, `done`, `error` 이벤트는 없음 |
+| `tool_execution_start`, `tool_execution_update`, `tool_execution_end` | `src/cli/rpc/mapper.rs:520`, `src/cli/rpc/mapper.rs:527`, `src/cli/rpc/mapper.rs:539` | Agent lifecycle events | 있음 — 어시스턴트 `message_end` 뒤에 내보냄 |
+| `available_commands_update` | `src/cli/rpc/adapter.rs:173` | Other stdout frames | 부분 — 시작할 때 한 번 쓰고 갱신하지 않음 |
 | `session_info_update` | `src/cli/rpc/mapper.rs:141` | Other stdout frames | 있음 |
 | `model_changed`, `thinking_level_changed` | `src/cli/rpc/mapper.rs:147`, `src/cli/rpc/mapper.rs:150` | Session events | 있음 |
-| `notice` | `src/cli/rpc/frame.rs:95` | Session events, `notice` | 부분 — 가드레일 중단과 컴팩션에 쓰고 `source`는 없음 |
-| `rpc_frame_error` | `src/cli/rpc/frame.rs:72` | Other stdout frames | 있음 — 1메비바이트를 넘는 프레임은 자르지 않고 대체함 |
+| `notice` | `src/cli/rpc/frame.rs:96` | Session events, `notice` | 부분 — 가드레일 중단과 컴팩션에 쓰고 `source`는 없음 |
+| `rpc_frame_error` | `src/cli/rpc/frame.rs:73` | Other stdout frames | 있음 — 1메비바이트를 넘는 프레임은 자르지 않고 대체함 |
 | `rpc_chunk` | Absent by design: `src/cli/rpc/frame.rs:18` pins version 1 | "Transport versions and large frames" | 없음 — 청크 재조립은 v2 전용 |
 | `command_output` | Absent | Other stdout frames | 없음 — 어댑터가 직접 처리하는 슬래시 명령이 텍스트를 내지 않음 |
 | `config_update` | Absent | Other stdout frames | 없음 — 대신 `model_changed`와 `thinking_level_changed`가 변경을 전함 |
-| `extension_ui_request` | `src/cli/rpc/adapter.rs:156` sends one empty `setWidget` | "Extension UI sub-protocol" | 부분 — 이 프레임을 기다리는 호스트가 멈추지 않게 승인만 한 번 보내고 대화상자, `cancel`, 값 응답은 없음 |
+| `extension_ui_request` | `src/cli/rpc/adapter.rs:164` sends one empty `setWidget` | "Extension UI sub-protocol" | 부분 — 이 프레임을 기다리는 호스트가 멈추지 않게 승인만 한 번 보내고 대화상자, `cancel`, 값 응답은 없음 |
 | `extension_error` | Absent | Other stdout frames | 없음 |
 | `host_tool_call`, `host_tool_cancel`, `host_uri_request`, `host_uri_cancel` | Absent | "Host tools and host URIs" | 없음 |
 | `subagent_lifecycle`, `subagent_progress`, `subagent_event` | Absent | "Subagent frames" | 없음 |

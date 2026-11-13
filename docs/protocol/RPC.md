@@ -47,25 +47,25 @@ Stdin is read by a dedicated task. A read cancelled by `select!` loses the bytes
 
 | Command | Horon | omp | Verdict |
 | --- | --- | --- | --- |
-| `negotiate_protocol` | `src/cli/rpc/adapter.rs:224` answers `{protocolVersion:1}` for any request | Transport versions, "negotiate_protocol" | partial — v1 only, no v2 chunking |
-| `prompt` | `src/cli/rpc/adapter.rs:210`, turn driven at `src/cli/rpc/adapter.rs:338` | Commands table, `prompt` | yes |
-| `steer` | `src/cli/rpc/adapter.rs:408` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | yes |
+| `negotiate_protocol` | `src/cli/rpc/adapter.rs:232` answers `{protocolVersion:1}` for any request | Transport versions, "negotiate_protocol" | partial — v1 only, no v2 chunking |
+| `prompt` | `src/cli/rpc/adapter.rs:218`, turn driven at `src/cli/rpc/adapter.rs:349` | Commands table, `prompt` | yes |
+| `steer` | `src/cli/rpc/adapter.rs:426` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | yes |
 | `follow_up` | Same arm, `urgent: true` | Same section | partial — steering and follow-up modes are fixed at `all`; `set_steering_mode` and `set_follow_up_mode` do not exist |
-| `abort` | `src/cli/rpc/adapter.rs:229` while idle, `src/cli/rpc/adapter.rs:410` mid-turn | "Cancel safely" | yes — the turn ends on the daemon's interrupt, not on this response |
-| `abort_and_prompt` | `src/cli/rpc/adapter.rs:419` | "Cancel safely" | partial — no replacement prompt is scheduled; the new text becomes a steer |
+| `abort` | `src/cli/rpc/adapter.rs:237` while idle, `src/cli/rpc/adapter.rs:437` mid-turn | "Cancel safely" | yes — the turn ends on the daemon's interrupt, not on this response |
+| `abort_and_prompt` | `src/cli/rpc/adapter.rs:446` | "Cancel safely" | partial — no replacement prompt is scheduled; the new text becomes a steer |
 | `get_state` | `src/cli/rpc/state.rs:108` | Commands table, `get_state` | yes |
-| `set_model` | `src/cli/rpc/state.rs:234` | Commands table, `set_model` | yes — the response is the selected model; `provider` and `modelId` are read from one `modelId` field |
+| `set_model` | `src/cli/rpc/state.rs:237` | Commands table, `set_model` | yes — the response is the selected model; `provider` and `modelId` are read from one `modelId` field |
 | `get_available_models` | `src/cli/rpc/state.rs:135` | Commands table, `get_available_models` | yes — unavailable routes are dropped so a host cannot select one that fails |
-| `set_thinking_level` | `src/cli/rpc/state.rs:255` | Commands table, `set_thinking_level` | yes |
-| `get_available_commands` | `src/cli/rpc/adapter.rs:242` | Commands table, `get_available_commands` | partial — two entries, `compact` and `model` |
-| `set_todos` | `src/cli/rpc/state.rs:291` | Commands table, `set_todos` | yes — `blocked` and `blocker` are real statuses here, so they survive a round trip |
-| `compact` | `src/cli/rpc/state.rs:302` | Commands table, `compact` | partial — `CompactionResult` carries `summary` only; `customInstructions` is ignored |
-| `get_session_stats` | `src/cli/rpc/state.rs:321` | Commands table, `get_session_stats` | yes |
-| `get_messages` | `src/cli/rpc/state.rs:352` | Commands table, `get_messages` | yes |
-| `set_session_name` | `src/cli/rpc/state.rs:275` | Commands table, `set_session_name` | yes |
-| `bash` | `src/cli/rpc/state.rs:411` runs the command locally with `sh -c` | Commands table, `bash` | partial — runs to completion before its response, so it is serialized like every other command |
-| `abort_bash` | `src/cli/rpc/adapter.rs:312` | Commands table, `abort_bash` | partial — answered as unsupported because `bash` cannot be concurrent here |
-| `new_session` | `src/cli/rpc/adapter.rs:233` | Commands table, `new_session` | no — one session per process; start another process |
+| `set_thinking_level` | `src/cli/rpc/state.rs:258` | Commands table, `set_thinking_level` | yes |
+| `get_available_commands` | `src/cli/rpc/adapter.rs:253` | Commands table, `get_available_commands` | partial — two entries, `compact` and `model` |
+| `set_todos` | `src/cli/rpc/state.rs:294` | Commands table, `set_todos` | yes — `blocked` and `blocker` are real statuses here, so they survive a round trip |
+| `compact` | `src/cli/rpc/state.rs:309` | Commands table, `compact` | partial — `CompactionResult` carries `summary` only; `customInstructions` is ignored |
+| `get_session_stats` | `src/cli/rpc/state.rs:328` | Commands table, `get_session_stats` | yes |
+| `get_messages` | `src/cli/rpc/state.rs:359` | Commands table, `get_messages` | yes |
+| `set_session_name` | `src/cli/rpc/state.rs:278` | Commands table, `set_session_name` | yes |
+| `bash` | `src/cli/rpc/state.rs:423` runs the command locally with `sh -c` | Commands table, `bash` | partial — runs to completion before its response, so it is serialized like every other command |
+| `abort_bash` | `src/cli/rpc/adapter.rs:323` | Commands table, `abort_bash` | partial — answered as unsupported because `bash` cannot be concurrent here |
+| `new_session` | `src/cli/rpc/adapter.rs:241` | Commands table, `new_session` | no — one session per process; start another process |
 | `switch_session`, `branch`, `get_branch_messages`, `handoff` | Not in `src/cli/rpc/command.rs:93` | Commands table, session rows | no |
 | `get_last_assistant_text` | Absent | Commands table | no — `get_messages` returns the transcript |
 | `get_messages_page` | Absent | Commands table, `get_messages_page` | no — no cursor paging; `get_messages` returns everything |
@@ -86,24 +86,24 @@ A line that is not a JSON object, or that names no `type`, is ignored: a host ma
 
 | Frame | Horon | omp | Verdict |
 | --- | --- | --- | --- |
-| `ready` | `src/cli/rpc/frame.rs:30` | Other stdout frames, `ready` | partial — `supportedProtocolVersions` is `[1]`, not `[1,2]` |
-| `response` | `src/cli/rpc/frame.rs:42`, `src/cli/rpc/frame.rs:51` | Response envelope | yes |
-| `prompt_result` | `src/cli/rpc/frame.rs:80` | Other stdout frames | yes — always emitted, with `status` added |
-| `session_settled` | `src/cli/rpc/frame.rs:91` | Not documented as a separate frame | yes |
-| `agent_start`, `agent_end` | `src/cli/rpc/mapper.rs:82`, `src/cli/rpc/mapper.rs:166` | Agent lifecycle events | yes |
-| `turn_start`, `turn_end` | `src/cli/rpc/mapper.rs:90`, `src/cli/rpc/mapper.rs:552` | Agent lifecycle events | yes |
-| `message_start`, `message_end` | `src/cli/rpc/frame.rs:99`, `src/cli/rpc/frame.rs:103` | Agent lifecycle events | yes — `messageId` is added beside `message` |
-| `message_update` | `src/cli/rpc/frame.rs:107` | Agent lifecycle events | yes — `text_*`, `thinking_*`, and `toolcall_*` events only; no `image_end` and no `done` or `error` event |
-| `tool_execution_start`, `tool_execution_update`, `tool_execution_end` | `src/cli/rpc/mapper.rs:520`, `src/cli/rpc/mapper.rs:527`, `src/cli/rpc/mapper.rs:536` | Agent lifecycle events | yes — emitted after the assistant `message_end` |
-| `available_commands_update` | `src/cli/rpc/adapter.rs:165` | Other stdout frames | partial — written once at startup, never updated |
+| `ready` | `src/cli/rpc/frame.rs:32` | Other stdout frames, `ready` | partial — `supportedProtocolVersions` is `[1]`, not `[1,2]` |
+| `response` | `src/cli/rpc/frame.rs:43`, `src/cli/rpc/frame.rs:53` | Response envelope | yes |
+| `prompt_result` | `src/cli/rpc/frame.rs:82` | Other stdout frames | yes — always emitted, with `status` added |
+| `session_settled` | `src/cli/rpc/frame.rs:92` | Not documented as a separate frame | yes |
+| `agent_start`, `agent_end` | `src/cli/rpc/mapper.rs:82`, `src/cli/rpc/mapper.rs:169` | Agent lifecycle events | yes |
+| `turn_start`, `turn_end` | `src/cli/rpc/mapper.rs:90`, `src/cli/rpc/mapper.rs:555` | Agent lifecycle events | yes |
+| `message_start`, `message_end` | `src/cli/rpc/frame.rs:100`, `src/cli/rpc/frame.rs:104` | Agent lifecycle events | yes — `messageId` is added beside `message` |
+| `message_update` | `src/cli/rpc/frame.rs:109` | Agent lifecycle events | yes — `text_*`, `thinking_*`, and `toolcall_*` events only; no `image_end` and no `done` or `error` event |
+| `tool_execution_start`, `tool_execution_update`, `tool_execution_end` | `src/cli/rpc/mapper.rs:520`, `src/cli/rpc/mapper.rs:527`, `src/cli/rpc/mapper.rs:539` | Agent lifecycle events | yes — emitted after the assistant `message_end` |
+| `available_commands_update` | `src/cli/rpc/adapter.rs:173` | Other stdout frames | partial — written once at startup, never updated |
 | `session_info_update` | `src/cli/rpc/mapper.rs:141` | Other stdout frames | yes |
 | `model_changed`, `thinking_level_changed` | `src/cli/rpc/mapper.rs:147`, `src/cli/rpc/mapper.rs:150` | Session events | yes |
-| `notice` | `src/cli/rpc/frame.rs:95` | Session events, `notice` | partial — used for guardrail stops and compaction; `source` is absent |
-| `rpc_frame_error` | `src/cli/rpc/frame.rs:72` | Other stdout frames | yes — a frame over one mebibyte is replaced, never truncated |
-| `rpc_chunk` | Absent by design: `src/cli/rpc/frame.rs:18` pins version 1 | "Transport versions and large frames" | no — reassembling a chunked frame is v2 only |
+| `notice` | `src/cli/rpc/frame.rs:96` | Session events, `notice` | partial — used for guardrail stops and compaction; `source` is absent |
+| `rpc_frame_error` | `src/cli/rpc/frame.rs:73` | Other stdout frames | yes — a frame over one mebibyte is replaced, never truncated |
+| `rpc_chunk` | Absent by design: `src/cli/rpc/frame.rs:18` pins `PROTOCOL_VERSION` to 1 | "Transport versions and large frames" | no — reassembling a chunked frame is v2 only |
 | `command_output` | Absent | Other stdout frames | no — no locally handled slash command produces text |
 | `config_update` | Absent | Other stdout frames | no — `model_changed` and `thinking_level_changed` carry the change instead |
-| `extension_ui_request` | `src/cli/rpc/adapter.rs:156` sends one empty `setWidget` | "Extension UI sub-protocol" | partial — a single acknowledgement so a host that waits for it does not stall; no dialog, no `cancel`, no value responses |
+| `extension_ui_request` | `src/cli/rpc/adapter.rs:164` sends one empty `setWidget` | "Extension UI sub-protocol" | partial — a single acknowledgement so a host that waits for it does not stall; no dialog, no `cancel`, no value responses |
 | `extension_error` | Absent | Other stdout frames | no |
 | `host_tool_call`, `host_tool_cancel`, `host_uri_request`, `host_uri_cancel` | Absent | "Host tools and host URIs" | no |
 | `subagent_lifecycle`, `subagent_progress`, `subagent_event` | Absent | "Subagent frames" | no |
