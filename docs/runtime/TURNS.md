@@ -88,6 +88,18 @@ cargo test -p horon-agent-agent-runtime turn_state
 cargo test -p horon-agent-base soft_interrupt_store
 ```
 
+### A wake waits for the turn handover, not for the queue
+
+A queued soft interrupt is drained only by a running turn, so the daemon-side wake
+(`run_live_system_turn_if_idle` in `crates/app-core/src/server/live_turn.rs`) must not
+mistake a handover for a busy session. A finished turn keeps the agent lock a moment longer
+while `ForegroundGuard::close` forwards its idle state to every attachment (bounded by
+`IDLE_FORWARD_BOUND`, 5 s). That turn registers no active run any more, so
+`foreground_state::is_running` is already false: the wake waits up to `HANDOVER_WAIT`
+(10 s) for the lock and starts the turn, instead of demoting the message to the queue and
+leaving the session idle until some unrelated turn drains it. A turn genuinely in flight
+still answers `None` at once and the message takes the queue path, as before.
+
 ## Soft interrupts: seamless message injection
 
 ### Overview

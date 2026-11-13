@@ -51,6 +51,22 @@ struct Inner {
     remembered: HashMap<String, bool>,
     open: HashMap<String, OpenCall>,
     resolved_early: VecDeque<String>,
+    /// A cancelled turn is withdrawing this session's calls. A call that opens
+    /// while this is set is never asked, so the notification does not depend
+    /// on whether `cancel_open` or the daemon reached the request first (#263).
+    cancelled_turn: bool,
+}
+
+/// What [`PermissionState::open`] decided for one request.
+#[derive(Debug, PartialEq, Eq)]
+enum OpenOutcome {
+    /// The client call is registered and must be asked.
+    Asked,
+    /// The request was already decided elsewhere; the client must not be asked.
+    AlreadyResolved,
+    /// The turn was cancelled: every call of it is withdrawn, including this
+    /// one, so the client must not be asked.
+    CancelledTurn,
 }
 
 /// Per-session permission state: remembered `always` answers and the client
@@ -73,13 +89,21 @@ impl PermissionState {
         self.lock().remembered.insert(tool_name.to_string(), approved);
     }
 
-    /// Record the client call for `request_id`. False when the request was
-    /// already resolved elsewhere, so the client must not be asked.
-    fn open(&self, request_id: &str, client_call_id: Value) -> bool {
+    /// Record the client call for `request_id` and say whether the client must
+    /// be asked.
+    ///
+    /// The cancelled-turn flag is read under the same lock `cancel_open` sets
+    /// it with, so a call that opens while a cancel is withdrawing the turn is
+    /// never asked: it cannot be missed by the withdrawal pass, whatever order
+    /// the two surfaces ran in (#263).
+    fn open(&self, request_id: &str, client_call_id: Value) -> OpenOutcome {
         let mut inner = self.lock();
         if let Some(position) = inner.resolved_early.iter().position(|id| id == request_id) {
             inner.resolved_early.remove(position);
-            return false;
+            return OpenOutcome::AlreadyResolved;
+        }
+        if inner.cancelled_turn {
+            return OpenOutcome::CancelledTurn;
         }
         inner.open.insert(
             request_id.to_string(),
@@ -88,7 +112,7 @@ impl PermissionState {
                 withdrawn: false,
             },
         );
-        true
+        OpenOutcome::Asked
     }
 
     /// Retire the call for `request_id`; true when it was withdrawn because
@@ -128,17 +152,32 @@ impl PermissionState {
 
     /// The prompt turn was cancelled: cancel every open client call. Each
     /// waiting handler then answers the daemon `deny`.
+    ///
+    /// The cancelled-turn flag is set under the same lock the ids are read
+    /// with, so a request that opens while this pass runs is not asked at all
+    /// ([`OpenOutcome::CancelledTurn`]): the notification then never depends on
+    /// which surface reached the request first (#263). The flag holds until
+    /// [`Self::end_cancelled_turn`].
     pub(super) async fn cancel_open(&self, peer: &RpcPeer) {
-        let ids: Vec<Value> = self
-            .lock()
-            .open
-            .values()
-            .filter(|call| !call.withdrawn)
-            .map(|call| call.client_call_id.clone())
-            .collect();
+        let ids: Vec<Value> = {
+            let mut inner = self.lock();
+            inner.cancelled_turn = true;
+            inner
+                .open
+                .values()
+                .filter(|call| !call.withdrawn)
+                .map(|call| call.client_call_id.clone())
+                .collect()
+        };
         for id in ids {
             peer.cancel_outbound(&id).await;
         }
+    }
+
+    /// The cancelled turn's successor is starting: from here on a request may
+    /// be asked again.
+    pub(super) fn end_cancelled_turn(&self) {
+        self.lock().cancelled_turn = false;
     }
 }
 
@@ -362,9 +401,22 @@ impl AcpSideChannel {
             Some(false) => PermissionDecision::Deny,
             None => {
                 let call = self.peer.begin_call();
-                if !self.permissions.open(&request_id, call.id.clone()) {
-                    self.peer.abandon_call(call);
-                    return;
+                match self.permissions.open(&request_id, call.id.clone()) {
+                    OpenOutcome::Asked => {}
+                    // Already decided elsewhere: the daemon settled the gate.
+                    OpenOutcome::AlreadyResolved => {
+                        self.peer.abandon_call(call);
+                        return;
+                    }
+                    // The turn was cancelled after the withdrawal pass took its
+                    // snapshot. The gate is still open on the daemon, so it is
+                    // answered here instead of asked: a question for a turn
+                    // nobody waits for would stay open forever (#263).
+                    OpenOutcome::CancelledTurn => {
+                        self.peer.abandon_call(call);
+                        self.send_decision(request_id, PermissionDecision::Deny).await;
+                        return;
+                    }
                 }
                 let params = if self.user_actions.is_some() {
                     let cwd = self.absolute_cwd().await;

@@ -32,6 +32,9 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+
+#[path = "acp_cancel.rs"]
+mod acp_cancel;
 use std::time::{Duration, Instant};
 
 /// Client capabilities advertised in `initialize`, and enforced when the agent
@@ -1140,22 +1143,6 @@ impl AcpClient {
                 Frame::Response { id, result } => self.early_responses.push((id, result)),
             }
         }
-    }
-
-    /// The next buffered notification, or the next one the agent writes.
-    pub fn next_notification(&mut self, deadline: Duration) -> Result<Value, AcpClientError> {
-        if let Some(notification) = self.notifications.pop_front() {
-            return Ok(notification);
-        }
-        let end = Instant::now() + deadline;
-        match self.next_frame(end)? {
-            Frame::Notification { method, params } => Ok(json!({ "method": method, "params": params })),
-            other => Err(AcpClientError::Io(format!("expected a notification, saw {other:?}"))),
-        }
-    }
-
-    pub fn drain_notifications(&mut self) -> Vec<Value> {
-        self.notifications.drain(..).collect()
     }
 
     /// Waits for the next `idle` this session reports.

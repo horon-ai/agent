@@ -1421,6 +1421,15 @@ jobs:
           } else {
             Write-Host 'sccache failed to start; this job builds without a wrapper'
           }
+          # A step is not a script: GitHub appends `exit $LASTEXITCODE` to a
+          # pwsh body, so a failed `sccache --start-server` would fail the whole
+          # job even though the branch above deliberately continues unwrapped.
+          # The bash twin has no such epilogue, which is why only Windows went
+          # red when the cache backend answered 503 ServerBusy ("Egress is over
+          # the account limit", run 43451256902) and every later step, including
+          # the build, was skipped. Ending with an explicit success keeps the
+          # decision here: the wrapper is opt-in, its absence is not a failure.
+          exit 0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:

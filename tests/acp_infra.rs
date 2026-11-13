@@ -1344,14 +1344,10 @@ fn acp_permission_cancel_while_pending_real_daemon() {
         .await_response("session/prompt", &prompt_id, T11_WAIT)
         .expect("the prompt response");
     assert_eq!(response["stopReason"], "cancelled", "{response}");
-    let notifications = run.client.drain_notifications();
-    assert!(
-        notifications
-            .iter()
-            .any(|note| note["method"] == "$/cancel_request" && note["params"]["requestId"] == permission_id),
-        "the open permission request is cancelled: {notifications:?}"
-    );
-    assert!(!mentions(&notifications, T11_BASH_RAN), "{notifications:?}");
+    run.client
+        .await_cancel_request(&permission_id, T11_WAIT)
+        .unwrap_or_else(|error| panic!("the open permission request is cancelled: {error}"));
+    assert!(!mentions(&run.client.drain_notifications(), T11_BASH_RAN));
 
     let mode = run.call(
         "session/set_config_option",
@@ -1580,13 +1576,9 @@ fn acp_client_terminal_cancel_while_pending_real_daemon() {
         .await_response("session/prompt", &prompt_id, T11_WAIT)
         .expect("the prompt response");
     assert_eq!(response["stopReason"], "cancelled", "{response}");
-    let notifications = run.client.drain_notifications();
-    assert!(
-        notifications
-            .iter()
-            .any(|note| note["method"] == "$/cancel_request" && note["params"]["requestId"] == wait_id),
-        "the open wait is withdrawn: {notifications:?}"
-    );
+    run.client
+        .await_cancel_request(&wait_id, T11_WAIT)
+        .unwrap_or_else(|error| panic!("the open wait is withdrawn: {error}"));
     if !run
         .client
         .handlers()

@@ -10,11 +10,12 @@ export const GET: APIRoute = async ({ site }) => {
   const lines = [
     "# horon agent",
     "",
-    "> Headless coding agent in one Rust binary for any OpenAI-compatible endpoint.",
+    "> Coding agent in one Rust binary for any OpenAI-compatible endpoint, with a",
+    "> terminal client, SDKs, ACP and RPC.",
     "",
     "horon agent runs a turn, calls tools and exits, or stays up as a daemon that",
-    "SDKs and editors attach to over a Unix socket. The headless package has no",
-    "terminal UI; the interactive client is a separate binary on the SDK.",
+    "the terminal client, SDKs, editors and host programs attach to over a Unix",
+    "socket. The terminal client is a separate binary on the SDK.",
     "",
   ];
 

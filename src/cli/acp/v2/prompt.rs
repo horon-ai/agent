@@ -160,6 +160,10 @@ impl AcpRuntime {
             return self.write_rpc_error(id, RpcError::auth_required()).await;
         }
 
+        // The cancelled turn is behind us: its withdrawn calls are settled, so
+        // a request this turn opens may ask the client again (#263).
+        session.permissions.end_cancelled_turn();
+        session.client_calls.end_cancelled_turn();
         let daemon_id = session.next_message_id();
         let (outcome, answered) = oneshot::channel();
         let request = Request::Message {
