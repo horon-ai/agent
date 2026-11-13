@@ -150,12 +150,12 @@ impl Turn {
                 "type": "thinking_level_changed",
                 "thinkingLevel": effort,
             })],
-            ServerEvent::ProviderGuardrail { stop_reason } => vec![frame::notice(
+            ServerEvent::ProviderGuardrail { stop_reason, message } => vec![frame::notice(
                 "warning",
-                &format!(
-                    "the provider ended the turn without visible output ({})",
-                    stop_reason.unwrap_or_else(|| "guardrail".to_string())
-                ),
+                &match stop_reason {
+                    Some(reason) => format!("{message} ({reason})"),
+                    None => message,
+                },
             )],
             ServerEvent::Compaction { .. } => vec![frame::notice("info", "context compacted")],
             _ => Vec::new(),
