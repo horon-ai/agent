@@ -826,11 +826,22 @@ pub fn write_scripted_provider_config(home: &Path, provider_base_url: &str) {
     write_provider_config(home, provider_base_url, "scripted-model");
 }
 
+/// A fresh scratch root under the canonical temporary directory.
+///
+/// The base comes from `std::env::temp_dir()` rather than a hardcoded
+/// `/private/tmp`: that spelling only exists on macOS, so the Linux job failed
+/// here with `PermissionDenied` and no ACP scenario could start (#226). On
+/// macOS `/var` is a symlink to `private/var` and the store refuses a path that
+/// walks through a symlink, so the OS temporary directory is resolved once and
+/// a unique name joined under it, exactly as `session-store` fixtures do.
 pub fn scratch_root(label: &str) -> PathBuf {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let short: String = label.chars().filter(|ch| ch.is_ascii_alphanumeric()).take(6).collect();
-    let root = PathBuf::from(format!("/private/tmp/tl{}{short}{n}", std::process::id()));
+    let base = std::env::temp_dir()
+        .canonicalize()
+        .expect("the OS temporary directory must resolve");
+    let root = base.join(format!("tl{}{short}{n}", std::process::id()));
     std::fs::create_dir_all(&root).expect("scratch root");
     root
 }
