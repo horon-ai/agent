@@ -442,13 +442,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-        id: sccache
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-pc-windows-msvc
@@ -461,13 +454,14 @@ jobs:
       - name: Build release binary
         shell: pwsh
         run: |
-          if (Get-Command sccache -ErrorAction SilentlyContinue) {
-            sccache --start-server *> $null
-            if ($LASTEXITCODE -eq 0) {
-              $env:RUSTC_WRAPPER = "sccache"
-            }
-          }
-
+          # No sccache wrapper on this target. Measured on run 43499875943:
+          # crate `horon-agent-base` compiles with a rustc command line of
+          # 33,934 characters (34,203 for the ARM64 job), and 215 of the
+          # arguments are `-L dependency=D:\a\agent\agent\target\...` entries
+          # that alone account for 22,931 bytes. CreateProcess on Windows stops
+          # at 32,767, so the wrapper's spawn fails with `os error 206: The
+          # filename or extension is too long` while plain cargo, which spawns
+          # rustc itself, builds the same crate. The other targets keep it.
           $cargoArgs = @("build", "--local", "--locked", "--release", "--target", "x86_64-pc-windows-msvc")
 
           & justrust @cargoArgs
@@ -566,13 +560,6 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-        id: sccache
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: aarch64-pc-windows-msvc
@@ -581,13 +568,8 @@ jobs:
       - name: Build release binary
         shell: pwsh
         run: |
-          if (Get-Command sccache -ErrorAction SilentlyContinue) {
-            sccache --start-server *> $null
-            if ($LASTEXITCODE -eq 0) {
-              $env:RUSTC_WRAPPER = "sccache"
-            }
-          }
-
+          # No sccache wrapper here either; see the x64 job for the 32,767
+          # character CreateProcess limit that `horon-agent-base` now exceeds.
           & cargo build --locked --release --target aarch64-pc-windows-msvc --no-default-features --features pdf
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
