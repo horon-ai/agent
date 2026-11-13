@@ -215,9 +215,18 @@ fn rpc_subcommand_parses() {
 
 #[test]
 fn rpc_mode_flag_parses() {
-    let args = Args::try_parse_from(["horon-agent", "--mode", "rpc"]).unwrap();
+    let mut args = Args::try_parse_from(["horon-agent", "--mode", "rpc"]).unwrap();
     assert_eq!(args.mode.as_deref(), Some("rpc"));
     assert!(args.command.is_none());
+    args.promote_rpc_mode();
+    assert!(matches!(args.command, Some(Command::Rpc { session_dir: None })));
+}
+
+#[test]
+fn rpc_subcommand_wins_over_the_mode_flag() {
+    let mut args = Args::try_parse_from(["horon-agent", "--mode", "rpc", "run", "hello"]).unwrap();
+    args.promote_rpc_mode();
+    assert!(matches!(args.command, Some(Command::Run { .. })));
 }
 
 #[test]
