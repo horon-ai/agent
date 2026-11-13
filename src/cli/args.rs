@@ -94,6 +94,11 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) tool_profile: Option<String>,
 
+    /// Run mode for a bare launch. `rpc` speaks the stdio JSONL protocol on
+    /// stdin and stdout; every other value runs the normal client.
+    #[arg(long, global = true, value_name = "MODE")]
+    pub(crate) mode: Option<String>,
+
     /// Comma-separated explicit allow-list of tools to expose, e.g. bash,read,write,apply_patch. Use '*' or 'all' for the unrestricted full toolset.
     #[arg(long, global = true)]
     pub(crate) tools: Option<String>,
@@ -155,6 +160,14 @@ pub(crate) enum Command {
 
     /// Run as an Agent Client Protocol (ACP) adapter backed by the HoronAgent daemon
     Acp,
+
+    /// Run as a stdio JSONL RPC adapter backed by the HoronAgent daemon
+    Rpc {
+        /// Directory the host expects session files in. Accepted for
+        /// compatibility and ignored: sessions live under the Horon home.
+        #[arg(long, value_name = "DIR")]
+        session_dir: Option<String>,
+    },
 
     /// Manage the background server daemon (e.g. `horon-agent server stop`).
     Server {

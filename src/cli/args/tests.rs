@@ -205,6 +205,22 @@ fn acp_subcommand_parses() {
 }
 
 #[test]
+fn rpc_subcommand_parses() {
+    let args = Args::try_parse_from(["horon-agent", "rpc", "--session-dir", "/tmp/s"]).unwrap();
+    match args.command {
+        Some(Command::Rpc { session_dir }) => assert_eq!(session_dir.as_deref(), Some("/tmp/s")),
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn rpc_mode_flag_parses() {
+    let args = Args::try_parse_from(["horon-agent", "--mode", "rpc"]).unwrap();
+    assert_eq!(args.mode.as_deref(), Some("rpc"));
+    assert!(args.command.is_none());
+}
+
+#[test]
 fn run_json_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "run", "--json", "hello"]).unwrap();
     match args.command {

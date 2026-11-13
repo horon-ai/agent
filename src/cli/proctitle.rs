@@ -12,6 +12,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
     match &args.command {
         Some(Command::Serve { .. }) => "horon:server".to_string(),
         Some(Command::Acp) => "horon-agent acp".to_string(),
+        Some(Command::Rpc { .. }) => "horon-agent rpc".to_string(),
         Some(Command::Server { .. }) => "horon-agent server".to_string(),
         #[cfg(unix)]
         Some(Command::ApiBridge { .. }) => "horon-agent api-bridge".to_string(),
