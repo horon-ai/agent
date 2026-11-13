@@ -29,6 +29,19 @@ DEFAULT_MANIFEST = ROOT / "scripts/ci/integration_targets.json"
 DEFAULT_RUNNER = ROOT / "scripts/ci/run_lib_tests.py"
 
 
+def skips(target: dict) -> list[str]:
+    """The `--skip` arguments of one target.
+
+    A target may name tests that stay out of CI with a recorded reason; libtest
+    matches `--skip` by substring, so the row lists the full test name. The
+    remaining tests still run, and `min_passed` is the count left.
+    """
+    arguments: list[str] = []
+    for name in target.get("skipped", []):
+        arguments.extend(["--skip", name])
+    return arguments
+
+
 def load_targets(path: Path) -> list[dict]:
     document = json.loads(path.read_text(encoding="utf-8"))
     return document["targets"]
@@ -79,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
                 str(target["min_passed"]),
                 "--timeout",
                 str(args.timeout),
+                "--",
+                *skips(target),
             ],
             cwd=ROOT,
         )

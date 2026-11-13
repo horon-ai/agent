@@ -343,10 +343,12 @@ jobs:
       - name: Test runner contract tests
         # The cohort steps trust `run_lib_tests.py` to turn a libtest run that
         # matched nothing into a failure; `--min-passed` is that behaviour, and
-        # this is where it is proved rather than assumed.
+        # this is where it is proved rather than assumed. The integration
+        # runner's per-target `skipped` rows are proved the same way.
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/ci/test_run_lib_tests.py
+        run: python3 -m unittest -v scripts/ci/test_run_lib_tests.py \
+          scripts/ci/test_run_integration_targets.py
 
       - name: Test coverage gate contract tests
         # Both guards are data-driven (a manifest and a ratchet baseline), so the

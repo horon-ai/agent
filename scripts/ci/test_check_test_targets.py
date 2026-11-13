@@ -85,6 +85,43 @@ class IntegrationTargetGateTests(unittest.TestCase):
     def row(self, package: str, name: str, min_passed: int = 1) -> dict:
         return {"package": package, "target": name, "min_passed": min_passed}
 
+    def test_skip_with_a_reason_is_accepted(self) -> None:
+        workflow = self.write_workflow(self.COMPILE)
+        row = self.row("horon-agent", "acp_infra", 30)
+        row["skipped"] = ["v5_real_daemon_cancel_note_then_prompt"]
+        row["skip_reason"] = "the outcome follows runner load"
+        manifest = self.write_manifest([row])
+        allowlist = self.write_allowlist([])
+        code, out, _ = self.run_gate(
+            workflow, manifest, allowlist, [self.target("horon-agent", "acp_infra")]
+        )
+        self.assertEqual(code, 0, out)
+
+    def test_skip_without_a_reason_fails(self) -> None:
+        workflow = self.write_workflow(self.COMPILE)
+        row = self.row("horon-agent", "acp_infra", 30)
+        row["skipped"] = ["v5_real_daemon_cancel_note_then_prompt"]
+        manifest = self.write_manifest([row])
+        allowlist = self.write_allowlist([])
+        code, out, _ = self.run_gate(
+            workflow, manifest, allowlist, [self.target("horon-agent", "acp_infra")]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("skip_reason", out)
+
+    def test_skip_list_of_non_names_fails(self) -> None:
+        workflow = self.write_workflow(self.COMPILE)
+        row = self.row("horon-agent", "acp_infra", 30)
+        row["skipped"] = [""]
+        row["skip_reason"] = "a reason"
+        manifest = self.write_manifest([row])
+        allowlist = self.write_allowlist([])
+        code, out, _ = self.run_gate(
+            workflow, manifest, allowlist, [self.target("horon-agent", "acp_infra")]
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("not made of test names", out)
+
     def test_manifest_row_counts_as_run(self) -> None:
         workflow = self.write_workflow(self.COMPILE)
         manifest = self.write_manifest([self.row("horon-agent", "e2e", 76)])

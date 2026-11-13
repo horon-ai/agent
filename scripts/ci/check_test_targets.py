@@ -195,6 +195,20 @@ def main(argv: list[str] | None = None) -> int:
                 f"manifest row {row['package']}::{row['target']} names a package the "
                 "compile step does not build"
             )
+        skipped = row.get("skipped", [])
+        if not isinstance(skipped, list) or not all(
+            isinstance(name, str) and name.strip() for name in skipped
+        ):
+            problems.append(
+                f"manifest row {row['package']}::{row['target']} has a `skipped` list "
+                "that is not made of test names"
+            )
+        elif skipped and not row.get("skip_reason", "").strip():
+            problems.append(
+                f"manifest row {row['package']}::{row['target']} skips "
+                f"{len(skipped)} test(s) without a `skip_reason`: a test left out of "
+                "CI must say why"
+            )
 
     allowlist = load_allowlist(args.allowlist)
     excused = {(entry["package"], entry["target"]) for entry in allowlist}
