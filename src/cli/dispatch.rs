@@ -40,12 +40,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         // Do not run local resume lookup or provider bootstrap.
         return super::ssh::run(args).await;
     }
-    // `--mode rpc` is the flag form of the `rpc` subcommand: a host that
-    // launches the binary directly passes the mode rather than a subcommand.
-    // The subcommand wins when both are present.
-    if args.command.is_none() && args.mode.as_deref() == Some("rpc") {
-        args.command = Some(Command::Rpc { session_dir: None });
-    }
     // Explicit MCP management is independent of provider profiles, sessions,
     // and the daemon. In particular, list must remain offline and scriptable.
     if matches!(args.command, Some(Command::Mcp { .. })) {
@@ -138,8 +132,14 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         apply_default_tool_profile(args.tool_profile.as_deref());
     }
 
+    args.promote_rpc_mode();
+    if let Some(Command::Rpc { session_dir }) = &args.command {
+        return rpc::run_rpc_command(&args, session_dir.clone()).await;
+    }
+
     match args.command {
         Some(Command::Mcp { action }) => super::mcp::run(action).await?,
+        Some(Command::Rpc { .. }) => unreachable!("rpc returns before the subcommand match"),
         Some(Command::Serve {
             temporary_server,
             owner_pid,
@@ -171,16 +171,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 args.model.clone(),
                 args.provider_profile.clone(),
                 args.tool_profile.is_some(),
-            )
-            .await?;
-        }
-        Some(Command::Rpc { session_dir }) => {
-            rpc::run_rpc_command(
-                args.provider.clone(),
-                args.model.clone(),
-                args.provider_profile.clone(),
-                session_dir,
-                args.resume.clone(),
             )
             .await?;
         }

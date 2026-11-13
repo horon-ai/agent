@@ -21,13 +21,9 @@ mod state;
 mod tests;
 
 /// Entry point shared by the `rpc` subcommand and the `--mode rpc` flag.
-pub(crate) async fn run_rpc_command(
-    provider: crate::cli::provider_init::ProviderChoice,
-    model: Option<String>,
-    provider_profile: Option<String>,
-    session_dir: Option<String>,
-    resume: Option<String>,
-) -> Result<()> {
+pub(crate) async fn run_rpc_command(args: &crate::cli::args::Args, session_dir: Option<String>) -> Result<()> {
+    let provider = args.provider.clone();
+    let (model, provider_profile, resume) = (args.model.clone(), args.provider_profile.clone(), args.resume.clone());
     crate::env::set_var("HORON_AGENT_NON_INTERACTIVE", "1");
     // The host does not open a terminal for this process, so tool output must
     // never be routed to one.

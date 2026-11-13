@@ -128,6 +128,19 @@ pub(crate) struct Args {
     pub(crate) command: Option<Command>,
 }
 
+impl Args {
+    /// Turn `--mode rpc` into the `rpc` subcommand.
+    ///
+    /// A host that launches the binary directly passes the mode rather than a
+    /// subcommand, so the flag form has to reach the same code. An explicit
+    /// subcommand wins when both are present.
+    pub(crate) fn promote_rpc_mode(&mut self) {
+        if self.command.is_none() && self.mode.as_deref() == Some("rpc") {
+            self.command = Some(Command::Rpc { session_dir: None });
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
     /// List configured MCP servers or manage remote-server OAuth credentials
