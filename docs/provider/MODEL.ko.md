@@ -8,7 +8,7 @@
 
 모델 요청은 한 경로로만 나간다.
 
-1. `[provider] default_provider`가 시작 프로파일 이름을 고른다. `--provider-profile <name>`을 주면 그 실행에서만 `[providers.<name>]` 표를 고른다. 내장 프로파일 id는 `[provider] default_provider`나 `--provider <id>`로 고른다.
+1. `[provider] default_provider`가 시작 프로파일 이름을 고른다. `--provider-profile <name>`을 주면 그 실행에서만 `[providers.<name>]` 표를 고른다. `-p`/`--provider`는 `auto`(기본값으로 `[provider] default_provider`나 `--provider-profile`을 따른다), `openai-compatible`, 프로파일 id 하나를 받는다. 프로파일 id는 `openrouter` 같은 내장 id이거나 직접 쓴 `[providers.<name>]` 표의 이름이다.
 2. 모델은 `--model <id>`, 프로파일의 `default_model`, `[provider] default_model` 가운데 정해진 값으로 고른다. 셋 다 없으면 호출이 오류로 끝난다.
 3. 요청 URL은 `base_url` 뒤에 `/chat/completions`를 붙여 만든다. `base_url`에는 `/v1` 같은 API 접두사까지 적는다.
 4. 도구 정의는 같은 요청 본문의 `tools`로 실린다. 별도 모델 서버가 도구를 중계하지 않는다.
@@ -48,7 +48,7 @@ input = ["text", "image"]
 | 키 | 뜻 |
 | --- | --- |
 | `type` | `"openai-compatible"`. 이 빌드의 모델 경로가 쓰는 값이다. |
-| `base_url` | 필수. API 접두사까지 포함한 주소다. `http://localhost`와 `http://127.0.0.1`도 받는다. |
+| `base_url` | 필수. API 접두사까지 포함한 주소다. `http`는 로컬·사설 호스트에만 받는다. `localhost`, `*.local` 이름, 루프백·사설·링크 로컬·CGNAT 주소, IPv6 루프백·유니크 로컬·링크 로컬 주소가 그렇다. 그 밖의 호스트는 `https`여야 한다. |
 | `api_key_env` | 키가 든 환경 변수 이름이다. 프로세스 환경을 먼저 보고, 값이 없으면 `env_file`을 읽는다. |
 | `env_file` | 설정 디렉터리에 두는 키 파일 이름이다. `MY_GW_API_KEY=...`처럼 한 줄에 하나씩 적는다. |
 | `auth` | `bearer`(기본), `header`, `none` 가운데 하나다. `header`는 `auth_header`로 헤더 이름을 정하고, 비우면 `api-key`를 쓴다. |
@@ -182,7 +182,7 @@ from = "plan-model"
 
 ## 프롬프트 캐시 키
 
-`prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 24자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.
+`prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 28자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.
 
 세션 id가 없는 호출에는 키를 싣지 않는다. `prompt_cache_key = true`는 호스트를 가리지 않고 싣지만, 모르는 필드를 거부하는 엔드포인트에는 `false`를 쓴다.
 
@@ -224,7 +224,6 @@ printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
 
 ```bash
 horon --provider-profile my-gw --model my-model run "hello"
-horon --provider-profile my-gw auth-test --prompt "Reply exactly OK"
 ```
 
 ## 준비 상태 확인
@@ -240,7 +239,7 @@ horon provider current --json
 | 증상 | 원인과 조치 |
 | --- | --- |
 | `Unknown provider profile '<name>'. Add [providers.<name>] to config.toml.` | `default_provider`나 `--provider-profile`이 가리키는 이름이 설정에 없다. 표 이름과 값을 맞춘다. |
-| `Provider profile '<name>' has invalid base_url ...` | `base_url`이 비었거나 `https://` 또는 `http://localhost` 형식이 아니다. 접두사까지 적는다. |
+| `Provider profile '<name>' has invalid base_url ...` | `base_url`이 비었거나, 절대 URL이 아니거나, 로컬·사설이 아닌 호스트에 평문 `http`를 썼다. 메시지는 `https://... or http://localhost`라고만 적지만, `http` 허용 범위는 위 `base_url` 행의 로컬·사설 호스트 목록 전체다. 접두사까지 적는다. |
 | 키가 없다는 오류 | 오류에 채워야 할 환경 변수 이름이 나온다. 키 값은 오류에 나오지 않는다. 변수를 내보내거나 `env_file`에 적는다. |
 | 401 또는 403 | 키가 틀렸거나 `auth` 형식이 엔드포인트와 맞지 않는다. 대부분 `bearer`이고, `x-api-key` 계열은 `auth = "header"`와 `auth_header`를 쓴다. |
 | 404 | `base_url`에 `/v1` 같은 접두사가 빠졌을 수 있다. 에이전트는 `base_url` 뒤에 `/chat/completions`만 붙인다. |
@@ -288,7 +287,7 @@ horon provider current --json
 - `tracking_started_unix_secs`는 이 로컬 원장의 적용 범위를 표시한다. 추적이
   시작되기 전에는 값이 없다. count는 전체 기간의 과거 추정치가 아니다. count가
   0이면 이 범위에 기록된 턴이 없다는 뜻이며 "한 번도 쓰지 않았다"는 뜻이 아니다.
-- `selection_count`와 `last_selected_unix_secs`는 headless 전환 이전 TUI가 남긴
+- `selection_count`와 `last_selected_unix_secs`는 예전 TUI가 남기고 지금 클라이언트는 더 쓰지 않는
   `model_picker_usage.json`에서 온다. 이 값은 선택기 선택을 재며 모델 요청을
   재지 않는다. effort 변형은 한 라우트 안에서 합산된다. 이 카운터는 따로 유지된다.
 - `usage`가 없으면 메타데이터를 알 수 없다는 뜻이며 구버전 서버도 여기에 해당한다.
@@ -312,8 +311,7 @@ horon provider current --json
 `horon_agent_sdk::compare_model_usage`와 TypeScript `compareModelUsage`는 추적된 턴
 수, 마지막 사용 시각, 과거 선택 횟수, 마지막 선택 시각 순으로 사용량을 좋은 순서로
 비교한다. 검색 관련성과 명시적인 current/favorite 정책은 이 비교기보다 앞서고, 그
-뒤에 안정적인 모델/라우트 타이브레이커가 붙는다. headless 전환 이전 TUI도 같은 비교기를 썼고
-기존 current/favorite 정책을 그대로 두었다.
+뒤에 안정적인 모델/라우트 타이브레이커가 붙는다. 예전 TUI도 같은 비교기를 썼고 기존 current/favorite 정책을 그대로 두었다.
 
 레거시 프로토콜 클라이언트는 `get_model_catalog.subscribe_usage_updates: true`로
 `model_usage_updated` 델타 이벤트를 옵트인한다. 이 플래그의 기본값은 false이므로

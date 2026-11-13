@@ -10,7 +10,7 @@ order: 1
 | Path | What it holds |
 | --- | --- |
 | `src/` | The CLI: `serve`, `run`, `repl`, `api-bridge`, `acp`, and their dispatch |
-| `crates/` | The workspace: `base`, `app-core`, `session-store`, `harness-api`, `agent-sdk`, provider and platform crates |
+| `crates/` | The workspace: `base`, `app-core`, `session-store`, `harness-api`, `agent-sdk`, `tui` (the `horon-tui` terminal client), provider and platform crates |
 | `docs/` | Behaviour documentation, compiled into the binary and served by `horon_agent_docs` |
 | `packages/sdk/typescript` | `@horon-ai/agent-sdk` |
 | `packages/sdk/python` | `horon-agent-sdk` |

@@ -31,18 +31,29 @@ socket, which is a different socket.
 | --- | --- |
 | `horon provider list` | Provider ids you can pass to `-p/--provider`. |
 | `horon provider current` | The currently requested and resolved provider selection. `--json` reports `"ready"`. |
-| `horon provider add <name> <base-url> <model>` | Add an OpenAI-compatible profile. `--api-key-stdin` keeps the key out of shell history. |
+| `horon provider add <name> --base-url <url> --model <id>` | Add an OpenAI-compatible profile. `--api-key-stdin` keeps the key out of shell history, `--auth none` suits a local endpoint, and `--set-default` also writes `[provider] default_provider`. |
 | `horon model list` | Model names you can pass to `-m/--model`. |
 
 ## Sessions
 
 `horon session` (alias `horon sessions`) works on the event store:
 `inspect`, `doctor`, `migrate`, `export`, `import`, `export-legacy`,
-`recover-to`, `rename`, `archive`, `restore`.
+`recover-to`, `rename`, `archive`, `restore`, `delete`.
 
-`horon export <session> [--out FILE] [--json]` prints a Markdown transcript.
+`horon session inspect <session> [--json]` is read-only: it reports the store
+layout, the heads, the archive state and any damage.
+
+`horon export <session> [--out FILE]` prints a Markdown transcript.
 Secrets are redacted and tool results over 4 KiB are truncated; the output matches
-the `export_session_markdown` harness API reply.
+the `export_session_markdown` harness API reply. `horon session export <session>
+--output <dir>` is a different command: it writes the original events and blobs
+as a bundle into a directory that must not exist yet, and `horon session import`
+reads that bundle back.
+
+`horon session archive` and `horon session restore` only record a state change.
+`horon session delete <session> --yes` is the one destructive command: the
+transcript, todos, the goal attachment, artifacts and the runtime journal all go,
+and a session a running daemon has open is refused.
 
 ## Unattended runs
 
@@ -62,9 +73,10 @@ the `export_session_markdown` harness API reply.
 | `horon usage [--json]` | Usage limits for connected providers. |
 | `horon mcp` | List configured MCP servers and manage remote-server OAuth credentials. |
 | `horon memory` | Memory management. |
-| `horon cloud move\|return\|where\|attach\|receive\|activate\|export\|list` | Move a live session to a cloud host, bring its work back, and manage the transferred sessions. |
+| `horon cloud move\|return\|where\|attach` | Move a live session to a cloud host, bring its work back, and manage the transferred sessions. Hidden commands (`receive`, `activate`, `export`, `list`) exist but are not shown by `--help`. |
 | `horon pair [--list] [--revoke <name>]` | Pairing codes for the iOS and web clients. |
-| `horon permissions` / `horon ambient` | Review pending ambient permission requests. |
+| `horon permissions` | Review and answer pending ambient permission requests. |
+| `horon ambient status\|log\|trigger\|stop` | Show ambient mode, read its activity log, trigger one cycle by hand, or stop it. |
 | `horon debug <command> [arg]` | Talk to a running daemon over the debug socket. |
 
 ## Editors (ACP)

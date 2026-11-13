@@ -387,7 +387,7 @@ jcode's (`1jehuang/jcode`, commit `c725fa3` from 2026-11-05) `scripts/` benchmar
 | `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | Ported as the competitor comparison. Measured on the headless path. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | Already present |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | Other scripts measure the same axis. |
-| TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | None | Excluded. horon is headless. |
+| TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | `bench_tui.py` | The client is measured on its own suite, not ported: first frame, handoff, input echo, RSS, one drawn frame and install size. The session picker, the visible-ready budget and the frame-by-frame scripts have no counterpart. |
 | `bench_resume_suite.py` | None | Excluded. The reload storm measures resume latency. |
 | Ones that need a real model, a paid API, or an external harness (`benchmark_swarm.py`, `run_terminal_bench_*`, `benchmark_discovery*.py`, `benchmark_browser_handoff.*`, and others) | None | Excluded |
 | `analyze_root_crate.py`, `analyze_openai_ws_cache.py` | None | Excluded. Those log lines do not exist. |

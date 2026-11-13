@@ -57,7 +57,7 @@ npx @horon-ai/horon --help
 | --- | --- | --- |
 | `workflow_run` | `main`의 "Release Tag" 실행이 끝났을 때 | 릴리스한 커밋을 가리키는 태그를 찾고, 공개 릴리스인지 확인한 뒤 태그 버전으로 게시한다 |
 | `workflow_dispatch` | 운영자가 릴리스 태그를, 또는 `package_only` Release 실행과 버전을 지정했을 때 | 기본은 드라이런이고, 스위치가 켜져 있으면 `dry_run=false`가 게시한다 |
-| `pull_request` | `npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
+| `pull_request` | `packages/npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
 
 워크플로는 npm 11.5.1 이상을 요구한다. provenance 서명과 trusted publishing에 이 버전이 필요하다. 계획 잡은 `contents: read`와 `actions: read`를 들고, 뒤의 권한으로 끝난 실행의 잡을 읽는다. `id-token: write`는 게시 잡만 받는다. 이 권한이 주는 단명 자격 증명을 npm이 한 번짜리 게시 허가로 바꾼다. `cancel-in-progress: false`인 동시성 그룹은 두 번째 실행을 취소하지 않고 줄 세우므로, 뒤 실행이 레지스트리를 다시 읽고 이미 올라간 것은 건너뛴다.
 

@@ -129,10 +129,11 @@ remove waiters and stop the response streams they own. No ordinary tool call or
 startup path waits for an interactive OAuth login.
 
 There is a separate existing headless behavior. Before the first turn, `horon run`
-waits up to 5 seconds for active servers that have no valid cached schema.
-With a warm cache it skips that wait. `HORON_AGENT_RUN_MCP_WAIT_MS=0` turns it off, and a smaller
-millisecond budget can be set. Inactive servers consume no budget, and the
-readiness check uses the exact server identifier rather than a normalized tool-name prefix.
+waits up to 5 seconds for enabled servers that have no valid cached schema.
+With a warm cache it skips that wait. `HORON_AGENT_RUN_MCP_WAIT_MS=0` turns it off, and any other
+millisecond value replaces the budget. `HORON_AGENT_RUN_MCP=0` skips MCP registration for the run
+entirely. Disabled servers consume no budget, and the readiness check uses the exact server
+identifier rather than a normalized tool-name prefix.
 
 In `auto` and `deferred` MCP modes, connect, disconnect, and tool discovery
 keep the immediately registered tool prefixes and the static system prompt stable.

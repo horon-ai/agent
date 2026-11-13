@@ -49,6 +49,30 @@ horon run "summarize this repo"
 With no profile configured, a model call stops before the network and names the
 missing `[providers.<name>]` table. Nothing silently falls back to another path.
 
+## The interactive client
+
+Run bare `horon` (or `hrn`, or `horon-agent`) on a terminal and it starts the
+server if needed, then replaces itself with `horon-tui`, the client that sits
+beside the agent binary and owns the screen from then on. The handoff checks
+three things first: standard input and standard output are both terminals,
+`HORON_NO_TUI` is unset, and `horon-tui` exists next to the running executable.
+A pipe or a redirect keeps the headless path, which is what scripts and CI want.
+When a check fails the command names it, prints the one-line hint about
+installing `horon-tui` next to the binary, and exits non-zero; a server it had
+already started stays up.
+
+```sh
+horon                      # starts the server, then opens horon-tui
+horon --resume <session>   # the same, attached to an existing session
+HORON_NO_TUI=1 horon       # stay headless
+```
+
+The client ships with the installer as an optional archive. A release that does
+not publish it, or a digest that does not match, prints one line and installs the
+headless agent alone; a source build and FreeBSD never stage a released client.
+Keys, themes, the status line and command files are documented in
+`docs/runtime/TUI.md`.
+
 ## Where to go next
 
 - [Configuration](/configuration/) — provider profiles, model roles, storage.

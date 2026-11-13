@@ -57,7 +57,7 @@ The npm version of a release is the release tag without its `v`. `scripts/npm/re
 | --- | --- | --- |
 | `workflow_run` | A "Release Tag" run on `main` finishes | Finds the tag pointing at the released commit, requires a public release, and publishes at the tag version |
 | `workflow_dispatch` | An operator names a release tag, or a `package_only` Release run and its version | Dry run by default; `dry_run=false` publishes when the switch is on |
-| `pull_request` | A change to `npm/`, `scripts/npm/` or the workflow file | Packages fixture archives and runs the same dry-run loop |
+| `pull_request` | A change to `packages/npm/`, `scripts/npm/` or the workflow file | Packages fixture archives and runs the same dry-run loop |
 
 The workflow requires npm 11.5.1 or newer, because provenance signing and trusted publishing need it. The planning job holds `contents: read` and `actions: read`, the second for reading a finished run's jobs; only the publish job gets `id-token: write`, which is the short-lived credential npm exchanges for a one-time publish grant. A concurrency group with `cancel-in-progress: false` queues a second run instead of cancelling it, so the later run re-reads the registry and skips what already landed.
 
