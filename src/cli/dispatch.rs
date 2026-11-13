@@ -10,7 +10,7 @@ use super::args::{
 };
 use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 
-use super::{acp, commands, debug, hot_exec, output, provider_init, terminal};
+use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal};
 use provider_init::ProviderChoice;
 
 fn is_file_controlled_debug_client() -> bool {
