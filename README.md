@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: a headless coding agent for OpenAI-compatible endpoints" width="720">
+  <img src="docs/assets/hero.svg" alt="horon-agent: a coding agent for OpenAI-compatible endpoints" width="720">
 </p>
 
 <p align="center">
-  <strong>A headless coding agent. One Rust binary, any OpenAI-compatible endpoint.</strong>
+  <strong>A coding agent for the terminal, the SDK, the editor and the host program. One Rust binary, any OpenAI-compatible endpoint.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it four ways: a one-shot command, a Unix-socket harness API for SDKs, the Agent Client Protocol (ACP) on stdio for editors, and a stdio JSONL RPC mode for a program that drives the agent as a child process. The headless binary never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
+`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it four ways: a one-shot command, a Unix-socket harness API for SDKs, the Agent Client Protocol (ACP) on stdio for editors, and a stdio JSONL RPC mode for a program that drives the agent as a child process. The agent binary draws no terminal of its own and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
-- **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the separate `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary; `HORON_NO_TUI=1` keeps the headless path, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
+- **The terminal client is a separate package.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary; `HORON_NO_TUI=1` stops with a sentence naming that setting, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
 - **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 55.9 ms on Linux and 103.3 ms on macOS ([numbers and caveats](#benchmarks)).
@@ -92,9 +92,9 @@ With no profile configured, a model call stops before the network and names the 
 
 | Command | What it does |
 | --- | --- |
-| `horon` (no subcommand) | On a terminal, start the server and replace itself with the `horon-tui` client beside it, with keys, user files and a settings screen ([docs/runtime/TUI.md](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling keeps the headless path. |
+| `horon` (no subcommand) | On a terminal, start the server and replace itself with the `horon-tui` client beside it, with keys, user files and a settings screen ([docs/runtime/TUI.md](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling prints a sentence naming the condition and the install command, then exits non-zero. |
 | `horon run "<message>"` | Send one message, run tools until the turn ends, exit. |
-| `horon repl` | Simple line-based REPL (no TUI). |
+| `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
 | `horon acp` | ACP v1/v2 adapter on stdio for editors. |
@@ -102,11 +102,11 @@ With no profile configured, a model call stops before the network and names the 
 
 ### Terminal client
 
-`horon-tui` is the interactive client: a transcript pane, a one-line input, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) built on `horon-agent-sdk`, so the headless binary stays free of terminal libraries.
+`horon-tui` is the interactive client: a transcript pane, a one-line input, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) built on `horon-agent-sdk`, so the agent binary stays free of terminal libraries.
 
-It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect keeps the headless path, so scripts and CI read its output. When a condition fails, the command names it, prints ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``, and exits non-zero; a server started before the check keeps running.
+It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect prints that sentence instead, so scripts and CI get the reason rather than a client. When a condition fails, the command names it, prints ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``, and exits non-zero; a server started before the check keeps running.
 
-The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. The archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the headless agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
+The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. The archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
 
 ### Editors (ACP)
 

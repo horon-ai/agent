@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: OpenAI 호환 엔드포인트용 헤드리스 코딩 에이전트" width="720">
+  <img src="docs/assets/hero.svg" alt="horon-agent: OpenAI 호환 엔드포인트를 쓰는 코딩 에이전트" width="720">
 </p>
 
 <p align="center">
-  <strong>헤드리스 코딩 에이전트. Rust 실행 파일 하나, OpenAI 호환 엔드포인트라면 무엇이든.</strong>
+  <strong>터미널·SDK·에디터·호스트 프로그램으로 쓰는 코딩 에이전트. Rust 실행 파일 하나, OpenAI 호환 엔드포인트라면 무엇이든.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 네 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드다. 헤드리스 실행 파일은 터미널 UI를 열지 않고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
+`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 네 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드다. 에이전트 실행 파일은 스스로 터미널 화면을 그리지 않고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
 
-- **계약으로 보장하는 헤드리스.** `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 대화형 터미널 클라이언트는 에이전트 SDK를 쓰는 별도 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 헤드리스 경로를 유지하며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
+- **터미널 클라이언트는 별도 패키지다.** `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 대화형 터미널 클라이언트는 에이전트 SDK를 쓰는 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 그 설정 이름을 알리는 문장을 남기고 멈추며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
 - **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
 - **모델 직접 호출.** 에이전트가 엔드포인트로 바로 POST한다. 사이에 라우터 프로세스나 플러그인 호스트가 없다.
 - **가볍고 빠른 시작.** GitHub 호스티드 러너에서 한 턴 실행이 Linux 55.9 ms, macOS 103.3 ms 걸렸다([수치와 한계](#벤치마크)).
@@ -92,9 +92,9 @@ horon run "summarize this repo"
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 `horon-tui` 클라이언트로 자기 프로세스를 넘긴다. 키, 사용자 파일, 설정 화면이 있다([docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재는 헤드리스 경로를 유지한다. |
+| `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 `horon-tui` 클라이언트로 자기 프로세스를 넘긴다. 키, 사용자 파일, 설정 화면이 있다([docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재는 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
 | `horon run "<메시지>"` | 메시지 하나를 보내고 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. |
-| `horon repl` | 줄 단위 간단한 REPL(TUI 아님). |
+| `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력하는 간단한 REPL. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 소켓(`HORON_AGENT_API_SOCKET`, Unix 전용). |
 | `horon acp` | 에디터용 표준 입출력 ACP v1/v2 어댑터. |
@@ -102,11 +102,11 @@ horon run "summarize this repo"
 
 ### 터미널 클라이언트
 
-`horon-tui`는 대화형 클라이언트다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이며 `horon-agent-sdk`로 만들어 터미널 라이브러리가 헤드리스 실행 파일에 들어가지 않는다.
+`horon-tui`는 대화형 클라이언트다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이며 `horon-agent-sdk`로 만들어 터미널 라이브러리가 에이전트 실행 파일에 들어가지 않는다.
 
-터미널에서 인자 없이 `horon`, `hrn`, `horon-agent`를 실행하면 시작한다. 서버가 없으면 띄운 뒤, 자기 프로세스를 에이전트 옆의 `horon-tui` 파일로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬으면 세션 번호도 넘긴다. 조건은 셋이다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션은 헤드리스 경로를 유지하므로 스크립트와 CI는 그 출력을 읽는다. 조건이 맞지 않으면 어떤 조건인지 알리고 ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``를 출력한 뒤 0이 아닌 종료 코드로 끝난다. 검사 전에 띄운 서버는 계속 돈다.
+터미널에서 인자 없이 `horon`, `hrn`, `horon-agent`를 실행하면 시작한다. 서버가 없으면 띄운 뒤, 자기 프로세스를 에이전트 옆의 `horon-tui` 파일로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬으면 세션 번호도 넘긴다. 조건은 셋이다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션은 그 문장을 대신 남기므로 스크립트와 CI는 클라이언트 대신 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고 ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``를 출력한 뒤 0이 아닌 종료 코드로 끝난다. 검사 전에 띄운 서버는 계속 돈다.
 
-설치 프로그램은 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`를 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 헤드리스 에이전트만 설치하거나 유지한다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
+설치 프로그램은 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`를 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 유지한다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 
 ### 에디터 (ACP)
 
