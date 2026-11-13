@@ -52,7 +52,7 @@ horon-agent rpc --resume <session>   # 기존 세션에 붙기
 | `steer` | `src/cli/rpc/adapter.rs:426` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | 있음 |
 | `follow_up` | Same arm, `urgent: true` | Same section | 부분 — 스티어링·팔로업 모드가 `all`로 고정이고 `set_steering_mode`, `set_follow_up_mode`가 없음 |
 | `abort` | `src/cli/rpc/adapter.rs:237` while idle, `src/cli/rpc/adapter.rs:437` mid-turn | "Cancel safely" | 있음 — 턴은 이 응답이 아니라 데몬의 인터럽트로 끝남 |
-| `abort_and_prompt` | `src/cli/rpc/adapter.rs:446` | "Cancel safely" | 부분 — 대체 프롬프트를 예약하지 않고 새 텍스트를 스티어로 보냄 |
+| `abort_and_prompt` | `src/cli/rpc/adapter.rs:441` | "Cancel safely" | 부분 — 대체 프롬프트를 예약하지 않고 새 텍스트를 스티어로 보냄 |
 | `get_state` | `src/cli/rpc/state.rs:108` | Commands table, `get_state` | 있음 |
 | `set_model` | `src/cli/rpc/state.rs:237` | Commands table, `set_model` | 있음 — 응답은 선택된 모델이며 `provider`와 `modelId`를 `modelId` 한 필드에서 읽음 |
 | `get_available_models` | `src/cli/rpc/state.rs:135` | Commands table, `get_available_models` | 있음 — 쓸 수 없는 라우트를 빼서 호스트가 실패할 라우트를 고르지 못함 |

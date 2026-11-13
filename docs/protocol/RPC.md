@@ -52,7 +52,7 @@ Stdin is read by a dedicated task. A read cancelled by `select!` loses the bytes
 | `steer` | `src/cli/rpc/adapter.rs:426` sends a soft interrupt with `urgent: false` | "Sending work while a turn is active" | yes |
 | `follow_up` | Same arm, `urgent: true` | Same section | partial — steering and follow-up modes are fixed at `all`; `set_steering_mode` and `set_follow_up_mode` do not exist |
 | `abort` | `src/cli/rpc/adapter.rs:237` while idle, `src/cli/rpc/adapter.rs:437` mid-turn | "Cancel safely" | yes — the turn ends on the daemon's interrupt, not on this response |
-| `abort_and_prompt` | `src/cli/rpc/adapter.rs:446` | "Cancel safely" | partial — no replacement prompt is scheduled; the new text becomes a steer |
+| `abort_and_prompt` | `src/cli/rpc/adapter.rs:441` | "Cancel safely" | partial — no replacement prompt is scheduled; the new text becomes a steer |
 | `get_state` | `src/cli/rpc/state.rs:108` | Commands table, `get_state` | yes |
 | `set_model` | `src/cli/rpc/state.rs:237` | Commands table, `set_model` | yes — the response is the selected model; `provider` and `modelId` are read from one `modelId` field |
 | `get_available_models` | `src/cli/rpc/state.rs:135` | Commands table, `get_available_models` | yes — unavailable routes are dropped so a host cannot select one that fails |
