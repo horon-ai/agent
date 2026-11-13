@@ -30,7 +30,7 @@ horon-agent rpc --resume <session>   # 기존 세션에 붙기
 {"id":"p1","type":"response","command":"prompt","success":true}
 ```
 
-텍스트만 있는 한 턴은 이 순서로 프레임을 쓴다. `agent_start`, `turn_start`, 사용자 `message_start`와 `message_end`, 어시스턴트 `message_start`, 그 `message_update`들, 어시스턴트 `message_end`, `turn_end`, `agent_end`, 그리고 `prompt_result`와 `session_settled`. 이 빌드의 레퍼런스 호스트에서 측정하면 텍스트 한 턴이 18프레임, 도구 한 번을 쓰는 턴이 58프레임이다.
+텍스트만 있는 한 턴은 이 순서로 프레임을 쓴다. `agent_start`, `turn_start`, 사용자 `message_start`와 `message_end`, 어시스턴트 `message_start`, 그 `message_update`들, 어시스턴트 `message_end`, `turn_end`, `agent_end`, 그리고 `prompt_result`와 `session_settled`. 측정한 텍스트 한 턴은 `ready`부터 `session_settled`까지 19프레임이고, 도구 한 번을 쓰는 같은 측정이 58프레임이다. 호스트는 `agent_end` 앞에 끼어드는 `extension_ui_request`도 볼 수 있으므로 무시한다.
 
 모든 프롬프트에 두 규칙이 적용된다.
 

@@ -30,7 +30,7 @@ A minimal exchange is two lines in and one line out for the acknowledgement, the
 {"id":"p1","type":"response","command":"prompt","success":true}
 ```
 
-One complete text turn writes these frames in this order: `agent_start`, `turn_start`, the user `message_start` and `message_end`, the assistant `message_start`, its `message_update` frames, the assistant `message_end`, `turn_end`, `agent_end`, then `prompt_result` and `session_settled`. Measured on this build's reference host, a single-text turn is 18 frames and a turn with one tool call is 58.
+One complete text turn writes these frames in this order: `agent_start`, `turn_start`, the user `message_start` and `message_end`, the assistant `message_start`, its `message_update` frames, the assistant `message_end`, `turn_end`, `agent_end`, then `prompt_result` and `session_settled`. A captured single-text turn is 19 frames from `ready` to `session_settled`; the same capture with one tool call is 58. A host may also see a stray `extension_ui_request` before `agent_end`, which it should ignore.
 
 Two rules hold for every prompt:
 
