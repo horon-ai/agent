@@ -280,6 +280,14 @@ already built, so a failure names the target and nothing recompiles. `min_passed
 is the count measured on the first green run: libtest exits 0 after selecting
 nothing, so a filter that silently stops matching would otherwise look healthy.
 
+A row may name tests to leave out with `skipped`, and `run_integration_targets.py`
+passes each to the binary as `--skip`; `min_passed` is then the count that is
+left. This is for a test whose outcome follows runner load rather than the
+change under test, and the row must carry a `skip_reason` naming the failure,
+the runner and the local result, so an exclusion cannot arrive without its
+evidence. A row that skips something without a reason fails the guard, and so
+does a `skipped` list that is not made of test names.
+
 A module behind `#[cfg(target_os = ...)]` exists in one job's build only, so its
 cohort step carries the same condition; the Linux process-ownership cohort is the
 example, and a platform-gated module with no gated cohort fails on that platform
