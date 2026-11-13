@@ -910,6 +910,25 @@ jobs:
             exit 1
           fi
 
+      - name: Run Linux process-ownership cohort
+        if: runner.os == 'Linux'
+        shell: bash
+        # Both modules are `#[cfg(all(test, target_os = "linux"))]`, so they only
+        # exist in this job, and no cohort named them. They drive a real
+        # subprocess each: the notification lifecycle tests read
+        # `/proc/<pid>/stat` to prove a hung `notify-send` is reaped without
+        # blocking the caller, and `claude_live` verifies a process start token
+        # before signalling, so a recycled pid is never signalled.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- notifications::notification_process_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 5 \
+            -- claude_live::tests:: --nocapture
+
       - name: Run stdin-forwarding cohort (all platforms)
         shell: bash
         # These tests exercise the per-platform stdin detector, whose

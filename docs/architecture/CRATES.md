@@ -280,6 +280,11 @@ already built, so a failure names the target and nothing recompiles. `min_passed
 is the count measured on the first green run: libtest exits 0 after selecting
 nothing, so a filter that silently stops matching would otherwise look healthy.
 
+A module behind `#[cfg(target_os = ...)]` exists in one job's build only, so its
+cohort step carries the same condition; the Linux process-ownership cohort is the
+example, and a platform-gated module with no gated cohort fails on that platform
+exactly as an unselected module does.
+
 The coverage ratchet freezes uncovered **module paths**, not test names. Test
 names change often and there are thousands of them; a module path survives a
 rename of one test and still fails when a whole module of tests stops running.
