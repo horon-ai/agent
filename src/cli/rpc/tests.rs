@@ -299,12 +299,12 @@ async fn prompt_streams_one_turn_and_reports_once() {
 
     assert_eq!(kinds.first().copied(), Some("agent_start"), "{kinds:?}");
     assert_eq!(
-        kinds.iter().filter(|kind| *kind == "prompt_result").count(),
+        kinds.iter().filter(|kind| **kind == "prompt_result").count(),
         1,
         "{kinds:?}"
     );
     assert_eq!(
-        kinds.iter().filter(|kind| *kind == "session_settled").count(),
+        kinds.iter().filter(|kind| **kind == "session_settled").count(),
         1,
         "{kinds:?}"
     );
