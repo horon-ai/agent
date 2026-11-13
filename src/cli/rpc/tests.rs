@@ -308,12 +308,18 @@ async fn prompt_streams_one_turn_and_reports_once() {
         1,
         "{kinds:?}"
     );
-    assert!(kinds.iter().any(|kind| *kind == "text_start"), "{kinds:?}");
+    // A text delta is an `assistantMessageEvent` inside a `message_update`
+    // frame, never a frame of its own, so the events are what gets checked.
+    let events: Vec<&str> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "message_update")
+        .map(|frame| frame["assistantMessageEvent"]["type"].as_str().unwrap_or_default())
+        .collect();
+    assert!(events.contains(&"text_start"), "{events:?}");
     let deltas: Vec<&str> = frames
         .iter()
         .filter(|frame| frame["type"] == "message_update")
         .map(|frame| frame["assistantMessageEvent"]["delta"].as_str().unwrap_or_default())
-        .filter(|delta| !delta.is_empty())
         .collect();
     assert_eq!(deltas.concat(), "hi there", "{deltas:?}");
     assert_eq!(kinds.last().copied(), Some("session_settled"));
