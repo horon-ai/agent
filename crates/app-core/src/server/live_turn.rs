@@ -24,9 +24,16 @@ use futures::FutureExt;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock, broadcast};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
+
+/// How long a wake waits for a finished turn to hand its idle state over.
+///
+/// The handover itself is bounded by `IDLE_FORWARD_BOUND` (5 s) in
+/// [`super::foreground_state`]; this is only the wake's own safety bound.
+const HANDOVER_WAIT: Duration = Duration::from_secs(10);
 
 /// Swarm bookkeeping handles needed to keep member status accurate around a
 /// server-initiated turn.
@@ -63,6 +70,14 @@ impl LiveTurnSwarmContext {
 /// The returned guard *is* the reservation: it stays held until the tracked
 /// turn finishes, so two concurrent wakes cannot both observe the agent as
 /// idle and then serialize behind each other (#1152).
+///
+/// A lock held by a turn that has *ended* is not a busy session: the turn owner
+/// keeps it until the fanout forwarded the idle state to every attachment. A
+/// wake that gives up there falls back to the soft interrupt queue, which only
+/// a running turn drains, so the message would wait for an unrelated turn
+/// (#263). When the lock is held by exactly that handover the wake waits for it
+/// and takes the lock; a lock held by anything else still answers `None` at
+/// once and the caller keeps its queue fallback.
 pub(super) async fn idle_live_agent(
     session_id: &str,
     sessions: &SessionAgents,
@@ -84,7 +99,16 @@ pub(super) async fn idle_live_agent(
         return None;
     }
 
-    agent.try_lock_owned().ok()
+    match agent.clone().try_lock_owned() {
+        Ok(guard) => Some(guard),
+        Err(_) => {
+            if !super::foreground_state::await_handover(session_id, HANDOVER_WAIT).await {
+                return None;
+            }
+            // Taken on a clone, so the map still owns the agent if this fails.
+            agent.try_lock_owned().ok()
+        }
+    }
 }
 
 /// Spawn `message` as a full tracked turn in a live session.

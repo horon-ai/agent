@@ -387,6 +387,10 @@ impl AcpRuntime {
         }
 
         session.settle_cancelled_turn().await;
+        // The cancelled turn is behind us: its withdrawn calls are settled, so
+        // a request this turn opens may ask the client again (#263).
+        session.permissions.end_cancelled_turn();
+        session.client_calls.end_cancelled_turn();
         let prompt_id = session.next_id();
         let message = Request::Message {
             id: prompt_id,

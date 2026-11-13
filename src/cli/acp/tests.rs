@@ -3,6 +3,7 @@ use super::*;
 use crate::protocol::SessionMcpServer;
 use std::path::Path;
 
+mod cancelled_turn;
 mod golden;
 
 #[test]
@@ -1208,7 +1209,7 @@ pub(super) mod connection_core {
         serve: JoinHandle<Result<()>>,
     }
 
-    fn start_client() -> Client {
+    pub(super) fn start_client() -> Client {
         start_client_with(None)
     }
 
@@ -4494,7 +4495,7 @@ pub(super) mod connection_core {
     }
 
     /// The next frame must be a session/request_permission for `request_id`.
-    async fn expect_permission_request(client: &mut Client, request_id: &str, tool_name: &str) -> Value {
+    pub(super) async fn expect_permission_request(client: &mut Client, request_id: &str, tool_name: &str) -> Value {
         let request = client.recv().await;
         assert_eq!(request["method"], "session/request_permission", "{request}");
         let params = &request["params"];
@@ -4521,7 +4522,7 @@ pub(super) mod connection_core {
         request["id"].clone()
     }
 
-    async fn expect_decision(daemon: &mut FakeDaemon, request_id: &str, decision: &str) {
+    pub(super) async fn expect_decision(daemon: &mut FakeDaemon, request_id: &str, decision: &str) {
         let answer = daemon.recv_type("permission_decision").await;
         assert_eq!(answer["request_id"], request_id, "{answer}");
         assert_eq!(answer["decision"], decision, "{answer}");
@@ -4930,10 +4931,10 @@ pub(super) mod connection_core {
         client.close_stdin().await;
     }
 
-    const ALL_CLIENT_CAPABILITIES: &str =
+    pub(super) const ALL_CLIENT_CAPABILITIES: &str =
         r#"{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true,"elicitation":{"form":{}}}"#;
 
-    async fn initialize_with(client: &mut Client, capabilities: &str) {
+    pub(super) async fn initialize_with(client: &mut Client, capabilities: &str) {
         let capabilities: Value = serde_json::from_str(capabilities).unwrap();
         client
             .send(json!({"jsonrpc":"2.0","id":0,"method":"initialize",
@@ -4943,7 +4944,7 @@ pub(super) mod connection_core {
         assert_eq!(response["result"]["protocolVersion"], 1, "{response}");
     }
 
-    fn client_request(request_id: &str, tool_call_id: Option<&str>, method: &str, params: Value) -> Value {
+    pub(super) fn client_request(request_id: &str, tool_call_id: Option<&str>, method: &str, params: Value) -> Value {
         json!({"type":"client_request","request_id":request_id,"tool_call_id":tool_call_id,
             "method":method,"params":params})
     }

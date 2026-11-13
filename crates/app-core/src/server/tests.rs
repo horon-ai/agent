@@ -473,6 +473,72 @@ async fn external_background_task_wake_emits_request_without_starting_turn() {
 }
 
 #[tokio::test]
+async fn idle_live_agent_waits_for_a_finished_turns_handover() {
+    // Regression for #263: a wake that found the agent lock held by a turn that
+    // had already *ended* (still forwarding its idle state) gave up, so the
+    // message was demoted to the soft interrupt queue, which only a running
+    // turn drains. The session then stayed idle until an unrelated turn ran.
+    let provider: Arc<dyn Provider> = Arc::new(StreamingMockProvider::default());
+    let agent = test_agent(provider).await;
+    let session_id = agent.lock().await.session_id().to_string();
+    let sessions = Arc::new(RwLock::new(HashMap::from([(session_id.clone(), agent.clone())])));
+    let (member_event_tx, _member_event_rx) = mpsc::unbounded_channel();
+    let member = attached_swarm_member(&session_id, member_event_tx);
+    let swarm_members = Arc::new(RwLock::new(HashMap::from([(session_id.clone(), member)])));
+
+    // The turn ended but still holds its lock while the idle state forwards.
+    let held_turn_lock = agent.lock().await;
+    super::foreground_state::register_handover_for_test(&session_id, "run-handover");
+
+    let wake = tokio::spawn({
+        let sessions = Arc::clone(&sessions);
+        let swarm_members = Arc::clone(&swarm_members);
+        let session_id = session_id.clone();
+        async move {
+            super::live_turn::idle_live_agent(&session_id, &sessions, &swarm_members)
+                .await
+                .is_some()
+        }
+    });
+    // Still blocked: the handover has not finished.
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    assert!(!wake.is_finished(), "the wake must wait while the handover runs");
+
+    super::foreground_state::note_forwarded("run-handover");
+    drop(held_turn_lock);
+
+    let reserved = timeout(Duration::from_secs(3), wake)
+        .await
+        .expect("wake finishes once the handover ended")
+        .expect("wake task");
+    assert!(reserved, "the wake starts the turn instead of queueing the message");
+}
+
+#[tokio::test]
+async fn idle_live_agent_does_not_wait_for_a_lock_that_is_not_a_handover() {
+    // A lock held by something other than a finished turn's handover (a
+    // connection processing a request, a caller holding the guard) must keep
+    // the old behaviour: no reservation, the caller keeps its queue fallback.
+    let provider: Arc<dyn Provider> = Arc::new(StreamingMockProvider::default());
+    let agent = test_agent(provider).await;
+    let session_id = agent.lock().await.session_id().to_string();
+    let sessions = Arc::new(RwLock::new(HashMap::from([(session_id.clone(), agent.clone())])));
+    let (member_event_tx, _member_event_rx) = mpsc::unbounded_channel();
+    let member = attached_swarm_member(&session_id, member_event_tx);
+    let swarm_members = Arc::new(RwLock::new(HashMap::from([(session_id.clone(), member)])));
+
+    let _held = agent.lock().await;
+    let reserved = timeout(
+        Duration::from_secs(1),
+        super::live_turn::idle_live_agent(&session_id, &sessions, &swarm_members),
+    )
+    .await
+    .expect("a non-handover lock must not delay the wake")
+    .is_some();
+    assert!(!reserved, "a busy agent yields no reservation");
+}
+
+#[tokio::test]
 async fn idle_live_agent_reservation_blocks_a_second_wake_until_released() {
     // Regression for #1152: the idle check used to drop its try_lock guard
     // before the turn started, so two concurrent wakes could both succeed.
