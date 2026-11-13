@@ -140,7 +140,7 @@ impl Turn {
             ServerEvent::SessionRenamed { session_id, title, .. } => vec![json!({
                 "type": "session_info_update",
                 "sessionId": session_id,
-                "title": title.unwrap_or_default(),
+                "title": title,
             })],
             ServerEvent::ModelChanged { model, .. } => {
                 self.model = model;
@@ -233,10 +233,10 @@ impl Turn {
     }
 
     fn message_id(&self) -> String {
-        self.assistant
-            .as_ref()
-            .map(|assistant| assistant.message_id.clone())
-            .unwrap_or_default()
+        match self.assistant.as_ref() {
+            Some(assistant) => assistant.message_id.clone(),
+            None => String::new(),
+        }
     }
 
     fn update(&self, event: Value) -> Vec<Value> {
@@ -531,7 +531,10 @@ impl Turn {
                     "partialResult": {"content": [frame::text_block(update)], "details": {}},
                 }));
             }
-            let (output, is_error) = execution.result.clone().unwrap_or_default();
+            let (output, is_error) = match &execution.result {
+                Some((output, is_error)) => (output.clone(), *is_error),
+                None => (String::new(), false),
+            };
             frames.push(json!({
                 "type": "tool_execution_end",
                 "toolCallId": execution.tool_call_id,

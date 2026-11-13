@@ -84,7 +84,10 @@ pub(super) fn parse(line: &str) -> Option<Command> {
     if trimmed.is_empty() {
         return None;
     }
-    let raw: Value = serde_json::from_str(trimmed).ok()?;
+    let raw: Value = match serde_json::from_str(trimmed) {
+        Ok(raw) => raw,
+        Err(_) => return None,
+    };
     if !raw.is_object() {
         return None;
     }
@@ -125,20 +128,24 @@ impl Command {
 
     /// `images` as `(mime, base64)` pairs, the daemon's wire shape.
     pub(super) fn images(&self) -> Vec<(String, String)> {
-        self.raw
-            .get("images")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        let mime = item.get("mimeType").or_else(|| item.get("mime"))?.as_str()?;
-                        let data = item.get("data")?.as_str()?;
-                        Some((mime.to_string(), data.to_string()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        let Some(items) = self.raw.get("images").and_then(Value::as_array) else {
+            return Vec::new();
+        };
+        let mut images = Vec::new();
+        for item in items {
+            let Some(mime) = item
+                .get("mimeType")
+                .or_else(|| item.get("mime"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(data) = item.get("data").and_then(Value::as_str) else {
+                continue;
+            };
+            images.push((mime.to_string(), data.to_string()));
+        }
+        images
     }
 
     pub(super) fn string_field(&self, key: &str) -> Option<&str> {

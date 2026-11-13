@@ -132,14 +132,14 @@ impl Adapter {
     }
 
     /// Ask the daemon for the catalog and project it into the host's model shape.
-    pub(super) async fn available_models(&mut self) -> std::result::Result<Value, String> {
+    pub(super) async fn available_models(&mut self) -> Result<Value> {
         let request = Request::GetModelCatalog {
             id: self.daemon.next_id(),
             subscribe_usage_updates: false,
         };
         let reply = match self.daemon.request(&request).await {
             Ok(reply) => reply,
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error),
         };
         let ServerEvent::History {
             provider_name,
@@ -149,14 +149,14 @@ impl Adapter {
             ..
         } = reply
         else {
-            return Err("unexpected reply to get_model_catalog".to_string());
+            anyhow::bail!("unexpected reply to get_model_catalog");
         };
         let provider = provider_name.unwrap_or_else(|| self.state.provider.clone());
         let profile = crate::config::config().providers.get(&provider).cloned();
-        let base_url = profile
-            .as_ref()
-            .map(|profile| profile.base_url.clone())
-            .unwrap_or_default();
+        let base_url = match profile.as_ref() {
+            Some(profile) => profile.base_url.clone(),
+            None => String::new(),
+        };
 
         // A route names the endpoint that serves the model; a bare model name
         // from an older daemon does not, so the profile's own name is used.
@@ -203,7 +203,10 @@ impl Adapter {
                     "maxTokens": 8192,
                     "input": ["text"],
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-                    "thinkingLevels": thinking.map(|level| vec![level]).unwrap_or_default(),
+                    "thinkingLevels": match thinking {
+                        Some(level) => vec![level],
+                        None => Vec::new(),
+                    },
                 })
             })
             .collect();
@@ -231,7 +234,7 @@ impl Adapter {
         Ok(json!({"models": models}))
     }
 
-    pub(super) async fn set_model(&mut self, model: &str) -> std::result::Result<Value, String> {
+    pub(super) async fn set_model(&mut self, model: &str) -> Result<Value> {
         let request = Request::SetModel {
             id: self.daemon.next_id(),
             model: model.to_string(),
@@ -241,18 +244,18 @@ impl Adapter {
                 model: active, error, ..
             }) => {
                 if let Some(error) = error {
-                    return Err(error);
+                    anyhow::bail!("{error}");
                 }
                 self.state.model = active.clone();
                 Ok(json!({"provider": self.state.provider, "id": active}))
             }
-            Ok(ServerEvent::Error { message, .. }) => Err(message),
-            Ok(other) => Err(format!("unexpected reply to set_model: {other:?}")),
-            Err(error) => Err(error.to_string()),
+            Ok(ServerEvent::Error { message, .. }) => Err(anyhow::anyhow!(message)),
+            Ok(other) => Err(anyhow::anyhow!("unexpected reply to set_model: {other:?}")),
+            Err(error) => Err(error),
         }
     }
 
-    pub(super) async fn set_thinking_level(&mut self, level: &str) -> std::result::Result<(), String> {
+    pub(super) async fn set_thinking_level(&mut self, level: &str) -> Result<()> {
         let request = Request::SetReasoningEffort {
             id: self.daemon.next_id(),
             effort: level.to_string(),
@@ -261,45 +264,48 @@ impl Adapter {
         match self.daemon.request(&request).await {
             Ok(ServerEvent::ReasoningEffortChanged { effort, error, .. }) => {
                 if let Some(error) = error {
-                    return Err(error);
+                    anyhow::bail!("{error}");
                 }
                 self.state.thinking_level = effort;
                 Ok(())
             }
-            Ok(ServerEvent::Error { message, .. }) => Err(message),
-            Ok(other) => Err(format!("unexpected reply to set_reasoning_effort: {other:?}")),
-            Err(error) => Err(error.to_string()),
+            Ok(ServerEvent::Error { message, .. }) => Err(anyhow::anyhow!(message)),
+            Ok(other) => Err(anyhow::anyhow!("unexpected reply to set_reasoning_effort: {other:?}")),
+            Err(error) => Err(error),
         }
     }
 
-    pub(super) async fn set_session_name(&mut self, name: &str) -> std::result::Result<(), String> {
+    pub(super) async fn set_session_name(&mut self, name: &str) -> Result<()> {
         let request = Request::RenameSession {
             id: self.daemon.next_id(),
             title: Some(name.to_string()),
         };
         match self.daemon.request(&request).await {
-            Ok(ServerEvent::Error { message, .. }) => Err(message),
+            Ok(ServerEvent::Error { message, .. }) => Err(anyhow::anyhow!(message)),
             Ok(_) => Ok(()),
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(error),
         }
     }
 
     /// Store the host's todo phases in the session's todo file.
     ///
-    /// The host's `blocked` status has no counterpart here, so it lands as
-    /// `abandoned` and the blocker text is dropped; the document says so.
-    pub(super) fn set_todos(&mut self, phases: &Value) -> std::result::Result<Value, String> {
+    /// A todo row is flat here and a phase is not, so the phase name becomes the
+    /// row's group and the host's `blocked` status keeps the reason it waits on.
+    pub(super) fn set_todos(&mut self, phases: &Value) -> Result<Value> {
         let todos = phases_to_todos(phases);
-        let previous = crate::todo::load_todos(&self.state.session_id).unwrap_or_default();
-        crate::todo::save_todos(&self.state.session_id, &todos).map_err(|error| error.to_string())?;
-        crate::todo::update_todo_review_cycle(&self.state.session_id, &previous, &todos)
-            .map_err(|error| error.to_string())?;
+        // A session with no todo file yet starts from an empty list.
+        let previous = match crate::todo::load_todos(&self.state.session_id) {
+            Ok(previous) => previous,
+            Err(_) => Vec::new(),
+        };
+        crate::todo::save_todos(&self.state.session_id, &todos)?;
+        crate::todo::update_todo_review_cycle(&self.state.session_id, &previous, &todos)?;
         let todo_phases = todos_to_phases(&todos);
         self.state.todo_phases = todo_phases.clone();
         Ok(json!({"todoPhases": todo_phases}))
     }
 
-    pub(super) async fn compact(&mut self) -> std::result::Result<Value, String> {
+    pub(super) async fn compact(&mut self) -> Result<Value> {
         let request = Request::Compact {
             id: self.daemon.next_id(),
             method: None,
@@ -309,12 +315,12 @@ impl Adapter {
                 if success {
                     Ok(json!({"summary": message}))
                 } else {
-                    Err(message)
+                    Err(anyhow::anyhow!(message))
                 }
             }
-            Ok(ServerEvent::Error { message, .. }) => Err(message),
-            Ok(other) => Err(format!("unexpected reply to compact: {other:?}")),
-            Err(error) => Err(error.to_string()),
+            Ok(ServerEvent::Error { message, .. }) => Err(anyhow::anyhow!(message)),
+            Ok(other) => Err(anyhow::anyhow!("unexpected reply to compact: {other:?}")),
+            Err(error) => Err(error),
         }
     }
 
@@ -385,7 +391,10 @@ impl Adapter {
                         "timestamp": timestamp,
                     }),
                     "tool" => {
-                        let call = message.tool_data.clone().unwrap_or_default();
+                        let call = match message.tool_data.clone() {
+                            Some(call) => call,
+                            None => Default::default(),
+                        };
                         json!({
                             "role": "toolResult",
                             "toolCallId": call.id,
@@ -410,14 +419,12 @@ impl Adapter {
     /// command outside a turn, so the adapter runs it itself.
     pub(super) async fn run_bash(&mut self, command: &str) -> Result<Value> {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let started = std::time::Instant::now();
         let output = tokio::process::Command::new("sh")
             .arg("-c")
             .arg(command)
             .current_dir(&cwd)
             .output()
             .await?;
-        let _ = started;
         let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&output.stderr));
         let total_lines = text.lines().count();
@@ -450,24 +457,22 @@ fn phases_to_todos(phases: &Value) -> Vec<crate::todo::TodoItem> {
     let Some(phases) = phases.as_array() else {
         return todos;
     };
-    for phase in phases {
-        let group = phase
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+    for (phase_index, phase) in phases.iter().enumerate() {
+        let phase_id = format!("phase-{phase_index}");
+        // A phase without a name still groups its tasks, just without a label.
+        let group = phase.get("name").and_then(Value::as_str).unwrap_or("");
+        let group = (!group.is_empty()).then(|| group.to_string());
         let Some(tasks) = phase.get("tasks").and_then(Value::as_array) else {
             continue;
         };
         for (index, task) in tasks.iter().enumerate() {
-            let content = task
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+            let Some(content) = task.get("content").and_then(Value::as_str) else {
+                continue;
+            };
             if content.is_empty() {
                 continue;
             }
+            let content = content.to_string();
             let (status, blocker) = match task.get("status").and_then(Value::as_str) {
                 Some("in_progress") => ("in_progress", None),
                 Some("completed") => ("completed", None),
@@ -484,8 +489,8 @@ fn phases_to_todos(phases: &Value) -> Vec<crate::todo::TodoItem> {
                 content,
                 status: status.to_string(),
                 priority: "medium".to_string(),
-                id: format!("{group}-{index}"),
-                group: (!group.is_empty()).then(|| group.clone()),
+                id: format!("{phase_id}-{index}"),
+                group: group.clone(),
                 blocker,
                 ..Default::default()
             });

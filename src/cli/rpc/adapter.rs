@@ -109,7 +109,8 @@ fn spawn_reader(mut input: Input) -> mpsc::UnboundedReceiver<Inbound> {
             let mut buffer = Vec::new();
             match input.read_until(b'\n', &mut buffer).await {
                 Ok(0) => {
-                    let _ = sender.send(Inbound::Eof);
+                    // The adapter is gone when this send fails; nothing is lost.
+                    drop(sender.send(Inbound::Eof));
                     return;
                 }
                 Ok(_) => {
@@ -118,7 +119,7 @@ fn spawn_reader(mut input: Input) -> mpsc::UnboundedReceiver<Inbound> {
                     }
                 }
                 Err(error) => {
-                    let _ = sender.send(Inbound::Failed(error.to_string()));
+                    drop(sender.send(Inbound::Failed(error.to_string())));
                     return;
                 }
             }
@@ -237,7 +238,10 @@ impl Adapter {
             }
             Kind::GetAvailableModels => match self.available_models().await {
                 Ok(data) => self.ok(command, Some(data)).await,
-                Err(error) => self.fail(command, &error, Some("model_catalog_unavailable")).await,
+                Err(error) => {
+                    self.fail(command, &error.to_string(), Some("model_catalog_unavailable"))
+                        .await
+                }
             },
             Kind::GetAvailableCommands => self.ok(command, Some(json!({"commands": available_commands()}))).await,
             Kind::GetSessionStats => match self.session_stats().await {
@@ -262,7 +266,7 @@ impl Adapter {
                 };
                 match self.set_model(model).await {
                     Ok(data) => self.ok(command, Some(data)).await,
-                    Err(error) => self.fail(command, &error, Some("model_unavailable")).await,
+                    Err(error) => self.fail(command, &error.to_string(), Some("model_unavailable")).await,
                 }
             }
             Kind::SetThinkingLevel => {
@@ -273,14 +277,14 @@ impl Adapter {
                 };
                 match self.set_thinking_level(level).await {
                     Ok(()) => self.ok(command, None).await,
-                    Err(error) => self.fail(command, &error, Some("effort_unavailable")).await,
+                    Err(error) => self.fail(command, &error.to_string(), Some("effort_unavailable")).await,
                 }
             }
             Kind::SetTodos => {
                 let phases = command.raw.get("phases").cloned().unwrap_or_else(|| json!([]));
                 match self.set_todos(&phases) {
                     Ok(data) => self.ok(command, Some(data)).await,
-                    Err(error) => self.fail(command, &error, Some("todo_write_failed")).await,
+                    Err(error) => self.fail(command, &error.to_string(), Some("todo_write_failed")).await,
                 }
             }
             Kind::SetSessionName => {
@@ -291,12 +295,12 @@ impl Adapter {
                 };
                 match self.set_session_name(name).await {
                     Ok(()) => self.ok(command, None).await,
-                    Err(error) => self.fail(command, &error, Some("rename_failed")).await,
+                    Err(error) => self.fail(command, &error.to_string(), Some("rename_failed")).await,
                 }
             }
             Kind::Compact => match self.compact().await {
                 Ok(data) => self.ok(command, Some(data)).await,
-                Err(error) => self.fail(command, &error, Some("compaction_failed")).await,
+                Err(error) => self.fail(command, &error.to_string(), Some("compaction_failed")).await,
             },
             Kind::Bash => {
                 let Some(text) = command.string_field("command") else {

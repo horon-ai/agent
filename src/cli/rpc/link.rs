@@ -174,7 +174,8 @@ async fn pump_events(
             None => None,
         };
         if let Some(waiter) = waiter {
-            let _ = waiter.send(event);
+            // A dropped receiver means the requester already gave up.
+            drop(waiter.send(event));
             continue;
         }
         if foreground.send(event).is_err() {

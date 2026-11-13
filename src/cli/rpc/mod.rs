@@ -37,7 +37,13 @@ pub(crate) async fn run_rpc_command(
             "rpc: --session-dir {dir} is ignored; sessions are stored under the Horon home"
         ));
     }
-    let cwd = std::env::current_dir().ok();
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => Some(cwd),
+        Err(error) => {
+            crate::logging::warn(&format!("rpc: working directory unavailable: {error}"));
+            None
+        }
+    };
     adapter::run(adapter::Start {
         provider: &provider,
         model: model.as_deref(),
