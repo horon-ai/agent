@@ -138,6 +138,7 @@ impl TurnSlot {
             return None;
         }
         self.idle_sent = true;
+        let session_id = self.session_id.clone().unwrap_or_default();
         if self.tracks_forward
             && let Some(run_id) = self.run_id.as_ref()
         {
@@ -149,7 +150,7 @@ impl TurnSlot {
             // instead of reading the held lock as a busy session (#263).
             let (handover, _) = watch::channel(false);
             lock_handovers().insert(
-                self.session_id.clone().unwrap_or_default(),
+                session_id.clone(),
                 Handover {
                     run_id: run_id.clone(),
                     sender: handover,
@@ -164,7 +165,7 @@ impl TurnSlot {
         };
         if let Some(tx) = self.tx.as_ref() {
             let _ = tx.send(ServerEvent::ForegroundState {
-                session_id: self.session_id.clone().unwrap_or_default(),
+                session_id,
                 running: false,
                 run_id: self.run_id.clone().unwrap_or_default(),
                 start_message_id: self.start_message_id.clone(),
@@ -197,17 +198,7 @@ async fn await_forward(run_id: &str, mut forwarded: watch::Receiver<bool>) {
         forward_waiters().remove(run_id);
         // The handover window is over either way: a wake must not wait on a
         // forward that already gave up.
-        let timed_out = {
-            let mut handovers = lock_handovers();
-            let session_id = handovers
-                .iter()
-                .find(|(_, handover)| handover.run_id == run_id)
-                .map(|(session_id, _)| session_id.clone());
-            session_id.and_then(|session_id| handovers.remove(&session_id))
-        };
-        if let Some(handover) = timed_out {
-            let _ = handover.sender.send(true);
-        }
+        end_handover(run_id);
         crate::logging::warn(&format!(
             "foreground: the idle state of run {run_id} was not forwarded within {IDLE_FORWARD_BOUND:?}"
         ));
@@ -265,21 +256,26 @@ pub(crate) fn note_forwarded(run_id: &str) {
     if let Some(waiter) = forward_waiters().remove(run_id) {
         let _ = waiter.send(true);
     }
-    let finished = {
-        let mut handovers = lock_handovers();
-        let session_id = handovers
-            .iter()
-            .find(|(_, handover)| handover.run_id == run_id)
-            .map(|(session_id, _)| session_id.clone());
-        session_id.and_then(|session_id| handovers.remove(&session_id))
-    };
-    if let Some(handover) = finished {
-        let _ = handover.sender.send(true);
+    end_handover(run_id);
+}
+
+/// Drop the handover window of `run_id`, if one is still open. Dropping the
+/// `watch::Sender` closes the channel, which is what wakes a waiting wake.
+fn end_handover(run_id: &str) {
+    let mut handovers = lock_handovers();
+    let session_id = handovers
+        .iter()
+        .find(|(_, handover)| handover.run_id == run_id)
+        .map(|(session_id, _)| session_id.clone());
+    if let Some(session_id) = session_id {
+        handovers.remove(&session_id);
     }
 }
 
 struct Handover {
     run_id: String,
+    /// Never sent on: the window ends when the entry is dropped, which closes
+    /// the channel and releases whoever waits in [`await_handover`].
     sender: watch::Sender<bool>,
 }
 
@@ -289,7 +285,7 @@ struct Handover {
 /// state, so for that window `try_lock` fails although no turn runs. A wake
 /// that finds the lock taken needs to tell that window from a busy session:
 /// only a session listed here has ended its turn, and [`await_handover`] waits
-/// on its sender. A lock held by anything else (a connection processing a
+/// for its entry to go. A lock held by anything else (a connection processing a
 /// request, a test holding the guard) is not a handover and never delays a
 /// wake. Keyed by session because the turn's registration is gone by the time
 /// its lock is released, so the run id alone no longer leads back here.
@@ -324,9 +320,9 @@ pub(crate) async fn await_handover(session_id: &str, bound: Duration) -> bool {
     else {
         return false;
     };
-    let wait = async move {
-        let _ = forwarded.wait_for(|done| *done).await;
-    };
+    // The channel closes when the handover entry is dropped: no value is ever
+    // sent, so the loop ends on the error, not on `done`.
+    let wait = async move { while forwarded.changed().await.is_ok() {} };
     tokio::time::timeout(bound, wait).await.is_ok()
 }
 
