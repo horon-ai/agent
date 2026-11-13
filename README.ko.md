@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 세 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP)이다. 헤드리스 실행 파일은 터미널 UI를 열지 않고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
+`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 네 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드다. 헤드리스 실행 파일은 터미널 UI를 열지 않고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
 
 - **계약으로 보장하는 헤드리스.** `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 대화형 터미널 클라이언트는 에이전트 SDK를 쓰는 별도 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 헤드리스 경로를 유지하며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
 - **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
@@ -98,6 +98,7 @@ horon run "summarize this repo"
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 소켓(`HORON_AGENT_API_SOCKET`, Unix 전용). |
 | `horon acp` | 에디터용 표준 입출력 ACP v1/v2 어댑터. |
+| `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([docs/protocol/RPC.ko.md](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
 
 ### 터미널 클라이언트
 
@@ -124,6 +125,10 @@ horon run "summarize this repo"
 ```
 
 JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md)를 본다.
+
+### 호스트 프로그램 (RPC)
+
+프로세스를 직접 소유한 프로그램은 터미널을 넘겨받는 대신 에이전트를 직접 구동할 수 있다. `horon rpc`(또는 `horon --mode rpc`)는 표준 입력에서 한 줄에 JSON 명령 하나를 읽고 표준 출력으로 한 줄에 프레임 하나를 쓴다. 스트리밍 턴, 취소, 세션 제어를 지원하며, 호스트가 둘 다 넘기면 서브커맨드가 이긴다. 표준 출력에는 프레임만 나가고 진단은 표준 오류로 가며, 표준 입력을 닫으면 프로세스가 끝난다. 이 모드는 프로토콜 버전 1을 말하므로 1 MiB를 넘는 프레임은 쪼개지 않고 오류가 된다. 터미널 클라이언트도 ACP도 아니다. `horon-tui`는 하네스 API로 붙고, RPC는 ACP를 말할 수 없는 호스트를 위한 표면이다. [docs/protocol/RPC.ko.md](docs/protocol/RPC.ko.md)를 본다.
 
 ### SDK
 
@@ -200,6 +205,7 @@ macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP
 | 터미널 클라이언트와 사용자 파일 | [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md) |
 | 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |
 | 에디터와 ACP | [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md) |
+| 표준 입출력 RPC 호스트 프로그램 | [docs/protocol/RPC.ko.md](docs/protocol/RPC.ko.md) |
 | SDK용 하네스 API | [docs/protocol/HARNESS_API.ko.md](docs/protocol/HARNESS_API.ko.md) |
 | 도구, 승인, 편집 안전 장치 | [docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md) |
 | 턴, 복구, `--resume` | [docs/runtime/TURNS.ko.md](docs/runtime/TURNS.ko.md) |

@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it three ways: a one-shot command, a Unix-socket harness API for SDKs, and the Agent Client Protocol (ACP) on stdio for editors. The headless binary never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
+`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it four ways: a one-shot command, a Unix-socket harness API for SDKs, the Agent Client Protocol (ACP) on stdio for editors, and a stdio JSONL RPC mode for a program that drives the agent as a child process. The headless binary never opens a terminal UI and speaks one model protocol: OpenAI-compatible `/chat/completions`.
 
 - **Headless by contract.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the separate `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary; `HORON_NO_TUI=1` keeps the headless path, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
@@ -98,6 +98,7 @@ With no profile configured, a model call stops before the network and names the 
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a Unix socket for SDK clients (`HORON_AGENT_API_SOCKET`, Unix only). |
 | `horon acp` | ACP v1/v2 adapter on stdio for editors. |
+| `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs/protocol/RPC.md](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
 
 ### Terminal client
 
@@ -124,6 +125,10 @@ Register `horon` (or `horon-agent`) with the argument `acp` as an external agent
 ```
 
 JetBrains and other ACP clients take the same two values. See [docs/protocol/ACP.md](docs/protocol/ACP.md).
+
+### Host programs (RPC)
+
+A program that owns the process can drive the agent instead of handing it a terminal. `horon rpc` (or `horon --mode rpc`) reads one JSON command per line on stdin and writes one frame per line on stdout, with streaming turns, cancellation and session controls; the subcommand wins when a host passes both. stdout carries frames only, diagnostics go to stderr, and closing stdin ends the process. The mode speaks protocol version 1, so a frame over one mebibyte becomes an error instead of being chunked. This is neither the terminal client nor ACP: `horon-tui` attaches over the harness API, and RPC serves a host that cannot speak ACP. See [docs/protocol/RPC.md](docs/protocol/RPC.md).
 
 ### SDKs
 
@@ -200,6 +205,7 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 | Terminal client and its user files | [docs/runtime/TUI.md](docs/runtime/TUI.md) |
 | Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
 | Editors and ACP | [docs/protocol/ACP.md](docs/protocol/ACP.md) |
+| Host programs over stdio RPC | [docs/protocol/RPC.md](docs/protocol/RPC.md) |
 | Harness API for SDKs | [docs/protocol/HARNESS_API.md](docs/protocol/HARNESS_API.md) |
 | Tools, approvals, edit safety | [docs/runtime/TOOLS.md](docs/runtime/TOOLS.md) |
 | Turns, recovery, `--resume` | [docs/runtime/TURNS.md](docs/runtime/TURNS.md) |
