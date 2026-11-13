@@ -10,7 +10,7 @@ use super::args::{
 };
 use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 
-use super::{acp, commands, debug, hot_exec, output, provider_init, terminal};
+use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal};
 use provider_init::ProviderChoice;
 
 fn is_file_controlled_debug_client() -> bool {
@@ -132,8 +132,14 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         apply_default_tool_profile(args.tool_profile.as_deref());
     }
 
+    args.promote_rpc_mode();
+    if let Some(Command::Rpc { session_dir }) = &args.command {
+        return rpc::run_rpc_command(&args, session_dir.clone()).await;
+    }
+
     match args.command {
         Some(Command::Mcp { action }) => super::mcp::run(action).await?,
+        Some(Command::Rpc { .. }) => unreachable!("rpc returns before the subcommand match"),
         Some(Command::Serve {
             temporary_server,
             owner_pid,

@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod output;
 pub mod proctitle;
 pub mod provider_init;
+pub mod rpc;
 pub mod runtime_state;
 pub mod sessions;
 pub mod ssh;

@@ -315,6 +315,7 @@ fn should_spawn_background_update_check_with_config(args: &Args, check_updates: 
                 | Some(Command::Serve { .. })
                 | Some(Command::Server { .. })
                 | Some(Command::Acp)
+                | Some(Command::Rpc { .. })
                 | Some(Command::Approvals { .. })
         )
         && args.resume.is_none()
