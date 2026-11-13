@@ -190,7 +190,7 @@ async fn handshake_announces_protocol_and_commands() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
     host.close().await;
 }
@@ -200,7 +200,7 @@ async fn negotiate_protocol_answers_version_one() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({"id": "n1", "type": "negotiate_protocol", "protocolVersion": 2}))
@@ -218,7 +218,7 @@ async fn unknown_command_fails_and_keeps_the_connection() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({"id": "u1", "type": "nope"})).await;
@@ -238,7 +238,7 @@ async fn non_json_lines_are_ignored() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send_raw("not json\n\n[]\n{\"type\":123}\n").await;
@@ -253,7 +253,7 @@ async fn get_state_reports_the_session() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({"id": "s1", "type": "get_state"})).await;
@@ -272,7 +272,7 @@ async fn prompt_streams_one_turn_and_reports_once() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({"id": "p1", "type": "prompt", "message": "hello"}))
@@ -323,7 +323,7 @@ async fn abort_while_idle_is_accepted() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({"id": "a1", "type": "abort"})).await;
@@ -337,7 +337,7 @@ async fn oversized_frame_is_rejected_without_ending_the_session() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     let oversized = format!(
@@ -367,7 +367,7 @@ async fn set_todos_persists_phases_and_answers_them_back() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({
@@ -408,7 +408,7 @@ async fn available_models_projects_the_catalog() {
     let (connector, mut daemons) = scripted_daemon();
     let mut host = start_host(connector);
     let mut daemon = daemons.recv().await.expect("a daemon connection");
-    daemon.handshake();
+    daemon.handshake().await;
     host.handshake().await;
 
     host.send(json!({"id": "m1", "type": "get_available_models"})).await;
