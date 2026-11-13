@@ -580,6 +580,12 @@ async fn a_folder_grant_answers_the_second_write_in_that_folder() {
         .expect("the second write in the granted folder runs");
     assert_eq!(output.output, "ran");
     assert_eq!(fixture.write_runs.load(Ordering::SeqCst), 2);
+    let audit = crate::approval::audit_records_for("call-grant-2");
+    assert_eq!(audit.len(), 1, "the grant writes one audit line: {audit:?}");
+    assert_eq!(
+        audit[0].reason, "grant",
+        "the audit line says the folder grant answered the call"
+    );
     fixture.assert_editor_quiet();
 }
 
