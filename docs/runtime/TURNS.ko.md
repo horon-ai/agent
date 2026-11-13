@@ -95,7 +95,7 @@ cargo test -p horon-agent-base soft_interrupt_store
 중인 세션을 바쁜 세션으로 오인하면 안 된다. 끝난 턴은 `ForegroundGuard::close`가
 모든 연결에 idle 상태를 넘기는 동안(`IDLE_FORWARD_BOUND`, 5초) 에이전트 잠금을 조금
 더 쥔다. 그 턴은 이미 활성 실행으로 등록되어 있지 않으므로
-`foreground_state::is_running`은 거짓이다. 웨이크는 이때 잠금을 `IDLE_HANDOVER_WAIT`
+`foreground_state::is_running`은 거짓이다. 웨이크는 이때 잠금을 `HANDOVER_WAIT`
 (10초)까지 기다렸다가 턴을 시작한다. 메시지를 대기열로 강등해 세션이 무관한 턴을
 기다리게 두지 않는다. 실제로 턴이 도는 중이면 예전처럼 즉시 `None`을 돌려주고
 메시지는 대기열로 간다.
