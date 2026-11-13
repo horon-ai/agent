@@ -393,11 +393,10 @@ impl App {
         let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
         match bound {
             Some(keys::ids::APP_SUBMIT) => {
-                // `editor.submit_on_enter = false` makes the send key insert a
-                // newline instead. The editor is single-line, so the key does
-                // nothing rather than sending: a newline cannot be typed into a
-                // buffer that has no lines, and sending anyway is exactly what
-                // the user turned off.
+                // `editor.submit_on_enter = false` disconnects the send key.
+                // The editor is single-line, so there is nowhere to insert a
+                // newline: the key does nothing rather than sending, since
+                // sending is exactly what the user turned off.
                 let submits = self.settings.boolean("editor.submit_on_enter").unwrap_or(true);
                 if !submits {
                     return None;
