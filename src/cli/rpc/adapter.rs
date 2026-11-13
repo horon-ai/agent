@@ -54,6 +54,12 @@ pub(super) struct Adapter {
     commands: mpsc::UnboundedReceiver<Inbound>,
 }
 
+/// What the turn loop is waiting on.
+enum Next {
+    Event(Option<ServerEvent>),
+    Inbound(Option<Inbound>),
+}
+
 /// One line read from stdin, or the error that stopped the read.
 enum Inbound {
     Line(Vec<u8>),
@@ -377,31 +383,34 @@ impl Adapter {
     /// host sends while a turn runs.
     async fn drive_turn(&mut self, turn: &mut Turn, request_id: u64) -> Result<Terminal> {
         loop {
-            tokio::select! {
-                event = self.foreground.recv() => {
-                    let Some(event) = event else {
-                        // The daemon connection ended mid-turn, so no terminal
-                        // will arrive for this request.
-                        return Ok(Terminal::Failed);
-                    };
+            // The select borrows two fields for as long as its futures live, so
+            // it yields a value and every use of `self` happens afterwards.
+            let next = tokio::select! {
+                event = self.foreground.recv() => Next::Event(event),
+                inbound = self.commands.recv() => Next::Inbound(inbound),
+            };
+            match next {
+                Next::Event(Some(event)) => {
                     let terminal = self.classify(&event, request_id);
                     self.out.send_all(turn.event(event)).await?;
                     if let Some(terminal) = terminal {
                         return Ok(terminal);
                     }
                 }
-                inbound = self.commands.recv() => {
-                    let Some(inbound) = inbound else {
-                        return Ok(Terminal::Aborted);
-                    };
-                    let buffer = match inbound {
-                        Inbound::Line(buffer) => buffer,
-                        Inbound::Eof => return Ok(Terminal::Aborted),
-                        Inbound::Failed(error) => anyhow::bail!("stdin read failed: {error}"),
-                    };
+                // The daemon connection ended mid-turn, so no terminal arrives.
+                Next::Event(None) => return Ok(Terminal::Failed),
+                Next::Inbound(Some(Inbound::Line(buffer))) => {
                     let text = String::from_utf8_lossy(&buffer);
-                    let Some(command) = command::parse(&text) else { continue };
+                    let Some(command) = command::parse(&text) else {
+                        continue;
+                    };
                     self.in_turn_command(&command).await?;
+                }
+                Next::Inbound(Some(Inbound::Failed(error))) => {
+                    anyhow::bail!("stdin read failed: {error}");
+                }
+                Next::Inbound(Some(Inbound::Eof)) | Next::Inbound(None) => {
+                    return Ok(Terminal::Aborted);
                 }
             }
         }
