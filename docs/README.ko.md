@@ -12,7 +12,7 @@
 
 | 요구사항 | 내용 | 현재 상태 |
 | --- | --- | --- |
-| `horon-agent` TUI 제외 | 헤드리스 실행 파일(`serve`, `run`, `api-bridge`, `acp`)은 화면을 열지 않고, 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없어야 한다. 터미널 클라이언트는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. | 충족. `scripts/ci/check_headless_graph.py`가 해석된 그래프를 따라 확인한다 |
+| `horon-agent` TUI 제외 | 헤드리스 실행 파일(`serve`, `run`, `api-bridge`, `acp`, `rpc`)은 화면을 열지 않고, 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없어야 한다. 터미널 클라이언트는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. | 충족. `scripts/ci/check_headless_graph.py`가 해석된 그래프를 따라 확인한다 |
 | ACP v1·v2 지원 | `horon acp`가 `protocolVersion` 1과 2를 모두 처리하고, 양쪽이 지원하는 가장 높은 버전으로 답한다. v2를 더하면서 v1을 깨지 않는다. | 충족. v2 협상은 `src/cli/acp/v2/negotiate.rs`, v1은 `src/cli/acp/util.rs` |
 | 성능 회귀 방지 | 같은 기계·빌드 프로필·작업에서 기록된 기준선과 같거나 빨라야 한다. 느려지는 변경은 병합하지 않는다. | 측정 방법과 기록된 수치가 있음(`performance/BENCHMARK.md`, `performance/RESULTS.md`). 기록된 수치가 기준선이다 |
 

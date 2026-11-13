@@ -10,7 +10,7 @@ The workspace builds two executables from one engine. The split is the rule, not
 
 | Crate | Package | Binary | Owns |
 | --- | --- | --- | --- |
-| root (`src/`) | `horon-agent` | `horon-agent` | The agent loop, the daemon, the harness API bridge and the ACP adapter. No `ratatui`, `crossterm` or `horon-tui` in its graph. |
+| root (`src/`) | `horon-agent` | `horon-agent` | The agent loop, the daemon, the harness API bridge, the ACP adapter and the stdio RPC adapter. No `ratatui`, `crossterm` or `horon-tui` in its graph. |
 | `crates/agent-sdk` | `horon-agent-sdk` | — | The client contract: request and event types, the socket transport, reconnection. Nothing renders. |
 | `crates/harness-api` | `horon-agent-harness-api` | — | Harness API v1 request and event surface with its schema snapshots. |
 | `crates/harness-api-server` | `horon-agent-harness-api-server` | — | The bridge and translate layer between the daemon and the harness API. |

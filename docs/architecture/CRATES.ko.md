@@ -10,7 +10,7 @@
 
 | 크레이트 | 패키지 | 실행 파일 | 맡는 것 |
 | --- | --- | --- | --- |
-| 루트(`src/`) | `horon-agent` | `horon-agent` | 에이전트 루프, 데몬, 하네스 API 브리지, ACP 어댑터. 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`가 없다. |
+| 루트(`src/`) | `horon-agent` | `horon-agent` | 에이전트 루프, 데몬, 하네스 API 브리지, ACP 어댑터, 표준 입출력 RPC 어댑터. 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`가 없다. |
 | `crates/agent-sdk` | `horon-agent-sdk` | — | 클라이언트 계약. 요청·이벤트 타입, 소켓 전송, 재연결. 그리는 일은 없다. |
 | `crates/harness-api` | `horon-agent-harness-api` | — | 스키마 스냅숏을 포함한 하네스 API v1 요청·이벤트 표면. |
 | `crates/harness-api-server` | `horon-agent-harness-api-server` | — | 데몬과 하네스 API 사이의 브리지와 변환 계층. |

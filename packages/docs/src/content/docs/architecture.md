@@ -46,8 +46,9 @@ off unless `[tools] generate_image = true`.
 
 ## Two binaries
 
-- `horon-agent` — headless: `serve`, `run`, `repl`, `api-bridge`, `acp`. Its
-  dependency graph holds no `ratatui`, `crossterm` or `horon-tui` crate.
+- `horon-agent` — the agent: `serve`, `run`, `repl`, `api-bridge`, `acp`,
+  `rpc`. Its dependency graph holds no `ratatui`, `crossterm` or `horon-tui`
+  crate, so the terminal stack stays in the client.
 - `horon-tui` — the interactive terminal client, a separate package on
   `horon-agent-sdk`. Bare `horon` on a terminal replaces itself with it.
 

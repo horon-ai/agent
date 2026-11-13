@@ -11,16 +11,17 @@ Every change in this tree keeps all three. A change that breaks one is not
 done, regardless of what else it fixes.
 
 1. **No TUI in the headless package.** The build ships two binaries, and the
-   split is the rule. `horon-agent` (`serve`, `run`, `api-bridge`, `acp` — the
-   headless binary) never opens a terminal UI, and its dependency graph stays
-   free of `ratatui`, `crossterm`, `horon-tui`, and any `horon-agent-tui*`
-   crate. The interactive client is the separate package and binary
-   `horon-tui`, which talks to the daemon through `horon-agent-sdk` and never
-   moves the terminal stack into `horon-agent`. The bare `horon` command is
-   still headless: when stdin and stdout are terminals, `HORON_NO_TUI` is
-   unset, and `horon-tui` sits beside the running binary, it replaces its own
-   process with that client (`src/cli/tui_handoff.rs`) and draws nothing
-   itself. `scripts/ci/check_headless_graph.py` enforces the graph rule in CI.
+   split is the rule. `horon-agent` (`serve`, `run`, `api-bridge`, `acp`, `rpc`
+   — the headless binary) never opens a terminal UI, and its dependency graph
+   stays free of `ratatui`, `crossterm`, `horon-tui`, and any
+   `horon-agent-tui*` crate. The interactive client is the separate package
+   and binary `horon-tui`, which talks to the daemon through `horon-agent-sdk`
+   and never moves the terminal stack into `horon-agent`. The bare `horon`
+   command is still headless: when stdin and stdout are terminals,
+   `HORON_NO_TUI` is unset, and `horon-tui` sits beside the running binary, it
+   replaces its own process with that client (`src/cli/tui_handoff.rs`) and
+   draws nothing itself. `scripts/ci/check_headless_graph.py` enforces the
+   graph rule in CI.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
    both sides support. Current state: both are implemented — v2 negotiates in
@@ -100,8 +101,9 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 
 - Two binaries. The headless one, `horon-agent`, has these working
   subcommands: `serve` (agent daemon), `run` (send one message and exit),
-  `api-bridge` (alias `api`; harness API on a Unix socket, Unix only), and
-  `acp` (ACP adapter on stdio). The interactive one, `horon-tui`, is a separate
+  `api-bridge` (alias `api`; harness API on a Unix socket, Unix only),
+  `acp` (ACP adapter on stdio), and `rpc` (stdio JSONL RPC adapter; `--mode rpc`
+  selects the same adapter). The interactive one, `horon-tui`, is a separate
   package and binary on `horon-agent-sdk`; it renders the terminal client and
   is built with its own cargo invocation so its feature set never unifies with
   the headless package. Bare `horon` on a terminal replaces itself with the
