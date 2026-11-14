@@ -10,6 +10,9 @@ Measured:
   version_ms        cold ``--version`` wall time (N repeats)
   oneshot_ms        one headless prompt through to completion, plus peak
                     process-tree RSS and whether a tool round-trip happened
+  oneshot_core      the same one-shot without ``--tools``, so the request
+                    carries the default core tool surface; a run whose first
+                    request offered no tools is ``core surface missing``
   sessions_memory   idle and post-turn process-tree RSS for N concurrent
                     sessions x K turns, plus the server's own thread and
                     descriptor counts after the turns; "first session" and
@@ -34,7 +37,7 @@ A second build of horon is a row too: `--bin horon-base=<path>` measures it with
 the same runner right after the candidate, so a before/after pair is produced on
 one machine, one mock server, and one load level instead of two runs.
 
-``--scenarios`` picks the phases (default ``oneshot,sessions,skill,mcp``); a
+``--scenarios`` picks the phases (default ``oneshot,oneshot_core,sessions,skill,mcp``); a
 subset really does skip the rest, which is how a skill-only or MCP-only run is
 measured.
 
@@ -69,12 +72,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bench_common as bc  # noqa: E402
+import bench_core_oneshot as bco  # noqa: E402
 import bench_request_bytes as brb  # noqa: E402
 
 SUITE = "compare"
 DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi", "omp", "omo"]
-DEFAULT_SCENARIOS = ["oneshot", "sessions", "skill", "mcp"]
-SCENARIO_NAMES = ("oneshot", "sessions", "skill", "mcp")
+DEFAULT_SCENARIOS = ["oneshot", "oneshot_core", "sessions", "skill", "mcp"]
+SCENARIO_NAMES = ("oneshot", "oneshot_core", "sessions", "skill", "mcp")
 TURN_PROMPT = "List the files in the current directory, then reply with mock-ok."
 SESSION_TURNS = [
     "List the files in the current directory.",
@@ -1953,6 +1957,11 @@ class HoronRunner(ToolRunner):
         env = self._root(root, mock)
         return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
+    def oneshot_core(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = self._root(root, mock)
+        argv = bco.argv(horon_oneshot_argv(self.binary))
+        return bco.check_surface(measure_oneshot(argv, cwd, env, mock, timeout))
+
     def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         path = install_skill(os.path.join(cwd, ".horon", "skills"))
         # MCP is on for both new scenarios; with no server configured it costs
@@ -2599,6 +2608,7 @@ def _empty_result(runner: ToolRunner) -> dict:
         "version": None,
         "version_ms": None,
         "oneshot": None,
+        "oneshot_core": None,
         "sessions_memory": None,
         "skill": None,
         "mcp": None,
@@ -2730,6 +2740,9 @@ def measure_tools(
                     result["oneshot"] = summarize_oneshot(
                         oneshot_runs_by_row[index], syscall_runs_by_row[index] if syscalls else None
                     )
+
+        if "oneshot_core" in selected:
+            bco.measure(runners, results, roots, mock, oneshot_runs, timeout)
 
         if "sessions" in selected:
             points_by_row: list[list[dict]] = [[] for _ in runners]
@@ -2982,6 +2995,10 @@ def render_markdown(
         if show_request_bytes:
             lines.append(brb.MARKDOWN_NOTE)
             lines.append("")
+
+    # A report written before this row existed has no key for it and keeps its shape.
+    if "oneshot_core" in scenarios and any("oneshot_core" in result for result in results):
+        lines.extend(bco.markdown_section(results, scenario_row))
 
     # Skill invocation
     if "skill" in scenarios:

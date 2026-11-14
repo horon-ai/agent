@@ -865,12 +865,11 @@ class ScenarioSummarizeTests(unittest.TestCase):
 
 
 class ScenarioSelectionTests(unittest.TestCase):
-    def test_default_is_all_four_scenarios(self) -> None:
+    def test_default_is_every_scenario(self) -> None:
+        every = ["oneshot", "oneshot_core", "sessions", "skill", "mcp"]
         args = bench.parse_args([])
-        self.assertEqual(args.scenarios, ["oneshot", "sessions", "skill", "mcp"])
-        self.assertEqual(
-            bench.parse_scenarios(args.scenarios), ["oneshot", "sessions", "skill", "mcp"]
-        )
+        self.assertEqual(args.scenarios, every)
+        self.assertEqual(bench.parse_scenarios(args.scenarios), every)
 
     def test_a_comma_list_and_a_repeated_name_normalize(self) -> None:
         self.assertEqual(bench.parse_scenarios(["skill,mcp", "skill"]), ["skill", "mcp"])
@@ -1370,6 +1369,80 @@ class RequestBytesTests(unittest.TestCase):
         }
         markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
         self.assertNotIn("request bytes", markdown)
+
+
+class CoreOneshotTests(unittest.TestCase):
+    """The core-profile one-shot runs the default tool surface, or says it did not."""
+
+    def test_core_oneshot_argv_has_no_tools_flag(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake(argv, cwd, env, mock, timeout, syscalls=False):
+            captured.append(list(argv))
+            return {"ms": 40.0, "error": None,
+                    "request_bytes": [{"body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8}]}
+
+        saved = bench.measure_oneshot
+        bench.measure_oneshot = fake
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                cwd = os.path.join(root, "ws")
+                os.makedirs(cwd)
+                run = bench.HoronRunner("/h").oneshot_core(FakeMockServer(), root, cwd, 1.0)
+        finally:
+            bench.measure_oneshot = saved
+        plain = bench.horon_oneshot_argv("/h")
+        self.assertEqual(plain[plain.index("--tools") + 1], "bash")
+        self.assertNotIn("--tools", captured[0])
+        self.assertNotIn("bash", captured[0])
+        self.assertEqual(captured[0], [arg for arg in plain if arg not in ("--tools", "bash")])
+        self.assertEqual(run["ms"], 40.0)
+        self.assertIsNone(run["error"])
+
+    def test_core_oneshot_without_tool_catalog_is_an_error(self) -> None:
+        offered = bench.bco.check_surface(run_record([
+            {"ts": 0.0, "body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8},
+        ]))
+        self.assertIsNone(offered["error"])
+        self.assertIsNotNone(offered["ms"])
+
+        bare = bench.bco.check_surface(run_record([
+            {"ts": 0.0, "body_bytes": 900, "tools_bytes": 0, "tool_count": 0},
+        ]))
+        self.assertEqual(bare["error"], "core surface missing")
+        self.assertIsNone(bare["ms"])
+        self.assertIsNone(bare["peak_rss_bytes"])
+        summary = bench.bco.summarize([bare])
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["error"], "core surface missing")
+        self.assertIsNone(summary["ms"])
+        result = {"name": "horon", "label": "horon", "oneshot_core": summary, "sessions_memory": {}}
+        markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
+        self.assertIn("**Core-profile one-shot**", markdown)
+        self.assertIn("failed: core surface missing", markdown)
+
+    def test_a_tool_without_a_core_profile_is_skipped(self) -> None:
+        class FakeRunner:
+            name = "jcode"
+            label = "jcode"
+            binary = "/j"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        try:
+            result = bench.measure_tools(
+                [FakeRunner()], FakeMockServer(), [1], 1, 1, 3, 30.0, scenarios=["oneshot_core"]
+            )[0]
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+        self.assertEqual(result["oneshot_core"], {"skipped": "jcode has no core tool profile"})
+        self.assertIsNone(result["oneshot"])
+
 
 
 if __name__ == "__main__":
