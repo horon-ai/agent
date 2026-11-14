@@ -110,6 +110,77 @@ pub fn request_timeout_for(config: &McpServerConfig) -> std::time::Duration {
         .unwrap_or(DEFAULT_MCP_REQUEST_TIMEOUT)
 }
 
+/// The root list this connection serves a server asking `roots/list`.
+///
+/// `[mcp] expose_roots` turns this on; off is the default. The single root is
+/// the working directory the connection speaks for: the session project folder
+/// when one is given, the process working directory otherwise. `None` means the
+/// connection declares no `roots` capability and refuses `roots/list`, so a
+/// capability is never claimed without being served.
+pub(super) fn resolve_roots(working_dir: Option<&std::path::Path>) -> Option<Vec<McpRoot>> {
+    if !crate::config::config().mcp.expose_roots {
+        return None;
+    }
+    let dir = match working_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                crate::logging::warn(&format!(
+                    "MCP: cannot resolve the working directory for roots/list: {err}"
+                ));
+                return None;
+            }
+        },
+    };
+    let roots: Vec<McpRoot> = McpRoot::directory(&dir).into_iter().collect();
+    (!roots.is_empty()).then_some(roots)
+}
+
+/// Write one answer to a server-initiated request without blocking the reader.
+///
+/// The writer channel is bounded, so waiting on room inline would stop the
+/// reader from handling the frames behind this one. `try_send` covers the
+/// common case and a task waits for room in the rare full case. A closed
+/// channel means the transport is gone: say so once and keep reading, because
+/// the reader still has to reach EOF to publish the transport-closed signal.
+fn send_server_reply(
+    writer: &mpsc::Sender<String>,
+    server: &str,
+    method: &str,
+    reply: Value,
+    closed_logged: &mut bool,
+) {
+    let Ok(frame) = serde_json::to_string(&reply) else {
+        crate::logging::warn(&format!("MCP [{server}]: could not serialize the reply to '{method}'"));
+        return;
+    };
+    let frame = frame + "\n";
+    match writer.try_send(frame) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(frame)) => {
+            let writer = writer.clone();
+            let server = server.to_string();
+            let method = method.to_string();
+            tokio::spawn(async move {
+                if writer.send(frame).await.is_err() {
+                    crate::logging::warn(&format!(
+                        "MCP [{server}]: transport closed while queueing the reply to '{method}'"
+                    ));
+                }
+            });
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            if !*closed_logged {
+                *closed_logged = true;
+                crate::logging::warn(&format!(
+                    "MCP [{server}]: transport closed, cannot answer '{method}' or any later server request"
+                ));
+            }
+        }
+    }
+}
+
 impl McpHandle {
     /// Send a request and wait for response
     pub async fn request(&self, method: &str, params: Option<Value>) -> Result<JsonRpcResponse> {
@@ -366,7 +437,7 @@ impl McpClient {
         working_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
         if let Some(transport) = config.remote_transport() {
-            return Self::connect_remote(name, config, transport).await;
+            return Self::connect_remote(name, config, transport, resolve_roots(working_dir)).await;
         }
         let working_dir = working_dir.filter(|dir| dir.is_dir());
         crate::logging::info(&format!(
@@ -450,8 +521,12 @@ impl McpClient {
         let reader_resources = Arc::clone(&resources);
         let reader_prompts = Arc::clone(&prompts);
         let mut reader = BufReader::new(stdout);
+        let reader_replies = writer_tx.clone();
+        let roots = resolve_roots(working_dir);
+        let reader_roots = roots.clone();
         tokio::spawn(async move {
             let mut line = String::new();
+            let mut closed_reply_logged = false;
             loop {
                 line.clear();
                 match reader.read_line(&mut line).await {
@@ -462,26 +537,35 @@ impl McpClient {
                     Ok(_) => match serde_json::from_str::<Value>(&line) {
                         Ok(Value::Object(object)) => {
                             if let Some(method) = object.get("method").and_then(Value::as_str) {
-                                // A server-initiated request carries an `id` and
-                                // would need a reply; horon-agent advertises no
-                                // client capabilities, so only notifications (no
-                                // `id`) are acted on.
-                                if object.get("id").is_none() {
-                                    // The list caches are invalidated in the
-                                    // reader, before the notification reaches
-                                    // the watcher: a frame that follows this one
-                                    // must already see the stale cache cleared.
-                                    if method == RESOURCES_LIST_CHANGED_NOTIFICATION {
-                                        invalidate_list(&reader_resources);
-                                    } else if method == PROMPTS_LIST_CHANGED_NOTIFICATION {
-                                        invalidate_list(&reader_prompts);
+                                // A frame with `method` and an `id` is a
+                                // server-initiated request: it keeps waiting
+                                // until an answer arrives, which is
+                                // indistinguishable from a hang. Answer every
+                                // one of them; only `ping` and (when declared)
+                                // `roots/list` are served.
+                                match object.get("id") {
+                                    Some(id) if !id.is_null() => {
+                                        let reply = server_request_reply(method, id, reader_roots.as_deref());
+                                        send_server_reply(
+                                            &reader_replies,
+                                            &reader_name,
+                                            method,
+                                            reply,
+                                            &mut closed_reply_logged,
+                                        );
                                     }
-                                    let _ = reader_notifications.send(method.to_string());
-                                } else {
-                                    crate::logging::debug(&format!(
-                                        "MCP [{}]: ignoring server request {}",
-                                        reader_name, method
-                                    ));
+                                    _ => {
+                                        // The list caches are invalidated in the
+                                        // reader, before the notification reaches
+                                        // the watcher: a frame that follows this one
+                                        // must already see the stale cache cleared.
+                                        if method == RESOURCES_LIST_CHANGED_NOTIFICATION {
+                                            invalidate_list(&reader_resources);
+                                        } else if method == PROMPTS_LIST_CHANGED_NOTIFICATION {
+                                            invalidate_list(&reader_prompts);
+                                        }
+                                        let _ = reader_notifications.send(method.to_string());
+                                    }
                                 }
                                 continue;
                             }
@@ -545,7 +629,7 @@ impl McpClient {
         };
 
         client
-            .initialize()
+            .initialize(roots.as_deref())
             .await
             .with_context(|| format!("MCP server '{}' failed to initialize", name))?;
 
@@ -593,10 +677,15 @@ impl McpClient {
     /// Bound discovery, authentication refresh, initialization, fallback and
     /// tool listing together. `timeout_secs` can extend legitimate tool calls,
     /// but must not turn connecting to a remote server into an indefinite wait.
-    async fn connect_remote(name: String, config: &McpServerConfig, transport: RemoteTransport) -> Result<Self> {
+    async fn connect_remote(
+        name: String,
+        config: &McpServerConfig,
+        transport: RemoteTransport,
+        roots: Option<Vec<McpRoot>>,
+    ) -> Result<Self> {
         tokio::time::timeout(
             REMOTE_MCP_HANDSHAKE_TIMEOUT,
-            Self::connect_remote_handshake(&name, config, transport),
+            Self::connect_remote_handshake(&name, config, transport, roots),
         )
         .await
         .with_context(|| format!("MCP server '{name}' connection timed out after 30s"))?
@@ -609,16 +698,18 @@ impl McpClient {
         name: &str,
         config: &McpServerConfig,
         transport: RemoteTransport,
+        roots: Option<Vec<McpRoot>>,
     ) -> Result<Self> {
         crate::logging::info(&format!("MCP: Connecting to '{}' ({})", name, config.display_target()));
-        match Self::connect_remote_once(name, config, transport).await {
+        let sse_roots = roots.clone();
+        match Self::connect_remote_once(name, config, transport, roots).await {
             Ok(client) => Ok(client),
             Err((err, wants_sse)) if wants_sse && transport == RemoteTransport::StreamableHttp => {
                 crate::logging::info(&format!(
                     "MCP: '{}' rejected Streamable HTTP ({:#}); retrying as legacy SSE",
                     name, err
                 ));
-                Self::connect_remote_once(name, config, RemoteTransport::LegacySse)
+                Self::connect_remote_once(name, config, RemoteTransport::LegacySse, sse_roots)
                     .await
                     .map_err(|(sse_err, _)| {
                         sse_err.context(format!(
@@ -634,6 +725,7 @@ impl McpClient {
         name: &str,
         config: &McpServerConfig,
         transport: RemoteTransport,
+        roots: Option<Vec<McpRoot>>,
     ) -> std::result::Result<Self, (anyhow::Error, bool)> {
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>> = Arc::new(Mutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
@@ -643,10 +735,13 @@ impl McpClient {
             name,
             config,
             transport,
-            writer_rx,
-            Arc::clone(&pending),
-            Arc::clone(&closed),
-            notifications.clone(),
+            super::remote::RemoteChannels {
+                writer_rx,
+                pending: Arc::clone(&pending),
+                closed: Arc::clone(&closed),
+                notifications: notifications.clone(),
+                roots: roots.clone(),
+            },
         )
         .await
         .map_err(|err| (err, false))?;
@@ -665,7 +760,7 @@ impl McpClient {
             backend: Backend::Remote(connection),
         };
 
-        if let Err(err) = client.initialize().await {
+        if let Err(err) = client.initialize(roots.as_deref()).await {
             let wants_sse = matches!(&client.backend, Backend::Remote(c) if c.wants_sse_fallback());
             return Err((
                 err.context(format!("MCP server '{name}' failed to initialize")),
@@ -692,8 +787,12 @@ impl McpClient {
         self.handle.clone()
     }
 
-    /// Initialize the MCP connection
-    async fn initialize(&mut self) -> Result<()> {
+    /// Initialize the MCP connection.
+    ///
+    /// `roots` is the root list this connection will serve for `roots/list`.
+    /// Passing `None` declares no `roots` capability, so the server has no
+    /// reason to ask and the client never claims what it would refuse.
+    async fn initialize(&mut self, roots: Option<&[McpRoot]>) -> Result<()> {
         // Remote servers get the newest revision we speak; older servers
         // answer with the version they support, which is fine because horon-agent
         // only uses methods common to every revision.
@@ -704,7 +803,7 @@ impl McpClient {
         };
         let params = InitializeParams {
             protocol_version: protocol_version.to_string(),
-            capabilities: ClientCapabilities::default(),
+            capabilities: ClientCapabilities::for_roots(roots),
             client_info: ClientInfo {
                 name: "horon-agent".to_string(),
                 version: horon_agent_build_meta::pkg_version().to_string(),
@@ -968,3 +1067,7 @@ done
 #[cfg(test)]
 #[path = "resources_tests.rs"]
 mod resources_tests;
+
+#[cfg(test)]
+#[path = "server_requests_tests.rs"]
+mod server_requests_tests;

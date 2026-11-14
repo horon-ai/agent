@@ -660,7 +660,23 @@ Servers that publish resources or prompts are reached through the same `mcp` too
 
 - A server that did not advertise the `resources` or `prompts` capability gets `MCP resources are not supported by '<server>' …` and no JSON-RPC request is written for it.
 - `notifications/resources/list_changed` and `notifications/prompts/list_changed` drop the cached list, so the next `resources` or `prompts` call refetches it. The cache belongs to the connection and starts empty again after a reconnect.
-- Resource subscriptions (`resources/subscribe`), sampling, and roots are not implemented.
+
+### Server-initiated requests
+
+A server may ask the client something. Every such frame (`method` plus an `id`) is answered on the same connection, over both stdio and remote transports, so a server never waits on a reply that never comes. The reply table is fixed:
+
+| Server method | Reply |
+| --- | --- |
+| `ping` | `{"jsonrpc":"2.0","id":<id>,"result":{}}` |
+| `roots/list` | One root (the session working directory as a `file://` URI) when `[mcp] expose_roots = true`; otherwise the `-32601` error below. |
+| Anything else (`sampling/createMessage`, `resources/subscribe`, `resources/unsubscribe`, `elicitation/create`, …) | `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32601,"message":"Method not found: <method>"}}` |
+
+- The client capabilities sent in `initialize` are exactly what the connection serves: `{"roots": {"listChanged": false}}` when `expose_roots` is on, and `{}` otherwise. A capability is never declared while the matching request is refused.
+- `[mcp] expose_roots` is off by default. Turning it on tells every connected server the directory the session works in.
+- A notification (`method` with no `id`) is not a request and never earns a reply; the `notifications/*/list_changed` handling above is unchanged.
+- Replies are written through the connection's bounded writer channel, never inline on the reader task, so a slow or full transport cannot stall frame handling. A closed channel is logged once and the reader keeps draining to EOF, which is what publishes the transport-closed signal.
+- Remote (HTTP/SSE) connections answer through a dedicated POST that does not touch the request registry: a reply has an `id` and no `method`, so it must never travel the request path. A reply the server refuses is logged once per method. Legacy SSE posts to the endpoint the server announced.
+- Resource subscriptions are still not implemented: a server may ask to subscribe, but the answer is `-32601` and no `notifications/resources/updated` is delivered.
 
 ## Large tool output and context saving
 

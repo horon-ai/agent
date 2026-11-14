@@ -626,7 +626,23 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 - `resources`나 `prompts` 기능을 알리지 않은 서버에는 `MCP resources are not supported by '<server>' …`를 돌려주고 JSON-RPC 요청을 보내지 않습니다.
 - `notifications/resources/list_changed`와 `notifications/prompts/list_changed`는 캐시한 목록을 버리므로 다음 `resources`나 `prompts` 호출이 다시 받아 옵니다. 캐시는 연결에 속하고 재연결 뒤에는 빈 상태로 시작합니다.
-- 리소스 구독(`resources/subscribe`), 샘플링, 루트는 구현하지 않았습니다.
+
+### 서버가 보낸 요청
+
+서버는 클라이언트에 무언가를 물을 수 있습니다. 그런 프레임(`method`와 `id`를 함께 가진 프레임)은 stdio와 원격 전송 모두 같은 연결에서 답합니다. 서버가 오지 않을 답을 기다리는 일이 없어야 하기 때문입니다. 답은 다음 표로 고정됩니다.
+
+| 서버 메서드 | 답 |
+| --- | --- |
+| `ping` | `{"jsonrpc":"2.0","id":<id>,"result":{}}` |
+| `roots/list` | `[mcp] expose_roots = true`이면 세션 작업 디렉터리를 `file://` URI 하나로 돌려줍니다. 아니면 아래 `-32601` 오류입니다. |
+| 그 밖의 메서드(`sampling/createMessage`, `resources/subscribe`, `resources/unsubscribe`, `elicitation/create` 등) | `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32601,"message":"Method not found: <method>"}}` |
+
+- `initialize`에서 알리는 클라이언트 기능은 그 연결이 실제로 처리하는 것과 정확히 같습니다. `expose_roots`가 켜져 있으면 `{"roots": {"listChanged": false}}`이고, 아니면 `{}`입니다. 거절할 요청의 기능을 미리 알리지 않습니다.
+- `[mcp] expose_roots`의 기본값은 꺼짐입니다. 켜면 연결된 모든 서버에 그 세션이 작업하는 디렉터리를 알립니다.
+- 알림(`id` 없는 `method`)은 요청이 아니라 답을 받지 않습니다. 위의 `notifications/*/list_changed` 처리는 그대로입니다.
+- 답은 연결의 크기가 제한된 쓰기 채널로 씁니다. 읽기 작업 안에서 직접 기다리지 않으므로 느리거나 가득 찬 전송이 프레임 처리를 멈추지 않습니다. 채널이 닫혔으면 한 번만 로그를 남기고 읽기는 EOF까지 계속합니다. 전송 종료 신호는 그 EOF에서 나옵니다.
+- 원격(HTTP/SSE) 연결은 요청 등록부를 건드리지 않는 전용 POST로 답합니다. 답에는 `id`가 있고 `method`가 없으므로 요청 경로를 타면 안 됩니다. 서버가 거절한 답은 메서드마다 한 번만 로그를 남깁니다. 레거시 SSE는 서버가 알린 엔드포인트로 POST합니다.
+- 리소스 구독은 여전히 구현하지 않았습니다. 서버가 구독을 요청해도 `-32601`로 답하고 `notifications/resources/updated`는 전달하지 않습니다.
 
 ## 큰 도구 출력과 컨텍스트 절약
 
