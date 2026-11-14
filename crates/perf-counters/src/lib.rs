@@ -10,7 +10,9 @@
 //! made while discovering the skill catalog, [`record_skill_file_read`] counts
 //! SKILL.md files opened and the bytes read from them, and
 //! [`record_mcp_config_read`] counts MCP configuration files parsed and their bytes,
-//! and [`record_hook_spawn`] counts lifecycle-hook child processes actually spawned.
+//! [`record_hook_spawn`] counts lifecycle-hook child processes actually spawned,
+//! and [`record_prompt_source_read`] counts static prompt source files probed
+//! while assembling the system prompt.
 //!
 //! Each recording call is one relaxed atomic read (the gate) plus one relaxed
 //! atomic add; high-water marks add a compare-and-swap that only spins when a new
@@ -76,6 +78,7 @@ static TOOL_RESULT_AGING_BATCHES: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGED_RESULTS: AtomicU64 = AtomicU64::new(0);
 static TOOL_RESULT_AGED_BYTES: AtomicU64 = AtomicU64::new(0);
 static HOOK_PROCESS_SPAWNS: AtomicU64 = AtomicU64::new(0);
+static PROMPT_SOURCE_READS: AtomicU64 = AtomicU64::new(0);
 
 /// Per-tool counts of calls a schema repair rewrote. The only counter keyed by
 /// a name, because "how often is this model's writer wrong about `bash`" is the
@@ -335,6 +338,22 @@ pub fn record_hook_spawn() {
     HOOK_PROCESS_SPAWNS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// One static prompt source probed on disk while assembling the system prompt:
+/// a base-prompt replacement candidate, an AGENTS.md candidate, a
+/// prompt-overlay file, or a preferred-tools file.
+///
+/// A probe counts whether or not the file exists: the lookup is paid either
+/// way, and a session that has none of these files must still read as
+/// measured. The prompt is assembled on every request, so a builder that goes
+/// back to disk records its probes again per request, and one that serves the
+/// same bytes from a per-session snapshot leaves the count alone.
+pub fn record_prompt_source_read() {
+    if !enabled() {
+        return;
+    }
+    PROMPT_SOURCE_READS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Tests and benchmark harnesses only; nothing in the daemon calls it.
 pub fn reset() {
     for slot in [
@@ -376,6 +395,7 @@ pub fn reset() {
         &TOOL_RESULT_AGED_RESULTS,
         &TOOL_RESULT_AGED_BYTES,
         &HOOK_PROCESS_SPAWNS,
+        &PROMPT_SOURCE_READS,
     ] {
         slot.store(0, Ordering::Relaxed);
     }
@@ -428,6 +448,7 @@ pub struct Snapshot {
     pub tool_result_aged_results: u64,
     pub tool_result_aged_bytes: u64,
     pub hook_process_spawns: u64,
+    pub prompt_source_reads: u64,
     /// Repaired calls per tool, ready to read without another lookup.
     pub tool_arg_repairs: BTreeMap<String, u64>,
 }
@@ -492,6 +513,7 @@ pub fn snapshot() -> Snapshot {
         tool_result_aged_results: TOOL_RESULT_AGED_RESULTS.load(Ordering::Relaxed),
         tool_result_aged_bytes: TOOL_RESULT_AGED_BYTES.load(Ordering::Relaxed),
         hook_process_spawns: HOOK_PROCESS_SPAWNS.load(Ordering::Relaxed),
+        prompt_source_reads: PROMPT_SOURCE_READS.load(Ordering::Relaxed),
         tool_arg_repairs: TOOL_ARG_REPAIRS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

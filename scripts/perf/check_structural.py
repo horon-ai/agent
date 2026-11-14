@@ -225,6 +225,20 @@ MEASUREMENTS = (
             "agent::tests::tool_request_bytes::core_profile_request_prefix_is_measured",
         ],
     },
+    # The static system prompt is the other half of the cached request prefix.
+    # Its size, its digest and the source files probed to assemble it are
+    # measured from the agent's own builder, on a session that changed nothing
+    # between requests.
+    {
+        "section": "prompt",
+        "source": "static-prompt",
+        "args": [
+            "-p",
+            "horon-agent-app-core",
+            "--lib",
+            "agent::tests::prompt_request_bytes::core_profile_static_prompt_is_measured",
+        ],
+    },
 )
 
 REQUIRED_SECTIONS = (
@@ -240,6 +254,7 @@ REQUIRED_SECTIONS = (
     "mcp_config",
     "hooks",
     "prefix",
+    "prompt",
 )
 
 
@@ -726,6 +741,44 @@ def check_prefix(report: Report, records: list[dict[str, str]], bounds: dict[str
         report.equal(section, "tool_count", count, as_int(record, "eager_count", section))
 
 
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def check_prompt(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The static prompt was measured, not read from counters that were off.
+
+    No ceiling yet: this section records the numbers a later bound is set
+    from. What it refuses is a line that measured nothing. A prompt of zero
+    bytes was never built, and a first build that probed no source file means
+    the counters were off, in which case the zero beside it for an unchanged
+    request would read as a pass it did not earn. The digest is the identity
+    of the prefix, so a value that is not a SHA-256 fails as well.
+    """
+    for record in records:
+        section = "prompt"
+        report.at_least(section, "static_bytes", as_int(record, "static_bytes", section), 1)
+        report.at_least(section, "static_tokens", as_int(record, "static_tokens", section), 1)
+        report.at_least(section, "index_bytes", as_int(record, "index_bytes", section), 1)
+        digest = record.get("static_sha256")
+        if digest is None:
+            raise GateError(f"section {section}: measurement is missing static_sha256")
+        report.check(
+            section,
+            "static_sha256",
+            len(digest),
+            SHA256_HEX.fullmatch(digest) is not None,
+            "64 lowercase hex digits",
+        )
+        report.at_least(section, "index_clipped_rows", as_int(record, "index_clipped_rows", section), 0)
+        report.at_least(section, "warm_source_reads", as_int(record, "warm_source_reads", section), 1)
+        report.at_least(
+            section,
+            "unchanged_request_source_reads",
+            as_int(record, "unchanged_request_source_reads", section),
+            0,
+        )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -739,6 +792,7 @@ CHECKS = {
     "mcp_config": check_mcp_config,
     "hooks": check_hooks,
     "prefix": check_prefix,
+    "prompt": check_prompt,
 }
 
 

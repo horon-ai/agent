@@ -71,6 +71,9 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
     "request_message_copies=0",
     "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8",
+    "STRUCTURAL_PERF section=prompt static_bytes=1414 "
+    "static_sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 static_tokens=330 "
+    "index_bytes=676 index_clipped_rows=6 warm_source_reads=6 unchanged_request_source_reads=54",
 ]
 
 
@@ -480,6 +483,43 @@ class PrefixSectionTest(unittest.TestCase):
         run = run_gate(without_prefix)
         self.assertEqual(run.code, 2, "a prefix section that did not run is not a pass")
         self.assertEqual(run.result["missing"], ["prefix"])
+
+
+class PromptSectionTest(unittest.TestCase):
+    """The static prompt line is a measurement, and a line of zeros is not one."""
+
+    PROMPT_LINE = (
+        "STRUCTURAL_PERF section=prompt static_bytes=1414 "
+        "static_sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 static_tokens=330 "
+        "index_bytes=676 index_clipped_rows=6 "
+    )
+
+    def test_prompt_section_missing_fails(self):
+        without_prompt = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=prompt")]
+        run = run_gate(without_prompt)
+        self.assertEqual(run.code, 2, "a prompt section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["prompt"])
+
+    def test_prompt_counters_off_is_not_measured(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE + "warm_source_reads=0 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("warm_source_reads", named)
+
+    def test_a_digest_that_is_not_a_sha256_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            "STRUCTURAL_PERF section=prompt static_bytes=1414 static_sha256=unknown static_tokens=330 "
+            "index_bytes=676 index_clipped_rows=6 warm_source_reads=6 unchanged_request_source_reads=54",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("static_sha256", named)
 
 
 class MissingMeasurementTest(unittest.TestCase):
