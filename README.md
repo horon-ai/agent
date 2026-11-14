@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A coding agent for the terminal, the SDK, the editor and the host program. One Rust binary, any OpenAI-compatible endpoint.</strong>
+  <strong>A coding agent for the terminal, the SDK, the editor and the host program. One agent, two modes (headless and TUI), any OpenAI-compatible endpoint.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent` is the agent backend for horon. It runs the agent loop (model calls, tools, sessions, MCP) and exposes it four ways: a one-shot command, a Unix-socket harness API for SDKs, the Agent Client Protocol (ACP) on stdio for editors, and a stdio JSONL RPC mode for a program that drives the agent as a child process. The agent binary draws no terminal of its own and speaks one model protocol: OpenAI-compatible `/chat/completions`.
+horon agent is one agent with two modes. In headless mode a program drives it: a one-shot command (`run`), a daemon (`serve`) with a Unix-socket harness API for SDKs (`api-bridge`), the Agent Client Protocol (ACP) on stdio for editors (`acp`), and a stdio JSONL RPC mode for a program that drives the agent as a child process (`rpc`). In TUI mode a person drives it from the terminal through `horon-tui`. Both modes run the same agent loop (model calls, tools, sessions, MCP) on the same daemon, sessions and configuration, and speak one model protocol: OpenAI-compatible `/chat/completions`.
 
-- **The terminal client is a separate package.** The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. The interactive terminal client is the `horon-tui` package on the agent SDK, and bare `horon` on a terminal replaces itself with that sibling binary; `HORON_NO_TUI=1` stops with a sentence naming that setting, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
+- **Two binaries, released together.** `horon-agent` is the agent binary every installation needs, and it draws no terminal of its own. `horon-tui` is the TUI binary, a separate package on the agent SDK, shipped as its own archive from the same release tag. The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. Bare `horon` on a terminal replaces itself with the sibling `horon-tui`; `HORON_NO_TUI=1` stops with a sentence naming that setting, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
 - **Direct model calls.** The agent POSTs to your endpoint. There is no router process or plugin host in between.
 - **Small and fast to start.** On GitHub-hosted runners a one-shot turn took 55.9 ms on Linux and 103.3 ms on macOS ([numbers and caveats](#benchmarks)).
@@ -90,6 +90,8 @@ With no profile configured, a model call stops before the network and names the 
 
 ## Ways to run it
 
+Headless mode covers every subcommand below except bare `horon`, which opens TUI mode. `horon repl` is a plain line prompt served by the agent binary itself, for a person who wants no full-screen client.
+
 | Command | What it does |
 | --- | --- |
 | `horon` (no subcommand) | On a terminal, start the server and replace itself with the `horon-tui` client beside it, with keys, user files and a settings screen ([docs/runtime/TUI.md](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling prints a sentence naming the condition and the install command, then exits non-zero. |
@@ -102,7 +104,7 @@ With no profile configured, a model call stops before the network and names the 
 
 ### Terminal client
 
-`horon-tui` is the interactive client: a transcript pane, a one-line input, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) built on `horon-agent-sdk`, so the agent binary stays free of terminal libraries.
+`horon-tui` is TUI mode: a transcript pane, a one-line input, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) built on `horon-agent-sdk` and attaches to the same daemon and sessions as every other client, so the agent binary stays free of terminal libraries.
 
 It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect prints that sentence instead, so scripts and CI get the reason rather than a client. When a condition fails, the command names it, prints ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``, and exits non-zero; a server started before the check keeps running.
 
@@ -195,7 +197,7 @@ On macOS horon was faster on the one-shot (103.3 ms against 413.7 ms), skill (84
 
 ## Documentation
 
-The docs are written in English (default) and Korean (`.ko.md` next to each file; for example `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. The same pages are published at [agent.horon.ai](https://agent.horon.ai), rendered from [packages/docs](packages/docs).
+The docs are written in English (default) and Korean (`.ko.md` next to each file; for example `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. The site at [agent.horon.ai](https://agent.horon.ai) is a separate, shorter set of pages written in [packages/docs](packages/docs); it is not generated from `docs/`, so a behavior change updates both by hand.
 
 | Topic | Read |
 | --- | --- |
@@ -214,7 +216,7 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no terminal UI in the `horon-agent` package, ACP v1 and v2 both served, and no measured performance regression against the recorded baseline.
+Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no terminal UI in the `horon-agent` package (TUI mode lives in `horon-tui`), ACP v1 and v2 both served, and no measured performance regression against the recorded baseline.
 
 - Branch from `dev` and open the pull request against `dev`. Every pull request must link a real issue in this repository (`Closes #123`); the `Require Linked Issue` check enforces it.
 - Run the checks before pushing:

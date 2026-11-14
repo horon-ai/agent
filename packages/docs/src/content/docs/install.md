@@ -76,9 +76,10 @@ webpki roots built into the binary and the roots the OS trusts, so a private CA
 installed in the OS store is trusted too. No setting narrows the trust set or
 disables verification; to use an internal CA, put it in the OS store.
 
-## The optional terminal client
+## The TUI binary
 
-The release publishes the interactive client as its own archive
-(`horon-tui-<suffix>.tar.gz`) beside the agent, verified against the same
-`SHA256SUMS`. A copy that cannot be verified never blocks the agent: the installer
-prints one line and continues with `horon-agent` alone.
+The release publishes `horon-tui`, the TUI binary, as its own archive
+(`horon-tui-<suffix>.tar.gz`) beside the agent, built from the same tag and
+verified against the same `SHA256SUMS`. It is optional for an installation that
+only uses headless mode. A copy that cannot be verified never blocks the agent:
+the installer prints one line and continues with `horon-agent` alone.

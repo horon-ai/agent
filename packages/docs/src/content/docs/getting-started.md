@@ -1,21 +1,22 @@
 ---
 title: Getting started
-description: horon agent is a coding agent in one Rust binary that talks to any OpenAI-compatible endpoint, from the terminal, an SDK, an editor or a host program.
+description: horon agent is one coding agent with two modes, headless for programs and TUI for people, that talks to any OpenAI-compatible endpoint.
 section: Start
 order: 1
 ---
 
-horon agent is a coding agent. One Rust binary, one OpenAI-compatible endpoint.
-It runs a turn, calls tools, and exits — or stays up as a daemon that the
-terminal client, SDKs, editors and host programs attach to over a Unix socket.
+horon agent is a coding agent with two equal modes on one engine. In headless
+mode a program drives it: it runs a turn, calls tools, and exits, or stays up as
+a daemon that SDKs, editors and host programs attach to over a Unix socket. In
+TUI mode a person drives the same daemon and sessions from the terminal.
 
 ## What it is
 
 - **One model path.** Requests go straight to `/chat/completions` on the
   endpoint you configure. There is no router process and no plugin host.
-- **Two binaries, one engine.** `horon-agent` runs the agent (`serve`, `run`,
-  `repl`, `api-bridge`, `acp`, `rpc`). `horon-tui` is the separate interactive
-  terminal client, built on the SDK.
+- **Two modes, two binaries, one release.** `horon-agent` is the agent binary
+  (`serve`, `run`, `repl`, `api-bridge`, `acp`, `rpc`). `horon-tui` is the TUI
+  binary, built on the SDK and shipped as its own archive from the same tag.
 - **Append-only sessions.** History is an event log on disk; archive, compaction
   and rewind append records and never delete an original.
 - **ACP v1 and v2.** `horon acp` serves both protocol versions and answers
@@ -48,10 +49,10 @@ horon run "summarize this repo"
 With no profile configured, a model call stops before the network and names the
 missing `[providers.<name>]` table. Nothing silently falls back to another path.
 
-## The interactive client
+## TUI mode
 
 Run bare `horon` (or `hrn`, or `horon-agent`) on a terminal and it starts the
-server if needed, then replaces itself with `horon-tui`, the client that sits
+server if needed, then replaces itself with `horon-tui`, the TUI binary that sits
 beside the agent binary and owns the screen from then on. The handoff checks
 three things first: standard input and standard output are both terminals,
 `HORON_NO_TUI` is unset, and `horon-tui` exists next to the running executable.

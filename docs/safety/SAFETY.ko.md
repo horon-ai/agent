@@ -350,7 +350,7 @@ pub type PathDenyPredicate = Arc<dyn Fn(&Path) -> Option<String> + Send + Sync>;
 
 `ask`는 사용자에게 선택지를 내미는 도구다. 이 빌드에서 그 도구는 **답할 수 있는 클라이언트가 세션에 붙어 있을 때만 기다린다. 그 대기는 300초에서 끊긴다.**
 
-데몬은 headless이다. 붙어 있는 클라이언트 화면을 보장할 수 없다. 그래서 `ask`는 먼저 세션에 답변 채널이 등록돼 있는지 확인한다(`crates/app-core/src/tool/ask.rs:357`). 채널은 세션에 붙은 연결이 `supports_ask_requests`를 광고할 때 설치되고 연결이 끊기거나 다른 세션으로 다시 붙으면 걷힌다(`crates/app-core/src/server/client_lifecycle.rs:2045-2053`, `crates/app-core/src/tool/ask_bridge.rs:72-88`). 채널의 존재 자체가 "이 연결은 질문을 보여주고 답할 수 있다"는 신호다(`crates/app-core/src/tool/ask_bridge.rs:6-13`). 광고는 하네스 API `Hello`의 `supports_ask_requests`로 협상한다(`crates/harness-api/src/requests.rs:42-45`).
+데몬은 자체 화면을 그리지 않으며 클라이언트가 붙어 있다고 가정할 수 없다. 그래서 `ask`는 먼저 세션에 답변 채널이 등록돼 있는지 확인한다(`crates/app-core/src/tool/ask.rs:357`). 채널은 세션에 붙은 연결이 `supports_ask_requests`를 광고할 때 설치되고 연결이 끊기거나 다른 세션으로 다시 붙으면 걷힌다(`crates/app-core/src/server/client_lifecycle.rs:2045-2053`, `crates/app-core/src/tool/ask_bridge.rs:72-88`). 채널의 존재 자체가 "이 연결은 질문을 보여주고 답할 수 있다"는 신호다(`crates/app-core/src/tool/ask_bridge.rs:6-13`). 광고는 하네스 API `Hello`의 `supports_ask_requests`로 협상한다(`crates/harness-api/src/requests.rs:42-45`).
 
 - 채널이 없으면: 요청을 검증한 뒤 `[tools] ask_policy`로 답을 정해 즉시 돌려준다. 기다리지 않는다(`crates/app-core/src/tool/ask.rs:372-377`).
 - 채널이 있으면: `ask_requested`를 내보내고 `ask_response`를 기다린다(`crates/app-core/src/server/client_ask.rs:80`, `crates/app-core/src/tool/ask.rs:386-408`). 상한은 `CLIENT_ANSWER_TIMEOUT` 300초다(`crates/app-core/src/tool/ask.rs:31`). 그래서 클라이언트가 붙어 있는 세션은 최악의 경우 턴이 5분 늦어진다.
@@ -383,7 +383,7 @@ pub enum AskPolicy {
 
 #### 언제 쓸 수 있는가
 
-`ask`는 코어 18도구 가운데 하나다(`crates/base/src/config.rs:652-671`). 그래서 기본 headless `serve`와 `run`에서도 늘 닿는다. 기본 `core` 세션은 `ask`의 스키마를 요청에 싣지 않고 시스템 프롬프트 색인에 이름만 올리며, 모델은 `toolbox`로 부른다. 권한이 필요한 동작을 물을 때 쓰는 `request_permission`과는 다르다. `request_permission`은 ambient 세션 전용이고 클라이언트가 없는 무인 실행에서만 허용 목록에 합쳐지지만, `ask`는 도구 표면에 상시 닿는다. 그래서 무인 실행에서 `ask`가 하는 일은 승인을 받아내는 것이 아니라, 답이 없는 상태에서도 턴을 멈추지 않고 다음 판단으로 넘어가는 것이다.
+`ask`는 코어 18도구 가운데 하나다(`crates/base/src/config.rs:652-671`). 그래서 헤드리스 모드의 기본 `serve`와 `run`에서도 늘 닿는다. 기본 `core` 세션은 `ask`의 스키마를 요청에 싣지 않고 시스템 프롬프트 색인에 이름만 올리며, 모델은 `toolbox`로 부른다. 권한이 필요한 동작을 물을 때 쓰는 `request_permission`과는 다르다. `request_permission`은 ambient 세션 전용이고 클라이언트가 없는 무인 실행에서만 허용 목록에 합쳐지지만, `ask`는 도구 표면에 상시 닿는다. 그래서 무인 실행에서 `ask`가 하는 일은 승인을 받아내는 것이 아니라, 답이 없는 상태에서도 턴을 멈추지 않고 다음 판단으로 넘어가는 것이다.
 
 ---
 

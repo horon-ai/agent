@@ -4,7 +4,11 @@ Language: **English** | [한국어](README.ko.md)
 
 This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
 
-The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The same pages are published at [agent.horon.ai](https://agent.horon.ai), which is built from `packages/docs`, so a change to an English file reaches both the binary and the site.
+The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) is a separate set of pages written in `packages/docs`; nothing generates it from this folder, so a behavior change that the site also describes is edited in both places.
+
+## Two modes, one agent
+
+horon agent runs in two modes that use the same engine, daemon, sessions, tools, and configuration. In headless mode a program drives the session: `run`, the daemon (`serve`) behind the SDKs and `api-bridge`, `acp` for editors, and `rpc`. In TUI mode a person drives it through `horon-tui`. Neither mode is a reduced form of the other; they differ only in who is on the other end. The modes ship as two binaries: `horon-agent` (the agent binary, which every installation needs) and `horon-tui` (the TUI binary, a separate optional asset of the same release). [`release/INSTALL.md`](release/INSTALL.md) and [`runtime/TUI.md`](runtime/TUI.md) describe how each is installed.
 
 ## Fixed requirements
 
@@ -12,7 +16,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 
 | Requirement | What it means | Current state |
 | --- | --- | --- |
-| No TUI in `horon-agent` | The headless binary (`serve`, `run`, `api-bridge`, `acp`, `rpc`) never opens a screen, and its dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate. The terminal client is the separate `horon-tui` package on `horon-agent-sdk`, and bare `horon` on a terminal replaces itself with that sibling binary. | Met. `scripts/ci/check_headless_graph.py` walks the resolved graph |
+| No TUI in `horon-agent` | The agent binary (`serve`, `run`, `api-bridge`, `acp`, `rpc`) never opens a screen, and its dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate. TUI mode lives in the separate `horon-tui` package on `horon-agent-sdk`, and bare `horon` on a terminal replaces itself with that sibling binary. | Met. `scripts/ci/check_headless_graph.py` walks the resolved graph |
 | ACP v1 and v2 support | `horon acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
 | No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
 

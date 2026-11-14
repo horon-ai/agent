@@ -91,11 +91,11 @@ Model requests go straight to an OpenAI-compatible `/chat/completions` and carry
 
 ### Why core stays closed
 
-`core` is an allow-list. It pins the default headless surface to the eighteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eleven are reached through the index and `toolbox`. The most recent additions, `swarm`, `todo` and `session_search`, keep their schemas out of the prefix the same way. The choice preserves three things.
+`core` is an allow-list. It pins the default `core` surface to the eighteen core tools plus `toolbox`, keeps the other modules in the tree, and leaves them unexposed. The allow-list is as closed as it was; only the delivery changed. Seven tools come with schemas, eleven are reached through the index and `toolbox`. The most recent additions, `swarm`, `todo` and `session_search`, keep their schemas out of the prefix the same way. The choice preserves three things.
 
 - The default surface's size does not change, so the request prefix and the prompt cache stay stable.
 - The default permission envelope, writes and shell included, stays predictable.
-- New tools do not quietly widen the headless default.
+- New tools do not quietly widen the default `core` surface.
 
 Widening it takes an explicit `--tool-profile full`, `HORON_AGENT_TOOL_PROFILE=full`, or `[tools] profile = "full"`.
 
@@ -215,7 +215,7 @@ A grant is consulted only after `evaluate` said "ask" for a reason a grant can a
 - **Not wider than its effect.** A grant issued for an append covers appends; a write grant covers both. Replacing a file is a stronger answer than appending to it.
 - **Not path-loose.** Both the grant and the call are canonicalized, so `..` and a symlink name the place they actually resolve to. A path that cannot be canonicalized gets no grant and asks.
 - **Not multi-path.** Only a call that names exactly one path can be granted. An `apply_patch` touching three files is approved once and asks next time, because one answer must not decide three places the user was never shown.
-- **Not restricted-path bypass.** A `restricted_paths` match asks in every mode, `off` included, and refuses in a headless session with no approval surface.
+- **Not restricted-path bypass.** A `restricted_paths` match asks in every mode, `off` included, and refuses in an unattended session (`is_headless` in code) with no approval surface.
 
 The request carries its capability in `context.grant_capability` (`append` or `write`) so the writer that stores the grant needs only the queued request, never the registry. The paths come from the request snapshot the daemon built, never from the client, so a client cannot widen what its answer covers.
 

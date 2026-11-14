@@ -6,7 +6,7 @@ Language: **English** | [한국어](CRATES.ko.md)
 
 ## One engine, two binaries
 
-The workspace builds two executables from one engine. The split is the rule, not a build option: the headless binary must never link terminal libraries, and the client must never grow its own engine.
+The workspace builds two executables from one engine. The split is the rule, not a build option: the agent binary `horon-agent` must never link terminal libraries, and the client must never grow its own engine.
 
 | Crate | Package | Binary | Owns |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@ The workspace builds two executables from one engine. The split is the rule, not
 | `crates/harness-api-server` | `horon-agent-harness-api-server` | — | The bridge and translate layer between the daemon and the harness API. |
 | `crates/tui` | `horon-tui` | `horon-tui` | The terminal client: transcript, input, approval prompt, settings screen, themes and key bindings. It depends on `horon-agent-sdk` and nothing of the engine. |
 
-`scripts/ci/check_headless_graph.py` walks every package reachable from `horon-agent` and fails on `ratatui`, `crossterm`, `horon-tui` and the `horon-agent-tui*` prefix, so the boundary is enforced rather than reviewed. The client is built with its own cargo invocation so its feature set never unifies into the headless package, and `horon-agent` launches it by replacing its own process on a terminal (`src/cli/tui_handoff.rs`); [runtime/TUI.md](../runtime/TUI.md) documents that handoff and the client's user files.
+`scripts/ci/check_headless_graph.py` walks every package reachable from `horon-agent` and fails on `ratatui`, `crossterm`, `horon-tui` and the `horon-agent-tui*` prefix, so the boundary is enforced rather than reviewed. The client is built with its own cargo invocation so its feature set never unifies into the `horon-agent` package, and `horon-agent` launches it by replacing its own process on a terminal (`src/cli/tui_handoff.rs`); [runtime/TUI.md](../runtime/TUI.md) documents that handoff and the client's user files.
 
 This document defines the target structure that keeps `horon-agent` modular without turning shared crates into a dumping ground. It carries the practical decision rules. Use it when deciding whether to move a type, helper, or behavior out of the root crate.
 
@@ -375,7 +375,7 @@ Root re-exports and usage paths observed:
   `crates/base/src/goal.rs`, and `todo` in `crates/task-types`
 - `env`, `id`, `stdin_detect`, `util`, and `panic_util` live in `crates/core/src/`
 
-This audit targeted the root modules before the headless transition. Those modules are no longer in the root `src/`, which now holds only
+This audit targeted the root modules before the TUI moved out of the agent binary. Those modules are no longer in the root `src/`, which now holds only
 `cli/`, `lib.rs`, and `main.rs`.
 
 Compile-speed priorities set by this audit:
@@ -433,7 +433,7 @@ These are not simple DTO moves. Refactor the behavior boundary first.
 
 ### Session module
 
-The responsibilities of `src/session.rs` before the headless transition are now split between `crates/session-store` and
+The responsibilities of `src/session.rs` before the TUI moved out of the agent binary are now split between `crates/session-store` and
 `crates/session-types`. What remains as split targets on top of that:
 
 - Metadata and the session model
@@ -445,7 +445,7 @@ The responsibilities of `src/session.rs` before the headless transition are now 
 
 ### Ambient module
 
-The responsibilities of `src/ambient.rs` before the headless transition now live in `crates/app-core/src/ambient/`. What remains as split
+The responsibilities of `src/ambient.rs` before the TUI moved out of the agent binary now live in `crates/app-core/src/ambient/`. What remains as split
 targets on top of that:
 
 - Visible cycle context input and output
@@ -459,7 +459,7 @@ Do not move `AmbientState` into a DTO until the load/save/record behavior is sep
 
 ### Usage module
 
-The responsibilities of `src/usage.rs` before the headless transition now live in `crates/base/src/usage.rs` and
+The responsibilities of `src/usage.rs` before the TUI moved out of the agent binary now live in `crates/base/src/usage.rs` and
 `crates/base/src/usage/`, and `horon-agent-usage-types` owns the DTOs.
 
 - API lookup providers
@@ -471,7 +471,7 @@ The responsibilities of `src/usage.rs` before the headless transition now live i
 
 ### Gateway module
 
-The responsibilities of `src/gateway.rs` before the headless transition now live in `crates/base/src/gateway.rs` and
+The responsibilities of `src/gateway.rs` before the TUI moved out of the agent binary now live in `crates/base/src/gateway.rs` and
 `crates/base/src/gateway/`, and `horon-agent-gateway-types` owns the DTOs.
 
 - Registry persistence

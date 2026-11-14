@@ -1,27 +1,57 @@
 # AGENTS.md: horon `agent/`
 
-This directory is horon's headless agent backend. The binary speaks the OpenAI
-protocol only and never opens a terminal. Other documents describe the code;
-this file governs it. When another document disagrees with this file, this file
-wins.
+This repository is horon agent: one agent with two equal modes. In headless
+mode a program drives a session (`run`, the `serve` daemon behind the SDKs and
+`api-bridge`, `acp` for editors, `rpc` for host programs). In TUI mode a person
+drives one from the terminal through `horon-tui`. Both modes share one engine,
+daemon, session store, tool set and configuration; they differ only in who is
+on the other end, and neither is a reduced form of the other. Model calls speak
+the OpenAI Chat Completions protocol only. Other documents describe the code;
+this file governs it. When another document disagrees with this file, this
+file wins.
+
+## Modes, binaries and release units
+
+|Unit|Source|What it serves|How it ships|
+|---|---|---|---|
+|`horon-agent`, the agent binary|root package (`src/`, `crates/*`)|headless mode, the daemon both modes attach to, and the plain `repl` line prompt|`horon-agent-<suffix>.tar.gz` on every release; every installation needs it|
+|`horon-tui`, the TUI binary|`crates/tui`, a client of `horon-agent-sdk`|TUI mode|`horon-tui-<suffix>.tar.gz` beside the agent in the same release; optional, never on FreeBSD|
+|`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; dry run until `NPM_PUBLISH` is `true`; not published yet|
+|SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml` (same `NPM_PUBLISH` gate); Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
+|Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
+
+- **One release.** Both binaries are built by the same `release.yml` run from
+  the same tagged commit (`vMAJOR.MINOR.PATCH`), and `install-release` stages
+  them into one `builds/versions/<version>/` directory that activates as a
+  unit. There is no separate TUI release or channel. The version strings
+  differ: `horon-agent --version` comes from the tag (`crates/build-meta`),
+  `horon-tui --version` from the `crates/tui` package version. The npm version is the tag
+  without its `v` (`docs/release/NPM.md`).
+- **Terminology.** "Headless" names a mode, nothing else. Do not call the
+  package, binary, engine or product "headless": say "the agent binary
+  `horon-agent`" and "the TUI binary `horon-tui`". A session with no client
+  attached (swarm workers, ambient resumes) is an *unattended session*. Code
+  identifiers, file names and config values that still say `headless`
+  (`check_headless_graph.py`, `is_headless`, `spawn_mode = "headless"`) keep
+  their names until a separately approved rename.
 
 ## Fixed requirements
 
 Every change in this tree keeps all three. A change that breaks one is not
 done, regardless of what else it fixes.
 
-1. **No TUI in the headless package.** The build ships two binaries, and the
-   split is the rule. `horon-agent` (`serve`, `run`, `api-bridge`, `acp`, `rpc`
-   — the headless binary) never opens a terminal UI, and its dependency graph
-   stays free of `ratatui`, `crossterm`, `horon-tui`, and any
-   `horon-agent-tui*` crate. The interactive client is the separate package
-   and binary `horon-tui`, which talks to the daemon through `horon-agent-sdk`
-   and never moves the terminal stack into `horon-agent`. The bare `horon`
-   command is still headless: when stdin and stdout are terminals,
-   `HORON_NO_TUI` is unset, and `horon-tui` sits beside the running binary, it
-   replaces its own process with that client (`src/cli/tui_handoff.rs`) and
-   draws nothing itself. `scripts/ci/check_headless_graph.py` enforces the
-   graph rule in CI.
+1. **No terminal UI in the agent binary.** The build ships two binaries, and
+   the split is the rule. `horon-agent` (`serve`, `run`, `repl`, `api-bridge`,
+   `acp`, `rpc`) never opens a full-screen terminal UI, and its dependency
+   graph stays free of `ratatui`, `crossterm`, `horon-tui`, and any
+   `horon-agent-tui*` crate. TUI mode is the separate package and binary
+   `horon-tui`, which talks to the daemon through `horon-agent-sdk` and never
+   moves the terminal stack into `horon-agent`. Bare `horon` draws nothing
+   itself: when stdin and stdout are terminals, `HORON_NO_TUI` is unset, and
+   `horon-tui` sits beside the running binary, it replaces its own process with
+   that client (`src/cli/tui_handoff.rs`); otherwise it stays in headless mode
+   and prints why. `scripts/ci/check_headless_graph.py` enforces the graph rule
+   in CI.
 2. **ACP v1 and v2.** `horon-agent acp` must serve Agent Client Protocol
    `protocolVersion` 1 and 2, answering `initialize` with the highest version
    both sides support. Current state: both are implemented — v2 negotiates in
@@ -34,12 +64,12 @@ done, regardless of what else it fixes.
    that makes a measured path slower than the baseline does not merge. How to
    measure: `docs/performance/BENCHMARK.md`; recorded numbers and their limits:
    `docs/performance/RESULTS.md`, which is the recorded baseline. Scope: the
-   baseline and the jcode target below cover the headless `horon-agent`
-   workloads, and those cells keep their definition unchanged now that a second
-   binary exists. The interactive client is measured on its own, never mixed
-   into a headless cell and never compared against one: its suites time
-   `horon-tui` against `horon-tui`, and a headless number quoted for a change
-   that only touches the client is not evidence.
+   baseline and the jcode target below cover `horon-agent` workloads (headless
+   mode), and those cells keep their definition unchanged now that a second
+   binary exists. `horon-tui` is measured on its own, never mixed into a
+   `horon-agent` cell and never compared against one: its suites time
+   `horon-tui` against `horon-tui`, and a `horon-agent` number quoted for a
+   change that only touches the TUI is not evidence.
 
 ## Performance target: beat jcode
 
@@ -78,8 +108,9 @@ Principles:
 
 1. Beat jcode in every cell and never fall below the recorded baseline.
 2. Support ACP v1 and v2.
-3. The headless package has no TUI; the TUI is the separate `horon-tui`
-   package and binary on the SDK. One engine, two binaries.
+3. Headless mode and TUI mode are equal modes on one engine. The agent binary
+   has no terminal UI; TUI mode is the separate `horon-tui` package and binary
+   on the SDK, released with the agent from the same tag.
 4. The engine is usable from server code through the Rust, TypeScript and
    Python SDKs.
 5. Claims are measured in CI, and durability is never traded for speed.
@@ -88,7 +119,7 @@ A proposed change fits when it:
 
 1. reduces per-request tokens or per-turn CPU, fsync or memory;
 2. is measurable by CI `compare` or the structural gate;
-3. does not grow the headless dependency graph or the binary;
+3. does not grow the `horon-agent` dependency graph or the binary;
 4. does not break ACP v1/v2, the SDKs or stored sessions;
 5. does not reintroduce removed surface under another name.
 
@@ -99,16 +130,18 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 
 ## What this build is
 
-- Two binaries. The headless one, `horon-agent`, has these working
+- Two binaries. The agent binary, `horon-agent`, has these working
   subcommands: `serve` (agent daemon), `run` (send one message and exit),
-  `api-bridge` (alias `api`; harness API on a Unix socket, Unix only),
-  `acp` (ACP adapter on stdio), and `rpc` (stdio JSONL RPC adapter; `--mode rpc`
-  selects the same adapter). The interactive one, `horon-tui`, is a separate
-  package and binary on `horon-agent-sdk`; it renders the terminal client and
-  is built with its own cargo invocation so its feature set never unifies with
-  the headless package. Bare `horon` on a terminal replaces itself with the
-  sibling `horon-tui` once the server is up; a pipe, `HORON_NO_TUI`, or a
-  missing sibling keeps the headless message and prints the install hint.
+  `repl` (plain line prompt, no full-screen UI), `api-bridge` (alias `api`;
+  harness API on a Unix socket, Unix only), `acp` (ACP adapter on stdio), and
+  `rpc` (stdio JSONL RPC adapter; `--mode rpc` selects the same adapter), plus
+  maintenance commands such as `update` and `install-release`. The TUI binary,
+  `horon-tui`, is a separate package and binary on `horon-agent-sdk`; it is
+  built with its own cargo invocation (`-p horon-tui`) so its feature set never
+  unifies with `horon-agent`. Bare `horon` on a terminal replaces itself with
+  the sibling `horon-tui` once the server is up; a pipe, `HORON_NO_TUI`, or a
+  missing sibling stays in headless mode, names the condition and prints the
+  install hint.
 - One model path: the agent POSTs `/chat/completions` to the OpenAI-compatible
   endpoint of the profile named by `[provider] default_provider` or
   `--provider-profile`. A profile is a `[providers.<name>]` table with
@@ -123,7 +156,7 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   off unless `[tools] generate_image = true`. The `image` role is therefore the
   one role whose model does not speak Chat Completions, and the only role with
   no text fallback.
-- Core tool profile, the headless default (18 tools): `bash`, `read`, `write`,
+- Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
   `skill_manage` and `mcp` stay registered. A `core` session sends seven of them
@@ -131,7 +164,42 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   plus `toolbox`, names the other eleven in the system prompt, and the model
   reaches them through `toolbox` (`docs/runtime/TOOLS.md`). An SDK-driven
   session keeps `session_search` and `swarm` off unless its `enabled` list names
-  them.
+  them. `horon-agent acp` is the exception to the default: with no explicit
+  profile it applies `[acp] tool_profile`, which is `acp`.
+
+## Repository layout and crate boundaries
+
+|Path|Holds|
+|---|---|
+|`src/`|the `horon-agent` package: agent loop, daemon, harness API bridge, ACP and RPC adapters, CLI dispatch|
+|`crates/`|the workspace crates; `crates/tui` is the `horon-tui` package, `crates/agent-sdk` the Rust SDK|
+|`tests/`, `crates/*/tests/`|integration targets|
+|`docs/`|behaviour documents in English/Korean pairs; the English files are compiled into the agent binary|
+|`packages/sdk/typescript`, `packages/sdk/python`|the TypeScript and Python SDKs|
+|`packages/npm/horon`|the `@horon-ai/horon` launcher|
+|`packages/docs`|the agent.horon.ai site: hand-written pages, not generated from `docs/`|
+|`scripts/ci`, `scripts/perf`, `scripts/release`, `scripts/install`, `scripts/npm`|gates, benchmarks, release, installer and packaging scripts|
+
+Boundaries, each with the gate that enforces it:
+
+- `horon-agent` reaches no `ratatui`, `crossterm`, `horon-tui` or
+  `horon-agent-tui*` package, dev-dependencies included
+  (`scripts/ci/check_headless_graph.py`).
+- `horon-tui` is a client: its only workspace dependencies are
+  `horon-agent-sdk` and the contract crate `horon-agent-tool-types`, never an
+  engine crate, and it grows no engine of its own
+  (`crates/tui/Cargo.toml`, `docs/architecture/CRATES.md`; reviewed, no gate
+  yet).
+- A `horon-agent-*-types` crate is a data contract. It never depends on the
+  root package, `horon-agent-core`, or the runtime and provider crates listed
+  in `scripts/ci/check_dependency_boundaries.py`.
+- OS-specific `cfg` lines live in the five `crates/platform*` crates. Every
+  line elsewhere is counted per file, with a reason, in
+  `scripts/ci/platform_cfg_allowlist.json` (`scripts/ci/check_platform_cfg.py`).
+- The Rust and TypeScript SDK surfaces stay in parity
+  (`cargo test --locked -p horon-agent-sdk parity`).
+- Whether a type or helper leaves the root package is decided by the rules in
+  `docs/architecture/CRATES.md`, not case by case.
 
 ## Configuration that must keep its default
 
@@ -192,11 +260,23 @@ project-local MCP config is skipped unless its digest was trusted, and
 
 ```bash
 cargo build -p horon-agent
+cargo build -p horon-tui
 ./target/debug/horon-agent --version
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
+
+Run before pushing, by what the change touches:
+
+|Change|Command|
+|---|---|
+|Anything|`scripts/ci/check_all.sh`: the Format and Quality Guardrails steps of `ci.yml`. `--skip-slow` leaves out `cargo check`, clippy and `cargo machete`; `--fix` formats and rebaselines the ratchets|
+|Rust code|the `cargo` lines above, with the tests of every crate touched|
+|`crates/tui`|`cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings`|
+|`docs/`, README, `PHILOSOPHY*.md`|`python3 scripts/ci/check_docs_links.py`, `python3 scripts/ci/check_docs_pairs.py`, `python3 -m unittest scripts/ci/test_docs_install_claims.py`|
+|`.github/workflows`|`actionlint`|
+|After the push|`python3 scripts/ci/run_warnings.py <run-id>` on the finished run (next section)|
 
 Requirement 1 check. Each `cargo tree` command must print "did not match any
 packages", and the graph gate must exit 0:
@@ -216,6 +296,30 @@ prefix too.
 Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 `src/cli/acp.rs`). Requirement 3 check: the structural gate and A/B runner in
 `docs/performance/BENCHMARK.md`.
+
+## Tests
+
+- **A test counts only when CI runs it.** An integration target (`tests/*.rs`,
+  `crates/*/tests/*.rs`) is listed in `scripts/ci/integration_targets.json`
+  with its `min_passed` count, or in `scripts/ci/test_target_allowlist.json`
+  with the reason it does not run (`scripts/ci/check_test_targets.py`). A lib
+  test module must be selected by a cohort filter in `ci.yml`
+  (`scripts/ci/check_lib_test_coverage.py`). A test that only compiles is not
+  evidence.
+- **A skip is written down.** A case left out of an integration target is
+  named in that target's `skipped` list with a `skip_reason`.
+- **Isolation.** Point `HORON_HOME` at a temporary directory and never read or
+  write the real `~/.horon`. Tests that change process environment serialize
+  themselves, as `crates/storage/src/active_pids.rs` does.
+- **Size.** A test file over 1,200 lines is tracked in
+  `scripts/ci/test_size_budget.json`: a tracked file may not grow and a new one
+  fails. Put a large new suite in its own file.
+- **Gates are tested too.** A gate script ships with its contract tests
+  (`scripts/ci/test_*.py`), and CI runs them.
+- **Performance and durability.** A performance claim is proven by the
+  structural gate (counters, `HORON_AGENT_PERF_COUNTERS=1`) or the Actions
+  benchmark, never by a timing run on a developer machine. A removed flush
+  needs the crash test named under "Performance target".
 
 ## CI warnings: zero is the completion condition
 
@@ -261,6 +365,8 @@ the last successful `dev` push run of the same workflow (two-dot diff).
   matrix, the SDK jobs and the structural performance gate are skipped.
 - **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
   gate runs.
+- **Site pages count as code.** `packages/docs/` is not in the documentation
+  list of `classify_changes.py`, so a change to a site page runs every gate.
 - **Pushes to `main`, manual dispatches and re-runs of a `dev` push always run
   everything.** A `dev` push whose head is already in `origin/main`, and any
   lookup or diff failure, also runs everything. Release evidence
@@ -281,6 +387,25 @@ the last successful `dev` push run of the same workflow (two-dot diff).
   jobs` on that run. Never fast-forward `dev` to a `main` commit (the sync is the
   merge-commit PR): a cancelled `dev` run would then be the newest push run for a
   release commit, and `scripts/release/check_ci.py` rejects it.
+
+## Working rules: worktree, branch, commit, pull request
+
+- **Worktree.** Change files in a git worktree at `.hyper/worktree/<name>`
+  (`.hyper/` is ignored), cut from `dev`, one task per worktree. Run every
+  command and edit with that worktree as the working directory. Never edit
+  another session's worktree. Remove the worktree and the branch once the merge
+  is confirmed.
+- **Branch.** `<type>/<slug>`, with the type of the commit (`feat/`, `fix/`,
+  `perf/`, `docs/`). The base and the pull request target are `dev`. `main`
+  changes only through the release pull request below.
+- **Commit.** Conventional Commits: `type(scope): summary`. A commit an agent
+  writes ends with the trailer
+  `Co-authored-by: Horon AI Bot <353694987+horon-ai-bot[bot]@users.noreply.github.com>`.
+- **Pull request.** It must reference an existing issue of this repository
+  (`require-issue.yml`; a pull request number does not count, and only
+  Dependabot is exempt). The body lists what changed and the evidence for it.
+  Squash-merge into `dev` after every job is green and `run_warnings.py`
+  prints no warning. Never force-push.
 
 ## Release and branch sync: dev into main, then main back into dev
 
@@ -324,3 +449,49 @@ tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled. The root
 `PHILOSOPHY.md` pair is checked like the READMEs but is not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.
 `docs/README.md` is the index; update it in the same change.
+
+**Wording.** Follow the terminology in "Modes, binaries and release units":
+"headless" and "TUI" name the two modes, and the binaries are called the agent
+binary and the TUI binary. The `<!-- bench-charts -->` and `<!-- bench-auto -->`
+blocks of `docs/performance/RESULTS.md` are written by
+`scripts/perf/bench_docs.py` in `benchmark-docs.yml`; change the script, not the
+block. A statement that also appears on a `packages/docs` page is changed there
+in the same pull request.
+
+## Not without the owner's explicit request
+
+- **Releasing.** Merging into `main`, pushing a tag, or dispatching
+  `release.yml` or `release-tag.yml`. A `main` merge publishes a release.
+- **Publishing.** The only paths to npm and PyPI are `publish-npm.yml`,
+  `publish-typescript-sdk.yml` and `publish-python-sdk.yml`. Never publish from
+  a machine (`npm publish`, a manual PyPI upload), never set `NPM_PUBLISH`, and
+  never dispatch a publish workflow with `dry_run=false`.
+- **Renaming.** Code identifiers, CLI flags, config keys, file names and CI job
+  names do not change for wording reasons. ACP v1, harness API v1 and stored
+  sessions are external contracts.
+- **Rewriting history.** No force-push, and no deleting a branch or worktree
+  that another session owns.
+- **Lifting a limit.** A ratchet's `--update` and a performance budget change
+  are for growth the change intends; name it in the pull request, and never use
+  it to make a failing gate pass.
+
+## Common pitfalls
+
+- **Wrong checkout.** A relative path used from the main checkout edits the
+  main checkout, not the worktree. Check the path before every edit.
+- **Two documentation sets.** `docs/` is compiled into the binary;
+  `packages/docs` is the site. Neither is generated from the other, so a claim
+  fixed in one stays wrong in the other until both are edited.
+- **Renamed heading.** It breaks `#anchor` links in both languages;
+  `check_docs_pairs.py` reports them.
+- **Stale `Cargo.lock`.** It passes every job that does not pass `--locked` and
+  fails the ones that do. `cargo metadata --locked --format-version 1` catches
+  it locally.
+- **Version strings.** `horon-agent --version` and `horon-tui --version` print
+  different values for the same release; compare release tags, not strings.
+- **`headless` in a name.** `check_headless_graph.py`, `is_headless` and
+  `spawn_mode = "headless"` are identifiers, not the product description.
+- **GitHub API budget.** `gh run watch` polls every 3 seconds by default and
+  every session shares one hourly limit. Use `--interval 60`.
+- **Documentation-only `dev` run.** It is green without building anything and
+  is not release evidence (see "CI gates by change type").

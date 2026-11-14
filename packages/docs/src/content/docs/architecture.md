@@ -46,11 +46,13 @@ off unless `[tools] generate_image = true`.
 
 ## Two binaries
 
-- `horon-agent` — the agent: `serve`, `run`, `repl`, `api-bridge`, `acp`,
-  `rpc`. Its dependency graph holds no `ratatui`, `crossterm` or `horon-tui`
-  crate, so the terminal stack stays in the client.
-- `horon-tui` — the interactive terminal client, a separate package on
-  `horon-agent-sdk`. Bare `horon` on a terminal replaces itself with it.
+- `horon-agent` — the agent binary: headless mode (`serve`, `run`, `api-bridge`,
+  `acp`, `rpc`) plus the plain `repl` line prompt. Its dependency graph holds no
+  `ratatui`, `crossterm` or `horon-tui` crate, so the terminal stack stays in
+  the client.
+- `horon-tui` — the TUI binary and TUI mode, a separate package on
+  `horon-agent-sdk` released beside the agent from the same tag. Bare `horon`
+  on a terminal replaces itself with it.
 
 One engine, two binaries. The split is enforced in CI by
 `scripts/ci/check_headless_graph.py`, which walks every package reachable from
@@ -67,7 +69,7 @@ One engine, two binaries. The split is enforced in CI by
 | `harness-api` | The versioned request and event surface |
 | `harness-api-server` | The bridge and translation between the daemon and that surface |
 | `agent-sdk` | The Rust client, launch and lifecycle |
-| `tui` | The `horon-tui` terminal client; it depends on `agent-sdk`, never on the engine |
+| `tui` | The TUI binary `horon-tui`; it depends on `agent-sdk`, never on the engine |
 
 ## Durability
 
