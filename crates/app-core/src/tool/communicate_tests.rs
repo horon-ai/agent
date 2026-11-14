@@ -668,8 +668,6 @@ fn plan_terminal_node_count_includes_failed_without_double_counting() {
 
 #[test]
 fn canonical_swarm_action_maps_common_synonyms() {
-    assert_eq!(canonical_swarm_action("inbox"), "read");
-    assert_eq!(canonical_swarm_action("read_messages"), "read");
     assert_eq!(canonical_swarm_action("send"), "message");
     assert_eq!(canonical_swarm_action("msg"), "message");
     assert_eq!(canonical_swarm_action("direct_message"), "dm");
@@ -682,8 +680,8 @@ fn canonical_swarm_action_maps_common_synonyms() {
 
 #[test]
 fn canonical_swarm_action_is_case_insensitive_and_trims() {
-    assert_eq!(canonical_swarm_action("  Inbox  "), "read");
     assert_eq!(canonical_swarm_action("SEND"), "message");
+    assert_eq!(canonical_swarm_action("ANNOUNCE"), "broadcast");
 }
 
 #[test]
@@ -1194,7 +1192,6 @@ fn schema_advertises_supported_swarm_fields() {
         .expect("swarm schema should have properties");
 
     assert!(props.contains_key("action"));
-    assert!(props.contains_key("key"));
     assert!(props.contains_key("value"));
     assert!(props.contains_key("message"));
     assert!(props.contains_key("to_session"));
@@ -1202,7 +1199,6 @@ fn schema_advertises_supported_swarm_fields() {
         props["to_session"]["description"],
         json!("Session ID or unique friendly name of one agent. Alias of target_session.")
     );
-    assert!(props.contains_key("channel"));
     assert!(props.contains_key("proposer_session"));
     assert!(props.contains_key("reason"));
     assert!(props.contains_key("target_session"));

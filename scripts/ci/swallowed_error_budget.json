@@ -1,9 +1,9 @@
 {
-  "total": 1942,
+  "total": 1885,
   "totals_by_pattern": {
-    "dot_ok": 724,
-    "let_underscore": 730,
-    "unwrap_or_default": 488
+    "dot_ok": 712,
+    "let_underscore": 706,
+    "unwrap_or_default": 467
   },
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": {
@@ -39,7 +39,7 @@
     "crates/app-core/src/agent.rs": {
       "dot_ok": 2,
       "let_underscore": 0,
-      "unwrap_or_default": 3
+      "unwrap_or_default": 1
     },
     "crates/app-core/src/agent/advisor.rs": {
       "dot_ok": 1,
@@ -97,7 +97,7 @@
       "unwrap_or_default": 1
     },
     "crates/app-core/src/agent/turn_execution.rs": {
-      "dot_ok": 1,
+      "dot_ok": 0,
       "let_underscore": 0,
       "unwrap_or_default": 2
     },
@@ -112,9 +112,9 @@
       "unwrap_or_default": 3
     },
     "crates/app-core/src/agent/turn_streaming_mpsc.rs": {
-      "dot_ok": 2,
+      "dot_ok": 0,
       "let_underscore": 77,
-      "unwrap_or_default": 3
+      "unwrap_or_default": 2
     },
     "crates/app-core/src/agent/utils.rs": {
       "dot_ok": 1,
@@ -221,29 +221,19 @@
       "let_underscore": 29,
       "unwrap_or_default": 1
     },
-    "crates/app-core/src/server/client_comm_channels.rs": {
-      "dot_ok": 0,
-      "let_underscore": 8,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/server/client_comm_context.rs": {
-      "dot_ok": 0,
-      "let_underscore": 6,
-      "unwrap_or_default": 3
-    },
     "crates/app-core/src/server/client_comm_message.rs": {
       "dot_ok": 0,
-      "let_underscore": 11,
-      "unwrap_or_default": 2
+      "let_underscore": 10,
+      "unwrap_or_default": 1
     },
     "crates/app-core/src/server/client_comm_swarms.rs": {
       "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 0
+      "let_underscore": 5,
+      "unwrap_or_default": 1
     },
     "crates/app-core/src/server/client_lifecycle.rs": {
       "dot_ok": 2,
-      "let_underscore": 63,
+      "let_underscore": 62,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/server/client_lifecycle_logging.rs": {
@@ -324,12 +314,12 @@
     "crates/app-core/src/server/debug_swarm_read.rs": {
       "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 3
+      "unwrap_or_default": 0
     },
     "crates/app-core/src/server/debug_swarm_write.rs": {
       "dot_ok": 0,
-      "let_underscore": 3,
-      "unwrap_or_default": 3
+      "let_underscore": 2,
+      "unwrap_or_default": 2
     },
     "crates/app-core/src/server/durable_state.rs": {
       "dot_ok": 1,
@@ -400,11 +390,6 @@
       "dot_ok": 8,
       "let_underscore": 7,
       "unwrap_or_default": 9
-    },
-    "crates/app-core/src/server/swarm_channels.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/app-core/src/server/swarm_labels.rs": {
       "dot_ok": 0,
@@ -752,9 +737,9 @@
       "unwrap_or_default": 0
     },
     "crates/base/src/background.rs": {
-      "dot_ok": 20,
-      "let_underscore": 12,
-      "unwrap_or_default": 11
+      "dot_ok": 15,
+      "let_underscore": 6,
+      "unwrap_or_default": 4
     },
     "crates/base/src/bus.rs": {
       "dot_ok": 0,
@@ -823,7 +808,7 @@
     },
     "crates/base/src/durable_runtime/store.rs": {
       "dot_ok": 0,
-      "let_underscore": 3,
+      "let_underscore": 2,
       "unwrap_or_default": 0
     },
     "crates/base/src/embedding.rs": {
@@ -878,7 +863,7 @@
     },
     "crates/base/src/hooks.rs": {
       "dot_ok": 0,
-      "let_underscore": 3,
+      "let_underscore": 2,
       "unwrap_or_default": 0
     },
     "crates/base/src/image_normalize.rs": {
@@ -947,7 +932,7 @@
       "unwrap_or_default": 0
     },
     "crates/base/src/memory/pending.rs": {
-      "dot_ok": 3,
+      "dot_ok": 2,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },
@@ -1106,11 +1091,6 @@
       "let_underscore": 6,
       "unwrap_or_default": 0
     },
-    "crates/base/src/session/event_actor.rs": {
-      "dot_ok": 0,
-      "let_underscore": 1,
-      "unwrap_or_default": 0
-    },
     "crates/base/src/session/event_compaction.rs": {
       "dot_ok": 0,
       "let_underscore": 0,
@@ -1142,9 +1122,9 @@
       "unwrap_or_default": 0
     },
     "crates/base/src/skill.rs": {
-      "dot_ok": 4,
+      "dot_ok": 1,
       "let_underscore": 0,
-      "unwrap_or_default": 6
+      "unwrap_or_default": 4
     },
     "crates/base/src/soft_interrupt_store.rs": {
       "dot_ok": 0,
@@ -1540,11 +1520,6 @@
       "dot_ok": 3,
       "let_underscore": 1,
       "unwrap_or_default": 0
-    },
-    "crates/swarm-core/src/lib.rs": {
-      "dot_ok": 0,
-      "let_underscore": 0,
-      "unwrap_or_default": 1
     },
     "crates/terminal-launch/src/lib.rs": {
       "dot_ok": 1,

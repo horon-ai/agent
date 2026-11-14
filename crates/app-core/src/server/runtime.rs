@@ -3,8 +3,8 @@ use super::debug::{ClientConnectionInfo, handle_debug_client};
 use super::debug_jobs::DebugJob;
 use super::util::get_shared_mcp_pool;
 use super::{
-    AwaitMembersRuntime, FileTouchService, PlanProposalStore, ServerIdentity, SessionInterruptQueues, SharedContext,
-    SwarmEvent, SwarmMutationRuntime, SwarmState,
+    AwaitMembersRuntime, FileTouchService, PlanProposalStore, ServerIdentity, SessionInterruptQueues, SwarmEvent,
+    SwarmMutationRuntime, SwarmState,
 };
 use crate::agent::Agent;
 use crate::ambient_runner::AmbientRunnerHandle;
@@ -13,7 +13,7 @@ use crate::protocol::ServerEvent;
 use crate::provider::Provider;
 use crate::transport::{Listener, Stream};
 use horon_agent_agent_runtime::InterruptSignal;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -21,8 +21,6 @@ use std::time::Instant;
 use tokio::sync::{Mutex, OnceCell, RwLock, broadcast, mpsc};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
 /// Owns every connection task spawned by a server runtime.
 ///
@@ -97,11 +95,8 @@ pub(super) struct ServerRuntime {
     client_count: Arc<RwLock<usize>>,
     client_connections: Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_state: SwarmState,
-    shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
     plan_proposals: PlanProposalStore,
     file_touch: FileTouchService,
-    channel_subscriptions: ChannelSubscriptions,
-    channel_subscriptions_by_session: ChannelSubscriptions,
     debug_jobs: Arc<RwLock<HashMap<String, DebugJob>>>,
     event_history: Arc<RwLock<VecDeque<SwarmEvent>>>,
     event_counter: Arc<AtomicU64>,
@@ -130,11 +125,8 @@ impl ServerRuntime {
             client_count: Arc::clone(&server.client_count),
             client_connections: Arc::clone(&server.client_connections),
             swarm_state: server.swarm_state.clone(),
-            shared_context: Arc::clone(&server.shared_context),
             plan_proposals: Arc::clone(&server.plan_proposals),
             file_touch: server.file_touch.clone(),
-            channel_subscriptions: Arc::clone(&server.channel_subscriptions),
-            channel_subscriptions_by_session: Arc::clone(&server.channel_subscriptions_by_session),
             debug_jobs: Arc::clone(&server.debug_jobs),
             event_history: Arc::clone(&server.event_history),
             event_counter: Arc::clone(&server.event_counter),
@@ -335,13 +327,10 @@ impl ServerRuntime {
                     Arc::clone(&self.client_connections),
                     Arc::clone(&self.swarm_state.members),
                     Arc::clone(&self.swarm_state.swarms_by_id),
-                    Arc::clone(&self.shared_context),
                     Arc::clone(&self.plan_proposals),
                     Arc::clone(&self.swarm_state.plans),
                     Arc::clone(&self.swarm_state.coordinators),
                     self.file_touch.clone(),
-                    Arc::clone(&self.channel_subscriptions),
-                    Arc::clone(&self.channel_subscriptions_by_session),
                     Arc::clone(&self.event_history),
                     Arc::clone(&self.event_counter),
                     self.swarm_event_tx.clone(),
@@ -386,13 +375,10 @@ impl ServerRuntime {
                 Arc::clone(&self.client_connections),
                 Arc::clone(&self.swarm_state.members),
                 Arc::clone(&self.swarm_state.swarms_by_id),
-                Arc::clone(&self.shared_context),
                 Arc::clone(&self.plan_proposals),
                 Arc::clone(&self.swarm_state.plans),
                 Arc::clone(&self.swarm_state.coordinators),
                 self.file_touch.clone(),
-                Arc::clone(&self.channel_subscriptions),
-                Arc::clone(&self.channel_subscriptions_by_session),
                 Arc::clone(&self.debug_jobs),
                 Arc::clone(&self.event_history),
                 Arc::clone(&self.event_counter),

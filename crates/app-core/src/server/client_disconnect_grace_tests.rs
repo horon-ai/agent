@@ -141,8 +141,6 @@ impl Fixture {
             &Arc::new(RwLock::new(HashMap::new())),
             &Arc::new(RwLock::new(HashMap::new())),
             &FileTouchService::new(),
-            &Arc::new(RwLock::new(HashMap::new())),
-            &Arc::new(RwLock::new(HashMap::new())),
             &self.connections,
             "original",
             &Arc::new(RwLock::new(HashMap::new())),

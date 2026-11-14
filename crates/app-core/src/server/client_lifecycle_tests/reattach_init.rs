@@ -83,12 +83,9 @@ async fn spawn_lifecycle_socket(provider_template: Arc<dyn Provider>, sessions: 
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
-    let shared_context = Arc::new(RwLock::new(HashMap::new()));
     let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
-    let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -110,13 +107,10 @@ async fn spawn_lifecycle_socket(provider_template: Arc<dyn Provider>, sessions: 
         client_connections,
         swarm_members,
         swarms_by_id,
-        shared_context,
         plan_proposals.clone(),
         swarm_plans,
         swarm_coordinators,
         file_touch,
-        channel_subscriptions,
-        channel_subscriptions_by_session,
         event_history,
         event_counter,
         swarm_event_tx,

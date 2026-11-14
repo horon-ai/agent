@@ -206,12 +206,6 @@ pub struct ToolCallSummary {
     pub timestamp_secs: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwarmChannelInfo {
-    pub channel: String,
-    pub member_count: usize,
-}
-
 /// Directory entry for one live swarm, used for cross-swarm discovery.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SwarmInfo {
@@ -227,16 +221,6 @@ pub struct SwarmInfo {
     /// Whether the requesting session belongs to this swarm.
     #[serde(default)]
     pub is_own: bool,
-}
-
-/// A shared context entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextEntry {
-    pub key: String,
-    pub value: String,
-    pub from_session: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_name: Option<String>,
 }
 
 /// Info about an agent
@@ -655,14 +639,10 @@ impl Request {
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
             | Request::GetSnapshot { id, .. } => *id,
-            Request::CommShare { id, .. } => *id,
-            Request::CommRead { id, .. } => *id,
             Request::CommMessage { id, .. } => *id,
             Request::CommList { id, .. } => *id,
-            Request::CommListChannels { id, .. } => *id,
             Request::CommListSwarms { id, .. } => *id,
             Request::CommSetSwarmLabel { id, .. } => *id,
-            Request::CommChannelMembers { id, .. } => *id,
             Request::CommProposePlan { id, .. } => *id,
             Request::CommApprovePlan { id, .. } => *id,
             Request::CommRejectPlan { id, .. } => *id,
@@ -683,8 +663,6 @@ impl Request {
             Request::CommAssignTask { id, .. } => *id,
             Request::CommAssignNext { id, .. } => *id,
             Request::CommTaskControl { id, .. } => *id,
-            Request::CommSubscribeChannel { id, .. } => *id,
-            Request::CommUnsubscribeChannel { id, .. } => *id,
             Request::CommAwaitMembers { id, .. } => *id,
         }
     }
@@ -699,14 +677,10 @@ impl Request {
                 // Deleting purges the store, which needs no attached session.
                 | Request::DeleteSession { .. }
                 | Request::NotifySession { .. }
-                | Request::CommShare { .. }
-                | Request::CommRead { .. }
                 | Request::CommMessage { .. }
                 | Request::CommList { .. }
-                | Request::CommListChannels { .. }
                 | Request::CommListSwarms { .. }
                 | Request::CommSetSwarmLabel { .. }
-                | Request::CommChannelMembers { .. }
                 | Request::CommProposePlan { .. }
                 | Request::CommApprovePlan { .. }
                 | Request::CommRejectPlan { .. }
@@ -727,8 +701,6 @@ impl Request {
                 | Request::CommAssignTask { .. }
                 | Request::CommAssignNext { .. }
                 | Request::CommTaskControl { .. }
-                | Request::CommSubscribeChannel { .. }
-                | Request::CommUnsubscribeChannel { .. }
                 | Request::CommAwaitMembers { .. }
         )
     }

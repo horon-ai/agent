@@ -766,7 +766,7 @@ pub enum ServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         identity: Option<RuntimeModelIdentity>,
     },
-    /// Notification from another agent (file conflict, message, shared context)
+    /// Notification from another agent (file conflict, message)
     #[serde(rename = "notification")]
     Notification {
         /// Session ID of the agent that triggered the notification
@@ -780,14 +780,6 @@ pub enum ServerEvent {
         message: String,
     },
 
-    /// Response to comm_read request
-    #[serde(rename = "comm_context")]
-    CommContext {
-        id: u64,
-        /// Shared context entries
-        entries: Vec<ContextEntry>,
-    },
-
     /// Response to comm_list request
     #[serde(rename = "comm_members")]
     CommMembers { id: u64, members: Vec<AgentInfo> },
@@ -795,10 +787,6 @@ pub enum ServerEvent {
     /// Response to comm_list_swarms and comm_set_swarm_label requests
     #[serde(rename = "comm_swarms")]
     CommSwarms { id: u64, swarms: Vec<SwarmInfo> },
-
-    /// Response to comm_list_channels request
-    #[serde(rename = "comm_channels")]
-    CommChannels { id: u64, channels: Vec<SwarmChannelInfo> },
 
     /// Response to comm_summary request
     #[serde(rename = "comm_summary_response")]

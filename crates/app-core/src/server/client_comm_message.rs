@@ -6,13 +6,11 @@ use super::{
 use crate::agent::Agent;
 use crate::protocol::{CommDeliveryMode, NotificationType, ServerEvent};
 use horon_agent_agent_runtime::SoftInterruptSource;
-use horon_agent_swarm_core::ChannelIndex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
 async fn swarm_id_for_session(
     session_id: &str,
@@ -89,14 +87,13 @@ fn resolve_comm_delivery_mode(scope: &str, delivery: Option<CommDeliveryMode>, w
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "comm message routes DM, channel, and broadcast delivery with session fanout state"
+    reason = "comm message routes DM and subtree-scoped broadcast delivery with session fanout state"
 )]
 pub(super) async fn handle_comm_message(
     id: u64,
     from_session: String,
     message: String,
     to_session: Option<String>,
-    channel: Option<String>,
     delivery: Option<CommDeliveryMode>,
     wake: Option<bool>,
     tldr: Option<String>,
@@ -106,7 +103,6 @@ pub(super) async fn handle_comm_message(
     soft_interrupt_queues: &SessionInterruptQueues,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    channel_subscriptions: &ChannelSubscriptions,
     event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: &Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
@@ -120,7 +116,6 @@ pub(super) async fn handle_comm_message(
             ("request_id", id.to_string()),
             ("from_session", from_session.clone()),
             ("to_session", to_session.clone().unwrap_or_else(|| "none".to_string())),
-            ("channel", channel.clone().unwrap_or_else(|| "none".to_string())),
             (
                 "delivery",
                 delivery
@@ -142,8 +137,8 @@ pub(super) async fn handle_comm_message(
 
         // Cross-swarm DMs: resolve `to_swarm` (label or id). When it names a
         // different swarm, the DM targets `to_session` inside that swarm, or
-        // its coordinator when no session is given. Channels and broadcasts
-        // never cross swarm boundaries.
+        // its coordinator when no session is given. Broadcasts never cross
+        // swarm boundaries.
         let cross_swarm_id = match to_swarm.as_deref().map(str::trim) {
             Some(target) if !target.is_empty() => {
                 let live_swarm_ids: HashSet<String> = {
@@ -169,16 +164,6 @@ pub(super) async fn handle_comm_message(
             }
             _ => None,
         };
-        if cross_swarm_id.is_some() && channel.is_some() && to_session.is_none() {
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message:
-                    "Channels are swarm-local. Cross-swarm messages are DMs: pass to_swarm with an optional to_session."
-                        .to_string(),
-                retry_after_secs: None,
-            });
-            return;
-        }
         let delivery_swarm_id = cross_swarm_id.clone().unwrap_or_else(|| swarm_id.clone());
 
         let swarm_session_ids: Vec<String> = {
@@ -282,8 +267,6 @@ pub(super) async fn handle_comm_message(
 
         let scope = if resolved_to_session.is_some() {
             "dm"
-        } else if channel.is_some() {
-            "channel"
         } else {
             "broadcast"
         };
@@ -313,27 +296,9 @@ pub(super) async fn handle_comm_message(
                 .collect()
         };
 
-        let target_sessions: Vec<String> = if let Some(target) = resolved_to_session {
-            vec![target]
-        } else if let Some(ref channel_name) = channel {
-            let subs = channel_subscriptions.read().await;
-            let index = ChannelIndex {
-                by_swarm_channel: subs.clone(),
-                by_session: HashMap::new(),
-            };
-            let channel_members = index.members(&swarm_id, channel_name);
-            if channel_members.is_empty() {
-                // No subscribers: fall back to the subtree scope rather than
-                // blasting the whole swarm.
-                subtree_broadcast_targets.clone()
-            } else {
-                channel_members
-                    .into_iter()
-                    .filter(|session_id| session_id != &from_session)
-                    .collect()
-            }
-        } else {
-            subtree_broadcast_targets
+        let target_sessions: Vec<String> = match resolved_to_session {
+            Some(target) => vec![target],
+            None => subtree_broadcast_targets,
         };
 
         let mut delivered_targets = 0usize;
@@ -345,10 +310,9 @@ pub(super) async fn handle_comm_message(
                 let from_label = friendly_name
                     .clone()
                     .unwrap_or_else(|| from_session[..8.min(from_session.len())].to_string());
-                let scope_label = match (scope, channel.as_deref()) {
+                let scope_label = match scope {
                     _ if cross_swarm_id.is_some() => "Cross-swarm DM".to_string(),
-                    ("channel", Some(channel_name)) => format!("#{}", channel_name),
-                    ("dm", _) => "DM".to_string(),
+                    "dm" => "DM".to_string(),
                     _ => "broadcast".to_string(),
                 };
                 let from_label = if cross_swarm_id.is_some() {
@@ -366,7 +330,6 @@ pub(super) async fn handle_comm_message(
                         from_name: friendly_name.clone(),
                         notification_type: NotificationType::Message {
                             scope: Some(scope.to_string()),
-                            channel: channel.clone(),
                             tldr: tldr.clone(),
                         },
                         message: notification_msg.clone(),
@@ -382,11 +345,6 @@ pub(super) async fn handle_comm_message(
                     )),
                     "dm" => Some(format!(
                         "You just received a direct swarm message from {}. Review it and respond or act if useful.",
-                        sender_name
-                    )),
-                    "channel" => Some(format!(
-                        "You just received a swarm channel message in #{} from {}. Review it and respond or act if useful.",
-                        channel.clone().unwrap_or_else(|| "channel".to_string()),
                         sender_name
                     )),
                     _ => Some(format!(
@@ -455,11 +413,6 @@ pub(super) async fn handle_comm_message(
             }
         }
 
-        let scope_value = if scope == "channel" {
-            format!("#{}", channel.clone().unwrap_or_default())
-        } else {
-            scope.to_string()
-        };
         record_swarm_event(
             event_history,
             event_counter,
@@ -468,7 +421,7 @@ pub(super) async fn handle_comm_message(
             friendly_name.clone(),
             Some(swarm_id.clone()),
             SwarmEventType::Notification {
-                notification_type: scope_value.clone(),
+                notification_type: scope.to_string(),
                 message: truncate_detail(&message, 220),
             },
         )
@@ -498,7 +451,6 @@ pub(super) async fn handle_comm_message(
                 ("from_session", from_session),
                 ("swarm_id", swarm_id),
                 ("scope", scope.to_string()),
-                ("channel", channel.unwrap_or_else(|| "none".to_string())),
                 ("target_count", target_sessions.len().to_string()),
                 ("delivered_targets", delivered_targets.to_string()),
                 ("elapsed_ms", started.elapsed().as_millis().to_string()),

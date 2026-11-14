@@ -497,7 +497,7 @@ fn no_v1_only_variants() {
         json!({"type":"provider_guardrail","message":"refused"}),
         json!({"type":"turn_stopped","reason":"failure","message":"boom"}),
         json!({"type":"notification","from_session":"s2",
-            "notification_type":{"kind":"shared_context","key":"k","value":"v"},"message":"hello"}),
+            "notification_type":{"kind":"message"},"message":"hello"}),
         json!({"type":"session_renamed","session_id":"s1","display_title":"Title"}),
         json!({"type":"generated_image","id":"img","path":"/work/i.png","output_format":"png"}),
         start("open", "write"),
