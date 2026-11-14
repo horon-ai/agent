@@ -57,13 +57,19 @@ impl WireProtocol {
     /// trimmed again here so a profile that was written with one still reaches
     /// the same path. A base that already ends with the wire's path is used
     /// unchanged, which is how a profile may point at the full endpoint.
+    ///
+    /// Gemini's path carries the model, so naming the method on the base has two
+    /// accepted forms: the full `…:streamGenerateContent?alt=sse` is returned
+    /// unchanged, and a bare `…:streamGenerateContent` gets only `?alt=sse`
+    /// appended. Either way the model in the base wins over the `model`
+    /// argument, since the path can name only one.
     pub fn endpoint(self, base_url: &str, model: &str) -> String {
         let base = base_url.trim_end_matches('/');
         match self {
             Self::ChatCompletions => joined(base, crate::chat::request::CHAT_COMPLETIONS_PATH),
             Self::Responses => joined(base, "responses"),
             Self::AnthropicMessages => joined(base, "messages"),
-            Self::GeminiGenerateContent => joined(base, &format!("models/{model}:streamGenerateContent?alt=sse")),
+            Self::GeminiGenerateContent => gemini_endpoint(base, model),
         }
     }
 
@@ -105,6 +111,19 @@ fn joined(base: &str, path: &str) -> String {
     match base.strip_suffix(path) {
         Some(head) if head.ends_with('/') => base.to_string(),
         _ => format!("{base}/{path}"),
+    }
+}
+
+/// The Gemini streaming URL for `model`, honouring a base that names the method.
+fn gemini_endpoint(base: &str, model: &str) -> String {
+    const METHOD: &str = ":streamGenerateContent";
+    const QUERY: &str = "?alt=sse";
+    if base.ends_with(&format!("{METHOD}{QUERY}")) {
+        base.to_string()
+    } else if base.ends_with(METHOD) {
+        format!("{base}{QUERY}")
+    } else {
+        joined(base, &format!("models/{model}{METHOD}{QUERY}"))
     }
 }
 
@@ -181,6 +200,25 @@ mod tests {
             second,
             "https://api.example.test/v1/models/gemini-3-pro:streamGenerateContent?alt=sse"
         );
+    }
+
+    #[test]
+    fn a_gemini_base_naming_the_method_takes_only_the_query() {
+        // A profile may name the streaming method without the query; appending
+        // the whole path again would corrupt the URL.
+        let gemini = WireProtocol::GeminiGenerateContent;
+        let method = "https://api.example.test/v1beta/models/gemini-2.5-pro:streamGenerateContent";
+        assert_eq!(gemini.endpoint(method, MODEL), format!("{method}?alt=sse"));
+        // The model argument cannot override a path that already names one.
+        assert_eq!(gemini.endpoint(method, "other-model"), format!("{method}?alt=sse"));
+    }
+
+    #[test]
+    fn a_gemini_base_naming_the_method_and_the_query_is_used_unchanged() {
+        let gemini = WireProtocol::GeminiGenerateContent;
+        let full = "https://api.example.test/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse";
+        assert_eq!(gemini.endpoint(full, MODEL), full);
+        assert_eq!(gemini.endpoint(&format!("{full}/"), MODEL), full);
     }
 
     #[test]
