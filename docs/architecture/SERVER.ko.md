@@ -115,7 +115,7 @@ horon run --socket /tmp/run.sock "spawn a worker that ..."
 swarm 워커는 `spawn` 요청의 `spawn_mode`와 무관하게 이 프로세스 안에서 도는 무인
 세션이다. 값은 `headless`, `inline`(기본), `auto` 셋이고 셋 다 같은 in-process 세션을
 만들며 터미널 창을 열지 않는다. 옛 config나 환경변수에 남은 `visible`, `headed`는
-`inline`으로 읽는다(`crates/config-types/src/lib.rs:795` `SwarmSpawnMode`).
+`inline`으로 읽는다(`crates/config-types/src/swarm_spawn.rs:11` `SwarmSpawnMode`).
 
 ### 세션 소유 표시 파일(`active_pids`)
 
