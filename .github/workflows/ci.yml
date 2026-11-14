@@ -1598,7 +1598,10 @@ jobs:
               'busy_pipe_is_reported_as_a_live_socket_path',
               'stream_pair_round_trips_bytes',
               'split_stream_supports_concurrent_read_and_write',
-              'directory_sync_is_not_effective_on_windows'
+              'directory_sync_is_not_effective_on_windows',
+              'resources::tests::snapshot_reports_real_memory_load_and_battery',
+              'resources::tests::disk_fact_reads_the_system_volume',
+              'resources::tests::disk_fact_is_skipped_when_no_path_is_asked_for'
             )
             'horon-agent-app-core' = @(
               'sibling_socket_path_roundtrip',
