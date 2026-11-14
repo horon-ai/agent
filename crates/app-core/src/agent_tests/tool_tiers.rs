@@ -374,14 +374,14 @@ async fn the_deferred_set_is_frozen_for_the_session() {
     let agent = agent_with_mcp_management_tool().await;
 
     let first = serde_json::to_string(&agent.tool_definitions_for_debug().await).expect("serialize");
-    env.rewrite_config("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\nswarm = \"essential\"\n");
+    env.rewrite_config("[tools]\nprofile = \"full\"\n\n[tools.load_mode]\nmemory = \"essential\"\n");
     let second = serde_json::to_string(&agent.tool_definitions_for_debug().await).expect("serialize");
 
     assert_eq!(first, second, "two consecutive builds of one session are identical");
     let definitions = agent.tool_definitions_for_debug().await;
-    let swarm = definition(&definitions, "swarm");
+    let memory = definition(&definitions, "memory");
     assert!(
-        swarm.defer_loading,
+        memory.defer_loading,
         "the session keeps the tier it resolved at startup, not the reloaded config"
     );
 }
@@ -543,7 +543,7 @@ async fn full_sdk_list_keeps_todays_deferral() {
         &session_id,
         "full-sdk-owner",
         crate::protocol::SessionToolConfig {
-            enabled: Some(vec!["bash".into(), "todo".into()]),
+            enabled: Some(vec!["bash".into(), "memory".into()]),
             disabled: vec![],
             custom: vec![],
         },
@@ -557,7 +557,7 @@ async fn full_sdk_list_keeps_todays_deferral() {
         "an essential tool stays eager under full"
     );
     assert!(
-        definition(&definitions, "todo").defer_loading,
+        definition(&definitions, "memory").defer_loading,
         "full still defers a non-core tool under an SDK list"
     );
     crate::tool::sdk::remove_session(&session_id);
@@ -744,20 +744,15 @@ async fn sessions_that_are_not_core_listed_get_no_index() {
     }
 
     let _sdk = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let named = || crate::protocol::SessionToolConfig {
+        enabled: Some(vec!["bash".into(), "read".into(), "undo".into()]),
+        disabled: vec![],
+        custom: vec![],
+    };
     let agent = agent_with_mcp_management_tool().await;
     let session_id = agent.session_id().to_string();
     let (tx, _rx) = tokio_mpsc::unbounded_channel();
-    crate::tool::sdk::configure(
-        &session_id,
-        "index-owner",
-        crate::protocol::SessionToolConfig {
-            enabled: Some(vec!["bash".into(), "read".into(), "undo".into()]),
-            disabled: vec![],
-            custom: vec![],
-        },
-        tx,
-    )
-    .expect("configure the SDK tool list");
+    crate::tool::sdk::configure(&session_id, "index-owner", named(), tx).expect("configure the SDK tool list");
     assert!(agent.load_tiers.core_listed(), "the session itself is core-listed");
     let listed_prompt = static_prompt(agent).await;
     assert!(
@@ -769,10 +764,16 @@ async fn sessions_that_are_not_core_listed_get_no_index() {
         "a tool the client named is not listed: {listed_prompt}"
     );
 
+    // The comparison session names the same tools: without the list it would
+    // be an ordinary core session, which is told about `todo`.
     let agent = agent_with_mcp_management_tool().await;
+    let forced_id = agent.session_id().to_string();
+    let (tx, _forced_rx) = tokio_mpsc::unbounded_channel();
+    crate::tool::sdk::configure(&forced_id, "index-owner", named(), tx).expect("configure the SDK tool list");
     let forced = static_prompt_with_listing_off(agent).await;
     assert_eq!(listed_prompt, forced, "an SDK enabled list under core is unchanged");
     crate::tool::sdk::remove_session(&session_id);
+    crate::tool::sdk::remove_session(&forced_id);
 
     let _explicit = ProfileEnv::new(CORE_TOOL_PROFILE, None);
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
