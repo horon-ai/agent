@@ -50,19 +50,10 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("AskResponse", Covered),
     ("BackgroundTool", Covered),
     ("Cancel", Covered),
-    (
-        "CancelBackgroundTerminal",
-        Gap("stop one background shell without ending the session or its turn"),
-    ),
+    ("CancelBackgroundTerminal", Covered),
     ("CancelSoftInterrupts", Covered),
-    (
-        "CancelToolCall",
-        Gap("stop one running tool call while the turn continues"),
-    ),
-    (
-        "CancelTurn",
-        Gap("cancel only the run the client saw start, never a turn that replaced it"),
-    ),
+    ("CancelToolCall", Covered),
+    ("CancelTurn", Covered),
     ("Clear", Covered),
     // A permanent delete. Ungated like `ArchiveSession`: the minor bump is the
     // signal, and a server without it answers `unknown_request`.
@@ -82,10 +73,7 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("GetSnapshot", Covered),
     // Create/attach session bootstrap requests state through the API bridge.
     ("GetState", Covered),
-    (
-        "ListBackgroundWork",
-        Gap("list the session's running background work after attaching"),
-    ),
+    ("ListBackgroundWork", Covered),
     ("Message", Covered),
     ("NotifyAuthChanged", Covered),
     ("PermissionDecision", Covered),
@@ -291,19 +279,21 @@ fn capability_report() {
     println!();
 }
 
-/// The four capabilities of protocol minor 14 are a fixed, reviewable set.
+/// The capability set is fixed and reviewable, and every entry is advertised
+/// by both SDKs and by the bridge when the daemon supports it.
 ///
 /// This is the gate for "the bridge advertises what the SDK gates on": a method
 /// that checks a capability nobody advertises is refused by its own SDK before
 /// the request leaves the process, which reads as a broken feature rather than
 /// an old server.
 #[test]
-fn the_minor_fourteen_capabilities_are_exactly_the_advertised_set() {
+fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
     let expected = [
         "durable_runtime_v1",
         "monitor_v1",
         "snapshot_marker_v1",
         "ask_receipts_v1",
+        "cancellable_work_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(
@@ -345,6 +335,21 @@ fn every_gated_request_names_a_defined_capability() {
             answers: Vec::new(),
             answer_id: Some("answer-1".into()),
         },
+        ApiRequest::CancelTurn {
+            session_id: "s1".into(),
+            run_id: "run-1".into(),
+        },
+        ApiRequest::CancelToolCall {
+            session_id: "s1".into(),
+            call_id: "call-1".into(),
+        },
+        ApiRequest::CancelBackgroundTerminal {
+            session_id: "s1".into(),
+            call_id: "call-1".into(),
+        },
+        ApiRequest::ListBackgroundWork {
+            session_id: "s1".into(),
+        },
     ];
     let mut gated = 0;
     for request in requests {
@@ -355,7 +360,7 @@ fn every_gated_request_names_a_defined_capability() {
         );
         gated += 1;
     }
-    assert_eq!(gated, 5, "the scan must cover every new request, not silently skip one");
+    assert_eq!(gated, 9, "the scan must cover every new request, not silently skip one");
 
     let events = [
         ApiEvent::RuntimeState {
@@ -373,6 +378,22 @@ fn every_gated_request_names_a_defined_capability() {
         ApiEvent::Snapshot {
             session_id: "s1".into(),
             snapshot: SessionSnapshot::default(),
+        },
+        ApiEvent::CancelTurnResult {
+            session_id: "s1".into(),
+            run_id: "run-1".into(),
+            accepted: false,
+            reason: Some("unknown".into()),
+        },
+        ApiEvent::ToolCallCancelResult {
+            session_id: "s1".into(),
+            call_id: "call-1".into(),
+            accepted: false,
+            reason: Some("unknown".into()),
+        },
+        ApiEvent::BackgroundWorkList {
+            session_id: "s1".into(),
+            items: Vec::new(),
         },
     ];
     for event in events {

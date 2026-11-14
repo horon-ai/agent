@@ -27,6 +27,7 @@ import {
   type ApiEvent,
   type ApiRequest,
   type AskSelection,
+  type BackgroundWorkItem,
   type CanonicalRecordRef,
   type CompactHandoffOutcome,
   type HistoryMessage,
@@ -1390,6 +1391,79 @@ export class HoronAgentClient extends EventEmitter {
     };
     if (typeof frame.tool_call_id === "string") result.toolCallId = frame.tool_call_id;
     if (typeof frame.tool_name === "string") result.toolName = frame.tool_name;
+    return result;
+  }
+
+  /**
+   * Cancel the run the caller saw start, and only that run. Requires
+   * `cancellable_work_v1`. `accepted: false` with `reason: "unknown"` means
+   * the session is not running that run, so a successor turn keeps going.
+   */
+  async cancelTurn(sessionId: string, runId: string): Promise<{ accepted: boolean; reason?: string }> {
+    this.requireCapability("cancellable_work_v1", "cancelTurn");
+    const frame = await this.expectReply({ req: "cancel_turn", session_id: sessionId, run_id: runId }, "cancel_turn_result");
+    const result: { accepted: boolean; reason?: string } = { accepted: frame.accepted === true };
+    if (typeof frame.reason === "string") result.reason = frame.reason;
+    return result;
+  }
+
+  /**
+   * Stop one tool call while its turn keeps running. Requires
+   * `cancellable_work_v1`. The cancelled call still reports a `tool_done`,
+   * whose result text the model sees.
+   */
+  async cancelToolCall(
+    sessionId: string,
+    callId: string,
+  ): Promise<{ callId: string; accepted: boolean; reason?: string }> {
+    this.requireCapability("cancellable_work_v1", "cancelToolCall");
+    const frame = await this.expectReply(
+      { req: "cancel_tool_call", session_id: sessionId, call_id: callId },
+      "tool_call_cancel_result",
+    );
+    return this.cancelOutcome(frame);
+  }
+
+  /**
+   * Stop one background terminal this session started. Requires
+   * `cancellable_work_v1`. The final `background_work` event confirms the
+   * stop; this reply only says the cancellation was accepted.
+   */
+  async cancelBackgroundTerminal(
+    sessionId: string,
+    callId: string,
+  ): Promise<{ callId: string; accepted: boolean; reason?: string }> {
+    this.requireCapability("cancellable_work_v1", "cancelBackgroundTerminal");
+    const frame = await this.expectReply(
+      { req: "cancel_background_terminal", session_id: sessionId, call_id: callId },
+      "tool_call_cancel_result",
+    );
+    return this.cancelOutcome(frame);
+  }
+
+  /**
+   * The background work still running in this session. Requires
+   * `cancellable_work_v1`.
+   */
+  async listBackgroundWork(sessionId: string): Promise<BackgroundWorkItem[]> {
+    this.requireCapability("cancellable_work_v1", "listBackgroundWork");
+    const frame = await this.expectReply(
+      { req: "list_background_work", session_id: sessionId },
+      "background_work_list",
+    );
+    return frame.items ?? [];
+  }
+
+  private cancelOutcome(frame: {
+    call_id?: string;
+    accepted?: boolean;
+    reason?: string;
+  }): { callId: string; accepted: boolean; reason?: string } {
+    const result: { callId: string; accepted: boolean; reason?: string } = {
+      callId: typeof frame.call_id === "string" ? frame.call_id : "",
+      accepted: frame.accepted === true,
+    };
+    if (typeof frame.reason === "string") result.reason = frame.reason;
     return result;
   }
 

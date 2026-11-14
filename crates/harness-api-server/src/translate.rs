@@ -1,11 +1,13 @@
 //! Pure JSON-to-JSON translation between the harness API and the legacy
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
+mod cancellable_work;
 mod compact_handoff;
 mod credentials;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
+mod simple_kind;
 mod usage_report;
 
 use crate::background_progress::parse_background_notification;
@@ -126,6 +128,11 @@ pub struct BridgeState {
     /// frame, so forwarding without this check would park the client until its
     /// own timeout.
     pub durable_runtime_api_supported: bool,
+    /// The daemon answers `cancel_turn`, `cancel_tool_call`,
+    /// `cancel_background_terminal` and `list_background_work`. An older daemon
+    /// drops them without a reply, so forwarding anyway would park the client
+    /// until its own timeout.
+    pub cancellable_work_api_supported: bool,
     /// Leftover queue size reported just before the current turn's `done`.
     pending_soft_interrupts_at_done: Option<u32>,
     /// Whether an unannounced transport loss should crash the attached session.
@@ -330,43 +337,7 @@ impl From<&RecentSessionIndexEntry> for PersistedSessionMetadata {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) enum SimpleKind {
-    RuntimeCommand,
-    Detach,
-    Tools,
-    ToolControl,
-    Ping,
-    History,
-    Ok,
-    /// Awaiting `done`: the daemon acks a delete before it touches the store,
-    /// and acknowledging a delete that later failed would report a transcript
-    /// as gone while it is still there. Only `done` answers this one.
-    Delete,
-    /// Awaiting `model_changed`, which carries its own error field.
-    Model,
-    /// Awaiting `reasoning_effort_changed`.
-    ReasoningEffort,
-    /// Awaiting `compacted_history`.
-    Compact,
-    /// Awaiting the catalog reply that answers `list_models`.
-    Models,
-    RuntimeInfo,
-    /// Awaiting `background_tool_result`.
-    BackgroundTool,
-    /// Awaiting `soft_interrupts_cancelled`.
-    SoftInterruptCancel,
-    /// Awaiting `runtime_state`.
-    RuntimeState,
-    /// Awaiting `control_receipt`.
-    ControlReceipt,
-    /// Awaiting `snapshot_result`.
-    Snapshot,
-    Credential {
-        provider: String,
-        configured: bool,
-    },
-}
+pub(super) use simple_kind::SimpleKind;
 
 /// Whether translating this daemon event may perform synchronous file I/O.
 ///
@@ -1296,6 +1267,9 @@ impl BridgeState {
                         vec![Outbound::Legacy(json!({"type": "cancel_soft_interrupts", "id": id}))]
                     }
                 }
+            }
+            "cancel_turn" | "cancel_tool_call" | "cancel_background_terminal" | "list_background_work" => {
+                cancellable_work::handle(self, api_id, req, request)
             }
             "background_tool" => {
                 let id = self.legacy_id();
@@ -2672,6 +2646,9 @@ impl BridgeState {
                     },
                 )]
             }
+            "cancel_turn_result" | "tool_call_cancel_result" | "background_work_list" => {
+                return cancellable_work::reply(self, kind, event);
+            }
             "background_tool_result" => {
                 let id = event["id"].as_u64().unwrap_or(0);
                 let Some(api_id) = self.take_simple(id, SimpleKind::BackgroundTool) else {
@@ -3713,6 +3690,10 @@ mod usage_report_tests;
 #[cfg(test)]
 #[path = "translate/session_delete_tests.rs"]
 mod session_delete_tests;
+
+#[cfg(test)]
+#[path = "translate/cancellable_work_tests.rs"]
+mod cancellable_work_tests;
 
 #[cfg(test)]
 #[path = "translate_tests/credential_profile_tests.rs"]

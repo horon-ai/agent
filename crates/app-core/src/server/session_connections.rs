@@ -46,6 +46,12 @@ pub(super) async fn connection_presence_pong(
             // answer an unknown request with an uncorrelated error frame, so a
             // forwarding bridge would wait for a reply that never arrives.
             "durable_runtime_api".into(),
+            // The daemon answers the API's cancellable-work requests
+            // (`cancel_turn`, `cancel_tool_call`, `cancel_background_terminal`,
+            // `list_background_work`). The bridge advertises the matching API
+            // capability only when this is present, because the work is done
+            // here and not in the bridge.
+            "cancellable_work_api".into(),
         ],
         user_connected_session_ids: Some(user_connected_session_ids),
     }

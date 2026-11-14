@@ -273,11 +273,16 @@ fn prepare(case: &Case) -> Prepared {
 }
 
 fn prepare_with(case: &Case, mask: bool) -> Prepared {
-    write_config(if mask {
-        "[tools]\nsecrets_mode = \"obfuscate\"\n"
-    } else {
-        ""
-    });
+    let mut config = String::new();
+    if mask {
+        config.push_str("[tools]\nsecrets_mode = \"obfuscate\"\n");
+    }
+    if case.memory {
+        // A consolidation threshold of one makes the durable summary available
+        // without storing twenty memories first.
+        config.push_str("[agents]\nmemory_consolidation_min_new = 1\n");
+    }
+    write_config(&config);
     let env = EnvRestore::apply(&[(
         "HORON_AGENT_MESSAGE_TIMESTAMPS",
         if case.timestamps { "true" } else { "false" },
@@ -309,16 +314,11 @@ fn prepare_with(case: &Case, mask: bool) -> Prepared {
             .with_project_dir(&project)
             .remember_project(entry.clone())
             .expect("persist the selected memory for scoped revalidation");
-        let prompt =
-            crate::memory::format_relevant_prompt(std::slice::from_ref(&entry), 1).expect("canonical memory prompt");
-        crate::memory::set_pending_memory(
-            &agent.session.id,
-            prompt.clone(),
-            1,
-            vec![entry.id.clone()],
-            None,
-            agent.session.working_dir.as_deref(),
-        );
+        let manager = crate::memory::MemoryManager::new().with_project_dir(&project);
+        manager.run_consolidation();
+        let (prompt, _) = manager
+            .consolidation_summary()
+            .expect("the consolidation pass writes the injected summary");
         suffix.push(Message::user(&format!(
             "<system-reminder>\n{prompt}\n</system-reminder>"
         )));

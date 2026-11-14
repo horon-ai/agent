@@ -1193,6 +1193,38 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- memory_update --nocapture
 
+      - name: Run memory recall cohorts
+        shell: bash
+        # Recall used to run in the background through a pending queue that the
+        # turn picked up; it is now only the agent's explicit `memory` tool call,
+        # and the consolidation summary is the one automatic piece. Those tests
+        # live in `horon-agent-base` and `horon-agent-app-core` lib suites, which
+        # this workflow runs only through filtered cohorts, so without a step
+        # naming them they would compile and never execute. `--min-passed` pins
+        # the measured count: `memory::consolidation::tests::` covers the pass,
+        # the merge rules and the digest rebuild after a forget;
+        # `memory_agent::tests::` covers what a context update does and does not
+        # schedule; `request_snapshot_reuse` and `memory_guidance` cover the
+        # injection slot on the turn path. `run_lib_tests.py` forwards a single
+        # filter to libtest, so each package gets its own call.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 900 --min-passed 12 \
+            -- memory::consolidation::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 900 --min-passed 3 \
+            -- memory_agent::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 2 \
+            -- request_snapshot_reuse --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 1 \
+            -- memory_guidance_is_the_consolidation_summary_only --nocapture
+
       - name: Run bg wait sources cohort
         shell: bash
         # `bg action=wait` gained two event sources, child agents and queued
@@ -1360,6 +1392,38 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- config::mcp::tests --nocapture
+      - name: Run cancellable work cohort
+        shell: bash
+        # Cancelling a run, cancelling one tool call and listing background work
+        # span three packages, and all three suites run only through filters
+        # here. The daemon half drives the real connection: a cancelled call
+        # stops while the turn continues, an unknown id is refused, a
+        # `cancel_turn` for another run id leaves the turn alone and one for the
+        # reported run id stops it, and the background-work list and cancel
+        # replies each carry the `call_id` they name. The harness-api half pins
+        # the two replies as additive frames that older clients still decode,
+        # and the bridge half proves each of the four requests forwards as the
+        # daemon frame it names and that a reply correlates back to its request.
+        # `cancellable_work_snapshot_tests` and `translate::cancellable_work_tests`
+        # are new modules with no other cohort, so without this step they would
+        # compile and never execute (scripts/ci/check_lib_test_coverage.py).
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- acp_tool_cancel --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 9 \
+            -- acp_background_work --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
+            --timeout 600 --min-passed 2 \
+            -- cancellable_work_snapshot_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 4 \
+            -- translate::cancellable_work_tests --nocapture
 
       - name: Run checkpoint tool cohort
         shell: bash

@@ -625,7 +625,7 @@ Extraction stores memories one session at a time and never merges across session
 - Two memories share a subject when they share at least two content terms and at least 60% of their combined term set, or when they share a tag. The pass prefers merging over keeping near-duplicates: a wrong merge costs a ranking slot, not data, and every merge is logged with the superseded ids and the session or tool that stored each.
 - A `correction` outranks every other category on its subject, because it records what the user said is true; a `fact` extracted later does not overwrite it. Within one category the newest entry wins.
 - Both scopes consolidate: the working folder's project store and the user-level global store, each with its own pass marker and summary (`crates/base/src/memory/consolidation.rs`).
-- Each scope's summary is written next to that scope's memory file and injected as memory guidance on the next fresh user turn, in the same slot as the per-turn relevance payload. It contributes nothing until a pass has run.
+- Each scope's summary is written next to that scope's memory file and injected as memory guidance on the next fresh user turn. It is the only memory text a turn carries on its own: relevance is never recalled in the background, only by an explicit `memory` recall, so the summary contributes nothing until a pass has run.
 - `[agents] memory_consolidation_min_new` (Horon default `20`) is how many memories must have been stored since the previous pass before it runs. A pass reloads the graph, merges and rewrites it, so it is batched instead of run per session.
 - `[agents] memory_consolidation_summary_bytes` (Horon default `4096`) caps the injected summary. Over the cap the text is cut at a character boundary, never dropped.
 

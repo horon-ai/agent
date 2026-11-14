@@ -1,78 +1,32 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
-type LastInjectedMemorySetBySession = HashMap<String, (HashSet<String>, Instant)>;
 type InjectedMemoryIdsBySession = HashMap<String, HashMap<String, Instant>>;
 
-/// Pending memory prompt from background check - ready to inject on next turn.
-/// Keyed by session ID so each session gets its own pending memory.
-static PENDING_MEMORY: Mutex<Option<HashMap<String, QueuedPendingMemory>>> = Mutex::new(None);
-
-/// A queued result always carries the binding it was validated against, so a
-/// payload can never be consumed by a session whose project scope differs.
-/// `project_dir = None` means global-only, never the process cwd.
-struct QueuedPendingMemory {
-    pending: PendingMemory,
-    binding: PendingBinding,
-}
-
-#[derive(PartialEq, Eq)]
-struct PendingBinding {
-    project_dir: Option<String>,
-    snapshots: HashMap<String, MemorySnapshot>,
-}
-
-#[derive(PartialEq, Eq)]
-struct MemorySnapshot {
-    global: bool,
-    signature: String,
-}
-
-/// Signature of the last injected prompt to suppress near-immediate duplicates.
+/// Memory IDs already surfaced for a session, with the time they were surfaced,
+/// so the same memory is not repeated while it is still in the transcript.
 /// Keyed by session ID.
-static LAST_INJECTED_PROMPT_SIGNATURE: Mutex<Option<HashMap<String, (String, Instant)>>> = Mutex::new(None);
-
-/// Recently injected memory ID sets per session.
-/// Used to suppress near-duplicate re-injection even when formatting differs.
-static LAST_INJECTED_MEMORY_SET: Mutex<Option<LastInjectedMemorySetBySession>> = Mutex::new(None);
-
-/// Memory IDs that have already been injected into the conversation, with the
-/// time they were injected. Used to prevent the same memory from being
-/// re-injected on subsequent turns while it is still fresh in the transcript.
-/// Keyed by session ID.
+///
+/// A payload is not persisted into history, but the model's response that
+/// consumed it is, so surfacing the same memory again shortly afterwards is
+/// pure noise. This tracking used to be cleared on every detected topic change,
+/// which fires often on real sessions (similarity between consecutive coding
+/// turns regularly sits below any topic threshold), so the same memory could
+/// come back minutes apart in one transcript. A TTL keeps the dedup stable
+/// across topic wobble while still letting genuinely old memories resurface in
+/// long sessions once they may have scrolled out of, or been compacted from,
+/// the context window.
 static INJECTED_MEMORY_IDS: Mutex<Option<InjectedMemoryIdsBySession>> = Mutex::new(None);
 
-/// Guard to ensure only one memory check runs at a time, per session.
-/// Keyed by session ID.
-static MEMORY_CHECK_IN_PROGRESS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-
-/// Suppress repeated identical memory payloads within this many seconds.
-const MEMORY_REPEAT_SUPPRESSION_SECS: u64 = 90;
-/// Suppress substantially overlapping memory sets for a bit longer.
-const MEMORY_SET_REPEAT_SUPPRESSION_SECS: u64 = 180;
-/// If a new pending payload overlaps this much with the last injected set,
-/// treat it as too similar to surface again immediately.
-const MEMORY_SET_OVERLAP_SUPPRESSION_RATIO: f32 = 0.8;
-/// How long an injected memory counts as "already known" to a session.
-///
-/// Injection payloads are ephemeral (not persisted into history), but the
-/// model's response that consumed them IS part of the transcript, so
-/// re-injecting the same memory shortly afterwards is pure noise. This
-/// tracking used to be cleared on every detected topic change, which fires
-/// often on real sessions (cosine similarity between consecutive coding turns
-/// regularly sits below the topic threshold), so the same memory could be
-/// re-injected minutes apart in one transcript. A TTL keeps the dedup stable
-/// across topic wobble while still letting genuinely old memories resurface in
-/// long sessions once they may have scrolled out of (or been compacted from)
-/// the context window.
+/// How long a surfaced memory counts as already known to a session.
 const INJECTED_MEMORY_TTL_SECS: u64 = 45 * 60;
 
 fn injected_recently(at: &Instant) -> bool {
     at.elapsed().as_secs() < INJECTED_MEMORY_TTL_SECS
 }
 
-/// A pending memory result from async checking.
+/// One turn's memory guidance, ready to inject.
 #[derive(Debug, Clone)]
 pub struct PendingMemory {
     /// The formatted memory prompt ready for injection.
@@ -88,328 +42,8 @@ pub struct PendingMemory {
     pub memory_ids: Vec<String>,
 }
 
-impl PendingMemory {
-    /// Check if this pending memory is still fresh (not too old).
-    pub fn is_fresh(&self) -> bool {
-        self.computed_at.elapsed().as_secs() < 120
-    }
-}
-
-fn prompt_signature(prompt: &str) -> String {
-    prompt
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .to_lowercase()
-}
-
-fn memory_set(ids: &[String]) -> HashSet<String> {
-    ids.iter().cloned().collect()
-}
-
-fn memory_overlap_ratio(left: &HashSet<String>, right: &HashSet<String>) -> f32 {
-    if left.is_empty() || right.is_empty() {
-        return 0.0;
-    }
-
-    let intersection = left.intersection(right).count() as f32;
-    let baseline = left.len().max(right.len()) as f32;
-    intersection / baseline
-}
-
-/// Read the actual graph file, not the mtime cache, and never migrate/write or
-/// run inference from the foreground pending-consumption path. Retrieval has
-/// already migrated any legacy entries before they can become scoped pending.
-fn read_validation_graph(path: &std::path::Path) -> anyhow::Result<crate::memory_graph::MemoryGraph> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(crate::memory_graph::MemoryGraph::new());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let graph: crate::memory_graph::MemoryGraph = serde_json::from_slice(&bytes)?;
-    anyhow::ensure!(graph.graph_version == super::GRAPH_VERSION, "unsupported memory graph");
-    Ok(graph)
-}
-
-fn semantic_signature(entry: &super::MemoryEntry) -> anyhow::Result<String> {
-    // Include everything sent to Jev plus semantic/rendering metadata. Access
-    // counters and embeddings do not change the fact that was judged.
-    Ok(serde_json::to_string(&(
-        &entry.content,
-        &entry.category,
-        &entry.tags,
-        &entry.source,
-        &entry.trust,
-        &entry.updated_at,
-    ))?)
-}
-
-fn snapshot_selected_memories(
-    project_dir: Option<&str>,
-    ids: &[String],
-) -> anyhow::Result<(HashMap<String, MemorySnapshot>, Vec<super::MemoryEntry>)> {
-    anyhow::ensure!(!ids.is_empty(), "scoped pending memory requires IDs");
-    let manager = match project_dir {
-        Some(project) => super::MemoryManager::new().with_project_dir(project),
-        None => super::MemoryManager::new(),
-    };
-    let project = match manager.project_memory_path()? {
-        Some(path) => read_validation_graph(&path)?,
-        None => crate::memory_graph::MemoryGraph::new(),
-    };
-    // Do not swallow a corrupt/unreadable store, even if the other store has
-    // matching IDs. Ambiguous duplicate IDs are likewise rejected below.
-    let global = read_validation_graph(&manager.global_memory_path()?)?;
-    let mut snapshots = HashMap::new();
-    let mut entries = Vec::with_capacity(ids.len());
-    for id in ids {
-        let (entry, is_global) = match (project.get_memory(id), global.get_memory(id)) {
-            (Some(entry), None) => (entry, false),
-            (None, Some(entry)) => (entry, true),
-            _ => anyhow::bail!("selected memory is absent or ambiguous"),
-        };
-        anyhow::ensure!(entry.id == *id, "selected memory ID does not match its storage key");
-        anyhow::ensure!(
-            entry.active && entry.superseded_by.is_none(),
-            "selected memory is inactive"
-        );
-        // Compare semantic/rendered metadata exactly, not a collision-prone hash.
-        // Access counters and embeddings are deliberately excluded.
-        let signature = semantic_signature(entry)?;
-        anyhow::ensure!(
-            snapshots
-                .insert(
-                    id.clone(),
-                    MemorySnapshot {
-                        global: is_global,
-                        signature
-                    }
-                )
-                .is_none(),
-            "duplicate selected memory ID"
-        );
-        entries.push(entry.clone());
-    }
-    Ok((snapshots, entries))
-}
-
-/// Take pending memory only for the exact current project binding of the given
-/// session. None means global-only, never the process cwd. Validation happens
-/// before dedup or IDs are marked injected, and failed payloads are removed
-/// rather than recycled.
-pub fn take_pending_memory(session_id: &str, project_dir: Option<&str>) -> Option<PendingMemory> {
-    let queued = {
-        let mut guard = PENDING_MEMORY.lock().ok()?;
-        guard.as_mut()?.remove(session_id)?
-    };
-    if queued.binding.project_dir.as_deref() != project_dir {
-        crate::memory_log::log_pending_discarded(session_id, "project binding changed or missing");
-        return None;
-    }
-    if !queued.pending.is_fresh() {
-        crate::memory_log::log_pending_discarded(session_id, "stale (>120s)");
-        return None;
-    }
-    let valid = snapshot_selected_memories(queued.binding.project_dir.as_deref(), &queued.pending.memory_ids)
-        .is_ok_and(|(current, _)| current == queued.binding.snapshots);
-    if !valid {
-        crate::memory_log::log_pending_discarded(session_id, "selected memory changed, forgotten, or unreadable");
-        return None;
-    }
-    let pending = queued.pending;
-
-    // If every memory in this payload is still fresh in the session's
-    // injected set, the model already knows all of it; do not re-inject
-    // just because formatting or ranking shifted slightly.
-    if !pending.memory_ids.is_empty() && pending.memory_ids.iter().all(|id| is_memory_injected(session_id, id)) {
-        crate::memory_log::log_pending_discarded(session_id, "all memories already known to session");
-        return None;
-    }
-
-    let sig = prompt_signature(&pending.prompt);
-    if let Ok(mut last_guard) = LAST_INJECTED_PROMPT_SIGNATURE.lock() {
-        let sig_map = last_guard.get_or_insert_with(HashMap::new);
-        if let Some((last_sig, last_at)) = sig_map.get(session_id)
-            && *last_sig == sig
-            && last_at.elapsed().as_secs() < MEMORY_REPEAT_SUPPRESSION_SECS
-        {
-            crate::memory_log::log_pending_discarded(session_id, "duplicate suppressed");
-            return None;
-        }
-        sig_map.insert(session_id.to_string(), (sig, Instant::now()));
-    }
-
-    if !pending.memory_ids.is_empty() {
-        let pending_set = memory_set(&pending.memory_ids);
-        if let Ok(mut last_guard) = LAST_INJECTED_MEMORY_SET.lock() {
-            let set_map = last_guard.get_or_insert_with(HashMap::new);
-            if let Some((last_set, last_at)) = set_map.get(session_id) {
-                let overlap = memory_overlap_ratio(last_set, &pending_set);
-                if overlap >= MEMORY_SET_OVERLAP_SUPPRESSION_RATIO
-                    && last_at.elapsed().as_secs() < MEMORY_SET_REPEAT_SUPPRESSION_SECS
-                {
-                    crate::memory_log::log_pending_discarded(session_id, "overlapping memory set suppressed");
-                    return None;
-                }
-            }
-            set_map.insert(session_id.to_string(), (pending_set, Instant::now()));
-        }
-    }
-
-    if !pending.memory_ids.is_empty() {
-        mark_memories_injected(session_id, &pending.memory_ids);
-    }
-
-    crate::memory_log::log_pending_consumed(
-        session_id,
-        pending.count,
-        pending.computed_at.elapsed().as_millis() as u64,
-        pending.prompt.chars().count(),
-    );
-
-    Some(pending)
-}
-
-/// Publish a result bound to the selected project and its current memory
-/// content. Verify the canonical prompt too, closing the race where a fact was
-/// edited during the async judge call, before this publication could snapshot it.
-///
-/// Every publication is bound to a project scope (`None` is global-only) and
-/// validated against stored memory IDs; there is no unscoped entry point, so a
-/// result computed for one project can never surface in another.
-pub fn set_pending_memory(
-    session_id: &str,
-    prompt: String,
-    count: usize,
-    memory_ids: Vec<String>,
-    display_prompt: Option<String>,
-    project_dir: Option<&str>,
-) {
-    publish_scoped_memory(session_id, prompt, count, memory_ids, display_prompt, project_dir, None);
-}
-
-/// Automatic publishers must retain the entries actually judged by Jev. A
-/// canonical prompt alone cannot detect tags-only edits while inference was in
-/// flight, because tags are model input but not part of the rendered prompt.
-pub(crate) fn set_pending_memory_with_selection(
-    session_id: &str,
-    prompt: String,
-    count: usize,
-    selected_entries: &[super::MemoryEntry],
-    display_prompt: Option<String>,
-    project_dir: Option<&str>,
-) {
-    let memory_ids = selected_entries.iter().map(|entry| entry.id.clone()).collect();
-    publish_scoped_memory(
-        session_id,
-        prompt,
-        count,
-        memory_ids,
-        display_prompt,
-        project_dir,
-        Some(selected_entries),
-    );
-}
-
-fn publish_scoped_memory(
-    session_id: &str,
-    prompt: String,
-    count: usize,
-    memory_ids: Vec<String>,
-    display_prompt: Option<String>,
-    project_dir: Option<&str>,
-    selected_entries: Option<&[super::MemoryEntry]>,
-) {
-    let Ok((snapshots, entries)) = snapshot_selected_memories(project_dir, &memory_ids) else {
-        crate::memory_log::log_pending_discarded(session_id, "cannot validate selected memory at publication");
-        return;
-    };
-    if let Some(selected) = selected_entries {
-        let matches_selection = selected.len() == memory_ids.len()
-            && selected.iter().zip(&memory_ids).all(|(entry, id)| {
-                entry.id == *id
-                    && entry.active
-                    && entry.superseded_by.is_none()
-                    && semantic_signature(entry)
-                        .is_ok_and(|signature| snapshots.get(id).is_some_and(|current| current.signature == signature))
-            });
-        if !matches_selection {
-            crate::memory_log::log_pending_discarded(
-                session_id,
-                "selected memory metadata changed during relevance evaluation",
-            );
-            return;
-        }
-    }
-    if super::format_relevant_prompt(&entries, entries.len())
-        .as_deref()
-        .map(str::trim)
-        != Some(prompt.trim())
-    {
-        crate::memory_log::log_pending_discarded(session_id, "selected memory changed before publication");
-        return;
-    }
-    store_pending_memory(
-        session_id,
-        prompt,
-        count,
-        memory_ids,
-        display_prompt,
-        PendingBinding {
-            project_dir: project_dir.map(str::to_owned),
-            snapshots,
-        },
-    );
-}
-
-fn store_pending_memory(
-    session_id: &str,
-    prompt: String,
-    count: usize,
-    memory_ids: Vec<String>,
-    display_prompt: Option<String>,
-    binding: PendingBinding,
-) {
-    crate::memory_log::log_pending_prepared(session_id, &prompt, count, &memory_ids);
-
-    if let Ok(mut guard) = PENDING_MEMORY.lock() {
-        let map = guard.get_or_insert_with(HashMap::new);
-        let new_sig = prompt_signature(&prompt);
-        let new_memory_set = memory_set(&memory_ids);
-
-        if let Some(existing) = map.get(session_id)
-            && existing.pending.is_fresh()
-            && existing.binding == binding
-        {
-            let existing_sig = prompt_signature(&existing.pending.prompt);
-            let overlap = memory_overlap_ratio(&memory_set(&existing.pending.memory_ids), &new_memory_set);
-            if existing_sig == new_sig || overlap >= MEMORY_SET_OVERLAP_SUPPRESSION_RATIO {
-                crate::memory_log::log_pending_discarded(session_id, "similar pending payload already queued");
-                return;
-            }
-        }
-
-        map.insert(
-            session_id.to_string(),
-            QueuedPendingMemory {
-                pending: PendingMemory {
-                    prompt,
-                    display_prompt,
-                    computed_at: Instant::now(),
-                    count,
-                    memory_ids,
-                },
-                binding,
-            },
-        );
-    }
-}
-
-/// Mark memory IDs as already injected for a session (prevents re-injection on future turns).
+/// Mark memory IDs as already surfaced for a session, so they are not repeated
+/// while they stay fresh in the transcript.
 pub fn mark_memories_injected(session_id: &str, ids: &[String]) {
     crate::memory_log::log_marked_injected(session_id, ids);
     insert_injected_ids(session_id, ids);
@@ -480,17 +114,6 @@ pub fn is_memory_injected(session_id: &str, id: &str) -> bool {
 
 /// Clear injected memory tracking for a session (call on session reset or topic change).
 pub fn clear_injected_memories(session_id: &str) {
-    if let Ok(mut guard) = LAST_INJECTED_PROMPT_SIGNATURE.lock()
-        && let Some(map) = guard.as_mut()
-    {
-        map.remove(session_id);
-    }
-    if let Ok(mut guard) = LAST_INJECTED_MEMORY_SET.lock()
-        && let Some(map) = guard.as_mut()
-    {
-        map.remove(session_id);
-    }
-
     if let Ok(mut guard) = INJECTED_MEMORY_IDS.lock()
         && let Some(outer) = guard.as_mut()
         && let Some(set) = outer.remove(session_id)
@@ -506,13 +129,6 @@ pub fn clear_injected_memories(session_id: &str) {
 
 /// Clear all injected memory tracking across all sessions.
 pub fn clear_all_injected_memories() {
-    if let Ok(mut guard) = LAST_INJECTED_PROMPT_SIGNATURE.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = LAST_INJECTED_MEMORY_SET.lock() {
-        *guard = None;
-    }
-
     if let Ok(mut guard) = INJECTED_MEMORY_IDS.lock() {
         if let Some(outer) = guard.as_ref() {
             let total: usize = outer.values().map(|s| s.len()).sum();
@@ -528,73 +144,27 @@ pub fn clear_all_injected_memories() {
     }
 }
 
-/// Clear any pending memory result for a session.
+/// Forget what a session has already seen.
+///
+/// The only per-session memory state left is the surfaced-id set, so this is a
+/// reset of that set. Callers use it when a session starts over, changes
+/// project, or is deleted.
 pub fn clear_pending_memory(session_id: &str) {
-    if let Ok(mut guard) = PENDING_MEMORY.lock()
-        && let Some(map) = guard.as_mut()
-    {
-        map.remove(session_id);
-    }
-    if let Ok(mut guard) = LAST_INJECTED_PROMPT_SIGNATURE.lock()
-        && let Some(map) = guard.as_mut()
-    {
-        map.remove(session_id);
-    }
-    if let Ok(mut guard) = LAST_INJECTED_MEMORY_SET.lock()
-        && let Some(map) = guard.as_mut()
-    {
-        map.remove(session_id);
-    }
     clear_injected_memories(session_id);
 }
 
-/// Clear all pending memory state across all sessions.
+/// Forget what every session has already seen.
 pub fn clear_all_pending_memory() {
-    if let Ok(mut guard) = PENDING_MEMORY.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = LAST_INJECTED_PROMPT_SIGNATURE.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = LAST_INJECTED_MEMORY_SET.lock() {
-        *guard = None;
-    }
     clear_all_injected_memories();
 }
 
-/// Check if there's a pending memory for a specific session.
+/// True when this session has been told about any memory it may still repeat.
 pub fn has_pending_memory(session_id: &str) -> bool {
-    PENDING_MEMORY
+    INJECTED_MEMORY_IDS
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().map(|m| m.contains_key(session_id)))
+        .and_then(|guard| guard.as_ref().map(|outer| outer.contains_key(session_id)))
         .unwrap_or(false)
-}
-
-pub(super) fn begin_memory_check(session_id: &str) -> bool {
-    if let Ok(mut guard) = MEMORY_CHECK_IN_PROGRESS.lock() {
-        let set = guard.get_or_insert_with(HashSet::new);
-        return set.insert(session_id.to_string());
-    }
-    false
-}
-
-pub(super) fn finish_memory_check(session_id: &str) {
-    if let Ok(mut guard) = MEMORY_CHECK_IN_PROGRESS.lock()
-        && let Some(set) = guard.as_mut()
-    {
-        set.remove(session_id);
-    }
-}
-
-#[cfg(test)]
-pub(super) fn backdate_pending_memory_for_test(session_id: &str, age: std::time::Duration) {
-    let mut guard = PENDING_MEMORY.lock().expect("pending memory lock");
-    if let Some(map) = guard.as_mut()
-        && let Some(queued) = map.get_mut(session_id)
-    {
-        queued.pending.computed_at = Instant::now() - age;
-    }
 }
 
 #[cfg(test)]
@@ -607,7 +177,3 @@ pub(super) fn backdate_injected_memory_for_test(session_id: &str, id: &str, age:
         *at = Instant::now() - age;
     }
 }
-
-#[cfg(test)]
-#[path = "pending_tests.rs"]
-mod scoped_tests;

@@ -432,6 +432,36 @@ pub enum ApiRequest {
     /// `background_tool_result`, otherwise `Ok` whether or not a tool ran.
     BackgroundTool { session_id: String },
 
+    /// Cancel the run the caller saw start, and only that run.
+    ///
+    /// `Cancel` stops whatever turn is running; this one names the run id a
+    /// client observed, so a cancel that loses the race with a finished turn
+    /// cannot reach its successor. The reply says whether a run was actually
+    /// stopped. Requires `cancellable_work_v1`.
+    CancelTurn { session_id: String, run_id: String },
+
+    /// Stop one tool call while the turn keeps running.
+    ///
+    /// `call_id` is the id a `tool_start` reported. The cancelled call still
+    /// reports a `tool_done`, whose result text the model sees, so the turn and
+    /// its transcript stay valid. A background task has its own
+    /// `cancel_background_terminal`. Requires `cancellable_work_v1`.
+    CancelToolCall { session_id: String, call_id: String },
+
+    /// Stop one background terminal this session started.
+    ///
+    /// The final `background_work` event for the item is what confirms the
+    /// stop; the reply only says the cancellation was accepted. Requires
+    /// `cancellable_work_v1`.
+    CancelBackgroundTerminal { session_id: String, call_id: String },
+
+    /// The background work still running in this session.
+    ///
+    /// A client that reattached after a reconnect asks this to learn what
+    /// survived, instead of guessing from a transcript it missed. Requires
+    /// `cancellable_work_v1`.
+    ListBackgroundWork { session_id: String },
+
     /// Durable heads of one stored session. Requires `session_event_store_v1`.
     ListSessionHeads { session_id: String },
 
@@ -647,6 +677,10 @@ impl ApiRequest {
             Self::RewindUndo { session_id, .. } => Some(session_id.as_str()),
             Self::CancelSoftInterrupts { session_id, .. } => Some(session_id.as_str()),
             Self::BackgroundTool { session_id, .. } => Some(session_id.as_str()),
+            Self::CancelTurn { session_id, .. } => Some(session_id.as_str()),
+            Self::CancelToolCall { session_id, .. } => Some(session_id.as_str()),
+            Self::CancelBackgroundTerminal { session_id, .. } => Some(session_id.as_str()),
+            Self::ListBackgroundWork { session_id, .. } => Some(session_id.as_str()),
             Self::ListSessionHeads { session_id, .. } => Some(session_id.as_str()),
             Self::SelectSessionHead { session_id, .. } => Some(session_id.as_str()),
             Self::GetHistoryPage { session_id, .. } => Some(session_id.as_str()),
@@ -678,6 +712,10 @@ impl ApiRequest {
                 Some(crate::CAPABILITY_DURABLE_RUNTIME_V1)
             }
             Self::GetSnapshot { .. } => Some(crate::CAPABILITY_SNAPSHOT_MARKER_V1),
+            Self::CancelTurn { .. }
+            | Self::CancelToolCall { .. }
+            | Self::CancelBackgroundTerminal { .. }
+            | Self::ListBackgroundWork { .. } => Some(crate::CAPABILITY_CANCELLABLE_WORK_V1),
             // Only the optional field is gated: an `ask_response` without an
             // `answer_id` is the legacy request and needs no negotiation.
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),

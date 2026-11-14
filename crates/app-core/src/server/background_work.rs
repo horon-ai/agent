@@ -327,25 +327,26 @@ pub(super) async fn handle_cancel_background_terminal(
 ) {
     let manager = crate::background::global();
     let answer = match manager.task_for_tool_call(session_id, call_id).await {
-        None => refused(id, "unknown"),
-        Some(task) if task.status != BackgroundTaskStatus::Running => refused(id, "final"),
-        Some(task) if task.tool_name != "bash" => refused(id, "not_cancellable"),
+        None => refused(id, call_id, "unknown"),
+        Some(task) if task.status != BackgroundTaskStatus::Running => refused(id, call_id, "final"),
+        Some(task) if task.tool_name != "bash" => refused(id, call_id, "not_cancellable"),
         // A task that finished on its own answers `final` without being marked:
         // `cancel_with_grace` records the cancellation only once it has taken
         // the task out of the live map.
         Some(task) => match manager.cancel_with_grace(&task.task_id, CANCEL_GRACE).await {
             Ok(true) => ServerEvent::ToolCallCancelResult {
                 id,
+                call_id: call_id.to_string(),
                 accepted: true,
                 reason: None,
             },
-            Ok(false) => refused(id, "final"),
+            Ok(false) => refused(id, call_id, "final"),
             Err(error) => {
                 crate::logging::warn(&format!(
                     "SERVER_BACKGROUND_TERMINAL_CANCEL_FAILED id={} session={} call_id={} error={error:#}",
                     id, session_id, call_id
                 ));
-                refused(id, "final")
+                refused(id, call_id, "final")
             }
         },
     };
@@ -357,9 +358,10 @@ pub(super) async fn handle_cancel_background_terminal(
     reply(client_event_tx, answer, "cancel_background_terminal");
 }
 
-fn refused(id: u64, reason: &'static str) -> ServerEvent {
+fn refused(id: u64, call_id: &str, reason: &'static str) -> ServerEvent {
     ServerEvent::ToolCallCancelResult {
         id,
+        call_id: call_id.to_string(),
         accepted: false,
         reason: Some(reason.to_string()),
     }

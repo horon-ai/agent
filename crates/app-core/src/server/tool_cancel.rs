@@ -40,6 +40,7 @@ pub(super) fn handle_cancel_tool_call(
         client_event_tx,
         ServerEvent::ToolCallCancelResult {
             id,
+            call_id: call_id.to_string(),
             accepted,
             reason: (!accepted).then(|| "unknown".to_string()),
         },
