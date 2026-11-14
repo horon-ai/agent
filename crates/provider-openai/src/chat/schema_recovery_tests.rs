@@ -4,7 +4,8 @@
 //! real loopback endpoint so the retry, the rebuilt body, the degradation
 //! receipt and the surfaced error are proven together.
 
-use super::tests::{MockServer, Reply, collect, provider};
+use super::tests::provider;
+use crate::test_support::{MockServer, Reply, collect};
 use horon_agent_message_types::degradation::DegradationKind;
 use horon_agent_message_types::{Message, StreamEvent, ToolDefinition};
 use horon_agent_provider_core::{Provider, ProviderRequestContext};

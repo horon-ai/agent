@@ -6,6 +6,10 @@ pub mod stream;
 pub mod websocket_health;
 
 #[cfg(test)]
+#[path = "test_support_tests.rs"]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 mod verdict_bytes_tests;
 
 pub use chat::request::{
