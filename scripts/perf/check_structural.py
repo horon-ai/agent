@@ -722,14 +722,32 @@ def check_hooks(report: Report, records: list[dict[str, str]], bounds: dict[str,
         )
 
 
+def per_tool_sizes(record: dict[str, str], section: str) -> list[int]:
+    """The bytes of each catalog entry, from `per_tool=name:bytes,name:bytes`."""
+    value = record.get("per_tool")
+    if value is None:
+        raise GateError(f"section {section}: measurement is missing per_tool")
+    sizes: list[int] = []
+    for entry in value.split(","):
+        if not entry:
+            continue
+        name, separator, size = entry.rpartition(":")
+        if not separator or not name or not size.isdigit():
+            raise GateError(f"section {section}: per_tool entry is not name:bytes: {entry!r}")
+        sizes.append(int(size))
+    return sizes
+
+
 def check_prefix(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
     """The request prefix stays inside its committed byte ceiling.
 
-    Three statements, because a ceiling alone certifies nothing. The floor
+    Four statements, because a ceiling alone certifies nothing. The floor
     rejects a zero, which is what a catalog that never serialized reports; the
-    ceiling is the bound; and the tool count is compared against the eager
+    ceiling is the bound; the tool count is compared against the eager
     definitions the same measurement saw, so a catalog that fell under the
-    ceiling by losing a tool fails here instead of passing quietly.
+    ceiling by losing a tool fails here instead of passing quietly; and the
+    per-tool sizes must account for the total, so the breakdown a later change
+    is judged against cannot drift from the number the ceiling bounds.
     """
     for record in records:
         section = "prefix"
@@ -739,6 +757,10 @@ def check_prefix(report: Report, records: list[dict[str, str]], bounds: dict[str
         report.at_most(section, "tools_bytes", tools, bounds["prefix_tools_bytes_max"])
         report.at_least(section, "tool_count", count, 1)
         report.equal(section, "tool_count", count, as_int(record, "eager_count", section))
+        sizes = per_tool_sizes(record, section)
+        report.equal(section, "per_tool_count", len(sizes), count)
+        # A JSON array spends two brackets and one comma between entries.
+        report.equal(section, "per_tool_bytes", sum(sizes) + 2 + max(len(sizes) - 1, 0), tools)
 
 
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")

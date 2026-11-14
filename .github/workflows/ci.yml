@@ -1173,8 +1173,10 @@ jobs:
         # prompt_request_bytes` prints the `prompt` line the structural gate
         # reads (static bytes, digest, index bytes, source-file probes) and
         # asserts that an unchanged request rebuilds a byte-identical prefix;
-        # `agent::tests::tool_request_bytes` prints the `prefix` line. `agent::
-        # tests::tool_tiers` and `agent::tests::deferred_tools` cover which
+        # `agent::tests::tool_request_bytes` prints the `prefix` line and
+        # `agent::tests::tool_schema_shape` pins the eager schemas without their
+        # descriptions. `agent::tests::tool_tiers` and
+        # `agent::tests::deferred_tools` cover which
         # tools a profile sends eagerly, lists or defers, `agent::prompting::
         # tests` and `tool::toolbox_tests` cover the listed-tools index and the
         # tool that reaches it, `startup_profile` covers the opt-in serve stage
@@ -1215,6 +1217,11 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- prompt::prompt_tests --nocapture
+          # Last, so a schema that moved cannot hide the modules above it.
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- agent::tests::tool_schema_shape --nocapture
 
       - name: Run memory record cohort
         shell: bash

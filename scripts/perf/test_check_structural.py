@@ -70,7 +70,8 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
     "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
     "request_message_copies=0",
-    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8",
+    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8 "
+    "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2400,ls:500,agentgrep:1900,toolbox:1091",
     "STRUCTURAL_PERF section=prompt static_bytes=1414 "
     "static_sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 static_tokens=330 "
     "index_bytes=676 index_clipped_rows=6 warm_source_reads=6 unchanged_request_source_reads=54",
@@ -451,7 +452,8 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_above_its_ceiling_fails_the_gate(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=70000 tool_count=8 eager_count=8",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=70000 tool_count=8 eager_count=8 "
+            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:63000,ls:500,agentgrep:1900,toolbox:1091",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
@@ -461,7 +463,7 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_that_serialized_nothing_fails_rather_than_passing_on_a_zero(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=0 tool_count=0 eager_count=0",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=0 tool_count=0 eager_count=0 per_tool=",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
@@ -471,12 +473,33 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_that_lost_a_tool_fails_even_under_the_ceiling(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9000 tool_count=7 eager_count=8",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9000 tool_count=7 eager_count=8 "
+            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:3092,ls:500,agentgrep:1900",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
         named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
         self.assertIn("tool_count", named)
+
+    def test_prefix_per_tool_sum_mismatch_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8 "
+            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2401,ls:500,agentgrep:1900,toolbox:1091",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"per_tool_bytes"})
+
+    def test_a_prefix_line_without_a_breakdown_is_not_a_measurement(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, "a prefix line with no per-tool breakdown is not a pass")
+        self.assertIn("per_tool", run.stderr)
 
     def test_a_missing_prefix_section_fails_the_same_way(self):
         without_prefix = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=prefix")]
