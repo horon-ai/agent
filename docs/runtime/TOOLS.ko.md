@@ -87,7 +87,7 @@ memory = "essential"
 
 #### 호스티드 검색
 
-모델 요청은 OpenAI 호환 `/chat/completions`로 직접 나가고 요청 본문에 호스티드 도구를 싣지 않으므로, 에이전트가 OpenAI 호스티드 `web_search`를 붙이는 경로는 없습니다. `websearch`는 로컬 도구로만 동작합니다.
+모델 요청은 프로파일 `type`이 고른 방식의 엔드포인트로 직접 나가고, 어느 방식도 요청 본문에 호스티드 도구를 싣지 않으므로 에이전트가 OpenAI 호스티드 `web_search`를 붙이는 경로는 없습니다. `websearch`는 로컬 도구로만 동작합니다.
 
 ### core가 닫혀 있는 이유
 

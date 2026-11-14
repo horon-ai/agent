@@ -18,7 +18,7 @@ Both forms reach the same adapter, and the subcommand wins when a host passes bo
 
 stdout carries frames only. Diagnostics go to stderr through the logging subsystem, so a host can parse stdout without filtering. Closing stdin ends the process; the adapter exits after the turn in flight, if any.
 
-The adapter starts the daemon when none is running, then subscribes and reads the session history, exactly as the ACP adapter does. Model calls go to the OpenAI-compatible endpoint of the active `[providers.<name>]` profile, so that profile has to be ready before the host starts.
+The adapter starts the daemon when none is running, then subscribes and reads the session history, exactly as the ACP adapter does. Model calls go to the endpoint of the wire the active `[providers.<name>]` profile's `type` names, so that profile has to be ready before the host starts.
 
 ## What a turn looks like
 
