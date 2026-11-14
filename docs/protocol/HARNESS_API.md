@@ -447,7 +447,7 @@ A request sent without the capability is answered `unsupported` with the missing
 
 ### Heads
 
-A session can hold several heads after a rewind or a branched import. The selected head is **host-local**. It is not replicated and is not part of the session's permanent identity. `list_session_heads` reports the heads and the current selection, and `selected_head` is absent when the several heads need an explicit choice. Until one is selected, execution is refused, and `select_session_head` answers `busy` when another process holds the write lock. Because the choice changes what the user's next turn continues from, never pick one silently; show the choice to the user.
+A session holds several heads after a branched import or after a turn is appended to a rewound branch. A rewind alone adds none: it writes no event, it records a selection over the graph that is already there, so the log keeps its single tip. The selected head is **host-local**. It is not replicated and is not part of the session's permanent identity. `list_session_heads` reports the heads and the current selection, and `selected_head` is absent when the several heads need an explicit choice. Until one is selected, execution is refused, and `select_session_head` answers `busy` when another process holds the write lock. Because the choice changes what the user's next turn continues from, never pick one silently; show the choice to the user.
 
 ### History
 
@@ -488,6 +488,24 @@ The five stable `ErrorCode` values are unchanged, so older clients keep decoding
 | `serving_model` | `string` | Model that produced the most recent assistant response. After a fallback answered it differs from `model`, which returns to the session's own selection once the turn ends. Absent when no response has been named yet. |
 
 Both fields are optional. An older daemon omits them, and a client that ignores them keeps working. Once the catalog and one identity report have arrived, the bridge answers `get_runtime_info` from its cache when no fallback list is configured, because the serving model can then only be the session's own. With a fallback list configured, or before the first identity report, it asks the daemon for the catalog on every `get_runtime_info`, because the serving model can change without the catalog changing.
+
+
+### Connection lifetime after a client leaves
+
+A bridge serves an API connection for as long as the client's socket is open, and
+it holds one daemon connection for that client. When the client goes away the
+bridge closes its daemon leg and keeps listening on the socket; only a bridge
+that fails to bind or loses its listener exits.
+
+The client half of that rule is easy to get wrong in a test harness: splitting a
+socket into read and write halves does not make each half an independent
+connection, so dropping only the write half leaves the stream open, no FIN
+reaches the bridge, and the bridge keeps its daemon leg. Both halves have to go.
+This is a harness mistake rather than a bridge defect, and it is why
+`crates/harness-api-server/tests/v1_client_round_trip.rs` drops both halves and
+bounds its daemon-leg read: a bridge that keeps the leg open after its client
+left now fails the assertion instead of hanging the target until the runner's
+timeout.
 
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
