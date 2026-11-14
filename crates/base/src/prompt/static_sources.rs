@@ -34,7 +34,9 @@ pub fn load_base_system_prompt(working_dir: Option<&Path>) -> String {
             }
         }
     }
-    DEFAULT_SYSTEM_PROMPT.to_string()
+    // Trimmed like a replacement file, so the parts join with one blank line
+    // and not two.
+    DEFAULT_SYSTEM_PROMPT.trim_end().to_string()
 }
 
 pub(super) fn base_system_prompt_parts(working_dir: Option<&Path>) -> Vec<String> {

@@ -15,9 +15,10 @@ use super::*;
 use crate::config::CORE_TOOL_PROFILE;
 
 /// The `core`-profile static prompt of a session with no prompt files, as the
-/// `prompt` measurement reported it before the sources were captured per
-/// session. Capturing them must not change one byte of what is sent.
-const CORE_STATIC_BYTES: usize = 1367;
+/// `prompt` measurement reported it. Capturing the sources per session moved
+/// no byte of it (1,367 B); trimming the built-in prompt's trailing newline
+/// removed one.
+const CORE_STATIC_BYTES: usize = 1366;
 const CORE_STATIC_SHA256: &str = "3275b88c172e254adda71a824b51ef1ac25efe4a0f849fcb3fe95e509e3bafbf";
 
 /// Tool calls answered before the prefix is compared for the last time.
@@ -45,6 +46,10 @@ async fn core_static_prefix_is_pinned_across_tool_round_trips() {
         format!("{:x}", Sha256::digest(pinned.as_bytes())),
         CORE_STATIC_SHA256,
         "the static prompt changed: {first}"
+    );
+    assert!(
+        !first.contains("\n\n\n"),
+        "a part is followed by two blank lines: {first}"
     );
 
     let before = horon_agent_perf_counters::snapshot();

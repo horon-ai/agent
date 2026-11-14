@@ -21,7 +21,8 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompt/system_prompt.md");
 /// Tool-selection hint for sessions that can call `todo`.
 ///
 /// Appended by the agent's prompt builder only when the session's tool
-/// selection allows `todo`, so profiles without the tool (`core`) never see it.
+/// selection allows `todo`. `core` includes `todo`, so `core` sessions get it;
+/// a profile or allow list without the tool does not.
 pub const TODO_HINT: &str = "Track multi-step work with the todo tool; editors show it as the plan.";
 
 /// Harness capabilities that conditionally contribute prompt modules.
