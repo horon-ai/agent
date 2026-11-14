@@ -37,10 +37,10 @@ use super::provider_control::{
     try_available_models_catalog,
 };
 use super::{
-    AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, SessionControlHandle, SessionInterruptQueues,
-    SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan, format_structured_completion_report,
-    register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail, update_member_status,
-    update_member_status_with_report, update_member_status_with_report_tldr,
+    AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, PlanProposalStore, SessionControlHandle,
+    SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan,
+    format_structured_completion_report, register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail,
+    update_member_status, update_member_status_with_report, update_member_status_with_report_tldr,
 };
 use crate::agent::Agent;
 use crate::bus::{Bus, BusEvent};
@@ -462,6 +462,7 @@ pub(super) async fn handle_client(
     swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: PlanProposalStore,
     swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
     file_touch: FileTouchService,
@@ -514,6 +515,7 @@ pub(super) async fn handle_client(
                             swarm_members: &swarm_members,
                             swarms_by_id: &swarms_by_id,
                             shared_context: &shared_context,
+                            plan_proposals: &plan_proposals,
                             swarm_plans: &swarm_plans,
                             swarm_coordinators: &swarm_coordinators,
                             file_touch: &file_touch,
@@ -2701,7 +2703,7 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                     &swarm_members,
                     &swarms_by_id,
-                    &shared_context,
+                    &plan_proposals,
                     &swarm_plans,
                     &swarm_coordinators,
                     &sessions,
@@ -2726,7 +2728,7 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                     &swarm_members,
                     &swarms_by_id,
-                    &shared_context,
+                    &plan_proposals,
                     &swarm_plans,
                     &swarm_coordinators,
                     &sessions,
@@ -2752,7 +2754,7 @@ pub(super) async fn handle_client(
                     reason,
                     &client_event_tx,
                     &swarm_members,
-                    &shared_context,
+                    &plan_proposals,
                     &swarm_coordinators,
                     &sessions,
                     &soft_interrupt_queues,

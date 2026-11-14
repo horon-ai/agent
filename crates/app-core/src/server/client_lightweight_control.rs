@@ -16,8 +16,8 @@ use super::comm_sync::{
     handle_comm_status, handle_comm_summary,
 };
 use super::{
-    AwaitMembersRuntime, ChannelSubscriptions, ClientConnectionInfo, FileTouchService, SessionAgents,
-    SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan,
+    AwaitMembersRuntime, ChannelSubscriptions, ClientConnectionInfo, FileTouchService, PlanProposalStore,
+    SessionAgents, SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan,
     format_structured_completion_report, truncate_detail, update_member_status_with_report_tldr,
 };
 use crate::config::SwarmSpawnMode;
@@ -223,6 +223,7 @@ pub(super) struct LightweightControlContext<'a> {
     pub(super) swarm_members: &'a Arc<RwLock<HashMap<String, SwarmMember>>>,
     pub(super) swarms_by_id: &'a Arc<RwLock<HashMap<String, HashSet<String>>>>,
     pub(super) shared_context: &'a Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    pub(super) plan_proposals: &'a PlanProposalStore,
     pub(super) swarm_plans: &'a Arc<RwLock<HashMap<String, VersionedPlan>>>,
     pub(super) swarm_coordinators: &'a Arc<RwLock<HashMap<String, String>>>,
     pub(super) file_touch: &'a FileTouchService,
@@ -250,6 +251,7 @@ pub(super) async fn handle_lightweight_control_request(
         swarm_members,
         swarms_by_id,
         shared_context,
+        plan_proposals,
         swarm_plans,
         swarm_coordinators,
         file_touch,
@@ -480,7 +482,7 @@ pub(super) async fn handle_lightweight_control_request(
                 &client_event_tx,
                 swarm_members,
                 swarms_by_id,
-                shared_context,
+                plan_proposals,
                 swarm_plans,
                 swarm_coordinators,
                 sessions,
@@ -504,7 +506,7 @@ pub(super) async fn handle_lightweight_control_request(
                 &client_event_tx,
                 swarm_members,
                 swarms_by_id,
-                shared_context,
+                plan_proposals,
                 swarm_plans,
                 swarm_coordinators,
                 sessions,
@@ -529,7 +531,7 @@ pub(super) async fn handle_lightweight_control_request(
                 reason,
                 &client_event_tx,
                 swarm_members,
-                shared_context,
+                plan_proposals,
                 swarm_coordinators,
                 sessions,
                 soft_interrupt_queues,

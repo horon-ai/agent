@@ -1,10 +1,10 @@
+use super::plan_proposals::{PlanProposalStore, peek_plan_proposal, store_plan_proposal, take_plan_proposal};
 use super::swarm_mutation_state::{
     PersistedSwarmMutationResponse, SwarmMutationRuntime, begin_or_replay, finish_request, request_key,
 };
 use super::{
-    SessionInterruptQueues, SharedContext, SwarmEvent, SwarmEventType, SwarmMember, SwarmState, VersionedPlan,
-    broadcast_swarm_plan, persist_swarm_state_for, queue_soft_interrupt_for_session, record_swarm_event,
-    summarize_plan_items,
+    SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember, SwarmState, VersionedPlan, broadcast_swarm_plan,
+    persist_swarm_state_for, queue_soft_interrupt_for_session, record_swarm_event, summarize_plan_items,
 };
 use crate::agent::Agent;
 use crate::plan::PlanItem;
@@ -12,7 +12,6 @@ use crate::protocol::{NotificationType, ServerEvent};
 use horon_agent_agent_runtime::SoftInterruptSource;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
@@ -46,7 +45,7 @@ pub(super) async fn handle_comm_propose_plan(
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: &Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: &PlanProposalStore,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     sessions: &SessionAgents,
@@ -210,23 +209,14 @@ pub(super) async fn handle_comm_propose_plan(
     }
 
     let proposal_key = format!("plan_proposal:{req_session_id}");
-    let proposal_value = serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string());
-    {
-        let mut context = shared_context.write().await;
-        let swarm_context = context.entry(swarm_id.clone()).or_insert_with(HashMap::new);
-        let now = Instant::now();
-        swarm_context.insert(
-            proposal_key.clone(),
-            SharedContext {
-                key: proposal_key.clone(),
-                value: proposal_value,
-                from_session: req_session_id.clone(),
-                from_name: from_name.clone(),
-                created_at: now,
-                updated_at: now,
-            },
-        );
-    }
+    store_plan_proposal(
+        plan_proposals,
+        &swarm_id,
+        &req_session_id,
+        items.clone(),
+        from_name.clone(),
+    )
+    .await;
     record_swarm_event(
         event_history,
         event_counter,
@@ -244,11 +234,12 @@ pub(super) async fn handle_comm_propose_plan(
 
     let summary = summarize_plan_items(&items, 3);
     let notification_msg = format!(
-        "Plan proposal from {} ({} items). Summary: {}. Review with communicate read key '{}'.",
+        "Plan proposal from {} ({} items). Summary: {}. Approve it with communicate approve_plan \
+         (proposer_session '{}') or reject_plan.",
         from_label,
         items.len(),
         summary,
-        proposal_key
+        req_session_id
     );
 
     let proposer_confirmation = "Plan proposal sent to coordinator (not yet applied).".to_string();
@@ -320,7 +311,7 @@ pub(super) async fn handle_comm_approve_plan(
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: &Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: &PlanProposalStore,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     sessions: &SessionAgents,
@@ -362,16 +353,7 @@ pub(super) async fn handle_comm_approve_plan(
         return;
     };
 
-    let proposal_key = format!("plan_proposal:{proposer_session}");
-    let proposal_value = {
-        let context = shared_context.read().await;
-        context
-            .get(&swarm_id)
-            .and_then(|swarm_context| swarm_context.get(&proposal_key))
-            .map(|context| context.value.clone())
-    };
-
-    let proposal = match proposal_value {
+    let proposal = match peek_plan_proposal(plan_proposals, &swarm_id, &proposer_session).await {
         Some(proposal) => proposal,
         None => {
             finish_request(
@@ -387,7 +369,8 @@ pub(super) async fn handle_comm_approve_plan(
         }
     };
 
-    if let Ok(items) = serde_json::from_str::<Vec<PlanItem>>(&proposal) {
+    let items = proposal.items;
+    {
         let existing_count = swarm_plans
             .read()
             .await
@@ -448,12 +431,7 @@ pub(super) async fn handle_comm_approve_plan(
             plan.participants.clone()
         };
 
-        {
-            let mut context = shared_context.write().await;
-            if let Some(swarm_context) = context.get_mut(&swarm_id) {
-                swarm_context.remove(&proposal_key);
-            }
-        }
+        take_plan_proposal(plan_proposals, &swarm_id, &proposer_session).await;
 
         broadcast_swarm_plan(
             &swarm_id,
@@ -550,7 +528,7 @@ pub(super) async fn handle_comm_reject_plan(
     reason: Option<String>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
-    shared_context: &Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: &PlanProposalStore,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     sessions: &SessionAgents,
     soft_interrupt_queues: &SessionInterruptQueues,
@@ -595,16 +573,10 @@ pub(super) async fn handle_comm_reject_plan(
         return;
     };
 
-    let proposal_key = format!("plan_proposal:{proposer_session}");
-    let proposal_exists = {
-        let context = shared_context.read().await;
-        context
-            .get(&swarm_id)
-            .and_then(|swarm_context| swarm_context.get(&proposal_key))
-            .is_some()
-    };
-
-    if !proposal_exists {
+    if take_plan_proposal(plan_proposals, &swarm_id, &proposer_session)
+        .await
+        .is_none()
+    {
         finish_request(
             swarm_mutation_runtime,
             &mutation_state,
@@ -615,13 +587,6 @@ pub(super) async fn handle_comm_reject_plan(
         )
         .await;
         return;
-    }
-
-    {
-        let mut context = shared_context.write().await;
-        if let Some(swarm_context) = context.get_mut(&swarm_id) {
-            swarm_context.remove(&proposal_key);
-        }
     }
 
     let coordinator_name = {

@@ -50,6 +50,7 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
     let swarm_members = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
     let shared_context = Arc::new(RwLock::new(HashMap::new()));
+    let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
@@ -78,6 +79,7 @@ async fn system_prompt_socket_creation_attach_resume_fork_and_no_leaking() {
             swarm_members.clone(),
             swarms_by_id.clone(),
             shared_context.clone(),
+            plan_proposals.clone(),
             swarm_plans.clone(),
             swarm_coordinators.clone(),
             file_touch.clone(),

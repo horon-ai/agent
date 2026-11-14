@@ -1608,6 +1608,7 @@ async fn lightweight_comm_request_skips_full_session_initialization() {
     let swarm_members = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
     let shared_context = Arc::new(RwLock::new(HashMap::new()));
+    let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
@@ -1634,6 +1635,7 @@ async fn lightweight_comm_request_skips_full_session_initialization() {
         swarm_members,
         swarms_by_id,
         shared_context,
+        plan_proposals.clone(),
         swarm_plans,
         swarm_coordinators,
         file_touch,
@@ -1788,6 +1790,7 @@ async fn sdk_socket_workflow(response_only: bool) {
     let swarm_members = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
     let shared_context = Arc::new(RwLock::new(HashMap::new()));
+    let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
@@ -1816,6 +1819,7 @@ async fn sdk_socket_workflow(response_only: bool) {
             swarm_members.clone(),
             swarms_by_id.clone(),
             shared_context.clone(),
+            plan_proposals.clone(),
             swarm_plans.clone(),
             swarm_coordinators.clone(),
             file_touch.clone(),
@@ -2252,6 +2256,7 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
     let swarm_members = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
     let shared_context = Arc::new(RwLock::new(HashMap::new()));
+    let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
@@ -2280,6 +2285,7 @@ async fn acp_session_bridge_round_trip_and_desktop_turn_uses_local_fs() {
             swarm_members.clone(),
             swarms_by_id.clone(),
             shared_context.clone(),
+            plan_proposals.clone(),
             swarm_plans.clone(),
             swarm_coordinators.clone(),
             file_touch.clone(),

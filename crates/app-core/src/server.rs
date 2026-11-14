@@ -31,6 +31,7 @@ mod comm_session;
 mod comm_sync;
 mod comm_worktree;
 mod configured_name;
+mod plan_proposals;
 mod session_connections;
 mod session_forget;
 mod session_observation;
@@ -587,6 +588,7 @@ async fn capture_runtime_memory_attribution_sample(
 mod state;
 mod subscribe_working_dir;
 
+pub(super) use self::plan_proposals::PlanProposalStore;
 use self::state::latest_peer_touches;
 #[cfg(test)]
 pub(crate) use self::state::register_session_event_sink;
@@ -753,6 +755,8 @@ pub struct Server {
     swarm_state: SwarmState,
     /// Shared context by swarm (swarm_id -> key -> SharedContext)
     shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    /// Pending plan proposals by swarm (swarm_id -> proposer session -> proposal)
+    plan_proposals: PlanProposalStore,
     /// Background debug jobs (async debug commands)
     debug_jobs: Arc<RwLock<HashMap<String, DebugJob>>>,
     /// Channel subscriptions (swarm_id -> channel -> session_ids)
@@ -851,6 +855,7 @@ impl Server {
                 restored_swarm_coordinators,
             ),
             shared_context: Arc::new(RwLock::new(HashMap::new())),
+            plan_proposals: Arc::new(RwLock::new(HashMap::new())),
             debug_jobs: Arc::new(RwLock::new(HashMap::new())),
             channel_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             channel_subscriptions_by_session: Arc::new(RwLock::new(HashMap::new())),

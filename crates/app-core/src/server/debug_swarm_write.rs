@@ -1,5 +1,5 @@
+use super::plan_proposals::{PlanProposalStore, peek_plan_proposal, take_plan_proposal};
 use super::{SharedContext, SwarmMember, SwarmState, VersionedPlan, persist_swarm_state_for};
-use crate::plan::PlanItem;
 use crate::protocol::{NotificationType, ServerEvent};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -12,6 +12,7 @@ pub(super) struct DebugSwarmWriteContext<'a> {
     pub(super) swarm_members: &'a Arc<RwLock<HashMap<String, SwarmMember>>>,
     pub(super) swarms_by_id: &'a Arc<RwLock<HashMap<String, HashSet<String>>>>,
     pub(super) shared_context: &'a Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    pub(super) plan_proposals: &'a PlanProposalStore,
     pub(super) swarm_plans: &'a Arc<RwLock<HashMap<String, VersionedPlan>>>,
     pub(super) swarm_coordinators: &'a Arc<RwLock<HashMap<String, String>>>,
 }
@@ -351,22 +352,14 @@ pub(super) async fn maybe_handle_swarm_write_command(
         }
 
         if let Some(swarm_id) = swarm_id {
-            let proposal_key = format!("plan_proposal:{}", proposer_session);
-            let proposal_value = {
-                let shared_ctx = ctx.shared_context.read().await;
-                shared_ctx
-                    .get(&swarm_id)
-                    .and_then(|swarm_ctx| swarm_ctx.get(&proposal_key))
-                    .map(|context| context.value.clone())
-            };
-
-            return match proposal_value {
+            return match peek_plan_proposal(ctx.plan_proposals, &swarm_id, proposer_session).await {
                 None => Err(anyhow::anyhow!(
                     "No pending plan proposal from session '{}'",
                     proposer_session
                 )),
                 Some(proposal) => {
-                    if let Ok(items) = serde_json::from_str::<Vec<PlanItem>>(&proposal) {
+                    let items = proposal.items;
+                    {
                         let version = {
                             let mut plans = ctx.swarm_plans.write().await;
                             let versioned_plan = plans.entry(swarm_id.clone()).or_insert_with(VersionedPlan::new);
@@ -384,12 +377,7 @@ pub(super) async fn maybe_handle_swarm_write_command(
                             versioned_plan.participants.insert(proposer_session.to_string());
                             versioned_plan.version
                         };
-                        {
-                            let mut shared_ctx = ctx.shared_context.write().await;
-                            if let Some(swarm_ctx) = shared_ctx.get_mut(&swarm_id) {
-                                swarm_ctx.remove(&proposal_key);
-                            }
-                        }
+                        take_plan_proposal(ctx.plan_proposals, &swarm_id, proposer_session).await;
                         Ok(Some(
                             serde_json::json!({
                                 "approved": true,
@@ -399,8 +387,6 @@ pub(super) async fn maybe_handle_swarm_write_command(
                             })
                             .to_string(),
                         ))
-                    } else {
-                        Err(anyhow::anyhow!("Failed to parse plan proposal as Vec<PlanItem>"))
                     }
                 }
             };
@@ -446,27 +432,14 @@ pub(super) async fn maybe_handle_swarm_write_command(
         }
 
         if let Some(swarm_id) = swarm_id {
-            let proposal_key = format!("plan_proposal:{}", proposer_session);
-            let proposal_exists = {
-                let shared_ctx = ctx.shared_context.read().await;
-                shared_ctx
-                    .get(&swarm_id)
-                    .and_then(|swarm_ctx| swarm_ctx.get(&proposal_key))
-                    .is_some()
-            };
-
-            if !proposal_exists {
+            if take_plan_proposal(ctx.plan_proposals, &swarm_id, proposer_session)
+                .await
+                .is_none()
+            {
                 return Err(anyhow::anyhow!(
                     "No pending plan proposal from session '{}'",
                     proposer_session
                 ));
-            }
-
-            {
-                let mut shared_ctx = ctx.shared_context.write().await;
-                if let Some(swarm_ctx) = shared_ctx.get_mut(&swarm_id) {
-                    swarm_ctx.remove(&proposal_key);
-                }
             }
             let reason_msg = reason
                 .as_ref()
@@ -706,6 +679,7 @@ mod tests {
         let swarm_members = Arc::new(RwLock::new(HashMap::new()));
         let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
         let shared_context = Arc::new(RwLock::new(HashMap::new()));
+        let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
         let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
         let swarm_coordinators = Arc::new(RwLock::new(HashMap::from([(
             "swarm-lock-order".to_string(),
@@ -716,6 +690,7 @@ mod tests {
             swarm_members: &swarm_members,
             swarms_by_id: &swarms_by_id,
             shared_context: &shared_context,
+            plan_proposals: &plan_proposals,
             swarm_plans: &swarm_plans,
             swarm_coordinators: &swarm_coordinators,
         };

@@ -10,7 +10,8 @@ use super::debug_session_admin::maybe_handle_session_admin_command;
 use super::debug_swarm_read::maybe_handle_swarm_read_command;
 use super::debug_swarm_write::{DebugSwarmWriteContext, maybe_handle_swarm_write_command};
 use super::{
-    FileTouchService, ServerIdentity, SharedContext, SwarmEvent, SwarmMember, VersionedPlan, debug_control_allowed,
+    FileTouchService, PlanProposalStore, ServerIdentity, SharedContext, SwarmEvent, SwarmMember, VersionedPlan,
+    debug_control_allowed,
 };
 use crate::agent::Agent;
 use crate::ambient_runner::AmbientRunnerHandle;
@@ -57,6 +58,7 @@ pub(super) async fn handle_debug_client(
     swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: PlanProposalStore,
     swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
     file_touch: FileTouchService,
@@ -205,6 +207,7 @@ pub(super) async fn handle_debug_client(
                         &swarm_members,
                         &swarms_by_id,
                         &shared_context,
+                        &plan_proposals,
                         &swarm_plans,
                         &swarm_coordinators,
                         &file_touch,
@@ -221,6 +224,7 @@ pub(super) async fn handle_debug_client(
                             swarm_members: &swarm_members,
                             swarms_by_id: &swarms_by_id,
                             shared_context: &shared_context,
+                            plan_proposals: &plan_proposals,
                             swarm_plans: &swarm_plans,
                             swarm_coordinators: &swarm_coordinators,
                         },

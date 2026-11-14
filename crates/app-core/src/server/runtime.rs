@@ -3,8 +3,8 @@ use super::debug::{ClientConnectionInfo, handle_debug_client};
 use super::debug_jobs::DebugJob;
 use super::util::get_shared_mcp_pool;
 use super::{
-    AwaitMembersRuntime, FileTouchService, ServerIdentity, SessionInterruptQueues, SharedContext, SwarmEvent,
-    SwarmMutationRuntime, SwarmState,
+    AwaitMembersRuntime, FileTouchService, PlanProposalStore, ServerIdentity, SessionInterruptQueues, SharedContext,
+    SwarmEvent, SwarmMutationRuntime, SwarmState,
 };
 use crate::agent::Agent;
 use crate::ambient_runner::AmbientRunnerHandle;
@@ -98,6 +98,7 @@ pub(super) struct ServerRuntime {
     client_connections: Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_state: SwarmState,
     shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: PlanProposalStore,
     file_touch: FileTouchService,
     channel_subscriptions: ChannelSubscriptions,
     channel_subscriptions_by_session: ChannelSubscriptions,
@@ -130,6 +131,7 @@ impl ServerRuntime {
             client_connections: Arc::clone(&server.client_connections),
             swarm_state: server.swarm_state.clone(),
             shared_context: Arc::clone(&server.shared_context),
+            plan_proposals: Arc::clone(&server.plan_proposals),
             file_touch: server.file_touch.clone(),
             channel_subscriptions: Arc::clone(&server.channel_subscriptions),
             channel_subscriptions_by_session: Arc::clone(&server.channel_subscriptions_by_session),
@@ -334,6 +336,7 @@ impl ServerRuntime {
                     Arc::clone(&self.swarm_state.members),
                     Arc::clone(&self.swarm_state.swarms_by_id),
                     Arc::clone(&self.shared_context),
+                    Arc::clone(&self.plan_proposals),
                     Arc::clone(&self.swarm_state.plans),
                     Arc::clone(&self.swarm_state.coordinators),
                     self.file_touch.clone(),
@@ -384,6 +387,7 @@ impl ServerRuntime {
                 Arc::clone(&self.swarm_state.members),
                 Arc::clone(&self.swarm_state.swarms_by_id),
                 Arc::clone(&self.shared_context),
+                Arc::clone(&self.plan_proposals),
                 Arc::clone(&self.swarm_state.plans),
                 Arc::clone(&self.swarm_state.coordinators),
                 self.file_touch.clone(),
