@@ -624,6 +624,70 @@ fn two_calls_in_one_chunk_get_two_different_ids() {
     assert_eq!(ids.len(), 2, "{events:?}");
     assert_ne!(ids[0], ids[1]);
     assert!(ids.iter().all(|id| id.starts_with(SYNTHETIC_CALL_ID_PREFIX)), "{ids:?}");
+
+    let (first, second) = (ids[0].to_string(), ids[1].to_string());
+    assert_eq!(
+        summary(&events),
+        vec![
+            format!("ToolUseStart({first},read)"),
+            format!("ToolInputDeltaFor({first},{{}})"),
+            format!("ToolUseEndFor({first})"),
+            format!("ToolUseStart({second},write)"),
+            format!("ToolInputDeltaFor({second},{{}})"),
+            format!("ToolUseEndFor({second})"),
+            "MessageEnd(Some(\"STOP\"))".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_thought_still_open_when_a_call_arrives_is_closed_before_the_call() {
+    let thought = r#"{"candidates":[{"content":{"parts":[{"text":"t","thought":true}]}}]}"#;
+    let call =
+        r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"read","args":{}}}]},"finishReason":"STOP"}]}"#;
+    let events = parse_payloads(&[thought, call]);
+
+    let id = match events
+        .iter()
+        .find(|event| matches!(event, StreamEvent::ToolUseStart { .. }))
+    {
+        Some(StreamEvent::ToolUseStart { id, name }) => {
+            assert_eq!(name, "read");
+            assert!(id.starts_with(SYNTHETIC_CALL_ID_PREFIX), "{id}");
+            id.clone()
+        }
+        other => panic!("expected a tool start, got {other:?}"),
+    };
+    assert_eq!(
+        summary(&events),
+        vec![
+            "ThinkingStart".to_string(),
+            "ThinkingDelta(t)".to_string(),
+            "ThinkingEnd".to_string(),
+            "ThinkingDone".to_string(),
+            format!("ToolUseStart({id},read)"),
+            format!("ToolInputDeltaFor({id},{{}})"),
+            format!("ToolUseEndFor({id})"),
+            "MessageEnd(Some(\"STOP\"))".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_thought_still_open_at_the_finish_reason_is_closed_before_the_end() {
+    let chunk = r#"{"candidates":[{"content":{"parts":[{"text":"t","thought":true}]},"finishReason":"STOP"}]}"#;
+    let events = parse_payloads(&[chunk]);
+
+    assert_eq!(
+        summary(&events),
+        vec![
+            "ThinkingStart",
+            "ThinkingDelta(t)",
+            "ThinkingEnd",
+            "ThinkingDone",
+            "MessageEnd(Some(\"STOP\"))",
+        ]
+    );
 }
 
 #[test]
@@ -633,9 +697,22 @@ fn text_already_open_is_closed_before_a_call_starts() {
     let summary = summary(&events);
 
     assert_eq!(summary.len(), 6, "{summary:?}");
-    assert_eq!(summary[0], "TextDelta(calling)");
-    assert_eq!(summary[1], "TextDone");
-    assert!(summary[2].starts_with("ToolUseStart("), "{summary:?}");
+    let id = summary[2]
+        .strip_prefix("ToolUseStart(")
+        .and_then(|rest| rest.split_once(','))
+        .map(|(id, _)| id.to_string())
+        .unwrap_or_default();
+    assert_eq!(
+        summary,
+        vec![
+            "TextDelta(calling)".to_string(),
+            "TextDone".to_string(),
+            format!("ToolUseStart({id},read)"),
+            format!("ToolInputDeltaFor({id},{{}})"),
+            format!("ToolUseEndFor({id})"),
+            "MessageEnd(Some(\"STOP\"))".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -787,6 +864,35 @@ fn a_server_error_is_terminal_and_later_payloads_are_ignored() {
 }
 
 #[test]
+fn an_error_closes_whatever_is_open_before_it_is_reported() {
+    let internal = r#"{"error":{"code":500,"message":"x","status":"INTERNAL"}}"#;
+    let thought = r#"{"candidates":[{"content":{"parts":[{"text":"t","thought":true}]}}]}"#;
+    let answer = r#"{"candidates":[{"content":{"parts":[{"text":"t"}]}}]}"#;
+
+    let thinking = parse_payloads(&[thought, internal, TWO_TEXTS]);
+    assert_eq!(
+        summary(&thinking),
+        vec![
+            "ThinkingStart".to_string(),
+            "ThinkingDelta(t)".to_string(),
+            "ThinkingEnd".to_string(),
+            "ThinkingDone".to_string(),
+            "Error(Gemini-compatible stream returned an error: INTERNAL: x,None)".to_string(),
+        ]
+    );
+
+    let text = parse_payloads(&[answer, internal, TWO_TEXTS]);
+    assert_eq!(
+        summary(&text),
+        vec![
+            "TextDelta(t)".to_string(),
+            "TextDone".to_string(),
+            "Error(Gemini-compatible stream returned an error: INTERNAL: x,None)".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn a_body_that_stops_before_a_finish_reason_is_truncated() {
     let events = parse_payloads(&[TWO_TEXTS]);
 
@@ -823,13 +929,28 @@ fn a_blocked_prompt_reports_its_block_reason_as_the_stop_reason() {
 
 #[test]
 fn a_malformed_chunk_reports_once_and_the_stream_continues() {
-    let events = parse_payloads(&["{\"candidates\": [", TEXT_AND_FINISH]);
+    let broken = "{\"candidates\": [";
+    let events = parse_payloads(&[broken, TEXT_AND_FINISH]);
 
     let summary = summary(&events);
     assert!(
         summary[0].starts_with("Error(Gemini-compatible stream sent a malformed JSON chunk:"),
         "{summary:?}"
     );
+    // The snippet is what a reader diagnoses the chunk from, so the payload text
+    // itself has to survive inside the message.
+    match &events[0] {
+        StreamEvent::Error { message, .. } => {
+            let snippet = message
+                .split_once("; payload=")
+                .map(|(_, snippet)| snippet)
+                .unwrap_or_default();
+            // `snippet` trims its input, so the comparison is against the trimmed
+            // payload; a short payload is not truncated.
+            assert_eq!(snippet, broken.trim(), "{message}");
+        }
+        other => panic!("expected one error event, got {other:?}"),
+    }
     assert_eq!(
         summary[1..].to_vec(),
         vec![
