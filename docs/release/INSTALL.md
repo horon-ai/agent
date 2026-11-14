@@ -33,16 +33,18 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 The Windows install locations and signing procedure are in [`WINDOWS.md`](WINDOWS.md).
 
-## Installing from npm
+## Installing from npm (not published yet)
 
-`@horon-ai/horon` on npm installs the same two binaries without a release download: one small launcher and one platform package pinned to the same version. npm picks the platform package through `optionalDependencies`, so a global install fetches only the one that matches the machine.
+The npm distribution is built and tested, but nothing has been published: the registry holds only the `0.0.0` placeholder packages that reserve the seven names, and those carry no binaries, so `npm i -g @horon-ai/horon` installs a launcher that cannot find a runtime. Use the installers above, the container image, or a source checkout until publishing is enabled.
+
+When it is, `@horon-ai/horon` installs the same two binaries without a release download: one small launcher and one platform package pinned to the same version, chosen through `optionalDependencies`, so a global install fetches only the one that matches the machine.
 
 ```bash
 npm i -g @horon-ai/horon
 npx @horon-ai/horon --help
 ```
 
-The npm installation is updated with npm, not with the agent's own updater: the launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` for the binary it starts, because the package pins one release for both binaries. Package layout, the error a missing platform package prints, the version rule, and the publish procedure are in [`NPM.md`](NPM.md).
+An npm installation is updated with npm, not with the agent's own updater: the launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` for the binary it starts, because the package pins one release for both binaries. Package layout, the error a missing platform package prints, the version rule, and the publish procedure are in [`NPM.md`](NPM.md).
 
 ## The optional terminal client
 
@@ -131,7 +133,7 @@ The update check only updates when the release version is higher than the curren
 
 ## Container image
 
-Each release pushes `linux/amd64` and `linux/arm64` images to `ghcr.io/horon-ai/agent` tagged `<version>`, `<MAJOR.MINOR>` and `latest`. GitHub Packages supports neither the cargo nor the PyPI registry, and the SDKs already ship through npm and PyPI, so the only thing published to GitHub Packages is the container that starts the headless daemon. The image does not recompile anything and uses the release assets as they are (`scripts/release/Containerfile`).
+Each release pushes `linux/amd64` and `linux/arm64` images to `ghcr.io/horon-ai/agent` tagged `<version>`, `<MAJOR.MINOR>` and `latest`. GitHub Packages supports neither the cargo nor the PyPI registry, and the SDKs will ship through npm and PyPI rather than GitHub Packages, so the only thing published to GitHub Packages is the container that starts the headless daemon. The image does not recompile anything and uses the release assets as they are (`scripts/release/Containerfile`).
 
 ```bash
 docker run --rm ghcr.io/horon-ai/agent:latest --version
