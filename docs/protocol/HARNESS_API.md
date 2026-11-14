@@ -496,6 +496,11 @@ Every reply echoes the `run_id` or `call_id` it answers. The daemon's frames are
 broadcast to the connection without per-request correlation, so without the echo
 a client with two cancels in flight could match the wrong reply.
 
+The echo comes from the daemon, so a bridge speaking to a daemon that predates
+it answers no reply for that frame instead of a reply with an empty subject: the
+client sees its own request timeout, which names a cause it can act on, rather
+than a verdict that belongs to another request.
+
 `reason` is absent when the cancellation was accepted, and names the refusal
 otherwise.
 
