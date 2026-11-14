@@ -79,7 +79,7 @@ impl Agent {
         split: &crate::prompt::SplitSystemPrompt,
         tools: &[ToolDefinition],
     ) {
-        let system_tokens = split.estimated_tokens();
+        let system_tokens = self.system_prompt_token_estimate(split);
         let tool_tokens = ToolDefinition::aggregate_prompt_token_estimate(tools);
         let prefix_tokens = system_tokens + tool_tokens;
         logging::info(&format!(

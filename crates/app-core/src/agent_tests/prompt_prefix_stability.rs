@@ -274,3 +274,76 @@ fn oversized_skills_section_is_unchanged() {
     assert_eq!(info.skills_chars, section.len());
     assert_eq!(info.total_chars, split.static_part.len() + split.dynamic_part.len());
 }
+
+/// Where the stored index section and the cached static estimate live, so a
+/// test can tell a reused buffer from a new render or a new estimate.
+fn index_and_estimate_buffers(agent: &Agent) -> (Option<*const u8>, Option<*const u8>) {
+    let index = agent
+        .listed_tools_index
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .and_then(|index| index.section.as_deref().map(str::as_ptr));
+    let estimate = agent
+        .static_token_estimate
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|(text, _)| text.as_ptr());
+    (index, estimate)
+}
+
+/// Requests after the index froze reuse the section rendered when it was
+/// stored and the static estimate made for the first of them.
+#[tokio::test]
+async fn index_section_renders_once_after_freeze() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let mut agent = agent_with_mcp_management_tool().await;
+    let tools = agent.tool_definitions().await;
+    let first = agent.build_system_prompt_split(None);
+    agent.log_prompt_prefix_accounting(&first, &tools);
+    let rendered = index_and_estimate_buffers(&agent);
+    assert!(
+        rendered.0.is_some() && rendered.1.is_some(),
+        "a core session lists tools"
+    );
+    let section = agent.listed_tools_section().expect("a core session lists its tools");
+    assert!(first.static_part.contains(&section), "{}", first.static_part);
+
+    for request in 0..5 {
+        let tools = agent.tool_definitions().await;
+        let split = agent.build_system_prompt_split(None);
+        agent.log_prompt_prefix_accounting(&split, &tools);
+        assert_eq!(
+            split.static_part, first.static_part,
+            "request {request} moved the prefix"
+        );
+        assert_eq!(
+            index_and_estimate_buffers(&agent),
+            rendered,
+            "request {request} rendered or estimated again"
+        );
+    }
+}
+
+/// A restored session drops the stored index with its rendered section, and
+/// the next request stores and renders a new one.
+#[tokio::test]
+async fn restored_session_rebuilds_the_index_cache() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let mut agent = agent_with_mcp_management_tool().await;
+    agent.tool_definitions().await;
+    let before = agent.listed_tools_section().expect("a core session lists its tools");
+
+    let mut other = Session::create(None, Some("restored session".into()));
+    other.save().expect("save the session to restore");
+    agent.restore_session(&other.id).expect("restore the saved session");
+    assert!(!agent.listed_tools_index_built(), "the restore kept the old index");
+    assert_eq!(index_and_estimate_buffers(&agent).0, None);
+
+    agent.tool_definitions().await;
+    assert!(agent.listed_tools_index_built(), "the next request stored no index");
+    assert_eq!(agent.listed_tools_section().as_deref(), Some(before.as_str()));
+}

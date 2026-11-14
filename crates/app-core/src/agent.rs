@@ -389,9 +389,10 @@ pub struct Agent {
     /// registration, and a provider switch all leave it alone, because rewriting
     /// the cached system prefix would cost a prompt-cache miss. `None` means "not
     /// built yet", which the prompt builder reports once instead of guessing;
-    /// `Some(vec![])` means "this session lists nothing". Interior mutability
+    /// `Some` with no rows means "this session lists nothing". The section is
+    /// rendered from the rows once, when they are stored. Interior mutability
     /// because the prompt is assembled behind `&self`.
-    listed_tools_index: std::sync::Mutex<Option<Vec<(String, String)>>>,
+    listed_tools_index: std::sync::Mutex<Option<prompt_snapshot::ListedToolsIndex>>,
     /// Whether [`Agent::listed_tools_index`] is final.
     ///
     /// A warmup builds the index before the session locks its tool surface, and
@@ -401,6 +402,9 @@ pub struct Agent {
     /// session and its tier snapshot, so rewriting the rows would only cost a
     /// prompt-cache miss.
     listed_tools_index_frozen: std::sync::atomic::AtomicBool,
+    /// The static prompt last estimated for the prefix log line and its token
+    /// estimate, so an unchanged prefix is not estimated again per request.
+    static_token_estimate: std::sync::Mutex<Option<(String, usize)>>,
     /// Whether the MCP fixed surface (`mcp_search`/`mcp_call`) stays eager.
     ///
     /// `None` until the tool surface first locks, then `true` when at least one
@@ -637,6 +641,7 @@ impl Agent {
             load_tiers,
             listed_tools_index: std::sync::Mutex::new(None),
             listed_tools_index_frozen: std::sync::atomic::AtomicBool::new(false),
+            static_token_estimate: std::sync::Mutex::new(None),
             mcp_surface_eager: std::sync::Mutex::new(None),
             provider_session_id: None,
             last_upstream_provider: None,

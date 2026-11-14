@@ -48,4 +48,83 @@ impl Agent {
             })
             .collect()
     }
+
+    /// Whether the listed-tools index has been stored, without copying it.
+    pub(super) fn listed_tools_index_built(&self) -> bool {
+        self.listed_tools_index
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+    }
+
+    /// The index rows, or `None` while the index has not been built.
+    pub(super) fn listed_tools_rows(&self) -> Option<Vec<(String, String)>> {
+        self.listed_tools_index
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|index| index.rows.clone())
+    }
+
+    /// The rendered index section, when this session lists any tool.
+    ///
+    /// A session that reaches the prompt before anything built the index gets no
+    /// section and a warning: guessing here would seed the cached prefix with a
+    /// list the session never resolved, and staying silent would hide a missing
+    /// call site.
+    pub(crate) fn listed_tools_section(&self) -> Option<String> {
+        let slot = self
+            .listed_tools_index
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(index) = slot.as_ref() {
+            return index.section.clone();
+        }
+        drop(slot);
+        logging::warn("listed tools index not built before prompt");
+        None
+    }
+
+    /// Token estimate of the system prompt for the prefix log line.
+    ///
+    /// The static part is estimated once per distinct text and the turn
+    /// context per request, so the sum can differ from one pass over the
+    /// joined prompt by the rounding of one part.
+    pub(super) fn system_prompt_token_estimate(&self, split: &crate::prompt::SplitSystemPrompt) -> usize {
+        if split.static_part.is_empty() {
+            return split.estimated_tokens();
+        }
+        let mut cache = self
+            .static_token_estimate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let static_tokens = match cache.as_ref() {
+            Some((text, tokens)) if *text == split.static_part => *tokens,
+            _ => {
+                let tokens = crate::util::estimate_tokens(&split.static_part);
+                *cache = Some((split.static_part.clone(), tokens));
+                tokens
+            }
+        };
+        drop(cache);
+        if split.dynamic_part.is_empty() {
+            static_tokens
+        } else {
+            static_tokens + crate::util::estimate_tokens(&split.dynamic_part)
+        }
+    }
+}
+
+/// The listed-tools index of a session: its rows and the prompt section
+/// rendered from them when they were stored.
+pub(crate) struct ListedToolsIndex {
+    pub(super) rows: Vec<(String, String)>,
+    pub(super) section: Option<String>,
+}
+
+impl ListedToolsIndex {
+    pub(super) fn new(rows: Vec<(String, String)>) -> Self {
+        let section = crate::prompt::build_additional_tools_section(&rows);
+        Self { rows, section }
+    }
 }
