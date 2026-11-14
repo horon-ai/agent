@@ -6,7 +6,7 @@
 
 ## 워크스페이스 신뢰
 
-프로젝트 저장소는 에이전트가 실행할 MCP 서버를 지정할 수 있습니다. 그래서 horon agent는 워크스페이스의 프로젝트 로컬 설정을 그 내용에 대한 동의 없이는 읽지 않습니다. 이 문서는 현재 트리의 게이트 범위, 다이제스트 규칙, headless 실패 폐쇄, 재정의를 설명합니다.
+프로젝트 저장소는 에이전트가 실행할 MCP 서버를 지정할 수 있습니다. 그래서 horon agent는 워크스페이스의 프로젝트 로컬 설정을 그 내용에 대한 동의 없이는 읽지 않습니다. 이 문서는 현재 트리의 게이트 범위, 다이제스트 규칙, 클라이언트가 없으면 거부하는 규칙, 재정의를 설명합니다.
 
 ### 무엇을 게이트하는가
 
@@ -35,9 +35,9 @@
 - 기록은 파일 전체를 읽고 고쳐 쓰는 방식이라 두 프로세스가 같은 순간에 쓰면 한쪽 결정이 사라질 수 있습니다. 잃는 것은 결정 하나이고, 없던 허용이 생기지는 않습니다 (`workspace_trust.rs:222` `record`).
 - 다이제스트는 저장소를 신뢰할 수 있게 만드는 장치가 아닙니다. 사용자가 본 내용에 동의를 묶는 장치입니다.
 
-### headless 실패 폐쇄
+### 클라이언트가 없으면 거부
 
-headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래서 모르는 상태는 허용이 아니라 거부입니다.
+붙어 있는 클라이언트가 없으면 물어볼 상대가 없습니다. 그래서 모르는 상태는 허용이 아니라 거부입니다.
 
 - 현재 다이제스트에 대한 기록이 없으면 `Skipped`입니다. 경고를 남기고 프로젝트 로컬 설정을 싣지 않으며, 아무 결정도 기록하지 않습니다. 다음 실행에서 다시 묻습니다.
 - 기록은 있지만 다이제스트가 다르면 `Skipped`입니다. 바뀐 표면을 경고에 적습니다.
@@ -152,7 +152,7 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 ### 우선순위
 
 1. rustls 스택을 거치는 `rustls-webpki` TLS 권고
-2. `ratatui`를 거치는 `lru` (headless 전환 이전 기록. 지금 트리에는 `ratatui` 가 없다)
+2. `ratatui`를 거치는 `lru` (TUI가 에이전트 바이너리에서 분리되기 전 기록. 지금은 `horon-tui`만 `ratatui`에 닿고 `horon-agent`는 닿지 않는다)
 3. `syntect`를 거치는 `bincode`
 4. 여러 전이 의존성을 거치는 `paste` / `rand`
 
@@ -163,19 +163,19 @@ headless 경로에는 질문을 받을 클라이언트가 없습니다. 그래�
 
 | 크레이트 | `Cargo.lock`에 있는가 | 관련 기록 |
 |---|---|---|
-| `ratatui` | 없다 | `lru` 행, TUI 경로 |
+| `ratatui` | 있다. `horon-tui`(`crates/tui`)로만 들어오고 `scripts/ci/check_headless_graph.py`가 `horon-agent`에 들어오지 못하게 막는다 | `lru` 행, TUI 경로 |
 | `syntect` | 없다 | `bincode` 행 |
 | `bincode` | 없다 | `RUSTSEC-2025-0141` |
-| `lru` | 없다 | `RUSTSEC-2026-0002` |
+| `lru` | 있다. `ratatui-core`를 거친다 | `RUSTSEC-2026-0002` |
 | `quick-xml` | 없다 | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
 | `paste` | 있다 | `RUSTSEC-2024-0436` |
 | `rand` | 있다 | `RUSTSEC-2026-0097` |
-| `azure_core` | 있다 | `RUSTSEC-2026-0097` |
+| `azure_core` | 없다 | `RUSTSEC-2026-0097` |
 | `tungstenite` | 있다 | `RUSTSEC-2026-0097` |
 | `tract-nnef` | 있다 | `RUSTSEC-2026-0097`, 아래 `RUSTSEC-2026-0217` 항목 |
 | `lopdf` | 있다 | `RUSTSEC-2026-0187` |
 | `rustls-webpki` | 있다 | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
-| `crossterm` | 없다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다 |
+| `crossterm` | 있다. `horon-tui`로만 들어온다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다가 `crates/tui`와 함께 돌아왔다 |
 
 ### 참고
 

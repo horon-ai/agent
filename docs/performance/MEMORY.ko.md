@@ -274,7 +274,7 @@ horon debug 'server:memory-incident'
 
 - RSS, PSS, 익명 PSS, 할당자 live 바이트
 - 15분 동안의 PSS 증가
-- live, headless, detached, connected 세션 수
+- live, 무인, detached, connected 세션 수(보고서에서는 `headless_live_sessions`)
 - 상주 세션의 상태별 개수
 - 상주 Agent가 가장 많은 스웜
 - 심각도와 주 원인 분류
@@ -332,7 +332,7 @@ python scripts/perf/analyze_memory_log.py --days 1 --json > /tmp/horon-agent-mem
 근거:
 
 - live Agent 수가 많거나 빠르게 늘고 있다
-- headless 또는 detached 세션이 붙어 있는 클라이언트보다 훨씬 많다
+- 무인 또는 detached 세션이 붙어 있는 클라이언트보다 훨씬 많다
 - 세션 수가 늘면서 할당자 live 바이트도 는다
 - `top_live_swarms`에서 하나 이상의 스웜이 큰 비중을 차지한다
 
@@ -434,7 +434,7 @@ ps -T -p <server-pid> -o pid,tid,%cpu,time,comm,wchan:32
 
 - 서버 ID, 버전, git 해시, 가동 시간
 - PSS, 익명 PSS, 할당자 live, 붙들린 상주 바이트
-- live/headless/connected 세션 수
+- live/무인/connected 세션 수
 - 상위 live 스웜과 상태별 개수
 - 15분 증가량
 - 고른 조치와 조치 전후 측정값

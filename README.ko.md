@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>터미널·SDK·에디터·호스트 프로그램으로 쓰는 코딩 에이전트. Rust 실행 파일 하나, OpenAI 호환 엔드포인트라면 무엇이든.</strong>
+  <strong>터미널·SDK·에디터·호스트 프로그램으로 쓰는 코딩 에이전트. 에이전트 하나에 두 모드(헤드리스, TUI), OpenAI 호환 엔드포인트라면 무엇이든.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,9 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-`horon-agent`는 horon의 에이전트 백엔드다. 모델 호출, 도구, 세션, MCP를 도는 에이전트 루프를 네 가지 방식으로 열어 준다. 한 번만 실행하는 명령, SDK용 유닉스 소켓 하네스 API, 에디터용 표준 입출력 Agent Client Protocol(ACP), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드다. 에이전트 실행 파일은 스스로 터미널 화면을 그리지 않고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
+horon agent는 두 모드를 지원하는 하나의 에이전트다. 헤드리스 모드에서는 프로그램이 에이전트를 움직인다. 한 번만 실행하는 명령(`run`), SDK용 유닉스 소켓 하네스 API(`api-bridge`)를 둔 데몬(`serve`), 에디터용 표준 입출력 Agent Client Protocol(ACP)(`acp`), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드(`rpc`)가 여기에 속한다. TUI 모드에서는 사람이 터미널에서 `horon-tui`로 에이전트를 움직인다. 두 모드는 같은 데몬, 세션, 설정 위에서 같은 에이전트 루프(모델 호출, 도구, 세션, MCP)를 돌리고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
 
-- **터미널 클라이언트는 별도 패키지다.** `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 대화형 터미널 클라이언트는 에이전트 SDK를 쓰는 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 그 설정 이름을 알리는 문장을 남기고 멈추며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
+- **바이너리는 둘이고 함께 릴리스된다.** `horon-agent`는 모든 설치에 필요한 에이전트 바이너리이고 스스로 터미널 화면을 그리지 않는다. `horon-tui`는 에이전트 SDK를 쓰는 별도 패키지인 TUI 바이너리이며, 같은 릴리스 태그에서 별도 압축 파일로 배포된다. `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 터미널에서 인자 없이 실행한 `horon`은 형제 실행 파일 `horon-tui`로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 그 설정 이름을 알리는 문장을 남기고 멈추며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
 - **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
 - **모델 직접 호출.** 에이전트가 엔드포인트로 바로 POST한다. 사이에 라우터 프로세스나 플러그인 호스트가 없다.
 - **가볍고 빠른 시작.** GitHub 호스티드 러너에서 한 턴 실행이 Linux 55.9 ms, macOS 103.3 ms 걸렸다([수치와 한계](#벤치마크)).
@@ -90,6 +90,8 @@ horon run "summarize this repo"
 
 ## 실행 방법
 
+인자 없는 `horon`은 TUI 모드를 열고, 아래의 나머지 하위 명령은 모두 헤드리스 모드다. `horon repl`은 전체 화면 클라이언트를 원하지 않는 사람을 위해 에이전트 바이너리가 직접 제공하는 단순한 줄 입력 프롬프트다.
+
 | 명령 | 하는 일 |
 | --- | --- |
 | `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 `horon-tui` 클라이언트로 자기 프로세스를 넘긴다. 키, 사용자 파일, 설정 화면이 있다([docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재는 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
@@ -102,7 +104,7 @@ horon run "summarize this repo"
 
 ### 터미널 클라이언트
 
-`horon-tui`는 대화형 클라이언트다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이며 `horon-agent-sdk`로 만들어 터미널 라이브러리가 에이전트 실행 파일에 들어가지 않는다.
+`horon-tui`는 TUI 모드다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이며 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 실행 파일에 들어가지 않는다.
 
 터미널에서 인자 없이 `horon`, `hrn`, `horon-agent`를 실행하면 시작한다. 서버가 없으면 띄운 뒤, 자기 프로세스를 에이전트 옆의 `horon-tui` 파일로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬으면 세션 번호도 넘긴다. 조건은 셋이다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션은 그 문장을 대신 남기므로 스크립트와 CI는 클라이언트 대신 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고 ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``를 출력한 뒤 0이 아닌 종료 코드로 끝난다. 검사 전에 띄운 서버는 계속 돈다.
 
@@ -195,7 +197,7 @@ macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. 같은 문서를 [agent.horon.ai](https://agent.horon.ai)에도 게시하며 [packages/docs](packages/docs)에서 빌드한다.
+문서는 영어(기본)와 한국어(`.ko.md`) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai) 사이트는 [packages/docs](packages/docs)에서 따로 쓴 더 짧은 문서 묶음이다. `docs/`에서 생성하지 않으므로 동작이 바뀌면 둘 다 손으로 고친다.
 
 | 주제 | 문서 |
 | --- | --- |
@@ -214,7 +216,7 @@ macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP
 
 ## 기여
 
-먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. `horon-agent` 패키지에 터미널 UI 없음, ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
+먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. `horon-agent` 패키지에 터미널 UI 없음(TUI 모드는 `horon-tui`에 있음), ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
 
 - `dev`에서 브랜치를 만들고 `dev`로 풀 리퀘스트를 연다. 모든 풀 리퀘스트는 이 저장소의 실제 이슈를 연결해야 한다(`Closes #123`). `Require Linked Issue` 검사가 이를 확인한다.
 - 푸시하기 전에 검사를 돌린다.

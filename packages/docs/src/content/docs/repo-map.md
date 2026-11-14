@@ -10,7 +10,7 @@ order: 1
 | Path | What it holds |
 | --- | --- |
 | `src/` | The CLI: `serve`, `run`, `repl`, `api-bridge`, `acp`, and their dispatch |
-| `crates/` | The workspace: `base`, `app-core`, `session-store`, `harness-api`, `agent-sdk`, `tui` (the `horon-tui` terminal client), provider and platform crates |
+| `crates/` | The workspace: `base`, `app-core`, `session-store`, `harness-api`, `agent-sdk`, `tui` (the TUI binary `horon-tui`), provider and platform crates |
 | `docs/` | Behaviour documentation, compiled into the binary and served by `horon_agent_docs` |
 | `packages/sdk/typescript` | `@horon-ai/agent-sdk` |
 | `packages/sdk/python` | `horon-agent-sdk` |
@@ -32,7 +32,7 @@ order: 1
 | Tool scheduling and loop prevention | `docs/runtime/TOOL_SCHEDULING.md` |
 | Turn recovery, mid-run insert, `--resume` | `docs/runtime/TURNS.md` |
 | Inter-agent IRC mailbox | `docs/runtime/IRC.md` |
-| Terminal client (`horon-tui`) | `docs/runtime/TUI.md` |
+| TUI mode (`horon-tui`) | `docs/runtime/TUI.md` |
 | System prompt composition | `docs/runtime/PROMPT.md` |
 | Provider profiles and model roles | `docs/provider/MODEL.md` |
 | Safety, approvals, unattended runs | `docs/safety/SAFETY.md` |

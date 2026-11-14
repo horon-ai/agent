@@ -269,7 +269,7 @@ The report contains:
 
 - RSS, PSS, anonymous PSS, allocator live bytes
 - PSS growth over 15 minutes
-- Live, headless, detached, and connected session counts
+- Live, unattended, detached, and connected session counts (`headless_live_sessions` in the report)
 - Resident sessions counted by state
 - The swarms with the most resident Agents
 - Severity and the primary cause classification
@@ -329,7 +329,7 @@ Crossing a threshold starts an investigation. It does not mean a destructive cle
 Evidence:
 
 - The live Agent count is high or growing fast
-- Headless or detached sessions far outnumber connected clients
+- Unattended or detached sessions far outnumber connected clients
 - Allocator live bytes grow with the session count
 - One or more swarms take a large share in `top_live_swarms`
 
@@ -432,7 +432,7 @@ Store these.
 
 - Server ID, version, git hash, uptime
 - PSS, anonymous PSS, allocator live, held resident bytes
-- Live/headless/connected session counts
+- Live/unattended/connected session counts
 - Top live swarms and counts by state
 - The 15-minute growth
 - The action chosen and measurements before and after
