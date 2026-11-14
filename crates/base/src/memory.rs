@@ -1273,11 +1273,6 @@ pub const EMBEDDING_MAX_HITS: usize = 10;
 /// Minimum per-retriever candidate pool size for hybrid fusion.
 const HYBRID_POOL_MIN: usize = 50;
 
-/// Most memories HoronAgent sends to Jev per automatic recall. Every 24 entries costs
-/// one Jev decision, so judging a whole store (thousands of memories) each turn
-/// exhausted the daily plan allowance within hours. Lexical relevance narrows
-/// the field first; Jev still judges every candidate that reaches the prompt.
-
 #[path = "memory/ranking.rs"]
 mod ranking;
 use ranking::bm25_rank;
