@@ -1291,5 +1291,86 @@ class SkillFixtureTests(unittest.TestCase):
                 self.assertIn("BENCH-SKILL-SENTINEL", fh.read())
 
 
+class StatsOnlyMock:
+    """A mock server that only answers ``stats()``, for a run with no agent.
+
+    The first call is the "before" count; every later call returns the
+    requests the test wants the run to have made.
+    """
+
+    base_url = "http://127.0.0.1:9"
+
+    def __init__(self, requests: list[dict]) -> None:
+        self.requests = requests
+        self.calls = 0
+
+    def stats(self) -> dict:
+        self.calls += 1
+        if self.calls == 1:
+            return {"request_count": 0, "requests": []}
+        return {"request_count": len(self.requests), "requests": list(self.requests)}
+
+
+def run_record(requests: list[dict]) -> dict:
+    """One real ``measure_oneshot`` record around a process that does nothing."""
+    env = {key: value for key, value in os.environ.items() if key != "HORON_HOME"}
+    return bench.measure_oneshot(
+        [sys.executable, "-c", "pass"], os.getcwd(), env, StatsOnlyMock(requests), 60.0
+    )
+
+
+class RequestBytesTests(unittest.TestCase):
+    """Each run record says what its model requests weighed."""
+
+    def test_oneshot_record_carries_request_bytes(self) -> None:
+        run = run_record([
+            {"ts": 0.0, "body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8},
+            {"ts": 0.0, "body_bytes": 12480, "tools_bytes": 9714, "tool_count": 8},
+        ])
+        self.assertIsNone(run["error"])
+        self.assertEqual(run["mock_requests"], 2)
+        self.assertEqual(
+            run["request_bytes"],
+            [
+                {"body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8},
+                {"body_bytes": 12480, "tools_bytes": 9714, "tool_count": 8},
+            ],
+        )
+        result = {
+            "name": "horon",
+            "label": "horon",
+            "oneshot": bench.summarize_oneshot([run]),
+            "sessions_memory": {},
+        }
+        markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
+        self.assertIn("| request bytes |", markdown)
+        self.assertIn("| 12,000 / 9,714 (8 tools) |", markdown)
+
+    def test_request_bytes_missing_keys_reports_none(self) -> None:
+        run = run_record([
+            {"ts": 0.0},
+            {"ts": 0.0, "body_bytes": 310, "tools_bytes": 0, "tool_count": 0},
+        ])
+        # A key the mock server did not report is unknown, not zero.
+        self.assertEqual(
+            run["request_bytes"][0], {"body_bytes": None, "tools_bytes": None, "tool_count": None}
+        )
+        self.assertIn('"tools_bytes": null', json.dumps(run["request_bytes"][0]))
+        # A reported zero is a real value and stays a zero.
+        self.assertEqual(
+            run["request_bytes"][1], {"body_bytes": 310, "tools_bytes": 0, "tool_count": 0}
+        )
+
+    def test_a_report_without_request_bytes_keeps_its_columns(self) -> None:
+        result = {
+            "name": "horon",
+            "label": "horon",
+            "oneshot": {"ms": 100.0, "peak_rss_bytes": 40e6, "tool_roundtrip": True},
+            "sessions_memory": {},
+        }
+        markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
+        self.assertNotIn("request bytes", markdown)
+
+
 if __name__ == "__main__":
     unittest.main()

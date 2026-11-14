@@ -23,6 +23,9 @@ Measured:
   fsync_calls       fsync + fdatasync calls made by one one-shot run, counted
                     with strace (``--syscalls``; Linux only, recorded as
                     skipped when strace is missing)
+  request_bytes     per run record, the JSON body bytes, tool catalog bytes and
+                    tool count of every model request, as the mock server
+                    received them (``null`` when it did not report a key)
   install_size_bytes  binary or npm package directory size
 
 horon is the baseline; every other row shows its multiple of horon.
@@ -66,6 +69,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bench_common as bc  # noqa: E402
+import bench_request_bytes as brb  # noqa: E402
 
 SUITE = "compare"
 DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi", "omp", "omo"]
@@ -877,6 +881,7 @@ def _measure_oneshot(
     tools_offered: list[str] = []
     result_excerpt = None
     request_offsets_ms: list[float] = []
+    request_bytes: list[dict] = []
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -908,6 +913,9 @@ def _measure_oneshot(
         # split a run into startup, tool round trip and shutdown without a
         # profiler, on every OS the bench runs on.
         request_offsets_ms = [round((r["ts"] - started_wall) * 1000, 2) for r in requests if "ts" in r]
+        # What each request weighed: the bytes a prompt or tool-description
+        # change moves, kept beside the timings of the same run.
+        request_bytes = brb.request_bytes(requests)
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -942,6 +950,7 @@ def _measure_oneshot(
         "tools_offered": tools_offered,
         "result_excerpt": result_excerpt,
         "request_offsets_ms": request_offsets_ms,
+        "request_bytes": request_bytes,
         "log_tail": log_tail,
         "exit_local_time": exit_local_time,
     }
@@ -2929,6 +2938,7 @@ def render_markdown(
         base_ms = baseline_value(results, ("oneshot", "ms"))
         base_rss = baseline_value(results, ("oneshot", "peak_rss_bytes"))
         show_syscalls = any((r.get("oneshot") or {}).get("fsync_calls") is not None for r in results)
+        show_request_bytes = any(brb.first_request(r.get("oneshot")) for r in results)
         rows = []
         for result in results:
             oneshot = result.get("oneshot") or {}
@@ -2952,6 +2962,8 @@ def render_markdown(
             ]
             if show_syscalls:
                 row.append(fmt_calls(oneshot.get("fsync_calls")))
+            if show_request_bytes:
+                row.append(brb.markdown_cell(oneshot))
             row.append(note[:60])
             rows.append(row)
         lines.append("**One-shot headless prompt** (includes startup, one `ls` tool call, final answer)")
@@ -2961,11 +2973,15 @@ def render_markdown(
                 ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
                  "Tool round-trip"]
                 + (["fsync calls"] if show_syscalls else [])
+                + (["request bytes"] if show_request_bytes else [])
                 + ["Note"],
                 rows,
             )
         )
         lines.append("")
+        if show_request_bytes:
+            lines.append(brb.MARKDOWN_NOTE)
+            lines.append("")
 
     # Skill invocation
     if "skill" in scenarios:
