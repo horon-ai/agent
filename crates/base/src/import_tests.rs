@@ -1,12 +1,16 @@
 use super::*;
 
-struct EnvVarGuard {
+/// Set an environment variable for one test and restore it on drop.
+///
+/// Shared with `import_takeover_tests`: the refusal cases there need the same
+/// isolated home, and a second copy would be a second thing to keep in step.
+pub(super) struct EnvVarGuard {
     key: &'static str,
     prev: Option<std::ffi::OsString>,
 }
 
 impl EnvVarGuard {
-    fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+    pub(super) fn set_path(key: &'static str, value: &std::path::Path) -> Self {
         let prev = std::env::var_os(key);
         crate::env::set_var(key, value);
         Self { key, prev }
@@ -221,8 +225,11 @@ fn write_live_claude_record(
     path
 }
 
-#[cfg(target_os = "linux")]
-fn write_claude_transcript(path: &std::path::Path, session_id: &str) {
+/// Write a two-message Claude transcript.
+///
+/// Opens no Claude process, so both this file and `import_takeover_tests` use
+/// it on every platform.
+pub(super) fn write_claude_transcript(path: &std::path::Path, session_id: &str) {
     std::fs::write(
         path,
         format!(
@@ -425,7 +432,9 @@ fn takeover_timeout_preserves_the_staged_horon_agent_session_after_sigterm() {
         session_path: transcript.to_string_lossy().to_string(),
     };
 
-    let error = take_over_live_claude_session_with_timeout(&target, std::time::Duration::from_millis(50)).unwrap_err();
+    let error =
+        super::takeover::take_over_live_claude_session_with_timeout(&target, std::time::Duration::from_millis(50))
+            .unwrap_err();
     assert!(error.to_string().contains("was preserved"));
     assert!(claude.try_wait().unwrap().is_none());
 
