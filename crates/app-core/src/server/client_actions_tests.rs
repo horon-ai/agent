@@ -447,9 +447,6 @@ async fn enabling_swarm_does_not_auto_elect_coordinator() {
     )])));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::<String, HashSet<String>>::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::<String, String>::new()));
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::<String, HashMap<String, HashSet<String>>>::new()));
-    let channel_subscriptions_by_session =
-        Arc::new(RwLock::new(HashMap::<String, HashMap<String, HashSet<String>>>::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let (client_event_tx, mut client_event_rx) = mpsc::unbounded_channel();
     let mut swarm_enabled = false;
@@ -465,8 +462,6 @@ async fn enabling_swarm_does_not_auto_elect_coordinator() {
         &swarm_members,
         &swarms_by_id,
         &swarm_coordinators,
-        &channel_subscriptions,
-        &channel_subscriptions_by_session,
         &swarm_plans,
         &client_event_tx,
     )

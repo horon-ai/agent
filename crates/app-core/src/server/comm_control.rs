@@ -1708,7 +1708,6 @@ async fn handle_comm_assign_task_with_mode(
             from_name: coordinator_name.clone(),
             notification_type: NotificationType::Message {
                 scope: Some("dm".to_string()),
-                channel: None,
                 tldr: None,
             },
             message: notification,
@@ -1763,7 +1762,6 @@ async fn handle_comm_assign_task_with_mode(
                 from_name: coordinator_name.clone(),
                 notification_type: NotificationType::Message {
                     scope: Some("plan".to_string()),
-                    channel: None,
                     tldr: None,
                 },
                 message: plan_msg.clone(),
@@ -2455,7 +2453,6 @@ pub(super) async fn handle_comm_task_control(
                         from_name: None,
                         notification_type: NotificationType::Message {
                             scope: Some("dm".to_string()),
-                            channel: None,
                             tldr: None,
                         },
                         message: stand_down,

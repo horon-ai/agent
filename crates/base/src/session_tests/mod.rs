@@ -54,6 +54,9 @@ mod final_cache_skip;
 #[path = "history_page.rs"]
 mod history_page;
 
+#[path = "retired_swarm_actions.rs"]
+mod retired_swarm_actions;
+
 /// A session snapshot written with the removed `plugin_id` field still loads
 /// (twice, for stale-state safety) and keeps its model metadata.
 #[test]

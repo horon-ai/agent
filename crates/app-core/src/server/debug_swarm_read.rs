@@ -1,8 +1,6 @@
 use super::plan_proposals::{PlanProposalStore, all_pending_plan_proposals, pending_plan_proposals_for_swarm};
-use super::swarm_channels::list_channels_for_swarm;
 use super::{
-    FileTouchService, ServerIdentity, SharedContext, SwarmMember, SwarmState, VersionedPlan, git_common_dir_for,
-    swarm_id_for_dir,
+    FileTouchService, ServerIdentity, SwarmMember, SwarmState, VersionedPlan, git_common_dir_for, swarm_id_for_dir,
 };
 use crate::agent::Agent;
 use crate::plan::{next_runnable_item_ids, summarize_plan_graph};
@@ -13,23 +11,20 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "swarm read debug commands inspect sessions, swarm state, shared context, plans, channels, and file touches together"
+    reason = "swarm read debug commands inspect sessions, swarm state, plans, and file touches together"
 )]
 pub(super) async fn maybe_handle_swarm_read_command(
     cmd: &str,
     sessions: &SessionAgents,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: &Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
     plan_proposals: &PlanProposalStore,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     file_touch: &FileTouchService,
-    channel_subscriptions: &ChannelSubscriptions,
     server_identity: &ServerIdentity,
 ) -> Result<Option<String>> {
     let swarm_state = SwarmState {
@@ -209,28 +204,6 @@ pub(super) async fn maybe_handle_swarm_read_command(
         ));
     }
 
-    if cmd == "swarm:channels" {
-        let subs = channel_subscriptions.read().await;
-        let mut out: Vec<serde_json::Value> = Vec::new();
-        for swarm_id in subs.keys() {
-            let channels = list_channels_for_swarm(swarm_id, channel_subscriptions).await;
-            let mut channel_data: Vec<serde_json::Value> = Vec::new();
-            for (channel, member_count) in channels {
-                channel_data.push(serde_json::json!({
-                    "channel": channel,
-                    "count": member_count,
-                }));
-            }
-            out.push(serde_json::json!({
-                "swarm_id": swarm_id,
-                "channels": channel_data,
-            }));
-        }
-        return Ok(Some(
-            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".to_string()),
-        ));
-    }
-
     if cmd.starts_with("swarm:plan_version:") {
         let swarm_id = cmd.strip_prefix("swarm:plan_version:").unwrap_or("").trim();
         let runtime = swarm_state.load_runtime(swarm_id).await;
@@ -336,68 +309,6 @@ pub(super) async fn maybe_handle_swarm_read_command(
                 "unresolved_dependency_ids": summary.unresolved_dependency_ids,
             })
             .to_string()
-        } else {
-            "[]".to_string()
-        };
-        return Ok(Some(output));
-    }
-
-    if cmd == "swarm:context" {
-        let ctx = shared_context.read().await;
-        let mut out: Vec<serde_json::Value> = Vec::new();
-        for (swarm_id, entries) in ctx.iter() {
-            for (key, context) in entries.iter() {
-                out.push(serde_json::json!({
-                    "swarm_id": swarm_id,
-                    "key": key,
-                    "value": context.value,
-                    "from_session": context.from_session,
-                    "from_name": context.from_name,
-                    "created_secs_ago": context.created_at.elapsed().as_secs(),
-                    "updated_secs_ago": context.updated_at.elapsed().as_secs(),
-                }));
-            }
-        }
-        return Ok(Some(
-            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".to_string()),
-        ));
-    }
-
-    if cmd.starts_with("swarm:context:") {
-        let arg = cmd.strip_prefix("swarm:context:").unwrap_or("").trim();
-        let ctx = shared_context.read().await;
-        let output = if let Some((swarm_id, key)) = arg.split_once(':') {
-            if let Some(entries) = ctx.get(swarm_id) {
-                if let Some(context) = entries.get(key) {
-                    serde_json::json!({
-                        "swarm_id": swarm_id,
-                        "key": key,
-                        "value": context.value,
-                        "from_session": context.from_session,
-                        "from_name": context.from_name,
-                        "created_secs_ago": context.created_at.elapsed().as_secs(),
-                        "updated_secs_ago": context.updated_at.elapsed().as_secs(),
-                    })
-                    .to_string()
-                } else {
-                    return Err(anyhow::anyhow!("No context key '{}' in swarm '{}'", key, swarm_id));
-                }
-            } else {
-                return Err(anyhow::anyhow!("No context for swarm '{}'", swarm_id));
-            }
-        } else if let Some(entries) = ctx.get(arg) {
-            let mut out: Vec<serde_json::Value> = Vec::new();
-            for (key, context) in entries.iter() {
-                out.push(serde_json::json!({
-                    "key": key,
-                    "value": context.value,
-                    "from_session": context.from_session,
-                    "from_name": context.from_name,
-                    "created_secs_ago": context.created_at.elapsed().as_secs(),
-                    "updated_secs_ago": context.updated_at.elapsed().as_secs(),
-                }));
-            }
-            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".to_string())
         } else {
             "[]".to_string()
         };
@@ -603,7 +514,6 @@ pub(super) async fn maybe_handle_swarm_read_command(
         let coordinators = swarm_coordinators.read().await;
         let members = swarm_members.read().await;
         let plans = swarm_plans.read().await;
-        let ctx = shared_context.read().await;
         let touches = file_touch.snapshot().await;
 
         let output = if let Some(session_ids) = swarms.get(swarm_id) {
@@ -645,11 +555,6 @@ pub(super) async fn maybe_handle_swarm_read_command(
                     })
                 });
 
-            let context_keys: Vec<_> = ctx
-                .get(swarm_id)
-                .map(|entries| entries.keys().cloned().collect())
-                .unwrap_or_default();
-
             let conflicts: Vec<_> = touches
                 .iter()
                 .filter_map(|(path, accesses)| {
@@ -673,7 +578,6 @@ pub(super) async fn maybe_handle_swarm_read_command(
                 "coordinator": coordinator,
                 "coordinator_name": coordinator_name,
                 "plan": plan,
-                "context_keys": context_keys,
                 "conflict_files": conflicts,
             })
             .to_string()

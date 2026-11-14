@@ -114,13 +114,10 @@ fn daemon() -> (SessionAgents, ConnectionMap, impl Fn() -> OpenedConnection) {
     let client_connections = Arc::new(RwLock::new(HashMap::new()));
     let swarm_members = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id = Arc::new(RwLock::new(HashMap::new()));
-    let shared_context = Arc::new(RwLock::new(HashMap::new()));
     let plan_proposals = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
-    let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
     let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
     let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let (swarm_event_tx, _) = broadcast::channel(8);
@@ -144,13 +141,10 @@ fn daemon() -> (SessionAgents, ConnectionMap, impl Fn() -> OpenedConnection) {
             Arc::clone(&client_connections),
             swarm_members.clone(),
             swarms_by_id.clone(),
-            shared_context.clone(),
             plan_proposals.clone(),
             swarm_plans.clone(),
             swarm_coordinators.clone(),
             file_touch.clone(),
-            channel_subscriptions.clone(),
-            channel_subscriptions_by_session.clone(),
             event_history.clone(),
             event_counter.clone(),
             swarm_event_tx.clone(),

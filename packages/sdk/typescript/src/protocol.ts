@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 20;
+export const API_VERSION_MINOR = 21;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each

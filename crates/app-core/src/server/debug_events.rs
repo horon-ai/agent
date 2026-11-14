@@ -104,7 +104,6 @@ pub(super) async fn maybe_handle_event_subscription_command<W: AsyncWrite + Unpi
                     SwarmEventType::Notification { .. } => "notification",
                     SwarmEventType::PlanUpdate { .. } => "plan_update",
                     SwarmEventType::PlanProposal { .. } => "plan_proposal",
-                    SwarmEventType::ContextUpdate { .. } => "context_update",
                     SwarmEventType::StatusChange { .. } => "status_change",
                     SwarmEventType::MemberChange { .. } => "member_change",
                 };

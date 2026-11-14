@@ -84,8 +84,6 @@ async fn run_disconnect_cleanup(
         &Arc::new(RwLock::new(HashMap::new())),
         &Arc::new(RwLock::new(HashMap::new())),
         &FileTouchService::new(),
-        &Arc::new(RwLock::new(HashMap::new())),
-        &Arc::new(RwLock::new(HashMap::new())),
         connections,
         "conn_old",
         &Arc::new(RwLock::new(HashMap::new())),
@@ -153,8 +151,6 @@ async fn cold_resume_with_agent(
     let shutdown_signals = Arc::new(RwLock::new(HashMap::<String, InterruptSignal>::new()));
     let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
-    let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>> = Arc::new(RwLock::new(HashMap::new()));
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -186,8 +182,6 @@ async fn cold_resume_with_agent(
         members,
         &swarms_by_id,
         &file_touch,
-        &channel_subscriptions,
-        &channel_subscriptions_by_session,
         &swarm_plans,
         &swarm_coordinators,
         &client_count,
@@ -707,8 +701,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
             let soft_interrupt_queues: SessionInterruptQueues = Arc::new(RwLock::new(HashMap::new()));
             let swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>> = Arc::new(RwLock::new(HashMap::new()));
             let file_touch = FileTouchService::new();
-            let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
-            let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
             let swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>> = Arc::new(RwLock::new(HashMap::new()));
             let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
             let client_count = Arc::new(RwLock::new(1usize));
@@ -741,8 +733,6 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     &members,
                     &swarms_by_id,
                     &file_touch,
-                    &channel_subscriptions,
-                    &channel_subscriptions_by_session,
                     &swarm_plans,
                     &swarm_coordinators,
                     &client_count,

@@ -416,7 +416,6 @@ async fn communicate_spawn_reports_completion_back_to_spawner() {
                     from_session,
                     notification_type: crate::protocol::NotificationType::Message {
                         scope: Some(scope),
-                        channel: None,
                         tldr: None,
                     },
                     message,

@@ -393,6 +393,46 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 답하고 클라이언트는 그것을 "세션이 없다"가 아니라 "이 빌드는 삭제할 수 없다"로 읽는다. SDK는 Rust와 Python에서
 `delete_session`, TypeScript에서 `deleteSession`으로 노출한다.
 
+## Swarm 채팅 표면 제거(프로토콜 1.21)
+
+하네스 API는 주 버전 1을 유지하고 부 버전이 20에서 21로 올라간다. 이 항목은 **표면 변경이 아니라
+제거 사실의 기록**이다. 없어진 swarm 채팅 기본 연산(`swarm` 동작 `share`, `share_append`, `read`,
+`channel`, `list_channels`, `channel_members`, `subscribe_channel`,
+`unsubscribe_channel`과 `swarm message`의 `channel` 인자)은 내부 데몬 와이어
+(`horon-agent-protocol`)와 `swarm` 도구 스키마에만 있었다. 어느 것도 하네스 API 요청·이벤트·필드로
+노출된 적이 없으므로 1.20을 쓰던 클라이언트는 같은 프레임을 보내고 읽는다.
+
+제거 사실을 여기에 적는 이유는 세션 전사에 담길 수 있는 내용과 옛 세션의 재생이 바뀌기
+때문이다.
+
+- 와이어 요청 `CommShare`, `CommRead`, `CommListChannels`, `CommChannelMembers`,
+  `CommSubscribeChannel`, `CommUnsubscribeChannel`이 사라졌다. 서버 이벤트 `CommContext`,
+  `CommChannels`, 알림 타입 `SharedContext`, `NotificationType::Message`의 `channel` 필드,
+  `SwarmEventType::ContextUpdate`, `ContextEntry`, `SwarmChannelInfo` 타입도 함께 사라졌다.
+- 제거 전에 저장된 세션은 불러오기·프로젝션·렌더를 거치면서 `swarm` 도구 호출의 이름과 인자를
+  그대로 유지하므로, 재개해도 전사가 사라지지 않는다. 재생은
+  `session::tests::retired_swarm_actions`가 검증한다.
+- 없어진 동작을 부르는 새 호출은 브로드캐스트로 떨어지지 않고 실패한다. 도구는
+  `Action '<name>' was removed: the swarm shared-context store and topic channels are gone.
+  Use action='message' (with to_session for a DM) ... and artifacts for durable data.`로
+  답한다. `message`에 붙인 `channel` 인자도 같은 방식으로 거절된다. 둘 다
+  `tool::communicate::tests::input_format::retired_channel_and_shared_context_actions_are_rejected`가
+  검증한다.
+
+### 이전 방법
+
+|이전|지금|
+| --- | --- |
+| `swarm {action:"dm"}` / `swarm {action:"message", to_session}` | 그대로 |
+| `swarm {action:"broadcast"}` / `swarm {action:"message"}` | 그대로. 보내는 쪽이 띄운 서브트리에 닿는다 |
+| `swarm {action:"channel", channel, message}` | 한 에이전트면 `swarm {action:"message", to_session}`, 서브트리면 `to_session` 없이 |
+| `swarm {action:"share"\|"share_append"\|"read", key, value}` | 그래프 엣지의 노드 아티팩트(`complete_node`가 타입 지정 핸드오프를 나른다), swarm 관찰은 `status`/`summary` |
+| `swarm {action:"list_channels"\|"channel_members"\|"subscribe_channel"\|"unsubscribe_channel"}` | 대체 없음. 그룹 도달은 띄운 서브트리다 |
+| `swarm {action:"await_members"}` | 그대로 |
+
+데몬 와이어는 같은 바이너리 안에서만 쓰는 사설 표면이므로 폐기 기간 없이 한 번에 제거했다. 옛
+swarm 프레임을 말하는 외부 생산자가 없고, 하네스 API가 그 프레임을 실어 나른 적도 없다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두

@@ -382,6 +382,52 @@ answers `unknown_request`, which a client treats as "this build cannot delete"
 rather than as a missing session. The SDKs expose it as `delete_session` (Rust, Python)
 and `deleteSession` (TypeScript).
 
+## Swarm chat surface removal (protocol 1.21)
+
+The harness API keeps major version 1 and moved from minor version 20 to 21. This
+entry is a **removal recorded, not a surface change**: the swarm chat primitives
+that went away (`swarm` actions `share`, `share_append`, `read`, `channel`,
+`list_channels`, `channel_members`, `subscribe_channel`, `unsubscribe_channel`,
+and the `channel` argument of `swarm message`) lived on the internal daemon wire
+(`horon-agent-protocol`) and in the `swarm` tool schema. None of them was ever
+exposed as a harness API request, event, or field, so a client that spoke 1.20
+sends and reads exactly the same frames.
+
+The removal is recorded here because it changes what a session's transcript can
+contain and what an old session replays:
+
+- The wire requests `CommShare`, `CommRead`, `CommListChannels`,
+  `CommChannelMembers`, `CommSubscribeChannel`, and `CommUnsubscribeChannel` are
+  gone, as are the `CommContext` and `CommChannels` server events, the
+  `SharedContext` notification type, the `channel` field on
+  `NotificationType::Message`, `SwarmEventType::ContextUpdate`, and the
+  `ContextEntry` and `SwarmChannelInfo` types.
+- A stored session written before the removal keeps its `swarm` tool calls with
+  their original names and arguments through load, projection, and render, so
+  resuming it loses no transcript. Replay is covered by
+  `session::tests::retired_swarm_actions`.
+- A new call naming a removed action fails instead of degrading: the tool answers
+  `Action '<name>' was removed: the swarm shared-context store and topic channels
+  are gone. Use action='message' (with to_session for a DM) ... and artifacts for
+  durable data.` A `channel` argument on `message` is refused the same way. Both
+  are covered by
+  `tool::communicate::tests::input_format::retired_channel_and_shared_context_actions_are_rejected`.
+
+### Migration
+
+| Was | Now |
+| --- | --- |
+| `swarm {action:"dm"}` / `swarm {action:"message", to_session}` | unchanged |
+| `swarm {action:"broadcast"}` / `swarm {action:"message"}` | unchanged; reaches the sender's spawned subtree |
+| `swarm {action:"channel", channel, message}` | `swarm {action:"message", to_session}` for one agent, or without `to_session` for the subtree |
+| `swarm {action:"share"|"share_append"|"read", key, value}` | node artifacts on graph edges (`complete_node` carries the typed handoff); `status`/`summary` observe the swarm |
+| `swarm {action:"list_channels"|"channel_members"|"subscribe_channel"|"unsubscribe_channel"}` | no replacement; group reach is the spawned subtree |
+| `swarm {action:"await_members"}` | unchanged |
+
+The daemon wire is same-binary and private, so this is a one-pass removal rather
+than a deprecation window: no external producer speaks old swarm frames, and the
+harness API never carried them.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.

@@ -10,8 +10,7 @@ use super::debug_session_admin::maybe_handle_session_admin_command;
 use super::debug_swarm_read::maybe_handle_swarm_read_command;
 use super::debug_swarm_write::{DebugSwarmWriteContext, maybe_handle_swarm_write_command};
 use super::{
-    FileTouchService, PlanProposalStore, ServerIdentity, SharedContext, SwarmEvent, SwarmMember, VersionedPlan,
-    debug_control_allowed,
+    FileTouchService, PlanProposalStore, ServerIdentity, SwarmEvent, SwarmMember, VersionedPlan, debug_control_allowed,
 };
 use crate::agent::Agent;
 use crate::ambient_runner::AmbientRunnerHandle;
@@ -25,8 +24,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
-
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
 #[derive(Clone, Debug)]
 pub(super) struct ClientConnectionInfo {
@@ -46,7 +43,7 @@ pub(super) struct ClientConnectionInfo {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "debug client wiring fans out across sessions, swarms, files, channels, jobs, and transport state"
+    reason = "debug client wiring fans out across sessions, swarms, files, jobs, and transport state"
 )]
 pub(super) async fn handle_debug_client(
     stream: Stream,
@@ -57,13 +54,10 @@ pub(super) async fn handle_debug_client(
     client_connections: Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
     plan_proposals: PlanProposalStore,
     swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
     file_touch: FileTouchService,
-    channel_subscriptions: ChannelSubscriptions,
-    channel_subscriptions_by_session: ChannelSubscriptions,
     debug_jobs: Arc<RwLock<HashMap<String, DebugJob>>>,
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
@@ -187,12 +181,9 @@ pub(super) async fn handle_debug_client(
                         &server_identity,
                         server_start_time,
                         &swarms_by_id,
-                        &shared_context,
                         &swarm_plans,
                         &swarm_coordinators,
                         &file_touch,
-                        &channel_subscriptions,
-                        &channel_subscriptions_by_session,
                         &debug_jobs,
                         &event_history,
                         &shutdown_signals,
@@ -206,12 +197,10 @@ pub(super) async fn handle_debug_client(
                         &sessions,
                         &swarm_members,
                         &swarms_by_id,
-                        &shared_context,
                         &plan_proposals,
                         &swarm_plans,
                         &swarm_coordinators,
                         &file_touch,
-                        &channel_subscriptions,
                         &server_identity,
                     )
                     .await?
@@ -223,7 +212,6 @@ pub(super) async fn handle_debug_client(
                             session_id: &session_id,
                             swarm_members: &swarm_members,
                             swarms_by_id: &swarms_by_id,
-                            shared_context: &shared_context,
                             plan_proposals: &plan_proposals,
                             swarm_plans: &swarm_plans,
                             swarm_coordinators: &swarm_coordinators,

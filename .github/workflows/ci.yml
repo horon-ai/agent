@@ -1161,6 +1161,9 @@ jobs:
         # `session_replication` covers what a replica reads from those files.
         # `session::tests::durability::` covers the close at the end of a run
         # publishing only the runtime binding, with nothing appended to the log.
+        # `session::tests::retired_swarm_actions::` covers replay of a session
+        # written before the swarm channel and shared-context removal: the
+        # stored calls must survive projection and render.
         # The other `session` modules are left out: two of their tests fail on
         # `dev` itself and are outside this change.
         run: |
@@ -1176,6 +1179,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- session::tests::durability:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- session::tests::retired_swarm_actions:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \

@@ -2,10 +2,10 @@
 
 Language: **English** | [한국어](SWARM_TASK_GRAPH.ko.md)
 
-Status: in progress (it replaces the earlier agent-first shape). The DAG engine,
-deep/light modes, gates, the growth machinery, and communication migration steps 1-2
-(artifact dataflow, subtree-scoped broadcast) work. Discarding channels and shared
-context (steps 3-4) is still ahead.
+Status: complete (it replaces the earlier agent-first shape). The DAG engine,
+deep/light modes, gates, the growth machinery, and all four communication migration
+steps are done: artifact dataflow, subtree-scoped broadcast, moving flows off the chat
+surface, and removing topic channels and the shared-context store.
 
 This document holds the plan for reworking the swarm module from an agent-centered
 model into a **task DAG (directed acyclic graph)**. The DAG becomes the primary
@@ -381,7 +381,7 @@ agent reasoning (arbitrary)
   edge_cases_considered, open_questions, confidence, what_i_did_not_check}}` - the typed
   handoff the gates inspect.
 - `swarm run` - hands control to the scheduler.
-- `spawn` / `dm` / `channel` remain as low-level escape hatches.
+- `spawn` / `dm` / `broadcast` remain as low-level escape hatches.
 
 The "more control" an agent actually wants is per-node prompts, computed fan-out, and
 conditional expansion. That is provided (a) by computing the node list the way the agent
@@ -392,11 +392,13 @@ It is not provided as a scripting language that bypasses enforcement.
 
 ## 8a. Communication rework: dataflow first, chat later
 
-Today's swarm tool gives agents a rich human-facing chat surface: DM, whole-swarm
-broadcast, topic channels (subscriptions/members), a shared key-value context store,
-delivery modes (`notify`/`interrupt`/`wake`), and `await_members`. It bolts a human
-collaboration metaphor onto agents. For the DAG model that is too much and the wrong
-shape. The rework is **subtraction, not addition**.
+Before the rework the swarm tool gave agents a rich human-facing chat surface: DM,
+whole-swarm broadcast, topic channels (subscriptions/members), a shared key-value
+context store, delivery modes (`notify`/`interrupt`/`wake`), and `await_members`. It
+bolted a human collaboration metaphor onto agents. For the DAG model that was too much
+and the wrong shape. The rework was **subtraction, not addition**, and it is finished:
+what remains is DM, subtree-scoped broadcast, `await_members`, and the artifact edges
+the scheduler fills.
 
 ### Why the current model does not fit
 1. **It is chat, not dataflow.** Every existing channel is push-notification messaging
@@ -412,9 +414,8 @@ shape. The rework is **subtraction, not addition**.
    More actions means more model errors.
 3. **Broadcast must not scale to the member cap.** At a 1000-member cap (section 10), a
    whole-swarm fan-out becomes a 1000-way notification storm on every send. So
-   broadcast-style delivery is subtree-scoped (migration step 2, implemented in
-   `handle_comm_message`/`handle_comm_share`). A sender reaches only the subtree it
-   spawned, and only the coordinator keeps whole-swarm reach.
+   broadcast-style delivery is subtree-scoped (`handle_comm_message`). A sender reaches
+   only the subtree it spawned, and only the coordinator keeps whole-swarm reach.
 
 ### The goal is a two-layer model
 Keep two layers and drop the middle.
@@ -430,16 +431,16 @@ Keep two layers and drop the middle.
   both editing `foo.rs`") and confirmation questions raised up the ownership tree. That
   is **DM + subtree-scoped broadcast**, nothing more.
 
-### What goes away or gets cut down
-- **The shared context key-value store:** it largely duplicates the repository (the real
-  shared medium) and typed artifacts. Keep it only when shared state outside the
-  repository is concretely needed; otherwise remove it as a second source of truth.
-- **Whole-swarm broadcast:** replace it with a **subtree-scoped broadcast** that reaches
-  only the children an agent owns. That is what keeps it from being a storm at the member
-  cap. Whole-swarm broadcast becomes a rare coordinator-only action.
+### What went away
+- **The shared context key-value store:** it largely duplicated the repository (the real
+  shared medium) and typed artifacts, so it was removed as a second source of truth.
+  Pending plan proposals, its one control-state consumer, moved to a typed store
+  (`crates/app-core/src/server/plan_proposals.rs`) where `take` is atomic-once.
+- **Whole-swarm broadcast:** replaced by a **subtree-scoped broadcast** that reaches only
+  the children an agent owns, which is what keeps it from being a storm at the member
+  cap. Whole-swarm reach stays with the coordinator only.
 - **General topic channels:** unnecessary once dataflow is the structure. Channels are
-  how *humans* organize ad-hoc collaboration. Agents should collaborate through graph
-  edges, not free-form rooms.
+  how *humans* organize ad-hoc collaboration; agents collaborate through graph edges.
 
 ### Alignment with the DAG model
 The dependency edge becomes the primary communication channel (typed artifacts), and
@@ -447,17 +448,35 @@ agent-to-agent messaging shrinks to a small exception path (DM + subtree broadca
 aligns communication with the DAG, removes the broadcast-storm risk at the member cap,
 and shrinks an error-prone tool surface.
 
-### Staged migration (nothing is ripped out up front)
-Cutting channels and shared context is a real behavior change for existing swarm flows,
-so it is staged.
+### Staged migration (nothing was ripped out up front)
+Cutting channels and shared context was a real behavior change for existing swarm flows,
+so it was staged. All four steps are done.
 1. **Done.** Artifact dataflow. Completion artifacts flow to dependents and fill their
    input.
-2. **Done.** Broadcasts scoped to the subtree the sender spawned (including the
-   replacement for subscriberless channels and shared-context notifications). Whole-swarm
-   broadcast remains only as a coordinator escape hatch.
-3. Move existing flows off channels/shared context (the tool schema no longer recommends
-   them).
-4. Once the flows have moved, deprecate and remove the duplicate chat primitives.
+2. **Done.** Broadcasts scoped to the subtree the sender spawned. Whole-swarm broadcast
+   remains only as a coordinator escape hatch.
+3. **Done.** Flows moved off channels and shared context: the tool schema stopped
+   offering them and the prompt stopped recommending them, so nothing new was written
+   against the retired surface.
+4. **Done.** The duplicate chat primitives were removed in one pass, because the daemon
+   wire is same-binary and has no external producers:
+
+   | Removed | What replaced it |
+   | --- | --- |
+   | `swarm` actions `share`, `share_append`, `read` | node artifacts on graph edges, and `status`/`summary` to observe the swarm |
+   | `swarm` actions `channel`, `list_channels`, `channel_members`, `subscribe_channel`, `unsubscribe_channel` | `message` with `to_session` (DM) or without it (subtree broadcast) |
+   | the `channel` argument on `swarm message` | the same two forms |
+   | wire requests `CommShare`, `CommRead`, `CommListChannels`, `CommChannelMembers`, `CommSubscribeChannel`, `CommUnsubscribeChannel` | none; they existed only to serve the removed actions |
+   | events `CommContext`, `CommChannels`, `ContextUpdate`, notification `SharedContext`, the notification `channel` field | none |
+   | debug commands `swarm:context*`, `swarm:set_context`, `swarm:channels` | `swarm:proposals*` and `swarm:info` |
+
+   A new call naming a removed action is rejected with a message that names the
+   replacement instead of silently degrading to a broadcast, and a stored session
+   written before the removal still replays its calls (both are pinned by tests:
+   `tool::communicate::tests::input_format::retired_channel_and_shared_context_actions_are_rejected`
+   and `session::tests::retired_swarm_actions`). The public Harness API never carried
+   this surface, so no client-visible version bump was needed; `docs/protocol/HARNESS_API.md`
+   records the removal under protocol 1.21.
 
 ---
 
