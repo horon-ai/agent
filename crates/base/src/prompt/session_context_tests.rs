@@ -145,6 +145,9 @@ fn session_context_child_processes_are_measured() {
 
 #[test]
 fn git_context_matches_three_spawn_output() {
+    // Holds the counter lock: this test starts counted `git` processes, which
+    // would land in the measurement above if the two ran at the same time.
+    let _env = crate::storage::lock_test_env();
     let repo = repository();
     assert_eq!(one_call_lines(repo.path()), Some("Git:\n  Branch: trunk".to_string()));
 
@@ -172,6 +175,7 @@ fn git_context_matches_three_spawn_output() {
 
 #[test]
 fn git_context_edge_states() {
+    let _env = crate::storage::lock_test_env();
     // Outside any repository: no route to git at all.
     let outside = tempfile::tempdir().expect("a directory outside any repository");
     assert_eq!(route(Some(outside.path()), false), Route::NoRepository);
@@ -261,6 +265,7 @@ fn gpu_line_and_probe_runs(devices: &Path) -> (Option<String>, u32) {
 
 #[test]
 fn gpu_probe_runs_when_display_class_exists() {
+    let _env = crate::storage::lock_test_env();
     for class in ["0x030000\n", "0x030200\n", "0x038000\n"] {
         let devices = tempfile::tempdir().expect("a PCI device list");
         pci_device(devices.path(), "network", "0x020000\n");
@@ -279,6 +284,7 @@ fn gpu_probe_runs_when_display_class_exists() {
 
 #[test]
 fn gpu_probe_skipped_without_display_class() {
+    let _env = crate::storage::lock_test_env();
     // Devices, none of them a display controller: network, storage, bridge,
     // and a device whose class file is missing.
     let devices = tempfile::tempdir().expect("a PCI device list");
