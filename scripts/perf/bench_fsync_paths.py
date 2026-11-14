@@ -21,7 +21,7 @@ import re
 MODE = "paths"
 SKIPPED = {"skipped": "strace unavailable"}
 CALL = re.compile(r"\b(fsync|fdatasync)\((\d+)(?:<([^>]*)>)?")
-SESSION = re.compile(r"session_[a-z0-9]+_\d+_[0-9a-f]{16}")
+SESSION = re.compile(r"session_[a-z0-9-]+_\d+_[0-9a-f]{16}")
 ID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
     r"|(?<![0-9a-fA-F])[0-9a-fA-F]{16,}(?![0-9a-fA-F])|\d{10,}"

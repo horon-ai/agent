@@ -1531,7 +1531,7 @@ class FsyncPathsTests(unittest.TestCase):
         # Session directories are named session_<word>_<millis>_<16 hex>; two
         # runs or two builds pick different names, and must still share keys.
         first = "/tmp/a/home/sessions/session_sauropod_1763150000123_63b5285181a99f5a"
-        second = "/tmp/b/home/sessions/session_goat_1763150000456_43ab7c6b5d77b230"
+        second = "/tmp/b/home/sessions/session_t-rex_1763150000456_43ab7c6b5d77b230"
         keys = []
         for root, session in (("/tmp/a", first), ("/tmp/b", second)):
             trace = f"7  fdatasync(3<{session}/events.jsonl>) = 0\n7  fsync(4<{session}>) = 0\n"
