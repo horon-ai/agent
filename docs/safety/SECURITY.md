@@ -133,7 +133,9 @@ The record was written against the tree before two removals. First the TUI crate
 provider runtime crate left. So rows naming `ratatui` and `syntect` paths and rows that went through the provider
 runtime are read as historical records. The provider crates that remain are `provider-core`,
 `provider-env`, `provider-metadata`, and `provider-openai`; `provider-openai-runtime` was
-removed on 2026-10-29 (`ls crates/`).
+removed on 2026-10-29 (`ls crates/`). The TUI has since come back as the separate package `horon-tui`
+(`crates/tui`): `ratatui` and `crossterm` are in `Cargo.lock` again, reached only from the TUI binary and
+never from `horon-agent` (`scripts/ci/check_headless_graph.py`). `syntect` did not come back.
 
 ### Current advisories
 

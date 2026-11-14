@@ -133,7 +133,9 @@
 프로바이더 런타임 크레이트가 빠졌다. 그래서 `ratatui`·`syntect` 경로를 적은 행과 프로바이더
 런타임을 거치던 행은 과거 기록으로 읽는다. 남은 프로바이더 관련 크레이트는 `provider-core`,
 `provider-env`, `provider-metadata`, `provider-openai` 넷이며 `provider-openai-runtime`은
-2026-10-29에 제거됐다(`ls crates/`).
+2026-10-29에 제거됐다(`ls crates/`). TUI는 그 뒤 별도 패키지 `horon-tui`(`crates/tui`)로
+돌아왔다. 그래서 `ratatui`와 `crossterm`은 다시 `Cargo.lock`에 있지만 TUI 바이너리에서만 닿고
+`horon-agent`에서는 닿지 않는다(`scripts/ci/check_headless_graph.py`). `syntect`는 돌아오지 않았다.
 
 ### 현재 권고
 

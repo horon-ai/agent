@@ -40,7 +40,7 @@ Review Queue (queue.json)
 Transcript Logger -> Session Reporter
 ```
 
-검토 화면은 이 빌드에 없다. TUI 검토 패널은 TUI 크레이트와 함께 삭제됐고(`AGENTS.md`의 삭제 목록), `horon safety review` 같은 CLI 하위 명령도 없다. 사용자는 알림에 답하거나 `SafetySystem::record_decision`을 부르는 경로로 결정을 낸다(`crates/base/src/safety.rs:597`).
+검토 화면은 이 빌드에 없다. 큐를 나열하는 화면이 없고, `horon-agent permissions` 하위 명령은 선언만 있고 오류로 끝나며(`src/cli/dispatch.rs`), `horon safety review` 같은 CLI 하위 명령도 없다. TUI 검토 패널은 TUI 크레이트가 처음 빠질 때 함께 사라졌다. 다시 들어온 TUI 바이너리 `horon-tui`는 자신이 붙은 세션에서 대기 중인 요청 하나를 입력창 위에서 묻고(`crates/tui/src/prompts.rs`), 데몬은 그 답을 `record_permission_via_file`로 기록한다(`crates/app-core/src/server/client_ask.rs`). 그 밖에는 알림이 요청이 기다린다는 사실을 알리고, 결정은 `SafetySystem::record_decision`을 불러 기록한다(`crates/base/src/safety.rs:597`). 사람을 기다리며 멈춘 무인 실행에 `horon-agent approvals resolve`가 부르는 것도 이 함수다.
 
 ---
 
@@ -301,13 +301,13 @@ Next cycle: ~35 minutes
 
 **1. 파일 기반 결정 기록**
 
-외부 도구가 결정을 남길 때는 `record_permission_via_file`을 쓴다(`crates/base/src/safety.rs:907`). 만료 정리는 `expire_stale_permissions_via_file`이 맡는다(`:929`).
+외부 도구가 결정을 남길 때는 `record_permission_via_file`을 쓴다(`crates/base/src/safety.rs:907`). 만료 정리는 `expire_stale_permissions_via_file`이 맡는다(`:944`).
 
 **2. 라이브러리 호출**
 
 `SafetySystem::record_decision`은 프로세스 안에서 결정을 기록하고 대기 중인 호출자를 깨운다(`crates/base/src/safety.rs:597`).
 
-이 빌드에는 TUI 검토 패널도, `horon safety review` 계열 CLI도 없다.
+이 빌드에는 `horon-tui`를 포함해 어디에도 검토 패널이 없고, `horon safety review` 계열 CLI도 없다. 더 좁은 표면 둘은 있다. `horon-tui`는 붙어 있는 세션이 기다리는 요청 하나에 1번 경로로 답하고, `horon-agent approvals resolve --request-id <id> --tool-call-id <id> --verdict retry|skip`은 멈춘 무인 실행의 호출별 판정을 2번 경로로 기록한다(`src/cli/dispatch.rs`).
 
 #### 결정 이력
 
@@ -633,11 +633,11 @@ exec claim 경로가 정확히 한 번 회수해 실행합니다(원자성이 �
   않는 메시지를 하나 지어내야 하고, 로그를 재생하는 모든 리더(프로바이더 트랜스크립트 포함)가
   그것을 보게 됩니다. 구현은 `crates/base/src/session/resume_marker.rs`입니다. 재개 여부는
   이제 이벤트 로그만 읽어 판정하며, 체크포인트가 갈아치울 수 있는 두 번째 파일은 없습니다.
-- **키의 append와 턴 생성은 한 번의 ACK가 아닙니다.** 마커는 턴보다 먼저 내구화됩니다(`crates/app-core/src/ambient/resume.rs:370`의
-  `append_resume_key`, 그 뒤 `crates/app-core/src/ambient/resume.rs:427` `resume_session_with_message`). 그래서 계획이 요구한 "턴 생성과
+- **키의 append와 턴 생성은 한 번의 ACK가 아닙니다.** 마커는 턴보다 먼저 내구화됩니다(`crates/app-core/src/ambient/resume.rs:367`의
+  `append_resume_key`, 그 뒤 `crates/app-core/src/ambient/resume.rs:424` `resume_session_with_message`). 그래서 계획이 요구한 "턴 생성과
   키 기록이 한 번의 ACK로 함께 내구화"는 이 구현으로 충족되지 않습니다. 대신 보장하는 것은 두 가지입니다.
   첫째, 키는 어떤 턴이 생기기 전에 이미 디스크에 있습니다(`writer.append` → fsync). 둘째, 키만 있고 턴이
-  없는 상태는 exec claim 경로가 정확히 한 번 회수해 실행합니다(`crates/app-core/src/ambient/resume.rs:381-411`,
+  없는 상태는 exec claim 경로가 정확히 한 번 회수해 실행합니다(`crates/app-core/src/ambient/resume.rs:378-408`,
   `crash_after_the_key_is_durable_recovers_with_one_turn`이 고정). 남는 창은 마커의 ACK와 턴 생성
   사이이며, 그 구간은 원자성이 아니라 exec claim이 덮습니다.
 - **마커 이벤트는 세션의 `updated_at`을 움직이지 않습니다.** 재개 판정은 `session.updated_at >

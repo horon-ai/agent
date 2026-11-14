@@ -10,7 +10,7 @@
 
 ### 판단 재료는 TurnState가 든다
 
-`TurnState`는 에이전트 루프 밖에서 턴의 카운터와 결과를 소유한다. 필드는 열둘이다(`crates/agent-runtime/src/turn_state.rs:83-96`).
+`TurnState`는 에이전트 루프 밖에서 턴의 카운터와 결과를 소유한다. 필드는 열넷이다(`crates/agent-runtime/src/turn_state.rs:471-486`).
 
 | 필드 | 세는 것 |
 | --- | --- |
@@ -25,6 +25,8 @@
 | `unparsed_tool_markup_nudges` | 파싱되지 않은 도구 마크업을 알린 횟수 |
 | `auto_continuations` | 자동 계속을 쓴 횟수 |
 | `final_text` | 턴의 최종 텍스트 |
+| `model_fallback_original` | 모델 폴백이 떠나온 세션 모델(되돌릴 때까지 보관) |
+| `model_fallback_tried` | 이번 턴에 이미 쓴 폴백 항목(오래된 것부터) |
 | `outcome` | 턴 결과(`TurnOutcome`) |
 
 `TurnState`는 `Agent`를 참조하지 않고, 세션·클라이언트 이벤트·디스크를 만지지 않는다. 그래서 두 턴 루프(순차 실행 `crates/app-core/src/agent/turn_loops.rs`, 스트리밍 실행 `crates/app-core/src/agent/interrupts.rs`)가 같은 판정 함수를 공유한다.
@@ -74,7 +76,7 @@
 
 ### 자동 계속은 턴당 두 번까지다
 
-합성 계속은 `MAX_AUTO_CONTINUATIONS = 2`로 제한된다(`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState`는 이 값을 넘기지 않고(`crates/agent-runtime/src/turn_state.rs:215-219` `record_auto_continuation`이 상한으로 자른다), 새 턴은 `TurnState::new()`가 0에서 시작하므로 예산이 초기화된다(`crates/agent-runtime/src/turn_state.rs:82-100`, 테스트 `crates/agent-runtime/src/turn_state_tests.rs:18-26`). 한도를 다 쓰면 복구를 멈추고 사용자에게 알린다(`crates/app-core/src/agent/turn_recovery_wiring.rs:136`).
+합성 계속은 `MAX_AUTO_CONTINUATIONS = 2`로 제한된다(`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState`는 이 값을 넘기지 않고(`crates/agent-runtime/src/turn_state.rs:633-636` `record_auto_continuation`이 상한으로 자른다), 새 턴은 `TurnState::new()`가 0에서 시작하므로 예산이 초기화된다(`crates/agent-runtime/src/turn_state.rs:489-491`, 테스트 `crates/agent-runtime/src/turn_state_tests.rs:200-208`). 한도를 다 쓰면 복구를 멈추고 사용자에게 알린다(`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
 
 ### 소프트 인터럽트는 재시작을 견딘다
 
@@ -119,11 +121,11 @@ cargo test -p horon-agent-base soft_interrupt_store
 
 ### 대기열과 인플라이트 집합
 
-`SoftInterruptQueue`는 `pending`과 `in_flight` 두 벡터를 하나의 잠금 아래에서 관리한다(`crates/agent-runtime/src/lib.rs:40-63`). `pending`은 아직 대화에 들어가지 않은 메시지고, `in_flight`는 이번 턴에 주입했지만 턴이 아직 끝나지 않은 메시지다.
+`SoftInterruptQueue`는 `pending`과 `in_flight` 두 벡터를 하나의 잠금 아래에서 관리한다(`crates/agent-runtime/src/lib.rs:67-76`). `pending`은 아직 대화에 들어가지 않은 메시지고, `in_flight`는 이번 턴에 주입했지만 턴이 아직 끝나지 않은 메시지다.
 
-- `transfer_to_in_flight`는 `pending`을 통째로 `in_flight`로 옮긴다. 두 벡터가 같은 잠금에서 바뀌므로 어느 쪽에도 없는 메시지는 생기지 않는다(`crates/agent-runtime/src/lib.rs:113-120`).
-- `commit`은 턴이 성공했을 때 `in_flight`를 비운다(`:124-131`).
-- `restore`는 실패하거나 취소되거나 패닉한 턴의 메시지를 `pending` 앞쪽으로 되돌린다(`:136-148`).
+- `transfer_to_in_flight`는 `pending`을 통째로 `in_flight`로 옮긴다. 두 벡터가 같은 잠금에서 바뀌므로 어느 쪽에도 없는 메시지는 생기지 않는다(`crates/agent-runtime/src/lib.rs:132-134`).
+- `commit`은 턴이 성공했을 때 `in_flight`를 비운다(`:157-162`).
+- `restore`는 실패하거나 취소되거나 패닉한 턴의 메시지를 `pending` 앞쪽으로 되돌린다(`:168-179`).
 
 턴 하나는 `InFlightGuard`를 하나 만든다(`crates/app-core/src/agent/interrupts.rs:21-70`). 정상 종료나 복원 경로에서는 `disarm`이 걸려 드롭이 아무 일도 하지 않는다. 제공자나 도구 계층에서 패닉이 나면 무장된 가드가 드롭되면서 `restore`를 호출하고, 주입한 메시지가 사라지지 않고 다시 대기열로 돌아간다(`:58-70`).
 
@@ -256,8 +258,8 @@ CancelSoftInterrupts {
 
 하네스 API는 연결된 데몬의 안전 기능 프로브가 `runtime_commands`를 알릴 때만 그 기능을 알린다.
 구형 데몬은 명시적인 미지원 오류를 돌려준다.
-이것은 추가형 API이며 현재 마이너 버전은 15이고 Rust와 TypeScript SDK 모두에서 쓸 수 있다
-(`crates/harness-api/src/lib.rs:53-55`).
+이것은 추가형 API이며 현재 마이너 버전은 20이고 Rust와 TypeScript SDK 모두에서 쓸 수 있다
+(`crates/harness-api/src/lib.rs:68-70`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -306,7 +308,7 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   `{"transport": null, "provider": ...}`가 오고, `auto`·`https`·`websocket`을 넘기면 위 오류가 난다
   (`crates/app-core/src/server/runtime_commands.rs:200-210`).
   설정 파일과 환경변수의 `openai_transport`는 값을 받아 두기만 하고 어떤 프로바이더도 읽지 않는다
-  (`crates/config-types/src/lib.rs:1341`, `crates/base/src/config/env_overrides.rs:476`).
+  (`crates/config-types/src/lib.rs:1249`, `crates/base/src/config/env_overrides.rs:491-495`).
 - `fast`: 인자 없는 명령은 우선순위/off를 토글하고, 명시적 on/off/flex/status를 지원한다.
   적용할 수 없는 프로바이더는 실제 오류를 돌려준다.
 - `refresh_model_list`: 실제 프로바이더 카탈로그 새로고침.
