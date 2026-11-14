@@ -393,10 +393,18 @@ fsync는 중복이었다. 가져오기(`legacy_publish.rs`)가 만드는 표식�
 - 새 로그가 검증되면 그것을 먼저 읽는다. 아니면 레거시 원본을 읽고 비파괴 마이그레이션을 제안한다.
 - 옛 SQLite 인덱스에만 있는 표시 메타데이터는 명시적이고 읽기 전용이며 옵트인인 경로로 가져온다.
   `session migrate --apply --legacy-index`가 일관된 트랜잭션 하나 안에서 보호된 준비 사본을 읽는다.
-  그 경로는 `legacy-session-index-import` 기능이 있는 빌드에만 있다. 기본 빌드는 데이터베이스를
+  그 경로는 `legacy-session-index-import` 기능이 있는 빌드에만 있고, 그 기능이 없는 빌드는
+  `--help`에 `--legacy-index`를 내보내지 않는다(`src/cli/args.rs`). 기본 빌드는 데이터베이스를
   열지 않고 `migration_required`로 거부한다. 정상 동작은 데이터베이스를 열지 않으며, 표시
   메타데이터를 가져오지 않은 데이터베이스는 제목이 조용히 사라진 목록 대신 같은
   `migration_required` 진단을 낸다.
+- 드러나는 모든 거부는 그 일을 끝낼 수 있는 빌드를 함께 알려 준다. `session migrate`,
+  `session inspect`, `session doctor`가 같은 해결책을 낸다. `--features legacy-session-index-import`로
+  컴파일한 빌드를 설치하고 `--legacy-index`로 다시 실행하는 것이다. 릴리스 빌드는 `pdf`
+  기능만 싣기 때문에(`.github/workflows/release.yml`) 릴리스 실행 파일은 자기가 숨기고 거부하는
+  플래그를 다시 쓰라고 하지 않고 그런 빌드를 설치하라고 말한다.
+- 그 기능이 없는 빌드에 `--legacy-index`를 주면 세션을 읽기 전에 실패하며, 같은 해결책을
+  알려 주고 데이터베이스는 건드리지 않는다.
 
 #### 세션이 아닌 SQLite는 범위 밖
 
