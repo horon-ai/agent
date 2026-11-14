@@ -1366,6 +1366,39 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- subscribe_prefix --nocapture
 
+      - name: Run cancellable work cohort
+        shell: bash
+        # Cancelling a run, cancelling one tool call and listing background work
+        # span three packages, and all three suites run only through filters
+        # here. The daemon half drives the real connection: a cancelled call
+        # stops while the turn continues, an unknown id is refused, a
+        # `cancel_turn` for another run id leaves the turn alone and one for the
+        # reported run id stops it, and the background-work list and cancel
+        # replies each carry the `call_id` they name. The harness-api half pins
+        # the two replies as additive frames that older clients still decode,
+        # and the bridge half proves each of the four requests forwards as the
+        # daemon frame it names and that a reply correlates back to its request.
+        # `cancellable_work_snapshot_tests` and `translate::cancellable_work_tests`
+        # are new modules with no other cohort, so without this step they would
+        # compile and never execute (scripts/ci/check_lib_test_coverage.py).
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- acp_tool_cancel --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 9 \
+            -- acp_background_work --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
+            --timeout 600 --min-passed 2 \
+            -- cancellable_work_snapshot_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 4 \
+            -- translate::cancellable_work_tests --nocapture
+
       - name: Run checkpoint tool cohort
         shell: bash
         # `horon-agent-app-core` and `horon-agent-base` lib tests only run

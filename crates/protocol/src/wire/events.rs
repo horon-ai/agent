@@ -1099,6 +1099,34 @@ pub enum ServerEvent {
     #[serde(rename = "tool_call_cancel_result")]
     ToolCallCancelResult {
         id: u64,
+        /// The call the caller named, echoed so a client can tell which of
+        /// several in-flight cancels this answers.
+        ///
+        /// Empty when the frame came from a daemon that predates the echo: the
+        /// field was added to an event that already existed, so a reader must
+        /// still decode the older shape. A consumer that needs the subject
+        /// treats empty as "cannot correlate" rather than guessing.
+        #[serde(default)]
+        call_id: String,
+        accepted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
+    /// Answer to a targeted `cancel_turn`.
+    ///
+    /// The daemon still acks every cancel (a client waiting on the ack must not
+    /// wait longer because the request was targeted), and this event carries the
+    /// verdict the ack cannot: `accepted` is false when the named run is not the
+    /// one running, which means nothing was stopped and a successor turn, if
+    /// any, keeps going. `reason` names why: `unknown` for a run this session is
+    /// not running.
+    #[serde(rename = "cancel_turn_result")]
+    CancelTurnResult {
+        id: u64,
+        /// The run the caller named, echoed so a client can tell which of
+        /// several in-flight cancels this answers.
+        run_id: String,
         accepted: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,

@@ -1235,7 +1235,7 @@ fn ids_state() -> BridgeState {
     }
 }
 
-fn legacy_out(out: &[Outbound]) -> &serde_json::Value {
+pub(super) fn legacy_out(out: &[Outbound]) -> &serde_json::Value {
     match out {
         [Outbound::Legacy(value)] => value,
         other => panic!("expected one legacy frame, got {other:?}"),
