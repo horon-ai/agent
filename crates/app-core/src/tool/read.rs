@@ -151,7 +151,7 @@ impl Tool for ReadTool {
                 "intent": super::intent_schema_property(),
                 "file_path": {
                     "type": "string",
-                    "description": "Path to a file; `p:10-40` lines, `a.zip:m` a member, `d.db:t` rows. Also artifact:// and memory://."
+                    "description": "Path; `p:10-40` line selector; a.zip:m, d.db:t; artifact://, memory://."
                 },
                 "start_line": {
                     "type": "integer",
