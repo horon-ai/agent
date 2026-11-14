@@ -19,8 +19,9 @@ Two deliberate allowances, both narrow:
 * An API rate limit is transient and shared with every other session on the
   account, so that one condition exits zero with a `::notice::` line instead of
   turning a healthy pull request red. Every other failure — a 404, a network
-  error, a missing `gh` — fails the gate, because "could not check" must never
-  read as "checked and fine".
+  error, a missing `gh`, a missing credential — fails the gate, because "could
+  not check" must never read as "checked and fine". The workflow therefore
+  passes `GH_TOKEN` to the step; without it `gh` exits refusing to run at all.
 
 Usage: check_issue_refs.py [--repo OWNER/REPO] [--root DIR]
 """
@@ -75,6 +76,13 @@ def existing_numbers(repo: str) -> set[int]:
         if "rate limit" in message.lower():
             print("::notice::issue reference check skipped: GitHub API rate limit reached")
             return set()
+        if "GH_TOKEN" in message:
+            # `gh` refuses to make any request from a workflow without it. The
+            # fix is a workflow change, so name it instead of quoting the hint.
+            raise SystemExit(
+                "gh has no credential here; the job must pass GH_TOKEN (see the "
+                "'Issue references resolve' step in .github/workflows/ci.yml)"
+            )
         raise SystemExit(f"gh api failed while listing issues: {message}")
     return {int(line) for line in output.stdout.split()}
 

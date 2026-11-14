@@ -88,6 +88,20 @@ class RepositoryCheckTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 gate.existing_numbers("horon-ai/agent")
 
+    def test_a_missing_credential_names_the_workflow_fix(self) -> None:
+        # This is the state the gate found itself in on its first CI run: `gh`
+        # was installed, `GH_TOKEN` was not passed to the step, and the message
+        # quoted `gh`'s own hint instead of naming the workflow change.
+        error = gate.subprocess.CalledProcessError(
+            1,
+            "gh",
+            stderr="gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.",
+        )
+        with mock.patch.object(gate.subprocess, "run", side_effect=error):
+            with self.assertRaises(SystemExit) as raised:
+                gate.existing_numbers("horon-ai/agent")
+        self.assertIn("must pass GH_TOKEN", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

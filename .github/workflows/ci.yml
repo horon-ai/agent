@@ -104,6 +104,13 @@ jobs:
     name: Quality Guardrails
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
+    # The issue-reference gate lists this repository's issues to prove the
+    # numbers in `.github/` and `scripts/` open. Reading them needs the token
+    # scopes below; every other step in this job only reads the checkout.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
@@ -289,6 +296,10 @@ jobs:
       # references had accumulated in `.github/` and `scripts/`.
       - name: Issue references resolve
         if: ${{ !cancelled() }}
+        env:
+          # `gh` refuses to run in a workflow without it, and the check must fail
+          # loudly rather than report "skipped" for a missing token.
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m unittest -v scripts/ci/test_check_issue_refs.py
           python3 scripts/ci/check_issue_refs.py
