@@ -4,6 +4,7 @@ pub mod images;
 pub mod request;
 pub mod stream;
 pub mod websocket_health;
+pub mod wire;
 
 #[cfg(test)]
 #[path = "test_support_tests.rs"]
