@@ -9,8 +9,6 @@ use crate::tool::Registry;
 use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{Value, json};
-#[cfg(unix)]
-use std::ffi::CString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -491,133 +489,31 @@ fn build_usage_projection(reports: &[crate::usage::ProviderUsage], manifest: &Ov
 }
 
 pub fn gather_resource_snapshot(working_dir: Option<&Path>) -> ResourceSnapshot {
-    let (memory_total_mb, memory_available_mb, swap_total_mb, swap_free_mb) = detect_memory();
-    let memory_used_percent = memory_total_mb.zip(memory_available_mb).and_then(|(total, available)| {
-        if total == 0 {
-            None
-        } else {
-            Some(((total.saturating_sub(available)) as f32 / total as f32) * 100.0)
-        }
-    });
-    let (load_one, cpu_count) = detect_load();
-    let (battery_percent, battery_status) = detect_battery();
-    let disk_available_gb = working_dir.and_then(disk_available_gb);
+    let facts = horon_agent_platform::host_resources(working_dir);
+    let memory_used_percent = facts
+        .memory_total_mb
+        .zip(facts.memory_available_mb)
+        .and_then(|(total, available)| {
+            if total == 0 {
+                None
+            } else {
+                Some(((total.saturating_sub(available)) as f32 / total as f32) * 100.0)
+            }
+        });
 
     ResourceSnapshot {
         captured_at: Utc::now(),
-        memory_total_mb,
-        memory_available_mb,
+        memory_total_mb: facts.memory_total_mb,
+        memory_available_mb: facts.memory_available_mb,
         memory_used_percent,
-        swap_total_mb,
-        swap_free_mb,
-        load_one,
-        cpu_count,
-        battery_percent,
-        battery_status,
-        disk_available_gb,
-    }
-}
-
-fn detect_memory() -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-    #[cfg(target_os = "linux")]
-    {
-        let Ok(contents) = std::fs::read_to_string("/proc/meminfo") else {
-            return (None, None, None, None);
-        };
-        let mut total_kb = None;
-        let mut available_kb = None;
-        let mut swap_total_kb = None;
-        let mut swap_free_kb = None;
-        for line in contents.lines() {
-            if let Some(rest) = line.strip_prefix("MemTotal:") {
-                total_kb = parse_meminfo_kb(rest);
-            } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
-                available_kb = parse_meminfo_kb(rest);
-            } else if let Some(rest) = line.strip_prefix("SwapTotal:") {
-                swap_total_kb = parse_meminfo_kb(rest);
-            } else if let Some(rest) = line.strip_prefix("SwapFree:") {
-                swap_free_kb = parse_meminfo_kb(rest);
-            }
-        }
-        (
-            total_kb.map(|kb| kb / 1024),
-            available_kb.map(|kb| kb / 1024),
-            swap_total_kb.map(|kb| kb / 1024),
-            swap_free_kb.map(|kb| kb / 1024),
-        )
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        (None, None, None, None)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn parse_meminfo_kb(rest: &str) -> Option<u64> {
-    rest.split_whitespace().next()?.parse().ok()
-}
-
-fn detect_load() -> (Option<f64>, Option<usize>) {
-    #[cfg(target_os = "linux")]
-    {
-        let load = std::fs::read_to_string("/proc/loadavg")
-            .ok()
-            .and_then(|contents| contents.split_whitespace().next()?.parse::<f64>().ok());
-        let cpus = std::thread::available_parallelism().ok().map(|value| value.get());
-        (load, cpus)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let cpus = std::thread::available_parallelism().ok().map(|value| value.get());
-        (None, cpus)
-    }
-}
-
-fn detect_battery() -> (Option<u8>, Option<String>) {
-    #[cfg(target_os = "linux")]
-    {
-        let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") else {
-            return (None, None);
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with("BAT") {
-                continue;
-            }
-            let percent = std::fs::read_to_string(path.join("capacity"))
-                .ok()
-                .and_then(|value| value.trim().parse::<u8>().ok());
-            let status = std::fs::read_to_string(path.join("status"))
-                .ok()
-                .map(|value| value.trim().to_string());
-            return (percent, status);
-        }
-        (None, None)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        (None, None)
-    }
-}
-
-fn disk_available_gb(path: &Path) -> Option<f64> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
-        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
-        if rc != 0 {
-            return None;
-        }
-        let bytes = stat.f_bavail as f64 * stat.f_frsize as f64;
-        Some(bytes / 1024.0 / 1024.0 / 1024.0)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        None
+        swap_total_mb: facts.swap_total_mb,
+        swap_free_mb: facts.swap_free_mb,
+        load_one: facts.load_one,
+        cpu_count: facts.cpu_count,
+        battery_percent: facts.battery_percent,
+        battery_status: facts.battery_status,
+        disk_available_gb: facts.disk_available_gb,
+        unavailable: facts.unavailable.iter().map(|name| name.to_string()).collect(),
     }
 }
 
@@ -1021,6 +917,42 @@ mod tests {
             validation_dir: run_dir.join("validation"),
             last_activity_at: now,
         }
+    }
+
+    #[test]
+    fn resource_snapshot_reports_the_platform_measurements_in_range() {
+        // Regression pin for the Linux behaviour this crate used to carry
+        // itself: memory, swap, load, CPU count and disk came from `/proc` and
+        // `statvfs`, and moving them into the platform adapter must not change
+        // which fields are populated or what range they fall in.
+        let snapshot = gather_resource_snapshot(Some(Path::new(".")));
+        let total = snapshot.memory_total_mb.expect("total memory");
+        let available = snapshot.memory_available_mb.expect("available memory");
+        assert!(total > 0, "total memory must be positive, got {total}");
+        assert!(available <= total, "{available} MiB available of {total} MiB installed");
+        let used = snapshot.memory_used_percent.expect("used percent");
+        assert!((0.0..=100.0).contains(&used), "used percent out of range: {used}");
+        if let (Some(swap_total), Some(swap_free)) = (snapshot.swap_total_mb, snapshot.swap_free_mb) {
+            assert!(swap_free <= swap_total, "{swap_free} MiB free of {swap_total} MiB swap");
+        }
+        assert!(snapshot.load_one.is_some_and(|load| load >= 0.0));
+        assert!(snapshot.cpu_count.is_some_and(|cpus| cpus >= 1));
+        assert!(snapshot.disk_available_gb.is_some_and(|gb| gb > 0.0));
+        if let Some(percent) = snapshot.battery_percent {
+            assert!(percent <= 100);
+        }
+    }
+
+    #[test]
+    fn resource_snapshot_does_not_name_a_fact_unavailable_on_this_platform() {
+        // Every platform horon ships for measures all nine facts, so a "not
+        // measurable here" entry would mean the adapter lost a source.
+        let snapshot = gather_resource_snapshot(Some(Path::new(".")));
+        assert!(
+            snapshot.unavailable.is_empty(),
+            "unexpected gaps: {:?}",
+            snapshot.unavailable
+        );
     }
 
     #[test]

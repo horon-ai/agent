@@ -1,0 +1,193 @@
+name: Attach/Detach Soak
+
+env:
+  HORON_AGENT_CI: "1"
+
+# Runs the 1,000-cycle attach/detach soak, the form `docs/performance/RESULTS.md`
+# depends on. The 200-cycle default form runs in `ci.yml` on every code change,
+# but 1,000 cycles is roughly 50 minutes of wall clock, far past a pull-request
+# gate's budget, so this is a scheduled run of its own.
+#
+# It is deliberately not part of `CI Required`: a soak failure is a resource
+# retention signal, and it must never block a pull request that has a clean
+# 200-cycle run. The documented baseline in RESULTS.md is what this job
+# re-measures, and a failure opens or updates one tracking issue rather than
+# failing a PR.
+on:
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: Cycles to run (1,000 is the documented form)
+        required: false
+        default: "1000"
+        type: string
+      should_fail_on_retention:
+        description: Fail the job when a counter retains above budget
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # Weekly drift check: retention that appears between releases shows up here
+    # before it reaches a user. Monday 06:00 UTC, after the FreeBSD smoke run.
+    - cron: '0 6 * * 1'
+  # A branch that edits this workflow is checked with
+  # `gh workflow run soak.yml --ref <branch>`; a push only runs here on `dev`,
+  # and only for this file, so the schedule is not the only trigger that covers
+  # a change to it.
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/soak.yml'
+      - 'tests/e2e/soak_attach_detach.rs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: soak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  soak:
+    name: Attach/detach soak (${{ inputs.cycles || '1000' }} cycles)
+    runs-on: ubuntu-24.04
+    # The 1,000-cycle run measured 2.7-3.1 s per cycle on an Apple M1 Max, so
+    # about 50 minutes on that machine; a hosted ubuntu runner is slower and
+    # cold-builds the whole workspace first. 180 minutes leaves room for both
+    # without letting a hung run hold a runner for a day.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      # Least privilege for the tracking issue: this job needs to read existing
+      # issues and write one. Nothing else in the workflow asks for it.
+      issues: write
+    env:
+      # The soak is a measurement, so the structural counters must record: with
+      # recording off every counter reads 0 and the gate treats that as "not
+      # measured" rather than "clean".
+      HORON_AGENT_PERF_COUNTERS: "1"
+      # The test spawns a daemon that trusts the workspace it runs in; without
+      # this the project-local configuration is skipped and the run diverges
+      # from the documented one.
+      HORON_AGENT_WORKSPACE_TRUST: trust
+      # CI builds without the local parallel-frontend rustc wrapper from
+      # .cargo/config.toml (a POSIX shell script; see
+      # scripts/dev/rustc_parallel_frontend).
+      CARGO_BUILD_RUSTC_WRAPPER: ""
+      # The 1,000-cycle form is selected through the test's own switch, the same
+      # way RESULTS.md documents it.
+      HORON_AGENT_SOAK_CYCLES: ${{ inputs.cycles || '1000' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      # A hosted ubuntu runner has about 14 GB free on `/`, and the workspace
+      # cold-compiles the whole agent plus the e2e harness. The shared script is
+      # the same one ci.yml and structural-perf.yml call (#21).
+      - name: Free disk space
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: soak-${{ runner.os }}
+          # The soak runs on a schedule from `dev`, never on a pull request, so
+          # the cache is always worth saving.
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Contract test the soak report shape
+        # Fast and compile-free: proves the parse of the run's own summary line
+        # before paying for a build.
+        run: python3 -m unittest -v scripts/perf/test_check_soak.py
+
+      - name: Run the attach/detach soak
+        id: soak
+        shell: bash
+        # A failed assertion still leaves the report on disk: the retention
+        # signal is the evidence, so `continue-on-error` keeps the upload and the
+        # issue step reachable while the job's own outcome stays honest through
+        # the explicit exit below.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p soak-artifacts
+          cargo test --locked -p horon-agent --test e2e \
+            soak_attach_detach::soak_attach_detach_returns_every_counter_to_baseline \
+            -- --exact --nocapture 2>&1 | tee soak-artifacts/soak.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Summarize the run
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/perf/check_soak.py soak-artifacts/soak.log \
+            --output soak-artifacts/soak-report.md \
+            --json soak-artifacts/soak-report.json
+          cat soak-artifacts/soak-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the soak report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: soak-attach-detach-report
+          path: soak-artifacts/
+          # The report is the point of the run: keep it even when the run failed,
+          # which is exactly when the retention numbers matter.
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Report retention to the tracking issue
+        # Opens one issue the first time a scheduled run fails, and comments on
+        # that same issue afterwards, so a weekly failure does not produce a
+        # weekly issue. A manual dispatch that passes posts nothing: it is a
+        # diagnosis run, not a regression signal.
+        if: ${{ !cancelled() && github.event_name == 'schedule' && steps.soak.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT: soak-artifacts/soak-report.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          title='Scheduled attach/detach soak found retained resources'
+          body="$(cat "$REPORT")"
+
+          # The list form is what a text search can use; `gh issue list --search`
+          # matches titles and bodies, so the marker below is unique to this
+          # automation and never matches a hand-written issue.
+          marker='<!-- soak-retention-tracking -->'
+          existing="$(gh issue list --state open --limit 100 --search "$title in:title" \
+            --json number,title --jq '.[] | select(.title == "'"$title"'") | .number' | head -n 1)"
+
+          if [ -n "${existing:-}" ]; then
+            gh issue comment "$existing" --body "$marker
+
+          $title again: [run]($RUN_URL)
+
+          $body"
+            echo "::notice::Commented on existing tracking issue #$existing"
+          else
+            gh issue create --title "$title" --body "$marker
+
+          Cycle retention measured above budget. The run is $RUN_URL and the full
+          report is attached to it as \`soak-attach-detach-report\`.
+
+          $body"
+          fi
+
+      - name: Fail on retention
+        # Explicit, because the run step above tolerates its own failure so the
+        # upload can happen; a retention signal then still turns the job red.
+        if: ${{ !cancelled() && steps.soak.outcome == 'failure' && (github.event_name != 'workflow_dispatch' || inputs.should_fail_on_retention) }}
+        shell: bash
+        run: |
+          echo "::error::The soak reported retained resources; see the uploaded report."
+          exit 1

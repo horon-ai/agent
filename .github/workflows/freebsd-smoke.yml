@@ -17,7 +17,7 @@ env:
 # (via QEMU) on a standard Ubuntu runner using vmactions/freebsd-vm. This runs
 # the actual FreeBSD kernel and userland, giving a true build + run check
 # instead of a cross-compile that can never link platform C dependencies
-# (e.g. aws-lc-sys). See issue #416.
+# (e.g. aws-lc-sys).
 
 on:
   workflow_dispatch:

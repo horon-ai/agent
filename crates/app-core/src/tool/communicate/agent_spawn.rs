@@ -274,14 +274,14 @@ pub(super) fn spawn_schema_properties(props: &mut serde_json::Map<String, Value>
         "source_session".to_string(),
         json!({
             "type": "string",
-            "description": "For spawn: session id whose transcript the child forks as a read-only consult. The child gets only read, agentgrep, ls and yield; the source session is never modified. An id outside this session's spawn tree is refused before any child starts. See SWARM_TASK_GRAPH 8d."
+            "description": "For spawn: session id to fork as a read-only consult child."
         }),
     );
     props.insert(
         "tasks".to_string(),
         json!({
             "type": "array",
-            "description": "spawn_many children, in input order. Each: {label, initial_message? (alias prompt), agent?, model?, effort?, isolation?, output_schema?}. Labels must be unique, case-insensitively, and a task that fails to start reports its own error.",
+            "description": "spawn_many children in input order; each {label, initial_message?, agent?, model?}.",
             "items": {
                 "type": "object",
                 "required": ["label"],

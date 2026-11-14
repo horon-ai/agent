@@ -1923,7 +1923,7 @@ impl Tool for CommunicateTool {
                              "task_graph", "expand_node", "complete_node", "inject_gap",
                              "start", "start_task", "wake", "resume", "retry", "reassign", "replace", "salvage",
                              "await_members", "list_models", "list_agent_defs", "spawn_many"],
-                    "description": "Action. spawn requires label and should include prompt, and may name an agent definition with agent; spawn_many starts several children concurrently from tasks[] with an optional shared context. To get an answer about an earlier conversation, spawn with source_session: the child forks that transcript and can only read. list_models shows available models/routes; list_agent_defs lists named agent definitions."
+                    "description": "Action. spawn needs label and prompt; spawn_many takes tasks[]; source_session consults an earlier session."
                 },
                 "value": {
                     "type": "string"
@@ -2002,7 +2002,7 @@ impl Tool for CommunicateTool {
                 },
                 "agent": {
                     "type": "string",
-                    "description": "For spawn: name of an agent definition under .horon/agents/ or ~/.horon/agents/. Its tools, model, effort, output_schema, and role prompt apply; explicit spawn parameters override them. See action=list_agent_defs."
+                    "description": "For spawn: agent definition name; see list_agent_defs."
                 },
                 "spawn_mode": {
                     "type": "string",

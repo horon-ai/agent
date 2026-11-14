@@ -34,7 +34,7 @@ fi
 #
 # Capture cargo output and its exit status separately: piping straight into
 # `grep -c ... || true` also swallowed a failing `cargo check`, so a compile
-# error with no warnings reported "Warning budget OK" (issue #1762).
+# error with no warnings reported "Warning budget OK".
 cargo_bin=${CARGO:-cargo}
 if ! command -v "$cargo_bin" > /dev/null 2>&1; then
   echo "error: cargo not found" >&2

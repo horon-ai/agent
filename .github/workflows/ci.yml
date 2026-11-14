@@ -104,6 +104,13 @@ jobs:
     name: Quality Guardrails
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
+    # The issue-reference gate lists this repository's issues to prove the
+    # numbers in `.github/` and `scripts/` open. Reading them needs the token
+    # scopes below; every other step in this job only reads the checkout.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
@@ -238,7 +245,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -265,6 +272,7 @@ jobs:
           node --test packages/npm/horon/test/launcher.test.mjs
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
+          python3 -m unittest -v scripts/sdk/test_python_platform_wheel.py
           python3 scripts/sdk/sdk_release.py check-committed
           placeholders="$(mktemp -d)"
           bash scripts/npm/prepare_placeholders.sh "$placeholders" >/dev/null
@@ -283,6 +291,19 @@ jobs:
             ' "$name" "$packed"
           done
           rm -rf "$placeholders"
+
+      # A comment that cites a number nobody can open costs the reader a dead
+      # end and hides whether the reasoning or the number was lost. Eleven such
+      # references had accumulated in `.github/` and `scripts/`.
+      - name: Issue references resolve
+        if: ${{ !cancelled() }}
+        env:
+          # `gh` refuses to run in a workflow without it, and the check must fail
+          # loudly rather than report "skipped" for a missing token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m unittest -v scripts/ci/test_check_issue_refs.py
+          python3 scripts/ci/check_issue_refs.py
 
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
@@ -457,7 +478,7 @@ jobs:
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
     # known-good commit were cancelled at the cap, each getting further through
-    # the same green steps (#693). A rerun is exactly what you reach for after a
+    # the same green steps. A rerun is exactly what you reach for after a
     # concurrency cancellation, so the old cap made healthy commits look red.
     # A hosted 4 vCPU runner with no cache at all needs more still: this job
     # builds release, test, and e2e artifacts from scratch in one target dir.
@@ -855,7 +876,7 @@ jobs:
         # model or session history had no CI check. The step previously ran a
         # filter inherited from upstream CI that matched nothing in this tree,
         # the looks-green-but-never-ran shape the warning budget and the stdin
-        # detector had (#651), so it now requires at least one pass
+        # detector had, so it now requires at least one pass
         # (`--min-passed 1`), which fails the step when a filter selects no
         # test instead of reporting a green `0 passed`. The Windows groups stay
         # out of scope: this step keeps `runner.os != 'Windows'`.
@@ -895,7 +916,7 @@ jobs:
         # the model's actual output, which is the only thing that can catch an
         # inference-engine upgrade silently changing embeddings: persisted
         # memories are keyed by model_id, which does not change across a tract
-        # bump, so the stale-embedding filter cannot notice (#657).
+        # bump, so the stale-embedding filter cannot notice.
         #
         # That test skips itself when the model is absent, and horon-agent-embedding
         # tests are not otherwise run here at all, so without this step it would
@@ -956,7 +977,7 @@ jobs:
         # `retention_readiness`, and the broader suite is Linux-only, so the
         # macOS detector had no coverage at all. `TH_STATE_WAITING` was defined
         # as 2 (`TH_STATE_STOPPED`) rather than 3, which silently disabled
-        # macOS stdin forwarding entirely until #651.
+        # macOS stdin forwarding entirely until the cohort step was added.
         #
         # Deliberately not Linux-gated: running this on both Unix platforms is
         # the whole point. Windows is a separate job and is not covered here,
@@ -1107,6 +1128,27 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 12 \
             -- agent::prewalk_tests:: --nocapture
+
+      - name: Run tool surface cohort
+        shell: bash
+        # `tool::tests` (78 checked, 4 `#[ignore]` QA) covers the registry:
+        # profile filtering, the deterministic definition order that keeps the
+        # prompt prefix cacheable, and the parameter-description token cap that
+        # governs how many tokens every request pays for the schema.
+        # `tool::read::tests` (48) covers the read surface: paging, archive and
+        # SQLite members, and the diff a re-read returns after an edit. Both
+        # modules compiled in every run and no cohort selected them (#300), so
+        # two failures sat on `dev` unexecuted until they were fixed.
+        # `--min-passed` is the measured count; raise it with the module.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 78 \
+            -- tool::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 48 \
+            -- tool::read::tests:: --nocapture
 
       - name: Run memory record cohort
         shell: bash
@@ -1357,8 +1399,8 @@ jobs:
       # second whole-workspace `cargo check` on the ubuntu matrix entry is a
       # second full compile of a release build that is already on disk. macOS is
       # the only place this gate sees Apple-specific warnings. Windows still has
-      # its own cfg-gated surface and is not yet warning-clean, so it stays out
-      # (#1177).
+      # its own cfg-gated surface and is not yet warning-clean, so it stays
+      # out.
       - name: Enforce warning budget (macOS)
         if: runner.os == 'macOS'
         shell: bash
@@ -1556,7 +1598,10 @@ jobs:
               'busy_pipe_is_reported_as_a_live_socket_path',
               'stream_pair_round_trips_bytes',
               'split_stream_supports_concurrent_read_and_write',
-              'directory_sync_is_not_effective_on_windows'
+              'directory_sync_is_not_effective_on_windows',
+              'resources::tests::snapshot_reports_real_memory_load_and_battery',
+              'resources::tests::disk_fact_reads_the_system_volume',
+              'resources::tests::disk_fact_is_skipped_when_no_path_is_asked_for'
             )
             'horon-agent-app-core' = @(
               'sibling_socket_path_roundtrip',
@@ -1991,6 +2036,14 @@ jobs:
       - name: Documentation pair gate unit tests
         if: ${{ !cancelled() }}
         run: python3 -m unittest -v scripts/ci/test_check_docs_pairs.py
+
+      # `@horon-ai/horon`, `@horon-ai/agent-sdk` and `horon-agent-sdk` are not
+      # published, so a doc that offers the install command sends the reader to a
+      # launcher with no runtime behind it or to a 404. The gate fails the
+      # install command's section unless it says the package is unpublished.
+      - name: Unpublished install claims
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest -v scripts/ci/test_docs_install_claims.py
 
       - name: Documentation benchmark block contract
         if: ${{ !cancelled() }}

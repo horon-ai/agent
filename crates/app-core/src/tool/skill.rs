@@ -134,7 +134,7 @@ impl Tool for SkillTool {
                 },
                 "source": {
                     "type": "string",
-                    "description": "Install only: git URL or path to clone the skill from, either alone or with a name to choose one skill inside it."
+                    "description": "Install only: git URL or path to clone; add a name to pick one skill inside."
                 },
                 "ref": {
                     "type": "string",

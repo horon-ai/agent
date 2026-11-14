@@ -2,6 +2,12 @@
 
 The Horon CLI: an autonomous agent runtime with a terminal client.
 
+> **Not published yet.** The registry names are reserved with empty `0.0.0`
+> placeholders, so `npm install -g @horon-ai/horon` currently installs a launcher
+> with no runtime behind it. Until publishing is enabled, install from the
+> release installer in `docs/release/INSTALL.md`, the container image
+> `ghcr.io/horon-ai/agent`, or a source checkout.
+
 ```sh
 npm install -g @horon-ai/horon
 horon --version
