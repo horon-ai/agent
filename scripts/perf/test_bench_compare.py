@@ -1527,6 +1527,20 @@ class FsyncPathsTests(unittest.TestCase):
         self.assertNotIn(bench.bfp.MODE, calls)
         self.assertEqual(oneshot["ms"], 40.0)
 
+    def test_fsync_paths_group_real_session_names_across_runs(self) -> None:
+        # Session directories are named session_<word>_<millis>_<16 hex>; two
+        # runs or two builds pick different names, and must still share keys.
+        first = "/tmp/a/home/sessions/session_sauropod_1763150000123_63b5285181a99f5a"
+        second = "/tmp/b/home/sessions/session_goat_1763150000456_43ab7c6b5d77b230"
+        keys = []
+        for root, session in (("/tmp/a", first), ("/tmp/b", second)):
+            trace = f"7  fdatasync(3<{session}/events.jsonl>) = 0\n7  fsync(4<{session}>) = 0\n"
+            keys.append([group["path"] for group in bench.bfp.parse(trace, (root,))])
+        self.assertEqual(keys[0], keys[1])
+        self.assertEqual(
+            keys[0],
+            ["<root>/home/sessions/session_<id>", "<root>/home/sessions/session_<id>/events.jsonl"],
+        )
 
 
 if __name__ == "__main__":

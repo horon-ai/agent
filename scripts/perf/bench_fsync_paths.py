@@ -8,9 +8,10 @@ behind its descriptor, and the calls are grouped by that path. The run is extra
 and untimed, so it never touches the timed or counted samples.
 
 Paths are made comparable between runs and builds: the run's temporary root
-becomes ``<root>``, and UUIDs, long hex ids and long digit runs (session and
-event ids, timestamps) become ``<id>``. The counts of all groups add up to the
-flushes the traced run made.
+becomes ``<root>``, a session directory name (``session_<word>_<millis>_<hex>``)
+becomes ``session_<id>``, and UUIDs, long hex ids and long digit runs (event ids,
+timestamps) become ``<id>``. The counts of all groups add up to the flushes the
+traced run made.
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ import re
 MODE = "paths"
 SKIPPED = {"skipped": "strace unavailable"}
 CALL = re.compile(r"\b(fsync|fdatasync)\((\d+)(?:<([^>]*)>)?")
+SESSION = re.compile(r"session_[a-z0-9]+_\d+_[0-9a-f]{16}")
 ID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-    r"|\b[0-9a-fA-F]{16,}\b|\d{10,}"
+    r"|(?<![0-9a-fA-F])[0-9a-fA-F]{16,}(?![0-9a-fA-F])|\d{10,}"
 )
 
 
@@ -41,7 +43,7 @@ def normalize(path: str, roots: tuple[str, ...]) -> str:
         if root and path.startswith(root):
             path = "<root>" + path[len(root):]
             break
-    return ID.sub("<id>", path)
+    return ID.sub("<id>", SESSION.sub("session_<id>", path))
 
 
 def parse(text: str, roots: tuple[str, ...] = ()) -> list[dict]:
