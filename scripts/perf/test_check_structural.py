@@ -75,6 +75,8 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=prompt static_bytes=1414 "
     "static_sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 static_tokens=330 "
     "index_bytes=676 index_clipped_rows=6 warm_source_reads=6 unchanged_request_source_reads=54",
+    "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=1 git_spawns_in_repo=3 "
+    "gpu_probe_spawns_without_display=1 gpu_reported=0",
 ]
 
 
@@ -543,6 +545,27 @@ class PromptSectionTest(unittest.TestCase):
         self.assertEqual(run.code, 1, run.stderr)
         named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
         self.assertIn("static_sha256", named)
+
+
+class SessionContextSectionTest(unittest.TestCase):
+    """The session-context line counts processes that were started, and a line of zeros does not."""
+
+    def test_session_context_section_missing_fails(self):
+        without = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=session_context")]
+        run = run_gate(without)
+        self.assertEqual(run.code, 2, "a session-context section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["session_context"])
+
+    def test_a_repository_that_started_no_git_was_not_measured(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=session_context",
+            "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=0 git_spawns_in_repo=0 "
+            "gpu_probe_spawns_without_display=0 gpu_reported=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"git_spawns_in_repo"})
 
 
 class MissingMeasurementTest(unittest.TestCase):

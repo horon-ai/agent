@@ -1,10 +1,13 @@
 //! System prompt management
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
+mod git_context;
+mod hardware;
 mod static_sources;
 
+use git_context::get_git_info;
+use hardware::hardware_context;
 #[cfg(test)]
 pub(crate) use static_sources::load_agents_md_files_from_dirs;
 use static_sources::{
@@ -877,162 +880,9 @@ where
     ]
 }
 
-/// Get git branch and status summary
-fn get_git_info(working_dir: Option<&Path>) -> Option<String> {
-    let mut command = Command::new("git");
-    if let Some(dir) = working_dir {
-        command.current_dir(dir);
-    }
-    // Check if we're in a git repo
-    let in_repo = command
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-        .ok()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if !in_repo {
-        return None;
-    }
-
-    let mut info = vec!["Git:".to_string()];
-
-    // Current branch
-    let mut branch_command = Command::new("git");
-    if let Some(dir) = working_dir {
-        branch_command.current_dir(dir);
-    }
-    if let Ok(output) = branch_command.args(["branch", "--show-current"]).output()
-        && output.status.success()
-    {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() {
-            info.push(format!("  Branch: {}", branch));
-        }
-    }
-
-    // Short status (modified files count)
-    let mut status_command = Command::new("git");
-    if let Some(dir) = working_dir {
-        status_command.current_dir(dir);
-    }
-    if let Ok(output) = status_command.args(["status", "--porcelain"]).output()
-        && output.status.success()
-    {
-        let status = String::from_utf8_lossy(&output.stdout);
-        let modified: Vec<&str> = status.lines().take(5).collect();
-        if !modified.is_empty() {
-            info.push(format!("  Modified: {} files", status.lines().count()));
-            for file in modified {
-                info.push(format!("    {}", file));
-            }
-            if status.lines().count() > 5 {
-                info.push("    ...".to_string());
-            }
-        }
-    }
-
-    if info.len() > 1 { Some(info.join("\n")) } else { None }
-}
-
-fn hardware_context() -> Option<String> {
-    // Hardware never changes for the life of the process, but this used to be
-    // rebuilt for every session create/attach, forking `lspci` each time. On a
-    // busy shared server that meant one subprocess per client connection.
-    static HARDWARE_CONTEXT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    HARDWARE_CONTEXT.get_or_init(hardware_context_uncached).clone()
-}
-
-fn hardware_context_uncached() -> Option<String> {
-    let mut lines = Vec::new();
-
-    if let Some(machine) = machine_model() {
-        lines.push(format!("  Machine: {}", machine));
-    }
-    if let Some(cpu) = cpu_model() {
-        lines.push(format!("  CPU: {}", cpu));
-    }
-    if let Some(gpu) = gpu_summary() {
-        lines.push(format!("  GPU: {}", gpu));
-    }
-    if let Some(memory) = memory_summary() {
-        lines.push(format!("  Memory: {}", memory));
-    }
-
-    if lines.is_empty() {
-        None
-    } else {
-        let mut out = vec!["Hardware:".to_string()];
-        out.extend(lines);
-        Some(out.join("\n"))
-    }
-}
-
-fn read_trimmed_file(path: impl Into<PathBuf>) -> Option<String> {
-    std::fs::read_to_string(path.into())
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn machine_model() -> Option<String> {
-    let vendor = read_trimmed_file("/sys/devices/virtual/dmi/id/sys_vendor");
-    let product = read_trimmed_file("/sys/devices/virtual/dmi/id/product_name");
-    match (vendor, product) {
-        (Some(vendor), Some(product)) if product.contains(&vendor) => Some(product),
-        (Some(vendor), Some(product)) => Some(format!("{} {}", vendor, product)),
-        (None, Some(product)) => Some(product),
-        (Some(vendor), None) => Some(vendor),
-        (None, None) => None,
-    }
-}
-
-fn cpu_model() -> Option<String> {
-    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
-    cpuinfo.lines().find_map(|line| {
-        let (_, value) = line.split_once(':')?;
-        if line.trim_start().starts_with("model name") {
-            let value = value.trim();
-            if value.is_empty() {
-                None
-            } else {
-                Some(value.to_string())
-            }
-        } else {
-            None
-        }
-    })
-}
-
-fn memory_summary() -> Option<String> {
-    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let kb = meminfo.lines().find_map(|line| {
-        let rest = line.strip_prefix("MemTotal:")?.trim();
-        rest.split_whitespace().next()?.parse::<u64>().ok()
-    })?;
-    let gib = kb as f64 / 1024.0 / 1024.0;
-    Some(format!("{:.1} GiB", gib))
-}
-
-fn gpu_summary() -> Option<String> {
-    let output = Command::new("lspci").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut gpus: Vec<String> = text
-        .lines()
-        .filter(|line| {
-            line.contains(" VGA compatible controller")
-                || line.contains(" 3D controller")
-                || line.contains(" Display controller")
-        })
-        .filter_map(|line| line.split_once(':').map(|(_, rest)| rest.trim().to_string()))
-        .collect();
-    gpus.dedup();
-    if gpus.is_empty() { None } else { Some(gpus.join("; ")) }
-}
-
 #[cfg(test)]
 #[path = "prompt_tests.rs"]
 mod prompt_tests;
+
+#[cfg(test)]
+mod session_context_tests;

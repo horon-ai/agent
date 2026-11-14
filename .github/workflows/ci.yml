@@ -1180,10 +1180,13 @@ jobs:
         # tools a profile sends eagerly, lists or defers, `agent::prompting::
         # tests` and `tool::toolbox_tests` cover the listed-tools index and the
         # tool that reaches it, `startup_profile` covers the opt-in serve stage
-        # report, and `prompt::prompt_tests` in `horon-agent-base` covers the
-        # prompt assembly and its source files. libtest accepts one filter per
-        # run, so each module has its own call, and each must report at least
-        # one pass so a renamed module fails the step instead of passing empty.
+        # report, `prompt::prompt_tests` in `horon-agent-base` covers the
+        # prompt assembly and its source files, and `prompt::
+        # session_context_tests` there prints the `session_context` line the
+        # structural gate reads (the `git` and GPU-probe child processes a
+        # session context starts). libtest accepts one filter per run, so each
+        # module has its own call, and each must report at least one pass so a
+        # renamed module fails the step instead of passing empty.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1217,6 +1220,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- prompt::prompt_tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- prompt::session_context_tests --nocapture
           # Last, so a schema that moved cannot hide the modules above it.
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \

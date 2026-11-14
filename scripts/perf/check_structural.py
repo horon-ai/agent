@@ -239,6 +239,20 @@ MEASUREMENTS = (
             "agent::tests::prompt_request_bytes::core_profile_static_prompt_is_measured",
         ],
     },
+    # A session context is built when a session is created or restored, and
+    # its git and GPU lines come from child processes. They are counted in
+    # three fixed situations: a directory outside any repository, a fresh
+    # repository, and the GPU probe on its own.
+    {
+        "section": "session_context",
+        "source": "session-context",
+        "args": [
+            "-p",
+            "horon-agent-base",
+            "--lib",
+            "prompt::session_context_tests::session_context_child_processes_are_measured",
+        ],
+    },
 )
 
 REQUIRED_SECTIONS = (
@@ -255,6 +269,7 @@ REQUIRED_SECTIONS = (
     "hooks",
     "prefix",
     "prompt",
+    "session_context",
 )
 
 
@@ -801,6 +816,32 @@ def check_prompt(report: Report, records: list[dict[str, str]], bounds: dict[str
         )
 
 
+def check_session_context(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The session-context child processes were counted, not read from counters that were off.
+
+    No ceiling yet: this section records the numbers a later bound is set
+    from. What it refuses is a line that measured nothing. Describing a
+    repository takes at least one `git` process, so a zero there means the
+    counters were off, and the zeros beside it for a directory outside any
+    repository and for the GPU probe would read as a pass they did not earn.
+    """
+    for record in records:
+        section = "session_context"
+        report.at_least(
+            section,
+            "git_spawns_outside_repo",
+            as_int(record, "git_spawns_outside_repo", section),
+            0,
+        )
+        report.at_least(section, "git_spawns_in_repo", as_int(record, "git_spawns_in_repo", section), 1)
+        report.at_least(
+            section,
+            "gpu_probe_spawns_without_display",
+            as_int(record, "gpu_probe_spawns_without_display", section),
+            0,
+        )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -815,6 +856,7 @@ CHECKS = {
     "hooks": check_hooks,
     "prefix": check_prefix,
     "prompt": check_prompt,
+    "session_context": check_session_context,
 }
 
 
