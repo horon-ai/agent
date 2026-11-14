@@ -61,9 +61,11 @@ A request sent without the capability is rejected with a structured `unsupported
 
 Four events were added: `runtime_state`, `control_receipt`, `snapshot_marker` and `snapshot`. All are gated by a capability; the server does not send them to a connection that did not negotiate it, and the SDK discards them after receiving them. Byte-level behaviour of existing connections is unchanged.
 
-### Not yet wired up
+### Where the answers come from
 
-The protocol shape and SDK methods of `apply_control`/`get_control_receipt` and `get_snapshot` are settled, but the storage and observation implementation behind them belongs to separate work. Until that work lands, the bridge answers these requests with `unsupported`. From the client's side that is the same "this server does not offer it yet" answer, so no branching changes.
+All four requests are served. The daemon advertises `durable_runtime_api` in its `pong` (`crates/app-core/src/server/session_connections.rs`) and owns the session, its cancel signals and the control ledger, so the bridge only translates a request into the daemon's own frame and translates the reply back (`crates/harness-api-server/src/translate.rs`); the daemon dispatches them in `crates/app-core/src/server/client_lifecycle.rs` and builds the snapshot from the session's observation owner (`crates/app-core/src/server/runtime_state_api.rs`).
+
+`unsupported` therefore means **this daemon is older**, not that the surface is unimplemented. The bridge returns it, naming `durable_runtime_v1`, only when the daemon it dialled did not advertise `durable_runtime_api`: an older daemon answers an unknown request with an error frame carrying no id, so forwarding would leave the client waiting out its own timeout. From the client's side that is the same "this server does not offer it" answer as any other missing capability, so no branching changes.
 
 ## Handoff compaction
 

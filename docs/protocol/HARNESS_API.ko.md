@@ -94,12 +94,11 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 모두 기능으로 게이트되며, 그 기능을 협상하지 않은 연결에는 서버가 보내지 않고 SDK도 받은
 뒤 버린다. 기존 연결의 바이트 수준 동작은 바뀌지 않는다.
 
-### 아직 연결되지 않은 부분
+### 응답이 만들어지는 곳
 
-`apply_control`/`get_control_receipt`와 `get_snapshot`의 프로토콜 모양과 SDK 메서드는
-확정됐지만, 그 뒤의 저장·관측 구현은 별도 작업이 소유한다. 그 작업이 붙기 전까지 브리지는
-이 요청들에 `unsupported`로 답한다. 클라이언트 입장에서는 "이 서버가 아직 제공하지 않는다"와
-같은 응답이므로 분기 처리가 달라지지 않는다.
+네 요청은 모두 실제로 처리된다. 데몬이 `pong`에서 `durable_runtime_api`를 알리고(`crates/app-core/src/server/session_connections.rs`) 세션과 취소 신호, 제어 원장을 소유하므로, 브리지는 요청을 데몬의 프레임으로 번역하고 응답을 되번역할 뿐이다(`crates/harness-api-server/src/translate.rs`). 데몬은 이 요청을 `crates/app-core/src/server/client_lifecycle.rs`에서 분기하고, 스냅샷은 세션의 관측 소유자로 만든다(`crates/app-core/src/server/runtime_state_api.rs`).
+
+그래서 `unsupported`는 **이 데몬이 구버전이라는 뜻**이지, 기능이 구현되지 않았다는 뜻이 아니다. 브리지는 접속한 데몬이 `durable_runtime_api`를 알리지 않았을 때만 `durable_runtime_v1`을 지목한 이 응답을 돌려준다. 구버전 데몬은 모르는 요청에 id가 없는 오류 프레임으로 답하므로 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다린다. 클라이언트 입장에서는 다른 기능이 없을 때와 같은 "이 서버가 제공하지 않는다"는 응답이므로 분기 처리는 달라지지 않는다.
 
 ## 핸드오프 압축
 
