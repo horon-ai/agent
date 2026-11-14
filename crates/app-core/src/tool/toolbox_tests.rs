@@ -172,6 +172,26 @@ fn the_schema_has_no_promote_action() {
     );
 }
 
+/// The dispatcher's one description is its whole contract in every request:
+/// the three actions, the index it serves, and that a dispatched call meets
+/// the same policy, approval, and hooks as a direct one.
+#[test]
+fn toolbox_description_names_actions_and_policy() {
+    let tool = toolbox::ToolboxTool::new(Registry::empty().downgrade());
+    let description = tool.description();
+    for part in [
+        "`list`",
+        "`describe`",
+        "`run`",
+        "\"Additional tools\"",
+        "Policy",
+        "approval",
+        "hooks",
+    ] {
+        assert!(description.contains(part), "missing {part}: {description}");
+    }
+}
+
 #[tokio::test]
 async fn toolbox_run_matches_direct_call() {
     let _guard = crate::storage::lock_test_env();
