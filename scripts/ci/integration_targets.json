@@ -300,6 +300,11 @@
       "package": "horon-agent-token-estimate",
       "target": "measured_baseline",
       "min_passed": 8
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "scratch_live_working_dir",
+      "min_passed": 2
     }
   ]
 }

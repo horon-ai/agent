@@ -24,6 +24,7 @@ pub mod signal;
 pub mod term;
 mod tls;
 pub mod watch;
+mod working_dirs;
 
 pub use unix::UnixInhibitor;
 
@@ -304,8 +305,7 @@ impl PlatformAdapter for Adapter {
     }
 
     fn process_working_dirs() -> Vec<PathBuf> {
-        // macOS has no process table that lists working directories cheaply.
-        Vec::new()
+        working_dirs::process_working_dirs()
     }
 
     fn process_memory_facts() -> ProcessMemoryFacts {
