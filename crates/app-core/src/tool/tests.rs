@@ -231,14 +231,12 @@ async fn swarm_follows_tool_profile_only() {
     let open = registry.definitions_filtered(None, &HashSet::new()).await;
     assert_eq!(open.iter().filter(|def| def.name == "swarm").count(), 1);
 
-    // The `core` profile is a closed allow-list that omits swarm, so nothing lists it.
-    let core: HashSet<String> = crate::config::CORE_TOOLS
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect();
-    assert!(!core.contains("swarm"));
+    // `swarm` is one of the eighteen `CORE_TOOLS` (AGENTS.md, `docs/runtime/TOOLS.md`),
+    // so `core` lists it — discoverable through the index and `toolbox`, not eager.
+    let core: HashSet<String> = crate::config::CORE_TOOLS.iter().map(|n| (*n).to_string()).collect();
+    assert!(core.contains("swarm") && !crate::config::ESSENTIAL_TOOLS.contains(&"swarm"));
     let closed = registry.definitions_filtered(Some(&core), &HashSet::new()).await;
-    assert!(!closed.iter().any(|def| def.name == "swarm"));
+    assert_eq!(closed.iter().filter(|def| def.name == "swarm").count(), 1);
     // An explicit profile entry is the only other switch: allowing it lists it,
     // disabling it hides it, and no tool surface outside the profile reintroduces it.
     let allow: HashSet<String> = HashSet::from(["swarm".to_string()]);
