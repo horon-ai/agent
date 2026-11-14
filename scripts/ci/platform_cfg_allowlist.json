@@ -88,10 +88,6 @@
       "count": 7,
       "reason": "desktop notifications: `osascript` on macOS, `notify-send` on Linux, nothing elsewhere; `reap_notification_child` serves only those two."
     },
-    "crates/app-core/src/overnight.rs": {
-      "count": 10,
-      "reason": "overnight scheduling hooks that exist only on Linux (process and session hooks) plus their non-Linux fallbacks."
-    },
     "crates/app-core/src/perf.rs": {
       "count": 11,
       "reason": "host load, memory and terminal probes chosen at compile time: /proc readers on Linux, sysctlbyname/getloadavg on macOS, GlobalMemoryStatusEx on Windows. The perf tier is cross-platform; each probe is the platform's own measurement API."

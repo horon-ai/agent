@@ -19,11 +19,13 @@ mod fs;
 pub mod log;
 mod power;
 mod process;
+pub mod resources;
 mod term;
 
 pub use fs::{FileIds, FileStamp};
 pub use power::{InhibitorState, SleepInhibitor};
 pub use process::{ProcessMemoryFacts, ReadyChild, StopRequest};
+pub use resources::PlatformResources;
 pub use term::StdinState;
 
 /// How hard a durability flush pushes the data to the device.
@@ -488,6 +490,14 @@ pub trait PlatformAdapter {
     /// Unix sends `SIGTERM`, waits up to three seconds, then kills. Windows has
     /// no catchable termination signal and terminates at once.
     fn terminate_child(child: &mut Child);
+
+    /// This host's memory, swap, load, battery and disk facts.
+    ///
+    /// A fact the platform cannot measure at all is listed in
+    /// [`PlatformResources::unavailable`] rather than left `None`, so a caller
+    /// can tell "not measured here" from "the read failed". `disk_path` names
+    /// the filesystem whose free space is wanted; `None` skips that fact.
+    fn host_resources(disk_path: Option<&Path>) -> PlatformResources;
 
     /// The base directory this platform keeps application configuration in.
     ///

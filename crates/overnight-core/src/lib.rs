@@ -118,6 +118,14 @@ pub struct ResourceSnapshot {
     pub battery_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk_available_gb: Option<f64>,
+    /// Facts this platform cannot measure at all, by field name.
+    ///
+    /// A field named here is absent because the operating system has no such
+    /// measurement, which is different from a read that failed; the summary
+    /// prints it as "unavailable on this platform" so the report never shows an
+    /// unexplained gap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -684,15 +692,25 @@ pub fn render_timeline_html(events: &[OvernightEvent], limit: usize) -> String {
 }
 
 pub fn resource_summary(snapshot: &ResourceSnapshot) -> String {
+    // A fact the platform cannot measure reads differently from one whose read
+    // failed: "unavailable on this platform" is a property of the operating
+    // system, "unknown" is a property of this sample.
+    let missing = |fact: &str| {
+        if snapshot.unavailable.iter().any(|name| name == fact) {
+            "unavailable on this platform"
+        } else {
+            "unknown"
+        }
+    };
     let memory = snapshot
         .memory_used_percent
         .map(|pct| format!("RAM {:.0}%", pct))
-        .unwrap_or_else(|| "RAM unknown".to_string());
+        .unwrap_or_else(|| format!("RAM {}", missing("memory_available_mb")));
     let load = snapshot
         .load_one
         .zip(snapshot.cpu_count)
         .map(|(load, cpus)| format!("load {:.1}/{}", load, cpus))
-        .unwrap_or_else(|| "load unknown".to_string());
+        .unwrap_or_else(|| format!("load {}", missing("load_one")));
     let battery = snapshot
         .battery_percent
         .map(|pct| {
@@ -706,7 +724,7 @@ pub fn resource_summary(snapshot: &ResourceSnapshot) -> String {
                     .unwrap_or_default()
             )
         })
-        .unwrap_or_else(|| "battery unknown".to_string());
+        .unwrap_or_else(|| format!("battery {}", missing("battery_percent")));
     format!("{}, {}, {}", memory, load, battery)
 }
 
