@@ -265,6 +265,7 @@ jobs:
           node --test packages/npm/horon/test/launcher.test.mjs
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
+          python3 -m unittest -v scripts/sdk/test_python_platform_wheel.py
           python3 scripts/sdk/sdk_release.py check-committed
           placeholders="$(mktemp -d)"
           bash scripts/npm/prepare_placeholders.sh "$placeholders" >/dev/null
@@ -1991,6 +1992,14 @@ jobs:
       - name: Documentation pair gate unit tests
         if: ${{ !cancelled() }}
         run: python3 -m unittest -v scripts/ci/test_check_docs_pairs.py
+
+      # `@horon-ai/horon`, `@horon-ai/agent-sdk` and `horon-agent-sdk` are not
+      # published, so a doc that offers the install command sends the reader to a
+      # launcher with no runtime behind it or to a 404. The gate fails the
+      # install command's section unless it says the package is unpublished.
+      - name: Unpublished install claims
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest -v scripts/ci/test_docs_install_claims.py
 
       - name: Documentation benchmark block contract
         if: ${{ !cancelled() }}

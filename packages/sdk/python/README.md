@@ -25,11 +25,15 @@ asyncio.run(main())
 
 ## Install
 
+The package is not on PyPI yet, so install from a source checkout:
+
 ```bash
-pip install horon-agent-sdk
-# or
-uv add horon-agent-sdk
+cd packages/sdk/python
+uv sync
+uv run python -c "import horon_agent_sdk"
 ```
+
+Once it is published, `pip install horon-agent-sdk` (or `uv add horon-agent-sdk`) installs the same code; `packages/sdk/python/RELEASING.md` is the release procedure.
 
 Platform wheels carry the horon-agent runtime for that platform. The pure wheel
 and the sdist do not, so `launch()` falls back to `horon-agent` on `PATH`.

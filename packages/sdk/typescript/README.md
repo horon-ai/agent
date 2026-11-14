@@ -12,17 +12,15 @@ Full documentation: **[horon-agent.sh/sdk](https://horon-agent.sh/sdk)**
 
 ## Install
 
-```bash
-npm install @horon-ai/agent-sdk
-```
-
-From a source checkout:
+The package is not on npm yet (only the `0.0.0` name reservation exists), so install from a source checkout:
 
 ```bash
 cd packages/sdk/typescript
 npm install
 npm run build
 ```
+
+Once the seven `@horon-ai/agent-sdk*` names are published, `npm install @horon-ai/agent-sdk` installs the same code; `packages/sdk/typescript/RELEASING.md` is the release procedure.
 
 ## Requirements
 
