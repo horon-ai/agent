@@ -443,8 +443,7 @@ fn apply_default_tool_profile(flag_profile: Option<&str>) {
 fn provider_choice_for_named_profile(_profile_name: &str) -> ProviderChoice {
     // Deliberately independent of the profile's `type`: the runtime identity is
     // `openai-compatible[:profile]` for every wire, so no config lookup happens
-    // here. `provider_choice_for_named_profile_in` keeps the old signature
-    // reachable for the test that pins this uniformity.
+    // here.
     ProviderChoice::OpenaiCompatible
 }
 
@@ -772,7 +771,8 @@ pub(crate) async fn maybe_prompt_server_bootstrap_login(provider_choice: &Provid
     // No interactive login exists in this build. Point the operator at the
     // config path instead of blocking a headless launch on a prompt.
     output::stderr_info(
-        "No model provider is configured. Add a [providers.<name>] profile with type = \"openai-compatible\" to config.toml, then run again.",
+        "No model provider is configured. Add a [providers.<name>] profile with type = \"openai-compatible\", \
+         \"openai-responses\", \"anthropic-compatible\" or \"gemini-compatible\" to config.toml, then run again.",
     );
 
     Ok(())

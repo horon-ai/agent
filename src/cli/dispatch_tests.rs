@@ -341,8 +341,11 @@ async fn spawn_lock_creates_missing_runtime_directory() {
 
 #[test]
 fn provider_profile_transport_is_uniform_across_profile_types() {
-    // The runtime identity is `openai-compatible[:profile]` for all four wires;
-    // the wire itself comes from the profile's `type` inside the runtime builder.
+    // Two separate claims: each of the four `type` values parses from a config
+    // file, and the transport choice is `ProviderChoice::OpenaiCompatible` for
+    // every profile name. The choice ignores the profile entirely, so the
+    // runtime identity stays `openai-compatible[:profile]` and the wire itself
+    // comes from the profile's `type` inside the runtime builder.
     let config: crate::config::Config = toml::from_str(
         r#"
 [providers.fcc-chat]

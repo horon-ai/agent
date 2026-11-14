@@ -234,7 +234,8 @@ fn builtin_provider_refusal(choice: &ProviderChoice) -> anyhow::Error {
 /// The error a launch gets when nothing names a model endpoint.
 fn unconfigured_provider_error() -> anyhow::Error {
     anyhow::anyhow!(
-        "No model provider is configured. Add a [providers.<name>] profile with type = \"openai-compatible\" to config.toml \
+        "No model provider is configured. Add a [providers.<name>] profile with type = \"openai-compatible\", \
+         \"openai-responses\", \"anthropic-compatible\" or \"gemini-compatible\" to config.toml \
          (set base_url, default_model, and either api_key_env or auth = \"none\"), then select it with \
          --provider-profile <name> or [provider] default_provider = \"<name>\". For a local server use e.g. \
          base_url = \"http://127.0.0.1:11434/v1\" and auth = \"none\"."
