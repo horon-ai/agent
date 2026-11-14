@@ -547,17 +547,21 @@ swarm_max_concurrent_agents = 32
 swarm_stall_after_secs = 600
 # swarm_stall_nudge = false
 #
-# Recall uses Jev typed Decisions directly, without embeddings or a sidecar LLM.
+# Recall is explicit: the agent calls the `memory` tool with the query it wrote,
+# and that call ranks candidates through Jev typed Decisions, without embeddings
+# or a sidecar LLM. No background pass recalls on its own between turns.
 # Provider values: auto, openrouter, typesafe, aimlapi.
 # auto prefers TypeSafe, then OpenRouter, then AI/ML API credentials.
 # Env override: HORON_AGENT_MEMORY_JEV_PROVIDER
 # memory_jev_provider = "auto"
-# Minimum relevance probability (0.8..=1.0). Invalid values fail closed.
+# Minimum relevance probability (0.8..=1.0) a `memory` recall must clear.
+# Invalid values fail closed.
 # memory_jev_threshold = 0.8
 # BYOK: OPENROUTER_API_KEY, TYPESAFE_API_KEY, or AIMLAPI_API_KEY.
 # No fallback after auth, billing, or network failure; no silent BYOK spend.
 # Memories remain local; the query and candidate memories go to the selected provider.
-# No keys? Local memory list/search/remember/forget still work.
+# No keys? Local memory list/search/remember/forget still work, and so does recall
+# without a provider ranking step.
 #
 # Optional text-generating extraction is separate from recall. Disable it to
 # learn only through the main agent's explicit memory writes.
