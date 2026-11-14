@@ -703,13 +703,14 @@ pub fn build_system_prompt_split_with_capabilities(
     capabilities: PromptCapabilities,
 ) -> (SplitSystemPrompt, ContextInfo) {
     let agents_md = load_agents_md_files_from_dir(working_dir);
+    let skills_section = build_available_skills_section(available_skills);
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
-        available_skills,
+        skills_section.as_deref(),
         memory_prompt,
         working_dir,
         capabilities,
-        agents_md,
+        &agents_md,
         &StaticPromptSources::load(working_dir),
     )
 }
@@ -727,33 +728,37 @@ pub fn build_system_prompt_split_with_agents_md(
     working_dir: Option<&Path>,
     agents_md: (Option<String>, ContextInfo),
 ) -> (SplitSystemPrompt, ContextInfo) {
-    build_system_prompt_split_with_snapshot(
+    let skills_section = build_available_skills_section(available_skills);
+    build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
-        available_skills,
+        skills_section.as_deref(),
         memory_prompt,
         working_dir,
-        agents_md,
+        PromptCapabilities::current(),
+        &agents_md,
         &StaticPromptSources::load(working_dir),
     )
 }
 
-/// Build a split prompt from sources captured earlier: the AGENTS.md snapshot
-/// and the base prompt, overlay and preferred-tools snapshot.
+/// Build a split prompt from sources captured earlier: the AGENTS.md snapshot,
+/// the base prompt, overlay and preferred-tools snapshot, and the skills
+/// section already rendered by [`build_available_skills_section`].
 ///
 /// This is the per-request path of a long-lived agent. It reads no prompt
-/// source file, so the static part stays byte-identical until the agent
+/// source file and copies each captured section once, straight into the
+/// static part, so the static part stays byte-identical until the agent
 /// captures its sources again at a session boundary.
 pub fn build_system_prompt_split_with_snapshot(
     skill_prompt: Option<&str>,
-    available_skills: &[SkillInfo],
+    skills_section: Option<&str>,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
-    agents_md: (Option<String>, ContextInfo),
+    agents_md: &(Option<String>, ContextInfo),
     sources: &StaticPromptSources,
 ) -> (SplitSystemPrompt, ContextInfo) {
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
-        available_skills,
+        skills_section,
         memory_prompt,
         working_dir,
         PromptCapabilities::current(),
@@ -762,28 +767,44 @@ pub fn build_system_prompt_split_with_snapshot(
     )
 }
 
+/// Append one static section after the ones already written, with the same
+/// `\n\n` separator a join of the parts would put between them.
+fn push_static_section(static_part: &mut String, section: &str) {
+    static_part.push_str("\n\n");
+    static_part.push_str(section);
+}
+
 fn build_system_prompt_split_with_capabilities_and_agents_md(
     skill_prompt: Option<&str>,
-    available_skills: &[SkillInfo],
+    skills_section: Option<&str>,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
-    agents_md: (Option<String>, ContextInfo),
+    agents_md: &(Option<String>, ContextInfo),
     sources: &StaticPromptSources,
 ) -> (SplitSystemPrompt, ContextInfo) {
-    let mut static_parts = vec![sources.base.clone()];
-    let mut dynamic_parts = Vec::new();
+    let (md_content, md_info) = agents_md;
+    let captured_len = [
+        md_content.as_deref(),
+        sources.overlay.0.as_deref(),
+        sources.preferred_tools.0.as_deref(),
+        skills_section,
+    ]
+    .iter()
+    .map(|section| section.map_or(0, |text| text.len() + 2))
+    .sum::<usize>();
+    let mut static_part = String::with_capacity(sources.base.len() + captured_len);
+    static_part.push_str(&sources.base);
     let mut info = ContextInfo {
-        system_prompt_chars: static_parts.join("\n\n").len(),
+        system_prompt_chars: sources.base.len(),
         ..Default::default()
     };
 
     // === STATIC CONTENT (cacheable) ===
 
     // Add AGENTS.md instructions (static per project)
-    let (md_content, md_info) = agents_md;
     if let Some(content) = md_content {
-        static_parts.push(content);
+        push_static_section(&mut static_part, content);
     }
     info.has_project_agents_md = md_info.has_project_agents_md;
     info.project_agents_md_chars = md_info.project_agents_md_chars;
@@ -793,42 +814,46 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     // Imported rules from other agent tools, after the native AGENTS.md path.
     if let Some((foreign_content, foreign_chars)) = foreign_rules_section(capabilities, working_dir) {
         info.foreign_rules_chars = foreign_chars;
-        static_parts.push(foreign_content);
+        push_static_section(&mut static_part, &foreign_content);
     }
 
     // Add optional prompt overlays from ~/.horon/ and ./.horon/
     if let Some(content) = &sources.overlay.0 {
         info.prompt_overlay_chars = sources.overlay.1;
-        static_parts.push(content.clone());
+        push_static_section(&mut static_part, content);
     }
 
     // Add optional preferred-tool guidance (static per project/user)
     if let Some(content) = &sources.preferred_tools.0 {
         info.preferred_tools_chars = sources.preferred_tools.1;
-        static_parts.push(content.clone());
+        push_static_section(&mut static_part, content);
     }
 
     // Add available skills list (fairly static)
-    if let Some(skills_section) = build_available_skills_section(available_skills) {
-        info.skills_chars = skills_section.len();
-        static_parts.push(skills_section);
+    if let Some(section) = skills_section {
+        info.skills_chars = section.len();
+        push_static_section(&mut static_part, section);
     }
 
     // === TURN CONTEXT (not cached) ===
 
+    let mut dynamic_part = String::new();
+
     // Memory prompt (changes per conversation)
     if let Some(memory) = memory_prompt {
         info.memory_chars = memory.len();
-        dynamic_parts.push(memory.to_string());
+        dynamic_part.push_str(memory);
     }
 
     // Active skill prompt (changes per skill invocation)
     if let Some(skill) = skill_prompt {
-        dynamic_parts.push(format!("# Active Skill\n\n{}", skill));
+        if memory_prompt.is_some() {
+            dynamic_part.push_str("\n\n");
+        }
+        dynamic_part.push_str("# Active Skill\n\n");
+        dynamic_part.push_str(skill);
     }
 
-    let static_part = static_parts.join("\n\n");
-    let dynamic_part = dynamic_parts.join("\n\n");
     info.total_chars = static_part.len() + dynamic_part.len();
 
     (

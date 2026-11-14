@@ -493,6 +493,9 @@ pub struct Agent {
     /// prefix (that forces a KV cache miss on everything after it), so the
     /// list is frozen here and later installs are announced in the transcript.
     prompt_skills_snapshot: Vec<crate::prompt::SkillInfo>,
+    /// That list rendered once as the system-prompt section, so a request
+    /// copies the captured text instead of rendering it again.
+    prompt_skills_section: Option<String>,
     /// Skill names already described to the model, either in the frozen
     /// system-prompt list or by a late-skill transcript announcement.
     announced_skills: HashSet<String>,
@@ -662,6 +665,7 @@ impl Agent {
             agents_md_snapshot,
             static_prompt_sources,
             prompt_skills_snapshot: Vec::new(),
+            prompt_skills_section: None,
             announced_skills: HashSet::new(),
             announced_skills_scan_index: 0,
             memory_enabled: crate::config::config().features.memory,

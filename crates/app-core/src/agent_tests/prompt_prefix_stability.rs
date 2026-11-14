@@ -183,3 +183,94 @@ async fn overlay_edit_applies_at_the_next_session_boundary() {
     let restored = static_prefix(&agent);
     assert!(restored.contains("overlay-global-late"), "{restored}");
 }
+
+/// Points `HORON_HOME` at a fresh directory for the rest of the test.
+fn isolated_home() -> (tempfile::TempDir, RestoreHome) {
+    let home = tempfile::tempdir().expect("temp home");
+    let restore = RestoreHome(std::env::var_os("HORON_HOME"));
+    crate::env::set_var("HORON_HOME", home.path());
+    crate::config::Config::invalidate_cache();
+    (home, restore)
+}
+
+/// Two requests of one session copy the captured AGENTS.md text and the
+/// skills section rendered at the boundary: neither is captured, rendered or
+/// replaced again, so both requests read the same buffers.
+#[tokio::test]
+async fn snapshot_sections_are_shared_not_copied() {
+    let _guard = crate::storage::lock_test_env();
+    let (_home, _restore) = isolated_home();
+    let project = tempfile::tempdir().expect("project dir");
+    std::fs::write(project.path().join("AGENTS.md"), "agents-md-captured-once").expect("write AGENTS.md");
+
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let mut agent = Agent::new_with_initial_working_dir(
+        provider,
+        Registry::empty(),
+        Some(project.path().to_str().expect("utf-8 project path")),
+    );
+    let skills = [crate::prompt::SkillInfo {
+        name: "captured-skill".to_string(),
+        description: "Rendered once at the session boundary.".to_string(),
+    }];
+    agent.prompt_skills_section = crate::prompt::build_available_skills_section(&skills);
+    let agents_md = agent.agents_md_snapshot.0.as_deref().map(str::as_ptr);
+    let section = agent.prompt_skills_section.as_deref().map(str::as_ptr);
+    assert!(agents_md.is_some() && section.is_some(), "both sections are captured");
+
+    let first = agent.build_system_prompt_split(None).static_part;
+    let second = agent.build_system_prompt_split(None).static_part;
+    assert_eq!(
+        without_clock(&first),
+        without_clock(&second),
+        "the prefix moved between requests"
+    );
+    assert!(first.contains("agents-md-captured-once"), "{first}");
+    assert!(first.contains("captured-skill"), "{first}");
+    assert_eq!(agent.agents_md_snapshot.0.as_deref().map(str::as_ptr), agents_md);
+    assert_eq!(agent.prompt_skills_section.as_deref().map(str::as_ptr), section);
+}
+
+/// A skills list too large for its budget reaches the prompt exactly as the
+/// section renderer cut it, after the base prompt and the one `\n\n`
+/// separator a join of the parts would have put there.
+#[test]
+fn oversized_skills_section_is_unchanged() {
+    let _guard = crate::storage::lock_test_env();
+    let (_home, _restore) = isolated_home();
+    let project = tempfile::tempdir().expect("project dir");
+    let dir = Some(project.path());
+
+    let skills: Vec<crate::prompt::SkillInfo> = (0..200)
+        .map(|index| crate::prompt::SkillInfo {
+            name: format!("skill-{index:03}-{}", "n".repeat(300)),
+            description: "d".repeat(200),
+        })
+        .collect();
+    let uncapped: usize = skills.iter().map(|skill| skill.name.len()).sum();
+    assert!(
+        uncapped > crate::prompt::SKILLS_SECTION_MAX_BYTES,
+        "fixture must exceed the budget"
+    );
+    let section = crate::prompt::build_available_skills_section(&skills).expect("skills section");
+    assert!(
+        section.len() <= crate::prompt::SKILLS_SECTION_MAX_BYTES,
+        "{}",
+        section.len()
+    );
+
+    let sources = crate::prompt::StaticPromptSources::load(dir);
+    let (split, info) = crate::prompt::build_system_prompt_split_with_snapshot(
+        Some("skill body"),
+        Some(&section),
+        Some("memory"),
+        dir,
+        &(None, crate::prompt::ContextInfo::default()),
+        &sources,
+    );
+    let expected = format!("{}\n\n{section}", crate::prompt::load_base_system_prompt(dir));
+    assert_eq!(without_clock(&split.static_part), without_clock(&expected));
+    assert_eq!(split.dynamic_part, "memory\n\n# Active Skill\n\nskill body");
+    assert_eq!(info.skills_chars, section.len());
+    assert_eq!(info.total_chars, split.static_part.len() + split.dynamic_part.len());
+}

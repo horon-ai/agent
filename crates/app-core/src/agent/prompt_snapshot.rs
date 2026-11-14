@@ -24,10 +24,12 @@ impl Agent {
         self.static_prompt_sources = crate::prompt::StaticPromptSources::load(working_dir);
     }
 
-    /// Re-capture the frozen skills list. Only called at session boundaries
-    /// (new/restored session, working directory change), never mid-turn.
+    /// Re-capture the frozen skills list and render its system-prompt section.
+    /// Only called at session boundaries (new/restored session, working
+    /// directory change), never mid-turn.
     pub(super) fn refresh_prompt_skills_snapshot(&mut self) {
         self.prompt_skills_snapshot = self.current_prompt_skill_infos();
+        self.prompt_skills_section = crate::prompt::build_available_skills_section(&self.prompt_skills_snapshot);
         self.announced_skills = self
             .prompt_skills_snapshot
             .iter()
