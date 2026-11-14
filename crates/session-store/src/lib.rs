@@ -42,6 +42,7 @@ pub mod error;
 pub mod heads;
 pub mod history_page;
 mod index;
+pub mod index_import;
 pub mod legacy;
 mod legacy_bundle;
 mod legacy_completion;

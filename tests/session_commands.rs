@@ -527,8 +527,8 @@ fn a_build_without_the_import_feature_refuses_without_opening_the_database() {
     fs::set_permissions(&database, fs::Permissions::from_mode(0o000)).expect("unreadable index");
 
     let output = sandbox.run(&home, &["sessions", "migrate", "old", "--apply", "--legacy-index"]);
-    assert_refused(&output, "MigrationRequired");
-    assert!(format!("{}{}", stdout(&output), stderr(&output)).contains("--features legacy-session-index-import"));
+    assert_refused(&output, "--legacy-index is not available in this build");
+    assert!(format!("{}{}", stdout(&output), stderr(&output)).contains("legacy-session-index-import"));
 
     fs::set_permissions(&database, fs::Permissions::from_mode(0o600)).expect("restore mode");
     assert_eq!(fs::read(&database).expect("index bytes"), before);
@@ -536,6 +536,80 @@ fn a_build_without_the_import_feature_refuses_without_opening_the_database() {
     assert!(!home.join("session-metadata-v1.sqlite3-shm").exists());
     assert!(!event_log(&home, "old").exists());
     assert_eq!(legacy_bytes(&home, "old").len(), legacy_bytes(&home, "old").len());
+}
+
+/// The flag must not be offered by a build that cannot act on it: a hidden flag
+/// is still parsed, so this checks the help text rather than a parse failure.
+#[cfg(not(feature = "legacy-session-index-import"))]
+#[test]
+fn a_build_without_the_import_feature_hides_the_flag_from_help() {
+    let sandbox = Sandbox::new("no-index-help");
+    let home = sandbox.home("a");
+    let output = sandbox.run(&home, &["sessions", "migrate", "--help"]);
+    assert_ok(&output);
+    assert!(
+        !stdout(&output).contains("--legacy-index"),
+        "help must not offer a flag this build cannot honour:\n{}",
+        stdout(&output)
+    );
+}
+
+/// The other half: a build that can import the index must document the flag.
+#[cfg(feature = "legacy-session-index-import")]
+#[test]
+fn a_build_with_the_import_feature_offers_the_flag_in_help() {
+    let sandbox = Sandbox::new("index-help");
+    let home = sandbox.home("a");
+    let output = sandbox.run(&home, &["sessions", "migrate", "--help"]);
+    assert_ok(&output);
+    assert!(
+        stdout(&output).contains("--legacy-index"),
+        "a build that can import the index must document the flag:\n{}",
+        stdout(&output)
+    );
+}
+
+/// A dry run must name the remedy a released binary can follow, not the flag it
+/// will refuse on the next hop.
+#[cfg(not(feature = "legacy-session-index-import"))]
+#[test]
+fn a_dry_run_reports_the_remedy_a_released_build_can_follow() {
+    let sandbox = Sandbox::new("no-index-dry-run");
+    let home = sandbox.home("a");
+    write_legacy(&home, "old");
+    fs::write(home.join("session-metadata-v1.sqlite3"), b"index").expect("index placeholder");
+
+    let output = sandbox.run(&home, &["sessions", "migrate", "old", "--dry-run", "--json"]);
+    assert_ok(&output);
+    let report: Value = serde_json::from_str(&stdout(&output)).expect("migrate json");
+    assert_eq!(report["feature_enabled"], json!(false));
+    assert_eq!(report["sessions"][0]["status"], json!("index-import-required"));
+    assert_eq!(report["sessions"][0]["index_import_available"], json!(false));
+    let remedy = report["sessions"][0]["remedy"].as_str().expect("remedy");
+    assert!(
+        remedy.contains("legacy-session-index-import"),
+        "the remedy must name the build feature that resolves this: {remedy}"
+    );
+}
+
+/// `inspect` on a session it cannot finish reading must say what to install.
+#[cfg(not(feature = "legacy-session-index-import"))]
+#[test]
+fn inspect_names_the_remedy_for_an_unreadable_index() {
+    let sandbox = Sandbox::new("no-index-inspect");
+    let home = sandbox.home("a");
+    write_legacy(&home, "old");
+    fs::write(home.join("session-metadata-v1.sqlite3"), b"index").expect("index placeholder");
+
+    let output = sandbox.run(&home, &["sessions", "inspect", "old", "--json"]);
+    assert_ok(&output);
+    let report: Value = serde_json::from_str(&stdout(&output)).expect("inspect json");
+    assert_eq!(report["migration_required"], json!(true));
+    assert_eq!(report["index_import_available"], json!(false));
+    assert!(
+        report["remedy"].as_str().is_some_and(|text| text.contains("legacy-session-index-import")),
+        "inspect must name the build that can import it: {report}"
+    );
 }
 
 #[cfg(feature = "legacy-session-index-import")]

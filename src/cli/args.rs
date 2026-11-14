@@ -663,8 +663,8 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Also import display metadata that exists only in the legacy SQLite index
-        #[arg(long)]
+        /// Also import display metadata that exists only in the old SQLite index
+        #[arg(long, hide = !crate::session::event_store_api::index_import::AVAILABLE)]
         legacy_index: bool,
 
         #[arg(long)]
