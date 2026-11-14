@@ -199,7 +199,7 @@ esac
 
 info "horon-agent uninstalled."
 if [ "$PURGE" = false ]; then
-  info "Reinstall with: curl -fsSL https://horon-agent.sh/install | bash"
+  info "Reinstall with: curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash"
 else
-  info "All horon-agent data wiped. Reinstall with: curl -fsSL https://horon-agent.sh/install | bash"
+  info "All horon-agent data wiped. Reinstall with: curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash"
 fi

@@ -8,7 +8,7 @@ Unix socket. Schema drift is guarded from both sides: a Rust test fails if a
 variant is added without mirroring it here, and a Node test fails if the tag
 sets diverge.
 
-Full documentation: **[horon-agent.sh/sdk](https://horon-agent.sh/sdk)**
+Full documentation: **[agent.horon.ai](https://agent.horon.ai/sdk-typescript/)**
 
 ## Install
 

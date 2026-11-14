@@ -5,10 +5,10 @@
     Downloads the latest horon-agent release and installs it to %LOCALAPPDATA%\horon-agent\bin.
 
     One-liner install:
-      irm https://horon-agent.sh/install.ps1 | iex
+      irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 
     Or download and run (allows parameters):
-      & ([scriptblock]::Create((irm https://horon-agent.sh/install.ps1)))
+      & ([scriptblock]::Create((irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1)))
 .PARAMETER InstallDir
     Override the installation directory (default: $env:LOCALAPPDATA\horon-agent\bin)
 .PARAMETER Version
@@ -70,8 +70,8 @@ function ConvertFrom-HoronAgentWebContent($Content) {
     if ($null -eq $Content) { return "" }
 
     # Windows PowerShell 5.1 returns Byte[] for some text responses when the
-    # server uses application/octet-stream (including horon-agent.sh metadata and
-    # GitHub release checksum manifests). Casting Byte[] directly to [string]
+    # server uses application/octet-stream (including GitHub release checksum
+    # manifests). Casting Byte[] directly to [string]
     # produces a space-separated list of decimal bytes instead of the text.
     if ($Content -is [byte[]]) {
         return [System.Text.Encoding]::UTF8.GetString($Content)
