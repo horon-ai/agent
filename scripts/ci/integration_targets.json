@@ -275,6 +275,11 @@
       "package": "horon-agent-session-types",
       "target": "degradation_record",
       "min_passed": 2
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "scratch_live_working_dir",
+      "min_passed": 2
     }
   ]
 }
