@@ -379,7 +379,6 @@ fn test_build_ambient_system_prompt_with_data() {
         low_confidence: 3,
         contradictions: 1,
         missing_embeddings: 5,
-        duplicate_candidates: 0,
         last_consolidation: Some(Utc::now() - Duration::hours(2)),
     };
 
@@ -416,6 +415,10 @@ fn test_build_ambient_system_prompt_with_data() {
     assert!(prompt.contains("confidence < 0.1: 3"));
     assert!(prompt.contains("contradictions: 1"));
     assert!(prompt.contains("without embeddings: 5"));
+    assert!(
+        !prompt.contains("Duplicate candidates"),
+        "the prompt must not ask for an embedding scan the ambient agent cannot run: {prompt}"
+    );
     assert!(prompt.contains("Fix auth bug"));
     assert!(prompt.contains("approved ambient fixing typos"));
     assert!(prompt.contains("rejected ambient refactoring"));
