@@ -209,6 +209,10 @@ test("a missing horon-agent binary is catchable, and leaks nothing", async () =>
       assert.equal(error.name, "HarnessError");
       assert.equal(error.code, "horon_agent_not_found");
       assert.match(error.message, /not installed, or not on PATH/);
+      // The message is the only install pointer a machine without the binary
+      // sees, so it has to name a host that resolves (horon-agent.sh does not).
+      assert.match(error.message, /https:\/\/agent\.horon\.ai\/install\//);
+      assert.doesNotMatch(error.message, /horon-agent\.sh/);
       return true;
     },
   );

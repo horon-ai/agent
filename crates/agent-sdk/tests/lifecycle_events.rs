@@ -328,6 +328,13 @@ fn missing_launch_binary_is_typed_and_cleans_up_its_temporary_home() {
         Err(error) => error,
     };
     assert_eq!(error.code(), "horon_agent_not_found");
+    // The message is the only install pointer a machine without the binary sees,
+    // so it has to name a host that resolves (horon-agent.sh does not).
+    assert!(
+        error.to_string().contains("https://agent.horon.ai/install/"),
+        "install pointer must name a resolving host: {error}"
+    );
+    assert!(!error.to_string().contains("horon-agent.sh"));
     let after = std::fs::read_dir(std::env::temp_dir())
         .expect("temp root")
         .flatten()

@@ -170,7 +170,12 @@ async def test_a_missing_horon_agent_binary_is_catchable_and_leaks_nothing() -> 
             LaunchOptions(binary="horon-agent-definitely-not-installed", startup_timeout_ms=5000)
         )
     assert caught.value.code == "horon_agent_not_found"
-    assert "not installed, or not on PATH" in str(caught.value)
+    message = str(caught.value)
+    assert "not installed, or not on PATH" in message
+    # The message is the only install pointer a machine without the binary sees,
+    # so it has to name a host that resolves (horon-agent.sh does not).
+    assert "https://agent.horon.ai/install/" in message
+    assert "horon-agent.sh" not in message
 
     after = [name for name in os.listdir(root) if name.startswith(INSTANCE_PREFIX)]
     assert after == before, "a failed launch must not leave an instance home behind"

@@ -422,7 +422,7 @@ if ($pathUpdate.Changed) {
 }
 
 Write-Info "horon-agent uninstalled."
-Write-Info "Reinstall with: irm https://horon-agent.sh/install.ps1 | iex"
+Write-Info "Reinstall with: irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex"
 
 
     return 0

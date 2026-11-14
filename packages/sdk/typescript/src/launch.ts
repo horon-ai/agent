@@ -522,6 +522,8 @@ function removeTree(target: string): void {
  * connections.
  * Private instances never auto-update: they run the binary that launched them.
  */
+const INSTALL_URL = "https://agent.horon.ai/install/";
+
 export async function launchInstance(options: LaunchOptions = {}): Promise<LaunchedInstance> {
   const binary = options.binary ?? bundledHoronAgentBinary() ?? "horon-agent";
   const ephemeral = options.horonAgentHome === undefined;
@@ -737,8 +739,8 @@ export async function launchInstance(options: LaunchOptions = {}): Promise<Launc
           ? `could not run \`${binaryName}\`: horon-agent is not installed, or not on PATH. ` +
               (platformPackage
                 ? `The bundled runtime package (${platformPackage}) is missing. Reinstall without ` +
-                  "--omit=optional, install horon-agent from https://horon-agent.sh, or pass `binary` with its full path."
-                : "Install horon-agent from https://horon-agent.sh, or pass `binary` with its full path.")
+                  `--omit=optional, install horon-agent from ${INSTALL_URL}, or pass \`binary\` with its full path.`
+                : `Install horon-agent from ${INSTALL_URL}, or pass \`binary\` with its full path.`)
           : `could not run \`${binaryName}\`: ${failure.message}`,
       );
     }

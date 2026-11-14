@@ -65,6 +65,11 @@ impl WakeMode {
 }
 
 /// Options for starting a private horon-agent instance.
+/// Where a user whose machine lacks the binary is sent. The message that carries
+/// it is the only install pointer they see, so it names a host that resolves:
+/// `horon-agent.sh` does not.
+const INSTALL_URL: &str = "https://agent.horon.ai/install/";
+
 pub struct LaunchOptions {
     /// State directory for the instance. A temporary, drop-cleaned directory is
     /// used when omitted; an explicit directory is persistent.
@@ -258,7 +263,8 @@ pub fn launch_instance(options: &LaunchOptions) -> Result<LaunchedInstance> {
             cleanup_on_error();
             let message = if cause.kind() == std::io::ErrorKind::NotFound {
                 format!(
-                    "could not run `{}`: horon-agent is not installed, or not on PATH. Install it from https://horon-agent.sh, or pass `binary` with its full path.",
+                    "could not run `{}`: horon-agent is not installed, or not on PATH. \
+                     Install it from {INSTALL_URL}, or pass `binary` with its full path.",
                     binary.display()
                 )
             } else {
