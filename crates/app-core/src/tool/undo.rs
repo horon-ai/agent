@@ -289,7 +289,7 @@ impl Tool for UndoTool {
     }
 
     fn description(&self) -> &str {
-        "Undo the most recent file mutation this session's file tools made."
+        "Undo the latest file change this session's file tools made."
     }
 
     fn parameters_schema(&self) -> Value {

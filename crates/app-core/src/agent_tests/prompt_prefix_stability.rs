@@ -352,3 +352,60 @@ async fn restored_session_rebuilds_the_index_cache() {
     assert!(agent.listed_tools_index_built(), "the next request stored no index");
     assert_eq!(agent.listed_tools_section().as_deref(), Some(before.as_str()));
 }
+
+/// Tools whose first sentence was rewritten to fit the index row.
+const INDEX_FITTED_TOOLS: [&str; 5] = ["ask", "mcp", "monitor", "swarm", "undo"];
+
+/// Every index row ends at its tool's first sentence, so no row is cut
+/// mid-word, except `todo`, whose model-visible text is left as written.
+#[tokio::test]
+async fn listed_tool_index_rows_end_at_a_sentence() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let mut agent = agent_with_mcp_management_tool().await;
+    agent.tool_definitions().await;
+    let rows = agent.listed_tools_rows().expect("a core session lists its tools");
+
+    for name in INDEX_FITTED_TOOLS {
+        assert!(
+            rows.iter().any(|(row, _)| row == name),
+            "{name} is not listed: {rows:?}"
+        );
+    }
+    for (name, description) in &rows {
+        if name != "todo" {
+            assert!(!description.ends_with("..."), "{name} is clipped: {description}");
+        }
+    }
+}
+
+/// Shortening the first sentence moved no detail out of the full description
+/// `toolbox describe` returns.
+#[tokio::test]
+async fn listed_tool_full_descriptions_keep_details() {
+    let _guard = crate::storage::lock_test_env();
+    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let agent = agent_with_mcp_management_tool().await;
+    let tools = agent
+        .registry
+        .definitions_filtered(agent.allowed_tools.as_ref(), &agent.disabled_tools)
+        .await;
+    let description = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .map(|tool| tool.description.clone())
+            .unwrap_or_else(|| panic!("{name} is registered"))
+    };
+    let mcp = description("mcp");
+    for detail in [
+        "OAuth status/logout",
+        "HTTP/SSE",
+        "`horon-agent mcp login <configured-server>`",
+    ] {
+        assert!(mcp.contains(detail), "mcp lost {detail}: {mcp}");
+    }
+    assert!(description("ask").contains("up to four questions"));
+    assert!(description("monitor").contains("instead of polling"));
+    assert!(description("swarm").contains("Spawn workers with a prompt"));
+}
