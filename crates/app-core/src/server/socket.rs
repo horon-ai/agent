@@ -308,7 +308,7 @@ const READY_SIGNAL_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// A server bootstrap can legitimately take tens of seconds on slow hosts (auth
 /// preflights and provider init were observed at 15-60s on a Windows Server
-/// VPS, issue #503). The child's liveness is checked every poll, so a generous
+/// VPS). The child's liveness is checked every poll, so a generous
 /// budget only delays the error for a genuinely hung server, while a crashed
 /// server still fails fast with its stderr.
 const READY_POLL_TIMEOUT: Duration = Duration::from_secs(120);
