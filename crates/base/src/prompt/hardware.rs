@@ -1,6 +1,6 @@
 //! The hardware lines of a session context: machine, CPU, GPU and memory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub(super) fn hardware_context() -> Option<String> {
@@ -82,7 +82,41 @@ fn memory_summary() -> Option<String> {
     Some(format!("{:.1} GiB", gib))
 }
 
+/// Where Linux lists PCI devices, one directory each with a `class` file.
+const SYSFS_PCI_DEVICES: &str = "/sys/bus/pci/devices";
+
+/// PCI class prefixes `lspci` names "VGA compatible controller" (0x0300),
+/// "3D controller" (0x0302) and "Display controller" (0x0380): the three
+/// kinds the GPU line reports.
+const DISPLAY_CLASS_PREFIXES: [&str; 3] = ["0x0300", "0x0302", "0x0380"];
+
 pub(super) fn gpu_summary() -> Option<String> {
+    gpu_summary_under(Path::new(SYSFS_PCI_DEVICES), lspci_display_controllers)
+}
+
+/// Runs `probe` only when `pci_devices` lists a display controller. A machine
+/// without one (a headless virtual machine, for example) and a system without
+/// that directory (macOS, Windows) have no GPU line to report, so the `lspci`
+/// process is not started for them.
+pub(super) fn gpu_summary_under(pci_devices: &Path, probe: impl FnOnce() -> Option<String>) -> Option<String> {
+    if lists_display_controller(pci_devices) {
+        probe()
+    } else {
+        None
+    }
+}
+
+pub(super) fn lists_display_controller(pci_devices: &Path) -> bool {
+    let Ok(devices) = std::fs::read_dir(pci_devices) else {
+        return false;
+    };
+    devices.flatten().any(|device| {
+        read_trimmed_file(device.path().join("class"))
+            .is_some_and(|class| DISPLAY_CLASS_PREFIXES.iter().any(|prefix| class.starts_with(prefix)))
+    })
+}
+
+pub(super) fn lspci_display_controllers() -> Option<String> {
     horon_agent_perf_counters::record_session_context_gpu_probe_spawn();
     let output = Command::new("lspci").output().ok()?;
     if !output.status.success() {
