@@ -4,7 +4,7 @@ Language: **English** | [한국어](SERVER.ko.md)
 
 ## Overview
 
-horon agent uses a **one server, many clients** structure. A single server process manages every session and all state. Clients attach to it over a Unix socket and reconnect transparently when the connection drops or the server re-execs. The clients are the TypeScript and Rust SDKs, editors over ACP, and the terminal client `horon-tui`, which ships in this repository as `crates/tui` on `horon-agent-sdk`. The terminal client is a separate binary: the headless `horon-agent` package never links it.
+horon agent uses a **one server, many clients** structure. A single server process manages every session and all state. Clients attach to it over a Unix socket and reconnect transparently when the connection drops or the server re-execs. The clients are the TypeScript and Rust SDKs, editors over ACP, and the terminal client `horon-tui`, which ships in this repository as `crates/tui` on `horon-agent-sdk`. The terminal client is a separate binary: the `horon-agent` package (the agent binary) never links it.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -78,19 +78,19 @@ prefer a display name. CLI input beats environment input. Names are normalized t
 ### Server shutdown
 
 The server exits in these cases.
-- **Idle deadline:** five minutes pass with no clients and no live headless swarm workers. The shared-server deadline is fixed at 300 seconds (`IDLE_TIMEOUT_SECS` in `crates/app-core/src/server.rs`) and `[server]` cannot change it. The watcher checks every 10 seconds, so shutdown can land slightly after five minutes.
+- **Idle deadline:** five minutes pass with no clients and no live unattended swarm workers (sessions the code marks `is_headless`). The shared-server deadline is fixed at 300 seconds (`IDLE_TIMEOUT_SECS` in `crates/app-core/src/server.rs`) and `[server]` cannot change it. The watcher checks every 10 seconds, so shutdown can land slightly after five minutes.
 - **Manual:** you kill the server process
 - **Reload:** the server execs into a new binary (the socket path stays the same)
 
 The debug control server turns the shared-server idle watcher off. Temporary servers use their own lifetime policy.
 
-### Headless `run` sessions and the temporary server
+### `run` sessions in headless mode and the temporary server
 
 `horon run` uses no server at all. It builds an `Agent` in-process, sends one message, and exits.
 `--socket <path>` only chooses which socket the tools dial, so in most runs nothing listens on that path.
 
-One tool genuinely needs a server. `swarm` talks to the daemon over the socket because workers are headless sessions the server owns. A `run`
-session used to fail these requests outright ("horon-agent server is not running"), which kept headless automation from using swarm. Now the
+One tool genuinely needs a server. `swarm` talks to the daemon over the socket because workers are unattended sessions the server owns. A `run`
+session used to fail these requests outright ("horon-agent server is not running"), which kept automation in headless mode from using swarm. Now the
 `run` command installs a spawner (`crate::server_spawn::register_on_demand_server_spawner`) and the first swarm request that cannot reach a
 server starts one. On the shared socket it becomes an ordinary long-lived daemon; on a user-supplied `--socket` the server belongs to that run.
 
@@ -110,9 +110,9 @@ Properties worth knowing:
 - **Follows the socket.** A temporary server belongs to the run only on a user-supplied `--socket`. Without `--socket` the run prepares the ordinary shared daemon. Putting a temporary server on the shared path would hold the socket every later client uses and then vanish when the run ends.
 - **Owned.** The temporary lifetime watcher shuts the server down when `--owner-pid` disappears, so a one-off run leaves no daemon behind. The socket, debug socket, daemon lock, build-hash sidecar, and metadata files are all removed. Workers live only as long as the run that spawned them. A `run` that spawns a worker and exits without waiting loses the worker by design.
 - **Current binary.** The owning path starts `std::env::current_exe()` instead of the shared-server update candidate, so a locally built binary exercised through `--socket` answers (see "Verifying a change at runtime" in AGENTS.md).
-- **`run` only.** Interactive and client runs do not install the on-demand spawner. They already prepare a daemon through their own start path, and a spawn triggered deep inside a tool would race that logic.
+- **`run` only.** TUI mode and client runs do not install the on-demand spawner. They already prepare a daemon through their own start path, and a spawn triggered deep inside a tool would race that logic.
 
-Swarm workers are headless sessions running inside this process regardless of the `spawn_mode` on the `spawn` request. The values are
+Swarm workers are unattended sessions running inside this process regardless of the `spawn_mode` on the `spawn` request. The values are
 `headless`, `inline` (the default), and `auto`, and all three create the same in-process session and open no terminal window. Old config or
 environment values `visible` and `headed` read as `inline` (`SwarmSpawnMode` at `crates/config-types/src/lib.rs:795`).
 
@@ -182,7 +182,7 @@ channel and uses the same path for every session. A session interrupted mid-relo
 | Later `horon` runs | Connect to the existing server |
 | Kill one client | The server and the other clients are unaffected |
 | `/reload` | The server execs into the new binary and clients reconnect |
-| Close every client | The shared server exits on the idle deadline after five minutes without live headless swarm workers (unless debug control is on) |
+| Close every client | The shared server exits on the idle deadline after five minutes without live unattended swarm workers (unless debug control is on) |
 | Resume a session | `horon --resume fox` reconnects to the existing session |
 | `horon run` | The agent runs in-process and uses no server unless a tool needs one |
 | `horon run` + `swarm` | Prepares the shared daemon, or a temporary server owned by that run when `--socket` is user-supplied |

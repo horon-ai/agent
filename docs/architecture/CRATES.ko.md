@@ -6,7 +6,7 @@
 
 ## 엔진 하나, 실행 파일 둘
 
-워크스페이스는 엔진 하나에서 실행 파일 둘을 만든다. 이 분리는 빌드 옵션이 아니라 규칙이다. 헤드리스 실행 파일은 터미널 라이브러리를 절대 링크하지 않고, 클라이언트는 자기 엔진을 갖지 않는다.
+워크스페이스는 엔진 하나에서 실행 파일 둘을 만든다. 이 분리는 빌드 옵션이 아니라 규칙이다. 에이전트 바이너리 `horon-agent`는 터미널 라이브러리를 절대 링크하지 않고, 클라이언트는 자기 엔진을 갖지 않는다.
 
 | 크레이트 | 패키지 | 실행 파일 | 맡는 것 |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@
 | `crates/harness-api-server` | `horon-agent-harness-api-server` | — | 데몬과 하네스 API 사이의 브리지와 변환 계층. |
 | `crates/tui` | `horon-tui` | `horon-tui` | 터미널 클라이언트. 대화 기록, 입력, 승인 프롬프트, 설정 화면, 테마, 키 바인딩. 엔진이 아니라 `horon-agent-sdk`에 의존한다. |
 
-`scripts/ci/check_headless_graph.py`는 `horon-agent`에서 닿는 모든 패키지를 따라가며 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 접두사가 나오면 실패한다. 경계를 리뷰가 아니라 게이트로 지킨다는 뜻이다. 클라이언트는 별도 카고 호출로 빌드해서 기능 집합이 헤드리스 패키지로 합쳐지지 않게 하고, `horon-agent`는 터미널에서 자기 프로세스를 바꿔 클라이언트를 띄운다(`src/cli/tui_handoff.rs`). 그 인계와 클라이언트의 사용자 파일은 [runtime/TUI.ko.md](../runtime/TUI.ko.md)에 있다.
+`scripts/ci/check_headless_graph.py`는 `horon-agent`에서 닿는 모든 패키지를 따라가며 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 접두사가 나오면 실패한다. 경계를 리뷰가 아니라 게이트로 지킨다는 뜻이다. 클라이언트는 별도 카고 호출로 빌드해서 기능 집합이 `horon-agent` 패키지로 합쳐지지 않게 하고, `horon-agent`는 터미널에서 자기 프로세스를 바꿔 클라이언트를 띄운다(`src/cli/tui_handoff.rs`). 그 인계와 클라이언트의 사용자 파일은 [runtime/TUI.ko.md](../runtime/TUI.ko.md)에 있다.
 
 이 문서는 공유 크레이트를 아무거나 쌓아 두는 곳으로 만들지 않으면서 `horon-agent`의 모듈성을 유지하기 위한 목표 구조를 정의한다. 실용적인 판단 기준을 담았다. 타입, 헬퍼, 동작을 루트 크레이트 밖으로 옮길지 정할 때 이 문서를 쓴다.
 
@@ -336,7 +336,7 @@ python3 -m unittest -v scripts/ci/test_check_test_targets.py scripts/ci/test_che
   `crates/base/src/goal.rs`, `todo`는 `crates/task-types`에 있다
 - `env`, `id`, `stdin_detect`, `util`, `panic_util`은 `crates/core/src/`에 있다
 
-이 감사는 headless 전환 이전의 루트 모듈을 대상으로 했다. 그 모듈은 지금 루트 `src/`에 없고,
+이 감사는 TUI가 에이전트 바이너리에서 분리되기 전의 루트 모듈을 대상으로 했다. 그 모듈은 지금 루트 `src/`에 없고,
 루트에는 `cli/`, `lib.rs`, `main.rs`만 남아 있다.
 
 이 감사에서 정한 컴파일 속도 우선순위:
@@ -394,7 +394,7 @@ python3 -m unittest -v scripts/ci/test_check_test_targets.py scripts/ci/test_che
 
 ### 세션 모듈
 
-headless 전환 이전 `src/session.rs`의 책임은 지금 `crates/session-store`와
+TUI가 에이전트 바이너리에서 분리되기 전 `src/session.rs`의 책임은 지금 `crates/session-store`와
 `crates/session-types`에 나뉘어 있다. 아래는 그 위에서 남은 분할 목표다.
 
 - 메타데이터와 세션 모델
@@ -406,7 +406,7 @@ headless 전환 이전 `src/session.rs`의 책임은 지금 `crates/session-stor
 
 ### 앰비언트 모듈
 
-headless 전환 이전 `src/ambient.rs`의 책임은 지금 `crates/app-core/src/ambient/`에
+TUI가 에이전트 바이너리에서 분리되기 전 `src/ambient.rs`의 책임은 지금 `crates/app-core/src/ambient/`에
 있다. 아래는 그 위에서 남은 분할 목표다.
 
 - 보이는 사이클 컨텍스트 입출력
@@ -420,7 +420,7 @@ load/save/record 동작을 구조체에서 분리하기 전에는 `AmbientState`
 
 ### 사용량 모듈
 
-headless 전환 이전 `src/usage.rs`의 책임은 지금 `crates/base/src/usage.rs`와
+TUI가 에이전트 바이너리에서 분리되기 전 `src/usage.rs`의 책임은 지금 `crates/base/src/usage.rs`와
 `crates/base/src/usage/`에 있고, DTO는 `horon-agent-usage-types`가 소유한다.
 
 - API 조회 제공자
@@ -432,7 +432,7 @@ headless 전환 이전 `src/usage.rs`의 책임은 지금 `crates/base/src/usage
 
 ### 게이트웨이 모듈
 
-headless 전환 이전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gateway.rs`와
+TUI가 에이전트 바이너리에서 분리되기 전 `src/gateway.rs`의 책임은 지금 `crates/base/src/gateway.rs`와
 `crates/base/src/gateway/`에 있고, DTO는 `horon-agent-gateway-types`가
 소유한다.
 

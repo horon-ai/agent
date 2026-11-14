@@ -703,5 +703,5 @@ the cap. The old `MAX_SWARM_SPAWN_DEPTH` depth limit has been removed.
 4. Build a text-based simulator to watch the graph change (like section 9) and to check
    the scheduler/critique/verification machinery before wiring it to a live swarm.
 5. Rework the tool surface (`task_graph`/`expand_node`/`complete_node`/`run`) around the
-   graph-first view (before the headless switch, this item also changed the TUI to the
-   same view). `spawn`/`dm` remain escape hatches.
+   graph-first view (before the TUI moved out of the agent binary, this item also
+   changed the TUI to the same view). `spawn`/`dm` remain escape hatches.

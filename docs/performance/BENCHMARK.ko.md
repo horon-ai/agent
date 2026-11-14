@@ -133,12 +133,12 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | 지표 | 뜻 |
 | --- | --- |
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
-| `oneshot_ms` | 헤드리스 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
+| `oneshot_ms` | one-shot `run` 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
 | `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
-| `skill_ms` | 헤드리스 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
-| `mcp_ms` | 헤드리스 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
+| `skill_ms` | one-shot `run` 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
+| `mcp_ms` | one-shot `run` 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
 | `mcp_ready_ms` | 프로세스 시작부터 도구 목록에 `bench_echo`가 처음 보인 요청까지의 시간(MCP 서버 시작과 도구 등록). 가짜 모델이 그 요청을 본 시각으로 잰다 |
 | `tool_round_trip` | 스킬 본문의 센티널이나 MCP가 돌려준 nonce를 나중 요청에서 실제로 봤을 때만 `true` |
 | `request_offsets_ms` | 실행 기록(JSON)마다 남는, 프로세스 시작부터 각 모델 요청이 도착할 때까지의 시간. 간격으로 기동, 도구 왕복, 종료 구간을 OS마다 나눠 본다 |
@@ -229,7 +229,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `render_p50_ms`, `render_p95_ms` | `crates/tui`의 `render_bench` 예제가 `TestBackend`에 델타 1000개를 그릴 때 프레임당 시간 |
 | `install_size_bytes` | `horon-tui` 바이너리 크기 |
 
-두 바이너리는 같은 표에 들어가지 않는다. `first_frame_ms`와 `direct_first_frame_ms`는 서로 다른 두 프로그램을 각각 띄운 값이고 `handoff_ms`는 그 둘의 차이다. `bench_docs.py`는 이 수치를 헤드리스 표 아래의 별도 구간에 그리며 헤드리스 표와 비교하지 않는다.
+두 바이너리는 같은 표에 들어가지 않는다. `first_frame_ms`와 `direct_first_frame_ms`는 서로 다른 두 프로그램을 각각 띄운 값이고 `handoff_ms`는 그 둘의 차이다. `bench_docs.py`는 이 수치를 `horon-agent` 표 아래의 별도 구간에 그리며 `horon-agent` 표와 비교하지 않는다.
 
 묶음은 다른 묶음과 같은 방식으로 보낸다.
 
@@ -382,7 +382,7 @@ jcode(`1jehuang/jcode`, 2026-11-05 커밋 `c725fa3`)의 `scripts/` 벤치마크�
 | `benchmark_tools.sh` | `bench_tools.py` | 이식. socat 없이 Python으로 소켓에 붙는다. |
 | `bench_reload_storm.py` | `bench_reload_storm.py` | 이식. 세션은 `fixtures/gen_event_log.py`로 만든다. |
 | `bench_compile.sh`, `bench_selfdev_checkpoints.sh`, `bench_selfdev_build.sh` | `bench_compile.py` | 이식. `cargo clean` 콜드 모드는 CI 캐시를 지워 뺐다. |
-| `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | 경쟁 도구 비교로 이식. 헤드리스 경로로 잰다. |
+| `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | 경쟁 도구 비교로 이식. 헤드리스 모드로 잰다. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | 이미 있음 |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | 같은 축을 다른 스크립트가 잰다. |
 | TUI 화면 측정(`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh` 등) | `bench_tui.py` | 포팅하지 않고 클라이언트를 자체 스위트로 측정한다. 첫 프레임, 인계, 입력 에코, RSS, 한 프레임 그리기, 설치 크기를 잰다. 세션 선택기와 표시 준비 예산, 프레임 단위 스크립트는 대응물이 없다. |

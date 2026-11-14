@@ -133,12 +133,12 @@ The jcode download handles transient errors (5xx). It retries the release downlo
 | Metric | Meaning |
 | --- | --- |
 | `version_ms` | Statistics over N `--version` runs (5 by default) |
-| `oneshot_ms` | Latency of one headless question (startup, one `ls` tool call, final response), the peak process tree memory during it, and whether the tool round-tripped |
+| `oneshot_ms` | Latency of one one-shot `run` question (startup, one `ls` tool call, final response), the peak process tree memory during it, and whether the tool round-tripped |
 | `fsync_calls` | Number of `fsync` and `fdatasync` calls one question makes when `--syscalls` is on. Counted by running the same number of extra `strace`-wrapped runs separately from the timed runs. Measured on Linux only when `strace` exists, otherwise `skipped` records the reason |
 | `sessions_memory` | Process tree memory after N concurrent sessions × K turns, both idle and right after a turn. It reports the first-session value and the per-session increment (least-squares slope) |
 | `install_size_bytes` | Executable size. For npm tools, the package plus installed dependencies |
-| `skill_ms` | Time for one headless question to find the fixture skill and read its body. The `Via` column names the path the tool used (`skill-tool`/`skill-uri`/`file-read`) |
-| `mcp_ms` | Time for one headless question to start the fixture stdio MCP server and call `bench_echo` once |
+| `skill_ms` | Time for one one-shot `run` question to find the fixture skill and read its body. The `Via` column names the path the tool used (`skill-tool`/`skill-uri`/`file-read`) |
+| `mcp_ms` | Time for one one-shot `run` question to start the fixture stdio MCP server and call `bench_echo` once |
 | `mcp_ready_ms` | Time from process start to the first request whose tool list shows `bench_echo` (MCP server start plus tool registration). Measured as when the fake model saw that request |
 | `tool_round_trip` | `true` only when a later request actually saw the sentinel from the skill body or the nonce the MCP server returned |
 | `request_offsets_ms` | Per run record (JSON), the time from process start to each model request arriving. The gaps split startup, tool round trip, and shutdown per OS |
@@ -229,7 +229,7 @@ It accepts `--json-out` and `--markdown-out`. A measurement failure records `nul
 | `render_p50_ms`, `render_p95_ms` | Per-frame draw time from `crates/tui`'s `render_bench` example, 1000 streamed deltas on a `TestBackend` |
 | `install_size_bytes` | Size of the `horon-tui` binary |
 
-The two binaries never share a table. `first_frame_ms` and `direct_first_frame_ms` are two launches of two different programs, and `handoff_ms` is the difference between them; `bench_docs.py` renders them in their own section, below the headless tables and never compared with them.
+The two binaries never share a table. `first_frame_ms` and `direct_first_frame_ms` are two launches of two different programs, and `handoff_ms` is the difference between them; `bench_docs.py` renders them in their own section, below the `horon-agent` tables and never compared with them.
 
 Dispatch the suite the same way as the others:
 
@@ -384,7 +384,7 @@ jcode's (`1jehuang/jcode`, commit `c725fa3` from 2026-11-05) `scripts/` benchmar
 | `benchmark_tools.sh` | `bench_tools.py` | Ported. Attaches to the socket from Python without socat. |
 | `bench_reload_storm.py` | `bench_reload_storm.py` | Ported. Sessions are built with `fixtures/gen_event_log.py`. |
 | `bench_compile.sh`, `bench_selfdev_checkpoints.sh`, `bench_selfdev_build.sh` | `bench_compile.py` | Ported. The `cargo clean` cold mode was dropped because it wipes the CI cache. |
-| `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | Ported as the competitor comparison. Measured on the headless path. |
+| `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | Ported as the competitor comparison. Measured in headless mode. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | Already present |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | Other scripts measure the same axis. |
 | TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | `bench_tui.py` | The client is measured on its own suite, not ported: first frame, handoff, input echo, RSS, one drawn frame and install size. The session picker, the visible-ready budget and the frame-by-frame scripts have no counterpart. |

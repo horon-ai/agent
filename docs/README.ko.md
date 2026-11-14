@@ -4,7 +4,11 @@
 
 이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
-문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. 같은 문서를 [agent.horon.ai](https://agent.horon.ai)에도 게시하며 `packages/docs`에서 빌드한다. 영어 파일을 고치면 바이너리와 사이트에 함께 반영된다.
+문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 `packages/docs`에서 따로 쓴 문서 묶음이다. 이 폴더에서 생성하지 않으므로, 사이트도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
+
+## 하나의 에이전트, 두 가지 모드
+
+horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모드로 실행된다. 헤드리스 모드에서는 프로그램이 세션을 움직인다. `run`, SDK와 `api-bridge` 뒤의 데몬(`serve`), 에디터용 `acp`, `rpc`가 여기에 속한다. TUI 모드에서는 사람이 `horon-tui`로 세션을 움직인다. 어느 모드도 다른 모드의 축소판이 아니며, 차이는 반대편에 누가 있느냐뿐이다. 두 모드는 두 바이너리로 배포된다. `horon-agent`(에이전트 바이너리, 모든 설치에 필요)와 `horon-tui`(TUI 바이너리, 같은 릴리스의 별도 선택 자산)다. 각각의 설치 방법은 [`release/INSTALL.ko.md`](release/INSTALL.ko.md)와 [`runtime/TUI.ko.md`](runtime/TUI.ko.md)에 있다.
 
 ## 고정 요구사항
 
@@ -12,7 +16,7 @@
 
 | 요구사항 | 내용 | 현재 상태 |
 | --- | --- | --- |
-| `horon-agent` TUI 제외 | 헤드리스 실행 파일(`serve`, `run`, `api-bridge`, `acp`, `rpc`)은 화면을 열지 않고, 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없어야 한다. 터미널 클라이언트는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지이고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. | 충족. `scripts/ci/check_headless_graph.py`가 해석된 그래프를 따라 확인한다 |
+| `horon-agent` TUI 제외 | 에이전트 바이너리(`serve`, `run`, `api-bridge`, `acp`, `rpc`)는 화면을 열지 않고, 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없어야 한다. TUI 모드는 `horon-agent-sdk`를 쓰는 별도 `horon-tui` 패키지에 있고, 터미널에서 인자 없이 실행한 `horon`은 그 형제 실행 파일로 자기 프로세스를 넘긴다. | 충족. `scripts/ci/check_headless_graph.py`가 해석된 그래프를 따라 확인한다 |
 | ACP v1·v2 지원 | `horon acp`가 `protocolVersion` 1과 2를 모두 처리하고, 양쪽이 지원하는 가장 높은 버전으로 답한다. v2를 더하면서 v1을 깨지 않는다. | 충족. v2 협상은 `src/cli/acp/v2/negotiate.rs`, v1은 `src/cli/acp/util.rs` |
 | 성능 회귀 방지 | 같은 기계·빌드 프로필·작업에서 기록된 기준선과 같거나 빨라야 한다. 느려지는 변경은 병합하지 않는다. | 측정 방법과 기록된 수치가 있음(`performance/BENCHMARK.md`, `performance/RESULTS.md`). 기록된 수치가 기준선이다 |
 

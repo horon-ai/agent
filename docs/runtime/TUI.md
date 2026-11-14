@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](TUI.ko.md)
 
-`horon-tui` is the interactive client for the harness. It is a separate package and binary that talks to the daemon only through `horon-agent-sdk`, so the headless `horon-agent` graph stays free of terminal libraries and a client bug cannot take down the server.
+`horon-tui` is the TUI binary: TUI mode of horon agent, where a person drives a session from the terminal. Headless mode, where a program drives it, runs from the agent binary `horon-agent`; both modes share one engine and one daemon. `horon-tui` is a separate package and binary that talks to the daemon only through `horon-agent-sdk`, so the `horon-agent` graph stays free of terminal libraries and a client bug cannot take down the server.
 
 ## Running it
 
@@ -10,8 +10,8 @@ Bare `horon` (or `hrn`, or `horon-agent`) on a terminal starts the server when n
 
 The handoff has three conditions, all checked before the process is replaced (`src/cli/tui_handoff.rs`):
 
-- stdin and stdout must both be terminals. A pipe, a file or a closed stream keeps the headless path, because scripts and CI read its output.
-- `HORON_NO_TUI` must be unset. Setting it to any value forces the headless path on a terminal.
+- stdin and stdout must both be terminals. A pipe, a file or a closed stream keeps headless mode, because scripts and CI read its output.
+- `HORON_NO_TUI` must be unset. Setting it to any value forces headless mode on a terminal.
 - `horon-tui` must be a file next to the running executable. A launcher that is a symbolic link is retried at its real location, which matters on macOS.
 
 When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`) plus the command that installs the client, and exits with a non-zero code. A server it started before the check keeps running. Starting `horon-tui` directly skips the decision entirely.
@@ -254,7 +254,7 @@ The release publishes the client as its own archive beside the agent: `horon-tui
 The archive is optional at every step, and a copy that cannot be verified never blocks the agent:
 
 - A release that publishes no archive for the platform installs `horon-agent` alone with one line saying so.
-- A missing `SHA256SUMS` entry, or a digest that does not match, prints one line and installs the headless agent alone.
+- A missing `SHA256SUMS` entry, or a digest that does not match, prints one line and installs the agent binary alone.
 - A source build (`--source-binary`) and FreeBSD never stage a released client; FreeBSD publishes `horon-agent` only.
 - An existing version directory that already holds `horon-agent` only gains the client when the file is absent; the version is immutable otherwise.
 

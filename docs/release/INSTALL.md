@@ -46,9 +46,9 @@ npx @horon-ai/horon --help
 
 An npm installation is updated with npm, not with the agent's own updater: the launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` for the binary it starts, because the package pins one release for both binaries. Package layout, the error a missing platform package prints, the version rule, and the publish procedure are in [`NPM.md`](NPM.md).
 
-## The optional terminal client
+## The TUI binary
 
-The release also publishes the interactive client as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together.
+The release also publishes the TUI binary `horon-tui`, the client that TUI mode runs in, as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together. Both binaries are built by the same `release.yml` run from the same tagged commit and are staged into the same version directory, so there is no separate client release or channel. The version string differs: `horon-agent --version` derives its version from the release tag (`crates/build-meta`), while `horon-tui --version` prints the `crates/tui` package version (`crates/tui/src/lib.rs`).
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, and the `LICENSE` each archive carries is installed there too, so one version directory holds both binaries with the licence that covers them and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
 
@@ -133,7 +133,7 @@ The update check only updates when the release version is higher than the curren
 
 ## Container image
 
-Each release pushes `linux/amd64` and `linux/arm64` images to `ghcr.io/horon-ai/agent` tagged `<version>`, `<MAJOR.MINOR>` and `latest`. GitHub Packages supports neither the cargo nor the PyPI registry, and the SDKs will ship through npm and PyPI rather than GitHub Packages, so the only thing published to GitHub Packages is the container that starts the headless daemon. The image does not recompile anything and uses the release assets as they are (`scripts/release/Containerfile`).
+Each release pushes `linux/amd64` and `linux/arm64` images to `ghcr.io/horon-ai/agent` tagged `<version>`, `<MAJOR.MINOR>` and `latest`. GitHub Packages supports neither the cargo nor the PyPI registry, and the SDKs will ship through npm and PyPI rather than GitHub Packages, so the only thing published to GitHub Packages is the container that starts the daemon in headless mode. The image does not recompile anything and uses the release assets as they are (`scripts/release/Containerfile`).
 
 ```bash
 docker run --rm ghcr.io/horon-ai/agent:latest --version
