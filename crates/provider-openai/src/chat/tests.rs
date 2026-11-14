@@ -9,7 +9,7 @@ use crate::chat::stream::{ChatStreamState, parse_chat_chunk};
 use crate::chat::transport::{HttpErrorKind, classify_http_status, http_response_error};
 use crate::test_support::{DEADLINE, MockServer, Reply, TEST_KEY, collect, sse_frame};
 use horon_agent_message_types::{ContentBlock, Message, Role, StreamEvent, ToolDefinition};
-use horon_agent_provider_core::{EventStream, Provider};
+use horon_agent_provider_core::Provider;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 
