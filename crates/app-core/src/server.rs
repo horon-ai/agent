@@ -702,25 +702,8 @@ mod reload_marker_scope_tests {
 }
 
 #[cfg(test)]
-mod idle_monitor_tests {
-    use super::idle_monitor_should_start;
-
-    #[test]
-    fn shared_idle_monitor_preserves_live_headless_worker() {
-        assert!(!idle_monitor_should_start(0, true));
-    }
-
-    #[test]
-    fn temporary_idle_monitor_preserves_live_headless_worker() {
-        assert!(!idle_monitor_should_start(0, true));
-    }
-
-    #[test]
-    fn idle_monitor_starts_only_without_clients_or_headless_workers() {
-        assert!(idle_monitor_should_start(0, false));
-        assert!(!idle_monitor_should_start(1, false));
-    }
-}
+#[path = "server/server_idle_monitor_tests.rs"]
+mod idle_monitor_tests;
 
 /// How often the retained-heap watchdog samples allocator retention.
 const HEAP_RETENTION_CHECK_SECS: u64 = 120;

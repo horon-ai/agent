@@ -1,6 +1,4 @@
-//! Daemon reports for ACP v2 connections (todo 5 of the acp-v2-dual-stack
-//! plan): user-message insertion, foreground turn state, tool exits and stored
-//! message ids, all gated on the connection having negotiated v2.
+//! Daemon reports for ACP v2 connections: insertions, foreground state, tool exits, message ids.
 
 use super::*;
 use serde_json::{Value, json};
@@ -1331,12 +1329,8 @@ async fn cancel_of_queued_v2_prompt_withdraws_it() {
     h.close(vec![editor, observer, desktop]).await;
 }
 
-/// IS-5 cancel clause across surfaces (todo 16): this editor's turn runs, a
-/// second v2 connection's prompt waits for the agent, and the editor cancels.
 /// The cancel holds the cancelled turn's idle state until its own reply is
-/// queued; the agent must not pass to the waiting turn before that idle state
-/// reached the session, or the waiting turn's `running` and text overtake it
-/// and a v2 adapter never sees `idle cancelled`.
+/// queued, so the waiting turn's `running` and text cannot overtake it.
 #[tokio::test]
 async fn cancelled_idle_precedes_the_queued_peer_turn() {
     let h = Harness::new();

@@ -96,7 +96,7 @@
       "count": 11,
       "reason": "host load, memory and terminal probes chosen at compile time: /proc readers on Linux, sysctlbyname/getloadavg on macOS, GlobalMemoryStatusEx on Windows. The perf tier is cross-platform; each probe is the platform's own measurement API."
     },
-    "crates/app-core/src/server/client_lifecycle.rs": {
+    "crates/app-core/src/server/client_lifecycle_ack_failure_tests.rs": {
       "count": 1,
       "reason": "read-only directory fixture built from POSIX mode bits."
     },

@@ -85,10 +85,10 @@ pub async fn take_plan_proposal(
 /// so listings stay deterministic.
 pub async fn pending_plan_proposals_for_swarm(store: &PlanProposalStore, swarm_id: &str) -> Vec<PendingPlanProposal> {
     let proposals = store.read().await;
-    let mut pending: Vec<PendingPlanProposal> = proposals
-        .get(swarm_id)
-        .map(|swarm_proposals| swarm_proposals.values().cloned().collect())
-        .unwrap_or_default();
+    let mut pending: Vec<PendingPlanProposal> = match proposals.get(swarm_id) {
+        Some(swarm_proposals) => swarm_proposals.values().cloned().collect(),
+        None => Vec::new(),
+    };
     pending.sort_by(|left, right| left.proposer_session.cmp(&right.proposer_session));
     pending
 }
