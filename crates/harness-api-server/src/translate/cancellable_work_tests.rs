@@ -153,3 +153,33 @@ fn cancellable_work_requests_validate_their_arguments() {
         );
     }
 }
+
+/// A daemon that predates the echoed subject answers a cancel without one.
+/// The bridge cannot tell which request that frame belongs to, so it answers
+/// nothing rather than answering the wrong one: the client sees its own
+/// timeout, which is the failure it can reason about.
+#[test]
+fn a_cancel_reply_without_its_subject_answers_no_request() {
+    for (request, reply) in [
+        (
+            json!({"req": "cancel_turn", "id": 40, "session_id": "s1", "run_id": "run-7"}),
+            json!({"type": "cancel_turn_result", "accepted": true}),
+        ),
+        (
+            json!({"req": "cancel_tool_call", "id": 41, "session_id": "s1", "call_id": "call-7"}),
+            json!({"type": "tool_call_cancel_result", "accepted": true}),
+        ),
+    ] {
+        let mut state = cancellable_state();
+        let out = state.api_request_to_legacy(&request);
+        let legacy_id = legacy_out(&out)["id"].as_u64().unwrap();
+        let mut older = reply;
+        // The id still matches, so the only missing part is the subject.
+        older["id"] = Value::from(legacy_id);
+        let frames = state.legacy_event_to_api(&older);
+        assert!(
+            frames.is_empty(),
+            "{request}: a reply with no subject must answer no request, got {frames:?}"
+        );
+    }
+}

@@ -310,7 +310,7 @@ async fn listed_terminal_cancel_reaches_the_daemon_and_answers_empty() {
     assert_eq!(request["call_id"], "c9", "{request}");
     let request_id = request["id"].as_u64().expect("a daemon request id");
     daemon
-        .emit(json!({"type":"tool_call_cancel_result","id":request_id,"accepted":true}))
+        .emit(json!({"type":"tool_call_cancel_result","id":request_id,"call_id":"c9","accepted":true}))
         .await;
     let (_, response) = client.recv_response(json!("cancel")).await;
     assert_eq!(response["result"], json!({}), "{response}");
@@ -355,7 +355,8 @@ async fn unlisted_terminal_cancel_is_invalid_params_without_a_daemon_request() {
     let request = daemon.recv_type("cancel_background_terminal").await;
     let request_id = request["id"].as_u64().expect("a daemon request id");
     daemon
-        .emit(json!({"type":"tool_call_cancel_result","id":request_id,"accepted":false,"reason":"final"}))
+        .emit(json!({"type":"tool_call_cancel_result","id":request_id,"call_id":"c10","accepted":false,
+            "reason":"final"}))
         .await;
     let (_, response) = client.recv_response(json!("raced")).await;
     assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");

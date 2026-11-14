@@ -392,6 +392,26 @@ fn assert_v2_event_roundtrip(event: ServerEvent, wire_type: &str, fields: &[&str
     Ok(wire)
 }
 
+/// `tool_call_cancel_result` existed before the echoed `call_id` was added to
+/// it, so a server that predates the field must still decode. Empty means
+/// "cannot correlate", never a guessed subject.
+#[test]
+fn a_tool_call_cancel_result_without_the_echoed_call_id_still_decodes() -> Result<()> {
+    let older = parse_event_json(r#"{"type":"tool_call_cancel_result","id":9,"accepted":true}"#)?;
+    assert!(
+        matches!(&older, ServerEvent::ToolCallCancelResult { id: 9, call_id, accepted: true, reason: None }
+            if call_id.is_empty()),
+        "an older daemon's frame decodes with no subject: {older:?}"
+    );
+    // Re-encoding writes the empty field: a reader of the new shape always sees
+    // the key, and an empty one is the documented "no subject" value.
+    assert_eq!(
+        serde_json::to_value(&older)?,
+        serde_json::json!({"type":"tool_call_cancel_result","id":9,"call_id":"","accepted":true})
+    );
+    Ok(())
+}
+
 #[test]
 fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
     let cancel = assert_v2_event_roundtrip(

@@ -111,8 +111,8 @@ fn call_frames<'a>(lines: &'a [Value], tool_call_id: &str) -> Vec<&'a Value> {
 }
 
 /// The daemon's answer to a `cancel_tool_call`.
-fn cancel_result(id: u64, accepted: bool) -> Value {
-    json!({"type":"tool_call_cancel_result","id":id,"accepted":accepted,
+fn cancel_result(id: u64, call_id: &str, accepted: bool) -> Value {
+    json!({"type":"tool_call_cancel_result","id":id,"call_id":call_id,"accepted":accepted,
         "reason":(!accepted).then_some("unknown")})
 }
 
@@ -157,7 +157,7 @@ async fn accepted_tool_call_cancel_answers_empty_and_reports_cancelled_once() {
     let request = daemon.recv_type("cancel_tool_call").await;
     let request_id = request["id"].as_u64().expect("a daemon request id");
     assert_eq!(request["call_id"], "c1", "{request}");
-    daemon.emit(cancel_result(request_id, true)).await;
+    daemon.emit(cancel_result(request_id, "c1", true)).await;
     let (before, response) = client.recv_response(json!("cancel")).await;
     assert_eq!(response["result"], json!({}), "{response}");
     assert!(
@@ -213,6 +213,7 @@ async fn stale_run_end_keeps_the_running_runs_calls_cancellable() {
     daemon
         .emit(cancel_result(
             request["id"].as_u64().expect("a daemon request id"),
+            "c2",
             true,
         ))
         .await;
@@ -306,7 +307,7 @@ async fn unadvertised_calls_are_invalid_params_without_a_daemon_request() {
     let request = daemon.recv_type("cancel_tool_call").await;
     assert_eq!(request["call_id"], "c2", "{request}");
     let request_id = request["id"].as_u64().expect("a daemon request id");
-    daemon.emit(cancel_result(request_id, true)).await;
+    daemon.emit(cancel_result(request_id, "c2", true)).await;
     let (_, response) = client.recv_response(json!("first")).await;
     assert_eq!(response["result"], json!({}), "{response}");
 
@@ -336,7 +337,7 @@ async fn daemon_refusal_is_invalid_params() {
     client.send(cancel_request(json!("cancel"), "c1")).await;
     let request = daemon.recv_type("cancel_tool_call").await;
     let request_id = request["id"].as_u64().expect("a daemon request id");
-    daemon.emit(cancel_result(request_id, false)).await;
+    daemon.emit(cancel_result(request_id, "c1", false)).await;
     let (_, response) = client.recv_response(json!("cancel")).await;
     assert_eq!(response["error"]["code"], JSONRPC_INVALID_PARAMS, "{response}");
     client.close_stdin().await;

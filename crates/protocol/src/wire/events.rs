@@ -1101,6 +1101,12 @@ pub enum ServerEvent {
         id: u64,
         /// The call the caller named, echoed so a client can tell which of
         /// several in-flight cancels this answers.
+        ///
+        /// Empty when the frame came from a daemon that predates the echo: the
+        /// field was added to an event that already existed, so a reader must
+        /// still decode the older shape. A consumer that needs the subject
+        /// treats empty as "cannot correlate" rather than guessing.
+        #[serde(default)]
         call_id: String,
         accepted: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]

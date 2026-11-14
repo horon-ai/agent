@@ -1364,7 +1364,7 @@ jobs:
             -- cancellable_work_snapshot_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
-            --timeout 600 --min-passed 3 \
+            --timeout 600 --min-passed 4 \
             -- translate::cancellable_work_tests --nocapture
 
       - name: Run checkpoint tool cohort
