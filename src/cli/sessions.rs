@@ -262,6 +262,10 @@ fn inspect(home: &Path, session: &str, json_output: bool) -> Result<()> {
                 Err(error) if error.code == store::StoreErrorCode::MigrationRequired => {
                     report["migration_required"] = json!(true);
                     report["message"] = json!(error.message);
+                    report["index_import_available"] = json!(store::index_import::AVAILABLE);
+                    if !store::index_import::AVAILABLE {
+                        report["remedy"] = json!(store::index_import::remedy());
+                    }
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -284,6 +288,7 @@ fn inspect(home: &Path, session: &str, json_output: bool) -> Result<()> {
         "torn_tail_bytes",
         "damage",
         "migration_required",
+        "remedy",
     ] {
         if let Some(value) = report.get(key).filter(|value| !value.is_null()) {
             println!("{key}: {value}");
@@ -364,6 +369,12 @@ fn doctor(home: &Path, session: Option<&str>, json_output: bool) -> Result<()> {
         "sessions": rows,
         "damaged": damaged,
         "migration_required": migration_required,
+        "index_import_available": store::index_import::AVAILABLE,
+        "remedy": if migration_required > 0 && !store::index_import::AVAILABLE {
+            json!(store::index_import::remedy())
+        } else {
+            Value::Null
+        },
     });
     if json_output {
         emit(true, &report)?;
@@ -381,6 +392,9 @@ fn doctor(home: &Path, session: Option<&str>, json_output: bool) -> Result<()> {
             "checked {} session(s): {damaged} damaged, {migration_required} need an offline index migration",
             report["sessions"].as_array().map(Vec::len).unwrap_or(0)
         );
+        if migration_required > 0 && !store::index_import::AVAILABLE {
+            println!("remedy: {}", store::index_import::remedy());
+        }
     }
     if damaged > 0 {
         bail!("doctor found damage in {damaged} session original(s)");
@@ -403,6 +417,15 @@ fn legacy_index_present(home: &Path) -> bool {
 }
 
 fn migrate(home: &Path, options: MigrateOptions, json_output: bool) -> Result<()> {
+    // The flag is hidden from `--help` in this build, so a caller that reaches it
+    // either has a script written for a feature-enabled binary or read an old
+    // doc. Naming the build is the only answer that changes anything.
+    if options.legacy_index && !store::index_import::AVAILABLE {
+        bail!(
+            "--legacy-index is not available in this build; {}",
+            store::index_import::remedy()
+        );
+    }
     let from_home = match options.from.as_deref() {
         Some(raw) => {
             let path = resolve_path(raw)?;
@@ -460,7 +483,7 @@ fn migrate(home: &Path, options: MigrateOptions, json_output: bool) -> Result<()
         "mode": if options.apply { "apply" } else { "dry-run" },
         "from": from_home.display().to_string(),
         "destination": destination.root().display().to_string(),
-        "feature_enabled": cfg!(feature = "legacy-session-index-import"),
+        "feature_enabled": store::index_import::AVAILABLE,
         "sessions": reports,
         "failures": failures,
     });
@@ -527,20 +550,26 @@ fn migrate_one(
             Err(error) if error.code == store::StoreErrorCode::MigrationRequired => {
                 report["status"] = json!("index-import-required");
                 report["message"] = json!(error.message);
+                report["index_import_available"] = json!(store::index_import::AVAILABLE);
+                if !store::index_import::AVAILABLE {
+                    report["remedy"] = json!(store::index_import::remedy());
+                }
             }
             Err(error) => return Err(error.into()),
         }
         return Ok(report);
     }
-    if index_present && !legacy_index {
+    if index_present && !store::index_import::AVAILABLE {
         bail!(
-            "session {} has a legacy SQLite index; re-run with --legacy-index to import its display metadata offline",
-            id.as_str()
+            "MigrationRequired: session {} has an old SQLite index and this build cannot import it. {}. The database was not opened.",
+            id.as_str(),
+            store::index_import::remedy()
         );
     }
-    if index_present && !cfg!(feature = "legacy-session-index-import") {
+    if index_present && !legacy_index {
         bail!(
-            "MigrationRequired: this build cannot read session-metadata-v1.sqlite3. Rebuild with `--features legacy-session-index-import` and run `horon-agent sessions migrate --apply --legacy-index`. The database was not opened."
+            "session {} has an old SQLite index; re-run with --legacy-index to import its display metadata offline",
+            id.as_str()
         );
     }
     let report = source.migrate(destination)?;
