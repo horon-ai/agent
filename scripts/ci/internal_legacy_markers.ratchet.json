@@ -6,8 +6,13 @@
     "kind": "regex_lines",
     "pattern": "legacy|deprecated|compat_alias|back.?compat",
     "case_insensitive": true,
-    "roots": ["src", "crates"],
-    "extensions": [".rs"],
+    "roots": [
+      "src",
+      "crates"
+    ],
+    "extensions": [
+      ".rs"
+    ],
     "exclude": [
       {
         "path": "crates/harness-api-server",
@@ -23,5 +28,5 @@
       }
     ]
   },
-  "ceiling": 952
+  "ceiling": 951
 }

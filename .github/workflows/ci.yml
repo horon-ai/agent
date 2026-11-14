@@ -968,6 +968,21 @@ jobs:
             --timeout 600 --min-passed 5 \
             -- claude_live::tests:: --nocapture
 
+      - name: Run takeover guard cohort (all platforms)
+        shell: bash
+        # `import::takeover_tests` holds the two directions of the platform
+        # guard: off Linux the takeover is refused before any session is
+        # staged, and the reason names this platform; on Linux the guard lets
+        # the call through. Both compile everywhere, so this runs on every OS
+        # and `--min-passed 1` keeps a filter that silently matches nothing
+        # from passing. The refusal cases are what the `windows-latest` step
+        # below repeats by name.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- import::takeover_tests:: --nocapture
+
       - name: Run stdin-forwarding cohort (all platforms)
         shell: bash
         # These tests exercise the per-platform stdin detector, whose
@@ -1602,6 +1617,10 @@ jobs:
               'resources::tests::snapshot_reports_real_memory_load_and_battery',
               'resources::tests::disk_fact_reads_the_system_volume',
               'resources::tests::disk_fact_is_skipped_when_no_path_is_asked_for'
+            )
+            'horon-agent-base' = @(
+              'import::takeover_tests::takeover_is_refused_before_a_session_is_staged_on_an_unsupported_platform',
+              'import::takeover_tests::unsupported_reason_is_none_exactly_where_takeover_works'
             )
             'horon-agent-app-core' = @(
               'sibling_socket_path_roundtrip',
