@@ -153,11 +153,14 @@ class WorkflowGuardTests(unittest.TestCase):
                          workflow)
 
     def test_every_job_has_a_hosted_sized_timeout(self):
-        for name in ('ci.yml', 'structural-perf.yml'):
+        # `soak.yml` runs the 1,000-cycle form, whose own bound is the long one,
+        # but a hung run must still give its runner back.
+        for name in ('ci.yml', 'structural-perf.yml', 'soak.yml'):
             text = (ROOT / f'.github/workflows/{name}').read_text()
             jobs = text.split('\njobs:\n', 1)[1]
             starts = list(re.finditer(r'^  ([A-Za-z0-9_-]+):\n', jobs, re.MULTILINE))
-            self.assertGreaterEqual(len(starts), 1 if name == 'structural-perf.yml' else 11)
+            minimum = {'ci.yml': 11, 'structural-perf.yml': 1, 'soak.yml': 1}[name]
+            self.assertGreaterEqual(len(starts), minimum)
             for index, start in enumerate(starts):
                 end = starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
                 with self.subTest(workflow=name, job=start.group(1)):
@@ -212,7 +215,8 @@ class WorkflowGuardTests(unittest.TestCase):
     def test_workflows_pin_actions_to_commits_of_maintained_majors(self):
         pinned = ('ci.yml', 'structural-perf.yml', 'require-issue.yml', 'freebsd-smoke.yml',
                   'windows-smoke.yml', 'loading-ab.yml', 'benchmark.yml',
-                  'benchmark-os.yml', 'benchmark-docs.yml', 'release-recovery.yml')
+                  'benchmark-os.yml', 'benchmark-docs.yml', 'release-recovery.yml',
+                  'soak.yml')
         use = re.compile(r'^\s*(?:- )?uses: (\S+)@(\S+)(?: # (\S+))?\s*$')
         for name in pinned:
             text = (ROOT / f'.github/workflows/{name}').read_text()
