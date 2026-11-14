@@ -1186,49 +1186,63 @@ jobs:
         # structural gate reads (the `git` and GPU-probe child processes a
         # session context starts). libtest accepts one filter per run, so each
         # module has its own call, and each must report at least one pass so a
-        # renamed module fails the step instead of passing empty.
+        # renamed module fails the step instead of passing empty. Every call
+        # runs even after one fails, and the step fails at the end, so one red
+        # module cannot hide the ones listed after it.
         run: |
+          set +e
+          failed=0
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::prompt_request_bytes --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::tool_request_bytes --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::tool_tiers --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::deferred_tools --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::prompting::tests --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- tool::toolbox_tests --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- startup_profile --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- prompt::prompt_tests --nocapture
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \
             -- prompt::session_context_tests --nocapture
-          # Last, so a schema that moved cannot hide the modules above it.
+          failed=$((failed | $?))
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- agent::tests::tool_schema_shape --nocapture
+          failed=$((failed | $?))
+          exit "$failed"
 
       - name: Run memory record cohort
         shell: bash
