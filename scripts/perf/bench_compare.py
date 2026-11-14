@@ -26,6 +26,9 @@ Measured:
   fsync_calls       fsync + fdatasync calls made by one one-shot run, counted
                     with strace (``--syscalls``; Linux only, recorded as
                     skipped when strace is missing)
+  fsync_paths       with ``--syscalls``, one extra untimed one-shot traced with
+                    ``strace -f -y`` groups those calls by the file or
+                    directory flushed (bench_fsync_paths.py)
   request_bytes     per run record, the JSON body bytes, tool catalog bytes and
                     tool count of every model request, as the mock server
                     received them (``null`` when it did not report a key)
@@ -56,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import json
 import os
 import re
@@ -73,6 +77,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bench_common as bc  # noqa: E402
 import bench_core_oneshot as bco  # noqa: E402
+import bench_fsync_paths as bfp  # noqa: E402
 import bench_request_bytes as brb  # noqa: E402
 
 SUITE = "compare"
@@ -826,28 +831,32 @@ def parse_strace_summary(text: str) -> dict | None:
 
 
 def measure_oneshot(
-    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, syscalls: bool = False
+    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float,
+    syscalls: bool | str = False,
 ) -> dict:
     """Run one headless prompt and time it, sampling peak tree RSS.
 
     With ``syscalls`` the run is wrapped in a call-counting strace, so the same
     sample also reports how many fsync/fdatasync calls the tool made; the
     summary file lives in a throwaway directory removed before returning.
+    With ``syscalls == "paths"`` the strace logs every flush with its path
+    instead, and the record carries ``fsync_paths`` (bench_fsync_paths.py).
     """
     trace_dir = bc.short_temp_dir("hcmp-strace-") if syscalls else None
     try:
-        return _measure_oneshot(argv, cwd, env, mock, timeout, trace_dir)
+        return _measure_oneshot(argv, cwd, env, mock, timeout, trace_dir, syscalls == bfp.MODE)
     finally:
         if trace_dir:
             shutil.rmtree(trace_dir, ignore_errors=True)
 
 
 def _measure_oneshot(
-    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, trace_dir: str | None
+    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, trace_dir: str | None,
+    paths: bool = False,
 ) -> dict:
     trace_path = os.path.join(trace_dir, "summary.txt") if trace_dir else None
     if trace_path:
-        argv = strace_argv(argv, trace_path)
+        argv = bfp.strace_argv(argv, trace_path, SYSCALL_NAMES) if paths else strace_argv(argv, trace_path)
     try:
         before = mock.stats()["request_count"]
     except Exception:  # noqa: BLE001
@@ -931,12 +940,18 @@ def _measure_oneshot(
         detail = (stderr or "").strip().splitlines()
         error = f"exit {proc.returncode}: " + (detail[-1] if detail else "no stderr")
     syscall_counts = None
+    fsync_paths = None
     if trace_path:
         try:
             with open(trace_path, encoding="utf-8", errors="replace") as fh:
-                syscall_counts = parse_strace_summary(fh.read())
+                trace = fh.read()
         except OSError:
-            syscall_counts = None
+            trace = None
+        if trace is not None and paths:
+            root = os.path.dirname(os.path.abspath(cwd))
+            fsync_paths = bfp.parse(trace, (os.path.realpath(root), root))
+        elif trace is not None:
+            syscall_counts = parse_strace_summary(trace)
     log_tail = _log_tail_since(env, log_marks)
     return {
         "ms": None if timed_out else round(elapsed_ms, 2),
@@ -948,6 +963,7 @@ def _measure_oneshot(
         "stdout_tail": (stdout or "").strip()[-300:],
         "fsync_calls": (syscall_counts or {}).get("total"),
         "fsync_breakdown": syscall_counts,
+        "fsync_paths": fsync_paths,
         "sentinel_seen": sentinel_seen,
         "mcp_ready_ms": mcp_ready_ms,
         "via": via,
@@ -2739,6 +2755,18 @@ def measure_tools(
                 if not result["error"]:
                     result["oneshot"] = summarize_oneshot(
                         oneshot_runs_by_row[index], syscall_runs_by_row[index] if syscalls else None
+                    )
+            if syscalls:
+                # One more untimed run per row, traced per call, says which
+                # files the counted flushes were for.
+                for index, runner in enumerate(runners):
+                    result = results[index]
+                    if result["error"] or result["oneshot"] is None:
+                        continue
+                    root, cwd = roots[runner.name]
+                    result["oneshot"]["fsync_paths"] = bfp.measure(
+                        functools.partial(runner.oneshot, mock, root, cwd, timeout, syscalls=bfp.MODE),
+                        strace_available(),
                     )
 
         if "oneshot_core" in selected:

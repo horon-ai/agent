@@ -1444,6 +1444,90 @@ class CoreOneshotTests(unittest.TestCase):
         self.assertIsNone(result["oneshot"])
 
 
+class FsyncPathsTests(unittest.TestCase):
+    """Each counted flush is attributed to the file or directory it flushed."""
+
+    ROOT = "/tmp/hcmp-horon-x"
+    EVENTS = ROOT + "/home/sessions/0b5e6c1a-2f3d-4a5b-9c8d-1e2f3a4b5c6d/events.jsonl"
+    TRACE = (
+        f"4101  fdatasync(7<{EVENTS}>) = 0\n"
+        f"4101  fdatasync(7<{EVENTS}> <unfinished ...>\n"
+        f"4102  fsync(9<{ROOT}/home/sessions>) = 0\n"
+        "4101  <... fdatasync resumed>) = 0\n"
+        "4103  fsync(11) = 0\n"
+        "4101  +++ exited with 0 +++\n"
+    )
+
+    def _measure(self, available: bool, calls: list) -> dict:
+        trace = self.TRACE
+        root = self.ROOT
+
+        class FakeRunner:
+            name = "horon"
+            label = "horon"
+            binary = "/b"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root_dir, cwd, timeout, syscalls=False) -> dict:
+                calls.append(syscalls)
+                record = {"ms": 40.0, "peak_rss_bytes": 1, "tool_roundtrip": True, "error": None}
+                if syscalls == bench.bfp.MODE:
+                    record["fsync_paths"] = bench.bfp.parse(trace, (root,))
+                elif syscalls:
+                    record["fsync_calls"] = 4
+                return record
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size,
+                 bench.strace_available)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        bench.strace_available = lambda: available
+        try:
+            return bench.measure_tools(
+                [FakeRunner()], FakeMockServer(), [1], 1, 1, 2, 30.0, syscalls=True,
+                scenarios=["oneshot"],
+            )[0]
+        finally:
+            (bench.tool_version, bench.measure_version, bench.measure_install_size,
+             bench.strace_available) = saved
+
+    def test_fsync_paths_grouped(self) -> None:
+        groups = bench.bfp.parse(self.TRACE, (self.ROOT,))
+        self.assertEqual(groups, [
+            {"path": "<root>/home/sessions/<id>/events.jsonl", "count": 2, "fsync": 0, "fdatasync": 2},
+            {"path": "<root>/home/sessions", "count": 1, "fsync": 1, "fdatasync": 0},
+            {"path": "fd:11", "count": 1, "fsync": 1, "fdatasync": 0},
+        ])
+        argv = bench.bfp.strace_argv(["/bin/tool", "run"], "/tmp/t.txt", bench.SYSCALL_NAMES)
+        self.assertIn("-y", argv)
+        self.assertNotIn("-c", argv)
+        self.assertEqual(argv[-2:], ["/bin/tool", "run"])
+
+        calls: list = []
+        oneshot = self._measure(True, calls)["oneshot"]
+        # Two timed runs, two counted runs, then one extra run traced per call.
+        self.assertEqual(calls, [False, False, True, True, bench.bfp.MODE])
+        self.assertEqual(len(oneshot["runs"]), 2)
+        self.assertEqual(sum(group["count"] for group in oneshot["fsync_paths"]), oneshot["fsync_calls"])
+
+    def test_fsync_paths_skipped_without_strace(self) -> None:
+        traced: list[str] = []
+        self.assertEqual(
+            bench.bfp.measure(lambda: traced.append("run") or {}, False),
+            {"skipped": "strace unavailable"},
+        )
+        self.assertEqual(traced, [])
+
+        calls: list = []
+        oneshot = self._measure(False, calls)["oneshot"]
+        self.assertEqual(oneshot["fsync_paths"], {"skipped": "strace unavailable"})
+        self.assertNotIn(bench.bfp.MODE, calls)
+        self.assertEqual(oneshot["ms"], 40.0)
+
+
 
 if __name__ == "__main__":
     unittest.main()
