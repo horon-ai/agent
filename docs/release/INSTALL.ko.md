@@ -44,9 +44,9 @@ npx @horon-ai/horon --help
 
 npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신한다. 패키지가 두 실행 파일의 한 릴리스를 함께 고정하므로 런처가 시작하는 실행 파일에 `HORON_AGENT_NO_AUTO_UPDATE=1`을 넣기 때문이다. 패키지 구성, 플랫폼 패키지가 없을 때 나오는 오류, 버전 규칙, 게시 절차는 [`NPM.ko.md`](NPM.ko.md)에 있다.
 
-## 선택 사항인 터미널 클라이언트
+## TUI 바이너리
 
-릴리스는 대화형 클라이언트도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다.
+릴리스는 TUI 모드가 도는 클라이언트인 TUI 바이너리 `horon-tui`도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다. 두 바이너리는 같은 `release.yml` 실행이 같은 태그 커밋에서 빌드하고 같은 버전 디렉터리에 함께 놓이므로, 클라이언트만의 릴리스나 채널은 따로 없다. 버전 문자열은 다르다. `horon-agent --version`은 릴리스 태그에서 버전을 만들고(`crates/build-meta`), `horon-tui --version`은 `crates/tui` 패키지 버전을 출력한다(`crates/tui/src/lib.rs`).
 
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이고 각 압축이 담은 `LICENSE`도 같은 곳에 설치되므로, 한 버전 디렉터리가 두 실행 파일과 그 실행 파일을 규율하는 라이선스를 들고 활성화가 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
 
@@ -131,7 +131,7 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 
 ## 컨테이너 이미지
 
-릴리스마다 `ghcr.io/horon-ai/agent`에 `linux/amd64`, `linux/arm64` 이미지를 `<버전>`, `<MAJOR.MINOR>`, `latest` 태그로 올린다. GitHub Packages는 cargo와 PyPI 레지스트리를 지원하지 않고, SDK는 이미 npm과 PyPI로 나가므로 GitHub Packages에는 헤드리스 데몬을 바로 띄우는 컨테이너만 올린다. 이미지는 다시 컴파일하지 않고 릴리스 자산을 그대로 넣는다 (`scripts/release/Containerfile`).
+릴리스마다 `ghcr.io/horon-ai/agent`에 `linux/amd64`, `linux/arm64` 이미지를 `<버전>`, `<MAJOR.MINOR>`, `latest` 태그로 올린다. GitHub Packages는 cargo와 PyPI 레지스트리를 지원하지 않고, SDK는 이미 npm과 PyPI로 나가므로 GitHub Packages에는 데몬을 헤드리스 모드로 바로 띄우는 컨테이너만 올린다. 이미지는 다시 컴파일하지 않고 릴리스 자산을 그대로 넣는다 (`scripts/release/Containerfile`).
 
 ```bash
 docker run --rm ghcr.io/horon-ai/agent:latest --version

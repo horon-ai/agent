@@ -6,7 +6,7 @@ Workspace trust gates, local crash bundles, and dependency security classificati
 
 ## Workspace trust
 
-A project repository can name MCP servers for the agent to run. So horon agent does not read a workspace's project-local configuration without consent for its contents. This document explains the gate's scope, the digest rules, the headless fail-closed behavior, and the overrides in the current tree.
+A project repository can name MCP servers for the agent to run. So horon agent does not read a workspace's project-local configuration without consent for its contents. This document explains the gate's scope, the digest rules, the fail-closed behavior when no client is attached, and the overrides in the current tree.
 
 ### What is gated
 
@@ -35,9 +35,9 @@ Consent is recorded as the pair of the normalized workspace path and this digest
 - The record is read and rewritten as a whole file, so if two processes write at the same moment one decision can be lost. What is lost is one decision; an allowance that did not exist never appears (`workspace_trust.rs:222` `record`).
 - The digest is not a mechanism that makes a repository trustworthy. It binds consent to the contents the user saw.
 
-### Headless fail-closed
+### Fail closed without a client
 
-A headless path has no client to ask. So an unknown state is denial, not allowance.
+When no client is attached there is nobody to ask. So an unknown state is denial, not allowance.
 
 - With no record for the current digest the result is `Skipped`. It logs a warning, does not load project-local configuration, and records no decision. The next run asks again.
 - With a record but a different digest the result is `Skipped`. The warning names the changed surface.
@@ -152,7 +152,7 @@ removed on 2026-10-29 (`ls crates/`).
 ### Priority
 
 1. The `rustls-webpki` TLS advisories through the rustls stack
-2. `lru` through `ratatui` (record from before the headless transition. The current tree has no `ratatui`)
+2. `lru` through `ratatui` (record from before the TUI moved out of the agent binary. Today `ratatui` is reached only from `horon-tui`, never from `horon-agent`)
 3. `bincode` through `syntect`
 4. `paste` / `rand` through multiple transitive dependencies
 
@@ -163,19 +163,19 @@ This section is not a re-measurement of the table above; it only counts whether 
 
 | Crate | In `Cargo.lock` | Related record |
 |---|---|---|
-| `ratatui` | No | `lru` row, TUI paths |
+| `ratatui` | Yes, through `horon-tui` only (`crates/tui`); `scripts/ci/check_headless_graph.py` keeps it out of `horon-agent` | `lru` row, TUI paths |
 | `syntect` | No | `bincode` row |
 | `bincode` | No | `RUSTSEC-2025-0141` |
-| `lru` | No | `RUSTSEC-2026-0002` |
+| `lru` | Yes, through `ratatui-core` | `RUSTSEC-2026-0002` |
 | `quick-xml` | No | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
 | `paste` | Yes | `RUSTSEC-2024-0436` |
 | `rand` | Yes | `RUSTSEC-2026-0097` |
-| `azure_core` | Yes | `RUSTSEC-2026-0097` |
+| `azure_core` | No | `RUSTSEC-2026-0097` |
 | `tungstenite` | Yes | `RUSTSEC-2026-0097` |
 | `tract-nnef` | Yes | `RUSTSEC-2026-0097`, the `RUSTSEC-2026-0217` item below |
 | `lopdf` | Yes | `RUSTSEC-2026-0187` |
 | `rustls-webpki` | Yes | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
-| `crossterm` | No | It left together with the deletion of the terminal image crate (`horon-agent-terminal-image`) |
+| `crossterm` | Yes, through `horon-tui` only | It left with the deletion of the terminal image crate (`horon-agent-terminal-image`) and came back with `crates/tui` |
 
 ### Notes
 
