@@ -104,6 +104,13 @@ jobs:
     name: Quality Guardrails
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
+    # The issue-reference gate lists this repository's issues to prove the
+    # numbers in `.github/` and `scripts/` open. Reading them needs the token
+    # scopes below; every other step in this job only reads the checkout.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
@@ -284,6 +291,19 @@ jobs:
           done
           rm -rf "$placeholders"
 
+      # A comment that cites a number nobody can open costs the reader a dead
+      # end and hides whether the reasoning or the number was lost. Eleven such
+      # references had accumulated in `.github/` and `scripts/`.
+      - name: Issue references resolve
+        if: ${{ !cancelled() }}
+        env:
+          # `gh` refuses to run in a workflow without it, and the check must fail
+          # loudly rather than report "skipped" for a missing token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m unittest -v scripts/ci/test_check_issue_refs.py
+          python3 scripts/ci/check_issue_refs.py
+
       - name: Enforce warning budget
         if: ${{ !cancelled() }}
         shell: bash
@@ -457,7 +477,7 @@ jobs:
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
     # known-good commit were cancelled at the cap, each getting further through
-    # the same green steps (#693). A rerun is exactly what you reach for after a
+    # the same green steps. A rerun is exactly what you reach for after a
     # concurrency cancellation, so the old cap made healthy commits look red.
     # A hosted 4 vCPU runner with no cache at all needs more still: this job
     # builds release, test, and e2e artifacts from scratch in one target dir.
@@ -855,7 +875,7 @@ jobs:
         # model or session history had no CI check. The step previously ran a
         # filter inherited from upstream CI that matched nothing in this tree,
         # the looks-green-but-never-ran shape the warning budget and the stdin
-        # detector had (#651), so it now requires at least one pass
+        # detector had, so it now requires at least one pass
         # (`--min-passed 1`), which fails the step when a filter selects no
         # test instead of reporting a green `0 passed`. The Windows groups stay
         # out of scope: this step keeps `runner.os != 'Windows'`.
@@ -895,7 +915,7 @@ jobs:
         # the model's actual output, which is the only thing that can catch an
         # inference-engine upgrade silently changing embeddings: persisted
         # memories are keyed by model_id, which does not change across a tract
-        # bump, so the stale-embedding filter cannot notice (#657).
+        # bump, so the stale-embedding filter cannot notice.
         #
         # That test skips itself when the model is absent, and horon-agent-embedding
         # tests are not otherwise run here at all, so without this step it would
@@ -956,7 +976,7 @@ jobs:
         # `retention_readiness`, and the broader suite is Linux-only, so the
         # macOS detector had no coverage at all. `TH_STATE_WAITING` was defined
         # as 2 (`TH_STATE_STOPPED`) rather than 3, which silently disabled
-        # macOS stdin forwarding entirely until #651.
+        # macOS stdin forwarding entirely until the cohort step was added.
         #
         # Deliberately not Linux-gated: running this on both Unix platforms is
         # the whole point. Windows is a separate job and is not covered here,
@@ -1378,8 +1398,8 @@ jobs:
       # second whole-workspace `cargo check` on the ubuntu matrix entry is a
       # second full compile of a release build that is already on disk. macOS is
       # the only place this gate sees Apple-specific warnings. Windows still has
-      # its own cfg-gated surface and is not yet warning-clean, so it stays out
-      # (#1177).
+      # its own cfg-gated surface and is not yet warning-clean, so it stays
+      # out.
       - name: Enforce warning budget (macOS)
         if: runner.os == 'macOS'
         shell: bash

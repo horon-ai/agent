@@ -76,8 +76,8 @@ RELEASE_COMMIT="$(git rev-parse HEAD)"
 
 # Ad-hoc sign a macOS binary with a stable code-signing identifier. The linker
 # signature otherwise uses cargo's hashed output name, which macOS Tahoe treats
-# as a new program on every release (duplicate "Allow in the Menu Bar" entries,
-# #621). Must match the identifier in .github/workflows/release.yml.
+# as a new program on every release (duplicate "Allow in the Menu Bar" entries).
+# Must match the identifier in .github/workflows/release.yml.
 MACOS_SIGNING_IDENTIFIER="com.horon-agent.cli"
 sign_macos_binary() {
     local bin="$1"

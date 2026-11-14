@@ -152,7 +152,7 @@ jobs:
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/release-cargo-metadata.json"
           git diff --exit-code -- Cargo.lock
 
-      # Render a human-readable changelog for the release body (issue #435):
+      # Render a human-readable changelog for the release body:
       # commit subjects since the previous tag grouped by conventional-commit
       # prefix, always ending with the compare link.
       - name: Generate release notes
@@ -366,8 +366,8 @@ jobs:
             # (`horon-agent-<hash>`) as the code-signing identifier, so every release
             # looked like a different program. macOS Tahoe's "Allow in the Menu
             # Bar" keys unbundled executables on that identity, which added a new
-            # horon-agent toggle per update and reset the menu bar item's placement
-            # (#621). Re-sign ad-hoc with a stable identifier. The TUI is the
+            # horon-agent toggle per update and reset the menu bar item's placement.
+            # Re-sign ad-hoc with a stable identifier. The TUI is the
             # process the CLI execs, so it gets the same stable-identifier
             # treatment under its own identifier.
             codesign --force --sign - --identifier com.horon-agent.cli dist/${{ matrix.artifact }}
@@ -508,7 +508,7 @@ jobs:
       # These debug-harness tests provide extra signal, but they must not block
       # publishing a release binary that already built, launched, and passed the
       # installer verification. A transient server-test disconnect caused the
-      # Windows x64 asset to disappear from releases v0.44.0-v0.46.0 (#480).
+      # Windows x64 asset to disappear from those releases.
       - name: Run advisory Windows runtime smoke tests (x64)
         continue-on-error: true
         shell: pwsh
@@ -844,8 +844,8 @@ jobs:
     needs: create-release
     if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     # GitHub has no native FreeBSD runners, so build inside a FreeBSD VM
-    # (QEMU via vmactions), same approach as freebsd-smoke.yml (issues #416,
-    # #433). FreeBSD is a required platform: the final job refuses to publish a
+    # (QEMU via vmactions), the same approach as freebsd-smoke.yml. FreeBSD is a
+    # required platform: the final job refuses to publish a
     # partial asset set, so a failed VM build is reported as a failure here
     # rather than being marked "non-fatal" while still blocking publication.
     timeout-minutes: 300

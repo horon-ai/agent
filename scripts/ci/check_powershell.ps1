@@ -24,7 +24,7 @@ $hadErrors = $false
 foreach ($file in $scriptFiles | Sort-Object FullName -Unique) {
     # Reject a UTF-8 BOM. `irm <url> | iex` on Windows PowerShell 5.1 decodes the
     # body without honoring the BOM, so the stray bytes corrupt the leading `<#`
-    # help comment and the whole script fails to parse (issue #503).
+    # help comment and the whole script fails to parse.
     $prefix = [System.IO.File]::ReadAllBytes($file.FullName) | Select-Object -First 3
     if ($prefix.Count -ge 3 -and $prefix[0] -eq 0xEF -and $prefix[1] -eq 0xBB -and $prefix[2] -eq 0xBF) {
         $hadErrors = $true
