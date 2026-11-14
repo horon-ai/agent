@@ -9,7 +9,8 @@
 use super::{handle_comm_approve_plan, handle_comm_propose_plan, plan_cycle_error};
 use crate::plan::PlanItem;
 use crate::protocol::ServerEvent;
-use crate::server::{SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan};
+use crate::server::plan_proposals::peek_plan_proposal;
+use crate::server::{PlanProposalStore, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -98,7 +99,7 @@ struct PlanFixture {
     soft_interrupt_queues: crate::server::SessionInterruptQueues,
     swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: PlanProposalStore,
     swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
     event_history: Arc<RwLock<VecDeque<SwarmEvent>>>,
@@ -132,7 +133,7 @@ fn plan_fixture(swarm_id: &str, coord: &str, worker: &str) -> PlanFixture {
         soft_interrupt_queues: Arc::new(RwLock::new(HashMap::new())),
         swarm_members,
         swarms_by_id,
-        shared_context: Arc::new(RwLock::new(HashMap::new())),
+        plan_proposals: Arc::new(RwLock::new(HashMap::new())),
         swarm_plans,
         swarm_coordinators,
         event_history: Arc::new(RwLock::new(VecDeque::new())),
@@ -151,7 +152,7 @@ impl PlanFixture {
             &self.client_tx,
             &self.swarm_members,
             &self.swarms_by_id,
-            &self.shared_context,
+            &self.plan_proposals,
             &self.swarm_plans,
             &self.swarm_coordinators,
             &self.sessions,
@@ -172,7 +173,7 @@ impl PlanFixture {
             &self.client_tx,
             &self.swarm_members,
             &self.swarms_by_id,
-            &self.shared_context,
+            &self.plan_proposals,
             &self.swarm_plans,
             &self.swarm_coordinators,
             &self.sessions,
@@ -320,12 +321,12 @@ async fn worker_proposal_with_internal_cycle_is_rejected_before_storage() {
         .await;
 
     // No proposal stored for the coordinator to approve.
-    let context = fx.shared_context.read().await;
-    let stored = context
-        .get(&fx.swarm_id)
-        .and_then(|swarm_context| swarm_context.get(&format!("plan_proposal:{worker}")));
-    assert!(stored.is_none(), "cyclic proposal must not be stored");
-    drop(context);
+    assert!(
+        peek_plan_proposal(&fx.plan_proposals, &fx.swarm_id, &worker)
+            .await
+            .is_none(),
+        "cyclic proposal must not be stored"
+    );
 
     let events = fx.drain_events();
     let errors = error_messages(&events);
@@ -352,16 +353,12 @@ async fn approve_plan_rejects_proposal_that_forms_cycle_with_existing_plan() {
     // passes the proposer-side check and is stored for approval.
     let worker = fx.worker.clone();
     fx.propose(&worker, vec![plan_item("b", &["a"])]).await;
-    {
-        let context = fx.shared_context.read().await;
-        assert!(
-            context
-                .get(&fx.swarm_id)
-                .and_then(|c| c.get(&format!("plan_proposal:{worker}")))
-                .is_some(),
-            "acyclic-in-isolation proposal should be stored"
-        );
-    }
+    assert!(
+        peek_plan_proposal(&fx.plan_proposals, &fx.swarm_id, &worker)
+            .await
+            .is_some(),
+        "acyclic-in-isolation proposal should be stored"
+    );
 
     // Approval must reject: merged graph has a <-> b.
     fx.approve(&worker).await;
@@ -372,15 +369,12 @@ async fn approve_plan_rejects_proposal_that_forms_cycle_with_existing_plan() {
     drop(plans);
 
     // The proposal stays pending so the proposer can fix and re-propose.
-    let context = fx.shared_context.read().await;
     assert!(
-        context
-            .get(&fx.swarm_id)
-            .and_then(|c| c.get(&format!("plan_proposal:{worker}")))
+        peek_plan_proposal(&fx.plan_proposals, &fx.swarm_id, &worker)
+            .await
             .is_some(),
         "rejected proposal should remain pending"
     );
-    drop(context);
 
     let events = fx.drain_events();
     let errors = error_messages(&events);
@@ -444,16 +438,12 @@ async fn worker_proposal_is_lost_when_coordinator_cached_channel_is_closed() {
 
     // The proposal is stored and the proposer is acked, so nothing upstream
     // signals a failure...
-    {
-        let context = fx.shared_context.read().await;
-        assert!(
-            context
-                .get(&fx.swarm_id)
-                .and_then(|c| c.get(&format!("plan_proposal:{worker}")))
-                .is_some(),
-            "proposal should be stored for approval"
-        );
-    }
+    assert!(
+        peek_plan_proposal(&fx.plan_proposals, &fx.swarm_id, &worker)
+            .await
+            .is_some(),
+        "proposal should be stored for approval"
+    );
     let events = fx.drain_events();
     assert!(saw_done(&events), "proposer must be acked with Done");
     assert!(error_messages(&events).is_empty(), "no error surfaced");
@@ -484,8 +474,8 @@ async fn worker_proposal_is_lost_when_coordinator_cached_channel_is_closed() {
     assert_eq!(pending.len(), 1, "soft-interrupt fallback should queue once");
     assert!(
         pending[0].content.contains("Plan proposal from")
-            && pending[0].content.contains(&format!("plan_proposal:{worker}")),
-        "fallback text should reference the stored proposal key: {}",
+            && pending[0].content.contains(&format!("proposer_session '{worker}'")),
+        "fallback text should name the proposer session to approve: {}",
         pending[0].content
     );
 }
@@ -512,15 +502,12 @@ async fn approve_plan_accepts_valid_dag_proposal() {
     drop(plans);
 
     // The consumed proposal is removed.
-    let context = fx.shared_context.read().await;
     assert!(
-        context
-            .get(&fx.swarm_id)
-            .and_then(|c| c.get(&format!("plan_proposal:{worker}")))
+        peek_plan_proposal(&fx.plan_proposals, &fx.swarm_id, &worker)
+            .await
             .is_none(),
         "approved proposal should be consumed"
     );
-    drop(context);
 
     let events = fx.drain_events();
     assert!(saw_done(&events), "approval must ack");

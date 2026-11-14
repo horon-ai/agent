@@ -320,6 +320,7 @@ async fn target_subscribe_refused_by_a_busy_writer_sends_the_refusal() {
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
         FileTouchService::new(),
         Arc::new(RwLock::new(HashMap::new())),
         Arc::new(RwLock::new(HashMap::new())),

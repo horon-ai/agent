@@ -1,3 +1,4 @@
+use super::plan_proposals::{PlanProposalStore, all_pending_plan_proposals, pending_plan_proposals_for_swarm};
 use super::swarm_channels::list_channels_for_swarm;
 use super::{
     FileTouchService, ServerIdentity, SharedContext, SwarmMember, SwarmState, VersionedPlan, git_common_dir_for,
@@ -24,6 +25,7 @@ pub(super) async fn maybe_handle_swarm_read_command(
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     shared_context: &Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: &PlanProposalStore,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     file_touch: &FileTouchService,
@@ -532,28 +534,20 @@ pub(super) async fn maybe_handle_swarm_read_command(
     }
 
     if cmd == "swarm:proposals" {
-        let ctx = shared_context.read().await;
-        let members = swarm_members.read().await;
-        let mut out: Vec<serde_json::Value> = Vec::new();
-        for (swarm_id, swarm_ctx) in ctx.iter() {
-            for (key, context) in swarm_ctx.iter() {
-                if key.starts_with("plan_proposal:") {
-                    let proposer_id = key.strip_prefix("plan_proposal:").unwrap_or("");
-                    let proposer_name = members.get(proposer_id).and_then(|m| m.friendly_name.clone());
-                    let item_count = serde_json::from_str::<Vec<serde_json::Value>>(&context.value)
-                        .map(|v| v.len())
-                        .unwrap_or(0);
-                    out.push(serde_json::json!({
-                        "swarm_id": swarm_id,
-                        "proposer_session": proposer_id,
-                        "proposer_name": proposer_name,
-                        "item_count": item_count,
-                        "age_secs": context.created_at.elapsed().as_secs(),
-                        "status": "pending",
-                    }));
-                }
-            }
-        }
+        let pending = all_pending_plan_proposals(plan_proposals).await;
+        let out: Vec<serde_json::Value> = pending
+            .iter()
+            .map(|(swarm_id, proposal)| {
+                serde_json::json!({
+                    "swarm_id": swarm_id,
+                    "proposer_session": proposal.proposer_session,
+                    "proposer_name": proposal.from_name,
+                    "item_count": proposal.items.len(),
+                    "age_secs": proposal.created_at.elapsed().as_secs(),
+                    "status": "pending",
+                })
+            })
+            .collect();
         return Ok(Some(
             serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".to_string()),
         ));
@@ -561,51 +555,46 @@ pub(super) async fn maybe_handle_swarm_read_command(
 
     if cmd.starts_with("swarm:proposals:") {
         let arg = cmd.strip_prefix("swarm:proposals:").unwrap_or("").trim();
-        let ctx = shared_context.read().await;
+        if arg.starts_with("session_") {
+            let pending = all_pending_plan_proposals(plan_proposals).await;
+            let found = pending
+                .into_iter()
+                .find(|(_, proposal)| proposal.proposer_session == arg)
+                .map(|(swarm_id, proposal)| {
+                    serde_json::json!({
+                        "swarm_id": swarm_id,
+                        "proposer_session": proposal.proposer_session,
+                        "proposer_name": proposal.from_name,
+                        "status": "pending",
+                        "age_secs": proposal.created_at.elapsed().as_secs(),
+                        "items": proposal.items,
+                    })
+                    .to_string()
+                })
+                .ok_or_else(|| anyhow::anyhow!("No proposal found from session '{}'", arg))?;
+            return Ok(Some(found));
+        }
         let members = swarm_members.read().await;
-        let output = if arg.starts_with("session_") {
-            let proposal_key = format!("plan_proposal:{}", arg);
-            let mut found_proposal: Option<String> = None;
-            for (swarm_id, swarm_ctx) in ctx.iter() {
-                if let Some(context) = swarm_ctx.get(&proposal_key) {
-                    let proposer_name = members.get(arg).and_then(|m| m.friendly_name.clone());
-                    let items: Vec<serde_json::Value> = serde_json::from_str(&context.value).unwrap_or_default();
-                    found_proposal = Some(
-                        serde_json::json!({
-                            "swarm_id": swarm_id,
-                            "proposer_session": arg,
-                            "proposer_name": proposer_name,
-                            "status": "pending",
-                            "age_secs": context.created_at.elapsed().as_secs(),
-                            "items": items,
-                        })
-                        .to_string(),
-                    );
-                    break;
-                }
-            }
-            found_proposal.ok_or_else(|| anyhow::anyhow!("No proposal found from session '{}'", arg))?
-        } else {
-            let mut out: Vec<serde_json::Value> = Vec::new();
-            if let Some(swarm_ctx) = ctx.get(arg) {
-                for (key, context) in swarm_ctx.iter() {
-                    if key.starts_with("plan_proposal:") {
-                        let proposer_id = key.strip_prefix("plan_proposal:").unwrap_or("");
-                        let proposer_name = members.get(proposer_id).and_then(|m| m.friendly_name.clone());
-                        let items: Vec<serde_json::Value> = serde_json::from_str(&context.value).unwrap_or_default();
-                        out.push(serde_json::json!({
-                            "proposer_session": proposer_id,
-                            "proposer_name": proposer_name,
-                            "status": "pending",
-                            "age_secs": context.created_at.elapsed().as_secs(),
-                            "items": items,
-                        }));
-                    }
-                }
-            }
-            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".to_string())
-        };
-        return Ok(Some(output));
+        let out: Vec<serde_json::Value> = pending_plan_proposals_for_swarm(plan_proposals, arg)
+            .await
+            .iter()
+            .map(|proposal| {
+                let proposer_name = members
+                    .get(&proposal.proposer_session)
+                    .and_then(|m| m.friendly_name.clone())
+                    .or_else(|| proposal.from_name.clone());
+                serde_json::json!({
+                    "proposer_session": proposal.proposer_session,
+                    "proposer_name": proposer_name,
+                    "status": "pending",
+                    "age_secs": proposal.created_at.elapsed().as_secs(),
+                    "items": proposal.items,
+                })
+            })
+            .collect();
+        return Ok(Some(
+            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".to_string()),
+        ));
     }
 
     if cmd.starts_with("swarm:info:") {
