@@ -450,40 +450,47 @@ async fn a_named_service_can_wait_for_a_tcp_port() {
     let env = IsolatedEnv::new("service-port", "");
     let registry = registry().await;
     let session = "policy-service-port";
-    // Ask the OS for a free port, then hand it to the server. The tiny race
-    // between closing the probe socket and the server binding is acceptable:
-    // the readiness wait allows ten seconds for the bind to succeed.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
-    let port = listener.local_addr().expect("the bound address").port();
-    drop(listener);
-
-    let output = run_bash(
-        &registry,
-        session,
-        env.home(),
-        json!({
-            "command": format!("python3 -m http.server {port} --bind 127.0.0.1"),
-            "name": "web",
-            "ready": {"port": port, "timeout_secs": 10.0}
-        }),
-    )
-    .await
-    .expect("the web service starts");
-
-    let first_line = output.lines().next().unwrap_or_default();
-    assert!(
-        first_line.starts_with("web: running pid=") && first_line.ends_with(" ready"),
-        "the port check must report readiness: {first_line:?}"
-    );
-
-    registry
-        .execute(
-            "bg",
-            json!({"action": "cancel", "task_id": "web"}),
-            context(session, env.home()),
+    // A free port has to be probed and then released before the server can bind
+    // it, and another process on a busy runner can take it in that window: the
+    // server then exits and readiness reports the death, which is the product
+    // behaving correctly. Retry with a fresh port rather than pin a port the
+    // runner may not own; a server that never binds still fails every attempt.
+    let mut first_line = String::new();
+    for attempt in 0..3 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+        let port = listener.local_addr().expect("the bound address").port();
+        drop(listener);
+        let name = format!("web{attempt}");
+        let output = run_bash(
+            &registry,
+            session,
+            env.home(),
+            json!({
+                "command": format!("python3 -m http.server {port} --bind 127.0.0.1"),
+                "name": name,
+                "ready": {"port": port, "timeout_secs": 10.0}
+            }),
         )
         .await
-        .expect("cleanup cancels the web service");
+        .expect("the web service call is accepted");
+        first_line = output.lines().next().unwrap_or_default().to_owned();
+        if first_line.ends_with(" ready") {
+            registry
+                .execute(
+                    "bg",
+                    json!({"action": "cancel", "task_id": name}),
+                    context(session, env.home()),
+                )
+                .await
+                .expect("cleanup cancels the web service");
+            break;
+        }
+    }
+
+    assert!(
+        first_line.starts_with("web") && first_line.contains("running pid=") && first_line.ends_with(" ready"),
+        "the port check must report readiness: {first_line:?}"
+    );
 }
 
 #[tokio::test]

@@ -6,9 +6,6 @@
 //! window-to-window and the largest single-window growth is checked separately
 //! from end-to-end retention: ending 12 FDs up but flat after cycle 100 is
 //! warm-up, adding 3 FDs per window is a leak.
-//!
-//! `shared_context` has no removal path (`crates/app-core/src/server.rs:771`), so
-//! it is measured and reported but never asserted.
 
 use crate::test_support::*;
 use serde_json::json;
@@ -145,7 +142,6 @@ struct SoakSample {
     pending_requests: u64,
     interrupt_poll_wakeups: u64,
     background_tasks: u64,
-    shared_context_entries: u64,
     live_sessions: u64,
     connected_clients: u64,
     rss_bytes: Option<u64>,
@@ -363,10 +359,6 @@ async fn sample(debug_socket_path: &Path, cycle: usize) -> Result<SoakSample> {
             .unwrap_or(0),
         background_tasks: memory
             .pointer("/background/task_count")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        shared_context_entries: memory
-            .pointer("/swarm/shared_context_entry_count")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0),
         live_sessions: memory
@@ -828,14 +820,13 @@ async fn run_soak() -> Result<()> {
             }
             let taken = settled_sample(&debug_socket_path, last_cycle).await?;
             eprintln!(
-                "soak window {window_index}/{windows} (cycle {last_cycle}): fds={:?} threads={:?} queue_hw={} pending={} wakeups={} tasks={} shared_ctx={} ms_per_cycle={:.2}",
+                "soak window {window_index}/{windows} (cycle {last_cycle}): fds={:?} threads={:?} queue_hw={} pending={} wakeups={} tasks={} ms_per_cycle={:.2}",
                 taken.fd_count,
                 taken.thread_count,
                 taken.queue_depth_high_water,
                 taken.pending_requests,
                 taken.interrupt_poll_wakeups,
                 taken.background_tasks,
-                taken.shared_context_entries,
                 attach_ms as f64 / completed_cycles as f64,
             );
             samples.push(taken);
@@ -855,9 +846,6 @@ async fn run_soak() -> Result<()> {
         let tasks = CounterSeries::new(&samples, "background_tasks", "tasks", window, |sample| {
             Some(sample.background_tasks)
         });
-        let shared_context = CounterSeries::new(&samples, "shared_context_entries", "entries", window, |sample| {
-            Some(sample.shared_context_entries)
-        });
         let live_sessions = CounterSeries::new(&samples, "live_sessions", "sessions", window, |sample| {
             Some(sample.live_sessions)
         });
@@ -872,15 +860,14 @@ async fn run_soak() -> Result<()> {
             &pending,
             &wakeups,
             &tasks,
-            &shared_context,
             &live_sessions,
             &clients,
         ];
 
-        let mut table = String::from("cycle\tfds\tthreads\tqueue_hw\tpending\twakeups\ttasks\tshared_ctx\trss_bytes\n");
+        let mut table = String::from("cycle\tfds\tthreads\tqueue_hw\tpending\twakeups\ttasks\trss_bytes\n");
         for sample in &samples {
             table.push_str(&format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                 sample.cycle,
                 sample
                     .fd_count
@@ -892,7 +879,6 @@ async fn run_soak() -> Result<()> {
                 sample.pending_requests,
                 sample.interrupt_poll_wakeups,
                 sample.background_tasks,
-                sample.shared_context_entries,
                 sample
                     .rss_bytes
                     .map_or_else(|| "n/a".to_string(), |value| value.to_string()),
@@ -963,10 +949,6 @@ async fn run_soak() -> Result<()> {
             ));
         }
 
-        let shared_context_grew = shared_context
-            .final_value()
-            .zip(shared_context.baseline())
-            .is_some_and(|(final_value, baseline)| final_value > baseline);
         let interrupt_poll_wakeups = wakeups.final_value().unwrap_or(0.0);
         let report = json!({
             "cycles": cycles,
@@ -1004,8 +986,6 @@ async fn run_soak() -> Result<()> {
                 "inline_round_tool_calls": inline_rounds.first().map(|round| round.tool_calls_in_round),
                 "finding": "the 25 ms interrupt poll costs nothing in the common case: poll_for_interrupt parks on pending() unless a watch exists, a one-member group runs inline in crates/app-core/src/agent/turn_streaming_mpsc.rs and never reaches run_group, and a watched group whose members finish inside one tick never reaches the biased select branch. It only ticks when a multi-member group has a member in flight past 25 ms, which is the number todo 16 should weigh against a notification.",
             },
-            "shared_context_grew": shared_context_grew,
-            "shared_context_note": "shared_context has no removal path (crates/app-core/src/server.rs:771); measured and reported, never asserted",
             "non_returning": offenders,
         });
 

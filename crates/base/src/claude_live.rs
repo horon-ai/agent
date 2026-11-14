@@ -71,6 +71,33 @@ impl LiveClaudeSession {
     }
 }
 
+/// Whether this platform can verify a Claude process's start token and signal it.
+///
+/// Live takeover needs `/proc/<pid>/stat` field 22 to confirm the registry record
+/// still names the same process and `pidfd_open`/`pidfd_send_signal` to signal it
+/// without racing PID reuse. Both interfaces exist only on Linux, so every other
+/// platform answers `false` here and refuses the takeover before any work.
+pub const fn live_takeover_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// The reason a takeover is refused on this platform, or `None` where it works.
+///
+/// The message names the platform and the missing capability so a user learns
+/// why the command cannot run here and what would make it possible, instead of
+/// reading a bare "not supported".
+pub fn live_takeover_unsupported_reason() -> Option<String> {
+    if live_takeover_supported() {
+        None
+    } else {
+        Some(format!(
+            "live Claude Code takeover is only supported on Linux: this is {} and it has no \
+             /proc/<pid>/stat process-start token or pidfd signal interface",
+            std::env::consts::OS
+        ))
+    }
+}
+
 /// Return live, identity-verified interactive Claude Code CLI sessions.
 ///
 /// On platforms where Claude's process-start token cannot yet be verified, the

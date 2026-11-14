@@ -168,9 +168,29 @@ async fn v1_client_negotiates_and_lists_a_session_recorded_by_v0_1_x() {
     assert_eq!(listed.title.as_deref(), Some("Round trip session"));
 
     // 3. Closing the client tears the connection down without taking the bridge.
+    //
+    // `tokio::io::split` hands out two halves of one socket: dropping only the
+    // write half leaves the stream alive, so no FIN reaches the bridge and the
+    // bridge never closes its daemon leg. Both halves must go for the client to
+    // be gone. The read below is bounded, so a bridge that keeps the daemon
+    // connection open after its client left fails here instead of hanging the
+    // target until the runner's timeout.
     drop(write);
+    drop(read);
     let mut probe = [0u8; 1];
-    let _ = tokio::io::AsyncReadExt::read(&mut daemon_conn, &mut probe).await;
+    let closed = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::io::AsyncReadExt::read(&mut daemon_conn, &mut probe),
+    )
+    .await;
+    assert!(
+        matches!(closed, Ok(Ok(0))),
+        "the bridge must close its daemon leg once the client is gone: {closed:?}"
+    );
+    assert!(
+        !bridge.is_finished(),
+        "one client leaving must not stop the bridge serving the socket"
+    );
     bridge.abort();
     let _ = bridge.await;
     std::fs::remove_dir_all(&root).unwrap();
