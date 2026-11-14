@@ -73,8 +73,8 @@ There are no secrets and no API charges. Every measurement that needs a model at
 
 | Group | Script | What it measures |
 | --- | --- | --- |
-| `compare` | `bench_compare.py`, `install_competitors.sh` | `--version` time, one-question latency and peak memory, memory by concurrent session count, install size, skill invocation time, and MCP tool call time and tool round trip for horon and the competing tools (`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`). Linux also counts `fsync` calls. |
-| `startup` | `bench_startup.py` | `--help` and `--version` load, `serve` socket readiness, and per-stage harness bridge readiness |
+| `compare` | `bench_compare.py`, `install_competitors.sh` | `--version` time, one-question latency and peak memory (once with the tool allow-list the recorded results use, and for horon once more as `oneshot_core` with the default core tool surface), the bytes of every model request (`request_bytes`), memory by concurrent session count, install size, skill invocation time, and MCP tool call time and tool round trip for horon and the competing tools (`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`). Linux also counts `fsync` calls and names the files they flush (`fsync_paths`). |
+| `startup` | `bench_startup.py` | `--help` and `--version` load, `serve` socket readiness, the `serve` startup stage table from one extra run with `HORON_AGENT_STARTUP_PROFILE=1`, and per-stage harness bridge readiness |
 | `loading` | `bench_loading.py` | Session loading of a fixed-seed fixture, COLD and WARM |
 | `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket |
 | `reload` | `bench_reload_storm.py` | Latency until `history` arrives when reopening N sessions (1, 10, 40) at once |
@@ -107,6 +107,8 @@ python3 scripts/perf/bench_reload_storm.py --binary ./target/release/horon-agent
 python3 scripts/perf/bench_startup.py ./target/release/horon-agent --runs 10
 ```
 
+`bench_startup.py` also names the stage behind the server-ready number. `serve` writes nothing about its startup by default; when `HORON_AGENT_STARTUP_PROFILE` is set to a non-empty value, it writes its startup stage table to the log once, after the daemon sockets are bound. The script makes one extra `serve` run with `HORON_AGENT_STARTUP_PROFILE=1`, outside the timed sample, and prints that table as a `Server startup stages (one extra run with HORON_AGENT_STARTUP_PROFILE=1, not timed):` block with the columns `stage`, `at ms`, `delta ms`, and `share`. The stages after `process_start` are `config_loaded` (config and provider setup done), `server_new` (the server value exists, with its persisted state loaded), and `socket_bound` (the main and debug sockets are bound). The timed runs never set the variable.
+
 To check only that the suites still start, run the smoke. It runs the tools, reload, and compare (horon only, `oneshot` and `sessions`) suites once each and exits 1 if any of them crashed, skipped, or recorded an error. A suite exits 0 even when its daemon never came up, so the smoke reads each JSON report rather than the exit code. The `Build & Test` job in `ci.yml` runs it on every code pull request against the binary it just built, because the benchmark workflow itself never runs on a pull request.
 
 ```bash
@@ -134,7 +136,9 @@ The jcode download handles transient errors (5xx). It retries the release downlo
 | --- | --- |
 | `version_ms` | Statistics over N `--version` runs (5 by default) |
 | `oneshot_ms` | Latency of one one-shot `run` question (startup, one `ls` tool call, final response), the peak process tree memory during it, and whether the tool round-tripped |
+| `oneshot_core` | The same one-shot question with `--tools` removed, so the request carries the default `core` surface: seven eager tools plus `toolbox`, and the listed-tool index in the system prompt. Each row reuses the home and workspace of its plain one-shot, so the two differ only in the tool surface. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`, with `oneshot_core.runs[*].request_bytes` per run. A run whose first request offered no tools is recorded as `core surface missing` with no time. A tool with no core profile (every tool but horon and a second horon build) records `{"skipped": "<label> has no core tool profile"}`. The `oneshot_ms` row keeps `--tools bash` so it stays comparable with `RESULTS.md` |
 | `fsync_calls` | Number of `fsync` and `fdatasync` calls one question makes when `--syscalls` is on. Counted by running the same number of extra `strace`-wrapped runs separately from the timed runs. Measured on Linux only when `strace` exists, otherwise `skipped` records the reason |
+| `fsync_paths` | With `--syscalls`, one more one-shot run per row, neither timed nor counted, traced with `strace -f -y` so every `fsync` and `fdatasync` names the file or directory behind its descriptor. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`, most calls first. The run's temporary root is written as `<root>`, and UUIDs, long hex ids and long digit runs as `<id>`, so two runs and two builds group the same way; a descriptor `strace` could not name is `fd:<n>`. The counts add up to the flushes that traced run made. Without `strace` the value is `{"skipped": "strace unavailable"}` |
 | `sessions_memory` | Process tree memory after N concurrent sessions × K turns, both idle and right after a turn. It reports the first-session value and the per-session increment (least-squares slope) |
 | `install_size_bytes` | Executable size. For npm tools, the package plus installed dependencies |
 | `skill_ms` | Time for one one-shot `run` question to find the fixture skill and read its body. The `Via` column names the path the tool used (`skill-tool`/`skill-uri`/`file-read`) |
@@ -142,6 +146,7 @@ The jcode download handles transient errors (5xx). It retries the release downlo
 | `mcp_ready_ms` | Time from process start to the first request whose tool list shows `bench_echo` (MCP server start plus tool registration). Measured as when the fake model saw that request |
 | `tool_round_trip` | `true` only when a later request actually saw the sentinel from the skill body or the nonce the MCP server returned |
 | `request_offsets_ms` | Per run record (JSON), the time from process start to each model request arriving. The gaps split startup, tool round trip, and shutdown per OS |
+| `request_bytes` | Per run record (JSON), one `{body_bytes, tools_bytes, tool_count}` entry per model request: the JSON body bytes the fake model received, how many of them were the tool catalog, and how many tools the request offered. JSON `oneshot.runs[*].request_bytes[*]`, and the same under `oneshot_core`. A key the fake model did not report is `null`, never 0, because 0 is a real value (a request that offers no tools). The report's `request bytes` column shows the first request of the first run as `body / tools (N tools)` and appears only when a row has a value |
 | `thread_names` | For each session count in the daemon session measurement, the daemon process's threads counted by name right after a turn (Linux `/proc/<pid>/task/*/comm`). Shows which threads grow with session count. `null` on other OSes |
 | `live_heap_bytes` | In the daemon session measurement, the bytes malloc areas actually hold while idle and right after a turn (the "All zones" total from macOS `heap(1)`). Read beside the RSS slope, it separates live data from memory the allocator keeps. The after-turn value is taken after the RSS sample; `null` on other OSes |
 | `post_turn_rss_anon_bytes`, `post_turn_rss_file_bytes` | The daemon tree RSS right after a turn split into anonymous memory (heap, stack) and file mappings (executable, libraries) (Linux `/proc/<pid>/status` `RssAnon`, `RssFile`). Shows which side the per-session increment comes from. `null` on other OSes |
@@ -150,7 +155,7 @@ The jcode download handles transient errors (5xx). It retries the release downlo
 
 Multipliers keep horon at 1.0×. Each tool attaches to the fake model differently. horon and jcode use `[providers.mock]` in a temporary HOME plus a debug socket session on one daemon, Claude Code uses `ANTHROPIC_BASE_URL` and a resident `stream-json` process, Codex uses `model_providers` and `app-server`, OpenCode uses `baseURL` in `opencode.json` and `serve`, and pi, omp, and omo use `models.json` (`providers.mock`, `openai-completions`) under a temporary HOME with the session handed to `--mode rpc`.
 
-Session implementations differ per tool (a session inside the daemon versus a process per session), so compare the per-session increment rather than absolute values. `strace` stops the tool on every system call, so a wrapped run's time grows with the call count. `oneshot_ms` therefore comes only from runs without `strace`, and wrapped runs serve only to count `fsync_calls`.
+Session implementations differ per tool (a session inside the daemon versus a process per session), so compare the per-session increment rather than absolute values. `strace` stops the tool on every system call, so a wrapped run's time grows with the call count. `oneshot_ms` therefore comes only from runs without `strace`, and wrapped runs serve only to count `fsync_calls` and to collect `fsync_paths`.
 
 ### omp and omo
 
@@ -171,8 +176,9 @@ The two tools use the same `models.json` and RPC contract as pi, so they share t
 
 ### Skill invocation and MCP tool calls
 
-The `compare` group picks scenarios with `--scenarios`. The default is `oneshot,sessions,skill,mcp`; a subset means the missing scenarios do not run and no table appears for them in the report. An unknown name fails the run immediately.
+The `compare` group picks scenarios with `--scenarios`. The default is `oneshot,oneshot_core,sessions,skill,mcp`; a subset means the missing scenarios do not run and no table appears for them in the report. An unknown name fails the run immediately.
 
+- `oneshot_core`: the one-shot question without its `--tools` allow-list, so the turn runs with the default `core` tool profile. It needs nothing new from the binary, so a baseline build given as `--bin horon-base=<path>` is measured the same way and the pair shows what a prompt or tool-description change moves in `request_bytes`.
 - `skill`: the prompt starts with `[bench:skill]`. Seeing that marker, the fake model calls the skill-specific tool (`Skill`, `skill`, `skills.read`, `skill_manage`) when one exists; otherwise it passes `skill://bench-skill` to a read tool whose description mentions `skill://`; otherwise it opens the `SKILL.md` absolute path the prompt supplies with a read or shell tool. The `via` field in the request record and the `Via` column in the report record which path it took.
 - `mcp`: the prompt starts with `[bench:mcp]`. The fake model looks for a tool whose name ends in `bench_echo` and calls it once with `{"text": "bench-nonce-N"}`. If that tool sits inside a Responses namespace, the function name is `bench_echo` and the namespace goes in a separate `namespace` field (the `function_call` shape Codex receives). When the tool list has no server tool, each agent follows the path its docs define: the fixed `mcp_call` tool (`mcp-call`), the management tool `mcp` whose `action` enum includes `call` (`mcp-action`), loading the prompt-listed deferred tool `mcp__<server>__bench_echo` first through `ToolSearch`'s `select:<name>` (`tool-search`), or, for a tool like omp that lists only an `xd://...bench_echo` route in the prompt, calling that route with the `write` tool (`mcp-route`).
 - If a tool was called but no sentinel or nonce came back, the last 400 characters of the final tool result go into `result_excerpt` in the run record. That value exists to check sandbox denials and shell errors without rerunning them.
@@ -256,15 +262,17 @@ The gate asks "is the shape still bounded", not "is it fast". It therefore reads
 | IRC mailbox | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | At or below the 100 cap, 900 drops for 1000 arrivals, one body allocation per broadcast, 0 waiters after cleanup, at most 16 concurrent broadcasts |
 | Skill catalog and workspace skills | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | In a 200-skill catalog at most one file read and 8 KiB per skill (reading a 32 KiB body whole fails), 0 file and folder reads across 9 unchanged workspace requests, 1 or more warmup reads |
 | MCP user config | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 1 or more warmup reads, 0 rereads of unchanged user config after warmup |
-| Request prefix | `tools_bytes`, `tool_count` | The `core` profile's tool catalog is at least 1 byte and at or below the committed ceiling, and the tool count equals the eager definitions it was built from |
+| Request prefix | `tools_bytes`, `tool_count`, `per_tool` | The `core` profile's tool catalog is at least 1 byte and at or below the committed ceiling, and the tool count equals the eager definitions it was built from. `per_tool` lists `name:bytes` in catalog order; the sizes plus the array's two brackets and the commas between entries must equal `tools_bytes`, and a line without `per_tool` is not a measurement |
+| Static prompt (`prompt`) | `static_bytes`, `static_sha256`, `static_tokens`, `index_bytes`, `index_clipped_rows`, `warm_source_reads`, `unchanged_request_source_reads` | No ceiling yet; the gate only refuses a line that measured nothing. The static prompt, its token estimate and the listed-tool index are at least 1 byte, the digest is a SHA-256, and the first build probes at least one source file. `static_sha256` hashes the prompt without its clock line (`Time: `), so the same prefix reads the same on any run. Both read counters count attempts to read a prompt source file, found or not |
+| Session context (`session_context`) | `git_spawns_outside_repo`, `git_spawns_in_repo`, `gpu_probe_spawns_without_display`, `gpu_reported` | No ceiling yet. `git_spawns_in_repo` is at least 1, because describing a repository takes a `git` process and a zero means the counters were off; the other two are recorded. Each counts attempts to start a child process, so a missing `git` or `lspci` still counts. The gate does not read `gpu_reported` |
 
-The mock model server records `body_bytes`, `tools_bytes`, and `tool_count` for every request it answers (`GET /__stats`), so a bench run reports the same per-request shape the `prefix` row bounds.
+The mock model server records `body_bytes`, `tools_bytes`, and `tool_count` for every request it answers (`GET /__stats`), and a `compare` run copies them into each run record as `request_bytes`, so a bench run reports the same per-request shape the `prefix` row bounds.
 
 An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # everything
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix, prompt, session_context
 python3 scripts/perf/check_structural.py --print-plan    # only show the cargo commands that would run
 python3 -m unittest -v scripts/perf/test_check_structural.py   # the gate's contract tests
 ```
