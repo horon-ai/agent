@@ -414,20 +414,28 @@ tool_profile = "acp"
 # [providers.<name>] table below. `--provider-profile <name>` overrides this for
 # one launch.
 #   default_provider = "openrouter"
-# A profile is one OpenAI-compatible endpoint:
+# A profile is one endpoint plus one wire. `type` picks the wire:
+#   openai-compatible     POST <base_url>/chat/completions   (default)
+#   openai-responses      POST <base_url>/responses
+#   anthropic-compatible  POST <base_url>/messages           (sends anthropic-version)
+#   gemini-compatible     POST <base_url>/models/{model}:streamGenerateContent?alt=sse
 #   [providers.myprofile]
 #   type = "openai-compatible"
 #   base_url = "https://api.example.com/v1"   # the /v1 prefix is part of it
 #   api_key_env = "MYPROFILE_API_KEY"         # or api_key, or env_file
-#   auth = "bearer"                           # bearer, header, or none
+#   auth = "bearer"                           # omitted applies the type default:
+#                                             # Bearer for the OpenAI kinds, x-api-key
+#                                             # for Anthropic, x-goog-api-key for Gemini
 #   default_model = "my-model"
 #   prompt_cache_key = true                   # lineage-stable cache key: true, false, or omitted
-#                                             # (omitted sends it only to api.openai.com and openrouter.ai)
+#                                             # (omitted sends it only to api.openai.com and openrouter.ai;
+#                                             #  the OpenAI wires send it, Anthropic and Gemini do not)
 #   [[providers.myprofile.models]]
 #   id = "my-model"
-# Every model request posts to <base_url>/chat/completions with that profile's
-# credential. Nothing else serves models in this build: no second provider
-# runtime, no router process, no plugin host.
+# Every model request posts to the endpoint of that profile's `type` with the
+# profile's credential. `extra_body` keys are merged into every request body on
+# all four wires. There is still one provider runtime, no router process, no
+# plugin host, and external tools come in over MCP.
 # OpenAI reasoning effort (none|minimal|low|medium|high|xhigh|max)
 openai_reasoning_effort = "low"
 # Reasoning effort for models that accept it (none|low|medium|high|xhigh|max).

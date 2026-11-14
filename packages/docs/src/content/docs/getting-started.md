@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: horon agent is one coding agent with two modes, headless for programs and TUI for people, that talks to any OpenAI-compatible endpoint.
+description: horon agent is one coding agent with two modes, headless for programs and TUI for people, that talks to Chat Completions, Responses, Anthropic and Gemini endpoints.
 section: Start
 order: 1
 ---
@@ -12,8 +12,10 @@ TUI mode a person drives the same daemon and sessions from the terminal.
 
 ## What it is
 
-- **One model path.** Requests go straight to `/chat/completions` on the
-  endpoint you configure. There is no router process and no plugin host.
+- **One model path.** Requests go straight to the endpoint you configure, over
+  the wire its `type` names: Chat Completions, the Responses API, Anthropic
+  Messages, or Gemini generateContent. There is no router process and no plugin
+  host.
 - **Two modes, two binaries, one release.** `horon-agent` is the agent binary
   (`serve`, `run`, `repl`, `api-bridge`, `acp`, `rpc`). `horon-tui` is the TUI
   binary, built on the SDK and shipped as its own archive from the same tag.
@@ -25,7 +27,9 @@ TUI mode a person drives the same daemon and sessions from the terminal.
 ## First turn
 
 Install the CLI (see [Install](/install/)), then point the agent at an endpoint.
-Any OpenAI-compatible server works; this example uses a local one with no key.
+A profile speaks Chat Completions, the Responses API, Anthropic Messages, or
+Gemini generateContent; this example uses a local Chat Completions server with no
+key.
 
 ```toml
 # ~/.horon/config.toml

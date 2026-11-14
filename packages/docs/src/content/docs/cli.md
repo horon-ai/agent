@@ -32,7 +32,7 @@ socket, which is a different socket.
 | --- | --- |
 | `horon provider list` | Provider ids you can pass to `-p/--provider`. |
 | `horon provider current` | The currently requested and resolved provider selection. `--json` reports `"ready"`. |
-| `horon provider add <name> --base-url <url> --model <id>` | Add an OpenAI-compatible profile. `--api-key-stdin` keeps the key out of shell history, `--auth none` suits a local endpoint, and `--set-default` also writes `[provider] default_provider`. |
+| `horon provider add <name> --type <type> --base-url <url> --model <id>` | Add a profile. `--type` takes `openai-compatible` (default), `openai-responses`, `anthropic-compatible`, or `gemini-compatible`, and without `--auth` the command writes no `auth` line so the type default applies. `--api-key-stdin` keeps the key out of shell history, `--auth none` suits a local endpoint, and `--set-default` also writes `[provider] default_provider`. |
 | `horon model list` | Model names you can pass to `-m/--model`. |
 
 ## Sessions

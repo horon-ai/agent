@@ -19,7 +19,7 @@
 | 5 | 모드는 둘, 엔진은 하나 | 헤드리스 모드와 TUI 모드는 같은 데몬과 세션을 움직입니다. 에이전트 바이너리의 의존성 그래프에는 터미널 스택이 없고, TUI 모드는 SDK 위의 별도 패키지로 같은 태그에서 릴리스됩니다 | `AGENTS.md`(Modes, binaries and release units, 고정 요구사항 1), `scripts/ci/check_headless_graph.py`, `docs/release/INSTALL.md` |
 | 6 | SDK가 먼저다 | harness API가 엔진과 모든 클라이언트(TUI와 서버 코드 포함) 사이의 계약입니다 | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
 | 7 | 도구는 토큰을 쓴다 | `core` 프로필은 도구 18개 중 7개만 매 요청에 싣고 나머지는 `toolbox`로 꺼냅니다. 스키마 바이트는 공짜가 아니라 예산입니다 | `AGENTS.md`(이 빌드가 무엇인가), `docs/runtime/TOOLS.md` |
-| 8 | 모델 경로는 하나 | OpenAI 호환 `/chat/completions`만 씁니다. 두 번째 프로바이더 런타임, 라우터 프로세스, 플러그인 호스트가 없고 외부 도구는 MCP로 받습니다 | `AGENTS.md`(이 빌드가 무엇인가) |
+| 8 | 모델 경로는 하나 | 경로는 하나이고 그 뒤에 네 가지 방식이 있습니다. `[providers.<name>] type`이 Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent 가운데 하나를 고릅니다. 두 번째 프로바이더 런타임, 라우터 프로세스, 플러그인 호스트가 없고 외부 도구는 MCP로 받습니다 | `AGENTS.md`(이 빌드가 무엇인가) |
 | 9 | 깨끗한 컷오버 | 자리를 잃은 표면은 별칭 뒤에 남기지 않고 모든 호출부를 옮긴 뒤 지웁니다. 홈 디렉터리는 호환 경로 없이 `~/.horon`으로 옮겼습니다 | 커밋 `738712a2`(#7), `d6a0f81b`(#9), `a3a70db7`(#88) |
 | 10 | CI 경고 0 | 경고가 있는 실행은 끝난 것이 아닙니다. 원인을 고치고 숨기지 않습니다 | `AGENTS.md`(CI 경고), `scripts/ci/run_warnings.py` |
 

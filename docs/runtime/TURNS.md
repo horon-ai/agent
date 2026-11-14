@@ -171,7 +171,7 @@ Non-urgent interrupts are never inserted between tools. All of them wait for poi
 
 ### Pairing tool calls with results
 
-Model calls in this build go out over a single OpenAI-compatible Responses path. That request assembler keeps calls and results in order itself. It first scans which message holds each tool result (`crates/provider-openai/src/request.rs:184-193`), defers output while the result is still ahead to preserve call order (`:390-420`), and inserts a synthetic `[Error] ...` output for a call that never gets a result (`:436-441`). A result that attaches to no call is emitted as a user message (`:449-464`).
+Model calls in this build go out over the wire the profile's `type` names, and each wire's request assembler keeps calls and results in order itself. On the OpenAI Chat Completions and Responses wires that assembler first scans which message holds each tool result (`crates/provider-openai/src/request.rs:184-193`), defers output while the result is still ahead to preserve call order (`:390-420`), and inserts a synthetic `[Error] ...` output for a call that never gets a result (`:436-441`). A result that attaches to no call is emitted as a user message (`:449-464`). The Anthropic Messages and Gemini generateContent builders apply the same three rules to their own content shapes.
 
 So the injection rules cannot create an ordering violation. Point D comes after every result is already in history, and point C comes after the skipped calls have been filled.
 

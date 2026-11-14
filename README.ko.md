@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: OpenAI 호환 엔드포인트를 쓰는 코딩 에이전트" width="720">
+  <img src="docs/assets/hero.svg" alt="horon-agent: Chat Completions, Responses, Anthropic, Gemini 엔드포인트를 쓰는 코딩 에이전트" width="720">
 </p>
 
 <p align="center">
-  <strong>터미널·SDK·에디터·호스트 프로그램으로 쓰는 코딩 에이전트. 에이전트 하나에 두 모드(헤드리스, TUI), OpenAI 호환 엔드포인트라면 무엇이든.</strong>
+  <strong>터미널·SDK·에디터·호스트 프로그램으로 쓰는 코딩 에이전트. 에이전트 하나에 두 모드(헤드리스, TUI), 네 가지 프로바이더 방식(Chat Completions, Responses, Anthropic Messages, Gemini generateContent).</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent는 두 모드를 지원하는 하나의 에이전트다. 헤드리스 모드에서는 프로그램이 에이전트를 움직인다. 한 번만 실행하는 명령(`run`), SDK용 유닉스 소켓 하네스 API(`api-bridge`)를 둔 데몬(`serve`), 에디터용 표준 입출력 Agent Client Protocol(ACP)(`acp`), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드(`rpc`)가 여기에 속한다. TUI 모드에서는 사람이 터미널에서 `horon-tui`로 에이전트를 움직인다. 두 모드는 같은 데몬, 세션, 설정 위에서 같은 에이전트 루프(모델 호출, 도구, 세션, MCP)를 돌리고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
+horon agent는 두 모드를 지원하는 하나의 에이전트다. 헤드리스 모드에서는 프로그램이 에이전트를 움직인다. 한 번만 실행하는 명령(`run`), SDK용 유닉스 소켓 하네스 API(`api-bridge`)를 둔 데몬(`serve`), 에디터용 표준 입출력 Agent Client Protocol(ACP)(`acp`), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드(`rpc`)가 여기에 속한다. TUI 모드에서는 사람이 터미널에서 `horon-tui`로 에이전트를 움직인다. 두 모드는 같은 데몬, 세션, 설정 위에서 같은 에이전트 루프(모델 호출, 도구, 세션, MCP)를 돌리고, 모델 요청은 고른 프로파일의 `type`이 가리키는 방식(Chat Completions, OpenAI Responses API, Anthropic Messages, Gemini generateContent)으로 보낸다.
 
 - **바이너리는 둘이고 함께 릴리스된다.** `horon-agent`는 모든 설치에 필요한 에이전트 바이너리이고 스스로 터미널 화면을 그리지 않는다. `horon-tui`는 에이전트 SDK를 쓰는 별도 패키지인 TUI 바이너리이며, 같은 릴리스 태그에서 별도 압축 파일로 배포된다. `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 터미널에서 인자 없이 실행한 `horon`은 형제 실행 파일 `horon-tui`로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 그 설정 이름을 알리는 문장을 남기고 멈추며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
 - **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
@@ -59,7 +59,7 @@ cargo build --release -p horon-agent
 
 ## 빠른 시작
 
-에이전트가 쓸 엔드포인트를 정한다. OpenAI 호환 서버면 모두 된다. 아래는 키가 필요 없는 로컬 서버 예시다.
+에이전트가 쓸 엔드포인트를 정한다. 프로파일은 Chat Completions, OpenAI Responses API, Anthropic Messages, Gemini generateContent 가운데 한 방식을 쓴다. 아래는 키가 필요 없는 로컬 Chat Completions 서버 예시다.
 
 ```toml
 # ~/.horon/config.toml
@@ -144,7 +144,7 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 ## 구조
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 OpenAI 호환 엔드포인트를 직접 호출한다" width="860">
+  <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 프로파일의 엔드포인트를 직접 호출한다" width="860">
 </p>
 
 크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다.

@@ -142,20 +142,29 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   the sibling `horon-tui` once the server is up; a pipe, `HORON_NO_TUI`, or a
   missing sibling stays in headless mode, names the condition and prints the
   install hint.
-- One model path: the agent POSTs `/chat/completions` to the OpenAI-compatible
-  endpoint of the profile named by `[provider] default_provider` or
-  `--provider-profile`. A profile is a `[providers.<name>]` table with
-  `type = "openai-compatible"`, `base_url`, `api_key_env` or `env_file`,
-  `auth`, `default_model`, and optional `[[providers.<name>.models]]`. Nothing
-  else serves models in this build: no second provider runtime, no router
-  process, no plugin host. External tools come in over MCP, which stays. The
-  one documented exception is the optional `generate_image` tool: when the
-  active profile names `roles.image`, it POSTs `/images/generations` and
-  `/images/edits` on that same profile, with the same base URL, credential and
-  `extra_body`. It is a route beside the chat builder, not a runtime, and it is
-  off unless `[tools] generate_image = true`. The `image` role is therefore the
-  one role whose model does not speak Chat Completions, and the only role with
-  no text fallback.
+- One model path: the agent POSTs to the endpoint of the profile named by
+  `[provider] default_provider` or `--provider-profile`, and the profile's
+  `type` picks the wire. There are four: `openai-compatible` (Chat Completions,
+  `POST {base_url}/chat/completions`, the default), `openai-responses`
+  (`POST {base_url}/responses`), `anthropic-compatible` (Anthropic Messages,
+  `POST {base_url}/messages`) and `gemini-compatible` (Gemini generateContent,
+  `POST {base_url}/models/{model}:streamGenerateContent?alt=sse`). A `base_url`
+  that already ends with the wire's path is used as it is, and `open-router` is
+  rejected at runtime by a message that lists the four values. A profile is a
+  `[providers.<name>]` table with `type`, `base_url`, `api_key_env` or
+  `env_file`, `auth`, `default_model`, and optional
+  `[[providers.<name>.models]]`. Omitting `auth` applies the type default:
+  `Authorization: Bearer` for the two OpenAI kinds, `x-api-key` for Anthropic
+  and `x-goog-api-key` for Gemini; an explicit `auth` always wins. There is
+  still one provider runtime, no router process, no plugin host. External tools
+  come in over MCP, which stays. The one documented exception is the optional
+  `generate_image` tool: when the active profile names `roles.image`, it POSTs
+  `/images/generations` and `/images/edits` on that same profile, with the same
+  base URL, credential and `extra_body`. It is a route beside the wires, not a
+  runtime, and it is off unless `[tools] generate_image = true`. The `image`
+  role is therefore the one role whose model does not speak Chat Completions,
+  it is served only by an `openai-compatible` or `openai-responses` profile,
+  and it is the only role with no text fallback.
 - Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.

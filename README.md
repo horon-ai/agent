@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: a coding agent for OpenAI-compatible endpoints" width="720">
+  <img src="docs/assets/hero.svg" alt="horon-agent: a coding agent for Chat Completions, Responses, Anthropic and Gemini endpoints" width="720">
 </p>
 
 <p align="center">
-  <strong>A coding agent for the terminal, the SDK, the editor and the host program. One agent, two modes (headless and TUI), any OpenAI-compatible endpoint.</strong>
+  <strong>A coding agent for the terminal, the SDK, the editor and the host program. One agent, two modes (headless and TUI), four provider wires: Chat Completions, Responses, Anthropic Messages and Gemini generateContent.</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent is one agent with two modes. In headless mode a program drives it: a one-shot command (`run`), a daemon (`serve`) with a Unix-socket harness API for SDKs (`api-bridge`), the Agent Client Protocol (ACP) on stdio for editors (`acp`), and a stdio JSONL RPC mode for a program that drives the agent as a child process (`rpc`). In TUI mode a person drives it from the terminal through `horon-tui`. Both modes run the same agent loop (model calls, tools, sessions, MCP) on the same daemon, sessions and configuration, and speak one model protocol: OpenAI-compatible `/chat/completions`.
+horon agent is one agent with two modes. In headless mode a program drives it: a one-shot command (`run`), a daemon (`serve`) with a Unix-socket harness API for SDKs (`api-bridge`), the Agent Client Protocol (ACP) on stdio for editors (`acp`), and a stdio JSONL RPC mode for a program that drives the agent as a child process (`rpc`). In TUI mode a person drives it from the terminal through `horon-tui`. Both modes run the same agent loop (model calls, tools, sessions, MCP) on the same daemon, sessions and configuration, and send model requests over the wire the selected profile's `type` names: Chat Completions, the OpenAI Responses API, Anthropic Messages, or Gemini generateContent.
 
 - **Two binaries, released together.** `horon-agent` is the agent binary every installation needs, and it draws no terminal of its own. `horon-tui` is the TUI binary, a separate package on the agent SDK, shipped as its own archive from the same release tag. The `horon-agent` dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate, and `scripts/ci/check_headless_graph.py` fails CI if one becomes reachable. Bare `horon` on a terminal replaces itself with the sibling `horon-tui`; `HORON_NO_TUI=1` stops with a sentence naming that setting, and [docs/runtime/TUI.md](docs/runtime/TUI.md) documents the client.
 - **ACP v1 and v2.** `horon acp` answers `initialize` with the highest protocol version both sides support.
@@ -59,7 +59,7 @@ Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows (
 
 ## Quick start
 
-Point the agent at an endpoint. Any OpenAI-compatible server works; this example uses a local one with no key.
+Point the agent at an endpoint. A profile speaks Chat Completions, the OpenAI Responses API, Anthropic Messages, or Gemini generateContent; this example uses a local Chat Completions server with no key.
 
 ```toml
 # ~/.horon/config.toml
@@ -144,7 +144,7 @@ Both talk the harness API (protocol v1) over the `api-bridge` socket and can sta
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs and editors over ACP reach the agent daemon through the harness API and the ACP adapter, and the terminal client horon-tui attaches the same way while a bare run hosts the agent in-process; the daemon stores sessions in an event log and calls an OpenAI-compatible endpoint directly" width="860">
+  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs and editors over ACP reach the agent daemon through the harness API and the ACP adapter, and the terminal client horon-tui attaches the same way while a bare run hosts the agent in-process; the daemon stores sessions in an event log and calls the profile's endpoint directly" width="860">
 </p>
 
 Crate boundaries and the platform adapters are in [docs/architecture/CRATES.md](docs/architecture/CRATES.md); the daemon, sessions and sockets are in [docs/architecture/SERVER.md](docs/architecture/SERVER.md).
