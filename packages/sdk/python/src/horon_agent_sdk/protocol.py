@@ -21,13 +21,17 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 21
+API_VERSION_MINOR = 22
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
     ("monitor_v1", ()),
     ("snapshot_marker_v1", ("get_snapshot", "snapshot_marker")),
     ("ask_receipts_v1", ("ask_response.answer_id",)),
+    (
+        "cancellable_work_v1",
+        ("cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"),
+    ),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -704,6 +708,9 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "control_receipt",
     "snapshot_marker",
     "snapshot",
+    "cancel_turn_result",
+    "tool_call_cancel_result",
+    "background_work_list",
 )
 
 #: Every request tag the SDK can send.
@@ -774,6 +781,10 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "apply_control",
     "get_control_receipt",
     "get_snapshot",
+    "cancel_turn",
+    "cancel_tool_call",
+    "cancel_background_terminal",
+    "list_background_work",
     "ping",
 )
 

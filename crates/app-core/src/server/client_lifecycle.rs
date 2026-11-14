@@ -1024,6 +1024,21 @@ pub(super) async fn handle_client(
         };
         if let Some((id, stop_turn)) = targeted_cancel {
             let ack_queued = client_event_tx.send(ServerEvent::Ack { id }).is_ok();
+            // The ack says the cancel arrived; a targeted one also needs a
+            // verdict, because a client that named a run must learn whether
+            // anything was actually stopped. Sent after the ack so a client
+            // that only waits for the ack keeps its current ordering.
+            if let Request::CancelTurn { run_id, .. } = &request {
+                let verdict = ServerEvent::CancelTurnResult {
+                    id,
+                    run_id: run_id.clone(),
+                    accepted: stop_turn,
+                    reason: (!stop_turn).then(|| "unknown".to_string()),
+                };
+                if client_event_tx.send(verdict).is_err() {
+                    crate::logging::warn("SERVER_REQUEST_REPLY_DROPPED request=cancel_turn");
+                }
+            }
             crate::logging::info(&format!(
                 "SERVER_INTERRUPT_CANCEL_PRE_ACK_DISPATCH id={} session={} ack_queued={} targeted={} stops_turn={} decoded_to_dispatch_ms={}",
                 id,

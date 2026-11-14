@@ -397,11 +397,12 @@ fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
     let cancel = assert_v2_event_roundtrip(
         ServerEvent::ToolCallCancelResult {
             id: 7,
+            call_id: "call-1".into(),
             accepted: true,
             reason: None,
         },
         "tool_call_cancel_result",
-        &["id", "accepted"],
+        &["id", "call_id", "accepted"],
     )?;
     assert_eq!(cancel["accepted"], true);
     assert!(cancel.get("reason").is_none(), "an accepted cancel names no reason: {cancel}");
@@ -409,11 +410,12 @@ fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
     let refused = assert_v2_event_roundtrip(
         ServerEvent::ToolCallCancelResult {
             id: 8,
+            call_id: "call-2".into(),
             accepted: false,
             reason: Some("final".into()),
         },
         "tool_call_cancel_result",
-        &["id", "accepted", "reason"],
+        &["id", "call_id", "accepted", "reason"],
     )?;
     assert_eq!(refused["reason"], "final");
 

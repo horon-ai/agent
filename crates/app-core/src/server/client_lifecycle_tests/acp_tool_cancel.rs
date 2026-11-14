@@ -51,10 +51,34 @@ fn cancel_reply(events: &[ServerEvent]) -> (bool, Option<String>) {
     events
         .iter()
         .find_map(|event| match event {
-            ServerEvent::ToolCallCancelResult { accepted, reason, .. } => Some((*accepted, reason.clone())),
+            ServerEvent::ToolCallCancelResult {
+                call_id,
+                accepted,
+                reason,
+                ..
+            } => {
+                assert!(!call_id.is_empty(), "the reply names the call it answers");
+                Some((*accepted, reason.clone()))
+            }
             _ => None,
         })
         .expect("the cancel is answered")
+}
+
+/// The verdict a targeted `cancel_turn` appends to its Ack.
+fn cancel_turn_verdict(events: &[ServerEvent]) -> (String, bool, Option<String>) {
+    events
+        .iter()
+        .find_map(|event| match event {
+            ServerEvent::CancelTurnResult {
+                run_id,
+                accepted,
+                reason,
+                ..
+            } => Some((run_id.clone(), *accepted, reason.clone())),
+            _ => None,
+        })
+        .expect("a targeted cancel is answered with a verdict")
 }
 
 /// QA happy: a `bash sleep 30` call and the text that follows it, from one
@@ -233,13 +257,27 @@ async fn cancel_turn_with_another_run_id_leaves_the_turn_running() {
     editor
         .send(json!({"type": "cancel_turn", "id": 11, "run_id": "some-other-run"}))
         .await;
+    // Read past the Ack to the verdict this request adds after it: the ack says
+    // the cancel arrived, the verdict says whether anything was stopped.
     let ack = editor
-        .until(|event| matches!(event, ServerEvent::Ack { id } if *id == 11))
+        .until(|event| matches!(event, ServerEvent::CancelTurnResult { id, .. } if *id == 11))
         .await;
+    assert!(
+        ack.iter()
+            .any(|event| matches!(event, ServerEvent::Ack { id } if *id == 11)),
+        "the Ack still comes first: {ack:#?}"
+    );
     assert!(
         !ack.iter().any(|event| matches!(event, ServerEvent::Interrupted)),
         "a cancel for another run interrupts nothing: {ack:#?}"
     );
+    let (echoed, accepted, reason) = cancel_turn_verdict(&ack);
+    assert_eq!(
+        echoed, "some-other-run",
+        "the verdict echoes the run it was asked about"
+    );
+    assert!(!accepted, "nothing was stopped, so the verdict says so: {ack:#?}");
+    assert_eq!(reason.as_deref(), Some("unknown"));
 
     let rest = editor.until(is_idle).await;
     let done_at = position(
@@ -289,11 +327,15 @@ async fn cancel_turn_with_the_reported_run_id_stops_the_turn() {
     let (_, _, run_id) = super::acp_v2_events::running_state(&running);
 
     editor
-        .send(json!({"type": "cancel_turn", "id": 11, "run_id": run_id}))
+        .send(json!({"type": "cancel_turn", "id": 11, "run_id": run_id.clone()}))
         .await;
     let events = tokio::time::timeout(DEADLINE, editor.until(is_idle))
         .await
         .expect("a targeted cancel stops the turn");
+    let (echoed, accepted, reason) = cancel_turn_verdict(&events);
+    assert_eq!(echoed, run_id, "the verdict echoes the run it stopped");
+    assert!(accepted, "the named run was running: {events:#?}");
+    assert_eq!(reason, None, "an accepted cancel names no reason");
     let idle = events.last().expect("the idle state closes the turn");
     let ServerEvent::ForegroundState { stop_reason, .. } = idle else {
         panic!("the last event is the idle state: {idle:?}");
