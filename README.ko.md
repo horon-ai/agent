@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>터미널·SDK·에디터·호스트 프로그램으로 쓰는 코딩 에이전트. 에이전트 하나에 두 모드(헤드리스, TUI), OpenAI 호환 엔드포인트라면 무엇이든.</strong>
+  <strong>에이전트는 하나, 동등한 모드는 둘. 프로그램이 움직이거나 사람이 터미널에서 직접 움직이며, 모델은 OpenAI 호환 엔드포인트면 무엇이든 된다.</strong>
 </p>
 
 <p align="center">
@@ -17,12 +17,14 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent는 두 모드를 지원하는 하나의 에이전트다. 헤드리스 모드에서는 프로그램이 에이전트를 움직인다. 한 번만 실행하는 명령(`run`), SDK용 유닉스 소켓 하네스 API(`api-bridge`)를 둔 데몬(`serve`), 에디터용 표준 입출력 Agent Client Protocol(ACP)(`acp`), 에이전트를 자식 프로세스로 구동하는 프로그램을 위한 표준 입출력 JSONL RPC 모드(`rpc`)가 여기에 속한다. TUI 모드에서는 사람이 터미널에서 `horon-tui`로 에이전트를 움직인다. 두 모드는 같은 데몬, 세션, 설정 위에서 같은 에이전트 루프(모델 호출, 도구, 세션, MCP)를 돌리고, 모델 프로토콜도 OpenAI 호환 `/chat/completions` 하나만 쓴다.
+horon agent는 OpenAI 호환 `/chat/completions` 엔드포인트를 쓰는 헤드리스 코딩 에이전트다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다. 데몬 하나가 모든 클라이언트에 답하고, 한 번만 실행하는 명령과 SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램, 터미널 클라이언트 `horon-tui`가 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 누가 에이전트를 움직이느냐뿐이다.
 
-- **바이너리는 둘이고 함께 릴리스된다.** `horon-agent`는 모든 설치에 필요한 에이전트 바이너리이고 스스로 터미널 화면을 그리지 않는다. `horon-tui`는 에이전트 SDK를 쓰는 별도 패키지인 TUI 바이너리이며, 같은 릴리스 태그에서 별도 압축 파일로 배포된다. `horon-agent` 의존성 그래프에는 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트가 없고, 하나라도 닿으면 `scripts/ci/check_headless_graph.py`가 CI를 실패시킨다. 터미널에서 인자 없이 실행한 `horon`은 형제 실행 파일 `horon-tui`로 자기 프로세스를 넘긴다. `HORON_NO_TUI=1`은 그 설정 이름을 알리는 문장을 남기고 멈추며, 클라이언트는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 설명한다.
-- **ACP v1과 v2.** `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다.
-- **모델 직접 호출.** 에이전트가 엔드포인트로 바로 POST한다. 사이에 라우터 프로세스나 플러그인 호스트가 없다.
-- **가볍고 빠른 시작.** GitHub 호스티드 러너에서 한 턴 실행이 Linux 55.9 ms, macOS 103.3 ms 걸렸다([수치와 한계](#벤치마크)).
+에이전트 바이너리는 `horon-agent`이고 스스로 터미널 화면을 그리지 않는다. 터미널 클라이언트 `horon-tui`는 에이전트 SDK 위에 만든 별도 패키지이며, 같은 릴리스 태그에서 자체 압축 파일로 나온다.
+
+| 모드 | 누가 움직이나 | 진입 명령 |
+| --- | --- | --- |
+| 헤드리스 | 프로그램 | `run`, `serve`, `api-bridge`, `acp`, `rpc` |
+| TUI | 터미널 앞의 사람 | 인자 없는 `horon`(자기 프로세스를 `horon-tui`로 넘긴다) |
 
 ## 설치
 
@@ -38,10 +40,6 @@ curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install
 irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
-설치 스크립트는 릴리스 압축 파일과 `SHA256SUMS`를 받아 `horon install-release`에 넘긴다. 이 명령이 체크섬을 확인하고, 바뀌지 않는 버전 디렉터리를 만들고, `stable`/`current` 링크를 바꾼다. 같은 버전 디렉터리에 다른 바이트가 있으면 덮어쓰지 않고 거부한다([자세히](docs/release/INSTALL.ko.md)).
-
-설치 스크립트는 실행 파일을 가리키는 이름을 세 개 만든다. 문서의 모든 예제가 쓰는 `horon`, 같은 명령을 더 짧게 부르는 `hrn`, 실행 파일 자체의 이름인 `horon-agent`다.
-
 **컨테이너 (Linux, amd64·arm64)**
 
 ```sh
@@ -55,11 +53,15 @@ cargo build --release -p horon-agent
 ./target/release/horon-agent --version
 ```
 
-릴리스 자산은 Linux(x86_64, aarch64), macOS(aarch64, x86_64), Windows(x86_64, aarch64), FreeBSD(x86_64)를 담는다. 런처는 `horon-agent`이고, v0.1.3부터 설치 때 별칭 `horon`(이 문서들이 쓰는 기본 명령)과 더 짧은 `hrn`도 만든다. 셋 다 같은 실행 파일이다. 데이터는 `~/.horon`에 두고(`HORON_HOME`으로 바꿀 수 있다), v0.1.1까지의 릴리스는 `~/.horon-agent`를 쓴다.
+설치 스크립트는 릴리스 압축 파일과 `SHA256SUMS`를 함께 받아 `horon install-release`에 넘긴다. 이 명령이 체크섬을 확인하고, 바뀌지 않는 버전 디렉터리를 만든 뒤 `stable`·`current` 링크를 바꾼다. 같은 버전 디렉터리에 다른 바이트가 이미 있으면 덮어쓰지 않고 거부한다([자세히](docs/release/INSTALL.ko.md)).
+
+설치 스크립트가 만드는 실행 이름은 셋이다. 이 문서의 모든 예제가 쓰는 `horon`, 같은 명령을 짧게 부르는 `hrn`, 실행 파일 자체의 이름인 `horon-agent`다. 셋 다 같은 파일을 가리킨다. 데이터는 `~/.horon`에 두고 `HORON_HOME`으로 바꿀 수 있으며, v0.1.1까지의 릴리스는 `~/.horon-agent`를 쓴다.
+
+릴리스 자산은 Linux(x86_64, aarch64), macOS(aarch64, x86_64), Windows(x86_64, aarch64), FreeBSD(x86_64)를 담는다.
 
 ## 빠른 시작
 
-에이전트가 쓸 엔드포인트를 정한다. OpenAI 호환 서버면 모두 된다. 아래는 키가 필요 없는 로컬 서버 예시다.
+에이전트가 쓸 엔드포인트를 정한다. OpenAI 호환 서버면 무엇이든 되고, 아래는 키가 필요 없는 로컬 서버 예시다.
 
 ```toml
 # ~/.horon/config.toml
@@ -73,7 +75,7 @@ auth = "none"
 default_model = "my-model"
 ```
 
-호스팅 엔드포인트라면 `auth = "bearer"`와 `api_key_env = "MY_API_KEY"`를 쓴다. 준비 상태를 확인하고 한 턴을 실행한다.
+호스팅 엔드포인트라면 대신 `auth = "bearer"`와 `api_key_env = "MY_API_KEY"`를 쓴다. 그다음 준비 상태를 확인하고 한 턴을 돌린다.
 
 ```sh
 horon provider current --json   # 프로파일이 정해지면 "ready": true
@@ -86,29 +88,31 @@ horon run "summarize this repo"
 
 <sub>`dev` 빌드를 저장소의 결정적 모의 모델 서버(`scripts/perf/mock_llm_server.py`)에 붙여 격리된 홈 디렉터리에서 실제로 실행해 얻은 출력이다. 모델 응답은 모의 서버의 고정 문구다.</sub>
 
-프로파일이 없으면 모델 호출은 네트워크에 닿기 전에 멈추고 빠진 `[providers.<name>]` 표를 알려 준다. 모든 키(`headers`, `extra_body`, `context_window`, `openrouter`·`zai`·`kimi`·`ollama` 같은 내장 프로파일)는 [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md)에 있다.
+프로파일을 정하지 않으면 모델 호출은 네트워크에 닿기 전에 멈추고 빠진 `[providers.<name>]` 표를 알려 준다. `headers`, `extra_body`, `context_window`와 `openrouter`·`zai`·`kimi`·`ollama` 같은 내장 프로파일까지 모든 키는 [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md)에 있다.
 
 ## 실행 방법
 
-인자 없는 `horon`은 TUI 모드를 열고, 아래의 나머지 하위 명령은 모두 헤드리스 모드다. `horon repl`은 전체 화면 클라이언트를 원하지 않는 사람을 위해 에이전트 바이너리가 직접 제공하는 단순한 줄 입력 프롬프트다.
+인자 없는 `horon`만 TUI 모드를 열고, 아래 하위 명령은 모두 헤드리스 모드다. `horon repl`은 전체 화면 클라이언트 없이 쓰려는 사람을 위해 에이전트 바이너리가 직접 제공하는 단순한 줄 입력 프롬프트다.
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 `horon-tui` 클라이언트로 자기 프로세스를 넘긴다. 키, 사용자 파일, 설정 화면이 있다([docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재는 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
-| `horon run "<메시지>"` | 메시지 하나를 보내고 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. |
-| `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력하는 간단한 REPL. |
+| `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
+| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. |
+| `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 소켓(`HORON_AGENT_API_SOCKET`, Unix 전용). |
-| `horon acp` | 에디터용 표준 입출력 ACP v1/v2 어댑터. |
-| `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([docs/protocol/RPC.ko.md](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
+| `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
+| `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
+
+`horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답하므로 v1 클라이언트와 v2 클라이언트가 모두 붙는다.
 
 ### 터미널 클라이언트
 
-`horon-tui`는 TUI 모드다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이며 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 실행 파일에 들어가지 않는다.
+`horon-tui`가 TUI 모드다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이고 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 바이너리에 들어가지 않는다.
 
-터미널에서 인자 없이 `horon`, `hrn`, `horon-agent`를 실행하면 시작한다. 서버가 없으면 띄운 뒤, 자기 프로세스를 에이전트 옆의 `horon-tui` 파일로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬으면 세션 번호도 넘긴다. 조건은 셋이다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션은 그 문장을 대신 남기므로 스크립트와 CI는 클라이언트 대신 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고 ``install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client``를 출력한 뒤 0이 아닌 종료 코드로 끝난다. 검사 전에 띄운 서버는 계속 돈다.
+터미널에서 `horon`, `hrn`, `horon-agent`를 인자 없이 실행하면 시작한다. 서버가 없으면 띄운 뒤 자기 프로세스를 에이전트 옆의 `horon-tui`로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬다면 세션 번호도 넘긴다. 먼저 조건 셋을 확인한다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션이면 클라이언트 대신 그 문장을 남기므로 스크립트와 CI는 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고, 대화형 클라이언트 설치 명령을 안내한 뒤 0이 아닌 코드로 끝난다.
 
-설치 프로그램은 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`를 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 유지한다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
+설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 
 ### 에디터 (ACP)
 
@@ -126,11 +130,11 @@ horon run "summarize this repo"
 }
 ```
 
-JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md)를 본다.
+JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 입출력 계약과 v2의 차이는 [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md)에 있다.
 
 ### 호스트 프로그램 (RPC)
 
-프로세스를 직접 소유한 프로그램은 터미널을 넘겨받는 대신 에이전트를 직접 구동할 수 있다. `horon rpc`(또는 `horon --mode rpc`)는 표준 입력에서 한 줄에 JSON 명령 하나를 읽고 표준 출력으로 한 줄에 프레임 하나를 쓴다. 스트리밍 턴, 취소, 세션 제어를 지원하며, 호스트가 둘 다 넘기면 서브커맨드가 이긴다. 표준 출력에는 프레임만 나가고 진단은 표준 오류로 가며, 표준 입력을 닫으면 프로세스가 끝난다. 이 모드는 프로토콜 버전 1을 말하므로 1 MiB를 넘는 프레임은 쪼개지 않고 오류가 된다. 터미널 클라이언트도 ACP도 아니다. `horon-tui`는 하네스 API로 붙고, RPC는 ACP를 말할 수 없는 호스트를 위한 표면이다. [docs/protocol/RPC.ko.md](docs/protocol/RPC.ko.md)를 본다.
+프로세스를 직접 소유한 프로그램은 터미널을 넘겨받는 대신 에이전트를 직접 구동할 수 있다. `horon rpc` 또는 `horon --mode rpc`는 표준 입력에서 한 줄에 JSON 명령 하나를 읽고 표준 출력으로 한 줄에 프레임 하나를 쓴다. 스트리밍 턴, 취소, 세션 제어를 지원하고, 호스트가 둘 다 넘기면 서브커맨드가 이긴다. 표준 출력에는 프레임만 나가고 진단은 표준 오류로 가며, 표준 입력을 닫으면 프로세스가 끝난다. 이 모드는 프로토콜 버전 1을 쓰므로 1 MiB를 넘는 프레임은 쪼개지 않고 오류가 된다. 터미널 클라이언트도 ACP도 아니다. `horon-tui`는 하네스 API로 붙고, RPC는 ACP를 쓸 수 없는 호스트를 받는다([문서](docs/protocol/RPC.ko.md)).
 
 ### SDK
 
@@ -139,7 +143,21 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 | TypeScript | `@horon-ai/agent-sdk` | [`packages/sdk/typescript`](packages/sdk/typescript) |
 | Python | `horon-agent-sdk` | [`packages/sdk/python`](packages/sdk/python) |
 
-둘 다 `api-bridge` 소켓으로 하네스 API(프로토콜 v1)를 쓰고, `launch()`로 자체 데몬을 띄울 수 있다. 이 글을 쓰는 시점에는 어느 패키지도 npm이나 PyPI에 올라 있지 않으므로 소스 체크아웃에서 설치한다. 단계는 각 SDK의 README에 있다.
+둘 다 `api-bridge` 소켓으로 하네스 API(프로토콜 v1)를 쓰고 `launch()`로 자체 데몬을 띄울 수 있다. 아직 어느 패키지도 npm이나 PyPI에 올라 있지 않으므로 소스 체크아웃에서 설치한다. 단계는 각 SDK README에 있다.
+
+## 기능
+
+| 기능 | 설명 |
+| --- | --- |
+| 핵심 도구 18개 | `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 하므로 첫 요청이 작다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([문서](docs/runtime/TOOLS.ko.md)). |
+| 추가만 하는 세션 | 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고, 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session` 하위 명령이 그 저장소를 조회·점검·내보내기·가져오기·이전·복구·보관·복원하고, 파괴적인 명령은 `delete <id> --yes` 하나뿐이며 실행 중인 데몬이 열고 있는 세션은 거부한다([문서](docs/protocol/SESSION_STORE.ko.md)). |
+| 편집 안전 장치 | 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 켜야 쓴다([문서](docs/runtime/TOOLS.ko.md)). |
+| 목표 예산 | 이어 가는 목표에 `budget_tokens`를 둘 수 있다. 세션 지출이 그 값에 닿으면 목표가 `budget_limited`가 되고, 지금까지의 결과를 기록하라고 모델에 알리는 마무리 턴을 한 번 준 뒤 멈춘다. 예산을 올리고 목표를 `active`로 되돌리는 일은 운영자가 정한다([문서](docs/runtime/TURNS.ko.md)). |
+| MCP와 스킬 | `horon mcp`가 설정된 MCP 서버를 나열하고 원격 서버의 OAuth 자격 증명을 관리한다. 스킬은 `skill://`로 읽고 `skill_manage`로 관리한다. |
+| 무인 실행 | 턴 복구, 영속 대기 입력을 다루는 `horon runtime-state`, 사람을 기다리다 멈춘 실행에 사람의 판정을 기록하는 `horon approvals`가 사람이 자리에 없는 실행을 받친다([문서](docs/safety/SAFETY.ko.md)). |
+| 에이전트 간 메시지 | 켜야 쓰는 `irc` 메일박스 버스(`[tools] irc = true`)로 한 데몬 안의 에이전트가 `send`, `wait`, `inbox`, `list`를 쓴다([문서](docs/runtime/IRC.ko.md)). |
+| 워크스페이스 신뢰 | 프로젝트 안의 MCP 설정은 다이제스트를 신뢰하기 전까지 건너뛰고, `--trust-workspace`가 그 결정을 기록한다([문서](docs/safety/SECURITY.ko.md)). |
+| OpenSSL 없는 TLS | 내장 webpki 루트와 OS 신뢰 저장소를 합쳐 쓰는 rustls다. Linux 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다([문서](docs/release/INSTALL.ko.md)). |
 
 ## 구조
 
@@ -147,23 +165,11 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
   <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 OpenAI 호환 엔드포인트를 직접 호출한다" width="860">
 </p>
 
-크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다.
-
-## 기능
-
-- **핵심 도구 18개.** `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 해서 첫 요청을 작게 유지한다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
-- **추가만 하는 세션.** 이력은 `<홈>/sessions/<id>/events.jsonl` 이벤트 로그이고 큰 페이로드는 내용 주소 blob에 둔다. 보관, 압축, 되감기는 기록을 덧붙일 뿐 원본을 지우지 않는다. `horon session inspect|doctor|export|import|migrate|recover-to|archive|restore`로 저장소를 다루고, `horon session delete <id> --yes`만 파괴적 명령이다. 대화 기록, todo, 목표 연결, 아티팩트, 저널을 지우며 실행 중인 데몬이 열고 있는 세션은 거부한다([docs/protocol/SESSION_STORE.ko.md](docs/protocol/SESSION_STORE.ko.md)).
-- **편집 안전 장치.** 저널이 파일 편집의 `undo`를 받쳐 주고, `redo`와 hashline 앵커는 켜야 쓴다([docs/runtime/TOOLS.ko.md](docs/runtime/TOOLS.ko.md)).
-- **목표 예산.** 이어 가는 목표에 `budget_tokens`를 둘 수 있다. 세션 지출이 그 값에 닿으면 목표가 `budget_limited`가 되고, 모델에게 지금까지의 결과를 기록하라고 알리는 마무리 턴을 한 번 준 뒤 멈춘다. 예산을 올리고 목표를 `active`로 되돌리는 것은 운영자의 결정이다([docs/runtime/TURNS.ko.md](docs/runtime/TURNS.ko.md)).
-- **MCP와 스킬.** `horon mcp`는 설정된 MCP 서버를 나열하고 원격 서버의 OAuth 자격 증명을 관리한다. 스킬은 `skill://`로 읽고 `skill_manage`로 관리한다.
-- **무인 실행.** 턴 복구, `horon runtime-state`(영속 대기 입력을 조회·정리), `horon approvals`(사람을 기다리다 멈춘 실행에 사람의 판정을 기록)로 사람이 자리에 없는 실행을 받친다([docs/safety/SAFETY.ko.md](docs/safety/SAFETY.ko.md)).
-- **에이전트 간 메시지.** 켜야 쓰는 `irc` 메일박스 버스(`[tools] irc = true`)로 한 데몬 안의 에이전트가 `send`, `wait`, `inbox`, `list`를 쓴다([docs/runtime/IRC.ko.md](docs/runtime/IRC.ko.md)).
-- **워크스페이스 신뢰.** 프로젝트 안의 MCP 설정은 다이제스트를 신뢰하기 전까지 건너뛰고, `--trust-workspace`가 그 결정을 기록한다([docs/safety/SECURITY.ko.md](docs/safety/SECURITY.ko.md)).
-- **OpenSSL 없는 TLS.** 내장 webpki 루트와 OS 신뢰 저장소의 합집합을 쓰는 rustls다. Linux 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다([docs/release/INSTALL.ko.md](docs/release/INSTALL.ko.md)).
+크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다. 헤드리스 그래프 규칙은 CI에서 `scripts/ci/check_headless_graph.py`가 확인하며, `horon-agent`에서 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트 중 하나라도 닿으면 실패한다.
 
 ## 벤치마크
 
-`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `805b408`로 jcode v0.99.1과 비교해 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 달라서 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
+`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `805b408`로 jcode v0.99.1과 비교해 한 턴을 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 다르므로 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
 
 <p align="center">
   <img src="docs/performance/charts/03-oneshot-time.svg" alt="OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 55.9 ms, jcode 140.8 ms. macOS: horon 103.3 ms, jcode 413.7 ms. Windows: horon 208.5 ms, jcode 153.3 ms" width="780">
@@ -178,7 +184,9 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. [docs/pr
 | 세션 하나 추가당 메모리(3턴 뒤 유휴) | 137.8 KB | 129.8 KB |
 | 설치 크기 | 114.5 MB | 163.4 MB |
 
-macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP(95.5 ms 대 453.0 ms) 모두 horon이 빨랐다. **Windows에서는 한 턴(153.3 ms 대 208.5 ms)과 스킬 실행(200.9 ms 대 220.5 ms)에서 jcode가 더 빨랐고**, MCP 호출은 horon이 빨랐다(269.4 ms 대 318.5 ms). Linux에서는 세션 하나를 더할 때 jcode가 메모리를 조금 덜 쓴다. 이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 그래프는 같은 워크플로가 다시 그린다. 도구 여덟 개의 전체 표와 TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
+Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모양이었다. 한 턴 103.3 ms 대 413.7 ms, 스킬 84.5 ms 대 354.9 ms, MCP 95.5 ms 대 453.0 ms다. **Windows는 다르다. 한 턴(153.3 ms 대 208.5 ms)과 스킬 실행(200.9 ms 대 220.5 ms)에서 jcode가 앞섰고**, MCP 호출은 horon이 앞섰다(269.4 ms 대 318.5 ms). Linux에서는 최대 메모리와 세션 추가당 메모리 모두 jcode가 조금 덜 썼다.
+
+이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표, TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
 
 ## 설정 기본값
 
@@ -189,15 +197,15 @@ macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
-| `[storage] sync` | `full`(정전에도 내구성 보장) | `fast` |
-| `[server] idle_hibernation_secs` | `1800` | `0`이면 끔 |
-| `serve`의 업데이트 확인 | 실행하지 않음 | `--no-update`는 어디서든 건너뜀 |
+| `[storage] sync` | `full`(정전에도 기록이 남는다) | `fast` |
+| `[server] idle_hibernation_secs` | `1800` | `0`이면 끈다 |
+| `serve`의 업데이트 확인 | 실행하지 않음 | `--no-update`가 어디서든 건너뛴다 |
 
-계약에 속하는 기본값 전체는 `AGENTS.md`에 있다.
+계약에 속하는 기본값 전체는 [`AGENTS.md`](AGENTS.md)에 있다.
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai) 사이트는 [packages/docs](packages/docs)에서 따로 쓴 더 짧은 문서 묶음이다. `docs/`에서 생성하지 않으므로 동작이 바뀌면 둘 다 손으로 고친다.
+문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs](packages/docs)에서 따로 쓴 더 짧은 문서 묶음이다. `docs/`에서 생성하지 않으므로 동작이 바뀌면 둘 다 손으로 고친다.
 
 | 주제 | 문서 |
 | --- | --- |
@@ -216,7 +224,7 @@ macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP
 
 ## 기여
 
-먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. `horon-agent` 패키지에 터미널 UI 없음(TUI 모드는 `horon-tui`에 있음), ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
+먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. `horon-agent` 패키지에 터미널 UI 없음(TUI 모드는 `horon-tui`에 있다), ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
 
 - `dev`에서 브랜치를 만들고 `dev`로 풀 리퀘스트를 연다. 모든 풀 리퀘스트는 이 저장소의 실제 이슈를 연결해야 한다(`Closes #123`). `Require Linked Issue` 검사가 이를 확인한다.
 - 푸시하기 전에 검사를 돌린다.
@@ -227,7 +235,7 @@ macOS에서는 한 턴(103.3 ms 대 413.7 ms), 스킬(84.5 ms 대 354.9 ms), MCP
   cargo test --workspace
   ```
 
-- 성능 주장은 개발자 기계가 아니라 GitHub Actions의 벤치마크 워크플로로 낸다.
+- 성능 주장은 개발자 기계가 아니라 GitHub Actions의 벤치마크 워크플로에서 낸다.
 
 ## 라이선스
 
