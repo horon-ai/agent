@@ -5,6 +5,7 @@ pub mod commands;
 pub mod debug;
 pub mod dispatch;
 pub mod hot_exec;
+pub mod index_import;
 pub mod install_release;
 pub mod mcp;
 pub mod output;

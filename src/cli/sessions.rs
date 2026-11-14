@@ -262,9 +262,9 @@ fn inspect(home: &Path, session: &str, json_output: bool) -> Result<()> {
                 Err(error) if error.code == store::StoreErrorCode::MigrationRequired => {
                     report["migration_required"] = json!(true);
                     report["message"] = json!(error.message);
-                    report["index_import_available"] = json!(store::index_import::AVAILABLE);
-                    if !store::index_import::AVAILABLE {
-                        report["remedy"] = json!(store::index_import::remedy());
+                    report["index_import_available"] = json!(super::index_import::AVAILABLE);
+                    if !super::index_import::AVAILABLE {
+                        report["remedy"] = json!(super::index_import::remedy());
                     }
                 }
                 Err(error) => return Err(error.into()),
@@ -369,9 +369,9 @@ fn doctor(home: &Path, session: Option<&str>, json_output: bool) -> Result<()> {
         "sessions": rows,
         "damaged": damaged,
         "migration_required": migration_required,
-        "index_import_available": store::index_import::AVAILABLE,
-        "remedy": if migration_required > 0 && !store::index_import::AVAILABLE {
-            json!(store::index_import::remedy())
+        "index_import_available": super::index_import::AVAILABLE,
+        "remedy": if migration_required > 0 && !super::index_import::AVAILABLE {
+            json!(super::index_import::remedy())
         } else {
             Value::Null
         },
@@ -392,8 +392,8 @@ fn doctor(home: &Path, session: Option<&str>, json_output: bool) -> Result<()> {
             "checked {} session(s): {damaged} damaged, {migration_required} need an offline index migration",
             report["sessions"].as_array().map(Vec::len).unwrap_or(0)
         );
-        if migration_required > 0 && !store::index_import::AVAILABLE {
-            println!("remedy: {}", store::index_import::remedy());
+        if migration_required > 0 && !super::index_import::AVAILABLE {
+            println!("remedy: {}", super::index_import::remedy());
         }
     }
     if damaged > 0 {
@@ -420,10 +420,10 @@ fn migrate(home: &Path, options: MigrateOptions, json_output: bool) -> Result<()
     // The flag is hidden from `--help` in this build, so a caller that reaches it
     // either has a script written for a feature-enabled binary or read an old
     // doc. Naming the build is the only answer that changes anything.
-    if options.legacy_index && !store::index_import::AVAILABLE {
+    if options.legacy_index && !super::index_import::AVAILABLE {
         bail!(
             "--legacy-index is not available in this build; {}",
-            store::index_import::remedy()
+            super::index_import::remedy()
         );
     }
     let from_home = match options.from.as_deref() {
@@ -483,7 +483,7 @@ fn migrate(home: &Path, options: MigrateOptions, json_output: bool) -> Result<()
         "mode": if options.apply { "apply" } else { "dry-run" },
         "from": from_home.display().to_string(),
         "destination": destination.root().display().to_string(),
-        "feature_enabled": store::index_import::AVAILABLE,
+        "feature_enabled": super::index_import::AVAILABLE,
         "sessions": reports,
         "failures": failures,
     });
@@ -550,20 +550,20 @@ fn migrate_one(
             Err(error) if error.code == store::StoreErrorCode::MigrationRequired => {
                 report["status"] = json!("index-import-required");
                 report["message"] = json!(error.message);
-                report["index_import_available"] = json!(store::index_import::AVAILABLE);
-                if !store::index_import::AVAILABLE {
-                    report["remedy"] = json!(store::index_import::remedy());
+                report["index_import_available"] = json!(super::index_import::AVAILABLE);
+                if !super::index_import::AVAILABLE {
+                    report["remedy"] = json!(super::index_import::remedy());
                 }
             }
             Err(error) => return Err(error.into()),
         }
         return Ok(report);
     }
-    if index_present && !store::index_import::AVAILABLE {
+    if index_present && !super::index_import::AVAILABLE {
         bail!(
             "MigrationRequired: session {} has an old SQLite index and this build cannot import it. {}. The database was not opened.",
             id.as_str(),
-            store::index_import::remedy()
+            super::index_import::remedy()
         );
     }
     if index_present && !legacy_index {

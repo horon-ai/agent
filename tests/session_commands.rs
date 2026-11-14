@@ -607,7 +607,9 @@ fn inspect_names_the_remedy_for_an_unreadable_index() {
     assert_eq!(report["migration_required"], json!(true));
     assert_eq!(report["index_import_available"], json!(false));
     assert!(
-        report["remedy"].as_str().is_some_and(|text| text.contains("legacy-session-index-import")),
+        report["remedy"]
+            .as_str()
+            .is_some_and(|text| text.contains("legacy-session-index-import")),
         "inspect must name the build that can import it: {report}"
     );
 }
