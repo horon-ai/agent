@@ -209,12 +209,13 @@ impl Agent {
 
         let working_dir = self.session.working_dir.as_ref().map(std::path::PathBuf::from);
 
-        let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_agents_md(
+        let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_snapshot(
             skill_prompt.as_deref(),
             available_skills,
             memory_prompt,
             working_dir.as_deref(),
             self.agents_md_snapshot.clone(),
+            &self.static_prompt_sources,
         );
 
         self.append_current_turn_system_reminder(&mut split);

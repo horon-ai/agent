@@ -15,7 +15,7 @@ const UNCHANGED_REQUESTS: usize = 9;
 
 /// The static part without its clock line, the one line allowed to differ
 /// between two builds of a session that changed nothing.
-fn without_clock(static_part: &str) -> String {
+pub(super) fn without_clock(static_part: &str) -> String {
     static_part
         .lines()
         .filter(|line| !line.starts_with("Time: "))
@@ -29,10 +29,12 @@ fn without_clock(static_part: &str) -> String {
 /// `static_bytes` and `static_tokens` describe the text as sent.
 /// `static_sha256` is taken over the text without its clock line, so it names
 /// the prefix and not the minute it was built in. `warm_source_reads` is the
-/// source-file probes of the first build; `unchanged_request_source_reads` is
-/// the probes of the next [`UNCHANGED_REQUESTS`] builds together. Probes count
-/// missing files too, so a session with no prompt files still measures above
-/// zero and a line of zeros means the counters were off.
+/// source-file probes of the session capture and the first build together: an
+/// agent reads its prompt sources when the session starts, so the window opens
+/// before the agent exists. `unchanged_request_source_reads` is the probes of
+/// the next [`UNCHANGED_REQUESTS`] builds together. Probes count missing files
+/// too, so a session with no prompt files still measures above zero in the
+/// warm window and a line of zeros means the counters were off.
 ///
 /// The numbers are reported, not asserted: the structural gate owns the
 /// bounds. What is asserted is that the prefix is byte-stable across requests.
@@ -41,11 +43,11 @@ async fn core_profile_static_prompt_is_measured() {
     let _guard = crate::storage::lock_test_env();
     let _counters = crate::perf::lock_perf_counters().await;
     let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
+    let cold = horon_agent_perf_counters::snapshot();
     let mut agent = agent_with_mcp_management_tool().await;
     // The index is fixed when the tool list locks, so the prompt is read after it.
     agent.tool_definitions().await;
 
-    let cold = horon_agent_perf_counters::snapshot();
     let first = agent.build_system_prompt_split(None).static_part;
     let warm = horon_agent_perf_counters::snapshot();
     let stable = without_clock(&first);

@@ -1,7 +1,9 @@
 //! The files the static system prompt is assembled from.
 //!
-//! Every loader here goes to disk, and the prompt builders call them on each
-//! request. Each probe of a candidate file is recorded with
+//! Every loader here goes to disk. A one-off prompt build calls them directly;
+//! a long-lived agent reads them once per session boundary into
+//! [`StaticPromptSources`] and its AGENTS.md snapshot, and hands those to the
+//! builder on every request. Each probe of a candidate file is recorded with
 //! [`horon_agent_perf_counters::record_prompt_source_read`], so the cost of an
 //! unchanged request is a number the structural gate can read.
 
@@ -37,6 +39,31 @@ pub fn load_base_system_prompt(working_dir: Option<&Path>) -> String {
 
 pub(super) fn base_system_prompt_parts(working_dir: Option<&Path>) -> Vec<String> {
     vec![load_base_system_prompt(working_dir)]
+}
+
+/// The static prompt sources that live outside AGENTS.md: the base prompt, the
+/// prompt overlay and the preferred-tools guidance.
+///
+/// Reading them costs six file probes. An agent captures them where it captures
+/// AGENTS.md (a new or restored session, a cleared conversation, a new working
+/// directory), so a request that changed nothing reads no file and an edit made
+/// mid-session cannot move the cached prefix.
+#[derive(Debug, Clone)]
+pub struct StaticPromptSources {
+    pub(super) base: String,
+    pub(super) overlay: (Option<String>, usize),
+    pub(super) preferred_tools: (Option<String>, usize),
+}
+
+impl StaticPromptSources {
+    /// Read the three sources for `working_dir` from disk.
+    pub fn load(working_dir: Option<&Path>) -> Self {
+        Self {
+            base: load_base_system_prompt(working_dir),
+            overlay: load_prompt_overlay_files_from_dir(working_dir),
+            preferred_tools: load_preferred_tools_files_from_dir(working_dir),
+        }
+    }
 }
 
 fn same_canonical_path(first: &Path, second: &Path) -> bool {

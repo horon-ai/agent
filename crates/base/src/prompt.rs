@@ -10,10 +10,10 @@ use git_context::get_git_info;
 use hardware::hardware_context;
 #[cfg(test)]
 pub(crate) use static_sources::load_agents_md_files_from_dirs;
+pub use static_sources::{StaticPromptSources, load_agents_md_files_from_dir, load_base_system_prompt};
 use static_sources::{
     base_system_prompt_parts, load_preferred_tools_files_from_dir, load_prompt_overlay_files_from_dir,
 };
-pub use static_sources::{load_agents_md_files_from_dir, load_base_system_prompt};
 
 /// Default system prompt for horon-agent (embedded at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompt/system_prompt.md");
@@ -710,20 +710,46 @@ pub fn build_system_prompt_split_with_capabilities(
         working_dir,
         capabilities,
         agents_md,
+        &StaticPromptSources::load(working_dir),
     )
 }
 
 /// Build a split prompt using an already captured AGENTS.md snapshot.
 ///
-/// Long-lived agents use this to keep their provider-cache prefix stable when a
-/// tool edits AGENTS.md during the session. New sessions still capture the
-/// latest instructions.
+/// Only AGENTS.md comes from the caller: the base prompt, the overlay and the
+/// preferred-tools guidance are read from disk on every call. A long-lived
+/// agent uses [`build_system_prompt_split_with_snapshot`] instead, so that no
+/// request of a running session goes to disk for them.
 pub fn build_system_prompt_split_with_agents_md(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     agents_md: (Option<String>, ContextInfo),
+) -> (SplitSystemPrompt, ContextInfo) {
+    build_system_prompt_split_with_snapshot(
+        skill_prompt,
+        available_skills,
+        memory_prompt,
+        working_dir,
+        agents_md,
+        &StaticPromptSources::load(working_dir),
+    )
+}
+
+/// Build a split prompt from sources captured earlier: the AGENTS.md snapshot
+/// and the base prompt, overlay and preferred-tools snapshot.
+///
+/// This is the per-request path of a long-lived agent. It reads no prompt
+/// source file, so the static part stays byte-identical until the agent
+/// captures its sources again at a session boundary.
+pub fn build_system_prompt_split_with_snapshot(
+    skill_prompt: Option<&str>,
+    available_skills: &[SkillInfo],
+    memory_prompt: Option<&str>,
+    working_dir: Option<&Path>,
+    agents_md: (Option<String>, ContextInfo),
+    sources: &StaticPromptSources,
 ) -> (SplitSystemPrompt, ContextInfo) {
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
@@ -732,6 +758,7 @@ pub fn build_system_prompt_split_with_agents_md(
         working_dir,
         PromptCapabilities::current(),
         agents_md,
+        sources,
     )
 }
 
@@ -742,8 +769,9 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
     agents_md: (Option<String>, ContextInfo),
+    sources: &StaticPromptSources,
 ) -> (SplitSystemPrompt, ContextInfo) {
-    let mut static_parts = base_system_prompt_parts(working_dir);
+    let mut static_parts = vec![sources.base.clone()];
     let mut dynamic_parts = Vec::new();
     let mut info = ContextInfo {
         system_prompt_chars: static_parts.join("\n\n").len(),
@@ -769,17 +797,15 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     }
 
     // Add optional prompt overlays from ~/.horon/ and ./.horon/
-    let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
-    if let Some(content) = overlay_content {
-        info.prompt_overlay_chars = overlay_chars;
-        static_parts.push(content);
+    if let Some(content) = &sources.overlay.0 {
+        info.prompt_overlay_chars = sources.overlay.1;
+        static_parts.push(content.clone());
     }
 
     // Add optional preferred-tool guidance (static per project/user)
-    let (preferred_tools_content, preferred_tools_chars) = load_preferred_tools_files_from_dir(working_dir);
-    if let Some(content) = preferred_tools_content {
-        info.preferred_tools_chars = preferred_tools_chars;
-        static_parts.push(content);
+    if let Some(content) = &sources.preferred_tools.0 {
+        info.preferred_tools_chars = sources.preferred_tools.1;
+        static_parts.push(content.clone());
     }
 
     // Add available skills list (fairly static)

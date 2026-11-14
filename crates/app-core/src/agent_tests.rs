@@ -2960,6 +2960,9 @@ mod tool_request_bytes;
 #[path = "agent_tests/prompt_request_bytes.rs"]
 mod prompt_request_bytes;
 
+#[path = "agent_tests/prompt_prefix_stability.rs"]
+mod prompt_prefix_stability;
+
 #[path = "agent_tests/tool_schema_shape.rs"]
 mod tool_schema_shape;
 

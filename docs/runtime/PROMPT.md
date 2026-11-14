@@ -58,7 +58,7 @@ To replace layer 1 entirely, create one of these files.
 
 The first non-empty file wins. Without one, the built-in default is used. An empty or whitespace-only file falls back to the default, so an empty prompt cannot be shipped by accident.
 
-This replaces only the base prompt. AGENTS.md, overlays, skills, and memory still apply.
+This replaces only the base prompt. AGENTS.md, overlays, skills, and memory still apply. The file is read when a session captures its prompt, not on every request (see Notes).
 
 ### Enforcing rules mid-stream ([[stream_rules]])
 
@@ -114,7 +114,9 @@ read in advance, and unrelated rules take no context.
 ### Notes
 
 - Changes to these files apply to **new sessions**. A running session keeps the prompt it captured
-  at start.
+  at start: the base prompt, AGENTS.md, the overlay, the preferred-tools guidance and the skills
+  list are read again only at a session boundary (a new session, a working directory change, a
+  clear, or a restored session).
 - Editing the built-in `system_prompt.md` takes a rebuild, because it is embedded with
   `include_str!`.
 - Swarm model routing guidance has a similar dedicated file, `.horon/swarm-prompt.md`.

@@ -43,6 +43,7 @@ mod prewalk;
 #[cfg(test)]
 #[path = "agent/prewalk_tests.rs"]
 mod prewalk_tests;
+mod prompt_snapshot;
 mod prompting;
 mod provider;
 mod provisional_init;
@@ -484,6 +485,9 @@ pub struct Agent {
     /// AGENTS.md is session bootstrap input. Keep the captured text stable so
     /// tool writes do not mutate the provider's cacheable prefix mid-session.
     agents_md_snapshot: (Option<String>, crate::prompt::ContextInfo),
+    /// Base prompt, overlay and preferred-tools text, captured with AGENTS.md
+    /// for the same reason and refreshed at the same session boundaries.
+    static_prompt_sources: crate::prompt::StaticPromptSources,
     /// The "Available Skills" system-prompt section is session bootstrap input
     /// too. Installing a skill mid-session must not rewrite the cached system
     /// prefix (that forces a KV cache miss on everything after it), so the
@@ -555,35 +559,6 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn refresh_agents_md_snapshot(&mut self) {
-        let working_dir = self.session.working_dir.as_deref().map(std::path::Path::new);
-        self.agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
-        self.refresh_prompt_skills_snapshot();
-    }
-
-    /// Re-capture the frozen skills list. Only called at session boundaries
-    /// (new/restored session, working directory change), never mid-turn.
-    fn refresh_prompt_skills_snapshot(&mut self) {
-        self.prompt_skills_snapshot = self.current_prompt_skill_infos();
-        self.announced_skills = self
-            .prompt_skills_snapshot
-            .iter()
-            .map(|skill| skill.name.clone())
-            .collect();
-        self.announced_skills_scan_index = 0;
-    }
-
-    fn current_prompt_skill_infos(&self) -> Vec<crate::prompt::SkillInfo> {
-        self.current_skills_snapshot()
-            .list()
-            .iter()
-            .map(|skill| crate::prompt::SkillInfo {
-                name: skill.name.clone(),
-                description: skill.description.clone(),
-            })
-            .collect()
-    }
-
     fn should_track_client_cache(&self) -> bool {
         match std::env::var("HORON_AGENT_TRACK_CLIENT_CACHE") {
             Ok(value) => {
@@ -637,6 +612,7 @@ impl Agent {
         let load_tiers = tool_config.load_tiers(allowed_tools.as_ref(), core_listed);
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
+        let static_prompt_sources = crate::prompt::StaticPromptSources::load(working_dir);
         let initial_provider_model = provider.model();
         let tool_policy_registration =
             crate::tool::register_session_tool_policy(&session.id, allowed_tools.clone(), disabled_tools.clone());
@@ -684,6 +660,7 @@ impl Agent {
             announced_mcp_tools: HashSet::new(),
             announced_mcp_scan_index: 0,
             agents_md_snapshot,
+            static_prompt_sources,
             prompt_skills_snapshot: Vec::new(),
             announced_skills: HashSet::new(),
             announced_skills_scan_index: 0,
@@ -1625,6 +1602,7 @@ impl Agent {
     pub(crate) fn set_working_dir_for_pending_context(&mut self, working_dir: Option<String>) {
         if working_dir.is_some() {
             self.session.working_dir = working_dir;
+            self.refresh_static_prompt_sources();
             self.unlock_tools();
             self.session.refresh_initial_session_context_message();
         }
