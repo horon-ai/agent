@@ -1,17 +1,5 @@
 use super::*;
 
-/// Keep the most lexically relevant memories for Jev judgement. Small stores
-/// pass through unchanged. Memories with no term overlap are dropped only when
-/// the store is larger than the candidate budget.
-pub(super) fn prefilter_for_jev(entries: Vec<MemoryEntry>, query: &str) -> Vec<MemoryEntry> {
-    if entries.len() <= MAX_JEV_RECALL_CANDIDATES {
-        return entries;
-    }
-    let ranked = bm25_rank(&entries, query, MAX_JEV_RECALL_CANDIDATES);
-    let mut entries: Vec<Option<MemoryEntry>> = entries.into_iter().map(Some).collect();
-    ranked.into_iter().filter_map(|(idx, _)| entries[idx].take()).collect()
-}
-
 /// Rank memories by BM25 over their normalized search text.
 ///
 /// Returns `(entry_index, score)` pairs sorted by score desc, truncated to

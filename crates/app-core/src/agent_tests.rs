@@ -1780,7 +1780,7 @@ async fn restore_session_rehydrates_injected_memory_ids() {
 }
 
 #[tokio::test]
-async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop() {
+async fn memory_guidance_is_the_consolidation_summary_only() {
     let _guard = crate::storage::lock_test_env();
     struct RestoreMemoryHome(Option<std::ffi::OsString>);
     impl Drop for RestoreMemoryHome {
@@ -1796,64 +1796,44 @@ async fn build_memory_prompt_nonblocking_defers_pending_memory_during_tool_loop(
     let home = tempfile::tempdir().expect("isolated memory home");
     let _restore = RestoreMemoryHome(std::env::var_os("HORON_HOME"));
     crate::env::set_var("HORON_HOME", home.path());
-    crate::config::Config::invalidate_cache();
+    // One stored memory is enough to run a pass; the shipped default is twenty.
+    let config_path = crate::config::Config::path().expect("config path");
+    std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("config dir");
+    std::fs::write(&config_path, "[agents]\nmemory_consolidation_min_new = 1\n").expect("write config");
+    crate::config::invalidate_config_cache();
     crate::memory::clear_all_pending_memory();
 
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let registry = Registry::new(provider.clone()).await;
     let mut agent = Agent::new(provider, registry);
     agent.memory_enabled = true;
+
+    // A project with a stored memory but no consolidation pass yet: nothing is
+    // injected, because relevance is the agent's explicit `memory` tool call.
     let project = home.path().join("project");
     std::fs::create_dir(&project).expect("isolated project");
     agent.session.working_dir = Some(project.to_string_lossy().into_owned());
-    let session_id = agent.session.id.clone();
-
     let entry = crate::memory::MemoryEntry::new(crate::memory::MemoryCategory::Fact, "remember this later");
     crate::memory::MemoryManager::new()
         .with_project_dir(&project)
-        .remember_project(entry.clone())
-        .expect("persist the selected memory for scoped revalidation");
-    let prompt =
-        crate::memory::format_relevant_prompt(std::slice::from_ref(&entry), 1).expect("canonical memory prompt");
-    crate::memory::set_pending_memory(
-        &session_id,
-        prompt.clone(),
-        1,
-        vec![entry.id.clone()],
-        None,
-        agent.session.working_dir.as_deref(),
+        .remember_project(entry)
+        .expect("persist a memory");
+    assert!(
+        agent
+            .build_memory_prompt_nonblocking(&[Message::user("hello")])
+            .is_none(),
+        "a stored memory is not turned into guidance without a consolidation pass"
     );
-    assert!(crate::memory::has_pending_memory(&session_id));
 
-    let tool_loop_messages = vec![
-        Message::user("hello"),
-        Message {
-            role: Role::Assistant,
-            content: vec![ContentBlock::ToolUse {
-                id: "call_1".to_string(),
-                name: "bash".to_string(),
-                input: serde_json::json!({}),
-                thought_signature: None,
-            }],
-            timestamp: Some(chrono::Utc::now()),
-            tool_duration_ms: None,
-        },
-        Message::tool_result("call_1", "ok", false),
-    ];
-
-    let pending = agent.build_memory_prompt_nonblocking(&tool_loop_messages, None);
-    assert!(pending.is_none(), "memory should not inject mid tool loop");
-    assert!(crate::memory::has_pending_memory(&session_id));
-    assert!(!crate::memory::is_memory_injected(&session_id, &entry.id));
-
-    let next_turn_messages = vec![Message::user("follow up")];
-    let pending = agent.build_memory_prompt_nonblocking(&next_turn_messages, None);
-    assert!(pending.is_some(), "memory should inject on the next real user turn");
-    let pending = pending.unwrap();
-    assert_eq!(pending.prompt, prompt);
-    assert_eq!(pending.memory_ids, vec![entry.id.clone()]);
-    assert!(crate::memory::is_memory_injected(&session_id, &entry.id));
-    assert!(!crate::memory::has_pending_memory(&session_id));
+    // Once a pass has written the summary, every fresh user turn carries it.
+    let manager = crate::memory::MemoryManager::new().with_project_dir(&project);
+    manager.run_consolidation();
+    let (summary, _) = manager.consolidation_summary().expect("a pass writes the summary");
+    let guidance = agent
+        .build_memory_prompt_nonblocking(&[Message::user("hello")])
+        .expect("the summary is injected on a fresh user turn");
+    assert_eq!(guidance.prompt, summary);
+    assert!(guidance.memory_ids.is_empty(), "a digest names no individual ids");
 
     crate::memory::clear_all_pending_memory();
 }
