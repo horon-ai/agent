@@ -389,6 +389,10 @@ codex_user = false
 claude_user = false
 # [mcp_servers.*] in ~/.codex/config.toml, read live and never copied.
 codex_user = false
+# Answer a connected server's `roots/list` with the session working directory as
+# one file:// root, and declare the `roots` capability in `initialize`. Off by
+# default: it tells every server which directory this session works in.
+expose_roots = false
 
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.
