@@ -109,24 +109,36 @@ fn original_survives_api_restart_and_replica_roundtrip() {
     );
     assert!(
         contains_all(&events_before_rewind, &event_ids(&fx.a.paths(), &session)),
-        "the rewind appends its branch pointer and deletes no original"
+        "the rewind deletes no original"
     );
+    // A rewind appends nothing: it records a host-local selection over the
+    // existing graph (`event_store::select` in `crates/base/src/session`), so
+    // the log keeps its one tip until the next turn appends to the selection.
+    // The second head is created by that append, not by the rewind.
     let after_rewind = branches(&fx.a.paths(), &session);
     assert_eq!(
         after_rewind.len(),
-        2,
-        "the rewind keeps the abandoned branch and starts the selected one: {after_rewind:?}"
+        1,
+        "a rewind writes no event, so the log keeps its single tip: {after_rewind:?}"
     );
     let abandoned = after_rewind
         .iter()
         .find(|(_, view)| view.messages == full.messages)
-        .unwrap_or_else(|| panic!("the abandoned branch renders every original: {after_rewind:?}"));
-    let selected = after_rewind
-        .iter()
-        .find(|(_, view)| view.messages.len() < full.messages.len())
-        .unwrap_or_else(|| panic!("the selected branch renders the rewound prefix: {after_rewind:?}"));
+        .unwrap_or_else(|| panic!("the abandoned tip still renders every original: {after_rewind:?}"));
+    let selected_head = a
+        .list_session_heads(&session)
+        .expect("heads after the rewind")
+        .selected_head
+        .expect("a rewind leaves an explicit selection");
+    let selected = store_projection(&fx.a.paths(), &session, Some(&selected_head));
     assert!(
-        full.messages.starts_with(&selected.1.messages),
+        selected.messages.len() < full.messages.len(),
+        "the selection renders the rewound prefix: {} of {}",
+        selected.messages.len(),
+        full.messages.len()
+    );
+    assert!(
+        full.messages.starts_with(&selected.messages),
         "the selected branch is the preserved prefix of the abandoned branch"
     );
 
@@ -149,11 +161,11 @@ fn original_survives_api_restart_and_replica_roundtrip() {
         .find(|(head, _)| head != &abandoned_after.0)
         .expect("the rewound branch head");
     assert!(
-        branch_after.1.messages.starts_with(&selected.1.messages),
+        branch_after.1.messages.starts_with(&selected.messages),
         "the rewound branch keeps its prefix and gains the new turn"
     );
     assert!(
-        branch_after.1.messages.len() > selected.1.messages.len(),
+        branch_after.1.messages.len() > selected.messages.len(),
         "the new turn is appended to the rewound branch"
     );
 
@@ -494,10 +506,14 @@ fn stale_compaction_job_is_discarded_and_originals_kept() {
         rendered_after < rendered,
         "the rewind took effect while the job was in flight: {rendered_after} of {rendered}"
     );
-    let rewound_prefix = branches(&fx.a.paths(), &session)
-        .into_iter()
-        .min_by_key(|(_, view)| view.messages.len())
-        .expect("the rewound branch");
+    // The rewind records a host-local selection and appends nothing, so the
+    // rewound prefix is read through that selection, not from a second head.
+    let rewound_head = a
+        .list_session_heads(&session)
+        .expect("heads after the rewind")
+        .selected_head
+        .expect("a rewind leaves an explicit selection");
+    let rewound_prefix = store_projection(&fx.a.paths(), &session, Some(&rewound_head));
     fx.provider.release_summary();
 
     assert_eq!(run_turn(&a, &session, "turn after the stale job"), PLAIN_TEXT);
@@ -520,11 +536,11 @@ fn stale_compaction_job_is_discarded_and_originals_kept() {
         .find(|(head, _)| head != &abandoned.0)
         .expect("the rewound branch head");
     assert!(
-        branch.1.messages.starts_with(&rewound_prefix.1.messages),
+        branch.1.messages.starts_with(&rewound_prefix.messages),
         "the rewound branch keeps the prefix it had before the job finished"
     );
     assert!(
-        branch.1.messages.len() > rewound_prefix.1.messages.len(),
+        branch.1.messages.len() > rewound_prefix.messages.len(),
         "the post-rewind turn was appended to the rewound branch"
     );
     assert!(

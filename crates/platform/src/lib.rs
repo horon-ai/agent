@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use rustls::ClientConfig;
 
+pub use horon_agent_platform_api::resources::PlatformResources;
 pub use horon_agent_platform_api::{PlatformAdapter, SleepAssertion, SyncMode};
 
 pub mod fs;
@@ -100,6 +101,15 @@ pub fn tls_client_config_with_extra_roots(
     extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
 ) -> Result<Arc<ClientConfig>, rustls::Error> {
     Current::client_config_with_extra_roots(extra_roots).map(Arc::new)
+}
+
+/// This host's memory, swap, load, battery and disk facts.
+///
+/// A fact the platform cannot measure is named in
+/// [`PlatformResources::unavailable`], so a caller never has to guess whether a
+/// `None` means "not measurable here" or "the read failed".
+pub fn host_resources(disk_path: Option<&Path>) -> PlatformResources {
+    Current::host_resources(disk_path)
 }
 
 /// Whether a process with `pid` exists.

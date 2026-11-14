@@ -105,6 +105,7 @@ run_gate "headless graph contract tests" python3 -m unittest scripts/ci/test_che
 run_gate "wildcard re-export ratchet" python3 scripts/ci/check_wildcard_reexports.py
 run_gate "platform cfg contract tests" python3 -m unittest scripts/ci/test_check_platform_cfg.py
 run_ratchet "platform cfg allowlist" check_platform_cfg.py
+run_gate "soak report contract tests" python3 -m unittest scripts/perf/test_check_soak.py
 
 if $SKIP_SLOW; then
     :
