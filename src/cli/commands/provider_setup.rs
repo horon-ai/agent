@@ -148,7 +148,7 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
         provider_type: NamedProviderType::OpenAiCompatible,
         base_url: api_base.clone(),
         api: None,
-        auth: auth.clone(),
+        auth: Some(auth),
         auth_header: match auth {
             NamedProviderAuth::Header => options
                 .auth_header
@@ -384,7 +384,10 @@ fn append_profile_section(mut content: String, name: &str, profile: &NamedProvid
     content.push_str(&format!("[providers.{name}]\n"));
     content.push_str("type = \"openai-compatible\"\n");
     content.push_str(&format!("base_url = {}\n", toml_quote(&profile.base_url)));
-    content.push_str(&format!("auth = {}\n", toml_quote(auth_label(&profile.auth))));
+    content.push_str(&format!(
+        "auth = {}\n",
+        toml_quote(auth_label(&profile.resolved_auth()))
+    ));
     if let Some(header) = profile.auth_header.as_deref() {
         content.push_str(&format!("auth_header = {}\n", toml_quote(header)));
     }

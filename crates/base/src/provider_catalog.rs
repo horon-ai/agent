@@ -933,17 +933,17 @@ pub fn apply_named_provider_profile_env_from_config(
             crate::env::remove_var("HORON_AGENT_ANTHROPIC_ENV_FILE");
         }
 
-        match profile.auth {
+        match profile.resolved_auth() {
             crate::config::NamedProviderAuth::Bearer => {
                 crate::env::set_var("HORON_AGENT_ANTHROPIC_AUTH", "bearer");
                 crate::env::remove_var("HORON_AGENT_ANTHROPIC_AUTH_HEADER");
             }
             crate::config::NamedProviderAuth::Header => {
                 crate::env::set_var("HORON_AGENT_ANTHROPIC_AUTH", "header");
-                crate::env::set_var(
-                    "HORON_AGENT_ANTHROPIC_AUTH_HEADER",
-                    profile.auth_header.as_deref().unwrap_or("x-api-key"),
-                );
+                match profile.resolved_auth_header() {
+                    Some(header) => crate::env::set_var("HORON_AGENT_ANTHROPIC_AUTH_HEADER", header),
+                    None => crate::env::remove_var("HORON_AGENT_ANTHROPIC_AUTH_HEADER"),
+                }
             }
             crate::config::NamedProviderAuth::None => {
                 crate::env::set_var("HORON_AGENT_ANTHROPIC_AUTH", "none");
@@ -1006,7 +1006,7 @@ pub fn apply_named_provider_profile_env_from_config(
         crate::env::set_var("HORON_AGENT_OPENROUTER_STATIC_MODELS", static_models.join("\n"));
     }
 
-    match profile.auth {
+    match profile.resolved_auth() {
         crate::config::NamedProviderAuth::None => {
             crate::env::set_var("HORON_AGENT_OPENROUTER_ALLOW_NO_AUTH", "1");
             crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "direct-no-auth");
@@ -1062,13 +1062,13 @@ pub fn apply_named_provider_profile_env_from_config(
                 crate::env::set_var("HORON_AGENT_OPENROUTER_TRANSPORT_STATE", "direct-api-key");
             }
 
-            match profile.auth {
+            match profile.resolved_auth() {
                 crate::config::NamedProviderAuth::Bearer => {
                     crate::env::set_var("HORON_AGENT_OPENROUTER_AUTH_HEADER", "bearer");
                 }
                 crate::config::NamedProviderAuth::Header => {
                     crate::env::set_var("HORON_AGENT_OPENROUTER_AUTH_HEADER", "api-key");
-                    if let Some(header) = profile.auth_header.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                    if let Some(header) = profile.resolved_auth_header() {
                         crate::env::set_var("HORON_AGENT_OPENROUTER_AUTH_HEADER_NAME", header);
                     }
                 }

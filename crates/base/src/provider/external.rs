@@ -144,21 +144,7 @@ pub fn build_named_openai_compatible_runtime(
         )
     })?;
 
-    let auth = match profile.auth {
-        crate::config::NamedProviderAuth::Bearer => ChatAuth::Bearer,
-        crate::config::NamedProviderAuth::Header => {
-            let header = profile
-                .auth_header
-                .as_deref()
-                .map(str::trim)
-                .filter(|header| !header.is_empty())
-                .unwrap_or("api-key");
-            ChatAuth::Header {
-                header: header.to_string(),
-            }
-        }
-        crate::config::NamedProviderAuth::None => ChatAuth::None,
-    };
+    let auth = profile_chat_auth(profile);
 
     let api_key = named_profile_api_key(profile);
     let requires_api_key = profile
@@ -350,21 +336,7 @@ pub fn image_endpoint(profile_name: &str) -> anyhow::Result<Option<ImageEndpoint
             profile.base_url,
         )
     })?;
-    let auth = match profile.auth {
-        crate::config::NamedProviderAuth::Bearer => ChatAuth::Bearer,
-        crate::config::NamedProviderAuth::Header => {
-            let header = profile
-                .auth_header
-                .as_deref()
-                .map(str::trim)
-                .filter(|header| !header.is_empty())
-                .unwrap_or("api-key");
-            ChatAuth::Header {
-                header: header.to_string(),
-            }
-        }
-        crate::config::NamedProviderAuth::None => ChatAuth::None,
-    };
+    let auth = profile_chat_auth(profile);
     Ok(Some(ImageEndpoint {
         profile: profile_name.to_string(),
         base_url,
@@ -383,4 +355,21 @@ pub fn image_model(profile_name: &str) -> Option<String> {
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(str::to_string)
+}
+
+/// The credential placement a `[providers.<name>]` profile resolves to.
+///
+/// The mode and header both come from the profile's resolution helpers, so the
+/// runtime and the env export can never disagree about how a profile
+/// authenticates.
+fn profile_chat_auth(profile: &crate::config::NamedProviderConfig) -> ChatAuth {
+    match profile.resolved_auth() {
+        crate::config::NamedProviderAuth::Bearer => ChatAuth::Bearer,
+        crate::config::NamedProviderAuth::Header => ChatAuth::Header {
+            header: profile
+                .resolved_auth_header()
+                .unwrap_or_else(|| profile.provider_type.default_auth_header().to_string()),
+        },
+        crate::config::NamedProviderAuth::None => ChatAuth::None,
+    }
 }
