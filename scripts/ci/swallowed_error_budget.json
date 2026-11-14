@@ -1,8 +1,8 @@
 {
-  "total": 1885,
+  "total": 1883,
   "totals_by_pattern": {
-    "dot_ok": 712,
-    "let_underscore": 706,
+    "dot_ok": 711,
+    "let_underscore": 705,
     "unwrap_or_default": 467
   },
   "tracked_files": {
@@ -113,7 +113,7 @@
     },
     "crates/app-core/src/agent/turn_streaming_mpsc.rs": {
       "dot_ok": 0,
-      "let_underscore": 77,
+      "let_underscore": 76,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/agent/utils.rs": {
@@ -932,7 +932,7 @@
       "unwrap_or_default": 0
     },
     "crates/base/src/memory/pending.rs": {
-      "dot_ok": 2,
+      "dot_ok": 1,
       "let_underscore": 0,
       "unwrap_or_default": 0
     },

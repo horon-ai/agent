@@ -179,16 +179,8 @@ impl Agent {
             // `messages` is this turn's single owned request snapshot. Memory,
             // timestamps and masking each derive a small delta from it instead
             // of copying the whole transcript again.
-            // Non-blocking memory: uses pending result from last turn, spawns check for next turn
-            let memory_pending = self.build_memory_prompt_nonblocking_shared(
-                std::sync::Arc::clone(&messages),
-                Some(std::sync::Arc::new({
-                    let event_tx = event_tx.clone();
-                    move |event| {
-                        let _ = event_tx.send(event);
-                    }
-                })),
-            );
+            // Memory guidance is the consolidation summary; recall is the agent's own `memory` call.
+            let memory_pending = self.build_memory_prompt_nonblocking_shared(std::sync::Arc::clone(&messages));
             // Use split prompt for better caching - static content cached, dynamic not
             self.log_prompt_prefix_accounting(&split_prompt, &tools);
 

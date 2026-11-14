@@ -1193,6 +1193,38 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- memory_update --nocapture
 
+      - name: Run memory recall cohorts
+        shell: bash
+        # Recall used to run in the background through a pending queue that the
+        # turn picked up; it is now only the agent's explicit `memory` tool call,
+        # and the consolidation summary is the one automatic piece. Those tests
+        # live in `horon-agent-base` and `horon-agent-app-core` lib suites, which
+        # this workflow runs only through filtered cohorts, so without a step
+        # naming them they would compile and never execute. `--min-passed` pins
+        # the measured count: `memory::consolidation::tests::` covers the pass,
+        # the merge rules and the digest rebuild after a forget;
+        # `memory_agent::tests::` covers what a context update does and does not
+        # schedule; `request_snapshot_reuse` and `memory_guidance` cover the
+        # injection slot on the turn path. `run_lib_tests.py` forwards a single
+        # filter to libtest, so each package gets its own call.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 900 --min-passed 12 \
+            -- memory::consolidation::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 900 --min-passed 3 \
+            -- memory_agent::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 2 \
+            -- request_snapshot_reuse --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 1 \
+            -- memory_guidance_is_the_consolidation_summary_only --nocapture
+
       - name: Run bg wait sources cohort
         shell: bash
         # `bg action=wait` gained two event sources, child agents and queued
