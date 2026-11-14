@@ -40,7 +40,7 @@ Review Queue (queue.json)
 Transcript Logger -> Session Reporter
 ```
 
-There is no review screen in this build. The TUI review panel was deleted with the TUI crate (the deletion list in `AGENTS.md`), and there is no CLI subcommand such as `horon safety review`. The user decides by answering a notification or by calling `SafetySystem::record_decision` (`crates/base/src/safety.rs:597`).
+There is no review screen in this build. Nothing lists the queue, the `horon-agent permissions` subcommand is declared but exits with an error (`src/cli/dispatch.rs`), and there is no CLI subcommand such as `horon safety review`. The TUI review panel went away when the TUI crate was first removed. The TUI binary `horon-tui` that came back asks inline about the one pending request of the session it is attached to (`crates/tui/src/prompts.rs`), and the daemon records that answer with `record_permission_via_file` (`crates/app-core/src/server/client_ask.rs`). Otherwise a notification tells the user that a request is waiting, and the decision is recorded by calling `SafetySystem::record_decision` (`crates/base/src/safety.rs:597`), which is also what `horon-agent approvals resolve` calls for an unattended run that stopped waiting on a person.
 
 ---
 
@@ -301,13 +301,13 @@ Next cycle: ~35 minutes
 
 **1. File-based decision recording**
 
-When an external tool records a decision, it uses `record_permission_via_file` (`crates/base/src/safety.rs:907`). Expiry cleanup is handled by `expire_stale_permissions_via_file` (`:929`).
+When an external tool records a decision, it uses `record_permission_via_file` (`crates/base/src/safety.rs:907`). Expiry cleanup is handled by `expire_stale_permissions_via_file` (`:944`).
 
 **2. Library call**
 
 `SafetySystem::record_decision` records a decision inside the process and wakes a waiting caller (`crates/base/src/safety.rs:597`).
 
-This build has no TUI review panel and no `horon safety review` CLI.
+This build has no review panel, in `horon-tui` or anywhere else, and no `horon safety review` CLI. Two narrower surfaces exist: `horon-tui` answers the one request its attached session is waiting on, through path 1, and `horon-agent approvals resolve --request-id <id> --tool-call-id <id> --verdict retry|skip` records a per-call verdict for a stopped unattended run, through path 2 (`src/cli/dispatch.rs`).
 
 #### Decision history
 
@@ -645,11 +645,11 @@ failover keys in `ProviderConfig` (`crates/config-types/src/lib.rs`).
   `crates/base/src/session/resume_marker.rs`. Whether a resume happened is now decided by reading only the event log,
   with no second file a checkpoint could swap out.
 - **The key append and the turn creation are not one ACK.** The marker becomes durable before the turn
-  (`append_resume_key` at `crates/app-core/src/ambient/resume.rs:370`, then `resume_session_with_message` at
-  `crates/app-core/src/ambient/resume.rs:427`). So the plan's requirement that "turn creation and key recording be
+  (`append_resume_key` at `crates/app-core/src/ambient/resume.rs:367`, then `resume_session_with_message` at
+  `crates/app-core/src/ambient/resume.rs:424`). So the plan's requirement that "turn creation and key recording be
   made durable together in one ACK" is not met by this implementation. Instead it guarantees two things. First, the
   key is already on disk before any turn exists (`writer.append` → fsync). Second, the exec claim path recovers and
-  runs a "key only, no turn" state exactly once (`crates/app-core/src/ambient/resume.rs:381-411`, pinned by
+  runs a "key only, no turn" state exactly once (`crates/app-core/src/ambient/resume.rs:378-408`, pinned by
   `crash_after_the_key_is_durable_recovers_with_one_turn`). The remaining window is between the marker's ACK and the
   turn creation, and the exec claim covers that span rather than atomicity.
 - **The marker event does not move the session's `updated_at`.** The resume decision uses
