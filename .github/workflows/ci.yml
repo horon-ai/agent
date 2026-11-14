@@ -1205,6 +1205,28 @@ jobs:
             --timeout 600 --min-passed 3 \
             -- agent::verdict_store_tests:: --nocapture
 
+      - name: Run swarm plan proposal and lightweight comm cohort
+        shell: bash
+        # Both modules were split out of oversized files to stay inside the
+        # code-size ratchet, and app-core lib tests are never run whole here,
+        # so without this step they would compile in every run and execute in
+        # none. The plan-proposal store is the typed replacement for the
+        # removed `plan_proposal:<session>` shared-context key (take is
+        # atomic-once, peek does not consume, per-swarm scoping holds), and the
+        # lightweight comm path proves a control-only request never pays for
+        # full session initialization. Each `--min-passed` is the number of
+        # tests its filter really matches, so a renamed module fails on the
+        # count instead of passing over an empty subset.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- server::plan_proposals::tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::client_lifecycle::tests::lightweight_comm --nocapture
+
       - name: Run tool_done verdict cohort
         shell: bash
         # The optional `verdict` on `tool_done` has three surfaces this workflow
