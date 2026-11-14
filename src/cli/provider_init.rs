@@ -318,7 +318,8 @@ fn provider_for_configured_name(
         return provider_for_builtin_profile(profile, model, strict_model);
     }
     anyhow::bail!(
-        "Unknown provider profile '{}'. Add [providers.{}] with type = \"openai-compatible\" to config.toml, \
+        "Unknown provider profile '{}'. Add [providers.{}] with type = \"openai-compatible\", \"openai-responses\", \
+         \"anthropic-compatible\" or \"gemini-compatible\" to config.toml, \
          or use a built-in OpenAI-compatible profile id.",
         name,
         name

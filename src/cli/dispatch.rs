@@ -315,6 +315,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 api_key,
                 api_key_stdin,
                 no_api_key,
+                provider_type,
                 auth,
                 auth_header,
                 env_file,
@@ -333,6 +334,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                     api_key,
                     api_key_stdin,
                     no_api_key,
+                    provider_type: provider_type.into(),
                     auth,
                     auth_header,
                     env_file,
@@ -393,13 +395,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Transport for `--provider-profile <name>` (issue #1560: this used to force
-/// OpenAI-compatible unconditionally). Anthropic-compatible profiles go
-/// through `Auto`, the same path as `default_provider = "<name>"`: the env
-/// applied by `apply_named_provider_profile_env` already selects the
-/// Anthropic Messages runtime with the profile's base URL and auth, while
-/// `AnthropicApi` would pin an Anthropic API-key credential the profile may
-/// not have (e.g. `auth = "none"`).
 /// Decide the tool profile a launch should use when the user selected none.
 ///
 /// Returns [`crate::config::CORE_TOOL_PROFILE`] only when no profile was chosen
@@ -438,27 +433,19 @@ fn apply_default_tool_profile(flag_profile: Option<&str>) {
     }
 }
 
-fn provider_choice_for_named_profile(profile_name: &str) -> ProviderChoice {
-    // Same source as `apply_named_provider_profile_env`, which already
-    // validated that the profile exists.
-    match crate::config::Config::load_strict() {
-        Ok(config) => provider_choice_for_named_profile_in(profile_name, &config),
-        Err(_) => provider_choice_for_named_profile_in(profile_name, crate::config::config()),
-    }
-}
-
-fn provider_choice_for_named_profile_in(profile_name: &str, config: &crate::config::Config) -> ProviderChoice {
-    match config.providers.get(profile_name) {
-        Some(profile)
-            if matches!(
-                profile.provider_type,
-                crate::config::NamedProviderType::AnthropicCompatible
-            ) =>
-        {
-            ProviderChoice::Auto
-        }
-        _ => ProviderChoice::OpenaiCompatible,
-    }
+/// Transport for `--provider-profile <name>`.
+///
+/// Every named profile type resolves to [`ProviderChoice::OpenaiCompatible`]:
+/// the runtime identity stays `openai-compatible[:profile]` for all four
+/// provider wires, and the profile's `type` selects the wire inside the runtime
+/// builder. The env applied by `apply_named_provider_profile_env` already
+/// carries the profile's base URL, auth and model.
+fn provider_choice_for_named_profile(_profile_name: &str) -> ProviderChoice {
+    // Deliberately independent of the profile's `type`: the runtime identity is
+    // `openai-compatible[:profile]` for every wire, so no config lookup happens
+    // here. `provider_choice_for_named_profile_in` keeps the old signature
+    // reachable for the test that pins this uniformity.
+    ProviderChoice::OpenaiCompatible
 }
 
 fn resolve_resume_arg(args: &mut Args) -> Result<()> {

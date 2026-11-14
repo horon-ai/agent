@@ -192,7 +192,9 @@ pub(super) async fn run_usage_command(emit_json: bool) -> Result<()> {
         println!("No connected providers");
         println!();
         println!("Next steps:");
-        println!("- Run `horon-agent provider add` to store an OpenAI-compatible profile and its API key.");
+        println!(
+            "- Run `horon-agent provider add --type <openai-compatible|openai-responses|anthropic-compatible|gemini-compatible>` to store a provider profile and its API key."
+        );
         return Ok(());
     }
 
