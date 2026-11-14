@@ -33,9 +33,11 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 
 Windows 설치 경로와 서명 절차는 [`WINDOWS.ko.md`](WINDOWS.ko.md)에 있다.
 
-## npm에서 설치
+## npm에서 설치 (아직 게시되지 않음)
 
-npm의 `@horon-ai/horon`은 릴리스 자산을 내려받지 않고 같은 두 실행 파일을 설치한다. 작은 런처 하나와 같은 버전으로 고정된 플랫폼 패키지 하나다. npm이 `optionalDependencies`로 플랫폼 패키지를 고르므로, 전역 설치가 컴퓨터에 맞는 하나만 받는다.
+npm 배포본은 만들어지고 시험되지만 게시된 적이 없다. 레지스트리에는 일곱 이름을 선점하는 `0.0.0` 자리표시 패키지만 있고 그 패키지에는 실행 파일이 없다. 그래서 지금 `npm i -g @horon-ai/horon`을 실행하면 런타임을 찾지 못하는 런처가 설치된다. 게시가 켜지기 전까지는 위의 설치 스크립트, 컨테이너 이미지, 소스 체크아웃 가운데 하나를 쓴다.
+
+게시가 켜지면 npm의 `@horon-ai/horon`은 릴리스 자산을 내려받지 않고 같은 두 실행 파일을 설치한다. 작은 런처 하나와 같은 버전으로 고정된 플랫폼 패키지 하나이고, npm이 `optionalDependencies`로 플랫폼 패키지를 골라 전역 설치가 컴퓨터에 맞는 하나만 받는다.
 
 ```bash
 npm i -g @horon-ai/horon
@@ -131,7 +133,7 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 
 ## 컨테이너 이미지
 
-릴리스마다 `ghcr.io/horon-ai/agent`에 `linux/amd64`, `linux/arm64` 이미지를 `<버전>`, `<MAJOR.MINOR>`, `latest` 태그로 올린다. GitHub Packages는 cargo와 PyPI 레지스트리를 지원하지 않고, SDK는 이미 npm과 PyPI로 나가므로 GitHub Packages에는 헤드리스 데몬을 바로 띄우는 컨테이너만 올린다. 이미지는 다시 컴파일하지 않고 릴리스 자산을 그대로 넣는다 (`scripts/release/Containerfile`).
+릴리스마다 `ghcr.io/horon-ai/agent`에 `linux/amd64`, `linux/arm64` 이미지를 `<버전>`, `<MAJOR.MINOR>`, `latest` 태그로 올린다. GitHub Packages는 cargo와 PyPI 레지스트리를 지원하지 않고, SDK는 npm과 PyPI로 내보낼 예정이므로 GitHub Packages에는 헤드리스 데몬을 바로 띄우는 컨테이너만 올린다. 이미지는 다시 컴파일하지 않고 릴리스 자산을 그대로 넣는다 (`scripts/release/Containerfile`).
 
 ```bash
 docker run --rm ghcr.io/horon-ai/agent:latest --version

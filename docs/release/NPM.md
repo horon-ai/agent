@@ -4,6 +4,8 @@ Language: **English** | [한국어](NPM.ko.md)
 
 `@horon-ai/horon` is the npm distribution of the CLI: a small launcher plus one package per platform that carries the `horon-agent` and `horon-tui` binaries. The launcher starts the binary of the machine it runs on, and npm pins the installed version like it does for any other dependency. Choosing a release tag and the installers that fetch the release archives are described in [`INSTALL.md`](INSTALL.md).
 
+**Nothing is published yet.** The registry holds only the `0.0.0` placeholder packages that reserve the seven names, and those carry no binaries, so an install today produces a launcher that cannot find a runtime. The packaging and the publish workflow are built and tested in dry-run; publishing starts when the repository variable `NPM_PUBLISH` is set to `true` (see "The publish workflow"). Until then, install from the release installer, the container image, or a source checkout.
+
 ## Package layout
 
 The seven names are one wrapper and six platform packages. The wrapper holds no binaries.
@@ -26,7 +28,7 @@ Every package carries the repository's `LICENSE` at its root, taken from the rel
 
 The launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` in the child's environment. The npm package pins one release for both binaries, and the agent's own updater would replace them with a different build, so an npm installation is updated with npm.
 
-## Installing and running
+## Installing and running (once published)
 
 ```bash
 npm i -g @horon-ai/horon
