@@ -628,6 +628,36 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 - `notifications/resources/list_changed`와 `notifications/prompts/list_changed`는 캐시한 목록을 버리므로 다음 `resources`나 `prompts` 호출이 다시 받아 옵니다. 캐시는 연결에 속하고 재연결 뒤에는 빈 상태로 시작합니다.
 - 리소스 구독(`resources/subscribe`), 샘플링, 루트는 구현하지 않았습니다.
 
+## 스크래치 디렉터리와 정리
+
+`bash` 자식 프로세스는 `TMPDIR`과 `HORON_AGENT_SCRATCH_DIR`을 `~/.horon/scratch`로
+받는다. 큰 임시 파일이나 클론, `CARGO_TARGET_DIR`을 작업 폴더 옆이 아니라 그곳에 두라는
+뜻이다. 식지 않은 Rust `target/` 하나가 수십 기가바이트이므로, 필요 없어진 항목은
+지운다.
+
+데몬이 시작할 때, 안쪽 어느 파일도 보존 기간보다 새롭지 않은 최상위 항목을 지운다.
+보존 기간은 `HORON_AGENT_SCRATCH_RETENTION_DAYS`이고 기본값은 7일이며, `0`이면 이
+동작을 끈다(`crates/base/src/scratch_maintenance.rs`). 이 동작은 기기마다 하루에 한
+번만 돌고, 사용자가 지정한 `HORON_AGENT_SCRATCH_DIR`은 건드리지 않는다.
+
+살아 있는 프로세스의 작업 디렉터리가 항목 안에 있으면 나이와 관계없이 그 항목을
+남긴다. 스크래치 트리에서 놀고 있는 셸은 아무것도 쓰지 않으므로 나이 검사만으로는
+알 수 없기 때문이다. 이 보호는 "살아 있는 프로세스의 작업 디렉터리"에 대한 플랫폼의
+답만큼만 유효하다.
+
+| 플랫폼 | 출처 | 보호 |
+| --- | --- | --- |
+| Linux | `/proc/<pid>/cwd` | 실제로 동작 |
+| macOS | `libproc`의 `proc_pidinfo(PROC_PIDVNODEPATHINFO)` | 실제로 동작, 권한 불필요 |
+| Windows | 없음: 별도 권한 없이 작업 디렉터리를 알려 주는 프로세스 표가 없다 | **무력** |
+
+Windows에서는 나이 검사가 유일한 보호이므로, `target/`이 스크래치 디렉터리 아래에 있는
+오래 걸리는 빌드는 실행 중에 지워질 수 있다. 그 플랫폼에서는 긴 빌드를
+`~/.horon/scratch` 밖에 두거나 `HORON_AGENT_SCRATCH_RETENTION_DAYS`를 낮춘다.
+`crates/base/tests/scratch_live_working_dir.rs`는 나이 든 스크래치 항목 안에 살아 있는
+자식 프로세스를 두고, 플랫폼의 답이 비어 있으면 실패한다. macOS의 빈틈은 그렇게
+닫았다.
+
 ## 큰 도구 출력과 컨텍스트 절약
 
 도구 출력이 모델 컨텍스트에 들어가는 양을 줄이는 장치 세 가지입니다. 셋 모두 원문을 버리지 않습니다. 모델은 줄어든 결과와 함께 원문을 다시 읽는 주소를 받습니다.

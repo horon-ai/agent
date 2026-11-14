@@ -662,6 +662,37 @@ Servers that publish resources or prompts are reached through the same `mcp` too
 - `notifications/resources/list_changed` and `notifications/prompts/list_changed` drop the cached list, so the next `resources` or `prompts` call refetches it. The cache belongs to the connection and starts empty again after a reconnect.
 - Resource subscriptions (`resources/subscribe`), sampling, and roots are not implemented.
 
+## The scratch directory and its cleanup
+
+`bash` children receive `TMPDIR` and `HORON_AGENT_SCRATCH_DIR` pointing at
+`~/.horon/scratch`, so an agent can put large temporary files, a clone or a
+`CARGO_TARGET_DIR` there instead of beside the work. A cold Rust `target/` is
+tens of gigabytes, so those entries are removed once nothing needs them.
+
+At daemon start, a pass removes top-level entries whose newest file anywhere
+inside is older than the retention window: `HORON_AGENT_SCRATCH_RETENTION_DAYS`,
+default 7 days, and `0` turns the pass off entirely
+(`crates/base/src/scratch_maintenance.rs`). The pass runs at most once a day per
+machine, and a custom `HORON_AGENT_SCRATCH_DIR` is never touched.
+
+An entry is kept regardless of age when a live process has its working directory
+inside it, because an idle shell in a scratch tree writes nothing and the age
+check alone cannot see it. That guard is only as good as the platform's answer
+to "working directories of live processes":
+
+| Platform | Source | Guard |
+| --- | --- | --- |
+| Linux | `/proc/<pid>/cwd` | real |
+| macOS | `proc_pidinfo(PROC_PIDVNODEPATHINFO)` via `libproc` | real, no privileges needed |
+| Windows | none: no process table lists working directories without extra privileges | **inert** |
+
+On Windows the age check is the only protection, so a long-running build whose
+`target/` sits under the scratch directory can be removed while it runs. Keep
+long builds outside `~/.horon/scratch` there, or lower
+`HORON_AGENT_SCRATCH_RETENTION_DAYS`. `crates/base/tests/scratch_live_working_dir.rs`
+holds a live child inside an aged scratch entry and fails on a platform whose
+answer is empty, which is how the macOS gap was closed.
+
 ## Large tool output and context saving
 
 Three devices reduce how much tool output enters the model's context. None of them discards the original. The model gets the reduced result together with an address for reading the original back.
