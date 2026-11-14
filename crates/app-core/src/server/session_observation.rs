@@ -10,63 +10,32 @@
 //!   event advances `seq` through `observe_*`. Nothing else mints a sequence
 //!   number, and no caller reconstructs the ordering from a broadcast tap after
 //!   the fact.
-//! * Two mechanisms classify a live event, and they cover different failures. The
-//!   `seq` in a snapshot reply is the state boundary: a change observed before
-//!   the capture is inside the view, a change observed after it is newer. The
-//!   per-connection FIFO is the delivery boundary: the marker is enqueued on it
-//!   inside the same critical section that fixed `seq`, so an event that reaches
-//!   the same connection later is after the marker even when it was not observed
-//!   (a reply written straight to one connection does not advance `seq`).
-//! * A snapshot captures the value, mints its marker, and enqueues that marker on
-//!   the requesting connection's FIFO inside **one** critical section that does no
-//!   disk I/O, awaits nothing, and never touches the network. A marker the FIFO
-//!   cannot take fails the request, because a client told it holds a snapshot must
-//!   be able to observe that snapshot's boundary.
+//! * The `seq` in a snapshot reply is the boundary a client places live events
+//!   against: a change observed before the capture is inside the returned view,
+//!   and a change observed after it is strictly newer. One reply carries both the
+//!   marker identity and the view, so the ordering that matters is the one inside
+//!   that single frame rather than an interleaving across two frames.
+//! * A snapshot captures the value and mints its marker inside **one** critical
+//!   section that does no disk I/O, awaits nothing, and never touches the
+//!   network.
 //! * `seq` is meaningful only inside one `generation`. A restart mints a new
 //!   generation and starts again at 1; nothing here replays or compares `seq`
 //!   across generations.
 //!
-//! The wire types for the marker and the snapshot reply belong to the harness API
-//! (plan task 12), so this module carries its own [`SnapshotMarker`],
-//! [`ConnectionRecord`], and [`SnapshotView`] plus a handler that frames them.
+//! The harness API's `SessionSnapshot` maps [`SnapshotView`] in
+//! [`runtime_state_api`](super::runtime_state_api), which is the only caller.
 
 use crate::protocol::HistoryMessage;
 use crate::protocol::ServerEvent;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
-use tokio::sync::mpsc;
 
 pub(crate) const DEFAULT_TAIL: u32 = 20;
 pub(crate) const MAX_TAIL: u32 = 100;
 pub(crate) const DEFAULT_MAX_BYTES: u64 = 262_144;
 pub(crate) const MAX_MAX_BYTES: u64 = 1_048_576;
 const RETAINED_MESSAGES: usize = 512;
-
-/// The boundary record a snapshot request puts on its own connection: a client
-/// that holds it classifies every live event that follows as newer than the
-/// snapshot, whatever the socket interleaving turns out to be.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct SnapshotMarker {
-    pub session_id: String,
-    pub generation: String,
-    pub seq: u64,
-    pub marker_id: String,
-}
-
-/// One record on a marker-aware connection's FIFO.
-///
-/// TODO(task 12): add a `Live { seq, generation, event }` arm once the harness
-/// API carries a sequence on live events, so a connection can classify an event
-/// that arrives before the marker without relying on this FIFO's order.
-#[derive(Clone, Debug)]
-#[allow(
-    dead_code,
-    reason = "the per-connection forwarder that drains this FIFO is task 12's dispatcher wiring"
-)]
-pub(crate) enum ConnectionRecord {
-    Marker(SnapshotMarker),
-}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SnapshotRequest {
@@ -97,12 +66,6 @@ pub(crate) struct SnapshotView {
     pub next_history_cursor: Option<String>,
     /// Cut by the byte budget or by what is still retained.
     pub truncated: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SnapshotError {
-    /// The connection FIFO could not take the marker, so no boundary exists.
-    MarkerRejected,
 }
 
 #[derive(Clone, Debug)]
@@ -277,37 +240,23 @@ impl SessionObservation {
         self.lock().seq
     }
 
-    /// Capture one consistent view and enqueue its marker on `connection`.
+    /// Capture one consistent view of this session.
     ///
-    /// The capture, the marker identity, and the FIFO enqueue happen under the
-    /// owner lock, so a change observed before this call is inside the returned
-    /// view and a change observed after it is after the marker. Nothing inside
-    /// this section reads a file, awaits, or touches the network.
-    pub(crate) fn take_snapshot(
-        &self,
-        request: &SnapshotRequest,
-        connection: &mpsc::UnboundedSender<ConnectionRecord>,
-    ) -> Result<SnapshotView, SnapshotError> {
+    /// The capture and the marker identity happen under the owner lock, so a
+    /// change observed before this call is inside the returned view and a change
+    /// observed after it is strictly newer than the returned `seq`. Nothing
+    /// inside this section reads a file, awaits, or touches the network, and the
+    /// marker and the view leave in one reply that the caller writes as one
+    /// frame.
+    pub(crate) fn take_snapshot(&self, request: &SnapshotRequest) -> SnapshotView {
         let inner = self.lock();
         let value = Arc::clone(&inner.value);
-        let marker_id = uuid::Uuid::new_v4().to_string();
-        let marker = SnapshotMarker {
-            session_id: self.session_id.clone(),
-            generation: self.generation.clone(),
-            seq: value.seq,
-            marker_id: marker_id.clone(),
-        };
-        // Enqueued inside the same critical section that fixed the boundary, so
-        // the marker cannot land on either side of the value it names.
-        if connection.send(ConnectionRecord::Marker(marker)).is_err() {
-            return Err(SnapshotError::MarkerRejected);
-        }
         let (messages, next_history_cursor, truncated) = select_tail(&value, request);
-        Ok(SnapshotView {
+        SnapshotView {
             session_id: self.session_id.clone(),
             generation: self.generation.clone(),
             seq: value.seq,
-            marker_id,
+            marker_id: uuid::Uuid::new_v4().to_string(),
             state: ObservationState {
                 message_count: value.message_count,
                 last_seq: value.seq,
@@ -317,7 +266,7 @@ impl SessionObservation {
             messages,
             next_history_cursor,
             truncated,
-        })
+        }
     }
 }
 
@@ -372,69 +321,6 @@ fn select_tail(value: &ObservationValue, request: &SnapshotRequest) -> (Vec<Hist
     let truncated = truncated || effective_start > 0;
     let next = (effective_start > 0).then(|| format!("before:{effective_start}"));
     (messages, next, truncated)
-}
-
-#[derive(Serialize)]
-struct SnapshotFrame<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    id: u64,
-    #[serde(flatten)]
-    view: &'a SnapshotView,
-}
-
-async fn write_frame(writer: &mut (impl tokio::io::AsyncWrite + Unpin), frame: &impl Serialize) -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    let mut buf = serde_json::to_vec(frame)?;
-    buf.push(b'\n');
-    writer.write_all(&buf).await?;
-    Ok(())
-}
-
-/// Answer one snapshot request: the marker is on the connection FIFO before the
-/// reply is written.
-///
-/// TODO(task 12): dispatch `ApiRequest::GetSnapshot` here and replace
-/// [`SnapshotFrame`] with `ApiEvent::Snapshot` once that type reaches the daemon.
-#[allow(
-    dead_code,
-    reason = "no production caller until task 12 wires the get_snapshot request into the dispatcher"
-)]
-pub(crate) async fn handle_get_snapshot(
-    id: u64,
-    session_id: &str,
-    request: SnapshotRequest,
-    connection: &mpsc::UnboundedSender<ConnectionRecord>,
-    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
-) -> anyhow::Result<()> {
-    let observation = observation_for(session_id);
-    match observation.take_snapshot(&request, connection) {
-        Ok(view) => {
-            // The reply carries the same `marker_id`, so a client that reads it
-            // before the marker can buffer instead of guessing from order.
-            write_frame(
-                writer,
-                &SnapshotFrame {
-                    kind: "snapshot",
-                    id,
-                    view: &view,
-                },
-            )
-            .await
-        }
-        Err(SnapshotError::MarkerRejected) => {
-            // A snapshot the client cannot place on its own stream is a false
-            // success, so this refuses with the daemon's existing error frame.
-            let refusal = ServerEvent::Error {
-                id,
-                message: format!(
-                    "get_snapshot for session `{session_id}` could not enqueue its marker; the connection cannot hold the snapshot boundary"
-                ),
-                retry_after_secs: None,
-            };
-            write_frame(writer, &refusal).await
-        }
-    }
 }
 
 #[cfg(test)]
