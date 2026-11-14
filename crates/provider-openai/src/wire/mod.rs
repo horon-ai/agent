@@ -12,6 +12,7 @@ use horon_agent_schema_dialect::{DialectSpec, registry};
 
 pub mod anthropic;
 pub mod gemini;
+pub mod responses;
 pub mod sse;
 pub mod turns;
 
