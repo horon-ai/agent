@@ -6,9 +6,10 @@ mode a program drives a session (`run`, the `serve` daemon behind the SDKs and
 drives one from the terminal through `horon-tui`. Both modes share one engine,
 daemon, session store, tool set and configuration; they differ only in who is
 on the other end, and neither is a reduced form of the other. Model calls speak
-the OpenAI Chat Completions protocol only. Other documents describe the code;
-this file governs it. When another document disagrees with this file, this
-file wins.
+one of four wires, picked by the profile's `type`: OpenAI Chat Completions,
+OpenAI Responses, Anthropic Messages or Gemini generateContent. Other documents
+describe the code; this file governs it. When another document disagrees with
+this file, this file wins.
 
 ## Modes, binaries and release units
 
