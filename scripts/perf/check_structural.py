@@ -782,18 +782,22 @@ SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 def check_prompt(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
-    """The static prompt was measured, not read from counters that were off.
+    """The static prompt stays inside its ceiling and costs no read per request.
 
-    No ceiling yet: this section records the numbers a later bound is set
-    from. What it refuses is a line that measured nothing. A prompt of zero
-    bytes was never built, and a first build that probed no source file means
-    the counters were off, in which case the zero beside it for an unchanged
+    The floors refuse a line that measured nothing. A prompt of zero bytes was
+    never built, and a first build that probed no source file means the
+    counters were off, in which case the zero beside it for an unchanged
     request would read as a pass it did not earn. The digest is the identity
-    of the prefix, so a value that is not a SHA-256 fails as well.
+    of the prefix, so a value that is not a SHA-256 fails as well. The
+    ceilings hold what the session snapshot bought: the static bytes, no
+    source read once the session captured its sources, and at most one index
+    row cut mid-sentence.
     """
     for record in records:
         section = "prompt"
-        report.at_least(section, "static_bytes", as_int(record, "static_bytes", section), 1)
+        static_bytes = as_int(record, "static_bytes", section)
+        report.at_least(section, "static_bytes", static_bytes, 1)
+        report.at_most(section, "static_bytes", static_bytes, bounds["prompt_static_bytes_max"])
         report.at_least(section, "static_tokens", as_int(record, "static_tokens", section), 1)
         report.at_least(section, "index_bytes", as_int(record, "index_bytes", section), 1)
         digest = record.get("static_sha256")
@@ -806,13 +810,17 @@ def check_prompt(report: Report, records: list[dict[str, str]], bounds: dict[str
             SHA256_HEX.fullmatch(digest) is not None,
             "64 lowercase hex digits",
         )
-        report.at_least(section, "index_clipped_rows", as_int(record, "index_clipped_rows", section), 0)
+        clipped = as_int(record, "index_clipped_rows", section)
+        report.at_least(section, "index_clipped_rows", clipped, 0)
+        report.at_most(section, "index_clipped_rows", clipped, bounds["prompt_index_clipped_rows_max"])
         report.at_least(section, "warm_source_reads", as_int(record, "warm_source_reads", section), 1)
-        report.at_least(
+        unchanged = as_int(record, "unchanged_request_source_reads", section)
+        report.at_least(section, "unchanged_request_source_reads", unchanged, 0)
+        report.at_most(
             section,
             "unchanged_request_source_reads",
-            as_int(record, "unchanged_request_source_reads", section),
-            0,
+            unchanged,
+            bounds["prompt_unchanged_request_source_reads_max"],
         )
 
 

@@ -72,9 +72,9 @@ HEALTHY_LINES = [
     "request_message_copies=0",
     "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8 "
     "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2100,ls:500,agentgrep:1900,toolbox:1091",
-    "STRUCTURAL_PERF section=prompt static_bytes=1414 "
-    "static_sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 static_tokens=330 "
-    "index_bytes=676 index_clipped_rows=6 warm_source_reads=6 unchanged_request_source_reads=54",
+    "STRUCTURAL_PERF section=prompt static_bytes=1322 "
+    "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
+    "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
     "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=1 git_spawns_in_repo=3 "
     "gpu_probe_spawns_without_display=1 gpu_reported=0",
 ]
@@ -533,9 +533,9 @@ class PromptSectionTest(unittest.TestCase):
     """The static prompt line is a measurement, and a line of zeros is not one."""
 
     PROMPT_LINE = (
-        "STRUCTURAL_PERF section=prompt static_bytes=1414 "
-        "static_sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 static_tokens=330 "
-        "index_bytes=676 index_clipped_rows=6 "
+        "STRUCTURAL_PERF section=prompt static_bytes=1322 "
+        "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
+        "index_bytes=585 "
     )
 
     def test_prompt_section_missing_fails(self):
@@ -547,18 +547,49 @@ class PromptSectionTest(unittest.TestCase):
     def test_prompt_counters_off_is_not_measured(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prompt",
-            self.PROMPT_LINE + "warm_source_reads=0 unchanged_request_source_reads=0",
+            self.PROMPT_LINE + "index_clipped_rows=1 warm_source_reads=0 unchanged_request_source_reads=0",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
         named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
         self.assertIn("warm_source_reads", named)
 
+    def test_a_request_that_reads_a_prompt_source_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE + "index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=1",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"unchanged_request_source_reads"})
+
+    def test_a_second_clipped_index_row_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE + "index_clipped_rows=2 warm_source_reads=8 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"index_clipped_rows"})
+
+    def test_a_static_prompt_over_its_ceiling_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE.replace("static_bytes=1322", "static_bytes=1323")
+            + "index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"static_bytes"})
+
     def test_a_digest_that_is_not_a_sha256_fails(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prompt",
-            "STRUCTURAL_PERF section=prompt static_bytes=1414 static_sha256=unknown static_tokens=330 "
-            "index_bytes=676 index_clipped_rows=6 warm_source_reads=6 unchanged_request_source_reads=54",
+            "STRUCTURAL_PERF section=prompt static_bytes=1322 static_sha256=unknown static_tokens=305 "
+            "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
@@ -693,6 +724,9 @@ class BudgetTest(unittest.TestCase):
             "hooks_unset_process_spawns_max",
             "hooks_unset_message_copies_max",
             "prefix_tools_bytes_max",
+            "prompt_static_bytes_max",
+            "prompt_unchanged_request_source_reads_max",
+            "prompt_index_clipped_rows_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 
