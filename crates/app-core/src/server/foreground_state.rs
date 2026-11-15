@@ -62,10 +62,21 @@ const STOP_MAX_TURN_REQUESTS: &str = "max_turn_requests";
 
 /// `provider_stop_reason` values of a `LimitReached` stop that mean the output
 /// token limit.
+///
+/// Matched ASCII case-insensitively: a wire reports its own spelling, and Gemini
+/// says `MAX_TOKENS` where the OpenAI wires say `max_tokens`.
 pub const OUTPUT_LIMIT_STOPS: [&str; 4] = ["max_tokens", "max_output_tokens", "length", "incomplete"];
 
 /// Raw provider stop reasons on `ProviderGuardrail` that are a refusal.
+///
+/// Matched ASCII case-insensitively, for the same reason as
+/// [`OUTPUT_LIMIT_STOPS`].
 pub const REFUSAL_STOPS: [&str; 2] = ["refusal", "content_filter"];
+
+/// Whether `reason` names one of `stops`, ignoring ASCII case.
+pub fn is_stop_reason(reason: &str, stops: &[&str]) -> bool {
+    stops.iter().any(|stop| reason.eq_ignore_ascii_case(stop))
+}
 
 #[derive(Default)]
 struct TurnSlot {
@@ -704,7 +715,7 @@ impl StopObserver {
                 TurnStopReason::LimitReached => {
                     let output_limit = provider_stop_reason
                         .as_deref()
-                        .is_some_and(|reason| OUTPUT_LIMIT_STOPS.contains(&reason));
+                        .is_some_and(|reason| is_stop_reason(reason, &OUTPUT_LIMIT_STOPS));
                     self.record(if output_limit {
                         STOP_MAX_TOKENS
                     } else {
@@ -716,7 +727,7 @@ impl StopObserver {
             ServerEvent::ProviderGuardrail {
                 stop_reason: Some(stop_reason),
                 ..
-            } if REFUSAL_STOPS.contains(&stop_reason.as_str()) => self.record(STOP_REFUSAL),
+            } if is_stop_reason(stop_reason, &REFUSAL_STOPS) => self.record(STOP_REFUSAL),
             ServerEvent::ForegroundState {
                 running: true,
                 snapshot: false,
@@ -1080,5 +1091,53 @@ mod tests {
             settle(vec![stopped(TurnStopReason::LimitReached, Some("length"))], "cancelled"),
             "cancelled"
         );
+    }
+
+    #[test]
+    fn a_provider_stop_reason_matches_whatever_case_the_wire_spells_it() {
+        // Gemini reports `MAX_TOKENS` where the OpenAI wires report
+        // `max_tokens`, and both must reach the same ACP stop reason.
+        for reason in ["max_tokens", "MAX_TOKENS", "Max_Tokens"] {
+            assert_eq!(
+                settle(vec![stopped(TurnStopReason::LimitReached, Some(reason))], "end_turn"),
+                "max_tokens",
+                "{reason}"
+            );
+        }
+        for reason in [
+            "max_output_tokens",
+            "MAX_OUTPUT_TOKENS",
+            "length",
+            "LENGTH",
+            "incomplete",
+        ] {
+            assert_eq!(
+                settle(vec![stopped(TurnStopReason::LimitReached, Some(reason))], "end_turn"),
+                "max_tokens",
+                "{reason}"
+            );
+        }
+        // A stop that is not an output limit still reports the request limit.
+        for reason in ["end_turn", "STOP", "tool_use"] {
+            assert_eq!(
+                settle(vec![stopped(TurnStopReason::LimitReached, Some(reason))], "end_turn"),
+                "max_turn_requests",
+                "{reason}"
+            );
+        }
+        // The guardrail check follows the same rule.
+        for reason in ["refusal", "REFUSAL", "content_filter", "Content_Filter"] {
+            assert_eq!(
+                settle(
+                    vec![ServerEvent::ProviderGuardrail {
+                        stop_reason: Some(reason.to_string()),
+                        message: "blocked".to_string(),
+                    }],
+                    "end_turn"
+                ),
+                "refusal",
+                "{reason}"
+            );
+        }
     }
 }
