@@ -825,28 +825,32 @@ def check_prompt(report: Report, records: list[dict[str, str]], bounds: dict[str
 
 
 def check_session_context(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
-    """The session-context child processes were counted, not read from counters that were off.
+    """The session context starts no `git` outside a repository, one inside, and no GPU probe without a display.
 
-    No ceiling yet: this section records the numbers a later bound is set
-    from. What it refuses is a line that measured nothing. Describing a
-    repository takes at least one `git` process, so a zero there means the
-    counters were off, and the zeros beside it for a directory outside any
-    repository and for the GPU probe would read as a pass they did not earn.
+    The floor refuses a line that measured nothing: describing a repository
+    takes at least one `git` process, so a zero there means the counters were
+    off, and the zeros beside it would read as a pass they did not earn.
     """
     for record in records:
         section = "session_context"
-        report.at_least(
+        outside = as_int(record, "git_spawns_outside_repo", section)
+        report.at_least(section, "git_spawns_outside_repo", outside, 0)
+        report.at_most(
             section,
             "git_spawns_outside_repo",
-            as_int(record, "git_spawns_outside_repo", section),
-            0,
+            outside,
+            bounds["session_context_git_spawns_outside_repo_max"],
         )
-        report.at_least(section, "git_spawns_in_repo", as_int(record, "git_spawns_in_repo", section), 1)
-        report.at_least(
+        in_repo = as_int(record, "git_spawns_in_repo", section)
+        report.at_least(section, "git_spawns_in_repo", in_repo, 1)
+        report.at_most(section, "git_spawns_in_repo", in_repo, bounds["session_context_git_spawns_in_repo_max"])
+        gpu = as_int(record, "gpu_probe_spawns_without_display", section)
+        report.at_least(section, "gpu_probe_spawns_without_display", gpu, 0)
+        report.at_most(
             section,
             "gpu_probe_spawns_without_display",
-            as_int(record, "gpu_probe_spawns_without_display", section),
-            0,
+            gpu,
+            bounds["session_context_gpu_probe_spawns_without_display_max"],
         )
 
 

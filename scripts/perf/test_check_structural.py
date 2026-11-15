@@ -75,8 +75,8 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=prompt static_bytes=1322 "
     "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
     "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
-    "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=1 git_spawns_in_repo=3 "
-    "gpu_probe_spawns_without_display=1 gpu_reported=0",
+    "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=0 git_spawns_in_repo=1 "
+    "gpu_probe_spawns_without_display=0 gpu_reported=0",
 ]
 
 
@@ -617,6 +617,24 @@ class SessionContextSectionTest(unittest.TestCase):
         named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
         self.assertEqual(named, {"git_spawns_in_repo"})
 
+    def test_each_session_context_spawn_over_its_ceiling_fails_alone(self):
+        for counter, line in (
+            ("git_spawns_outside_repo", "git_spawns_outside_repo=1 git_spawns_in_repo=1 gpu_probe_spawns_without_display=0"),
+            ("git_spawns_in_repo", "git_spawns_outside_repo=0 git_spawns_in_repo=2 gpu_probe_spawns_without_display=0"),
+            (
+                "gpu_probe_spawns_without_display",
+                "git_spawns_outside_repo=0 git_spawns_in_repo=1 gpu_probe_spawns_without_display=1",
+            ),
+        ):
+            lines = replace_line(
+                "STRUCTURAL_PERF section=session_context",
+                f"STRUCTURAL_PERF section=session_context {line} gpu_reported=0",
+            )
+            run = run_gate(lines)
+            self.assertEqual(run.code, 1, run.stderr)
+            named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+            self.assertEqual(named, {counter})
+
 
 class MissingMeasurementTest(unittest.TestCase):
     def test_a_missing_section_fails_instead_of_passing_on_nothing(self):
@@ -727,6 +745,9 @@ class BudgetTest(unittest.TestCase):
             "prompt_static_bytes_max",
             "prompt_unchanged_request_source_reads_max",
             "prompt_index_clipped_rows_max",
+            "session_context_git_spawns_outside_repo_max",
+            "session_context_git_spawns_in_repo_max",
+            "session_context_gpu_probe_spawns_without_display_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 
