@@ -37,6 +37,7 @@ mod horon_agent_docs;
 pub mod inflight;
 mod invalid;
 mod irc;
+mod lifecycle;
 mod ls;
 mod lsp;
 pub mod mcp;
@@ -1484,7 +1485,7 @@ impl Registry {
                     "approval-gate",
                 );
                 if decision.approved {
-                    let mut fields = Self::tool_lifecycle_fields("approved", resolved_name, resolved_name, input, ctx);
+                    let mut fields = lifecycle::fields("approved", resolved_name, resolved_name, input, ctx);
                     fields.push(("block_reason".to_string(), "approval".to_string()));
                     fields.push(("approval_request_id".to_string(), request_id));
                     crate::logging::event_info("TOOL_LIFECYCLE", fields);
@@ -1697,56 +1698,6 @@ impl Registry {
                 "approval record for request {request_id} could not be created: {error}"
             ));
         }
-    }
-
-    fn tool_lifecycle_fields(
-        phase: &str,
-        requested_name: &str,
-        resolved_name: &str,
-        input: &Value,
-        ctx: &ToolContext,
-    ) -> Vec<(String, String)> {
-        let cwd = ctx
-            .working_dir
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "none".to_string());
-        let input_json = serde_json::to_string(input).unwrap_or_default();
-        let mut fields = vec![
-            ("phase".to_string(), phase.to_string()),
-            ("tool_name".to_string(), requested_name.to_string()),
-            ("resolved_tool_name".to_string(), resolved_name.to_string()),
-            ("session_id".to_string(), ctx.session_id.clone()),
-            ("message_id".to_string(), ctx.message_id.clone()),
-            ("tool_call_id".to_string(), ctx.tool_call_id.clone()),
-            ("execution_mode".to_string(), format!("{:?}", ctx.execution_mode)),
-            ("cwd".to_string(), cwd),
-            ("input_json_bytes".to_string(), input_json.len().to_string()),
-        ];
-
-        if let Some(object) = input.as_object() {
-            let mut keys = object.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            fields.push(("input_keys".to_string(), keys.join(",")));
-
-            let touched_paths = path_policy::touched_paths(input, ctx)
-                .into_iter()
-                .map(|(key, path)| format!("{key}:{}", path.display()))
-                .collect::<Vec<_>>();
-            if !touched_paths.is_empty() {
-                fields.push(("touched_paths".to_string(), touched_paths.join(",")));
-                fields.push(("touched_path_count".to_string(), touched_paths.len().to_string()));
-            }
-
-            for text_key in ["command", "prompt", "task", "query", "content"] {
-                if let Some(text) = object.get(text_key).and_then(Value::as_str) {
-                    fields.push((format!("{text_key}_bytes"), text.len().to_string()));
-                    fields.push((format!("{text_key}_chars"), text.chars().count().to_string()));
-                }
-            }
-        }
-
-        fields
     }
 
     /// Maximum fraction of context budget a single tool output may consume.
@@ -2029,7 +1980,7 @@ impl Registry {
         if policy_on_self
             && !crate::plan_mode::allows_effects(&ctx.session_id, plan_effects.unwrap_or(ToolEffects::write()))
         {
-            let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
+            let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
             fields.push(("block_reason".to_string(), "plan_mode".to_string()));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
             return Err(ToolRejected(crate::plan_mode::block_message(resolved_name)).into());
@@ -2110,7 +2061,7 @@ impl Registry {
             if let Some(verdict) = bash_pattern.as_ref()
                 && verdict.approval == crate::config::BashPatternApproval::Deny
             {
-                let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
+                let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
                 fields.push(("block_reason".to_string(), "bash_pattern".to_string()));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Blocked by bash pattern '{}' (deny).", verdict.pattern)).into());
@@ -2188,7 +2139,7 @@ impl Registry {
             None
         };
         if let Some(refusal) = refusal {
-            let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
+            let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
             fields.push(("block_reason".to_string(), "approval".to_string()));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
             return Err(ToolRejected(refusal).into());
@@ -2216,7 +2167,7 @@ impl Registry {
                 })
                 .await;
             if let crate::hooks::GateDecision::Block { reason } = decision {
-                let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &restored, &ctx);
+                let mut fields = lifecycle::fields("blocked", name, resolved_name, &restored, &ctx);
                 fields.push(("block_reason".to_string(), reason.clone()));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Tool call blocked by pre_tool hook: {reason}")).into());
@@ -2227,10 +2178,10 @@ impl Registry {
         };
         let hook_gate_ms = elapsed_ms(gate_started_at);
 
-        crate::logging::event_info(
-            "TOOL_LIFECYCLE",
-            Self::tool_lifecycle_fields("start", name, resolved_name, &input, &ctx),
-        );
+        // Input and context stay as they are from here on, so the lifecycle
+        // fields are built once: lent to the start line, relabelled below.
+        let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
+        crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
 
         let execute_started_at = std::time::Instant::now();
         let result = tool.execute(input.clone(), ctx.clone()).await;
@@ -2256,7 +2207,7 @@ impl Registry {
                     ..DispatchTimings::default()
                 };
                 observe_dispatch_timings(&ctx.tool_call_id, timings);
-                let mut fields = Self::tool_lifecycle_fields("error", name, resolved_name, &input, &ctx);
+                lifecycle::set_phase(&mut fields, "error");
                 fields.extend(timings.fields());
                 fields.push(("error".to_string(), crate::util::format_error_chain(&error)));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
@@ -2308,7 +2259,7 @@ impl Registry {
         };
         observe_dispatch_timings(&ctx.tool_call_id, timings);
 
-        let mut fields = Self::tool_lifecycle_fields("done", name, resolved_name, &input, &ctx);
+        lifecycle::set_phase(&mut fields, "done");
         fields.extend(timings.fields());
         fields.push(("output_bytes".to_string(), output.output.len().to_string()));
         fields.push(("output_chars".to_string(), output.output.chars().count().to_string()));

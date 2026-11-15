@@ -1157,6 +1157,9 @@ jobs:
         # modules compiled in every run and no cohort selected them (#300), so
         # two failures sat on `dev` unexecuted until they were fixed.
         # `--min-passed` is the measured count; raise it with the module.
+        # `tool::lifecycle::tests` (5) pins the `TOOL_LIFECYCLE` field list a
+        # dispatch builds once and relabels for its done or error line: names,
+        # order, values, and the input size counted without building the text.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1166,6 +1169,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 48 \
             -- tool::read::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 5 \
+            -- tool::lifecycle::tests:: --nocapture
 
       - name: Run prompt surface cohort
         shell: bash

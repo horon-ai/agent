@@ -928,7 +928,7 @@ async fn lifecycle_timing_fields_carry_durations_and_no_payload() {
         graceful_shutdown_signal: None,
         execution_mode: ToolExecutionMode::Direct,
     };
-    let mut fields = Registry::tool_lifecycle_fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
+    let mut fields = lifecycle::fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
     fields.extend(timings.fields());
     for (key, value) in &fields {
         assert!(
