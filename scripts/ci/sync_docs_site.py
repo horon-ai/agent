@@ -44,6 +44,7 @@ GITHUB_BLOB = "https://github.com/horon-ai/agent/blob/dev/"
 # Language code -> (path prefix inside the site, source suffix, language line).
 LANGUAGES = {
     "en": ("", ".md", re.compile(r"^Language:\s")),
+    "ko": ("ko/", ".ko.md", re.compile(r"^언어:\s")),
 }
 
 # Sidebar labels for pages whose title is too long for a sidebar. Keyed by the
@@ -81,6 +82,27 @@ DESCRIPTIONS = {
     "runtime/TOOL_SCHEDULING.md": "How a message's tool calls are grouped and run, and how repeated calls are stopped.",
     "runtime/TURNS.md": "Turn recovery, mid-run message insertion, the prewalk handoff, goal continuation, runtime commands and --resume.",
 }
+
+SIDEBAR_TITLES_KO = {
+    "README.md": "개요",
+    "diagram/README.md": "다이어그램",
+    "architecture/CRATES.md": "크레이트",
+    "performance/RESULTS.md": "측정 결과",
+    "performance/BENCHMARK.md": "성능 측정",
+    "performance/MEMORY.md": "메모리 예산",
+    "runtime/SWARM_TASK_GRAPH.md": "Swarm 태스크 그래프",
+    "runtime/TOOL_SCHEDULING.md": "도구 스케줄링",
+}
+
+DESCRIPTIONS_KO = {
+    "README.md": "참조 문서가 어떻게 구성되어 있는지, 고정 요구사항, 문서를 최신으로 유지하는 규칙을 설명한다.",
+    "diagram/README.md": "코드를 그린 다이어그램 여덟 장: 시스템 개요, 실행 모드, 턴 생명주기, 프로바이더 와이어, ACP 협상, 세션 저장, 도구 로딩, 릴리스 흐름.",
+    "performance/RESULTS.md": "측정 결과와 측정 방법, 그 결과가 보여 주는 것의 한계를 기록한다.",
+    "runtime/SWARM_TASK_GRAPH.md": "Swarm 태스크 DAG 설계. 기본으로 꺼져 있는 기능이며 horon-agent-plan 크레이트의 설계 근거를 담는다.",
+}
+
+SIDEBAR_BY_LANG = {"en": SIDEBAR_TITLES, "ko": SIDEBAR_TITLES_KO}
+DESCRIPTIONS_BY_LANG = {"en": DESCRIPTIONS, "ko": DESCRIPTIONS_KO}
 
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
@@ -188,7 +210,8 @@ def escape_text(text: str) -> str:
     """Escape what MDX would read as JSX, an expression or a wiki link."""
     text = re.sub(r"(?<!\\)([{}])", r"\\\1", text)
     text = re.sub(r"(?<!\\)\[\[", r"\\[\\[", text)
-    return re.sub(r"(?<!\\)<(?=[A-Za-z/!?])", r"\\<", text)
+    # A tag name may start with a letter of any script (`<디렉터리>`) or `/`, `!`, `?`.
+    return re.sub(r"(?<!\\)<(?=[^\W\d_]|[/!?])", r"\\<", text)
 
 
 def convert_line(line: str, origin: PurePosixPath, pages: set[PurePosixPath], lang: str) -> str:
@@ -279,10 +302,10 @@ def convert_page(page: PurePosixPath, lang: str, pages: set[PurePosixPath]) -> s
         out.append(convert_line(line, source_for(page, lang), pages, lang))
     while out and not out[0].strip():
         out.pop(0)
-    description = DESCRIPTIONS.get(page.as_posix()) if lang == "en" else None
+    description = DESCRIPTIONS_BY_LANG[lang].get(page.as_posix())
     description = description or describe(out)
     front = ["---", f"title: {json.dumps(title, ensure_ascii=False)}"]
-    sidebar = SIDEBAR_TITLES.get(page.as_posix()) if lang == "en" else None
+    sidebar = SIDEBAR_BY_LANG[lang].get(page.as_posix())
     if sidebar:
         front.append(f"sidebarTitle: {json.dumps(sidebar, ensure_ascii=False)}")
     front.append(f"description: {json.dumps(description, ensure_ascii=False)}")

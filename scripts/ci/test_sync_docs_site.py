@@ -28,6 +28,9 @@ class EscapeTests(unittest.TestCase):
     def test_braces_and_tags_outside_code_are_escaped(self) -> None:
         self.assertEqual(convert("use {name} and <tag> here"), r"use \{name\} and \<tag> here")
 
+    def test_tag_like_placeholder_in_korean_is_escaped(self) -> None:
+        self.assertEqual(convert("경로는 <디렉터리> 아래다"), r"경로는 \<디렉터리> 아래다")
+
     def test_code_spans_are_left_alone(self) -> None:
         self.assertEqual(convert("run `a {b} <c>` now"), "run `a {b} <c>` now")
 

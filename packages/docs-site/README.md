@@ -6,6 +6,23 @@ site settings, each `*.mdx` file is one page, `logo/` and `favicon.svg` are the
 brand assets, and `index.mdx` is the home page. The package is managed with bun;
 the Mintlify CLI (`mint`) is a dev dependency, so no global install is needed.
 
+## Generated Reference pages
+
+The `Reference` tab (English) and its Korean counterpart under `ko/` are not
+written here. `scripts/ci/sync_docs_site.py` generates `reference/`, `ko/reference/`
+and `images/reference/` from `docs/`, which stays the source of truth. Edit
+`docs/`, run the script, and commit the result; never edit those folders by hand.
+
+```bash
+python3 scripts/ci/sync_docs_site.py          # rewrite the generated files
+python3 scripts/ci/sync_docs_site.py --check  # exit 1 when they are stale (runs in CI)
+```
+
+The other pages (`index`, `getting-started`, `install`, `cli`, ...) are hand-written
+and are English only. `docs.json` lists every generated page; the script's
+`--check` fails when a page is missing from the navigation or listed without a
+source.
+
 ## Work on the site
 
 ```bash
