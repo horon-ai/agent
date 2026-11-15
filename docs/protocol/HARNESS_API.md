@@ -478,6 +478,15 @@ for every call it made. A background task's stop is confirmed by its final
 `background_work` event, not by the reply: the reply only says a cancellation
 was accepted.
 
+Two ordering rules hold on the daemon's side of the socket. A finished turn is
+closed before the next `message` for that session is read, so a client that
+answers a turn's terminal event with its next prompt is not refused with
+`Already processing a message` (`crates/app-core/src/server/client_lifecycle.rs:820-830`).
+And a cancel's `Interrupted` and the turn's `Done` are written only after the
+cancelled turn's own frames have been forwarded, waiting at most 500 ms for
+that (`crates/app-core/src/server/client_lifecycle.rs:3970-3980`,
+`crates/app-core/src/server/fanout_flush.rs:56-60`).
+
 ### Events
 
 ```json

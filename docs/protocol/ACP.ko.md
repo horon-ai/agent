@@ -127,7 +127,7 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 | `refusal` | 모델이 거절함 |
 | `cancelled` | `session/cancel`, `$/cancel_request`, `session/close` 중 하나로 취소됨 |
 
-취소한 턴은 데몬 스트림이 어떤 모양으로 끝나도 항상 `cancelled`로 답한다. 현재 턴을 외부에서 중단해도 `cancelled`다. 취소한 턴에 남은 데몬 이벤트(늦게 오는 텍스트, 도구, 계획, diff 프레임과 그 턴의 종료 신호)는 어댑터가 비우므로 다음 `session/prompt`로 넘어가지 않는다. 취소된 턴 다음의 `session/prompt`는 메시지를 보내기 전에 세션이 아직 바쁜지 데몬에 확인한다. 이 대기는 최대 약 5초다. 그때도 바쁘면 메시지를 그대로 보내고, 데몬이 거절하면 `-32603`으로 답한다. 취소한 턴이 응답한 뒤 약 10초가 지나서 도착한 데몬 이벤트는 비우지 못하고 다음 prompt의 업데이트에 섞일 수 있다. 토큰 사용량은 응답의 `_meta["horon-agent"].usage`에 담긴다.
+취소한 턴은 데몬 스트림이 어떤 모양으로 끝나도 항상 `cancelled`로 답한다. 현재 턴을 외부에서 중단해도 `cancelled`다. 취소한 턴에 남은 데몬 이벤트(늦게 오는 텍스트, 도구, 계획, diff 프레임과 그 턴의 종료 신호)는 어댑터가 비우므로 다음 `session/prompt`로 넘어가지 않는다. 취소된 턴 다음의 `session/prompt`는 메시지를 보내기 전에 세션이 아직 바쁜지 데몬에 확인한다. 이 대기는 최대 약 5초다. 그때도 바쁘면 메시지를 그대로 보내고, 데몬이 거절하면 `-32603`으로 답한다. 데몬 쪽에서는 취소한 턴 자신의 프레임이 모두 전달된 뒤에야 취소의 `Interrupted`와 그 턴의 `Done`을 쓰며, 그 대기는 500ms가 상한이다. 그래서 그 턴의 마지막 도구 프레임이 다음 prompt 안으로 들어가지 않는다. 취소한 턴이 응답한 뒤 약 10초가 지나서 도착한 데몬 이벤트는 비우지 못하고 다음 prompt의 업데이트에 섞일 수 있다. 토큰 사용량은 응답의 `_meta["horon-agent"].usage`에 담긴다.
 
 `session/cancel`은 알림이다. 진행 중인 prompt가 없을 때 보낸 `session/cancel`은 아무 일도 하지 않는다. 요청을 취소하는 `$/cancel_request`도 두 방향으로 처리한다. 진행 중인 prompt를 가리키면 그 prompt가 응답을 하나 받고 끝난다. 그 밖의 진행 중 요청은 `-32800`으로 답한다. 모르는 id는 무시한다.
 
@@ -355,7 +355,7 @@ protocol_v2 = true     # false면 모든 클라이언트에 v1로만 답한다
 
 ## 적합성 검증
 
-`cargo test --locked -p horon-agent --test acp_stdio`는 통합 시나리오 IS-1부터 IS-15까지 한 개씩, 테스트 15개를 돌린다. 모든 프레임은 `tests/fixtures/acp/schema-v1.26.0.json`으로 검증한다.
+`cargo test --locked -p horon-agent --test acp_stdio`는 통합 시나리오 IS-1부터 IS-15까지를 돌리고, v1 `authMethods` 프레임을 확인하는 골든 검사를 함께 돌린다. 모든 프레임은 `tests/fixtures/acp/schema-v1.26.0.json`으로 검증한다.
 
 ```bash
 # 공식 acp-tck v1 스위트 (고정 커밋, 격리된 데몬)

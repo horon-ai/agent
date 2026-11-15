@@ -91,8 +91,8 @@ values. Those names in the stale config comment are not a runtime guarantee.
 ### `turn_end`
 
 Fires when an agent turn ends (the streaming turn path covers desktop, swarm
-worker, and unattended sessions (`is_headless` in code), and a one-shot `horon run`
-counts here too).
+worker, and unattended sessions, and a one-shot `horon run` fires it too,
+`crates/app-core/src/agent/turn_execution.rs:60-67`).
 
 Extra fields are `HORON_AGENT_HOOK_STATUS` (`ok`/`error`),
 `HORON_AGENT_HOOK_DURATION_MS`, `HORON_AGENT_HOOK_MODEL`,
@@ -104,7 +104,7 @@ Extra fields are `HORON_AGENT_HOOK_STATUS` (`ok`/`error`),
 `HORON_AGENT_HOOK_ERROR`.
 
 The token fields are summed from the assistant messages of the current turn
-(`crates/app-core/src/agent/turn_execution.rs:256-270`). `PROMPT_TOKENS` is the
+(`crates/app-core/src/agent/turn_execution/turn_token_usage.rs:27-60`). `PROMPT_TOKENS` is the
 whole prompt size the provider reported, and it is filled only when present.
 `INPUT_TOKENS` is the raw input count the provider reported. These values are not
 normalized across providers. This build sends model calls through one provider

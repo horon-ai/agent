@@ -87,7 +87,7 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
 ### `turn_end`
 
 에이전트 턴이 끝날 때 발생한다(스트리밍 턴 경로는 데스크톱, swarm 워커, 무인
-세션(코드에서 `is_headless`)을 포함하며, 일회성 `horon run`도 여기에 해당한다).
+세션을 포함하며, 일회성 `horon run`도 같은 훅을 낸다, `crates/app-core/src/agent/turn_execution.rs:60-67`).
 
 추가 필드는 `HORON_AGENT_HOOK_STATUS`(`ok`/`error`), `HORON_AGENT_HOOK_DURATION_MS`,
 `HORON_AGENT_HOOK_MODEL`, `HORON_AGENT_HOOK_LAST_ASSISTANT_TEXT`(앞 4000자),
@@ -98,7 +98,7 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
 `HORON_AGENT_HOOK_ERROR`다.
 
 토큰 필드는 현재 턴의 어시스턴트 메시지에서 합산한다
-(`crates/app-core/src/agent/turn_execution.rs:256-270`). `PROMPT_TOKENS`는
+(`crates/app-core/src/agent/turn_execution/turn_token_usage.rs:27-60`). `PROMPT_TOKENS`는
 제공자가 보고한 전체 프롬프트 크기이며 있을 때만 채운다. `INPUT_TOKENS`는 제공자가
 보고한 원시 입력 수다. 이 값들은 제공자 사이에서 정규화되지 않는다. 이 빌드는 모델
 호출이 프로파일 `type`을 따르는 엔드포인트를 가진 프로바이더 런타임 하나로 나가므로

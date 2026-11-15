@@ -16,9 +16,9 @@
 - `.mcp.json`
 - `.claude/mcp.json`
 
-사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다.
+사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다. 이 가운데 Claude Code 파일은 `[mcp] claude_user`가 켜져 있을 때만 읽고, `~/.codex/config.toml`은 `[mcp] codex_user`가 켜져 있을 때만 읽습니다. `~/.claude.json`의 프로젝트별 항목은 세션의 프로젝트 디렉터리와 맞춰 고르므로 한 저장소의 항목이 다른 저장소로 새지 않습니다 (`crates/base/src/mcp/sources.rs:1-14`).
 
-강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
+강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
 
 ### 다이제스트 규칙
 
@@ -90,13 +90,13 @@
 | `panic.thread` | 패닉이 난 스레드 이름 또는 ID. |
 | `operations` | 마지막 도구 디스패치 최대 64건. 오래된 것부터. |
 
-`operations`는 프로세스 전역 링 버퍼입니다 (`crash.rs:25` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 입력 JSON 직렬화 문자열을 담습니다. 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않습니다.
+`operations`는 프로세스 전역 링 버퍼입니다 (`crash.rs:25` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 리댁션과 자르기를 거친 입력 텍스트를 담습니다 (`crash.rs:42-46` `OperationRecord`). 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않습니다.
 
 `report.txt`는 같은 내용을 사람이 읽기 좋게 편다. 첫 줄은 `horon-agent crash bundle (local only; nothing was transmitted)`입니다 (`crash.rs:205` `render_report`).
 
 ### 리댁션
 
-번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:51`).
+번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:44`).
 
 - 패닉 메시지, 위치, 스레드 이름, 도구 이름, 도구 입력 JSON에 같은 패스를 적용합니다.
 - 필드마다 2048자에서 자르고 `[truncated]`를 붙입니다. 도구 이름은 128자입니다 (`crash.rs:241` `truncate_chars`).
@@ -112,7 +112,7 @@
 
 `[features] crash_bundles`의 기본값은 `true`입니다 (`crates/config-types/src/feature.rs:54`). `false`로 두면 패닉 훅이 번들을 쓰지 않고 도구 디스패치도 기록하지 않습니다.
 
-훅은 시작할 때 한 번 설치됩니다 (`src/cli/startup.rs:52`). 이후 호출은 활성 플래그만 갱신합니다 (`crash.rs:67` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
+훅은 시작할 때 한 번 설치됩니다 (`src/cli/startup.rs:38`). 이후 호출은 활성 플래그만 갱신합니다 (`crash.rs:67` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
 
 ### 한계
 
@@ -207,7 +207,7 @@
   `scripts/ci/check_security.sh`에서 무시했다. 이 스크립트는 `cargo audit --deny warnings`로
   돌기 때문에 새 경고(유지보수 중단, 불건전성, yanked)는 CI를 실패시킨다.
 - `scripts/ci/check_security.sh`는 위에서 명시적으로 분류한 취약점 권고
-  (`rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
+  (`rustls-webpki`, `lopdf`, `quick-xml`)를 무시해 CI가 계속 조치 가능하게 유지한다
   (`scripts/ci/check_security.sh`의 `audit_ignores`). 새
   취약점은 기본적으로 여전히 CI를 실패시킨다.
 - 2026-11-13: 같은 날 공개된 권고 세 건이 의존성을 바꾸지 않은 push에서도 preflight를 실패시켰다.

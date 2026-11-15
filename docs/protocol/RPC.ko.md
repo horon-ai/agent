@@ -25,7 +25,7 @@ horon-agent rpc --resume <session>   # 기존 세션에 붙기
 최소 교환은 입력 두 줄과 승인 한 줄, 그 뒤 턴 프레임이다. `prompt` 응답은 턴이 돌기 *전에* 기록되므로, 그 응답을 기다리는 호스트가 긴 답변에서 교착되지 않는다.
 
 ```json
-{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
+{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864,"supportsBashExcludeFromContext":true}
 {"id":"p1","type":"prompt","message":"Reply with only the word ok"}
 {"id":"p1","type":"response","command":"prompt","success":true}
 ```

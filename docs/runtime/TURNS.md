@@ -102,6 +102,30 @@ while `ForegroundGuard::close` forwards its idle state to every attachment (boun
 leaving the session idle until some unrelated turn drains it. A turn genuinely in flight
 still answers `None` at once and the message takes the queue path, as before.
 
+### A finished turn closes before the next prompt is read
+
+The request loop reads a finished turn's report ahead of client input
+(`crates/app-core/src/server/client_lifecycle.rs:825-829`, the biased
+`processing_done_rx.recv()` arm). The turn task sends that report before it
+sends its terminal event, so a client that answers `Done` with the next prompt
+finds the turn already closed instead of meeting `Already processing a
+message` (`crates/app-core/src/server/client_lifecycle.rs:3771-3779`). A rejected
+turn reports in the same order, before its error event
+(`crates/app-core/src/server/client_lifecycle.rs:3705-3707`). The next turn's
+task still holds the agent until this turn's idle state is out, so its `running`
+cannot precede that idle.
+
+A cancel is the one reply the request loop writes straight to the client rather
+than through the turn's forwarder, so it waits for the session's forwarders to
+drain first: `fanout_flush::flush` with a 500 ms bound, then `Interrupted` and
+`Done` (`crates/app-core/src/server/client_lifecycle.rs:3976-3978`). Without that
+wait the cancelled turn's last tool frame would land after its `Done`, inside
+the next prompt. A forwarder registers its flush channel at spawn, answers a
+flush only when its event queue was empty when the request arrived, and drops
+the channel on exit; a session with no live forwarder returns at once, and a
+flush that runs out its bound logs a warning and lets the reply go
+(`crates/app-core/src/server/fanout_flush.rs`, `crates/app-core/src/server/state.rs:996`).
+
 ## Soft interrupts: seamless message injection
 
 ### Overview
