@@ -280,25 +280,16 @@ fn a_streamed_call_opens_once_and_closes_with_its_arguments() {
         json!({ "type": "response.completed", "response": { "status": "completed" } }),
     ]);
 
-    let labelled = labels(&events);
     assert_eq!(
-        labelled.first().map(String::as_str),
-        Some("tool:call_1:bash"),
-        "{labelled:?}"
-    );
-    assert!(
-        labelled.iter().any(|label| label.starts_with("arg:call_1:")),
-        "the arguments stream as deltas: {labelled:?}"
-    );
-    assert!(
-        labelled.contains(&"tool-end:call_1".to_string()),
-        "the call closes once: {labelled:?}"
-    );
-    assert_eq!(labelled.last().map(String::as_str), Some("end:None"), "{labelled:?}");
-    assert_eq!(
-        labelled.iter().filter(|label| **label == "tool:call_1:bash").count(),
-        1,
-        "{labelled:?}"
+        labels(&events),
+        vec![
+            "tool:call_1:bash",
+            "arg:call_1:{\"command\":",
+            // Only the part the done snapshot added is streamed again.
+            "arg:call_1:\"pwd\"}",
+            "tool-end:call_1",
+            "end:None",
+        ]
     );
 }
 
@@ -404,17 +395,17 @@ fn a_reasoning_item_already_streamed_live_adds_no_second_block() {
         json!({ "type": "response.completed", "response": { "status": "completed" } }),
     ]);
 
-    let labelled = labels(&events);
     assert_eq!(
-        labelled.iter().filter(|label| **label == "think").count(),
-        1,
-        "the summary must not be rendered twice: {labelled:?}"
+        labels(&events),
+        vec!["think", "think:live", "think-end", "think-done", "end:None",],
+        "the summary must not be rendered twice"
     );
     assert!(
         !events
             .iter()
             .any(|event| matches!(event, StreamEvent::OpenAIReasoning { .. })),
-        "{labelled:?}"
+        "{:?}",
+        labels(&events)
     );
 }
 
@@ -484,7 +475,7 @@ fn a_body_that_ends_mid_answer_reports_truncation() {
 fn a_malformed_chunk_is_reported_once_and_the_stream_keeps_going() {
     let mut parser = ResponsesParser::new();
     let mut out = VecDeque::new();
-    parser.parse("{not json", &mut out);
+    parser.parse("  {not json  ", &mut out);
 
     let first: Vec<StreamEvent> = out.drain(..).collect();
     assert_eq!(first.len(), 1, "{:?}", labels(&first));
@@ -493,9 +484,14 @@ fn a_malformed_chunk_is_reported_once_and_the_stream_keeps_going() {
             message,
             retry_after_secs,
         }) => {
+            let expected_prefix = "OpenAI Responses stream sent a malformed JSON chunk: ";
+            assert!(message.starts_with(expected_prefix), "{message}");
+            // The diagnostic keeps the payload as it was reported, trimmed.
+            let payload_part = format!("; payload={}", "{not json");
+            assert!(message.ends_with(&payload_part), "{message}");
             assert!(
-                message.starts_with("OpenAI Responses stream sent a malformed JSON chunk:"),
-                "{message}"
+                message.len() > expected_prefix.len() + payload_part.len(),
+                "the parse error is quoted: {message}"
             );
             assert!(retry_after_secs.is_none(), "{retry_after_secs:?}");
         }
@@ -513,6 +509,92 @@ fn a_malformed_chunk_is_reported_once_and_the_stream_keeps_going() {
 
     let rest: Vec<StreamEvent> = out.into_iter().collect();
     assert_eq!(labels(&rest), vec!["text:recovered", "text-done", "end:None"]);
+}
+
+#[test]
+fn a_transport_disconnect_frame_ends_the_stream() {
+    let mut parser = ResponsesParser::new();
+    let mut out = VecDeque::new();
+    parser.parse("stream disconnected before completion", &mut out);
+
+    // The consumer acts on the first `Error`, so a second one only repeats it.
+    parser.parse(
+        &json!({ "type": "response.output_text.delta", "delta": "after" }).to_string(),
+        &mut out,
+    );
+    parser.finish(&mut out);
+
+    assert_eq!(
+        labels(out.make_contiguous()),
+        vec!["error:stream disconnected before completion"]
+    );
+}
+
+#[test]
+fn an_inconsistent_argument_snapshot_ends_the_stream() {
+    let mut parser = ResponsesParser::new();
+    let mut out = VecDeque::new();
+    parser.parse(
+        &json!({
+            "type": "response.function_call_arguments.delta",
+            "output_index": 1,
+            "item_id": "fc_1",
+            "call_id": "call_1",
+            "name": "bash",
+            "delta": "{\"command\":\"ls\"}"
+        })
+        .to_string(),
+        &mut out,
+    );
+    // A done snapshot that disagrees with what was already streamed.
+    parser.parse(
+        &json!({
+            "type": "response.function_call_arguments.done",
+            "output_index": 1,
+            "item_id": "fc_1",
+            "arguments": "{\"command\":\"rm\"}"
+        })
+        .to_string(),
+        &mut out,
+    );
+    parser.parse(
+        &json!({ "type": "response.output_text.delta", "delta": "after" }).to_string(),
+        &mut out,
+    );
+    parser.finish(&mut out);
+
+    // The partial call is left open in the list only because the error ended the
+    // read; nothing after it may arrive.
+    assert_eq!(
+        labels(out.make_contiguous()),
+        vec![
+            "tool:call_1:bash",
+            "arg:call_1:{\"command\":\"ls\"}",
+            "error:OpenAI tool argument snapshot differs from streamed arguments",
+        ]
+    );
+}
+
+#[test]
+fn a_websocket_fallback_notice_is_not_a_parse_error() {
+    let mut parser = ResponsesParser::new();
+    let mut out = VecDeque::new();
+    parser.parse("falling back from websockets to https transport", &mut out);
+    assert!(out.is_empty(), "{:?}", labels(out.make_contiguous()));
+
+    // The stream itself is still alive after the notice.
+    parser.parse(
+        &json!({ "type": "response.output_text.delta", "delta": "still here" }).to_string(),
+        &mut out,
+    );
+    parser.parse(
+        &json!({ "type": "response.completed", "response": { "status": "completed" } }).to_string(),
+        &mut out,
+    );
+    assert_eq!(
+        labels(out.make_contiguous()),
+        vec!["text:still here", "text-done", "end:None"]
+    );
 }
 
 #[test]
@@ -565,15 +647,12 @@ async fn a_key_quoted_in_a_server_error_is_redacted() {
     let mut stream: horon_agent_provider_core::EventStream = Box::pin(stream);
     let events = crate::test_support::collect(&mut stream).await;
 
-    let labelled = labels(&events);
-    assert!(!labelled.is_empty(), "the failure must be reported");
-    assert!(
-        labelled.iter().all(|label| !label.contains(TEST_KEY)),
-        "the key leaked: {labelled:?}"
-    );
-    assert!(
-        labelled.iter().any(|label| label.contains(REDACTED)),
-        "the key is replaced: {labelled:?}"
+    assert_eq!(
+        labels(&events),
+        vec![format!(
+            "error:OpenAI Responses stream returned an error: invalid_request_error: bad key {REDACTED}"
+        )],
+        "one terminal error, with the key replaced"
     );
 }
 

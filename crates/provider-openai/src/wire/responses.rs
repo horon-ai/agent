@@ -29,6 +29,14 @@ const LABEL: &str = "OpenAI Responses";
 /// Event kinds that fail the whole response rather than one frame of it.
 const ERROR_KINDS: [&str; 3] = ["response.failed", "response.error", "error"];
 
+/// The transport's notice that it switched from websockets to HTTPS.
+///
+/// Same text as `WEBSOCKET_FALLBACK_NOTICE` in `crate::stream`, which
+/// `transport_frame_event` turns into "no event" for the native stream. That
+/// module is out of this plan's write scope, so the string is repeated here and
+/// a silent frame stays silent on this wire too.
+const WEBSOCKET_FALLBACK_NOTICE: &str = "falling back from websockets to https transport";
+
 /// Build a streaming Responses request body.
 ///
 /// `instructions` carries the system prompt and is omitted when it is empty.
@@ -247,6 +255,13 @@ impl ResponsesParser {
                         message,
                         retry_after_secs,
                     });
+                    // The consumer ends the read on `StreamEvent::Error`: it
+                    // either retries the whole response or stops the turn
+                    // (app-core `turn_loops`/`turn_streaming_mpsc`). Anything
+                    // this wire emitted afterwards, including its own
+                    // truncation error, could only add a second failure.
+                    self.finished = true;
+                    break;
                 }
                 other => out.push_back(other),
             }
@@ -272,8 +287,9 @@ impl WireParser for ResponsesParser {
             events.push_front(first);
         }
         // A failed response carries the provider's own error object, which this
-        // wire renders in its own words; every other error the inner parser
-        // reports (an inconsistent argument snapshot) leaves the turn alive.
+        // wire renders in its own words. Every other error the inner parser
+        // reports is already terminal through `translate`, which ends the read
+        // because the consumer does the same on `StreamEvent::Error`.
         if events.iter().any(|event| matches!(event, StreamEvent::Error { .. }))
             && let Some(error) = server_error_event(payload)
         {
@@ -282,11 +298,17 @@ impl WireParser for ResponsesParser {
             self.finished = true;
             return;
         }
+        if events.is_empty() && payload.to_lowercase().contains(WEBSOCKET_FALLBACK_NOTICE) {
+            // The transport announced a switch to HTTPS; the response itself
+            // has not started, so the native stream drops this frame too.
+            return;
+        }
         if events.is_empty()
             && let Err(error) = serde_json::from_str::<serde::de::IgnoredAny>(payload)
         {
-            // One bad frame is a bad frame, not a broken response: report it and
-            // keep reading, so the rest of the answer still arrives.
+            // One unreadable frame is a bad frame, not a broken response: report
+            // it and keep reading, so the rest of the answer still arrives. This
+            // is the one error this wrapper reports without ending the stream.
             out.push_back(StreamEvent::Error {
                 message: format!(
                     "{LABEL} stream sent a malformed JSON chunk: {error}; payload={}",
