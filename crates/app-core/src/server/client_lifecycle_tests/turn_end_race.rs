@@ -54,12 +54,24 @@ async fn a_prompt_waiting_beside_the_turn_end_is_not_busy() {
         .await;
     editor.until(is_running).await;
 
+    // The plan read happens only for a session that has a swarm.
+    let session_id = h.only_session().await;
+    if let Some(member) = h.swarm_members.write().await.get_mut(&session_id) {
+        member.swarm_id = Some(format!("session:{session_id}"));
+    }
     let plans = h.swarm_plans.write().await;
     editor.send(json!({"type": "get_history", "id": 11})).await;
-    // The reply is written before the plan read, so the loop is parked now.
+    // The reply is written before the plan read.
     editor
         .until(|event| matches!(event, ServerEvent::History { id: 11, .. }))
         .await;
+    editor.send(json!({"type": "ping", "id": 13})).await;
+    let pong = tokio::time::timeout(
+        Duration::from_millis(300),
+        editor.until(|event| matches!(event, ServerEvent::Pong { .. })),
+    )
+    .await;
+    assert!(pong.is_err(), "the request loop is parked on the swarm plan table: {pong:?}");
 
     gate.add_permits(1);
     let first = editor
