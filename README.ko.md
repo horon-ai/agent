@@ -169,23 +169,23 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 
 ## 벤치마크
 
-`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `f7a53f1`로 jcode v0.99.1과 비교해 한 턴을 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 다르므로 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
+`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `cdc8cb8`로 jcode v0.99.1과 비교해 한 턴을 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 다르므로 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
 
 <p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 43.1 ms, jcode 144 ms. macOS: horon 55.2 ms, jcode 366 ms. Windows: horon 118 ms, jcode 129 ms" width="780">
+  <img src="docs/performance/charts/03-oneshot-time.svg" alt="OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 53.5 ms, jcode 144 ms. macOS: horon 92.2 ms, jcode 517 ms. Windows: horon 207 ms, jcode 162 ms" width="780">
 </p>
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| 한 턴 실행, 중앙값 | 43.1 ms | 144.1 ms |
-| 스킬 호출, 중앙값 | 36.9 ms | 58.5 ms |
-| MCP 도구 호출, 중앙값 | 61.9 ms | 177.5 ms |
-| 한 턴 최대 프로세스 트리 RSS | 39.8 MB | 41.7 MB |
-| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 231.7 KB | 120.3 KB |
+| 한 턴 실행, 중앙값 | 53.5 ms | 143.8 ms |
+| 스킬 호출, 중앙값 | 36.8 ms | 57.3 ms |
+| MCP 도구 호출, 중앙값 | 63.2 ms | 176.4 ms |
+| 한 턴 최대 프로세스 트리 RSS | 39.8 MB | 38.8 MB |
+| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 204.7 KB | 91.4 KB |
 | 첫 모델 요청, 본문 / 도구 목록 바이트 | 3,731 / 2,390 | 3,245 / 1,433 |
-| 설치 크기 | 115.6 MB | 163.4 MB |
+| 설치 크기 | 115.7 MB | 163.4 MB |
 
-Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모양이었다. 한 턴 55.2 ms 대 366.4 ms, 스킬 48.8 ms 대 273.0 ms, MCP 66.6 ms 대 304.5 ms다. Windows도 같은 세 항목을 가져갔지만 격차는 좁다. 한 턴 118.3 ms 대 129.3 ms, 스킬 129.3 ms 대 153.1 ms, MCP 161.3 ms 대 257.9 ms다. 그래도 Windows 한 턴의 최대 메모리(30.8 MB 대 35.3 MB)와 Linux의 세션 추가당 메모리는 jcode가 덜 썼다.
+Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모양이었다. 한 턴 92.2 ms 대 516.6 ms, 스킬 90.6 ms 대 482.5 ms, MCP 151.4 ms 대 557.3 ms다. **Windows는 예외로 한 턴 실행을 jcode가 가져갔다**(161.8 ms 대 206.5 ms). 스킬(169.3 ms 대 213.8 ms)과 MCP 호출(241.2 ms 대 318.1 ms)은 horon이 앞섰다. 한 턴의 최대 메모리는 Linux와 Windows에서 jcode가 덜 썼고(38.8 MB 대 39.8 MB, 28.2 MB 대 36.5 MB), Linux의 세션 추가당 메모리도 jcode가 덜 썼다.
 
 이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표, TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
 

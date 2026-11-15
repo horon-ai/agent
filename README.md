@@ -169,23 +169,23 @@ Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs
 
 ## Benchmarks
 
-`.github/workflows/benchmark-docs.yml` runs a one-shot turn on GitHub-hosted runners at commit `f7a53f1` against jcode v0.99.1, with a deterministic mock model and exactly one `ls` tool call per turn. Each OS runs on a different machine, so compare inside a row and never across rows.
+`.github/workflows/benchmark-docs.yml` runs a one-shot turn on GitHub-hosted runners at commit `cdc8cb8` against jcode v0.99.1, with a deterministic mock model and exactly one `ls` tool call per turn. Each OS runs on a different machine, so compare inside a row and never across rows.
 
 <p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS. Linux: horon 43.1 ms, jcode 144 ms. macOS: horon 55.2 ms, jcode 366 ms. Windows: horon 118 ms, jcode 129 ms" width="780">
+  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS. Linux: horon 53.5 ms, jcode 144 ms. macOS: horon 92.2 ms, jcode 517 ms. Windows: horon 207 ms, jcode 162 ms" width="780">
 </p>
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| One-shot turn, median | 43.1 ms | 144.1 ms |
-| Skill invocation, median | 36.9 ms | 58.5 ms |
-| MCP tool call, median | 61.9 ms | 177.5 ms |
-| Peak tree RSS, one-shot | 39.8 MB | 41.7 MB |
-| Memory per additional session, idle after 3 turns | 231.7 KB | 120.3 KB |
+| One-shot turn, median | 53.5 ms | 143.8 ms |
+| Skill invocation, median | 36.8 ms | 57.3 ms |
+| MCP tool call, median | 63.2 ms | 176.4 ms |
+| Peak tree RSS, one-shot | 39.8 MB | 38.8 MB |
+| Memory per additional session, idle after 3 turns | 204.7 KB | 91.4 KB |
 | First model request, body / tool catalog bytes | 3,731 / 2,390 | 3,245 / 1,433 |
-| Install size | 115.6 MB | 163.4 MB |
+| Install size | 115.7 MB | 163.4 MB |
 
-horon took all three Linux time rows, and macOS followed the same shape: one-shot 55.2 ms against 366.4 ms, skill 48.8 ms against 273.0 ms, MCP 66.6 ms against 304.5 ms. Windows took the same three rows with narrower gaps: one-shot 118.3 ms against 129.3 ms, skill 129.3 ms against 153.1 ms, and MCP 161.3 ms against 257.9 ms. jcode still used less peak memory on a Windows one-shot (30.8 MB against 35.3 MB) and less memory per extra session on Linux.
+horon took all three Linux time rows, and macOS followed the same shape: one-shot 92.2 ms against 516.6 ms, skill 90.6 ms against 482.5 ms, MCP 151.4 ms against 557.3 ms. **Windows is the exception: jcode won the one-shot** (161.8 ms against 206.5 ms), while horon kept the skill run (169.3 ms against 213.8 ms) and the MCP call (241.2 ms against 318.1 ms). jcode also used less peak memory on the Linux and Windows one-shots (38.8 MB against 39.8 MB, 28.2 MB against 36.5 MB) and less memory per extra session on Linux.
 
 These are single-commit CI samples, not a guarantee. The full tables for eight tools, the TUI suite, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
 
