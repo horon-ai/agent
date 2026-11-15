@@ -12,7 +12,8 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 ### 계층 (순서대로)
 
 1. **기본 시스템 프롬프트**: 내장 `crates/base/src/prompt/system_prompt.md`이며
-   파일로 재정의할 수 있다(아래 참고).
+   파일로 재정의할 수 있다(아래 참고). 내장 문구도 재정의 파일처럼 끝 공백을 잘라 내므로
+   다음 계층과의 사이에는 빈 줄이 정확히 하나만 들어간다.
 2. 기능 모듈(예: `[[stream_rules]]` 안내, 아래 참고).
 3. `AGENTS.md`: 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.ko.md`](TOOLS.ko.md)).
 4. 프롬프트 오버레이: `./.horon/prompt-overlay.md`와 `~/.horon/prompt-overlay.md`.

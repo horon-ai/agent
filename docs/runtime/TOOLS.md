@@ -6,7 +6,7 @@ This covers tool loading tiers, effects and approval tiers, edit safety, the anc
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 9,111 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
 
 ### Three tiers
 
@@ -56,7 +56,7 @@ The static part of a listing `core` session's system prompt gains an `# Addition
 - The index freezes once, when the first tool list is locked. A warm-up request before MCP servers register does not freeze it; it is rebuilt once at lock time and then pinned. Unlocking tools, compaction, MCP connections, provider switches, and configuration reloads afterwards do not change it (`turn_execution.rs:834` `ensure_listed_tools_index`).
 - Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
 - When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:175`). An overridden session still keeps the names of listed tools.
-- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`.
+- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`. Each listed core tool opens its description with a sentence that fits, so no row stops mid-word; `todo` is the one row still cut, because its model-visible text is kept as written.
 - The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:233` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox

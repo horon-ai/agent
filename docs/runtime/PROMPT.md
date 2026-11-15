@@ -11,7 +11,8 @@ horon-agent builds the system prompt in several layers. Two of them are files th
 ### Layers (in order)
 
 1. **Base system prompt**: the built-in `crates/base/src/prompt/system_prompt.md`, replaceable by a
-   file (see below).
+   file (see below). Trailing whitespace is trimmed from the built-in text as it is from a
+   replacement file, so the next layer follows exactly one blank line.
 2. Feature modules (for example the `[[stream_rules]]` guidance below).
 3. `AGENTS.md`: the project's `./AGENTS.md` and the global `~/AGENTS.md`. An `AGENTS.md` in a subdirectory that this layer does not cover is attached separately to `read` results when `[tools] nested_agents_md` is on ([`docs/runtime/TOOLS.md`](TOOLS.md)).
 4. Prompt overlay: `./.horon/prompt-overlay.md` and `~/.horon/prompt-overlay.md`.
