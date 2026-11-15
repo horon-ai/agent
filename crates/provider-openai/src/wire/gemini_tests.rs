@@ -557,7 +557,7 @@ fn text_chunks_accumulate_and_the_last_one_closes_the_turn() {
             "TokenUsage(Some(10),Some(7),Some(4),None)",
             "TextDelta( world)",
             "TextDone",
-            "MessageEnd(Some(\"STOP\"))",
+            "MessageEnd(Some(\"stop\"))",
         ]
     );
 }
@@ -577,7 +577,7 @@ fn a_thought_part_is_a_thinking_run_closed_before_the_text() {
             "ThinkingDone",
             "TextDelta(answer)",
             "TextDone",
-            "MessageEnd(Some(\"STOP\"))",
+            "MessageEnd(Some(\"stop\"))",
         ]
     );
 }
@@ -604,7 +604,7 @@ fn a_call_reports_its_id_signature_arguments_and_end_in_order() {
             format!("ToolUseSignatureFor({id},sig)"),
             format!("ToolInputDeltaFor({id},{{\"path\":\"a.txt\"}})"),
             format!("ToolUseEndFor({id})"),
-            "MessageEnd(Some(\"STOP\"))".to_string(),
+            "MessageEnd(Some(\"stop\"))".to_string(),
         ]
     );
 }
@@ -635,7 +635,7 @@ fn two_calls_in_one_chunk_get_two_different_ids() {
             format!("ToolUseStart({second},write)"),
             format!("ToolInputDeltaFor({second},{{}})"),
             format!("ToolUseEndFor({second})"),
-            "MessageEnd(Some(\"STOP\"))".to_string(),
+            "MessageEnd(Some(\"stop\"))".to_string(),
         ]
     );
 }
@@ -668,7 +668,7 @@ fn a_thought_still_open_when_a_call_arrives_is_closed_before_the_call() {
             format!("ToolUseStart({id},read)"),
             format!("ToolInputDeltaFor({id},{{}})"),
             format!("ToolUseEndFor({id})"),
-            "MessageEnd(Some(\"STOP\"))".to_string(),
+            "MessageEnd(Some(\"stop\"))".to_string(),
         ]
     );
 }
@@ -685,7 +685,7 @@ fn a_thought_still_open_at_the_finish_reason_is_closed_before_the_end() {
             "ThinkingDelta(t)",
             "ThinkingEnd",
             "ThinkingDone",
-            "MessageEnd(Some(\"STOP\"))",
+            "MessageEnd(Some(\"stop\"))",
         ]
     );
 }
@@ -710,7 +710,7 @@ fn text_already_open_is_closed_before_a_call_starts() {
             format!("ToolUseStart({id},read)"),
             format!("ToolInputDeltaFor({id},{{}})"),
             format!("ToolUseEndFor({id})"),
-            "MessageEnd(Some(\"STOP\"))".to_string(),
+            "MessageEnd(Some(\"stop\"))".to_string(),
         ]
     );
 }
@@ -727,7 +727,7 @@ fn a_server_id_is_sanitized_and_a_missing_args_object_becomes_empty() {
             "ToolUseStart(fc_1,read)".to_string(),
             "ToolInputDeltaFor(fc_1,{})".to_string(),
             "ToolUseEndFor(fc_1)".to_string(),
-            "MessageEnd(Some(\"STOP\"))".to_string(),
+            "MessageEnd(Some(\"stop\"))".to_string(),
         ]
     );
     assert!(!summary.iter().any(|label| label.contains(SYNTHETIC_CALL_ID_PREFIX)));
@@ -844,7 +844,7 @@ fn usage_arrives_field_by_field_and_only_when_present() {
             "TokenUsage(Some(7),None,None,None)",
             "TextDelta(x)",
             "TextDone",
-            "MessageEnd(Some(\"STOP\"))",
+            "MessageEnd(Some(\"stop\"))",
         ]
     );
 }
@@ -908,12 +908,14 @@ fn a_body_that_stops_before_a_finish_reason_is_truncated() {
 
 #[test]
 fn a_safety_finish_becomes_the_stop_reason_without_an_error() {
-    for reason in ["SAFETY", "MAX_TOKENS"] {
+    // The server spells these upper case; every consumer compares against a
+    // lower-case list, so the parser normalizes at capture.
+    for (reason, expected) in [("SAFETY", "safety"), ("MAX_TOKENS", "max_tokens")] {
         let chunk = format!(r#"{{"candidates":[{{"finishReason":"{reason}"}}]}}"#);
         let events = parse_payloads(&[&chunk]);
         assert_eq!(
             summary(&events),
-            vec![format!("MessageEnd(Some(\"{reason}\"))")],
+            vec![format!("MessageEnd(Some(\"{expected}\"))")],
             "reason {reason}"
         );
     }
@@ -924,7 +926,29 @@ fn a_blocked_prompt_reports_its_block_reason_as_the_stop_reason() {
     let blocked = r#"{"promptFeedback":{"blockReason":"SAFETY"}}"#;
     let events = parse_payloads(&[blocked]);
 
-    assert_eq!(summary(&events), vec!["MessageEnd(Some(\"SAFETY\"))".to_string()]);
+    assert_eq!(summary(&events), vec!["MessageEnd(Some(\"safety\"))".to_string()]);
+}
+
+#[test]
+fn a_max_tokens_finish_reaches_the_output_limit_stop() {
+    // `OUTPUT_LIMIT_STOPS` in `crates/app-core/src/server/foreground_state.rs:65`
+    // is what the server maps to the ACP `max_tokens` stop. This crate cannot
+    // depend on app-core, so the list is repeated here: if the two ever drift,
+    // a Gemini `MAX_TOKENS` would silently become `max_turn_requests`.
+    const OUTPUT_LIMIT_STOPS: [&str; 4] = ["max_tokens", "max_output_tokens", "length", "incomplete"];
+
+    let chunk = r#"{"candidates":[{"finishReason":"MAX_TOKENS"}]}"#;
+    let events = parse_payloads(&[chunk]);
+    let stop_reason = match events.last() {
+        Some(StreamEvent::MessageEnd { stop_reason }) => stop_reason.as_deref(),
+        other => panic!("expected a message end, got {other:?}"),
+    };
+
+    assert_eq!(stop_reason, Some("max_tokens"));
+    assert!(
+        stop_reason.is_some_and(|reason| OUTPUT_LIMIT_STOPS.contains(&reason)),
+        "the server must read this as the output limit, not the request limit: {stop_reason:?}"
+    );
 }
 
 #[test]
@@ -957,7 +981,7 @@ fn a_malformed_chunk_reports_once_and_the_stream_continues() {
             "TokenUsage(Some(10),Some(7),Some(4),None)",
             "TextDelta( world)",
             "TextDone",
-            "MessageEnd(Some(\"STOP\"))",
+            "MessageEnd(Some(\"stop\"))",
         ]
     );
     assert_eq!(
@@ -1049,7 +1073,7 @@ async fn a_complete_body_through_the_shared_stream_closes_with_a_message_end() {
             "TokenUsage(Some(10),Some(7),Some(4),None)",
             "TextDelta( world)",
             "TextDone",
-            "MessageEnd(Some(\"STOP\"))",
+            "MessageEnd(Some(\"stop\"))",
         ]
     );
 }

@@ -323,6 +323,12 @@ fn thinking_config(model: &str, effort: Option<&str>) -> Option<Value> {
 /// started, given its whole argument object and ended within the chunk that
 /// carried it. The body ends without a marker, so `finish` is the only place the
 /// turn is closed.
+///
+/// The reported stop reason is ASCII-lower-cased (`MAX_TOKENS` -> `max_tokens`,
+/// `STOP` -> `stop`, `SAFETY` -> `safety`), because the server compares it
+/// against lower-case lists and the other three wires already report lower case.
+/// The two `*_UNSPECIFIED` sentinels are recognized before that step, in the
+/// spelling the server sends.
 pub struct GeminiParser {
     text_open: bool,
     thinking_open: bool,
@@ -396,7 +402,7 @@ impl GeminiParser {
             .and_then(Value::as_str)
             .filter(|reason| !reason.is_empty() && *reason != FINISH_REASON_UNSPECIFIED)
         {
-            self.finish_reason = Some(reason.to_string());
+            self.finish_reason = Some(reason.to_ascii_lowercase());
         }
 
         // A prompt the server refused produces no candidate at all, so its block
@@ -408,7 +414,7 @@ impl GeminiParser {
                 .and_then(Value::as_str)
                 .filter(|reason| !reason.is_empty() && *reason != BLOCK_REASON_UNSPECIFIED)
         {
-            self.finish_reason = Some(reason.to_string());
+            self.finish_reason = Some(reason.to_ascii_lowercase());
         }
     }
 
