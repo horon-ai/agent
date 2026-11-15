@@ -743,15 +743,15 @@ fn open_router_type_is_rejected_with_the_supported_values() {
     with_clean_provider_test_env(|| {
         write_provider_config(
             r#"
-[providers.legacy]
+[providers.retired]
 type = "open-router"
 base_url = "http://127.0.0.1:18080/v1"
 auth = "none"
-default_model = "legacy-model"
+default_model = "retired-model"
 "#,
         );
 
-        let error = match MultiProvider::from_named_provider_profile("legacy") {
+        let error = match MultiProvider::from_named_provider_profile("retired") {
             Ok(_) => panic!("a removed provider type must not build a runtime"),
             Err(error) => error,
         };
