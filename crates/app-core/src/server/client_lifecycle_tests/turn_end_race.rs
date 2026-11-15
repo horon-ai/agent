@@ -68,7 +68,7 @@ async fn a_prompt_waiting_beside_the_turn_end_is_not_busy() {
     editor.send(json!({"type": "ping", "id": 13})).await;
     let pong = tokio::time::timeout(
         Duration::from_millis(300),
-        editor.until(|event| matches!(event, ServerEvent::Pong { .. })),
+        editor.until(|event| matches!(event, ServerEvent::Pong { id: 13, .. })),
     )
     .await;
     assert!(
